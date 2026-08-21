@@ -16,10 +16,10 @@ concurrency:
 on:
   push:
     branches: [main]
-    paths-ignore: ['*.md', '**/docs/**']
+    paths-ignore: ['**/docs/**']
   pull_request:
     branches: [main]
-    paths-ignore: ['*.md', '**/docs/**']
+    paths-ignore: ['**/docs/**']
   workflow_dispatch:
 
 jobs:
