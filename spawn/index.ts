@@ -33,6 +33,8 @@ import { abortChildSession, type AgenticodingState } from "../state.js";
 import { formatPageList } from "../notebook/store.js";
 import { createNotebookToolDefinitions } from "../notebook/tools.js";
 import { resolveSpawnModelRoute } from "../model-groups/router.js";
+import { productionConstraintRegistry, type ConstraintRegistry } from "../model-groups/constraints/registry.js";
+import { MODEL_GROUP_MODALITY_PROSE } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
 import {
 	renderSpawnCall,
@@ -286,28 +288,40 @@ const SPAWN_DESCRIPTION =
 
 const SPAWN_PROMPT_SNIPPET = "Spawn a focused subtask agent";
 
-const SPAWN_PROMPT_GUIDELINES = [
-	"Use spawn to delegate isolated work to child agents. They are trusted extensions of you with their own context and the same authority. Only condensed results are returned.",
-	"If the operator requests a known Model Group confidently, pass its exact name as group. If no known/confident group is requested, omit group so the child inherits the parent model/thinking.",
-];
+function spawnPromptGuidelines(constraintRegistry: ConstraintRegistry): string[] {
+	const constraintKeys = constraintRegistry.descriptors.map((descriptor) => descriptor.key);
+	return [
+		"Use spawn to delegate isolated work to child agents. They are trusted extensions of you with their own context and the same authority. Only condensed results are returned.",
+		"If the operator requests a known Model Group confidently, pass its exact name as group. If no known/confident group is requested, omit group so the child inherits the parent model/thinking.",
+		`Declare constraints when the delegated task needs ${MODEL_GROUP_MODALITY_PROSE} capability; do not work around a missing required modality with third-party tools.`,
+		`A constraint is keyed by its exact name (${constraintKeys.join(", ")}); values must match the key's schema — unknown keys or invalid values are rejected before any child is created.`,
+		"A specified group is binding: if the operator asks for a specific group and it lacks a needed capability, do NOT substitute a different group or inherit the parent model. Stop and report to the operator that the named group cannot satisfy the task, and ask how to proceed.",
+		`Pass modality requirements as constraints: { modalities: { required: [\"text\", ...] } } — modalities is an object whose only key is \"required\" (an array of modality names), not a bare array, and constraints itself is a JSON object, not a JSON string. Valid entries are exactly text, image, or reasoning — do not invent capability names (e.g. \"code\"). Invalid shapes are rejected before any child is created.`,
+	];
+}
 
-const SPAWN_PARAMETERS = Type.Object({
-	prompt: Type.String({
-		description:
-			"Self-contained task description. Reference notebook pages by name — " +
-			"child will notebook_read them on demand.",
-	}),
-	group: Type.Optional(Type.String({
-		description: "Optional exact Model Group name for child model routing. Omit to inherit the parent model/thinking.",
-	})),
-	thinking: Type.Optional(StringEnum(
-		["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
-		{
+export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
+	return Type.Object({
+		prompt: Type.String({
 			description:
-				"Override child thinking level. A routed Model Group entry may override it.",
-		},
-	)),
-});
+				"Self-contained task description. Reference notebook pages by name — " +
+				"child will notebook_read them on demand.",
+		}),
+		group: Type.Optional(Type.String({
+			description: "Optional exact Model Group name for child model routing. Omit to inherit the parent model/thinking.",
+		})),
+		constraints: Type.Optional(Type.Object(Object.fromEntries(constraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])) as any, {
+			description: `Capability requirements for the delegated task — a JSON object keyed by constraint name, not a JSON string and not an array. Keys: ${constraintRegistry.descriptors.map((descriptor) => descriptor.key).join(", ")} — each value must match its key's schema; unknown keys or invalid values are rejected before a child is created.`,
+		})),
+		thinking: Type.Optional(StringEnum(
+			["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
+			{
+				description:
+					"Override child thinking level. A routed Model Group entry may override it.",
+			},
+		)),
+	});
+}
 
 
 /**
@@ -342,12 +356,33 @@ export function createChildTools(
  *   - both registries delete(toolCallId) on error and completion paths
  *
  */
+export type SpawnConstraintRequirements = Record<string, unknown>;
+export interface SpawnParameters { prompt: string; group?: string; constraints?: SpawnConstraintRequirements; thinking?: ThinkingValue }
+
+/** Validate the public constraint envelope once, rejecting unknown keys before routing. */
+export function normalizeSpawnRequirements(params: Pick<SpawnParameters, "constraints">, registry: ConstraintRegistry = productionConstraintRegistry): SpawnConstraintRequirements {
+	const raw = params.constraints;
+	if (raw !== undefined && (!raw || typeof raw !== "object" || Array.isArray(raw))) throw new Error("Spawn constraints must be an object.");
+	const normalized: SpawnConstraintRequirements = {};
+	for (const [key, value] of Object.entries(raw ?? {})) {
+		const descriptor = registry.get(key);
+		if (!descriptor) throw new Error(`Unknown spawn constraint requirement '${key}'.`);
+		const decoded = descriptor.requirement.decode(value, `constraints.${key}`);
+		if (!decoded.ok) throw new Error(decoded.message);
+		// Keep the envelope shape: resolveSpawnModelRoute is the single decoder of
+		// requirement values (schema-shaped envelope in, engine value out), so the
+		// router never sees raw/partial shapes that could bypass descriptor validation.
+		normalized[key] = value;
+	}
+	return normalized;
+}
+
 export function executeSpawn(
 	toolCallId: string,
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	state: AgenticodingState,
-	params: { prompt: string; group?: string; thinking?: ThinkingValue },
+	params: SpawnParameters,
 	signal: AbortSignal | undefined,
 	onUpdate:
 		| ((result: {
@@ -357,6 +392,7 @@ export function executeSpawn(
 		| undefined,
 	defaultThinking: ThinkingValue,
 	sessionFactory: typeof createAgentSession = createAgentSession,
+	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
 ): Promise<{ content: TextContent[]; details: SpawnResultDetails }> {
 	let execution!: Promise<{ content: TextContent[]; details: SpawnResultDetails }>;
 	execution = (async () => {
@@ -366,12 +402,15 @@ export function executeSpawn(
 		}
 
 		const inheritedChildThinking: ThinkingValue = params.thinking ?? defaultThinking;
+		const constraints = normalizeSpawnRequirements(params, constraintRegistry);
 		const route = resolveSpawnModelRoute({
 			requestedGroup: params.group,
+			constraints,
 			groups: state.modelGroups.groups,
 			parentModel,
 			parentThinking: inheritedChildThinking,
 			modelRegistry: ctx.modelRegistry,
+			constraintRegistry,
 		});
 		const childModel = route.model;
 		const requestedChildThinking: ThinkingValue = route.thinking;
@@ -401,6 +440,12 @@ export function executeSpawn(
 	const authorityNote = state.readonlyEnabled
 		? READONLY_CHILD_AUTHORITY_NOTE
 		: "You have the same authority as the parent.";
+	// Constraint descriptors own child-facing orientation for explicit group
+	// ceilings; spawn only presents the generic notes supplied by the route.
+	const capabilityNotice =
+		route.status === "routed" && route.groupCapabilityCeilings?.length
+			? `\n\n## Model Group capability ceiling\n${route.groupCapabilityCeilings.join("\n")}\n\n`
+			: "";
 	const fullPrompt =
 		`You are a focused child agent spawned by a parent agent. ` +
 		`${authorityNote} ` +
@@ -409,6 +454,7 @@ export function executeSpawn(
 		`${notebookListing}\n\n` +
 		`If you write notebook pages, store only durable shared memory for the parent and future contexts. ` +
 		`Keep transient task state in your final reply to the parent.\n\n` +
+		`${capabilityNotice}` +
 		`## Task\n\n${params.prompt}${readonlyNotice}\n\n` +
 		`When complete, provide a concise summary of findings. ` +
 		`Keep the result under ${CHILD_MAX_LINES} lines / ${(CHILD_MAX_BYTES / 1024).toFixed(0)}KB.`;
@@ -608,19 +654,20 @@ export function registerSpawnTool(
 	pi: ExtensionAPI,
 	state: AgenticodingState,
 	sessionFactory: typeof createAgentSession = createAgentSession,
+	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
 ): void {
 	pi.registerTool({
 		name: "spawn",
 		label: "Spawn",
 		description: SPAWN_DESCRIPTION,
 		promptSnippet: SPAWN_PROMPT_SNIPPET,
-		promptGuidelines: SPAWN_PROMPT_GUIDELINES,
-		parameters: SPAWN_PARAMETERS,
+		promptGuidelines: spawnPromptGuidelines(constraintRegistry),
+		parameters: buildSpawnParameters(constraintRegistry),
 		renderShell: "self",
 
 		execute(
 			_toolCallId: string,
-			params: { prompt: string; group?: string; thinking?: ThinkingValue },
+			params: SpawnParameters,
 			signal: AbortSignal | undefined,
 			onUpdate:
 				| ((result: {
@@ -641,6 +688,7 @@ export function registerSpawnTool(
 				onUpdate,
 				parentThinking,
 				sessionFactory,
+				constraintRegistry,
 			);
 		},
 

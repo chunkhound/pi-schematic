@@ -71,10 +71,12 @@ import { registerSpawnTool } from "./spawn/index.js";
 import { registerModelGroupsCommand } from "./model-groups/command.js";
 import { resolveSpawnModelRoute, SpawnRouteError } from "./model-groups/router.js";
 import { registerModelGroupAutocomplete } from "./model-groups/autocomplete.js";
-import { getEffectiveModelGroupNames } from "./model-groups/router.js";
+import { getEffectiveModelGroups, getEffectiveModelGroupNames } from "./model-groups/router.js";
+import { MODEL_GROUP_MODALITY_PROSE, type ResolvedModelGroup, type ModelGroupsAccess } from "./model-groups/types.js";
 import { loadModelGroups, summarizeBootValidation, validateModelGroups } from "./model-groups/store.js";
 import { escapeDisplayLabel } from "./model-groups/display.js";
-import type { ModelGroupsAccess } from "./model-groups/types.js";
+import { presentConstraintPrompt } from "./model-groups/constraints/presentation.js";
+import { productionConstraintRegistry } from "./model-groups/constraints/registry.js";
 import {
 	cacheLookupCommand,
 	cacheLookupCommandExplicitModel,
@@ -100,6 +102,7 @@ import {
 	updateIndicators,
 } from "./tui.js";
 import { applyReadonlyBashGuard } from "./readonly-bash.js";
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 /**
@@ -461,13 +464,14 @@ function refreshModelGroupsState(state: AgenticodingState, ctx: ExtensionContext
 	return state.modelGroups.validation;
 }
 
-function modelGroupsPromptSection(names: string[]): string | undefined {
-	if (names.length === 0) return undefined;
+function modelGroupsPromptSection(groups: ResolvedModelGroup[]): string | undefined {
+	if (groups.length === 0) return undefined;
+	const labels = groups.map((group) => `${escapeDisplayLabel(group.name)} (${(group.evaluations ? presentConstraintPrompt(group.evaluations, productionConstraintRegistry).filter(Boolean).join(", ") : group.modalities?.effective.join(", ")) || "no common modalities"})`);
 	return `\n## Model Groups for spawn\n` +
-		`Available Model Groups: ${names.join(", ")}\n` +
-		`When the operator asks to spawn with one of these groups, or mentions #group-name, call spawn with group set to the exact group name only when the mapping is known and confident. ` +
-		`If no known/confident group is requested, omit group and inherit the parent model/thinking. ` +
-		`The group list is names-only; do not assume provider/model membership, thinking levels, auth status, validation details, or storage paths from it.`;
+		`Available Model Groups: ${labels.join(", ")}\n` +
+		`When the operator asks to spawn with one of these groups, or mentions #group-name, call spawn with group set to the exact group name only when the mapping is known and confident. If a delegated task requires ${MODEL_GROUP_MODALITY_PROSE} capability, pass those requirements as constraints. If no known/confident group is requested, omit group and inherit the parent model/thinking. ` +
+		`An explicitly-named group is binding: if the operator requests a specific group and the task also needs a capability that group lacks, do NOT fall back to a different group, inherit, or work around the missing capability. Stop and report to the operator that the named group cannot do the task; ask whether to pick a different group or drop the capability. ` +
+		`The group list exposes only names and effective modalities; do not assume provider/model membership, thinking levels, auth status, validation details, or storage paths from it.`;
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -756,7 +760,7 @@ export default function (pi: ExtensionAPI): void {
 			);
 		}
 
-		const modelGroupSection = modelGroupsPromptSection(getEffectiveModelGroupNames(state.modelGroups.groups));
+		const modelGroupSection = modelGroupsPromptSection(getEffectiveModelGroups(state.modelGroups.groups));
 		if (modelGroupSection) {
 			parts.push(modelGroupSection);
 		}
@@ -920,9 +924,9 @@ export default function (pi: ExtensionAPI): void {
 				const backupNote = issue.backupFailed ? `; backup failed${backupPath ? ` (${backupPath})` : ""}, original file left untouched` : "";
 				ctx.ui.notify(`Model Groups config ${issue.kind} in ${issue.scope} scope (${sourcePath}); using empty config for that scope${backupNote}; ${detail}`, "warning");
 			}
-			const { unavailableCount, overrideCount } = summarizeBootValidation(validation.groups);
-			if (unavailableCount > 0 || overrideCount > 0) {
-				ctx.ui.notify(`Model Groups boot validation: ${unavailableCount} unavailable model references · ${overrideCount} project overrides`, "warning");
+			const { unavailableCount, overrideCount, emptyModalityCount, staleModalityOverrideCount } = summarizeBootValidation(validation.groups);
+			if (unavailableCount > 0 || overrideCount > 0 || emptyModalityCount > 0 || staleModalityOverrideCount > 0) {
+				ctx.ui.notify(`Model Groups boot validation: ${unavailableCount} unavailable model references · ${overrideCount} project overrides · ${emptyModalityCount} groups with no common modalities · ${staleModalityOverrideCount} stale modality overrides`, "warning");
 			}
 		}
 

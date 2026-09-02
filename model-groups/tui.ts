@@ -1,7 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, type Model, type ModelThinkingLevel, type Api } from "@earendil-works/pi-ai";
-import { Container, fuzzyFilter, Input, Key, matchesKey, SelectList, truncateToWidth, visibleWidth, type Component, type Focusable, type SelectItem, type TUI } from "@earendil-works/pi-tui";
+import { Container, fuzzyFilter, Input, Key, matchesKey, SelectList, sliceByColumn, truncateToWidth, visibleWidth, type Component, type Focusable, type SelectItem, type SelectListLayoutOptions, type SelectListTruncatePrimaryContext, type TUI } from "@earendil-works/pi-tui";
 import {
 	createGroup,
 	deleteGroup,
@@ -11,11 +11,16 @@ import {
 	summarizeBootValidation,
 	updateGroup,
 } from "./store.js";
-import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ResolvedModelGroup } from "./types.js";
+import { MODEL_GROUP_MODALITIES, ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModality, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ResolvedModelGroup } from "./types.js";
 import { canonicalizeModelGroupName } from "./names.js";
 import { decodeDisplayLabel, escapeDisplayLabel } from "./display.js";
+import { MODALITY_FG, MODALITY_LETTER, modalityLetterRun as buildModalityLetterRun } from "./modality.js";
+import { getModalitiesModelFact } from "./constraints/modalities.js";
+import { constraintEditorRows, presentConstraintDiagnosticRecords, type ConstraintEditorRow } from "./constraints/presentation.js";
+import { productionConstraintRegistry } from "./constraints/registry.js";
+import type { AnyConstraintDescriptor, ErasedConstraintEvaluation } from "./constraints/types.js";
 
-export type ModelGroupsScreen = "LIST" | "EDITOR" | "MODEL_EDIT" | "WIZARD_PROVIDER" | "WIZARD_MODEL" | "WIZARD_THINKING" | "DELETE_CONFIRM";
+export type ModelGroupsScreen = "LIST" | "EDITOR" | "MODALITIES" | "MODEL_EDIT" | "WIZARD_PROVIDER" | "WIZARD_MODEL" | "WIZARD_THINKING" | "DELETE_CONFIRM";
 
 export interface ModelGroupsStoreOps {
 	listResolvedModelGroups: typeof listResolvedModelGroups;
@@ -37,6 +42,7 @@ const defaultStore: ModelGroupsStoreOps = { listResolvedModelGroups, createGroup
 
 function isEnter(data: string): boolean { return matchesKey(data, Key.enter) || data === "\n"; }
 function isEsc(data: string): boolean { return matchesKey(data, Key.escape); }
+const isSpace = (data: string) => data === " ";
 function isUp(data: string): boolean { return matchesKey(data, Key.up); }
 function isDown(data: string): boolean { return matchesKey(data, Key.down); }
 function isLeft(data: string): boolean { return matchesKey(data, Key.left); }
@@ -44,7 +50,8 @@ function isBackspace(data: string): boolean { return matchesKey(data, Key.backsp
 function isDeleteChord(data: string): boolean { return data === "D" || matchesKey(data, Key.delete); }
 
 function cloneDef(def: ModelGroupDef): ModelGroupDef {
-	return { models: def.models.map((model) => ({ ...model })) };
+	const constraints = def.constraints === undefined ? undefined : { ...def.constraints, ...(Array.isArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) };
+	return { ...def, models: def.models.map((model) => ({ ...model })), ...(constraints === undefined ? {} : { constraints }) };
 }
 
 function groupKey(group: Pick<ResolvedModelGroup, "scope" | "name">): string {
@@ -107,7 +114,8 @@ export function createModelGroupsComponent(
 	let rootFocused = false;
 	let activeSelect: SelectList | null = null;
 	const nameRow = () => access.policy === "global-project" ? 2 : 1;
-	const modelStartRow = () => nameRow() + 1;
+	const modalityRow = () => nameRow() + 1;
+	const modelStartRow = () => modalityRow() + 1;
 	function syncInputFocus(): void {
 		groupNameInput.focused = rootFocused && state.screen === "EDITOR" && state.row === nameRow() && state.activeTextInput === "group-name";
 		modelSearchInput.focused = rootFocused && state.screen === "WIZARD_MODEL";
@@ -231,18 +239,25 @@ export function createModelGroupsComponent(
 		}
 	}
 
-	function updateDraft(def: ModelGroupDef, afterSuccess: () => void): void {
+	/** Persist the draft, refresh state, and re-resolve the updated group. No navigation. */
+	function persistDraft(def: ModelGroupDef): ResolvedModelGroup | undefined {
 		const group = currentEditGroup();
-		if (!group) return;
+		if (!group) return undefined;
 		try {
-			store.updateGroup(group.scope, access, group.name, def);
+			store.updateGroup(group.scope, access, group.name, def, modelRegistry);
 			refresh();
-			const updated = state.groups.find((candidate) => candidate.name === group.name && candidate.scope === group.scope);
-			if (updated) openEditor(updated);
-			afterSuccess();
+			return state.groups.find((candidate) => candidate.name === group.name && candidate.scope === group.scope);
 		} catch (error) {
 			notifyError(error);
+			return undefined;
 		}
+	}
+
+	function updateDraft(def: ModelGroupDef, afterSuccess: () => void): void {
+		const updated = persistDraft(def);
+		if (!updated) return; // error already notified; do not navigate
+		openEditor(updated);
+		afterSuccess();
 	}
 
 	function availableModels(): Model<Api>[] {
@@ -280,11 +295,42 @@ export function createModelGroupsComponent(
 		return [undefined, ...supported];
 	}
 
+	function activeConstraintEditor(): { descriptor: AnyConstraintDescriptor; evaluation: ErasedConstraintEvaluation } | undefined {
+		const group = currentEditGroup();
+		const evaluation = group?.evaluations?.find((candidate) => productionConstraintRegistry.get(candidate.key)?.editor.kind === "multi-select");
+		const descriptor = evaluation && productionConstraintRegistry.get(evaluation.key);
+		if (descriptor && evaluation) return { descriptor, evaluation };
+		// Test/store adapters that predate generic evaluations retain the production descriptor's compatibility projection.
+		const compatibilityDescriptor = productionConstraintRegistry.descriptors.find((candidate) => candidate.editor.kind === "multi-select");
+		if (!group || !compatibilityDescriptor) return undefined;
+		const reconciled = compatibilityDescriptor.reconcile({ aggregate: group.modalities, override: state.editDraft?.constraints?.modalities });
+		return { descriptor: compatibilityDescriptor, evaluation: { key: compatibilityDescriptor.key, aggregate: group.modalities, effective: reconciled.effective, diagnostics: reconciled.diagnostics } };
+	}
+
+	function modalityEditorRows(): readonly ConstraintEditorRow[] {
+		const editor = activeConstraintEditor();
+		if (!editor) return [];
+		// The modalities hand-edit screen is rebuilt around disabling capabilities
+		// from the union: only the toggleable media rows remain (no Automatic
+		// selector row). Text is the required base when the group's members support
+		// it and reasoning is handled per-model (thinkingLevel), so both are
+		// excluded from toggles.
+		return constraintEditorRows(editor.descriptor, editor.evaluation, state.editDraft?.constraints?.[editor.descriptor.key]).filter(
+			(row) => row.kind === "toggle" && row.value !== "reasoning" && row.value !== "text",
+		);
+	}
+
 	function maxRow(): number {
 		switch (state.screen) {
 			case "LIST": return state.groups.length;
 			case "EDITOR": return modelStartRow() + (state.editDraft?.models.length ?? 0);
-			case "MODEL_EDIT": return thinkingOptionsFor(modelRegistry.find(state.editDraft?.models[state.modelEditIndex]?.provider ?? "", state.editDraft?.models[state.modelEditIndex]?.modelId ?? "") as Model<Api> | undefined).length;
+			case "MODALITIES": return Math.max(0, modalityEditorRows().length - 1);
+			case "MODEL_EDIT": {
+				const reference = state.editDraft?.models[state.modelEditIndex];
+				const model = modelRegistry.find(reference?.provider ?? "", reference?.modelId ?? "") as Model<Api> | undefined;
+				const options = thinkingOptionsFor(model);
+				return options.length;
+			}
 			case "WIZARD_PROVIDER": return Math.max(0, allProviders().length - 1);
 			case "WIZARD_MODEL": return Math.max(0, filteredModelsForProvider(state.wizardProvider).length - 1);
 			case "WIZARD_THINKING": return Math.max(0, thinkingOptionsFor(currentWizardModel()).length - 1);
@@ -303,7 +349,7 @@ export function createModelGroupsComponent(
 					const name = uniqueNewGroupName();
 					try {
 						const scope = access.policy === "global-project" ? "project" : "global";
-						store.createGroup(scope, access, name, { models: [] });
+						store.createGroup(scope, access, name, { models: [] }, modelRegistry);
 						refresh();
 						const created = state.groups.find((group) => group.name === name && group.scope === scope);
 						if (created) openEditor(created);
@@ -318,6 +364,7 @@ export function createModelGroupsComponent(
 				if (access.policy === "global-project" && state.row === 0) { switchScope("project"); return; }
 				if ((access.policy === "global-project" && state.row === 1) || (access.policy === "global-only" && state.row === 0)) { switchScope("global"); return; }
 				if (state.row === nameRow()) { state.activeTextInput = "group-name"; syncInputFocus(); return; }
+				if (state.row === modalityRow()) { state.screen = "MODALITIES"; state.row = 0; return; }
 				if (!commitName()) return;
 				const modelIndex = state.row - modelStartRow();
 				if (state.editDraft && modelIndex < state.editDraft.models.length) {
@@ -328,6 +375,42 @@ export function createModelGroupsComponent(
 					resetModelSearch();
 					state.screen = "WIZARD_PROVIDER";
 					state.row = 0;
+				}
+				return;
+			}
+			case "MODALITIES": {
+				if (!state.editDraft) return;
+				const editor = activeConstraintEditor();
+				const selected = modalityEditorRows()[state.row];
+				// No toggle rows (text-only / unresolvable) → Enter/Space are inert.
+				if (!editor || !selected || selected.kind !== "toggle") return;
+				const next = cloneDef(state.editDraft);
+				const base = [...(editor.evaluation.effective as ModelGroupModality[])];
+				const pressed = selected.value as ModelGroupModality;
+				// Disable a capability by subtracting it from the current effective
+				// (preserving hidden reasoning); re-enable by adding it back.
+				const toggled = base.includes(pressed)
+					? base.filter((modality) => modality !== pressed)
+					: orderedModalities([...base, pressed]);
+				const supported = orderedModalities((editor.evaluation.aggregate as { supported?: ModelGroupModality[] }).supported ?? []);
+				if (orderedModalities(toggled).join(",") === supported.join(",")) {
+					// Re-enabling back to the full union returns the group to Automatic:
+					// no override is stored, so no spawn ceiling attaches to a non-limit.
+					if (next.constraints) delete next.constraints[editor.descriptor.key];
+					if (next.constraints && Object.keys(next.constraints).length === 0) delete next.constraints;
+				} else {
+					(next.constraints ??= {})[editor.descriptor.key] = toggled;
+				}
+				const updated = persistDraft(next);
+				if (updated) {
+					// Re-bind the draft to the toggled override while staying on this screen.
+					state.editKey = groupKey(updated);
+					state.editName = escapeDisplayLabel(updated.name);
+					setGroupNameInputValue(state.editName);
+					state.editScope = updated.scope;
+					state.editDraft = next;
+					state.activeTextInput = null;
+					syncInputFocus();
 				}
 				return;
 			}
@@ -390,6 +473,7 @@ export function createModelGroupsComponent(
 		switch (state.screen) {
 			case "LIST": state.finished = true; done(); return;
 			case "EDITOR": commitName(); state.screen = "LIST"; state.row = 0; return;
+			case "MODALITIES": state.screen = "EDITOR"; state.row = modalityRow(); return;
 			case "MODEL_EDIT": state.screen = "EDITOR"; state.row = 0; return;
 			case "WIZARD_PROVIDER": resetModelSearch(); state.screen = "EDITOR"; state.row = 0; return;
 			case "WIZARD_MODEL": resetModelSearch(); state.screen = "WIZARD_PROVIDER"; state.row = 0; return;
@@ -440,6 +524,47 @@ export function createModelGroupsComponent(
 		};
 	}
 
+	// Media modalities editable in the modalities screen. Reasoning is a distinct
+	// capability (per-member thinkingLevel / routing gate) and is not exposed here.
+	const VISIBLE_MODALITIES = MODEL_GROUP_MODALITIES.filter((modality) => modality !== "reasoning") as ModelGroupModality[];
+
+	/** Vocab-order the given modalities per MODEL_GROUP_MODALITIES. */
+	function orderedModalities(values: Iterable<ModelGroupModality>): ModelGroupModality[] {
+		const set = new Set(values);
+		return MODEL_GROUP_MODALITIES.filter((modality) => set.has(modality));
+	}
+
+	/** Dim wrap, so each description run re-asserts dim after an inner colored span's \x1b[39m. */
+	function dim(s: string): string {
+		return theme.fg("dim", s);
+	}
+
+	/** A non-selectable section bar: dim rule, accent label, dim rule. */
+	function sectionBar(label: string): string {
+		return `${dim("── ")}${theme.fg("accent", label)}${dim(" ──")}`;
+	}
+
+	/** Colored single-letter run for a group's effective media modalities + dimmed padding. Empty set -> "". */
+	function modalityLetterRun(effective: readonly ModelGroupModality[] | null | undefined): string {
+		return buildModalityLetterRun(effective, {
+			render: (modality, letter) => theme.fg(MODALITY_FG[modality], letter),
+			separator: dim(" "),
+		});
+	}
+
+	/** Build a modality-tagged description whose dim segments re-assert dim after each colored letter. */
+	function modalityDescription(
+		scope: ModelGroupScope,
+		count: number,
+		thinking: string,
+		tags: string,
+		effective: readonly ModelGroupModality[] | null | undefined,
+	): string {
+		const head = dim(`[${scope}] ${count} models`);
+		const letters = modalityLetterRun(effective);
+		return `${head}${letters ? `${dim(" ")}${letters}${dim(" ")}` : dim(" ")}${dim(thinking)}${tags ? dim(` — ${tags}`) : ""}`;
+	}
+
 	const selectTheme = {
 		selectedPrefix: (text: string) => theme.fg("accent", text),
 		selectedText: (text: string) => theme.fg("accent", text),
@@ -463,9 +588,53 @@ export function createModelGroupsComponent(
 		activeSelect = models.length > 0 ? buildModelSelect(models) : null;
 	}
 
+	// Model rows are "provider/id" labels; the library's default truncation cuts the
+	// tail silently (no marker). Instead, keep the distinguishing id tail behind a
+	// visible ellipsis and dim the provider prefix on non-selected rows.
+	const MODEL_ROW_ELLIPSIS = "…";
+
+	function tailOfWidth(text: string, maxWidth: number): string {
+		const width = visibleWidth(text);
+		if (width <= maxWidth) return text;
+		return sliceByColumn(text, Math.max(0, width - maxWidth), maxWidth, true);
+	}
+
+	function truncateModelRow(context: SelectListTruncatePrimaryContext): string {
+		const { text, maxWidth, isSelected } = context;
+		if (maxWidth <= 0) return "";
+		if (visibleWidth(text) <= maxWidth) {
+			const slash = text.lastIndexOf("/");
+			if (isSelected || slash < 0) return text;
+			return `${dim(text.slice(0, slash + 1))}${text.slice(slash + 1)}`;
+		}
+		const slash = text.lastIndexOf("/");
+		const provider = slash >= 0 ? text.slice(0, slash + 1) : "";
+		const id = slash >= 0 ? text.slice(slash + 1) : text;
+		const providerWidth = visibleWidth(provider);
+		const ellipsisWidth = visibleWidth(MODEL_ROW_ELLIPSIS);
+		let keptProvider = "";
+		let tailBudget = maxWidth - ellipsisWidth;
+		if (providerWidth > 0 && providerWidth + ellipsisWidth < maxWidth) {
+			keptProvider = isSelected ? provider : dim(provider);
+			tailBudget = maxWidth - providerWidth - ellipsisWidth;
+		}
+		const tail = tailOfWidth(id, tailBudget);
+		return tail ? `${keptProvider}${MODEL_ROW_ELLIPSIS}${tail}` : `${keptProvider}${MODEL_ROW_ELLIPSIS}`;
+	}
+
 	function buildModelSelect(models: Model<Api>[]): SelectList {
-		const items = models.map((model, index) => ({ value: String(index), label: modelDisplay(model) }));
-		const select = new SelectList(items, 10, selectTheme);
+		const items = models.map((model, index) => ({
+			value: String(index),
+			label: modelDisplay(model),
+			description: modalityLetterRun(getModalitiesModelFact(model)),
+		}));
+		const select = new SelectList(items, 10, selectTheme, {
+			// A wider primary column keeps common ids visible; rows still truncate
+			// tail-first through truncateModelRow when the terminal is narrow.
+			minPrimaryColumnWidth: 24,
+			maxPrimaryColumnWidth: 48,
+			truncatePrimary: truncateModelRow,
+		});
 		select.setSelectedIndex(Math.min(state.row, Math.max(0, items.length - 1)));
 		select.onSelectionChange = (item) => { state.row = Number(item.value); syncInputFocus(); };
 		select.onSelect = (item) => {
@@ -487,13 +656,21 @@ export function createModelGroupsComponent(
 		const container = new Container();
 		container.addChild(textLine(theme.fg("accent", "Model Groups")));
 		container.addChild(textLine(theme.fg("dim", `Boot validation: ${summary.unavailableCount} unavailable model references · ${summary.overrideCount} project overrides`)));
+		const legend = `${theme.fg("dim", "modalities: ")}${VISIBLE_MODALITIES.map((modality) => `${theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality])}${dim(" " + modality)}`).join(dim(" · "))}`;
+		container.addChild(textLine(legend));
 		const items: SelectItem[] = state.groups.map((group, index) => {
 			const tags: string[] = [];
 			if (group.validation.degraded) tags.push("⚠ degraded");
 			if (group.validation.unavailableRefs.length > 0) tags.push("✗ unavailable");
 			if (group.validation.shadowedByProject) tags.push("project override");
 			const models = group.models.map((model) => thinkingLabel(model.thinkingLevel)).join(", ") || "empty";
-			return { value: String(index), label: escapeDisplayLabel(group.name), description: `[${group.scope}] ${group.models.length} models ${models}${tags.length ? ` — ${tags.join(" · ")}` : ""}` };
+			if (group.evaluations) tags.push(...presentConstraintDiagnosticRecords(group.evaluations, productionConstraintRegistry).map((diagnostic) => diagnostic.text));
+			else {
+				if (group.validation.emptyCommonModalities) tags.push("⚠ no common modalities");
+				if (group.validation.unsupportedOverrideModalities.length > 0) tags.push(`⚠ stale modality override: ${group.validation.unsupportedOverrideModalities.join(", ")}`);
+			}
+			const description = modalityDescription(group.scope, group.models.length, models, tags.join(" · "), group.modalities?.effective);
+			return { value: String(index), label: escapeDisplayLabel(group.name), description };
 		});
 		items.push({ value: String(state.groups.length), label: "+ Add group" });
 		container.addChild(buildSelect(items));
@@ -505,16 +682,87 @@ export function createModelGroupsComponent(
 		activeSelect = null;
 		const container = new Container();
 		const current = currentEditGroup();
-		container.addChild(textLine(theme.fg("accent", `Model Group: ${escapeDisplayLabel(current?.name ?? "")}`)));
-		if (access.policy === "global-project") container.addChild(textLine(selectableLine(state.row === 0, "Location: project", state.editScope === "project" ? " ✓" : "")));
-		container.addChild(textLine(selectableLine(state.row === (access.policy === "global-project" ? 1 : 0), "Location: global", state.editScope === "global" ? " ✓" : "")));
+		const title = theme.fg("accent", `Model Group: ${escapeDisplayLabel(current?.name ?? "")}`);
+		container.addChild(textLine(title));
+
+		if (access.policy === "global-project") {
+			const projectLocation = selectableLine(state.row === 0, "Location: project", state.editScope === "project" ? " ✓" : "");
+			container.addChild(textLine(projectLocation));
+		}
+		const globalLocationRow = access.policy === "global-project" ? 1 : 0;
+		const globalLocation = selectableLine(state.row === globalLocationRow, "Location: global", state.editScope === "global" ? " ✓" : "");
+		container.addChild(textLine(globalLocation));
 		container.addChild(groupNameLineComponent());
+
+		const modalities = current?.modalities;
+		const capabilitiesBar = sectionBar("Capabilities");
+		container.addChild(textLine(capabilitiesBar));
+		const commonModalities = modalities?.common.filter((modality) => modality !== "reasoning").join(", ") || "none";
+		const commonCapabilities = theme.fg("dim", `  Supported by every model: ${commonModalities}`);
+		container.addChild(textLine(commonCapabilities));
+		const modalityState = state.editDraft?.constraints?.modalities === undefined ? "Automatic" : "Override";
+		const effectiveModalities = modalities?.effective.filter((modality) => modality !== "reasoning").join(", ") || "none";
+		const modalityLine = selectableLine(state.row === modalityRow(), `Modalities: ${modalityState} (${effectiveModalities})`);
+		container.addChild(textLine(modalityLine));
+		const modelsBar = sectionBar("Models");
+		container.addChild(textLine(modelsBar));
+
 		state.editDraft?.models.forEach((model, index) => {
 			const available = modelAvailable(modelRegistry, model.provider, model.modelId) ? "available" : "unavailable";
-			container.addChild(textLine(selectableLine(state.row === index + modelStartRow(), `${escapeDisplayLabel(model.provider)}/${escapeDisplayLabel(model.modelId)}`, ` (${available}, thinking ${thinkingLabel(model.thinkingLevel)})`)));
+			const found = modelRegistry.find(model.provider, model.modelId) as Model<Api> | undefined;
+			// Per-model capability chip, mirroring the Add-model picker (D2). Unresolved
+			// members have no fact, so they render without a chip.
+			const chip = found ? modalityLetterRun(getModalitiesModelFact(found)) : "";
+			const id = `${escapeDisplayLabel(model.provider)}/${escapeDisplayLabel(model.modelId)}`;
+			const selected = state.row === index + modelStartRow();
+			const label = chip ? `${id} ${chip}` : id;
+			const suffix = ` (${available}, thinking ${thinkingLabel(model.thinkingLevel)})`;
+			const modelLine = selectableLine(selected, label, suffix);
+			container.addChild(textLine(modelLine));
 		});
 		const addRow = modelStartRow() + (state.editDraft?.models.length ?? 0);
-		container.addChild(textLine(selectableLine(state.row === addRow, "+ Add model…")));
+		const addModelLine = selectableLine(state.row === addRow, "+ Add model…");
+		container.addChild(textLine(addModelLine));
+		return container;
+	}
+
+	function renderModalitiesComponent(): Component {
+		activeSelect = null;
+		const container = new Container();
+		const editor = activeConstraintEditor();
+		const current = currentEditGroup();
+		const key = editor?.descriptor.key ?? "modalities";
+		const isAutomatic = state.editDraft?.constraints?.[key] === undefined;
+		const effective = (editor?.evaluation.effective ?? []) as ModelGroupModality[];
+		const rows = modalityEditorRows();
+		container.addChild(textLine(theme.fg("accent", `Modalities — ${escapeDisplayLabel(current?.name ?? "")}`)));
+		// Text is the required base capability — not toggleable — but only when the
+		// group's members actually support it: empty groups derive no supported
+		// modalities, so they must not claim text (the empty state below speaks).
+		const supportedModalities = (editor?.evaluation.aggregate as { supported?: readonly string[] } | undefined)?.supported;
+		if (supportedModalities?.includes("text")) {
+			container.addChild(textLine(`  ${theme.fg(MODALITY_FG.text, MODALITY_LETTER.text)}${dim(" text  [required]")}`));
+		}
+		for (const [index, row] of rows.entries()) {
+			if (row.kind !== "toggle") continue;
+			const modality = row.value as ModelGroupModality;
+			const letter = theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality]);
+			const stateText = row.active ? "[on]" : "[off]";
+			// The selected row is accent-highlighted (arrow + label) while the modality
+			// letter keeps its own color; [on]/[off] read as live toggle state.
+			const selected = state.row === index;
+			const label = selected
+				? `${theme.fg("accent", "→")} ${letter}${theme.fg("accent", ` ${row.label}  ${stateText}`)}`
+				: `  ${letter}${dim(` ${row.label}  ${stateText}`)}`;
+			container.addChild(textLine(label));
+		}
+		if (rows.length === 0) container.addChild(textLine(theme.fg("dim", "  No optional media capabilities available.")));
+		// Single editable row screens drop arrow navigation — toggling + Esc is the whole flow.
+		container.addChild(textLine(theme.fg("dim", rows.length > 1 ? "↑↓ navigate • Enter/Space toggle • Esc back" : rows.length === 1 ? "Enter/Space toggle • Esc back" : "Esc back")));
+		// Single dynamic status: Automatic uses the union; an override limits the media set.
+		container.addChild(textLine(theme.fg("dim", isAutomatic
+			? "Automatic — using every capability its members support."
+			: `Override — media limited to ${effective.filter((modality) => modality !== "reasoning").join(", ") || "none"}.`)));
 		return container;
 	}
 
@@ -531,6 +779,25 @@ export function createModelGroupsComponent(
 		thinkingOptionsFor(found).forEach((level, index) => container.addChild(textLine(selectableLine(state.row === index, `Thinking: ${thinkingLabel(level)}`))));
 		container.addChild(textLine(selectableLine(state.row === thinkingOptionsFor(found).length, "Remove model")));
 		return container;
+	}
+
+	function selectedModelDetailComponent(model: Model<Api>): Component {
+		return {
+			render: (width: number) => {
+				const full = `${escapeDisplayLabel(model.provider)}/${escapeDisplayLabel(model.id)}`;
+				const name = model.name ? escapeDisplayLabel(model.name) : undefined;
+				const lines = [dim("Selected:")];
+				if (width > 2) {
+					lines.push(truncateToWidth(`  ${theme.fg("accent", full)}`, width, MODEL_ROW_ELLIPSIS));
+					if (name !== undefined) lines.push(truncateToWidth(`  ${dim(name)}`, width, MODEL_ROW_ELLIPSIS));
+				} else {
+					lines.push(theme.fg("accent", full));
+					if (name !== undefined) lines.push(dim(name));
+				}
+				return lines;
+			},
+			invalidate: () => {},
+		};
 	}
 
 	function renderWizardComponent(): Component {
@@ -550,6 +817,7 @@ export function createModelGroupsComponent(
 				container.addChild(textLine(theme.fg("dim", "  No matching models")));
 			} else {
 				container.addChild(buildModelSelect(models));
+				container.addChild(selectedModelDetailComponent(models[Math.min(state.row, models.length - 1)]));
 			}
 			return container;
 		} else {
@@ -577,6 +845,7 @@ export function createModelGroupsComponent(
 	function activeComponent(): Component {
 		if (state.screen === "LIST") return renderListComponent();
 		if (state.screen === "EDITOR") return renderEditorComponent();
+		if (state.screen === "MODALITIES") return renderModalitiesComponent();
 		if (state.screen === "MODEL_EDIT") return renderModelEditComponent();
 		if (state.screen === "DELETE_CONFIRM") return renderDeleteComponent();
 		return renderWizardComponent();
@@ -641,6 +910,7 @@ export function createModelGroupsComponent(
 			else if (activeSelect && (state.screen === "LIST" || state.screen.startsWith("WIZARD_")) && isEnter(data)) activate();
 			else if (isUp(data)) { state.row--; clampRow(); }
 			else if (isDown(data)) { state.row++; clampRow(); }
+			else if (state.screen === "MODALITIES" && isSpace(data)) activate();
 			else if (isLeft(data) || isEsc(data)) goBack();
 			else if (isEnter(data)) activate();
 			syncInputFocus();

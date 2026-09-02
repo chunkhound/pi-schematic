@@ -9,7 +9,7 @@ import { createTestPI, theme } from "./helpers.js";
 import { withTemp } from "./model-groups-helpers.js";
 
 function registry(available = new Set(["openai:gpt-5"])): any {
-	const models = [{ provider: "openai", id: "gpt-5", reasoning: true, thinkingLevelMap: { xhigh: "x" } }];
+	const models = [{ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } }];
 	return {
 		getAll: () => models,
 		getAvailable: () => models.filter((m) => available.has(`${m.provider}:${m.id}`)),
@@ -53,7 +53,7 @@ test("/model-groups command registers and opens ctx.ui.custom with live registry
 	assert.equal(customCalled, 1);
 	assert.match(rendered, /Model Groups/);
 	assert.match(rendered, /cwd-sentinel-group/);
-	assert.deepEqual(findCalls, ["openai:gpt-5"]);
+	assert.deepEqual(findCalls, ["openai:gpt-5", "openai:gpt-5"]);
 }));
 
 test("index session_start stores model group validation and notifies load and validation issues", async () => withTemp(async ({ cwd }) => {
@@ -81,6 +81,31 @@ test("index session_start stores model group validation and notifies load and va
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
 	assert.ok(notifications.some((m) => /1 unavailable model references · 1 project overrides/.test(m)));
+}));
+
+test("index session_start notifies empty-common and stale-override boot counts", async () => withTemp(async ({ cwd }) => {
+	fs.mkdirSync(path.dirname(modelGroupsPath("global", cwd)), { recursive: true });
+	// claude is NOT in the registry, so claude-only is unavailable with empty common modalities; its override is stale.
+	// The registry has only gpt-5 (text+image); an empty group also has empty common modalities.
+	fs.writeFileSync(modelGroupsPath("global", cwd), JSON.stringify({ version: 2, groups: {
+		empty: { models: [] },
+		"claude-only": { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["text", "image"] } },
+	} }), "utf8");
+	const pi = createTestPI();
+	registerAgenticoding(pi as any);
+	const notifications: string[] = [];
+	const ctx = {
+		hasUI: true,
+		mode: "tui",
+		isProjectTrusted: () => true,
+		cwd,
+		modelRegistry: registry(),
+		getContextUsage: () => ({ percent: 10 }),
+		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {} },
+	};
+	const handler = pi.handlers.get("session_start")!.at(-1)!;
+	await handler({ reason: "load" }, ctx);
+	assert.ok(notifications.some((m) => /1 unavailable model references · 0 project overrides · 2 groups with no common modalities · 1 stale modality overrides/.test(m)), JSON.stringify(notifications, null, 2));
 }));
 
 test("index session_start notifies corrupt/schema/unsupported load issues", async () => withTemp(async ({ cwd }) => {
@@ -149,7 +174,7 @@ test("index session_start includes backup-failure detail in load issue notificat
 	assert.ok(notifications.some((m) => /corrupt-json/.test(m) && /backup failed.*original file left untouched/.test(m) && m.includes(escapeDisplayLabel(modelGroupsPath("project", cwd)))));
 }));
 
-test("before_agent_start injects fresh names-only Model Groups guidance", async () => withTemp(async ({ cwd }) => {
+test("before_agent_start injects fresh names-and-effective-modalities guidance", async () => withTemp(async ({ cwd }) => {
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 1, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }), "utf8");
 	const pi = createTestPI();
@@ -157,12 +182,64 @@ test("before_agent_start injects fresh names-only Model Groups guidance", async 
 	const handler = pi.handlers.get("before_agent_start")!.at(-1)!;
 	const result = await handler({ systemPrompt: "Base." }, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
 	assert.match(result.systemPrompt, /## Model Groups for spawn/);
-	assert.match(result.systemPrompt, /Available Model Groups: review/);
+	assert.match(result.systemPrompt, /Available Model Groups: review \(text, image, reasoning\)/);
+	assert.match(result.systemPrompt, /constraints/);
 	assert.match(result.systemPrompt, /exact group name/);
 	assert.match(result.systemPrompt, /known and confident/);
 	assert.match(result.systemPrompt, /omit group and inherit/);
 	assert.doesNotMatch(result.systemPrompt, /gpt-5/);
 	assert.doesNotMatch(result.systemPrompt, /model-groups\.json/);
+}));
+
+test("before_agent_start exposes union-effective modalities for automatic mixed groups", async () => withTemp(async ({ cwd }) => {
+	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
+	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { mixed: { models: [{ provider: "openai", modelId: "gpt-5" }, { provider: "google", modelId: "gemini-text" }] } } }), "utf8");
+	const pi = createTestPI();
+	registerAgenticoding(pi as any);
+	const handler = pi.handlers.get("before_agent_start")!.at(-1)!;
+	const models = [
+		{ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } },
+		{ provider: "google", id: "gemini-text", input: ["text"], reasoning: false },
+	];
+	const reg = { getAll: () => models, getAvailable: () => models, find: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id), hasConfiguredAuth: () => true };
+	// Automatic mixed group: guidance lists the union — image/reasoning present via the capable member.
+	const result = await handler({ systemPrompt: "Base." }, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: reg, getContextUsage: () => null });
+	assert.match(result.systemPrompt, /Available Model Groups: mixed \(text, image, reasoning\)/);
+}));
+
+test("before_agent_start labels empty effective modalities unambiguously", async () => withTemp(async ({ cwd }) => {
+	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
+	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { foo: { models: [] }, "foo (none)": { models: [] } } }), "utf8");
+	const pi = createTestPI();
+	registerAgenticoding(pi as any);
+	const handler = pi.handlers.get("before_agent_start")!.at(-1)!;
+	const result = await handler({ systemPrompt: "Base." }, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
+	assert.match(result.systemPrompt, /foo \(no common modalities\)/);
+	assert.match(result.systemPrompt, /foo \(none\) \(no common modalities\)/);
+	assert.doesNotMatch(result.systemPrompt, /foo \(none\),/);
+}));
+
+test("before_agent_start reinjects updated effective modalities after registry changes", async () => withTemp(async ({ cwd }) => {
+	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
+	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }), "utf8");
+	let model = { provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: false, thinkingLevelMap: { xhigh: "x" } };
+	const changingRegistry = {
+		getAll: () => [model],
+		getAvailable: () => [model],
+		find: () => model,
+		hasConfiguredAuth: () => true,
+	};
+	const pi = createTestPI();
+	registerAgenticoding(pi as any);
+	const handler = pi.handlers.get("before_agent_start")!.at(-1)!;
+	const ctx = { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: changingRegistry, getContextUsage: () => null };
+	const initial = await handler({ systemPrompt: "Base." }, ctx);
+	assert.match(initial.systemPrompt, /review \(text, image\)/);
+
+	model = { ...model, input: ["text"], reasoning: true };
+	const refreshed = await handler({ systemPrompt: "Base." }, ctx);
+	assert.match(refreshed.systemPrompt, /review \(text, reasoning\)/);
+	assert.doesNotMatch(refreshed.systemPrompt, /review \(text, image\)/);
 }));
 
 test("before_agent_start clears stale Model Groups guidance when registry becomes unavailable", async () => withTemp(async ({ cwd }) => {

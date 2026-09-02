@@ -119,6 +119,14 @@ Pi expands `$@` into the supplied intent and starts the parent reviewer with the
 
 This pattern scales from critical review to separate research, implementation, migration, and debugging passes.
 
+## Capabilities
+
+Model groups advertise what their members can do. Today that means input modalities: `text` and `image`.
+
+Model pickers and editor rows put a small chip beside each model (`T` for text, `I` for image) so you can tell at a glance which inputs it handles. A group's set is derived from its members — you can **narrow** it, but never widen it beyond what the members actually support.
+
+When you delegate a task with `spawn`, you can declare which capabilities it needs. Spawn checks that requirement against the group and the exact model it selects — and if it can't be met, it fails before creating any child rather than improvising around the gap.
+
 ## Why use it
 
 - **Repeat expertise, not steering** — version the procedure and constraints instead of rebuilding them in conversation.

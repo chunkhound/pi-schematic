@@ -26,6 +26,7 @@ export function group(
 	opts: {
 		scope?: "project" | "global";
 		models?: ResolvedModelGroup["models"];
+		constraints?: { modalities: import("../../model-groups/types.js").ModelGroupModality[] } | Record<string, unknown>;
 		shadowedByProject?: boolean;
 		unavailableRefs?: ResolvedModelGroup["validation"]["unavailableRefs"];
 	} = {},
@@ -36,10 +37,14 @@ export function group(
 		scope,
 		sourcePath: `<${scope}>`,
 		models: opts.models ?? [],
+		...(opts.constraints === undefined ? {} : { constraints: { ...opts.constraints, ...(Array.isArray(opts.constraints.modalities) ? { modalities: [...opts.constraints.modalities] } : {}) } }),
 		validation: {
 			unavailableRefs: opts.unavailableRefs ?? [],
 			shadowedByProject: opts.shadowedByProject ?? false,
 			degraded: (opts.unavailableRefs?.length ?? 0) > 0,
+			emptyCommonModalities: false,
+			unsupportedOverrideModalities: [],
 		},
+		modalities: { common: [], supported: [], effective: [] },
 	};
 }

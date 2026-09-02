@@ -279,7 +279,8 @@ test("Property 4: Reset clears all state fields", async () => {
 						scope: "project",
 						sourcePath: "<project>",
 						models: [],
-						validation: { unavailableRefs: [], shadowedByProject: false, degraded: false },
+						modalities: { common: [], supported: [], effective: [] },
+						validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
 					}];
 					s2.modelGroups.validation = { groups: s2.modelGroups.groups, loadIssues: [] };
 					resetState(s2);
