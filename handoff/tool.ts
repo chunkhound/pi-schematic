@@ -34,7 +34,7 @@ import { STATUS_KEY_HANDOFF } from "../tui.js";
 
 function validateHandoffRequest(nextInstruction: string, ctx: ExtensionContext): void {
 	const usage = ctx.getContextUsage();
-	if (!nextInstruction.trim()) {
+	if (!nextInstruction) {
 		const pct = normalizeContextPercent(usage?.percent);
 		throw new Error(
 			`Context at ${pct === null ? "?" : Math.round(pct) + "%"}. Empty handoff nextInstruction rejected. Save findings to notebook, then call handoff with the instruction the successor must execute.`,
@@ -60,8 +60,9 @@ function validateHandoffRequest(nextInstruction: string, ctx: ExtensionContext):
 /**
  * Resolve the two handoff roles. The extension owns the instruction — a human
  * `/handoff <direction>` wins over anything the model offers — while the model owns
- * the situational `context`. Neither field is rewritten here: the instruction is
- * preserved byte-for-byte, and `buildNextUserMessage` owns context normalization.
+ * the situational `context`. Verbatim means no paraphrase: surrounding whitespace is
+ * normalized here (like `context`), inner bytes preserved, and `buildNextUserMessage`
+ * owns context normalization.
  */
 function resolveHandoffRequest(
 	state: AgenticodingState,
@@ -69,7 +70,7 @@ function resolveHandoffRequest(
 ): { nextInstruction: string; context: string } {
 	const humanDirection = state.pendingRequestedHandoff?.nextInstruction ?? null;
 	return {
-		nextInstruction: humanDirection ?? params.nextInstruction ?? "",
+		nextInstruction: (humanDirection ?? params.nextInstruction ?? "").trim(),
 		context: params.context ?? "",
 	};
 }
