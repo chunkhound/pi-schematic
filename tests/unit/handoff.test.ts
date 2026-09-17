@@ -181,7 +181,7 @@ test("handoff onComplete fails gracefully when the discard commit marker throws"
 	assert.equal(state.pendingHandoff, null);
 	assert.equal(state.pendingRequestedHandoff, null, "requested handoff cleared after successful compaction");
 	assert.equal(state.activeNotebookTopic, null, "active topic cleared after successful compaction");
-	assert.equal(state.readonlyNudgePending, true, "a handoff schedules the live readonly OFF nudge");
+	assert.equal(state.readonlyNudgePending, false, "a clean OFF-to-OFF handoff stays silent; the ON posture is announced only when readonly is active");
 	const fallback = pi.sentUserMessages.at(-1)?.content ?? "";
 	assert.match(fallback, /## Next instruction\n\ncontinue/);
 	assert.match(fallback, /## Handoff report\n\nHandoff completed, but notebook discard was not persisted/);
@@ -272,7 +272,7 @@ test("a host delivery rejection finalizes the cut while its persisted payload re
 	assert.equal(state.pendingHandoffDelivery, null, "recovery reads the payload persisted on the completed cut");
 	assert.equal(state.pendingRequestedHandoff, null, "a completed cut must not retain its handoff bypass");
 	assert.equal(state.activeNotebookTopic, null, "the completed cut must clear the old topic");
-	assert.equal(state.readonlyNudgePending, true, "the successor must still receive the live readonly posture");
+	assert.equal(state.readonlyNudgePending, false, "an OFF-at-cut handoff stays silent; the ON posture is announced only when readonly is active");
 });
 
 test("commit failure and UI failure both ride along with the instruction", async () => {
@@ -1298,8 +1298,8 @@ test("a pending human direction wins over a model-supplied nextInstruction", asy
 
 	compactOptions.onComplete();
 	const delivered = pi.sentUserMessages.at(-1)?.content ?? "";
-	assert.ok(delivered.startsWith(`## Next instruction\n\n${direction}`),
-		"the human direction must be delivered byte-for-byte");
+	assert.ok(delivered.startsWith(`## Next instruction\n\n${direction.trim()}`),
+		"the human direction must be delivered verbatim modulo surrounding whitespace");
 	assert.doesNotMatch(delivered, /Verify the audit is done/, "the model must not smuggle its own instruction through");
 	assert.match(delivered, /## Context\n\nstate machine rebuilt from scratch/);
 });
@@ -1355,7 +1355,8 @@ test("handoff with no pending direction requires nextInstruction but not context
 
 	compactOptions.onComplete();
 	const delivered = pi.sentUserMessages.at(-1)!.content;
-	assertSuccessorTurn(delivered, { nextInstruction: instruction });
+	// Surrounding whitespace is normalized at the resolver (like context); inner bytes preserved.
+	assertSuccessorTurn(delivered, { nextInstruction: "Ship the fix" });
 	assert.doesNotMatch(delivered, /## Context/, "no context means no empty context section");
 });
 

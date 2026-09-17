@@ -12,7 +12,6 @@ import { createTestPI, makeReadonlyUICtx } from "./helpers.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
 import { buildContinuationFrame } from "../../handoff/format.js";
-import { READONLY_DISABLED_SUMMARY } from "../../notifications.js";
 
 function createHandoffPI() {
 	const pi = createTestPI();
@@ -328,15 +327,15 @@ test("the handoff summary stays readonly-free and the fresh context relearns rea
 	assert.match(resumed.nudgeContent ?? "", /\[readonly\] enabled — write\/edit blocked/,
 		"the post-handoff turn must relearn readonly from the context hook");
 
-	// Readonly dropped before the cut: same constant summary, but the fresh context
-	// explicitly learns the OFF state — proof the summary cannot go stale after a
-	// toggle or /tree rollback.
+	// Readonly dropped before the cut: same constant summary, and the fresh context
+	// stays silent — OFF-at-cut needs no announcement, while toggles and tree
+	// navigation re-announce via rehydration.
 	const dropped = await handoffCutAcrossReadonlyToggle(false);
 	assert.ok(dropped.summary.startsWith(buildContinuationFrame()));
 	assert.match(dropped.summary, /<!-- handoff-cut:[0-9a-f-]{36} -->$/i);
 	assert.doesNotMatch(dropped.summary, /readonly/i);
-	assert.equal(dropped.nudgeContent, READONLY_DISABLED_SUMMARY,
-		"the post-handoff turn must re-announce the live readonly OFF state");
+	assert.equal(dropped.nudgeContent, undefined,
+		"an OFF-at-cut handoff stays silent; ON-to-OFF across start/tree is covered by rehydration");
 });
 
 test("readonly topic boundary derives eligibility from percentage when tokens are unavailable", async () => {
