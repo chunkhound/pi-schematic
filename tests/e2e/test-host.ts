@@ -15,6 +15,7 @@
  *   → compact-success       — run queued handoff compaction success path
  *   → compact-fail [message] — run queued handoff compaction failure path
  *   → successor-turn        — drain a queued follow-up into the successor context hook
+ *   → user-turn <text>      — persist a newer user message without draining a follow-up
  *   → session-tree          — navigate the active session tree branch
  *   → agent-end             — run the first agent_end handler
  *   → agent-settled         — run the first agent_settled handler
@@ -207,6 +208,18 @@ for await (const line of rl) {
 			messages: [{ role: "user", content: successorMessage, timestamp: Date.now() }],
 		}, mockCtx);
 		process.stdout.write("OK:" + JSON.stringify({ successorMessage, context: result ?? null }) + "\n");
+	} else if (trimmed.startsWith("user-turn ")) {
+		const content = trimmed.slice("user-turn ".length).trim();
+		if (!content) {
+			process.stdout.write("ERR:missing user-turn content\n");
+			continue;
+		}
+		branch.push({
+			type: "message",
+			id: `message-${++entrySeq}`,
+			message: { role: "user", content: [{ type: "text", text: content }] },
+		});
+		process.stdout.write("OK\n");
 	} else if (trimmed === "agent-end") {
 		const [agentEnd] = pi.handlers.get("agent_end") ?? [];
 		if (!agentEnd) {

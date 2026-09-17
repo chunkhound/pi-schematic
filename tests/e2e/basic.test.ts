@@ -201,6 +201,51 @@ describe("agenticoding E2E", () => {
 		assert.equal(h.snapshot().trim(), "OK:2", "a delivered successor must not be re-sent");
 	}));
 
+	it("recovery never appends a lost handoff after newer user work", async () => withHarness(async (h) => {
+		h.write('usage {"tokens":50000,"percent":25,"contextWindow":200000}');
+		await h.waitForText("OK");
+		h.write('tool handoff {"nextInstruction":"old handoff work"}');
+		await h.waitForText("OK:Handoff started.");
+		h.write("compact-success");
+		await h.waitForText("queuedFollowUp");
+		h.write("drop-follow-up");
+		await h.waitForText("OK");
+
+		// The user moved on before a recovery trigger. That newer intent owns the branch.
+		h.write("user-turn newer user work");
+		await h.waitForText("OK");
+		h.write("agent-settled");
+		await h.waitForText("OK");
+		h.clear();
+		h.write("successor-count");
+		await h.waitForText("OK:");
+		await h.waitForText("\n");
+		assert.equal(h.snapshot().trim(), "OK:1", "recovery must not enqueue superseded work");
+	}));
+
+	it("tree navigation never appends a lost handoff after newer user work", async () => withHarness(async (h) => {
+		h.write('usage {"tokens":50000,"percent":25,"contextWindow":200000}');
+		await h.waitForText("OK");
+		h.write('tool handoff {"nextInstruction":"old handoff work"}');
+		await h.waitForText("OK:Handoff started.");
+		h.write("compact-success");
+		await h.waitForText("queuedFollowUp");
+		h.write("drop-follow-up");
+		await h.waitForText("OK");
+
+		// The user moved on before a recovery trigger. Tree navigation must not
+		// resurrect the superseded instruction either.
+		h.write("user-turn newer user work");
+		await h.waitForText("OK");
+		h.write("session-tree");
+		await h.waitForText("OK");
+		h.clear();
+		h.write("successor-count");
+		await h.waitForText("OK:");
+		await h.waitForText("\n");
+		assert.equal(h.snapshot().trim(), "OK:1", "tree recovery must not enqueue superseded work");
+	}));
+
 	it("failed handoff compaction preserves retryability", async () => withHarness(async (h) => {
 		h.write("cmd handoff retry after failure");
 		await h.waitForText("OK");
