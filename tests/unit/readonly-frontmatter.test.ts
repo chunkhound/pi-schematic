@@ -334,7 +334,7 @@ test("extension plain text without a slash stays a no-op", async () => {
 	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 	const ctx = makeBeforeStartCtx();
 
-	await inputHandler({ text: "Proceed.", source: "extension" }, ctx);
+	await inputHandler({ text: "continue", source: "extension" }, ctx);
 	await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 	assert.equal(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}), undefined);
@@ -397,7 +397,7 @@ test("queued slash + extension message preserves the first pending command", asy
 		pi.setCommands([makePromptCommand("my-prompt", filePath)]);
 
 		await inputHandler({ text: "/my-prompt", source: "interactive" }, ctx);
-		await inputHandler({ text: "Proceed.", source: "extension" }, ctx);
+		await inputHandler({ text: "continue", source: "extension" }, ctx);
 		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block, true);
@@ -938,18 +938,17 @@ test("one readonly entry is appended per consumed queued toggle", async () => {
 	}
 });
 
-async function assertHandoffAlignment(name: string, readonly: boolean, task: string): Promise<void> {
+async function assertHandoffAlignment(name: string, readonly: boolean, direction: string): Promise<void> {
 	const dir = await tmpDir();
 	try {
 		const filePath = await writePrompt(dir, name, readonly);
 		const { pi } = registerReadonlyPI();
 		const [inputHandler] = pi.handlers.get("input")!;
 		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
-		const [beforeCompactHandler] = pi.handlers.get("session_before_compact")!;
 		const ctx = makeBeforeStartCtx();
 
 		await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
-		await pi.commands.get("handoff").handler(task, {
+		await pi.commands.get("handoff").handler(direction, {
 			...makeReadonlyUICtx(),
 			isIdle: () => true,
 		} as any);
@@ -961,31 +960,31 @@ async function assertHandoffAlignment(name: string, readonly: boolean, task: str
 		assert.equal(pi.appendedEntries.at(-1)?.customType, "agenticoding-readonly");
 		assert.equal(pi.appendedEntries.at(-1)?.data.enabled, readonly);
 
-		await pi.tools.get("handoff").execute(
-			"1",
-			{ task },
-			undefined,
-			undefined,
-			{
-				getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
-				compact: () => {},
-			},
+		// The live context hook renders the pending-handoff nudge from the toggled
+		// readonly mode, so the nudge can never go stale like a frozen summary would.
+		const [contextHandler] = pi.handlers.get("context")!;
+		const result = await contextHandler(
+			{ messages: [{ role: "user", content: "continue", timestamp: 1 }] },
+			makeReadonlyUICtx({ getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }) }),
 		);
-		const compaction = await beforeCompactHandler(
-			{ preparation: { tokensBefore: 1 }, branchEntries: [{ id: "leaf-1" }] },
-			{},
-		);
-		const summary = compaction.compaction.summary;
-		assert.equal(summary.includes("Fresh context resumes in readonly mode."), readonly);
+		const nudge = result.messages.filter((message: any) => message.customType === "agenticoding-watchdog").at(-1);
+		assert.ok(nudge, "the context hook must deliver a pending-handoff watchdog nudge");
+		if (readonly) {
+			assert.match(nudge.content, /temporary handoff exception active/);
+			assert.match(nudge.content, /fresh context resumes in readonly mode/i);
+		} else {
+			assert.match(nudge.content, /successor receives the instruction verbatim/i);
+			assert.doesNotMatch(nudge.content, /temporary handoff exception/);
+		}
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
 }
 
-test("frontmatter toggle aligns pending handoff with readonly: true", async () => {
+test("frontmatter toggle drives pending handoff nudge: readonly true", async () => {
 	await assertHandoffAlignment("review-prompt", true, "continue review");
 });
 
-test("frontmatter toggle aligns pending handoff with readonly: false", async () => {
+test("frontmatter toggle drives pending handoff nudge: readonly false", async () => {
 	await assertHandoffAlignment("safe-prompt", false, "continue work");
 });

@@ -115,25 +115,90 @@ describe("agenticoding E2E", () => {
 		assert.ok(snap.includes("fresh-agent-topic"));
 	}));
 
-	it("handoff tool rejects when context usage is unavailable", async () => withHarness(async (h) => {
-		h.write('tool handoff {"task":"test handoff task","direction":"next-phase"}');
+	it("handoff tool requires an instruction and eligible context usage", async () => withHarness(async (h) => {
+		// An instruction is mandatory even before usage checks run
+		h.write('tool handoff {"context":"situational only"}');
+		await h.waitForText("Empty handoff nextInstruction rejected");
+
+		// With an instruction but no usage data, handoff is still rejected
+		h.write('tool handoff {"nextInstruction":"test handoff task"}');
 		await h.waitForText("ERR:Context usage unavailable");
 	}));
 
-	it("handoff succeeds with valid context usage and readonly execution constraints", async () => withHarness(async (h) => {
+	it("handoff queues the successor instruction and re-announces readonly in its turn", async () => withHarness(async (h) => {
 		h.write("cmd readonly");
 		await h.waitForText("OK");
+		// Drain the toggle nudge so the successor nudge proves post-handoff live state.
+		h.write("context");
+		await h.waitForText("agenticoding-readonly-nudge");
 		h.write("cmd handoff continue readonly work");
 		await h.waitForText("OK");
 		h.write('usage {"tokens":50000,"percent":25,"contextWindow":200000}');
 		await h.waitForText("OK");
-		h.write('tool handoff {"task":"continue readonly work"}');
+		h.write('tool handoff {"context":"mid-task state"}');
 		await h.waitForText("OK:Handoff started.");
 		h.write("compact-success");
-		await h.waitForText("Fresh context resumes in readonly mode.");
-		const snap = h.snapshot();
-		assert.ok(snap.includes("temporary handoff-only exception used to reach this context is no longer active"));
-		assert.ok(snap.includes("non-temp bash filesystem mutations remain blocked"));
+		await h.waitForText("queuedFollowUp");
+		h.write("successor-turn");
+		await h.waitForText("## Next instruction");
+		await h.waitForText("continue readonly work");
+		await h.waitForText("mid-task state");
+		await h.waitForText("[readonly] enabled");
+		h.write("successor-turn");
+		await h.waitForText("ERR:no queued successor turn");
+	}));
+
+	it("persisted successor is not re-delivered by settle or tree navigation", async () => withHarness(async (h) => {
+		h.write('usage {"tokens":50000,"percent":25,"contextWindow":200000}');
+		await h.waitForText("OK");
+		h.write('tool handoff {"nextInstruction":"do the resumed work","context":"remaining state"}');
+		await h.waitForText("OK:Handoff started.");
+		h.write("compact-success");
+		await h.waitForText("queuedFollowUp");
+		// Draining the follow-up persists it as real text content parts.
+		h.write("successor-turn");
+		await h.waitForText("## Next instruction");
+
+		h.write("agent-settled");
+		await h.waitForText("OK");
+		h.write("session-tree");
+		await h.waitForText("OK");
+		h.clear();
+		h.write("successor-count");
+		await h.waitForText("OK:");
+		await h.waitForText("\n");
+		assert.equal(h.snapshot().trim(), "OK:1", "a persisted successor must be delivered exactly once");
+	}));
+
+	it("recovery resends a lost successor and stops once it lands", async () => withHarness(async (h) => {
+		h.write('usage {"tokens":50000,"percent":25,"contextWindow":200000}');
+		await h.waitForText("OK");
+		h.write('tool handoff {"nextInstruction":"do the resumed work","context":"remaining state"}');
+		await h.waitForText("OK:Handoff started.");
+		h.write("compact-success");
+		await h.waitForText("queuedFollowUp");
+
+		// Simulate a lost fire-and-forget delivery: the follow-up never reaches the branch.
+		h.write("drop-follow-up");
+		await h.waitForText("OK");
+		h.write("agent-settled");
+		await h.waitForText("OK");
+		h.clear();
+		h.write("successor-count");
+		await h.waitForText("OK:");
+		await h.waitForText("\n");
+		assert.equal(h.snapshot().trim(), "OK:2", "recovery must resend the absent successor");
+
+		// The resent delivery lands and persists; a later settle must not send again.
+		h.write("successor-turn");
+		await h.waitForText("## Next instruction");
+		h.write("agent-settled");
+		await h.waitForText("OK");
+		h.clear();
+		h.write("successor-count");
+		await h.waitForText("OK:");
+		await h.waitForText("\n");
+		assert.equal(h.snapshot().trim(), "OK:2", "a delivered successor must not be re-sent");
 	}));
 
 	it("failed handoff compaction preserves retryability", async () => withHarness(async (h) => {
@@ -141,7 +206,7 @@ describe("agenticoding E2E", () => {
 		await h.waitForText("OK");
 		h.write('usage {"tokens":50000,"percent":25,"contextWindow":200000}');
 		await h.waitForText("OK");
-		h.write('tool handoff {"task":"retry after failure"}');
+		h.write('tool handoff {"nextInstruction":"retry after failure"}');
 		await h.waitForText("OK:Handoff started.");
 		h.write("compact-fail simulated failure");
 		await h.waitForText("OK:compaction failed");
@@ -150,7 +215,7 @@ describe("agenticoding E2E", () => {
 		h.write("ui-events");
 		await h.waitForText('"agenticoding-handoff":"🤝 Handoff required — ready to compact"');
 		await h.waitForText("Handoff compaction failed");
-		h.write('tool handoff {"task":"retry after failure"}');
+		h.write('tool handoff {"nextInstruction":"retry after failure"}');
 		await h.waitForText("OK:Handoff started.");
 	}));
 
@@ -159,7 +224,7 @@ describe("agenticoding E2E", () => {
 		await h.waitForText("OK");
 		h.write('usage {"tokens":50000,"percent":25,"contextWindow":200000}');
 		await h.waitForText("OK");
-		h.write('tool handoff {"task":"stale branch work"}');
+		h.write('tool handoff {"nextInstruction":"stale branch work"}');
 		await h.waitForText("OK:Handoff started.");
 		h.write("session-tree");
 		await h.waitForText("OK");
@@ -183,14 +248,17 @@ describe("agenticoding E2E", () => {
 		// Set eligible context usage and call the handoff tool
 		h.write('usage {"tokens":50000,"percent":25,"contextWindow":200000}');
 		await h.waitForText("OK");
-		h.write('tool handoff {"task":"continue readonly work"}');
+		h.write('tool handoff {"nextInstruction":"continue readonly work"}');
 		await h.waitForText("OK:Handoff started.");
 		// Simulate successful compaction
 		h.write("compact-success");
-		await h.waitForText("Fresh context resumes in readonly mode.");
-		// After compaction: bypass cleared, readonly persists.
+		await h.waitForText("queuedFollowUp");
+		// After compaction: bypass cleared, readonly persists and is re-announced live.
+		h.write("context");
+		await h.waitForText("agenticoding-readonly-nudge");
+		await h.waitForText("[readonly] enabled");
 		// handoff tool should now be blocked again
-		h.write('toolcall handoff {"task":"direct call"}');
+		h.write('toolcall handoff {"nextInstruction":"direct call"}');
 		await h.waitForText('"block":true');
 		// write tool should stay blocked
 		h.write('toolcall write {"path":"/tmp/x","content":"x"}');
@@ -214,20 +282,23 @@ describe("agenticoding E2E", () => {
 		h.write("ui-events");
 		await h.waitForText('"agenticoding-handoff":"🤝 Handoff required — ready to compact"');
 		await h.waitForText("Readonly topic boundary detected");
-		h.write('toolcall handoff {"task":"continue billing work"}');
+		h.write('toolcall handoff {"nextInstruction":"continue billing work"}');
 		await h.waitForText('OK:null');
-		h.write('tool handoff {"task":"continue billing work"}');
+		h.write('tool handoff {"nextInstruction":"continue billing work"}');
 		await h.waitForText('OK:Handoff started.');
 		h.clear();
 		h.write("ui-events");
 		await h.waitForText('"agenticoding-handoff":"🤝 Handoff in progress"');
 		h.write("compact-success");
-		await h.waitForText("Fresh context resumes in readonly mode.");
+		await h.waitForText("queuedFollowUp");
+		// Readonly persists after the handoff and is re-announced live
+		h.write("context");
+		await h.waitForText("agenticoding-readonly-nudge");
 		h.clear();
 		h.write("ui-events");
 		await h.waitForText("OK:");
 		assert.doesNotMatch(h.snapshot(), /agenticoding-handoff/);
-		h.write('toolcall handoff {"task":"direct call"}');
+		h.write('toolcall handoff {"nextInstruction":"direct call"}');
 		await h.waitForText('"block":true');
 	}));
 

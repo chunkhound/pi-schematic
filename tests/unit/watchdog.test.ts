@@ -194,7 +194,7 @@ test("buildNudge does not require an ineligible pending handoff by default", () 
 		activeNotebookTopic: null,
 		pendingTopicBoundaryHint: null,
 		readonlyEnabled: false,
-		pendingRequestedHandoff: { toolCalled: false, resumeReadonlyAfterHandoff: false, enforcementAttempts: 0 },
+		pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, nextInstruction: null },
 	}, null, false);
 	assert.match(nudge, /not yet ready for compaction/i);
 	assert.doesNotMatch(nudge, /complete a real handoff in this session now/i);
@@ -205,12 +205,23 @@ test("buildNudge uses prompt wording for eligible requested handoffs and topic b
 		activeNotebookTopic: null,
 		pendingTopicBoundaryHint: null,
 		readonlyEnabled: false,
-		pendingRequestedHandoff: { toolCalled: false, resumeReadonlyAfterHandoff: false, enforcementAttempts: 0 },
+		pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, nextInstruction: null },
 	}, 30, true);
 	assert.match(requested, /real handoff is required/i);
-	assert.match(requested, /draft the prompt/i);
-	assert.match(requested, /call handoff/i);
+	assert.match(requested, /do not perform the new instruction here/i);
+	assert.match(requested, /call handoff with the next instruction and the remaining context/i);
+	assert.doesNotMatch(requested, /before continuing normal work/i, "stale obligation copy must not survive");
 	assert.doesNotMatch(requested, /\bbrief\b/i);
+
+	const directed = buildNudge({
+		activeNotebookTopic: null,
+		pendingTopicBoundaryHint: null,
+		readonlyEnabled: false,
+		pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, nextInstruction: "continue work" },
+	}, 30, true);
+	assert.match(directed, /call handoff with only the remaining context/i);
+	assert.match(directed, /successor receives the instruction verbatim/i);
+	assert.doesNotMatch(directed, /next instruction and the remaining context/i);
 
 	const boundary = buildNudge({
 		activeNotebookTopic: "billing",
@@ -219,7 +230,8 @@ test("buildNudge uses prompt wording for eligible requested handoffs and topic b
 		pendingRequestedHandoff: null,
 	}, 30, true);
 	assert.match(boundary, /task-boundary signal/i);
-	assert.match(boundary, /situational prompt/i);
+	assert.match(boundary, /next instruction/i);
+	assert.match(boundary, /remaining context/i);
 	assert.match(boundary, /call handoff/i);
 	assert.doesNotMatch(boundary, /\bbrief\b/i);
 });
@@ -284,7 +296,7 @@ test("watchdog does not cancel an in-flight handoff", async () => {
 		isIdle: () => true,
 	} as any);
 	let compactOptions: any;
-	await pi.tools.get("handoff").execute("in-flight", { task: "continue work" }, undefined, undefined, {
+	await pi.tools.get("handoff").execute("in-flight", { nextInstruction: "continue work" }, undefined, undefined, {
 		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
 		compact: (options: any) => { compactOptions = options; },
 	});

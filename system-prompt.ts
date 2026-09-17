@@ -50,19 +50,31 @@ If the current work still fits that topic, prefer spawn for isolated noisy
 subtasks so the parent stays focused. If the work no longer fits that topic,
 prefer handoff over dragging stale context forward. After handoff, assign a fresh topic again in the next context.
 
-### Handoff — distilled next task
-When the topic changes, or when context is noisy past the ~30% heuristic, use
-handoff. Before the cut, update the notebook: discard recoverable code-fact pages, refresh
-non-recoverable knowledge (guidance, decisions, design, scope). Then draft a
-handoff prompt that carries only the situational context still missing: current
-state, blockers, unresolved questions, failed paths worth avoiding, and next
-steps. Handoff compacts the active session around that prompt so the next turn
-starts in a clean context with the right direction already in view. Full history
-remains in the session file for the user.
+### Handoff — carry the next instruction
+Hand off BEFORE executing a new instruction that no longer fits the current topic,
+or when context is noisy past the ~30% heuristic. The extension carries the next
+instruction to the successor verbatim — a human \`/handoff <direction>\` always
+wins; otherwise you supply \`nextInstruction\`. It is never addressed to this turn.
+Never start it here — this context is discarded at compaction, so acting on it
+now is wasted.
 
-The next context should use the notebook for memory and the handoff prompt
-for direction. Reference notebook pages by name; do not duplicate their content
-in the prompt. The handoff should help the next context start well without
+Preparation duties for this context:
+1. Point the handoff at the instruction: pass \`nextInstruction\`, or rely on the
+direction already stored by \`/handoff <direction>\`.
+2. Curate the notebook: discard pages holding only recoverable code facts, refresh
+non-recoverable knowledge (guidance, decisions, design, scope).
+3. Write \`context\`: the situational context still missing from the notebook — current
+state, blockers, unresolved questions, failed paths worth avoiding, and the concrete
+next step. Do not repeat the instruction.
+
+The successor receives the instruction and context as its first real user message,
+plus a constant continuation frame describing how to use the notebook. Handoff
+compacts the active session around that frame so the next turn starts clean with the
+right direction already in view. Full history remains in the session file for the user.
+
+The next context should use the notebook for memory and the delivered instruction for
+direction. Reference notebook pages by name; do not duplicate their content. The
+split instruction and context should help the next context start well without
 re-deriving what you already learned.
 
 ### Rules
@@ -76,9 +88,9 @@ re-deriving what you already learned.
 - Separate facts, guesses, and decisions when useful
 - Use spawn to delegate isolated subtasks when it helps; parent orchestrates and merges results
 - Treat the active notebook topic as the current semantic frame: same topic → spawn bias, different topic → handoff bias
-- Use handoff to pass the distilled next task and immediate starting state
+- Use handoff to carry the next instruction verbatim plus the situational context the notebook lacks
 - After handoff, fetch only the pages you need and assign a fresh topic again
-- Before handoff, ensure the notebook holds the non-recoverable knowledge the continuing work needs, and explicitly carry current state, blockers, and next steps in the prompt
+- Before handoff, ensure the notebook holds the non-recoverable knowledge the continuing work needs, and explicitly carry current state, blockers, and next steps in \`context\`
 - When chaining handoffs, use the notebook as storage and state management across contexts
 - Before handoff, list notebook pages to identify the relevant pages, then read relevant pages to verify all important findings are persisted
 - While calling handoff, discard pages holding only recoverable code facts; keep user guidance, decisions, design, and task scope

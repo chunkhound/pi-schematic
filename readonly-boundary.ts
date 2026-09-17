@@ -36,8 +36,9 @@ export function discardNonHumanBoundary(state: AgenticodingState): boolean {
 export function promoteBoundary(state: AgenticodingState, ctx: ExtensionContext): void {
 	state.pendingRequestedHandoff = {
 		toolCalled: false,
-		resumeReadonlyAfterHandoff: true,
 		enforcementAttempts: 0,
+		// A topic boundary carries no human direction, so the model must supply the instruction.
+		nextInstruction: null,
 	};
 	if (ctx.hasUI) {
 		if (ctx.ui.theme) {

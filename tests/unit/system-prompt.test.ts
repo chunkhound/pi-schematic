@@ -31,7 +31,11 @@ test("CONTEXT_PRIMER states the notebook, topic, and handoff contracts", () => {
 	assert.match(topicSection, /semantic frame/i);
 	assert.match(topicSection, /prefer spawn/i);
 	assert.match(topicSection, /prefer handoff/i);
-	assert.match(handoffSection, /handoff prompt/i);
+	assert.match(handoffSection, /next instruction/i);
+	assert.match(handoffSection, /verbatim/i);
+	assert.match(handoffSection, /Hand off BEFORE executing/i);
+	assert.match(handoffSection, /nextInstruction/i);
+	assert.doesNotMatch(handoffSection, /draft a handoff prompt/i);
 	assert.match(handoffSection, /notebook/i);
 	assert.doesNotMatch(handoffSection, /\bbrief\b/i);
 	assert.match(CONTEXT_PRIMER, /When the ask no longer matches the topic, call the handoff tool\./i);

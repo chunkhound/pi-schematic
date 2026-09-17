@@ -14,7 +14,13 @@
  *   → ui-events             — return current status values and emitted notifications
  *   → compact-success       — run queued handoff compaction success path
  *   → compact-fail [message] — run queued handoff compaction failure path
+ *   → successor-turn        — drain a queued follow-up into the successor context hook
  *   → session-tree          — navigate the active session tree branch
+ *   → agent-end             — run the first agent_end handler
+ *   → agent-settled         — run the first agent_settled handler
+ *   → drop-follow-up        — discard one queued follow-up without persisting it (simulated delivery loss)
+ *   → successor-count       — count sent messages starting with "## Next instruction"
+ *   → sent-messages         — return extension-sent user messages
  *   → tools                 — list registered tool names
  *   → cmds                  — list registered command names
  *   → exit                  — graceful shutdown
@@ -48,8 +54,24 @@ type CompactRequest = { onComplete?: () => void; onError?: (error: Error) => voi
 
 let currentUsage: MockContextUsage = null;
 let lastCompactRequest: CompactRequest | null = null;
+const queuedFollowUps: string[] = [];
 const statuses = new Map<string, string | undefined>();
 const notifications: Array<{ message: string; level: string }> = [];
+// Branch model: compaction and successor entries land here exactly as Pi persists
+// them, so recovery scans see the real order and content shape.
+const branch: any[] = [];
+let entrySeq = 0;
+
+// Model Pi's follow-up queue centrally: every extension send with
+// deliverAs "followUp" waits here until a run drains it. Recovery sends must
+// queue too, so the override cannot live inside a single REPL command.
+const originalSendUserMessage = pi.sendUserMessage;
+pi.sendUserMessage = (content: any, options?: any) => {
+	originalSendUserMessage.call(pi, content, options);
+	if (options?.deliverAs === "followUp") {
+		queuedFollowUps.push(typeof content === "string" ? content : content.map((part: any) => part.text ?? "").join("\n"));
+	}
+};
 
 const mockCtx = {
 	hasUI: true,
@@ -82,7 +104,7 @@ const mockCtx = {
 		setTheme: () => ({ ok: true }),
 	},
 	getContextUsage: () => currentUsage,
-	sessionManager: null,
+	sessionManager: { getBranch: () => branch },
 	modelRegistry: null,
 	isProjectTrusted: () => true,
 	// Required by spawn tool which checks ctx.model existence before using it
@@ -90,7 +112,7 @@ const mockCtx = {
 	isIdle: () => true,
 	signal: new AbortController().signal,
 	abort: () => {},
-	hasPendingMessages: () => false,
+	hasPendingMessages: () => queuedFollowUps.length > 0,
 	shutdown: () => process.exit(0),
 	compact: (request: { onComplete?: () => void; onError?: (error: Error) => void }) => {
 		lastCompactRequest = request;
@@ -143,8 +165,20 @@ for await (const line of rl) {
 				process.stdout.write("OK:null\n");
 				continue;
 			}
+			// Mirror Pi: the compaction entry lands in the branch before the successor
+			// delivery, so recovery scans observe the same order.
+			branch.push({
+				type: "compaction",
+				id: `compaction-${++entrySeq}`,
+				summary: result.compaction.summary,
+				details: result.compaction.details,
+			});
 			compactRequest.onComplete();
-			process.stdout.write("OK:" + JSON.stringify(result.compaction) + "\n");
+			const lastMessage = pi.sentUserMessages.at(-1);
+			process.stdout.write("OK:" + JSON.stringify({
+				...result.compaction,
+				queuedFollowUp: lastMessage?.options?.deliverAs === "followUp",
+			}) + "\n");
 		} else {
 			if (typeof compactRequest.onError !== "function") {
 				process.stdout.write("ERR:no failure callback\n");
@@ -155,6 +189,48 @@ for await (const line of rl) {
 			const lastMessage = pi.sentUserMessages.at(-1)?.content ?? "";
 			process.stdout.write("OK:compaction failed:" + lastMessage + "\n");
 		}
+	} else if (trimmed === "successor-turn") {
+		const successorMessage = queuedFollowUps.shift();
+		const [contextHandler] = pi.handlers.get("context") ?? [];
+		if (!successorMessage || !contextHandler) {
+			process.stdout.write("ERR:no queued successor turn\n");
+			continue;
+		}
+		// Model Pi persistence: draining the follow-up appends the user message as
+		// text content parts — the shape real Pi persists.
+		branch.push({
+			type: "message",
+			id: `message-${++entrySeq}`,
+			message: { role: "user", content: [{ type: "text", text: successorMessage }] },
+		});
+		const result = await contextHandler({
+			messages: [{ role: "user", content: successorMessage, timestamp: Date.now() }],
+		}, mockCtx);
+		process.stdout.write("OK:" + JSON.stringify({ successorMessage, context: result ?? null }) + "\n");
+	} else if (trimmed === "agent-end") {
+		const [agentEnd] = pi.handlers.get("agent_end") ?? [];
+		if (!agentEnd) {
+			process.stdout.write("ERR:no agent_end handler\n");
+			continue;
+		}
+		await agentEnd({}, mockCtx);
+		process.stdout.write("OK\n");
+	} else if (trimmed === "agent-settled") {
+		const [agentSettled] = pi.handlers.get("agent_settled") ?? [];
+		if (!agentSettled) {
+			process.stdout.write("ERR:no agent_settled handler\n");
+			continue;
+		}
+		await agentSettled({}, mockCtx);
+		process.stdout.write("OK\n");
+	} else if (trimmed === "drop-follow-up") {
+		const dropped = queuedFollowUps.shift();
+		process.stdout.write(dropped ? "OK\n" : "ERR:no queued follow-up\n");
+	} else if (trimmed === "successor-count") {
+		const count = pi.sentUserMessages.filter((message) => message.content.startsWith("## Next instruction")).length;
+		process.stdout.write("OK:" + count + "\n");
+	} else if (trimmed === "sent-messages") {
+		process.stdout.write("OK:" + JSON.stringify(pi.sentUserMessages) + "\n");
 	} else if (trimmed === "session-tree") {
 		const [sessionTree] = pi.handlers.get("session_tree") ?? [];
 		if (!sessionTree) {
