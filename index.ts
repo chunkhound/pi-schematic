@@ -975,7 +975,8 @@ export default function (pi: ExtensionAPI): void {
 
 	// A failed fire-and-forget successor follow-up has no extension-visible error or
 	// acknowledgement. Once a later agent run settles with no queued messages, inspect
-	// the persisted branch and resend only if the successor turn is still absent.
+	// the persisted branch and resend only when no user turn follows the cut (a
+	// delivered successor or newer user input ends recovery).
 	pi.on("agent_settled", async (_event, ctx: ExtensionContext) => {
 		// A settle is the retry boundary: the earlier request either landed (the branch
 		// now shows it) or failed silently (still absent). Clear the latch so an absent
