@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
 import registerAgenticoding from "../../index.js";
-import { appendHandoffReport, buildNextUserMessage } from "../../handoff/format.js";
+import { appendHandoffReport, buildNextUserMessage, HANDOFF_REPORT_DELIMITER } from "../../handoff/format.js";
 import { getUndeliveredHandoffMessage } from "../../handoff/recovery.js";
 import { createTestPI } from "./helpers.js";
 
@@ -30,63 +30,93 @@ test("recovers the exact successor message from the newest handoff compaction", 
 	]), message);
 });
 
-test("does not duplicate a delivered successor, in any persisted content shape", () => {
-	// Pi persists extension sends as a single text content part; string content is
-	// kept as a legacy/alternative shape the scan must also accept.
-	const deliveredEntries = [
-		delivered(message),
-		delivered([{ type: "text", text: message }]),
-		delivered([{ type: "text", text: appendHandoffReport(message, "Notebook: 1 page kept.") }]),
-	];
-	for (const entry of deliveredEntries) {
-		assert.equal(recoveredMessage([handoff(), entry]), null);
-	}
+test("a persisted successor ends recovery", () => {
+	// Presence, not shape, ends recovery: any user turn after the cut supersedes.
+	assert.equal(recoveredMessage([handoff(), delivered(message)]), null);
 });
 
-test("content parts that do not match the successor still recover", () => {
+test("a recovered resend is the bare payload without the operational report", () => {
+	const lostWithReport = appendHandoffReport(message, "Notebook: 1 page kept.");
+	assert.ok(lostWithReport.includes(HANDOFF_REPORT_DELIMITER));
+	const recovered = recoveredMessage([handoff()]);
+	assert.equal(recovered, message);
+	assert.ok(!recovered!.includes(HANDOFF_REPORT_DELIMITER),
+		"a recovered headless delivery must drop the stale operational report");
+});
+
+test("a distinct user turn after the cut abandons recovery", () => {
 	assert.equal(
 		recoveredMessage([handoff(), delivered([{ type: "text", text: "## Next instruction\n\nsomething else" }])]),
-		message,
-	);
-});
-
-test("multi-part and non-text content normalize the way Pi joins before matching", () => {
-	// Pi normalizes array content by joining text parts with "\n", so a split of the
-	// successor message across parts (the join consuming one newline) still matches.
-	const splitAt = message.indexOf("\n\n## Context") + 1;
-	const parts = [message.slice(0, splitAt), message.slice(splitAt + 1)];
-	assert.equal(recoveredMessage([handoff(), delivered(parts.map((text) => ({ type: "text", text })))]), null,
-		"a multi-part persistence of the successor must count as delivered");
-	assert.equal(
-		recoveredMessage([handoff(), delivered([{ type: "image", text: "ignored" }, { type: "text", text: message }])]),
 		null,
-		"non-text parts must be filtered before matching",
+		"newer user intent must not be followed by the lost handoff instruction",
 	);
 	assert.equal(
 		recoveredMessage([handoff(), delivered([{ type: "text" } as { type: string; text: string }])]),
-		message,
-		"a part without text contributes nothing and must not count as delivered",
+		null,
+		"an empty user turn is not delivery but still supersedes recovery",
 	);
 });
 
-test("any newline-boundary split of the successor persists as delivered", async () => {
-	const boundaries = [...message.matchAll(/\n/g)].map((match) => match.index!);
+test("non-user entries after the cut do not abandon recovery", () => {
+	assert.equal(
+		recoveredMessage([handoff(), { type: "message", message: { role: "assistant", content: "working" } }]),
+		message,
+	);
+});
+
+test("a malformed message entry without content does not throw or abandon recovery", () => {
+	assert.equal(recoveredMessage([handoff(), { type: "message" }]), message);
+	assert.equal(recoveredMessage([handoff(), { type: "message", message: null }]), message);
+});
+
+test("a newer user turn abandons recovery even while the queue is still pending", async () => {
+	const pi = createTestPI();
+	registerAgenticoding(pi as any);
+	const branch: any[] = [handoff(), delivered([{ type: "text", text: "newer user work" }])];
+	const [sessionTree] = pi.handlers.get("session_tree")!;
+	const [agentSettled] = pi.handlers.get("agent_settled")!;
+
+	// A queued follow-up may be the unpersisted successor, so the queue gate
+	// suppresses recovery first — but the newer user turn must own the branch
+	// once the queue drains, not resurrect the lost handoff instruction.
+	const pendingCtx = { hasUI: false, hasPendingMessages: () => true, getContextUsage: () => null, sessionManager: { getBranch: () => branch } };
+	await sessionTree({}, pendingCtx);
+	assert.deepEqual(pi.sentUserMessages, [], "an undrained queue must not be scanned for recovery");
+
+	await agentSettled({}, { ...pendingCtx, hasPendingMessages: () => false });
+	assert.deepEqual(pi.sentUserMessages, [], "a drained queue must not resend superseded handoff work");
+});
+
+test("a distinct user turn after a delivered successor does not resurrect recovery", () => {
+	assert.equal(
+		recoveredMessage([handoff(), delivered([{ type: "text", text: message }]), delivered([{ type: "text", text: "newer user work" }])]),
+		null,
+		"supersession must hold in delivery-then-user-turn order",
+	);
+});
+
+test("a user turn between two cuts does not abandon the newest recovery", () => {
+	assert.equal(
+		recoveredMessage([
+			handoff({ version: 1, nextInstruction: "old", context: "old state" }),
+			delivered([{ type: "text", text: "newer work" }]),
+			handoff(),
+		]),
+		message,
+		"only entries after the newest cut supersede recovery",
+	);
+});
+
+test("any user-entry shape after the cut abandons recovery", async () => {
+	// Supersession is presence-based, so every persisted user-entry shape — string
+	// content, text parts, parts with missing text, non-text parts — must end
+	// recovery without the scan inspecting or choking on the content.
+	const part = fc.record({ type: fc.string(), text: fc.option(fc.string(), { nil: undefined }) });
+	const userEntry = fc.oneof(fc.string(), fc.array(part)).map((content) => delivered(content as any));
 	await fc.assert(
-		fc.property(
-			fc.uniqueArray(fc.integer({ min: 0, max: boundaries.length - 1 }), { maxLength: 4 }),
-			(picks) => {
-				const cuts = picks.map((index) => boundaries[index]).sort((a, b) => a - b);
-				const parts: Array<{ type: string; text: string }> = [];
-				let previous = 0;
-				for (const cut of cuts) {
-					parts.push({ type: "text", text: message.slice(previous, cut) });
-					previous = cut + 1; // the "\n" join restores the consumed newline
-				}
-				parts.push({ type: "text", text: message.slice(previous) });
-				assert.equal(recoveredMessage([handoff(), delivered(parts)]), null,
-					`split at ${JSON.stringify(cuts)} must persist as delivered`);
-			},
-		),
+		fc.property(userEntry, (entry) => {
+			assert.equal(recoveredMessage([handoff(), entry]), null);
+		}),
 	);
 });
 
@@ -261,6 +291,25 @@ test("a cut shared across tree branches coalesces instead of double-sending", as
 
 	assert.deepEqual(pi.sentUserMessages, [{ content: message, options: { deliverAs: "followUp" } }],
 		"the same persisted cut on a new branch must reuse the outstanding delivery latch");
+});
+
+test("a same-text new cut with a different recovery key re-arms recovery", async () => {
+	const pi = createTestPI();
+	registerAgenticoding(pi as any);
+	const branch: any[] = [{ id: "handoff-key-a", type: "compaction", details: { handoff: true, payload, recoveryKey: "key-a" } }];
+	const ctx = { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => branch } };
+	const [sessionTree] = pi.handlers.get("session_tree")!;
+
+	await sessionTree({}, ctx);
+	assert.equal(pi.sentUserMessages.length, 1, "the first cut must deliver once");
+
+	// Same instruction text, new cut identity: the latch must not coalesce it away.
+	branch.push({ id: "handoff-key-b", type: "compaction", details: { handoff: true, payload, recoveryKey: "key-b" } });
+	await sessionTree({}, ctx);
+	assert.deepEqual(pi.sentUserMessages, [
+		{ content: message, options: { deliverAs: "followUp" } },
+		{ content: message, options: { deliverAs: "followUp" } },
+	], "a new cut with a different recovery key must re-arm recovery even for identical text");
 });
 
 test("a recovery send failure releases its latch for the next trigger", async () => {
