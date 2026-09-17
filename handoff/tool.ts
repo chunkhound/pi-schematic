@@ -159,10 +159,10 @@ function finalizeHandoffState(state: AgenticodingState): void {
 	state.pendingRequestedHandoff = null;
 	state.pendingNotebookDiscard = null;
 	clearActiveNotebookTopic(state);
-	// Readonly is live, not frozen into the summary: ask the context hook to emit the
-	// current ON or OFF state on the first post-handoff turn. `state.readonlyEnabled`
-	// is the only source of truth; the context hook renders the final wording live.
-	state.readonlyNudgePending = true;
+	// Readonly is live, not frozen into the summary: announce the ON posture on the
+	// first post-handoff turn. OFF-to-OFF stays silent; ON-to-OFF and OFF-to-ON are
+	// covered by rehydration on session start and tree navigation.
+	if (state.readonlyEnabled) state.readonlyNudgePending = true;
 }
 
 function createHandoffCallbacks(
