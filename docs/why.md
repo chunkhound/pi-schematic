@@ -37,7 +37,7 @@ The notebook is deliberately the opposite. It is **coupled to the conversation/t
 - **`/new` (or a new session) clears everything** with the conversation
 - Pages split into two tiers: re-derivable code facts are a discardable cache; user guidance, decisions, design, and task scope are kept and refreshed for the life of the stream
 
-So the agent can keep user guidance, decisions, constraints, and expensive findings **without** building a forever store that needs invalidation: code facts are pruned as they go stale, while non-recoverable knowledge is refreshed for the life of the stream. Handoff still splits concerns: the notebook holds reusable memory *for this task*; the prompt holds only remaining situational context. That beats one summary blob that mixes both — and beats external memory that outlives the work and goes stale.
+So the agent can keep user guidance, decisions, constraints, and expensive findings **without** building a forever store that needs invalidation: code facts are pruned as they go stale, while non-recoverable knowledge is refreshed for the life of the stream. Handoff still splits concerns three ways: the notebook holds reusable memory *for this task*; the next instruction is carried verbatim, never paraphrased; and `context` holds only remaining situational state (current position, blockers, open questions, failed paths, concrete next step). That beats one summary blob that mixes all three — and beats external memory that outlives the work and goes stale.
 
 ## Awareness, not autopilot
 
