@@ -35,6 +35,25 @@ test("a persisted successor ends recovery", () => {
 	assert.equal(recoveredMessage([handoff(), delivered(message)]), null);
 });
 
+test("a successor retained outside the active branch ends recovery", () => {
+	const cut = handoff();
+	assert.equal(
+		getUndeliveredHandoffMessage([cut], [cut, delivered(message)]),
+		null,
+		"editing the successor from /tree must not make its already delivered instruction recoverable",
+	);
+});
+
+test("a predecessor's identical successor does not suppress a later lost delivery", () => {
+	const firstCut = handoff();
+	const secondCut = handoff();
+	assert.equal(
+		getUndeliveredHandoffMessage([secondCut], [firstCut, delivered(message), secondCut])?.message,
+		message,
+		"delivery evidence belongs only to the cut that precedes it",
+	);
+});
+
 test("a recovered resend is the bare payload without the operational report", () => {
 	const lostWithReport = appendHandoffReport(message, "Notebook: 1 page kept.");
 	assert.ok(lostWithReport.includes(HANDOFF_REPORT_DELIMITER));

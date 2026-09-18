@@ -530,7 +530,8 @@ export default function (pi: ExtensionAPI): void {
 		// A queued follow-up may be the successor message itself, not yet persisted;
 		// resending now would double-deliver once the queue drains.
 		if (ctx.hasPendingMessages?.()) return;
-		const candidate = getUndeliveredHandoffMessage(ctx.sessionManager?.getBranch?.() ?? []);
+		const branch = ctx.sessionManager?.getBranch?.() ?? [];
+		const candidate = getUndeliveredHandoffMessage(branch, ctx.sessionManager?.getEntries?.() ?? branch);
 		// The latch coalesces repeated triggers for one persisted cut. New cuts carry a
 		// durable recovery key; legacy cuts fall back to their persisted entry identity.
 		if (!candidate) return;
