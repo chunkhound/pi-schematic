@@ -170,6 +170,27 @@ describe("agenticoding E2E", () => {
 		assert.equal(h.snapshot().trim(), "OK:1", "a persisted successor must be delivered exactly once");
 	}));
 
+	it("editing a persisted successor never re-delivers its original instruction", async () => withHarness(async (h) => {
+		h.write('usage {"tokens":50000,"percent":25,"contextWindow":200000}');
+		await h.waitForText("OK");
+		h.write('tool handoff {"nextInstruction":"do the resumed work","context":"remaining state"}');
+		await h.waitForText("OK:Handoff started.");
+		h.write("compact-success");
+		await h.waitForText("queuedFollowUp");
+		h.write("successor-turn");
+		await h.waitForText("## Next instruction");
+		// The original follow-up has settled, so the dedupe latch cannot mask a retry.
+		h.write("agent-settled");
+		await h.waitForText("OK");
+		h.write("tree-edit-last-user");
+		await h.waitForText("OK");
+		h.clear();
+		h.write("successor-count");
+		await h.waitForText("OK:");
+		await h.waitForText("\n");
+		assert.equal(h.snapshot().trim(), "OK:1", "editing a successor must not requeue its original instruction");
+	}));
+
 	it("recovery resends a lost successor and stops once it lands", async () => withHarness(async (h) => {
 		h.write('usage {"tokens":50000,"percent":25,"contextWindow":200000}');
 		await h.waitForText("OK");

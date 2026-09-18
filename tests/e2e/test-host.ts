@@ -16,7 +16,8 @@
  *   → compact-fail [message] — run queued handoff compaction failure path
  *   → successor-turn        — drain a queued follow-up into the successor context hook
  *   → user-turn <text>      — persist a newer user message without draining a follow-up
- *   → session-tree          — navigate the active session tree branch
+ *   → session-tree          — fire a tree-navigation event without changing the active branch
+ *   → tree-edit-last-user   — open the latest user turn for editing and move the active branch to its parent
  *   → agent-end             — run the first agent_end handler
  *   → agent-settled         — run the first agent_settled handler
  *   → drop-follow-up        — discard one queued follow-up without persisting it (simulated delivery loss)
@@ -58,10 +59,17 @@ let lastCompactRequest: CompactRequest | null = null;
 const queuedFollowUps: string[] = [];
 const statuses = new Map<string, string | undefined>();
 const notifications: Array<{ message: string; level: string }> = [];
-// Branch model: compaction and successor entries land here exactly as Pi persists
-// them, so recovery scans see the real order and content shape.
+// `branch` models the active path while `entries` preserves the session history.
+// Pi moves a selected user turn into the editor by moving the active leaf to its
+// parent, but the delivered turn remains in session history as recovery evidence.
 const branch: any[] = [];
+const entries: any[] = [];
 let entrySeq = 0;
+
+function appendEntry(entry: any): void {
+	branch.push(entry);
+	entries.push(entry);
+}
 
 // Model Pi's follow-up queue centrally: every extension send with
 // deliverAs "followUp" waits here until a run drains it. Recovery sends must
@@ -105,7 +113,7 @@ const mockCtx = {
 		setTheme: () => ({ ok: true }),
 	},
 	getContextUsage: () => currentUsage,
-	sessionManager: { getBranch: () => branch },
+	sessionManager: { getBranch: () => branch, getEntries: () => entries },
 	modelRegistry: null,
 	isProjectTrusted: () => true,
 	// Required by spawn tool which checks ctx.model existence before using it
@@ -168,7 +176,7 @@ for await (const line of rl) {
 			}
 			// Mirror Pi: the compaction entry lands in the branch before the successor
 			// delivery, so recovery scans observe the same order.
-			branch.push({
+			appendEntry({
 				type: "compaction",
 				id: `compaction-${++entrySeq}`,
 				summary: result.compaction.summary,
@@ -199,7 +207,7 @@ for await (const line of rl) {
 		}
 		// Model Pi persistence: draining the follow-up appends the user message as
 		// text content parts — the shape real Pi persists.
-		branch.push({
+		appendEntry({
 			type: "message",
 			id: `message-${++entrySeq}`,
 			message: { role: "user", content: [{ type: "text", text: successorMessage }] },
@@ -214,7 +222,7 @@ for await (const line of rl) {
 			process.stdout.write("ERR:missing user-turn content\n");
 			continue;
 		}
-		branch.push({
+		appendEntry({
 			type: "message",
 			id: `message-${++entrySeq}`,
 			message: { role: "user", content: [{ type: "text", text: content }] },
@@ -244,13 +252,22 @@ for await (const line of rl) {
 		process.stdout.write("OK:" + count + "\n");
 	} else if (trimmed === "sent-messages") {
 		process.stdout.write("OK:" + JSON.stringify(pi.sentUserMessages) + "\n");
-	} else if (trimmed === "session-tree") {
+	} else if (trimmed === "session-tree" || trimmed === "tree-edit-last-user") {
 		const [sessionTree] = pi.handlers.get("session_tree") ?? [];
 		if (!sessionTree) {
 			process.stdout.write("ERR:no session_tree handler\n");
 			continue;
 		}
-		await sessionTree({ newLeafId: "fresh-leaf", oldLeafId: "old-leaf" }, mockCtx);
+		const oldLeafId = branch.at(-1)?.id ?? "old-leaf";
+		if (trimmed === "tree-edit-last-user") {
+			const index = branch.map((entry) => entry.message?.role).lastIndexOf("user");
+			if (index === -1) {
+				process.stdout.write("ERR:no user turn to edit\n");
+				continue;
+			}
+			branch.splice(index);
+		}
+		await sessionTree({ newLeafId: branch.at(-1)?.id ?? "root", oldLeafId }, mockCtx);
 		process.stdout.write("OK\n");
 	} else if (trimmed === "tools") {
 		const names = Array.from(tools.keys()).sort().join(",");
