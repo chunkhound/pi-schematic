@@ -10,6 +10,7 @@ const payload = { version: 1 as const, nextInstruction: "resume\nexactly", conte
 const message = buildNextUserMessage(payload);
 
 let handoffId = 0;
+let messageId = 0;
 
 function handoff(payloadOverride: unknown = payload): any {
 	return { id: `handoff-${++handoffId}`, type: "compaction", details: { handoff: true, payload: payloadOverride } };
@@ -19,8 +20,9 @@ function recoveredMessage(entries: any[]): string | null {
 	return getUndeliveredHandoffMessage(entries)?.message ?? null;
 }
 
-function delivered(content: string | Array<{ type: string; text: string }>): any {
-	return { type: "message", message: { role: "user", content } };
+// `owner` sets the parent link that decides which cut owns this user turn.
+function delivered(content: string | Array<{ type: string; text: string }>, owner?: { id: string }): any {
+	return { id: `message-${++messageId}`, parentId: owner?.id ?? null, type: "message", message: { role: "user", content } };
 }
 
 test("recovers the exact successor message from the newest handoff compaction", () => {
@@ -38,7 +40,7 @@ test("a persisted successor ends recovery", () => {
 test("a successor retained outside the active branch ends recovery", () => {
 	const cut = handoff();
 	assert.equal(
-		getUndeliveredHandoffMessage([cut], [cut, delivered(message)]),
+		getUndeliveredHandoffMessage([cut], [cut, delivered(message, cut)]),
 		null,
 		"editing the successor from /tree must not make its already delivered instruction recoverable",
 	);
@@ -48,9 +50,97 @@ test("a predecessor's identical successor does not suppress a later lost deliver
 	const firstCut = handoff();
 	const secondCut = handoff();
 	assert.equal(
-		getUndeliveredHandoffMessage([secondCut], [firstCut, delivered(message), secondCut])?.message,
+		getUndeliveredHandoffMessage([secondCut], [firstCut, delivered(message, firstCut), secondCut])?.message,
 		message,
 		"delivery evidence belongs only to the cut that precedes it",
+	);
+});
+
+test("an identical successor appended after a lost cut does not suppress its recovery", () => {
+	// Cross-branch late delivery: the other branch's identical successor lands in
+	// full history after the lost cut, but lineage attributes it to the other cut,
+	// so the lost cut recovers.
+	const otherCut = handoff();
+	const lostCut = handoff();
+	assert.equal(
+		getUndeliveredHandoffMessage([lostCut], [otherCut, lostCut, delivered(message, otherCut)])?.message,
+		message,
+		"a same-text successor from another cut must not mask a genuinely lost cut",
+	);
+});
+
+test("a later identical cut does not hide an earlier cut's delivered successor", () => {
+	const deliveredCut = handoff();
+	const laterCut = handoff();
+	assert.equal(
+		getUndeliveredHandoffMessage([deliveredCut], [deliveredCut, delivered(message, deliveredCut), laterCut]),
+		null,
+		"a later same-text cut cannot own a successor that was already delivered",
+	);
+});
+
+test("a later same-message cut cannot claim a lost cut's delivery", () => {
+	// The matching successor is owned by the later cut, so it does not prove the
+	// lost cut delivered; lineage lets the lost cut recover instead of being masked.
+	const lostCut = handoff();
+	const laterDuplicateCut = handoff();
+	assert.equal(
+		getUndeliveredHandoffMessage([lostCut], [lostCut, laterDuplicateCut, delivered(message, laterDuplicateCut)])?.message,
+		message,
+		"a successor owned by a different cut must not suppress the lost cut",
+	);
+});
+
+test("a delivered successor edited away is not re-sent when an earlier cut shares its text", () => {
+	// Lineage attributes the surviving successor to this cut even though an earlier
+	// cut carries the same payload, so the already-delivered instruction is not
+	// duplicated.
+	const earlierDuplicate = handoff();
+	const deliveredCut = handoff();
+	assert.equal(
+		getUndeliveredHandoffMessage([deliveredCut], [earlierDuplicate, deliveredCut, delivered(message, deliveredCut)]),
+		null,
+		"lineage ownership must prevent a duplicate resend during /tree editing",
+	);
+});
+
+test("an orphaned parent chain fails open toward resend", () => {
+	const cut = handoff();
+	assert.equal(
+		getUndeliveredHandoffMessage([cut], [cut, delivered(message, { id: "missing-parent" })])?.message,
+		message,
+		"a match with no traceable owner must not suppress recovery",
+	);
+});
+
+test("a cyclic parent chain terminates without an owner", () => {
+	const cut = handoff();
+	const a = delivered(message);
+	const b = { id: "cycle-b", parentId: a.id, type: "custom", data: {} };
+	a.parentId = b.id;
+	assert.equal(
+		getUndeliveredHandoffMessage([cut], [cut, a, b])?.message,
+		message,
+		"a cyclic chain must not loop or claim ownership",
+	);
+});
+
+test("an intermediate entry between cut and successor preserves ownership", () => {
+	const cut = handoff();
+	const bridge = { id: "bridge", parentId: cut.id, type: "custom", data: {} };
+	assert.equal(
+		getUndeliveredHandoffMessage([cut], [cut, bridge, delivered(message, bridge)]),
+		null,
+		"a successor below any entry owned by the cut is still the cut's delivery",
+	);
+});
+
+test("a successor carrying an appended operational report is owned delivery", () => {
+	const cut = handoff();
+	assert.equal(
+		getUndeliveredHandoffMessage([cut], [cut, delivered(appendHandoffReport(message, "Notebook: 1 page kept."), cut)]),
+		null,
+		"the report-delimited successor prefix is still delivery evidence",
 	);
 });
 

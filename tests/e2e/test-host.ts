@@ -67,6 +67,8 @@ const entries: any[] = [];
 let entrySeq = 0;
 
 function appendEntry(entry: any): void {
+	// Mirror pi: each entry is a child of the current leaf, and the leaf advances.
+	entry.parentId = branch.at(-1)?.id ?? null;
 	branch.push(entry);
 	entries.push(entry);
 }

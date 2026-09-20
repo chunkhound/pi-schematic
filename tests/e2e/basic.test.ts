@@ -222,6 +222,46 @@ describe("agenticoding E2E", () => {
 		assert.equal(h.snapshot().trim(), "OK:2", "a delivered successor must not be re-sent");
 	}));
 
+	it("identical successors across cuts are attributed by lineage, not re-sent", async () => withHarness(async (h) => {
+		h.write('usage {"tokens":50000,"percent":25,"contextWindow":200000}');
+		await h.waitForText("OK");
+		// Two cuts carry identical payloads. Queued successors attach to the current
+		// leaf (cut2), so lineage attributes the surviving successor to cut2.
+		h.write('tool handoff {"nextInstruction":"do the resumed work","context":"remaining state"}');
+		await h.waitForText("OK:Handoff started.");
+		h.write("compact-success");
+		await h.waitForText("queuedFollowUp");
+		h.write('tool handoff {"nextInstruction":"do the resumed work","context":"remaining state"}');
+		await h.waitForText("OK:Handoff started.");
+		h.write("compact-success");
+		await h.waitForText("queuedFollowUp");
+
+		// Drain cut1's queued successor (it persists under cut2, the current leaf),
+		// then discard cut2's. Text alone cannot tell the deliveries apart.
+		h.write("successor-turn");
+		await h.waitForText("## Next instruction");
+		h.write("drop-follow-up");
+		await h.waitForText("OK");
+
+		// The successor sits after cut2, so recovery finds no candidate. Settle clears
+		// the direct-delivery latch for the later trigger.
+		h.write("agent-settled");
+		await h.waitForText("OK");
+		h.write("tree-edit-last-user");
+		await h.waitForText("OK");
+		h.write("session-tree");
+		await h.waitForText("OK");
+
+		h.clear();
+		h.write("successor-count");
+		await h.waitForText("OK:");
+		await h.waitForText("\n");
+		// 2 direct sends (one per compact-success), no resend: lineage proves cut2's
+		// successor was retained outside the branch, so the identical payload is not
+		// re-delivered.
+		assert.equal(h.snapshot().trim(), "OK:2", "an identical successor owned by another cut must not be re-sent");
+	}));
+
 	it("recovery never appends a lost handoff after newer user work", async () => withHarness(async (h) => {
 		h.write('usage {"tokens":50000,"percent":25,"contextWindow":200000}');
 		await h.waitForText("OK");
