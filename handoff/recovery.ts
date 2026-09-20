@@ -21,6 +21,7 @@
  */
 
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { TextContent } from "@earendil-works/pi-ai";
 import { HANDOFF_REPORT_DELIMITER, buildNextUserMessage, type HandoffPayload } from "./format.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -62,9 +63,13 @@ function hasUserTurnAfterCut(entries: SessionEntry[]): boolean {
 function getMessageText(entry: SessionEntry): string | null {
 	if (entry.type !== "message" || entry.message?.role !== "user") return null;
 	const content = entry.message.content;
-	return typeof content === "string"
-		? content
-		: content.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n");
+	if (typeof content === "string") return content;
+	// Persisted session JSON is unvalidated: guard malformed content instead of throwing.
+	if (!Array.isArray(content)) return null;
+	return content
+		.filter((part): part is TextContent => isRecord(part) && part.type === "text" && typeof part.text === "string")
+		.map((part) => part.text)
+		.join("\n");
 }
 
 function hasDeliveredSuccessor(entries: SessionEntry[], cutId: string, message: string): boolean {

@@ -54,6 +54,23 @@ test("a predecessor's identical successor does not suppress a later lost deliver
 	);
 });
 
+test("malformed user content shapes do not throw recovery", () => {
+	const cut = handoff();
+	const malformed: any[] = [
+		{ type: "message", message: { role: "user", content: 42 } },
+		{ type: "message", message: { role: "user", content: { type: "text", text: message } } },
+		{ type: "message", message: { role: "user", content: null } },
+		{ type: "message", message: { role: "user", content: [null, { type: "text" }] } },
+	];
+	for (const entry of malformed) {
+		assert.equal(
+			getUndeliveredHandoffMessage([cut], [cut, entry])?.message,
+			message,
+			"malformed content is skipped, not crashed on",
+		);
+	}
+});
+
 test("a recovered resend is the bare payload without the operational report", () => {
 	const lostWithReport = appendHandoffReport(message, "Notebook: 1 page kept.");
 	assert.ok(lostWithReport.includes(HANDOFF_REPORT_DELIMITER));
