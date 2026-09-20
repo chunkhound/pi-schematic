@@ -298,6 +298,10 @@ describe("agenticoding E2E", () => {
 		// resurrect the superseded instruction either.
 		h.write("user-turn newer user work");
 		await h.waitForText("OK");
+		// Settle clears the direct-delivery dedupe latch so session-tree recovery
+		// is exercised, not latch-masked: pre-supersession code would resend here.
+		h.write("agent-settled");
+		await h.waitForText("OK");
 		h.write("session-tree");
 		await h.waitForText("OK");
 		h.clear();
