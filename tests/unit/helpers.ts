@@ -265,8 +265,28 @@ export default function(pi) {
 		}],
 		streamSimple(model, context, options) {
 			globalThis.__agenticE2eStreamCalls = (globalThis.__agenticE2eStreamCalls ?? 0) + 1;
-			globalThis.__agenticE2eToolSets = [...(globalThis.__agenticE2eToolSets ?? []), (context.tools ?? []).map((tool) => tool.name)];
-			globalThis.__agenticE2eMessages = [...(globalThis.__agenticE2eMessages ?? []), ...(context.messages ?? []).flatMap((message) => (message.content ?? []).filter((block) => block.type === "text").map((block) => block.text))];
+			// Pi <=0.86 passes tools as context.tools; 0.87+ carries the tool set in the
+			// transcript's system message (toolsAdded/toolsRemoved). Replay both so the
+			// fixture observes the same effective tool set across Pi versions.
+			const effectiveToolNames = (() => {
+				const names = (context.tools ?? []).map((tool) => tool.name);
+				for (const message of context.messages ?? []) {
+					if (message.role !== "system") continue;
+					for (const tool of message.toolsAdded ?? []) if (!names.includes(tool.name)) names.push(tool.name);
+					for (const removed of message.toolsRemoved ?? []) {
+						const index = names.indexOf(removed.name);
+						if (index !== -1) names.splice(index, 1);
+					}
+				}
+				return names;
+			})();
+			globalThis.__agenticE2eToolSets = [...(globalThis.__agenticE2eToolSets ?? []), effectiveToolNames];
+			// Content may be a block array (assistant/user) or a plain string (system/user text); normalize both.
+			globalThis.__agenticE2eMessages = [...(globalThis.__agenticE2eMessages ?? []), ...(context.messages ?? []).flatMap((message) => {
+				const content = message.content;
+				if (Array.isArray(content)) return content.filter((block) => block.type === "text").map((block) => block.text);
+				return typeof content === "string" ? [content] : [];
+			})];
 			globalThis.__agenticE2eThinking = options?.reasoning !== undefined
 				? [...(globalThis.__agenticE2eThinking ?? []), options.reasoning]
 				: (globalThis.__agenticE2eThinking ?? []);
