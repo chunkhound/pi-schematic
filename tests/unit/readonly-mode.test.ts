@@ -4,7 +4,7 @@ import os from "node:os";
 import { registerReadonlyPI, makeReadonlyUICtx } from "./helpers.js";
 
 test("readonly toggle on blocks write, edit, handoff, and bash mutations", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const ctx = makeReadonlyUICtx();
 
 	await pi.commands.get("readonly").handler("", ctx as any);
@@ -18,7 +18,7 @@ test("readonly toggle on blocks write, edit, handoff, and bash mutations", async
 });
 
 test("readonly toggle off restores write, handoff, and bash access", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const ctx = makeReadonlyUICtx();
 
 	await pi.commands.get("readonly").handler("", ctx as any);
@@ -30,7 +30,7 @@ test("readonly toggle off restores write, handoff, and bash access", async () =>
 });
 
 test("readonly toggle is a no-op in headless mode", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const [inputHandler] = pi.handlers.get("input")!;
 	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 
@@ -61,7 +61,7 @@ test("readonly toggle is a no-op in headless mode", async () => {
 });
 
 test("readonly shortcut only toggles while idle", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const shortcut = pi.shortcuts.get("ctrl+shift+r");
 	assert.ok(shortcut);
 
@@ -73,7 +73,7 @@ test("readonly shortcut only toggles while idle", async () => {
 });
 
 test("readonly toggle delivers an activation nudge via context hook", async () => {
-	const { pi } = registerReadonlyPI();
+	const { pi } = await registerReadonlyPI();
 	const [contextHook] = pi.handlers.get("context")!;
 
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
@@ -89,7 +89,7 @@ test("readonly toggle delivers an activation nudge via context hook", async () =
 });
 
 test("readonly toggle off delivers a deactivation nudge via context hook", async () => {
-	const { pi } = registerReadonlyPI();
+	const { pi } = await registerReadonlyPI();
 	const [contextHook] = pi.handlers.get("context")!;
 
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);

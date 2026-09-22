@@ -1,6 +1,6 @@
 // ── Shared test helpers ──────────────────────────────────────────
 // Imported by other test files via `./helpers.js`
-// Includes createTestPI(), test utilities, theme constants, readonly helpers, etc.
+// Includes the real-API test host (see ./test-host.js), test utilities, theme constants, readonly helpers, etc.
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import assert from "node:assert/strict";
@@ -8,9 +8,9 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import os from "node:os";
-import registerAgenticoding from "../../index.js";
 import { createState, resetState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
+import { createTestHost, type TestPI } from "./test-host.js";
 
 export const theme = {
 	fg: (_name: string, text: string) => text,
@@ -105,113 +105,6 @@ export function createDeferred() {
 	return { promise, resolve };
 }
 
-export function createTestPI() {
-	const _handlers = new Map<string, any[]>();
-	const _tools = new Map<string, any>();
-	const _commands = new Map<string, any>();
-	const _shortcuts = new Map<string, any>();
-	const _flags = new Map<string, any>();
-	const _activeTools: string[] = [];
-	const _allToolNames: string[] = [];
-	const _toolSources = new Map<string, string>();
-	const _slashCommands: any[] = [];
-	const _sentUserMessages: Array<{ content: string; options: any }> = [];
-	const _appendedEntries: Array<{ customType: string; data: any }> = [];
-
-	const obj = {
-		registerCommand: (name: string, def: any) => { _commands.set(name, def); },
-		registerTool: (def: any) => { _tools.set(def.name, def); },
-		on: (event: string, handler: any) => {
-			const h = _handlers.get(event) ?? [];
-			h.push(handler);
-			_handlers.set(event, h);
-		},
-		getActiveTools: () => [..._activeTools],
-		getAllTools: () =>
-			(_allToolNames.length ? _allToolNames : [..._activeTools]).map((name) => ({
-				name,
-				description: "",
-				parameters: {},
-				sourceInfo: {
-					path: `<${_toolSources.get(name) ?? "builtin"}:${name}>`,
-					source: _toolSources.get(name) ?? "builtin",
-					scope: "temporary" as const,
-					origin: "top-level" as const,
-				},
-			})),
-		getThinkingLevel: () => "medium" as const,
-		setThinkingLevel: () => {},
-		sendUserMessage: (content: string, options?: any) => {
-			_sentUserMessages.push({ content, options });
-		},
-		appendEntry: (customType: string, data: any) => {
-			_appendedEntries.push({ customType, data });
-		},
-		setActiveTools: (tools: string[]) => {
-			_activeTools.length = 0;
-			_activeTools.push(...tools);
-			for (const tool of tools) {
-				if (!_toolSources.has(tool)) _toolSources.set(tool, "builtin");
-			}
-		},
-		setToolSource: (name: string, source: string) => {
-			_toolSources.set(name, source);
-		},
-		setAllTools: (tools: string[]) => {
-			_allToolNames.length = 0;
-			_allToolNames.push(...tools);
-			for (const tool of tools) {
-				if (!_toolSources.has(tool)) _toolSources.set(tool, "builtin");
-			}
-		},
-		sendMessage: () => Promise.resolve(),
-		setSessionName: () => {},
-		getSessionName: () => undefined,
-		exec: () => Promise.resolve({ exitCode: 0, stdout: "", stderr: "", code: 0, killed: false, signal: null } as any),
-		getCommands: () => [..._slashCommands],
-		setCommands: (commands: any[]) => {
-			_slashCommands.length = 0;
-			_slashCommands.push(...commands);
-		},
-		setModel: () => Promise.resolve(true),
-		registerProvider: () => {},
-		registerShortcut: (key: string, def: any) => { _shortcuts.set(key, def); },
-		registerFlag: (name: string, def: any) => {
-			if (!_flags.has(name)) _flags.set(name, def.default);
-		},
-		getFlag: (name: string) => _flags.get(name),
-		registerMessageRenderer: () => {},
-		registerMarkdownTransformer: () => {}, // Pi 0.84.1 ExtensionAPI compat stub
-		registerEntryRenderer: () => {},
-		setLabel: () => {},
-		unregisterProvider: () => {},
-		events: { on: () => () => {}, emit: () => {} } as import("@earendil-works/pi-coding-agent").EventBus,
-		setEditorText: () => {},
-		get commands() { return _commands; },
-		get shortcuts() { return _shortcuts; },
-		get tools() { return _tools; },
-		get handlers() { return _handlers; },
-		get activeTools() { return _activeTools; },
-		set activeTools(tools: string[]) {
-			_activeTools.length = 0;
-			_activeTools.push(...tools);
-		},
-		get flags() { return _flags; },
-		get sentUserMessages() { return _sentUserMessages; },
-		get appendedEntries() { return _appendedEntries; },
-		get allToolNames() { return _allToolNames; },
-		get toolSources() { return _toolSources; },
-	};
-	return obj;
-}
-
-// ── ExtensionAPI compile-time check ──────────────────────────────
-// If ExtensionAPI adds new required members, this fails at compile
-// time — forcing the test PI factory to be updated in sync.
-type _TestPICoversExtensionAPI = typeof createTestPI extends () => import("@earendil-works/pi-coding-agent").ExtensionAPI ? true : never;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const _testPIVerified: _TestPICoversExtensionAPI = true;
-
 // ── Readonly test helpers ────────────────────────────────────────────
 
 export type ToolCall = (event: { toolName: string; input?: Record<string, unknown> }, ctx: { cwd?: string }) => Promise<any>;
@@ -219,9 +112,8 @@ export type ToolCall = (event: { toolName: string; input?: Record<string, unknow
 /**
  * Create a test PI instance with agenticoding registered and the tool_call handler extracted.
  */
-export function registerReadonlyPI() {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+export async function registerReadonlyPI(): Promise<{ pi: TestPI; toolCall: ToolCall }> {
+	const pi = await createTestHost();
 	const [toolCall] = pi.handlers.get("tool_call") as ToolCall[];
 	return { pi, toolCall };
 }
@@ -452,11 +344,7 @@ export default function(pi) {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 128000, maxTokens: 1024,
 		};
-		const pi = createTestPI();
-		pi.setToolSource("agentic_e2e_probe", "project");
 		const activeTools = params.activeTools ?? ["read", "agentic_e2e_probe", "spawn"];
-		pi.setActiveTools(activeTools);
-		pi.setAllTools(activeTools);
 		const state = createState();
 		state.readonlyEnabled = params.readonly ?? false;
 		if (params.notebookPages) {
@@ -464,7 +352,11 @@ export default function(pi) {
 				state.notebookPages.set(pageName, pageContent);
 			}
 		}
-		registerSpawnTool(pi as any, state);
+		const pi = await createTestHost((api) => registerSpawnTool(api, state), {
+			toolSources: { agentic_e2e_probe: "project" },
+			activeTools,
+			allTools: activeTools,
+		});
 		const controller = new AbortController();
 		if (params.abortBeforeStart) controller.abort(new Error("fixture abort"));
 		// Expose live references for the provider (separate module scope) to act on.

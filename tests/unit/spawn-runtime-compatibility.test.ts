@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { Value } from "typebox/value";
 import { createState } from "../../state.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
-import { createTestPI, runRealChildInvocation } from "./helpers.js";
+import { createTestHost } from "./test-host.js";
+import { runRealChildInvocation } from "./helpers.js";
 
 test("real child completes through inherited/default thinking", async () => {
 	const proof = await runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK." });
@@ -95,9 +96,8 @@ test("spawn routes through the public registry but uses only the selected-model 
 });
 
 test("spawn accepts max thinking parameter in schema", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerSpawnTool(pi as any, state);
+	const pi = await createTestHost((api) => registerSpawnTool(api, state));
 	const tool = pi.tools.get("spawn");
 	const schemaText = JSON.stringify(tool.parameters);
 	assert.match(schemaText, /max/);
@@ -125,7 +125,7 @@ test("spawn real child completes with max thinking requested", async () => {
 });
 
 test("executeSpawn rejects immediately when no model is configured", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	const ctx = { cwd: "/tmp" } as any; // ctx.model is undefined
 
@@ -153,7 +153,7 @@ test("a parent-transient selected model fails explicitly in the real child runti
 		await mkdir(cwd, { recursive: true });
 		await mkdir(agentDir, { recursive: true });
 		process.env.PI_CODING_AGENT_DIR = agentDir;
-		const pi = createTestPI();
+		const pi = await createTestHost();
 		const state = createState();
 		const model = {
 			id: "transient-model",

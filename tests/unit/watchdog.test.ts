@@ -4,16 +4,16 @@ import fc from "fast-check";
 import { createState } from "../../state.js";
 import { registerWatchdog, MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
 import { buildNudge } from "../../watchdog.js";
-import registerAgenticoding from "../../index.js";
 import { registerHandoffCommand } from "../../handoff/command.js";
 import { registerHandoffTool } from "../../handoff/tool.js";
-import { createTestPI, makeReadonlyUICtx } from "./helpers.js";
+import { makeReadonlyUICtx } from "./helpers.js";
+import { createTestHost } from "./test-host.js";
+import type { TestPI } from "./test-host.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 
 test("watchdog records context usage without user notifications", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerWatchdog(pi as any, state);
+	const pi = await createTestHost((api) => registerWatchdog(api, state));
 	const [handler] = pi.handlers.get("agent_end")!;
 
 	const notifications: string[] = [];
@@ -32,9 +32,8 @@ test("watchdog records context usage without user notifications", async () => {
 
 test("watchdog ignores malformed percentages", async () => {
 	for (const percent of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
-		const pi = createTestPI();
 		const state = createState();
-		registerWatchdog(pi as any, state);
+		const pi = await createTestHost((api) => registerWatchdog(api, state));
 		const [handler] = pi.handlers.get("agent_end")!;
 		await handler({}, { hasUI: false, getContextUsage: () => ({ percent }) });
 		assert.equal(state.lastContextPercent, null);
@@ -42,17 +41,15 @@ test("watchdog ignores malformed percentages", async () => {
 });
 
 test("watchdog records overflow percentages", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerWatchdog(pi as any, state);
+	const pi = await createTestHost((api) => registerWatchdog(api, state));
 	const [handler] = pi.handlers.get("agent_end")!;
 	await handler({}, { hasUI: false, getContextUsage: () => ({ percent: 125 }) });
 	assert.equal(state.lastContextPercent, 125);
 });
 
 test("context injects watchdog reminder before each LLM call", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const [handler] = pi.handlers.get("context")!;
 	await pi.commands.get("notebook")!.handler("oauth", { hasUI: false, getContextUsage: () => null });
 
@@ -77,8 +74,7 @@ test("context injects watchdog reminder before each LLM call", async () => {
 
 
 test("context injects a boundary nudge below 30% after an explicit topic change", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const [handler] = pi.handlers.get("context")!;
 	await pi.commands.get("notebook")!.handler("oauth", { hasUI: false, getContextUsage: () => null });
 	await pi.commands.get("notebook")!.handler("billing", { hasUI: false, getContextUsage: () => null });
@@ -96,8 +92,7 @@ test("context injects a boundary nudge below 30% after an explicit topic change"
 
 
 test("context treats malformed percentages as unavailable", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const [handler] = pi.handlers.get("context")!;
 
 	for (const percent of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
@@ -110,8 +105,7 @@ test("context treats malformed percentages as unavailable", async () => {
 });
 
 test("context injects a no-topic nudge when context is high", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const [handler] = pi.handlers.get("context")!;
 
 	const result = await handler(
@@ -130,8 +124,7 @@ test("context injects a no-topic nudge when context is high", async () => {
 
 
 test("context nudges at band crossings and after a below-30% reset", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const [handler] = pi.handlers.get("context")!;
 
 	for (const [percent, shouldNudge] of [
@@ -148,8 +141,7 @@ test("context nudges at band crossings and after a below-30% reset", async () =>
 
 
 test("context consumes a boundary hint after the first injected nudge", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const [handler] = pi.handlers.get("context")!;
 	await pi.commands.get("notebook")!.handler("oauth", { hasUI: false, getContextUsage: () => null });
 	await pi.commands.get("notebook")!.handler("billing", { hasUI: false, getContextUsage: () => null });
@@ -177,8 +169,7 @@ test("buildNudge emits topic and spawn guidance", () => {
 });
 
 test("default watchdog guidance respects token eligibility", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const [handler] = pi.handlers.get("context")!;
 	const result = await handler(
 		{ messages: [{ role: "user", content: "small window", timestamp: 1 }] },
@@ -256,10 +247,11 @@ test("buildNudge handles null percent and boundary hints before topic guidance",
 });
 
 test("watchdog stays advisory for a fresh user-requested handoff", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffCommand(pi as any, state);
-	registerWatchdog(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCommand(api, state);
+		registerWatchdog(api, state);
+	});
 	const [handler] = pi.handlers.get("agent_end")!;
 
 	await pi.commands.get("handoff").handler("implement auth", {
@@ -286,11 +278,12 @@ test("watchdog stays advisory for a fresh user-requested handoff", async () => {
 });
 
 test("watchdog does not cancel an in-flight handoff", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffCommand(pi as any, state);
-	registerHandoffTool(pi as any, state);
-	registerWatchdog(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCommand(api, state);
+		registerHandoffTool(api, state);
+		registerWatchdog(api, state);
+	});
 	await pi.commands.get("handoff").handler("continue work", {
 		...makeReadonlyUICtx(),
 		isIdle: () => true,
@@ -311,10 +304,11 @@ test("watchdog does not cancel an in-flight handoff", async () => {
 });
 
 test("watchdog auto-cancels a required handoff after enough unanswered turns", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffCommand(pi as any, state);
-	registerWatchdog(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCommand(api, state);
+		registerWatchdog(api, state);
+	});
 	const [handler] = pi.handlers.get("agent_end")!;
 
 	await pi.commands.get("handoff").handler("implement auth", {
@@ -355,7 +349,7 @@ test("watchdog auto-cancels a required handoff after enough unanswered turns", a
 
 // ── Readonly-specific injection contracts ─────────────────────────
 
-async function drainReadonlyNudge(pi: ReturnType<typeof createTestPI>): Promise<void> {
+async function drainReadonlyNudge(pi: TestPI): Promise<void> {
 	const [handler] = pi.handlers.get("context")!;
 	await handler(
 		{ messages: [{ role: "user", content: "drain initial readonly nudge", timestamp: 1 }] },
@@ -364,8 +358,7 @@ async function drainReadonlyNudge(pi: ReturnType<typeof createTestPI>): Promise<
 }
 
 test("context hook suppresses watchdog after readonly toggle nudge is drained", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 	const [handler] = pi.handlers.get("context")!;
 
@@ -386,8 +379,7 @@ test("context hook suppresses watchdog after readonly toggle nudge is drained", 
 });
 
 test("context injects a readonly-mode nudge after toggle", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 	const [handler] = pi.handlers.get("context")!;
 
@@ -405,8 +397,7 @@ test("context injects a readonly-mode nudge after toggle", async () => {
 });
 
 test("context injects readonly handoff guidance after explicit user /handoff", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const [handler] = pi.handlers.get("context")!;
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 	await drainReadonlyNudge(pi);
@@ -431,8 +422,7 @@ test("context injects readonly handoff guidance after explicit user /handoff", a
 });
 
 test("readonly toggle nudge aligns with handoff exception in the same turn", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const [handler] = pi.handlers.get("context")!;
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 	await pi.commands.get("handoff").handler("continue readonly work", {
@@ -456,8 +446,7 @@ test("readonly toggle nudge aligns with handoff exception in the same turn", asy
 });
 
 test("eligible readonly human topic boundary auto-creates handoff bypass equivalent to /handoff", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const [handler] = pi.handlers.get("context")!;
 
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
@@ -499,8 +488,7 @@ test("watchdog band-crossing: nudge iff context enters a higher band", async () 
 		fc.asyncProperty(
 			fc.array(fc.nat({ max: 150 }), { minLength: 1, maxLength: 20 }),
 			async (percentages) => {
-				const pi = createTestPI();
-				registerAgenticoding(pi as any);
+				const pi = await createTestHost();
 				const [handler] = pi.handlers.get("context")!;
 				let lastBand: number | null = null;
 				for (const raw of percentages) {

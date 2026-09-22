@@ -7,10 +7,9 @@ import { registerHandoffCommand } from "../../handoff/command.js";
 import { registerHandoffTool } from "../../handoff/tool.js";
 import { buildContinuationFrame, buildHandoffCompactionSummary, buildNextUserMessage } from "../../handoff/format.js";
 import { registerHandoffCompaction } from "../../handoff/compact.js";
-import registerAgenticoding from "../../index.js";
 import { STATUS_KEY_HANDOFF, WIDGET_KEY_WARNING, updateIndicators } from "../../tui.js";
 import { registerWatchdog } from "../../watchdog.js";
-import { createTestPI, makeTUICtx } from "./helpers.js";
+import { createTestHost } from "./test-host.js";
 
 /**
  * The successor turn must OPEN with the delivered instruction + context. The
@@ -31,9 +30,10 @@ function assertSuccessorTurn(content: string, input: { nextInstruction: string; 
 }
 
 test("/handoff sends the direction back through the LLM without opening the editor", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffCommand(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCommand(api, state);
+	});
 
 	await pi.commands.get("handoff")!.handler("implement auth", {
 		hasUI: true,
@@ -61,9 +61,10 @@ test("/handoff sends the direction back through the LLM without opening the edit
 });
 
 test("/handoff requires a direction", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffCommand(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCommand(api, state);
+	});
 
 	const notifications: string[] = [];
 	await pi.commands.get("handoff")!.handler("   ", {
@@ -77,11 +78,12 @@ test("/handoff requires a direction", async () => {
 });
 
 test("handoff tool queues the split request and delivers it verbatim after compaction", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	state.notebookPages.set("auth-refresh", "sensitive notebook body");
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, nextInstruction: null };
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	let compactOptions: any;
 	const result = await pi.tools.get("handoff").execute(
@@ -109,13 +111,14 @@ test("handoff tool queues the split request and delivers it verbatim after compa
 });
 
 test("successful handoff discards pages after compaction", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	state.epoch = 1;
 	state.notebookPages.set("stale", "obsolete");
 	const notifications: string[] = [];
 	let callbacks: any;
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	const result = await pi.tools.get("handoff").execute(
 		"discard",
@@ -148,14 +151,15 @@ test("successful handoff discards pages after compaction", async () => {
 });
 
 test("handoff onComplete fails gracefully when the discard commit marker throws", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	state.epoch = 1;
 	state.notebookPages.set("stale", "obsolete");
 	state.activeNotebookTopic = "oauth";
 	state.pendingRequestedHandoff = { toolCalled: true, enforcementAttempts: 0, nextInstruction: null };
 	let callbacks: any;
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await pi.tools.get("handoff").execute(
 		"discard-fail",
@@ -188,12 +192,13 @@ test("handoff onComplete fails gracefully when the discard commit marker throws"
 });
 
 test("post-commit reporting failure does not claim pages were retained", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	state.epoch = 1;
 	state.notebookPages.set("stale", "obsolete");
 	let callbacks: any;
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await pi.tools.get("handoff").execute(
 		"report-fail",
@@ -231,15 +236,16 @@ test("post-commit reporting failure does not claim pages were retained", async (
 });
 
 test("a host delivery rejection finalizes the cut while its persisted payload remains recoverable", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	state.epoch = 1;
 	state.notebookPages.set("stale", "obsolete");
 	state.activeNotebookTopic = "auth";
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, nextInstruction: "continue" };
 	let callbacks: any;
-	registerHandoffTool(pi as any, state);
-	registerHandoffCompaction(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+		registerHandoffCompaction(api, state);
+	});
 
 	await pi.tools.get("handoff").execute(
 		"delivery-fail",
@@ -276,12 +282,13 @@ test("a host delivery rejection finalizes the cut while its persisted payload re
 });
 
 test("commit failure and UI failure both ride along with the instruction", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	state.epoch = 1;
 	state.notebookPages.set("stale", "obsolete");
 	let callbacks: any;
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await pi.tools.get("handoff").execute(
 		"compound-fail",
@@ -318,11 +325,12 @@ test("commit failure and UI failure both ride along with the instruction", async
 });
 
 test("a synchronous successor-delivery rejection is reported as such and propagates", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	let callbacks: any;
 	const notifications: string[] = [];
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await pi.tools.get("handoff").execute(
 		"delivery-reject",
@@ -350,12 +358,13 @@ test("a synchronous successor-delivery rejection is reported as such and propaga
 });
 
 test("successor delivery is requested as a followUp (queue-safe contract)", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	state.epoch = 1;
 	state.notebookPages.set("stale", "obsolete");
 	let callbacks: any;
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await pi.tools.get("handoff").execute(
 		"queue-on-active-run",
@@ -384,11 +393,12 @@ test("successor delivery is requested as a followUp (queue-safe contract)", asyn
 });
 
 test("handoff with empty discardPages retains all pages", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	state.notebookPages.set("keep", "value");
 	let callbacks: any;
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	const result = await pi.tools.get("handoff").execute(
 		"no-discard",
@@ -407,7 +417,6 @@ test("handoff with empty discardPages retains all pages", async () => {
 });
 
 test("handoff compaction keeps the frame constant and the state contract intact", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	state.pendingHandoff = { generation: state.handoffGeneration };
 	state.pendingHandoffDelivery = {
@@ -418,7 +427,9 @@ test("handoff compaction keeps the frame constant and the state contract intact"
 	state.pendingRequestedHandoff = { enforcementAttempts: 1, toolCalled: true, nextInstruction: null };
 	state.activeNotebookTopic = "oauth";
 	state.activeNotebookTopicSource = "human";
-	registerHandoffCompaction(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCompaction(api, state);
+	});
 
 	const [handler] = pi.handlers.get("session_before_compact")!;
 	const result = await handler(
@@ -445,9 +456,10 @@ test("handoff compaction keeps the frame constant and the state contract intact"
 });
 
 test("/handoff sets the handoff status indicator", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffCommand(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCommand(api, state);
+	});
 	const statuses = new Map<string, string | undefined>();
 
 	await pi.commands.get("handoff")!.handler("implement auth", {
@@ -465,9 +477,10 @@ test("/handoff sets the handoff status indicator", async () => {
 });
 
 test("/handoff shows ready status when context is eligible", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffCommand(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCommand(api, state);
+	});
 	const statuses = new Map<string, string | undefined>();
 
 	await pi.commands.get("handoff")!.handler("implement auth", {
@@ -485,8 +498,7 @@ test("/handoff shows ready status when context is eligible", async () => {
 });
 
 test("handoff status becomes ready when later context becomes eligible", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const statuses = new Map<string, string | undefined>();
 	const commandContext = {
 		hasUI: true,
@@ -515,13 +527,14 @@ test("handoff status becomes ready when later context becomes eligible", async (
 });
 
 test("handoff compaction ignores a reservation without a delivery payload", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	// Two-phase contract: the tool records the generation marker and the payload
 	// together, and only the pair may be compacted. A marker without a payload
 	// (stale or partially cleared state) must leave the reservation untouched.
 	state.pendingHandoff = { generation: state.handoffGeneration };
-	registerHandoffCompaction(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCompaction(api, state);
+	});
 	const [handler] = pi.handlers.get("session_before_compact")!;
 
 	const result = await handler(
@@ -534,7 +547,6 @@ test("handoff compaction ignores a reservation without a delivery payload", asyn
 });
 
 test("handoff compaction ignores a delivery payload from a stale generation", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	// The marker and its payload are recorded as a pair; a payload whose generation
 	// no longer matches the marker (a superseded reservation) must not compact.
@@ -544,7 +556,9 @@ test("handoff compaction ignores a delivery payload from a stale generation", as
 		payload: { version: 1, nextInstruction: "stale", context: "" },
 		recoveryKey: "stale-key",
 	};
-	registerHandoffCompaction(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCompaction(api, state);
+	});
 	const [handler] = pi.handlers.get("session_before_compact")!;
 
 	const result = await handler(
@@ -558,9 +572,10 @@ test("handoff compaction ignores a delivery payload from a stale generation", as
 });
 
 test("handoff success sends a completion notification", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 	let compactOptions: any;
 	const notifications: Array<{ message: string; level: string }> = [];
 	const statuses = new Map<string, string | undefined>();
@@ -590,11 +605,12 @@ test("handoff success sends a completion notification", async () => {
 });
 
 test("async handoff compaction error retains discard pages and restores a ready retry status", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	state.notebookPages.set("stale", "obsolete");
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, nextInstruction: null };
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 	let compactOptions: any;
 	const statuses = new Map<string, string | undefined>();
 	const notifications: Array<{ message: string; level: string }> = [];
@@ -629,10 +645,11 @@ test("async handoff compaction error retains discard pages and restores a ready 
 });
 
 test("stored human direction survives a failed compaction and is delivered on retry", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffCommand(pi as any, state);
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCommand(api, state);
+		registerHandoffTool(api, state);
+	});
 
 	await pi.commands.get("handoff")!.handler("Goal: continue", { hasUI: false, isIdle: () => true });
 
@@ -660,11 +677,12 @@ test("stored human direction survives a failed compaction and is delivered on re
 });
 
 test("synchronous compaction failure retains discard pages and restores a retryable handoff", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	state.notebookPages.set("stale", "obsolete");
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, nextInstruction: null };
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "🤝 Handoff in progress"]]);
 
 	await assert.rejects(
@@ -695,10 +713,11 @@ test("synchronous compaction failure retains discard pages and restores a retrya
 });
 
 test("failed handoff shows waiting status when usage becomes unavailable", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, nextInstruction: null };
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 	let compactOptions: any;
 	let usage: { tokens: number; percent: number; contextWindow: number } | null = {
 		tokens: 50_000, percent: 25, contextWindow: 200_000,
@@ -722,10 +741,11 @@ test("failed handoff shows waiting status when usage becomes unavailable", async
 });
 
 test("handoff rejects overlapping compaction and preserves the first task", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	let firstCallbacks: any;
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await pi.tools.get("handoff").execute("first", { nextInstruction: "first" }, undefined, undefined, {
 		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
@@ -750,11 +770,12 @@ test("handoff rejects overlapping compaction and preserves the first task", asyn
 });
 
 test("/handoff rejects a replacement while compaction is reserved", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	let firstCallbacks: any;
-	registerHandoffCommand(pi as any, state);
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCommand(api, state);
+		registerHandoffTool(api, state);
+	});
 
 	await pi.commands.get("handoff")!.handler("first", { hasUI: false, isIdle: () => true } as any);
 	await pi.tools.get("handoff").execute("first", { nextInstruction: "first" }, undefined, undefined, {
@@ -778,12 +799,13 @@ test("/handoff rejects a replacement while compaction is reserved", async () => 
 });
 
 test("failed compaction releases the overlap guard without mutating state twice", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	let firstCallbacks: any;
 	let secondCallbacks: any;
 	const notifications: string[] = [];
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await pi.tools.get("handoff").execute("first", { nextInstruction: "first" }, undefined, undefined, {
 		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
@@ -817,10 +839,11 @@ test("failed compaction releases the overlap guard without mutating state twice"
 });
 
 test("reset invalidates late handoff callbacks", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	let callbacks: any;
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	state.epoch = 1;
 	state.notebookPages.set("stale", "retain");
@@ -844,10 +867,11 @@ test("reset invalidates late handoff callbacks", async () => {
 });
 
 test("handoff terminal callbacks are idempotent", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	let compactOptions: any;
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await pi.tools.get("handoff").execute(
 		"callbacks",
@@ -869,9 +893,10 @@ test("handoff terminal callbacks are idempotent", async () => {
 });
 
 test("handoff rejects malformed numeric context usage", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	for (const usage of [
 		{ tokens: Number.NaN, percent: 20, contextWindow: 200000 },
@@ -892,8 +917,7 @@ test("handoff rejects malformed numeric context usage", async () => {
 });
 
 test("turn_end fallback keeps requested handoff status sticky until real handoff happens", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const statuses = new Map<string, string | undefined>();
 	await pi.commands.get("handoff")!.handler("implement auth", {
 		hasUI: true,
@@ -920,10 +944,11 @@ test("turn_end fallback keeps requested handoff status sticky until real handoff
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), "🤝 Handoff requested — waiting for eligible context");
 });
 
-test("handoff tool metadata and schema describe the prompt contract", () => {
-	const pi = createTestPI();
+test("handoff tool metadata and schema describe the prompt contract", async () => {
 	const state = createState();
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	const tool = pi.tools.get("handoff");
 	assert.match(tool.description, /past ~30%/i);
@@ -1030,9 +1055,10 @@ test("buildNextUserMessage preserves instruction bytes and normalizes context pa
 });
 
 test("handoff tool rejects an empty nextInstruction with context usage", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await assert.rejects(
 		() => pi.tools.get("handoff").execute(
@@ -1051,9 +1077,10 @@ test("handoff tool rejects an empty nextInstruction with context usage", async (
 });
 
 test("handoff tool rejects small session with clear error", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await assert.rejects(
 		() => pi.tools.get("handoff").execute(
@@ -1074,10 +1101,11 @@ test("handoff tool rejects small session with clear error", async () => {
 });
 
 test("handoff tool preserves pending requested handoff and re-engages LLM after synchronous small-session rejection", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, nextInstruction: null };
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "🤝 Handoff in progress"]]);
 	const notifications: Array<{ message: string; level: string }> = [];
 
@@ -1113,12 +1141,13 @@ test("handoff tool preserves pending requested handoff and re-engages LLM after 
 });
 
 test("command handoff waits for eligibility and retries without watchdog cancellation", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	let compactOptions: any;
-	registerHandoffCommand(pi as any, state);
-	registerHandoffTool(pi as any, state);
-	registerWatchdog(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCommand(api, state);
+		registerHandoffTool(api, state);
+		registerWatchdog(api, state);
+	});
 	const [watchdogHandler] = pi.handlers.get("agent_end")!;
 
 	await pi.commands.get("handoff")!.handler("continue work", { hasUI: false, isIdle: () => true } as any);
@@ -1139,9 +1168,10 @@ test("command handoff waits for eligibility and retries without watchdog cancell
 });
 
 test("handoff tool rejects small session with null percent without crashing", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await assert.rejects(
 		() => pi.tools.get("handoff").execute(
@@ -1162,9 +1192,10 @@ test("handoff tool rejects small session with null percent without crashing", as
 });
 
 test("handoff tool rejects small session estimated from percent when tokens are unavailable", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await assert.rejects(
 		() => pi.tools.get("handoff").execute(
@@ -1185,9 +1216,10 @@ test("handoff tool rejects small session estimated from percent when tokens are 
 });
 
 test("handoff tool accepts large estimated session when tokens are unavailable", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await assert.doesNotReject(
 		() => pi.tools.get("handoff").execute(
@@ -1205,9 +1237,10 @@ test("handoff tool accepts large estimated session when tokens are unavailable",
 });
 
 test("handoff tool accepts the exact 30000-token minimum", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await assert.doesNotReject(
 		() => pi.tools.get("handoff").execute(
@@ -1225,9 +1258,10 @@ test("handoff tool accepts the exact 30000-token minimum", async () => {
 });
 
 test("handoff tool rejects session just below the 30000-token minimum", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await assert.rejects(
 		() => pi.tools.get("handoff").execute(
@@ -1248,9 +1282,10 @@ test("handoff tool rejects session just below the 30000-token minimum", async ()
 });
 
 test("handoff tool rejects a whitespace-only nextInstruction", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await assert.rejects(
 		() => pi.tools.get("handoff").execute(
@@ -1269,10 +1304,11 @@ test("handoff tool rejects a whitespace-only nextInstruction", async () => {
 });
 
 test("a pending human direction wins over a model-supplied nextInstruction", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffCommand(pi as any, state);
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCommand(api, state);
+		registerHandoffTool(api, state);
+	});
 
 	const direction = "  Audit the retry budget.  ";
 	await pi.commands.get("handoff")!.handler(direction, {
@@ -1305,10 +1341,11 @@ test("a pending human direction wins over a model-supplied nextInstruction", asy
 });
 
 test("a pending human direction needs no tool arguments", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffCommand(pi as any, state);
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCommand(api, state);
+		registerHandoffTool(api, state);
+	});
 
 	await pi.commands.get("handoff")!.handler("finish the migration", { hasUI: false, isIdle: () => true } as any);
 
@@ -1323,9 +1360,10 @@ test("a pending human direction needs no tool arguments", async () => {
 });
 
 test("/handoff queues as a followUp while a run is active", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffCommand(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCommand(api, state);
+	});
 
 	await pi.commands.get("handoff")!.handler("continue work", { hasUI: false, isIdle: () => false } as any);
 
@@ -1334,9 +1372,10 @@ test("/handoff queues as a followUp while a run is active", async () => {
 });
 
 test("handoff with no pending direction requires nextInstruction but not context", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await assert.rejects(
 		() => pi.tools.get("handoff").execute("missing-instruction", { context: "only context" }, undefined, undefined, {
@@ -1361,9 +1400,10 @@ test("handoff with no pending direction requires nextInstruction but not context
 });
 
 test("handoff tool ignores a legacy task field and rejects the resulting empty instruction", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	// The harness calls execute directly, bypassing Pi's schema validation. TypeBox
 	// tolerates the unknown key, so this pins that the removed fused field is never
@@ -1380,9 +1420,10 @@ test("handoff tool ignores a legacy task field and rejects the resulting empty i
 });
 
 test("handoff tool rejects when context usage is unavailable", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await assert.rejects(
 		() => pi.tools.get("handoff").execute(
@@ -1401,10 +1442,11 @@ test("handoff tool rejects when context usage is unavailable", async () => {
 });
 
 test("handoff tool preserves pending requested handoff and re-engages LLM after synchronous unavailable-usage rejection", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, nextInstruction: null };
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "🤝 Handoff in progress"]]);
 	const notifications: Array<{ message: string; level: string }> = [];
 
@@ -1438,9 +1480,10 @@ test("handoff tool preserves pending requested handoff and re-engages LLM after 
 });
 
 test("handoff tool rejects when context usage cannot be estimated", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerHandoffTool(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffTool(api, state);
+	});
 
 	await assert.rejects(
 		() => pi.tools.get("handoff").execute(
@@ -1459,8 +1502,7 @@ test("handoff tool rejects when context usage cannot be estimated", async () => 
 });
 
 test("session_start new clears stale handoff status and warning widget", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "stale"]]);
 	const widgets = new Map<string, string[] | undefined>([[WIDGET_KEY_WARNING, ["stale"]]]);
 	const sessionStartHandlers = pi.handlers.get("session_start")!;
@@ -1483,13 +1525,14 @@ test("session_start new clears stale handoff status and warning widget", async (
 });
 
 test("session_before_compact ignores a stale generation", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	// Queue a handoff at generation N, then bump the generation counter
 	// as if a newer request superseded it.
 	state.pendingHandoff = { generation: 1 };
 	state.handoffGeneration = 2;
-	registerHandoffCompaction(pi as any, state);
+	const pi = await createTestHost((api) => {
+		registerHandoffCompaction(api, state);
+	});
 
 	const [handler] = pi.handlers.get("session_before_compact")!;
 	const result = await handler(

@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import registerAgenticoding from "../../index.js";
 import { appendHandoffReport, buildNextUserMessage, HANDOFF_REPORT_DELIMITER } from "../../handoff/format.js";
 import { getUndeliveredHandoffMessage } from "../../handoff/recovery.js";
-import { createTestPI } from "./helpers.js";
+import { createTestHost } from "./test-host.js";
 
 const payload = { version: 1 as const, nextInstruction: "resume\nexactly", context: "blocked on CI" };
 const message = buildNextUserMessage(payload);
@@ -196,8 +195,7 @@ test("a malformed message entry without content does not throw or abandon recove
 });
 
 test("a newer user turn abandons recovery even while the queue is still pending", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const branch: any[] = [handoff(), delivered([{ type: "text", text: "newer user work" }])];
 	const [sessionTree] = pi.handlers.get("session_tree")!;
 	const [agentSettled] = pi.handlers.get("agent_settled")!;
@@ -271,8 +269,7 @@ test("a non-handoff compaction does not supersede the last handoff cut", () => {
 });
 
 test("repeated tree triggers coalesce and a settled run retries only while absent", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const branch: any[] = [handoff()];
 	const ctx = { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => branch } };
 	const [sessionTree] = pi.handlers.get("session_tree")!;
@@ -293,8 +290,7 @@ test("repeated tree triggers coalesce and a settled run retries only while absen
 });
 
 test("a session start re-opens the delivery scope after an in-process session load", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const branch: any[] = [handoff()];
 	const ctx = { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => branch } };
 	const [sessionTree] = pi.handlers.get("session_tree")!;
@@ -307,8 +303,7 @@ test("a session start re-opens the delivery scope after an in-process session lo
 });
 
 test("a settled run during an in-flight cut does not recover an older payload", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const branch: any[] = [handoff()];
 	// Start a handoff but never settle its callbacks: the compaction reservation stays set.
 	await pi.tools.get("handoff")!.execute(
@@ -333,23 +328,20 @@ test("a settled run during an in-flight cut does not recover an older payload", 
 });
 
 test("tree navigation and resume queue a missing successor in a fresh process", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const branch = [handoff()];
 	const ctx = { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => branch } };
 	const [sessionTree] = pi.handlers.get("session_tree")!;
 	await sessionTree({}, ctx);
 	assert.deepEqual(pi.sentUserMessages, [{ content: message, options: { deliverAs: "followUp" } }]);
 
-	const resumedPi = createTestPI();
-	registerAgenticoding(resumedPi as any);
+	const resumedPi = await createTestHost();
 	for (const handler of resumedPi.handlers.get("session_start") ?? []) await handler({ reason: "load" }, ctx);
 	assert.deepEqual(resumedPi.sentUserMessages, [{ content: message, options: { deliverAs: "followUp" } }]);
 });
 
 test("a direct delivery is latched against duplicate tree recovery until settle", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const branch: any[] = [];
 	let callbacks: any;
 	await pi.tools.get("handoff")!.execute(
@@ -383,8 +375,7 @@ test("a direct delivery is latched against duplicate tree recovery until settle"
 });
 
 test("identical payloads on separate branches each recover once", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const branchA = [handoff()];
 	const branchB = [handoff()];
 	let branch = branchA;
@@ -402,8 +393,7 @@ test("identical payloads on separate branches each recover once", async () => {
 });
 
 test("a cut shared across tree branches coalesces instead of double-sending", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const shared = handoff();
 	const branchA: any[] = [shared];
 	const branchB: any[] = [{ type: "message", message: { role: "user", content: "older work" } }, shared];
@@ -420,8 +410,7 @@ test("a cut shared across tree branches coalesces instead of double-sending", as
 });
 
 test("a same-text new cut with a different recovery key re-arms recovery", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const branch: any[] = [{ id: "handoff-key-a", type: "compaction", details: { handoff: true, payload, recoveryKey: "key-a" } }];
 	const ctx = { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => branch } };
 	const [sessionTree] = pi.handlers.get("session_tree")!;
@@ -439,8 +428,7 @@ test("a same-text new cut with a different recovery key re-arms recovery", async
 });
 
 test("a recovery send failure releases its latch for the next trigger", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const branch = [handoff()];
 	const ctx = { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => branch } };
 	const [sessionTree] = pi.handlers.get("session_tree")!;
@@ -456,8 +444,7 @@ test("a recovery send failure releases its latch for the next trigger", async ()
 });
 
 test("tree and session-start recovery wait for a queued follow-up to drain", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const branch: any[] = [handoff()];
 	const queuedCtx = {
 		hasUI: false,
@@ -479,8 +466,7 @@ test("tree and session-start recovery wait for a queued follow-up to drain", asy
 });
 
 test("session start recovers on reasons other than load when the queue is empty", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const branch: any[] = [handoff()];
 	const ctx = {
 		hasUI: false,
@@ -495,8 +481,7 @@ test("session start recovers on reasons other than load when the queue is empty"
 });
 
 test("a later settled run recovers an absent successor only after its queue drains", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const branch: any[] = [handoff()];
 	const [agentSettled] = pi.handlers.get("agent_settled")!;
 	const ctx = {
@@ -513,8 +498,7 @@ test("a later settled run recovers an absent successor only after its queue drai
 	await agentSettled({}, ctx);
 	assert.equal(pi.sentUserMessages.length, 1, "persisted delivery must not be sent again");
 
-	const pendingPi = createTestPI();
-	registerAgenticoding(pendingPi as any);
+	const pendingPi = await createTestHost();
 	const [pendingSettled] = pendingPi.handlers.get("agent_settled")!;
 	await pendingSettled({}, { ...ctx, hasPendingMessages: () => true });
 	assert.deepEqual(pendingPi.sentUserMessages, [], "an undrained queue must not be duplicated");

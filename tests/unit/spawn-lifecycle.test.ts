@@ -1,16 +1,16 @@
 import test, { afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createState, resetState, abortChildSession } from "../../state.js";
-import { createSession, createSubscribableSession, createTestPI, createRenderContext, theme } from "./helpers.js";
+import { createSession, createSubscribableSession, createRenderContext, theme } from "./helpers.js";
+import { createTestHost } from "./test-host.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
 import { registerSpawnTool } from "../../spawn/index.js";
 import { flushSpawnFrameScheduler } from "../../spawn/renderer.js";
 
 let h: TestHarness;
 
-function makeChildSpawnTool(state: any) {
-	const pi = createTestPI();
-	registerSpawnTool(pi as any, state);
+async function makeChildSpawnTool(state: any) {
+	const pi = await createTestHost((api) => registerSpawnTool(api, state));
 	return pi.tools.get("spawn");
 }
 
@@ -40,9 +40,9 @@ test("resetState aborts and clears child session registries", () => {
 	assert.equal(state.liveChildSessions.size, 0);
 });
 
-test("resetState aborts a claimed child session after render ownership transfer", () => {
+test("resetState aborts a claimed child session after render ownership transfer", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	let abortCalls = 0;
 	const session = {
 		...createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]),
@@ -72,7 +72,7 @@ test("resetState aborts a claimed child session after render ownership transfer"
 
 test("nested spawn dispose shares the deduplicated abort promise with other abort paths", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	let abortCalls = 0;
 	const session = {
 		...createSession([]),
@@ -105,7 +105,7 @@ test("nested spawn dispose shares the deduplicated abort promise with other abor
 
 test("nested spawn dispose registers its abort in the shared dedup map", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	let abortCalls = 0;
 	const session = {
 		...createSession([]),
@@ -133,9 +133,9 @@ test("nested spawn dispose registers its abort in the shared dedup map", async (
 	assert.equal(abortCalls, 1, "a later abortChildSession call does not re-abort");
 });
 
-test("nested spawn dispose is identity-guarded against a replaced live session", () => {
+test("nested spawn dispose is identity-guarded against a replaced live session", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	let oldAbortCalls = 0;
 	const session = {
 		...createSession([]),
@@ -163,9 +163,9 @@ test("nested spawn dispose is identity-guarded against a replaced live session",
 	assert.equal(state.liveChildSessions.get("tool-call-1"), replacement, "dispose must not delete the replacement's registry entry");
 });
 
-test("nested spawn dispose survives re-entrant dispose from abort", () => {
+test("nested spawn dispose survives re-entrant dispose from abort", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	let abortCalls = 0;
 	let component: any;
 	const session = {
@@ -194,9 +194,9 @@ test("nested spawn dispose survives re-entrant dispose from abort", () => {
 
 // ── nested spawn lifecycle tests ──────────────────────────────────
 
-test("nested spawn drops events after resetState bumps child epoch", () => {
+test("nested spawn drops events after resetState bumps child epoch", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -218,9 +218,9 @@ test("nested spawn drops events after resetState bumps child epoch", () => {
 	assert.deepEqual(after, before, "stale events should not change rendered state after reset");
 });
 
-test("nested spawn drops events when session is replaced in live state", () => {
+test("nested spawn drops events when session is replaced in live state", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -243,9 +243,9 @@ test("nested spawn drops events when session is replaced in live state", () => {
 	assert.deepEqual(after, before, "replaced sessions should not change rendered state");
 });
 
-test("nested spawn completed-session deletion stays stale even if the toolCallId is later reused", () => {
+test("nested spawn completed-session deletion stays stale even if the toolCallId is later reused", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -273,9 +273,9 @@ test("nested spawn completed-session deletion stays stale even if the toolCallId
 	assert.ok(afterReuse.every((l: string) => !l.includes("should be dropped")), "toolCallId reuse should not admit stale text updates");
 });
 
-test("nested spawn drops late events after live registry deletion", () => {
+test("nested spawn drops late events after live registry deletion", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -299,7 +299,7 @@ test("nested spawn drops late events after live registry deletion", () => {
 
 test("nested spawn reattach resets render guard for the new session", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const first = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", first.session);
 	state.liveChildSessions.set("tool-call-1", first.session);
@@ -336,7 +336,7 @@ test("nested spawn reattach resets render guard for the new session", async () =
 
 test("nested spawn dispose then reattach streams new session events", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const first = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", first.session);
 	state.liveChildSessions.set("tool-call-1", first.session);

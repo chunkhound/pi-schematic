@@ -7,10 +7,9 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import registerAgenticoding from "../../index.js";
 import { wrapWithBwrap, wrapWithSandboxExec } from "../../os-sandbox.js";
 import { applyReadonlyBashGuard, classifyBashCommand } from "../../readonly-bash.js";
-import { createTestPI } from "./helpers.js";
+import { createTestHost } from "./test-host.js";
 import {
 	READONLY_BASH_SCOPE,
 	READONLY_NON_TEMP_MUTATION_SCOPE,
@@ -121,8 +120,7 @@ test("bash and sandbox consumers use centralized readonly copy", () => {
 });
 
 test("parent readonly tool-call consumer uses centralized block copy", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	await pi.commands.get("readonly")!.handler("", {
 		hasUI: true,
 		getContextUsage: () => null,
@@ -174,9 +172,8 @@ test("shared readonly fragments keep copy aligned across contexts", () => {
 	assert.match(buildReadonlySandboxPathError("/tmp/'bad"), /cannot safely escape/i);
 });
 
-test("readonly command consumes the centralized description", () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+test("readonly command consumes the centralized description", async () => {
+	const pi = await createTestHost();
 	assert.equal(pi.commands.get("readonly")?.description, READONLY_COMMAND_DESCRIPTION);
 });
 

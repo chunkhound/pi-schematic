@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { CONTEXT_PRIMER } from "../../system-prompt.js";
-import registerAgenticoding from "../../index.js";
-import { createTestPI, makeTUICtx } from "./helpers.js";
+import { createTestHost } from "./test-host.js";
+import { makeTUICtx } from "./helpers.js";
 
 test("CONTEXT_PRIMER states the notebook, topic, and handoff contracts", () => {
 	assert.doesNotMatch(CONTEXT_PRIMER, /ledger/i,
@@ -57,8 +57,7 @@ test("CONTEXT_PRIMER states the notebook, topic, and handoff contracts", () => {
 });
 
 test("before_agent_start injects notebook contracts plus live topic and page data", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	await pi.commands.get("notebook")!.handler("oauth", { hasUI: false, getContextUsage: () => null });
 	const notebookWrite = pi.tools.get("notebook_write");
 	await notebookWrite.execute("1", { name: "alpha", content: "first line\nsecond line" }, undefined, undefined, makeTUICtx());
@@ -78,8 +77,7 @@ test("before_agent_start injects notebook contracts plus live topic and page dat
 });
 
 test("before_agent_start injects no-topic guidance when the topic is unset", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const [handler] = pi.handlers.get("before_agent_start")!;
 	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
 	const result = await handler({ systemPrompt: "Base system prompt." }, ctx);

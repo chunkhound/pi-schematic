@@ -5,10 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { registerReadonlyPI, makeReadonlyUICtx } from "./helpers.js";
 import type { ToolCall } from "./helpers.js";
+import type { TestPI } from "./test-host.js";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
-async function enableReadonly(pi: ReturnType<typeof import("./helpers.js").createTestPI>) {
+async function enableReadonly(pi: TestPI) {
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 }
 
@@ -24,7 +25,7 @@ async function assertAllowed(toolCall: ToolCall, command: string, cwd = "/worksp
 // ── Behavioral contract tests (via tool_call hook — real code path) ──
 
 test("blocks bash writes outside temp dir", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	const outsideTemp = path.join(os.homedir(), "readonly-test-file");
 
@@ -36,7 +37,7 @@ test("blocks bash writes outside temp dir", async () => {
 });
 
 test("blocks malformed bash input without throwing", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 
 	for (const command of [undefined, null, 42, false, true, Symbol("test"), BigInt(42), () => {}]) {
@@ -50,7 +51,7 @@ test("blocks malformed bash input without throwing", async () => {
 });
 
 test("allows bash reads and non-mutating commands", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 
 	// CONTRACT: reads are allowed (catches over-blocking).
@@ -62,7 +63,7 @@ test("allows bash reads and non-mutating commands", async () => {
 });
 
 test("allows bash writes to temp dir", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	const tmp = os.tmpdir();
 
@@ -72,7 +73,7 @@ test("allows bash writes to temp dir", async () => {
 });
 
 test("blocks command substitutions that write outside temp", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	const outsideTemp = path.join(os.homedir(), "readonly-test-file");
 
@@ -81,7 +82,7 @@ test("blocks command substitutions that write outside temp", async () => {
 });
 
 test("blocks write redirects outside temp dir", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	const outsideTemp = path.join(os.homedir(), "readonly-test-file");
 
@@ -90,7 +91,7 @@ test("blocks write redirects outside temp dir", async () => {
 });
 
 test("blocks package managers unconditionally", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 
 	// CONTRACT: package managers blocked regardless of target path.
@@ -100,7 +101,7 @@ test("blocks package managers unconditionally", async () => {
 });
 
 test("classifies git commands correctly", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 
 	// CONTRACT: immutable git commands allowed, mutable blocked.
@@ -111,7 +112,7 @@ test("classifies git commands correctly", async () => {
 });
 
 test("blocks cwd-relative downloads outside temp but allows inside temp", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	const tmp = os.tmpdir();
 
@@ -122,7 +123,7 @@ test("blocks cwd-relative downloads outside temp but allows inside temp", async 
 });
 
 test("allows readonly-safe git inspection subcommands", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 
 	await assertAllowed(toolCall, "git reflog");
@@ -131,7 +132,7 @@ test("allows readonly-safe git inspection subcommands", async () => {
 });
 
 test("allows piped read commands", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 
 	await assertAllowed(toolCall, "cat /etc/hosts | grep localhost");
@@ -140,7 +141,7 @@ test("allows piped read commands", async () => {
 });
 
 test("blocks chained commands that write outside temp", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	const outside = path.join(os.homedir(), "readonly-test-file");
 
@@ -150,7 +151,7 @@ test("blocks chained commands that write outside temp", async () => {
 });
 
 test("allows chained commands that only read or write to temp", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	const tmp = os.tmpdir();
 
@@ -159,7 +160,7 @@ test("allows chained commands that only read or write to temp", async () => {
 });
 
 test("blocks heredoc redirects outside temp", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	const outside = path.join(os.homedir(), "readonly-test-file");
 
@@ -167,7 +168,7 @@ test("blocks heredoc redirects outside temp", async () => {
 });
 
 test("blocks dd of= outside temp and allows it in temp", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	const tmp = os.tmpdir();
 	const outside = path.join(os.homedir(), "readonly-test-file");
@@ -177,7 +178,7 @@ test("blocks dd of= outside temp and allows it in temp", async () => {
 });
 
 test("allows hidden-file globs inside temp dir", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	const cwd = await mkdtemp(path.join(os.tmpdir(), "readonly-hidden-allow-"));
 
@@ -190,7 +191,7 @@ test("allows hidden-file globs inside temp dir", async () => {
 });
 
 test("blocks hidden-file globs outside temp dir", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	// Home dir already has hidden files (.gitconfig, .ssh, etc.) and is
 	// outside the temp dir — no filesystem writes needed for the glob to match.
@@ -200,7 +201,7 @@ test("blocks hidden-file globs outside temp dir", async () => {
 // ── Untested bash pattern coverage (from review findings) ──────────
 
 test("blocks sudo commands that write outside temp", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertBlocked(toolCall, "sudo rm /etc/passwd");
 	await assertBlocked(toolCall, "sudo -u root touch /etc/test");
@@ -208,35 +209,35 @@ test("blocks sudo commands that write outside temp", async () => {
 });
 
 test("allows sudo commands that only read", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertAllowed(toolCall, "sudo ls /etc");
 	await assertAllowed(toolCall, "sudo cat /etc/hosts");
 });
 
 test("blocks env -S with mutation command", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertBlocked(toolCall, 'env -S "rm -rf /"');
 	await assertBlocked(toolCall, "env -S 'touch /etc/test'");
 });
 
 test("allows env with read commands", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertAllowed(toolCall, "env -S 'ls /etc'");
 	await assertAllowed(toolCall, "env VAR=value ls /tmp");
 });
 
 test("blocks eval and exec wrappers with mutation", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertBlocked(toolCall, "eval 'rm /etc/passwd'");
 	await assertBlocked(toolCall, "exec touch /etc/test");
 });
 
 test("blocks interpreter inline execution that shells out to mutation commands", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertBlocked(toolCall, "node -e 'rm /etc/passwd'");
 	await assertBlocked(toolCall, "python -c 'touch /etc/test'");
@@ -245,13 +246,13 @@ test("blocks interpreter inline execution that shells out to mutation commands",
 });
 
 test("blocks process substitution with mutation", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertBlocked(toolCall, "cat <(rm /etc/passwd)");
 });
 
 test("blocks xargs with mutation command", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertBlocked(toolCall, "echo /etc/test | xargs rm");
 	// xargs npm is a known L2 bypass (documented at the top of readonly-bash.ts):
@@ -261,13 +262,13 @@ test("blocks xargs with mutation command", async () => {
 });
 
 test("allows xargs with read commands", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertAllowed(toolCall, "echo /tmp/test | xargs ls");
 });
 
 test("blocks xargs flag variants with mutation commands", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertBlocked(toolCall, "printf '/etc/passwd\n' | xargs -I {} rm {} ");
 	await assertBlocked(toolCall, "printf '/etc/passwd\0' | xargs -0 rm");
@@ -275,21 +276,21 @@ test("blocks xargs flag variants with mutation commands", async () => {
 });
 
 test("blocks git branch creation", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertBlocked(toolCall, "git branch new-branch");
 	await assertBlocked(toolCall, "git checkout -b new-branch");
 });
 
 test("blocks git tag creation", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertBlocked(toolCall, "git tag v1.0.0");
 	await assertBlocked(toolCall, "git tag -a v1.0.0 -m 'release'");
 });
 
 test("blocks command substitution with nested mutation", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	const outside = path.join(os.homedir(), "readonly-test-file");
 	await assertBlocked(toolCall, `echo $(touch ${outside})`);
@@ -297,7 +298,7 @@ test("blocks command substitution with nested mutation", async () => {
 });
 
 test("blocks wget download-dir writes outside temp and allows them in temp", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	const tmp = os.tmpdir();
 	await assertBlocked(toolCall, "wget -P /workspace https://example.com/file.txt");
@@ -306,7 +307,7 @@ test("blocks wget download-dir writes outside temp and allows them in temp", asy
 });
 
 test("blocks mixed curl output modes outside temp and allows them in temp", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	const tmp = os.tmpdir();
 	const tmpOutput = path.join(tmp, "out.txt");
@@ -317,19 +318,19 @@ test("blocks mixed curl output modes outside temp and allows them in temp", asyn
 // ── Subshell and nested-wrapper edge cases ──────────────────────
 
 test("blocks double-parenthesized mutation", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertBlocked(toolCall, "((rm /etc/passwd))");
 });
 
 test("allows double-parenthesized read command", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertAllowed(toolCall, "((echo hello))");
 });
 
 test("blocks nested wrapper sudo+env+xargs", async () => {
-	const { pi, toolCall } = registerReadonlyPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertBlocked(toolCall, "sudo env xargs rm /etc/passwd");
 });

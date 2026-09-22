@@ -33,21 +33,18 @@
  */
 
 import { createInterface } from "node:readline";
-import registerAgenticoding from "../../index.js";
-import { createTestPI } from "../unit/helpers.js";
+import { createTestHost } from "../unit/test-host.js";
 
-// ── Mock ExtensionAPI ─────────────────────────────────────────────
-// Uses createTestPI() from the shared test utilities — a minimal object
-// that satisfies what index.ts needs at registration time.
-// No TUI dependencies — tools and commands access the state through
-// the pi object directly.
+// ── Real extension host ───────────────────────────────────────────
+// Loads the extension through pi's real loader so the host exercises the same
+// ExtensionAPI the runtime provides. No TUI dependencies — tools and commands
+// access the state through the pi object directly.
 
-const pi = createTestPI();
+const pi = await createTestHost();
+// Capture the maps after registration: `pi.tools` is derived from the loaded
+// Extension's registered tools.
 const commands = pi.commands;
 const tools = pi.tools;
-
-// Register the extension — this populates pi.commands and pi.tools
-registerAgenticoding(pi);
 
 // ── Mock ExtensionContext for tool/command execution ──────────────
 

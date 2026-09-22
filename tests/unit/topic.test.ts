@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createState } from "../../state.js";
 import { setActiveNotebookTopic, clearActiveNotebookTopic } from "../../notebook/topic.js";
 import { registerNotebookTopicTool } from "../../notebook/topic-tool.js";
-import { createTestPI } from "./helpers.js";
+import { createTestHost } from "./test-host.js";
 
 test("topic helpers manage the active notebook topic lifecycle", () => {
 	const state = createState();
@@ -24,9 +24,8 @@ test("topic helpers manage the active notebook topic lifecycle", () => {
 });
 
 test("notebook_topic_set establishes a fresh topic, is idempotent, and refuses overrides", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerNotebookTopicTool(pi as any, state);
+	const pi = await createTestHost((api) => registerNotebookTopicTool(api, state));
 
 	const tool = pi.tools.get("notebook_topic_set");
 	const first = await tool.execute("1", { topic: "OAuth" });
@@ -44,9 +43,8 @@ test("notebook_topic_set establishes a fresh topic, is idempotent, and refuses o
 
 
 test("notebook_topic_set preserves human authority, stays idempotent for equal topics, and rejects empty normalized topics", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerNotebookTopicTool(pi as any, state);
+	const pi = await createTestHost((api) => registerNotebookTopicTool(api, state));
 	const tool = pi.tools.get("notebook_topic_set");
 
 	setActiveNotebookTopic(state, "oauth", "human");
@@ -59,9 +57,8 @@ test("notebook_topic_set preserves human authority, stays idempotent for equal t
 		/human-set notebook topic is authoritative/i,
 	);
 
-	const freshPi = createTestPI();
 	const freshState = createState();
-	registerNotebookTopicTool(freshPi as any, freshState);
+	const freshPi = await createTestHost((api) => registerNotebookTopicTool(api, freshState));
 	const freshTool = freshPi.tools.get("notebook_topic_set");
 	await assert.rejects(
 		() => freshTool.execute("3", { topic: "@@@" }),
