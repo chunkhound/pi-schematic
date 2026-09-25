@@ -18,7 +18,7 @@ import type {
 	ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import { createEventBus, createExtensionRuntime } from "@earendil-works/pi-coding-agent";
-import registerAgenticoding from "../../index.js";
+import registerSchematic from "../../index.js";
 
 // `ThinkingLevel` is not re-exported from the package root; derive it from the
 // api surface so the harness stays pinned to whatever Pi exposes.
@@ -231,7 +231,7 @@ function stampAccessors(api: ExtensionAPI, extension: Extension, state: HostStat
  * @param seed State applied before the factory runs (pre-registration setup).
  */
 export async function createTestHost(
-	factory: ExtensionFactory = registerAgenticoding,
+	factory: ExtensionFactory = registerSchematic,
 	seed: TestHostSeed = {},
 ): Promise<TestPI> {
 	const state = createHostState(seed);

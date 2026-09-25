@@ -145,7 +145,7 @@ test("executeSpawn rejects immediately when no model is configured", async () =>
 });
 
 test("a parent-transient selected model fails explicitly in the real child runtime without fallback", async () => {
-	const root = await mkdtemp(join(tmpdir(), "pi-agenticoding-transient-"));
+	const root = await mkdtemp(join(tmpdir(), "pi-schematic-transient-"));
 	const cwd = join(root, "project");
 	const agentDir = join(root, "agent");
 	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;

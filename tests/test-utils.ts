@@ -1,5 +1,5 @@
 /**
- * Central test harness for the agenticoding extension.
+ * Central test harness for the pi-schematic extension.
  *
  * Every non-E2E test that touches module-level singletons starts with
  * `const h = createTestHarness()` and ends with `h.teardown()`.  One call

@@ -117,7 +117,7 @@ test("model-group frontmatter triggers model switch for /name command", async ()
 		assert.equal(setModelCalls[0].id, "gpt-4o");
 		assert.ok(notifications.some((n) => /Model changed.*reviewer.*\/review/.test(n.message)));
 
-		const groupEntries = pi.appendedEntries.filter((e: any) => e.customType === "agenticoding-model-group-switch");
+		const groupEntries = pi.appendedEntries.filter((e: any) => e.customType === "pi-schematic-model-group-switch");
 		assert.equal(groupEntries.length, 1, "should append one model-group-switch entry");
 		assert.equal(groupEntries[0].data.command, "/review");
 		assert.equal(groupEntries[0].data.groupName, "reviewer");
@@ -154,7 +154,7 @@ test("model-group-only frontmatter applies and records the group's effective thi
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
 		assert.deepEqual(setThinkingCalls, ["medium"], "group thinking is clamped for the routed model");
-		const entry = pi.appendedEntries.find((e: any) => e.customType === "agenticoding-model-group-switch");
+		const entry = pi.appendedEntries.find((e: any) => e.customType === "pi-schematic-model-group-switch");
 		assert.equal(entry?.data.thinking, "medium", "entry records effective thinking");
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
@@ -412,9 +412,9 @@ async function runPromptInput(
 
 function hasModelSelectionEntry(pi: any): boolean {
 	const types = new Set([
-		"agenticoding-model-switch",
-		"agenticoding-model-group-switch",
-		"agenticoding-thinking-change",
+		"pi-schematic-model-switch",
+		"pi-schematic-model-group-switch",
+		"pi-schematic-thinking-change",
 	]);
 	return pi.appendedEntries.some((entry: any) => types.has(entry.customType));
 }
@@ -445,7 +445,7 @@ test("explicit model frontmatter switches model", async () => withTemp(async ({ 
 		assert.equal(setModelCalls[0].id, "gpt-4o");
 		assert.ok(notifications.some((n) => /Model switched.*openai.*gpt-4o.*\/review/.test(n.message)));
 
-		const switchEntries = pi.appendedEntries.filter((e: any) => e.customType === "agenticoding-model-switch");
+		const switchEntries = pi.appendedEntries.filter((e: any) => e.customType === "pi-schematic-model-switch");
 		assert.equal(switchEntries.length, 1, "should append one model-switch entry");
 		assert.equal(switchEntries[0].data.command, "/review");
 		assert.equal(switchEntries[0].data.provider, "openai");
@@ -544,7 +544,7 @@ test("explicit model applies while invalid thinking is reported", async () => wi
 		const warnings = notifications.filter((n) => n.level === "warning");
 		assert.equal(warnings.length, 1, "invalid thinking should produce one warning");
 		assert.match(warnings[0]?.message ?? "", /\`thinking\`/);
-		const issues = pi.appendedEntries.filter((entry: any) => entry.customType === "agenticoding-frontmatter-issue");
+		const issues = pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-frontmatter-issue");
 		assert.equal(issues.length, 1, "invalid thinking should produce one issue entry");
 		assert.equal(issues[0]?.data.type, "command");
 		assert.equal(issues[0]?.data.issue.kind, "invalid-thinking-value");
@@ -702,7 +702,7 @@ test("thinking only frontmatter sets thinking level without changing model", asy
 		assert.equal(setThinkingCalls[0], "high");
 		assert.ok(notifications.some((n) => /Thinking level set.*high.*\/review/.test(n.message)));
 
-		const thinkingEntries = pi.appendedEntries.filter((e: any) => e.customType === "agenticoding-thinking-change");
+		const thinkingEntries = pi.appendedEntries.filter((e: any) => e.customType === "pi-schematic-thinking-change");
 		assert.equal(thinkingEntries.length, 1, "should append one thinking-change entry");
 		assert.equal(thinkingEntries[0].data.command, "/review");
 		assert.equal(thinkingEntries[0].data.thinking, "high");
@@ -883,7 +883,7 @@ test("model-group toggle does not affect readonly state", async () => withTemp(a
 		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(setModelCalls.length, 1, "model should be switched");
-		const readonlyEntries = pi.appendedEntries.filter((e: any) => e.customType === "agenticoding-readonly");
+		const readonlyEntries = pi.appendedEntries.filter((e: any) => e.customType === "pi-schematic-readonly");
 		assert.equal(readonlyEntries.length, 0, "readonly state should not be affected");
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });

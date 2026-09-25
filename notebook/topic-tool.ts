@@ -1,11 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { AgenticodingState } from "../state.js";
+import type { SchematicState } from "../state.js";
 import { normalizeNotebookTopic, setActiveNotebookTopic } from "./topic.js";
 
 export function registerNotebookTopicTool(
 	pi: ExtensionAPI,
-	state: AgenticodingState,
+	state: SchematicState,
 ): void {
 	pi.registerTool({
 		name: "notebook_topic_set",

@@ -8,14 +8,14 @@
 
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { buildHandoffCompactionSummary } from "./format.js";
-import type { AgenticodingState } from "../state.js";
+import type { SchematicState } from "../state.js";
 
 function getImpossibleKeptId(branchEntries: SessionEntry[]): string {
 	const leaf = branchEntries[branchEntries.length - 1];
 	return `${leaf?.id ?? "handoff"}-handoff-cut`;
 }
 
-export function registerHandoffCompaction(pi: ExtensionAPI, state: AgenticodingState): void {
+export function registerHandoffCompaction(pi: ExtensionAPI, state: SchematicState): void {
 	pi.on("session_before_compact", async (event, _ctx: ExtensionContext) => {
 		const pending = state.pendingHandoff;
 		const delivery = state.pendingHandoffDelivery;

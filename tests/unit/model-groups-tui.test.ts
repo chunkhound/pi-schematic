@@ -300,7 +300,7 @@ test("model groups TUI modality editor preserves state and notifies on updateGro
 	let failing = true;
 	const store = {
 		updateGroup: (_scope: string, _cwd: string, _name: string, def: any) => {
-			if (failing) throw new ModelGroupsPersistenceError({ operation: "save", scope: "project", sourcePath: "/tmp/.pi/pi-agenticoding/model-groups.json", phase: "rename", message: "modality write denied" });
+			if (failing) throw new ModelGroupsPersistenceError({ operation: "save", scope: "project", sourcePath: "/tmp/.pi/pi-schematic/model-groups.json", phase: "rename", message: "modality write denied" });
 			review.constraints = def.constraints ? { ...def.constraints, ...(Array.isArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) } : undefined;
 		},
 		listResolvedModelGroups: () => boot([review]),
@@ -385,7 +385,7 @@ test("model groups TUI wizard renders provider/model/thinking steps and preserve
 			throw new ModelGroupsPersistenceError({
 				operation: "save",
 				scope: "project",
-				sourcePath: "/tmp/project/.pi/pi-agenticoding/model-groups.json",
+				sourcePath: "/tmp/project/.pi/pi-schematic/model-groups.json",
 				phase: "rename",
 				message: "add failed",
 			});
@@ -577,7 +577,7 @@ test("model groups TUI notifies and preserves model edit state when updateGroup 
 			throw new ModelGroupsPersistenceError({
 				operation: "save",
 				scope: "project",
-				sourcePath: "/tmp/project/.pi/pi-agenticoding/model-groups.json",
+				sourcePath: "/tmp/project/.pi/pi-schematic/model-groups.json",
 				phase: "temp-write",
 				message: `update failed ${attemptedModels.length}`,
 			});
@@ -708,8 +708,8 @@ test("model groups TUI notifies and keeps visible state on persistence errors", 
 				throw new ModelGroupsPersistenceError({
 					operation: "save",
 					scope: "project",
-					sourcePath: "/tmp/project/.pi/pi-agenticoding/model-groups.json",
-					targetPath: "/tmp/project/.pi/pi-agenticoding/model-groups.json.123.tmp",
+					sourcePath: "/tmp/project/.pi/pi-schematic/model-groups.json",
+					targetPath: "/tmp/project/.pi/pi-schematic/model-groups.json.123.tmp",
 					phase: "temp-write",
 					message: "collision",
 				});
@@ -725,8 +725,8 @@ test("model groups TUI notifies and keeps visible state on persistence errors", 
 	c.handleInput?.("\u001b"); // Escape preserves persistence-error handling and exits name input
 	assert.equal(messages.length, 1);
 	assert.match(messages[0], /save failed at temp-write for project scope/);
-	assert.match(messages[0], /source: \/tmp\/project\/\.pi\/pi-agenticoding\/model-groups\.json/);
-	assert.match(messages[0], /target: \/tmp\/project\/\.pi\/pi-agenticoding\/model-groups\.json\.123\.tmp/);
+	assert.match(messages[0], /source: \/tmp\/project\/\.pi\/pi-schematic\/model-groups\.json/);
+	assert.match(messages[0], /target: \/tmp\/project\/\.pi\/pi-schematic\/model-groups\.json\.123\.tmp/);
 	assert.match(messages[0], /collision/);
 	const text = c.render(100).join("\n");
 	assert.match(text, /Model Group: review/);

@@ -1,6 +1,6 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext, ThemeColor } from "@earendil-works/pi-coding-agent";
-import type { AgenticodingState } from "../state.js";
+import type { SchematicState } from "../state.js";
 import { getEffectiveModelGroups } from "./router.js";
 import { MODALITY_FG, modalityLetterRun } from "./modality.js";
 import type { ModelGroupModel, ResolvedModelGroup } from "./types.js";
@@ -61,7 +61,7 @@ function buildSuggestionDescription(route: string, letters: string, capsWidth: n
 	return `${padded}${gap}${colorize("muted", route)}`;
 }
 
-export function createModelGroupAutocompleteProvider(state: AgenticodingState, colorize?: DescriptionColorizer) {
+export function createModelGroupAutocompleteProvider(state: SchematicState, colorize?: DescriptionColorizer) {
 	return (current: any) => ({
 		async getSuggestions(lines: string[], cursorLine: number, cursorCol: number, options: unknown) {
 			const line = lines[cursorLine] ?? "";
@@ -100,7 +100,7 @@ export function createModelGroupAutocompleteProvider(state: AgenticodingState, c
 	});
 }
 
-export function registerModelGroupAutocomplete(ctx: ExtensionContext, state: AgenticodingState): void {
+export function registerModelGroupAutocomplete(ctx: ExtensionContext, state: SchematicState): void {
 	if (!ctx.hasUI) return;
 	const ui = ctx.ui as unknown as {
 		addAutocompleteProvider?: (factory: ReturnType<typeof createModelGroupAutocompleteProvider>) => void;

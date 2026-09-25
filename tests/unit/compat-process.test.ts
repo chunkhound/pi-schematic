@@ -147,7 +147,7 @@ test("runNpmWithRetry rethrows after exhausting its retry budget", async () => {
 
 test("runChecked reports process launch failures", () => {
 	assert.throws(
-		() => runChecked("pi-agenticoding-command-that-does-not-exist", [], { cwd: REPO_ROOT, capture: true }),
+		() => runChecked("pi-schematic-command-that-does-not-exist", [], { cwd: REPO_ROOT, capture: true }),
 		(error: unknown) => {
 			assert.match(String(error), /error\.stack:/);
 			assert.match(String(error), /status: null/);

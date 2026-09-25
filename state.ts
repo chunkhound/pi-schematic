@@ -1,5 +1,5 @@
 /**
- * Shared mutable state for the agenticoding extension.
+ * Shared mutable state for the pi-schematic extension.
  *
  * Single source of truth that all modules read/write through.
  * Mutable by design — this is session-scoped imperative state.
@@ -11,7 +11,7 @@ import type { FrontmatterEntry, FrontmatterIssue } from "./frontmatter-cache.js"
 import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
 import type { HandoffPayload } from "./handoff/format.js";
 
-export interface AgenticodingState {
+export interface SchematicState {
 	/** Compact notebook pages keyed by kebab-case name */
 	notebookPages: Map<string, string>;
 
@@ -159,14 +159,14 @@ export interface AgenticodingState {
 }
 
 /** Create a fresh state instance. Call reset() on /new. */
-export function createState(): AgenticodingState {
+export function createState(): SchematicState {
 	const childSessions = new Map<string, AgentSession>();
 	const liveChildSessions = new Map<string, AgentSession>();
 	const frontmatterSkillCache = new Map<string, FrontmatterEntry>();
 	const frontmatterPromptCache = new Map<string, FrontmatterEntry>();
 	const frontmatterSkillIssues = new Map<string, FrontmatterIssue>();
 	const frontmatterPromptIssues = new Map<string, FrontmatterIssue>();
-	const state: AgenticodingState = {
+	const state: SchematicState = {
 		notebookPages: new Map(),
 		epoch: 0,
 		activeNotebookTopic: null,
@@ -214,7 +214,7 @@ export function createState(): AgenticodingState {
 }
 
 /** Reset all state. Used on /new or session reset. */
-export function resetState(state: AgenticodingState): void {
+export function resetState(state: SchematicState): void {
 	state.childSessionEpoch++;
 	state.notebookPages.clear();
 	state.epoch = 0; // sentinel: 0 = not yet initialized; set to 1 on first write
@@ -242,7 +242,7 @@ export function resetState(state: AgenticodingState): void {
 }
 
 /** Invalidate handoff work that belongs to a previous session-tree branch. */
-export function invalidateHandoffState(state: AgenticodingState): void {
+export function invalidateHandoffState(state: SchematicState): void {
 	state.handoffGeneration++;
 	state.pendingHandoff = null;
 	state.handoffCompactionGeneration = null;
@@ -266,7 +266,7 @@ export function invalidateHandoffState(state: AgenticodingState): void {
 }
 
 /** Return the session's single shared abort operation, starting it if necessary. */
-export function abortChildSession(state: AgenticodingState, session: AgentSession): Promise<void> {
+export function abortChildSession(state: SchematicState, session: AgentSession): Promise<void> {
 	const existing = state.childAbortPromises.get(session);
 	if (existing) return existing;
 
@@ -286,7 +286,7 @@ export function abortChildSession(state: AgenticodingState, session: AgentSessio
 }
 
 /** Abort all active child sessions and clear both registries. Called on /new (session reset). */
-export function abortAndClearChildSessions(state: AgenticodingState): void {
+export function abortAndClearChildSessions(state: SchematicState): void {
 	const sessions = new Set([...state.childSessions.values(), ...state.liveChildSessions.values()]);
 	state.childSessions.clear();
 	state.liveChildSessions.clear();

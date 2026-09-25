@@ -589,7 +589,7 @@ test("modality overrides survive CRUD rename and move lifecycle in both scopes",
 }));
 
 test("model groups use branded paths, global-only access, canonical own keys, and native max", () => withTemp(({ cwd }) => {
-	assert.equal(modelGroupsPath("project", cwd, "branded-pi"), path.join(cwd, "branded-pi", "pi-agenticoding", "model-groups.json"));
+	assert.equal(modelGroupsPath("project", cwd, "branded-pi"), path.join(cwd, "branded-pi", "pi-schematic", "model-groups.json"));
 	const raw = '{"version":1,"groups":{" __proto__ ":{"models":[{"provider":"p","modelId":"proto","thinkingLevel":"max"}]},"constructor":{"models":[]},"toString":{"models":[]}}}';
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), raw, "utf8");

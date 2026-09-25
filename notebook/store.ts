@@ -10,7 +10,7 @@ import {
 	DEFAULT_MAX_LINES,
 	truncateHead,
 } from "@earendil-works/pi-coding-agent";
-import type { AgenticodingState } from "../state.js";
+import type { SchematicState } from "../state.js";
 import { createWriteLock, __setSingletons, getSingletons } from "../runtime-singletons.js";
 
 /** Reset write lock state. Only for test cleanup after concurrent runs. */
@@ -45,7 +45,7 @@ async function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
 	}
 }
 
-export function getPageNames(state: AgenticodingState): string[] {
+export function getPageNames(state: SchematicState): string[] {
 	return Array.from(state.notebookPages.keys()).sort();
 }
 
@@ -59,7 +59,7 @@ export function formatPagePreview(content: string): string {
 		: firstLine;
 }
 
-export function formatPageList(state: AgenticodingState): string {
+export function formatPageList(state: SchematicState): string {
 	const names = getPageNames(state);
 	if (names.length === 0) return "";
 
@@ -73,7 +73,7 @@ export function formatPageList(state: AgenticodingState): string {
 
 export async function saveNotebookPage(
 	pi: ExtensionAPI,
-	state: AgenticodingState,
+	state: SchematicState,
 	name: string,
 	content: string,
 	assertWritable?: () => void | Promise<void>,
@@ -117,7 +117,7 @@ export async function saveNotebookPage(
  */
 export async function prepareNotebookDiscard(
 	pi: ExtensionAPI,
-	state: AgenticodingState,
+	state: SchematicState,
 	generation: number,
 	names: string[],
 ): Promise<string[]> {
@@ -141,7 +141,7 @@ export async function prepareNotebookDiscard(
 
 /** Commit a prepared discard after Pi reports compaction success. */export function commitNotebookDiscard(
 	pi: ExtensionAPI,
-	state: AgenticodingState,
+	state: SchematicState,
 	generation: number,
 ): void {
 	const pending = state.pendingNotebookDiscard;

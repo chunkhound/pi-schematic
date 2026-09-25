@@ -14,7 +14,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { createState, type AgenticodingState } from "../../state.js";
+import { createState, type SchematicState } from "../../state.js";
 import {
 	renderSpawnCall,
 	renderSpawnResult,
@@ -81,7 +81,7 @@ function matchSnapshot(name: string, actual: string): void {
 	assert.equal(cleaned, expected, `Snapshot ${name} does not match`);
 }
 
-function withHarness(run: (state: AgenticodingState) => void): void {
+function withHarness(run: (state: SchematicState) => void): void {
 	const harness = createTestHarness();
 	const state = createState();
 	try {
@@ -289,7 +289,7 @@ test("context indicator at 30% matches snapshot", () => {
 	const ctx = makeTUICtx({ percent: 30, record });
 
 	updateIndicators(ctx, state);
-	const status = record.statuses.get("agenticoding-ctx") ?? "";
+	const status = record.statuses.get("pi-schematic-ctx") ?? "";
 	matchSnapshot("indicator-30", status);
 });
 
@@ -299,7 +299,7 @@ test("context indicator at 50% matches snapshot", () => {
 	const ctx = makeTUICtx({ percent: 50, record });
 
 	updateIndicators(ctx, state);
-	const status = record.statuses.get("agenticoding-ctx") ?? "";
+	const status = record.statuses.get("pi-schematic-ctx") ?? "";
 	matchSnapshot("indicator-50", status);
 });
 
@@ -309,6 +309,6 @@ test("context indicator at 70% matches snapshot", () => {
 	const ctx = makeTUICtx({ percent: 70, record });
 
 	updateIndicators(ctx, state);
-	const status = record.statuses.get("agenticoding-ctx") ?? "";
+	const status = record.statuses.get("pi-schematic-ctx") ?? "";
 	matchSnapshot("indicator-70", status);
 });

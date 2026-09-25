@@ -1,5 +1,5 @@
 /**
- * /handoff command for the agenticoding extension.
+ * /handoff command for the pi-schematic extension.
  *
  * Stores the human direction as the successor's instruction, then asks the LLM to
  * prepare this context for the cut: curate the notebook and supply the remaining
@@ -13,10 +13,10 @@ import {
 	READONLY_HANDOFF_EXCEPTION_NOTIFICATION,
 	buildReadonlyHandoffCommandNotice,
 } from "../notifications.js";
-import type { AgenticodingState } from "../state.js";
+import type { SchematicState } from "../state.js";
 import { STATUS_KEY_HANDOFF } from "../tui.js";
 
-export function registerHandoffCommand(pi: ExtensionAPI, state: AgenticodingState): void {
+export function registerHandoffCommand(pi: ExtensionAPI, state: SchematicState): void {
 	pi.registerCommand("handoff", {
 		description:
 			"Store the next context's instruction verbatim from your direction, have the LLM " +

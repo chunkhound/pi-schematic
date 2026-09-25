@@ -322,7 +322,7 @@ test("notebook_write pushes onUpdate and refreshes UI indicators", async () => {
 
 	assert.equal((update.content[0] as any).text, 'Saved "entry-a": first line');
 	assert.deepEqual(update.details, { entries: ["entry-a"], preview: "first line" });
-	assert.equal(record.statuses.get("agenticoding-notebook"), "📒 1");
+	assert.equal(record.statuses.get("pi-schematic-notebook"), "📒 1");
 	assert.deepEqual(result.details, { entries: ["entry-a"], preview: "first line" });
 });
 

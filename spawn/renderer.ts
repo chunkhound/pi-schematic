@@ -33,7 +33,7 @@ import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { Container, Spacer, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
 import { escapeDisplayLabel } from "../model-groups/display.js";
-import { abortChildSession, type AgenticodingState } from "../state.js";
+import { abortChildSession, type SchematicState } from "../state.js";
 import {
 	__setSingletons,
 	getSingletons,
@@ -497,7 +497,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 	private details?: SpawnResultDetails;
 	private nestTheme?: Theme;
 	private ownedToolCallId?: string;
-	private state?: AgenticodingState;
+	private state?: SchematicState;
 	private attachedChildSessionEpoch?: number;
 	private liveOutcome: SpawnOutcome = "running";
 	// States: "⏳ initializing…" → "💭 thinking…" → "[tool] …/preview" or live text → terminal outcome
@@ -634,7 +634,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 	attachSession(
 		toolCallId: string,
 		session: AgentSession,
-		state: AgenticodingState,
+		state: SchematicState,
 	): void {
 		if (
 			this.session === session
@@ -1321,7 +1321,7 @@ function renderSpawnResult(
 	expanded: boolean,
 	theme: Theme,
 	context: { toolCallId: string; lastComponent?: unknown; invalidate: () => void; showImages: boolean; isError?: boolean },
-	state: AgenticodingState,
+	state: SchematicState,
 ): NestedAgentSessionComponent | Text {
 	const details = normalizeSpawnResultDetails(result.details);
 	const component = context.lastComponent instanceof NestedAgentSessionComponent

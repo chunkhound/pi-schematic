@@ -63,7 +63,7 @@ test("context injects watchdog reminder before each LLM call", async () => {
 	assert.equal(result.messages.length, 2);
 	assert.deepEqual(result.messages[0], { role: "user", content: "hi", timestamp: 1 });
 	assert.equal(result.messages[1].role, "custom");
-	assert.equal(result.messages[1].customType, "agenticoding-watchdog");
+	assert.equal(result.messages[1].customType, "pi-schematic-watchdog");
 	assert.equal(result.messages[1].display, false);
 	assert.match(result.messages[1].content, /70%/);
 	assert.match(result.messages[1].content, /oauth/);
@@ -115,7 +115,7 @@ test("context injects a no-topic nudge when context is high", async () => {
 
 	assert.equal(result.messages.length, 2);
 	assert.equal(result.messages[1].role, "custom");
-	assert.equal(result.messages[1].customType, "agenticoding-watchdog");
+	assert.equal(result.messages[1].customType, "pi-schematic-watchdog");
 	assert.equal(result.messages[1].display, false);
 	assert.match(result.messages[1].content, /no active notebook topic/i);
 	assert.match(result.messages[1].content, /fresh topic/i);
@@ -389,7 +389,7 @@ test("context injects a readonly-mode nudge after toggle", async () => {
 	);
 
 	assert.equal(result.messages.length, 2);
-	assert.equal(result.messages[1].customType, "agenticoding-readonly-nudge");
+	assert.equal(result.messages[1].customType, "pi-schematic-readonly-nudge");
 	assert.match(result.messages[1].content, /readonly/i);
 	assert.match(result.messages[1].content, /write\/edit blocked/i);
 	assert.match(result.messages[1].content, /bash writes/i);
@@ -410,7 +410,7 @@ test("context injects readonly handoff guidance after explicit user /handoff", a
 		{ messages: [{ role: "user", content: "hi", timestamp: 2 }] },
 		{ getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }) },
 	);
-	const watchdogMessage = result.messages.find((message: any) => message.customType === "agenticoding-watchdog");
+	const watchdogMessage = result.messages.find((message: any) => message.customType === "pi-schematic-watchdog");
 
 	assert.ok(watchdogMessage, "requested handoff should inject watchdog guidance");
 	assert.match(watchdogMessage.content, /handoff/i);
@@ -434,8 +434,8 @@ test("readonly toggle nudge aligns with handoff exception in the same turn", asy
 		{ messages: [{ role: "user", content: "hi", timestamp: 2 }] },
 		{ getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }) },
 	);
-	const readonlyMessage = result.messages.find((message: any) => message.customType === "agenticoding-readonly-nudge");
-	const watchdogMessage = result.messages.find((message: any) => message.customType === "agenticoding-watchdog");
+	const readonlyMessage = result.messages.find((message: any) => message.customType === "pi-schematic-readonly-nudge");
+	const watchdogMessage = result.messages.find((message: any) => message.customType === "pi-schematic-watchdog");
 
 	assert.ok(readonlyMessage, "readonly toggle should still emit its one-shot nudge");
 	assert.ok(watchdogMessage, "handoff guidance should still be injected");
@@ -468,7 +468,7 @@ test("eligible readonly human topic boundary auto-creates handoff bypass equival
 	// An eligible topic boundary in readonly mode creates the handoff bypass and injects
 	// watchdog guidance — equivalent to explicit /handoff or a human topic boundary.
 	assert.ok(result, "topic boundary should inject watchdog guidance");
-	const watchdogMessage = result.messages.find((m: any) => m.customType === "agenticoding-watchdog");
+	const watchdogMessage = result.messages.find((m: any) => m.customType === "pi-schematic-watchdog");
 	assert.ok(watchdogMessage, "watchdog message should be present");
 	assert.match(watchdogMessage.content, /handoff/i);
 	assert.match(watchdogMessage.content, /temporary handoff exception active/i);
@@ -498,7 +498,7 @@ test("watchdog band-crossing: nudge iff context enters a higher band", async () 
 						{ getContextUsage: () => pct },
 					);
 					const didNudge = result?.messages?.some(
-						(message: any) => message.customType === "agenticoding-watchdog",
+						(message: any) => message.customType === "pi-schematic-watchdog",
 					) ?? false;
 					if (raw < 30) {
 						// Below 30% resets lastWatchdogBand and never nudges.

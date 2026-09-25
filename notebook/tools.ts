@@ -1,5 +1,5 @@
 /**
- * Notebook tool definitions for the agenticoding extension.
+ * Notebook tool definitions for the pi-schematic extension.
  *
  * Three tools: notebook_write (sequential, serialized write), notebook_read, notebook_index.
  * All read from the in-memory state.notebookPages Map and always return the current
@@ -9,7 +9,7 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
-import type { AgenticodingState } from "../state.js";
+import type { SchematicState } from "../state.js";
 import { updateIndicators } from "../tui.js";
 import { formatPageList, formatPagePreview, getPageNames, saveNotebookPage } from "./store.js";
 
@@ -52,7 +52,7 @@ type IndexArgs = Static<typeof notebookIndexParams>;
  */
 export function createNotebookToolDefinitions(
 	pi: ExtensionAPI,
-	state: AgenticodingState,
+	state: SchematicState,
 	options?: { withPromptHints?: boolean; isStale?: () => boolean },
 ): ToolDefinition[] {
 	const withHints = options?.withPromptHints ?? false;
@@ -252,7 +252,7 @@ export function createNotebookToolDefinitions(
 
 export function registerNotebookTools(
 	pi: ExtensionAPI,
-	state: AgenticodingState,
+	state: SchematicState,
 ): void {
 	const tools = createNotebookToolDefinitions(pi, state, { withPromptHints: true });
 	for (const tool of tools) {

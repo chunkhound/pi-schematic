@@ -17,7 +17,7 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const loader = new URL("../../register-loader.mjs", import.meta.url).href;
 
 function evaluate(code: string): void {
-	const agentDir = mkdtempSync(join(tmpdir(), "pi-agenticoding-module-order-"));
+	const agentDir = mkdtempSync(join(tmpdir(), "pi-schematic-module-order-"));
 	try {
 		const result = spawnSync(process.execPath, ["--import", loader, "--input-type=module", "--eval", code], {
 			cwd: root,
