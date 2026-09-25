@@ -1,7 +1,8 @@
 import test, { afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createState } from "../../state.js";
-import { createSession, createSubscribableSession, createTestPI, createRenderContext, theme } from "./helpers.js";
+import { createSession, createSubscribableSession, createRenderContext, theme } from "./helpers.js";
+import { createTestHost } from "./test-host.js";
 import { flushSpawnFrameScheduler } from "../../spawn/renderer.js";
 import { getSingletons } from "../../runtime-singletons.js";
 import { registerSpawnTool } from "../../spawn/index.js";
@@ -9,9 +10,8 @@ import { createTestHarness, type TestHarness } from "../test-utils.js";
 
 let h: TestHarness;
 
-function makeChildSpawnTool(state: any) {
-	const pi = createTestPI();
-	registerSpawnTool(pi as any, state);
+async function makeChildSpawnTool(state: any) {
+	const pi = await createTestHost((api) => registerSpawnTool(api, state));
 	return pi.tools.get("spawn");
 }
 
@@ -130,9 +130,9 @@ test("frame scheduler creates only one timer for a failed-target recovery frame"
 	scheduler.clear();
 });
 
-test("nested spawn live action tracks tool execution events", () => {
+test("nested spawn live action tracks tool execution events", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -165,9 +165,9 @@ test("nested spawn live action tracks tool execution events", () => {
 	assert.ok(lines.some((l: string) => l.includes("[bash]")), `expected tool live action, got: ${lines.join("\n")}`);
 });
 
-test("nested spawn handleEvent recovers from malformed events", () => {
+test("nested spawn handleEvent recovers from malformed events", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -188,9 +188,9 @@ test("nested spawn handleEvent recovers from malformed events", () => {
 	assert.ok(lines.some((l: string) => l.includes("thinking")), `expected thinking after recovery, got: ${lines.join("\n")}`);
 });
 
-test("nested spawn message_end with aborted stopReason clears pending tools", () => {
+test("nested spawn message_end with aborted stopReason clears pending tools", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -211,9 +211,9 @@ test("nested spawn message_end with aborted stopReason clears pending tools", ()
 	assert.ok(lines.some((l: string) => l.includes("aborted")), `expected aborted, got: ${lines.join("\n")}`);
 });
 
-test("nested spawn dispose stops event processing", () => {
+test("nested spawn dispose stops event processing", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -234,9 +234,9 @@ test("nested spawn dispose stops event processing", () => {
 	assert.ok(after.every((line: string) => !line.includes("thinking")), `unexpected post-dispose update: ${after.join("\n")}`);
 });
 
-test("nested spawn dispose aborts but does not dispose a claimed live child session", () => {
+test("nested spawn dispose aborts but does not dispose a claimed live child session", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	let abortCalls = 0;
 	let disposeCalls = 0;
 	const session = {
@@ -268,9 +268,9 @@ test("nested spawn dispose aborts but does not dispose a claimed live child sess
 	assert.equal(state.liveChildSessions.has("tool-call-1"), false);
 });
 
-test("nested spawn rapid events collapse to last state", () => {
+test("nested spawn rapid events collapse to last state", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -303,9 +303,9 @@ test("nested spawn rapid events collapse to last state", () => {
 
 // Verifies pendingToolCallCreations accumulation: the last streamed args
 // overwrite on each message_update before the first frame flush.
-test("nested spawn uses the latest streamed tool-call args before first frame flush", () => {
+test("nested spawn uses the latest streamed tool-call args before first frame flush", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -341,7 +341,7 @@ test("nested spawn uses the latest streamed tool-call args before first frame fl
 
 test("nested spawn coalesces same-turn child events into one parent invalidate", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -366,9 +366,9 @@ test("nested spawn coalesces same-turn child events into one parent invalidate",
 	assert.ok(lines.some((l: string) => l.includes("file2")));
 });
 
-test("nested spawn retries a throw-once parent invalidate without a new child event", () => {
+test("nested spawn retries a throw-once parent invalidate without a new child event", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -397,9 +397,9 @@ test("nested spawn retries a throw-once parent invalidate without a new child ev
 	assert.deepEqual(h.warnings, []);
 });
 
-test("nested spawn does not restore a failed invalidate after disposal", () => {
+test("nested spawn does not restore a failed invalidate after disposal", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -429,7 +429,7 @@ test("nested spawn does not restore a failed invalidate after disposal", () => {
 
 test("nested spawn ignores child renderer invalidations during parent rebuild", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session } = createSubscribableSession([]);
 	(session as any).getToolDefinition = (toolName: string) => toolName === "reentrant"
 		? {
@@ -468,7 +468,7 @@ test("nested spawn ignores child renderer invalidations during parent rebuild", 
 
 test("nested spawn shared scheduler calls each distinct invalidate once per frame", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const first = createSubscribableSession([]);
 	const second = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", first.session);
@@ -508,7 +508,7 @@ test("nested spawn shared scheduler calls each distinct invalidate once per fram
 
 test("nested spawn shared scheduler still coalesces duplicate invalidate callbacks", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const first = createSubscribableSession([]);
 	const second = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", first.session);
@@ -539,7 +539,7 @@ test("nested spawn shared scheduler still coalesces duplicate invalidate callbac
 
 test("nested spawn renders state changes across frame boundaries", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -566,7 +566,7 @@ test("nested spawn renders state changes across frame boundaries", async () => {
 
 test("nested spawn dispose cancels pending and further invalidates after cleanup", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -597,7 +597,7 @@ test("nested spawn dispose cancels pending and further invalidates after cleanup
 
 test("nested spawn recovers batching state after event handler error", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -621,9 +621,9 @@ test("nested spawn recovers batching state after event handler error", async () 
 		"error recovery should allow subsequent events to render");
 });
 
-test("handleEvent gracefully degrades with null message events", () => {
+test("handleEvent gracefully degrades with null message events", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);

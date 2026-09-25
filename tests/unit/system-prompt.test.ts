@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { CONTEXT_PRIMER } from "../../system-prompt.js";
-import registerAgenticoding from "../../index.js";
-import { createTestPI, makeTUICtx } from "./helpers.js";
+import { createTestHost } from "./test-host.js";
+import { makeTUICtx } from "./helpers.js";
 
 test("CONTEXT_PRIMER states the notebook, topic, and handoff contracts", () => {
 	assert.doesNotMatch(CONTEXT_PRIMER, /ledger/i,
@@ -31,7 +31,11 @@ test("CONTEXT_PRIMER states the notebook, topic, and handoff contracts", () => {
 	assert.match(topicSection, /semantic frame/i);
 	assert.match(topicSection, /prefer spawn/i);
 	assert.match(topicSection, /prefer handoff/i);
-	assert.match(handoffSection, /handoff prompt/i);
+	assert.match(handoffSection, /next instruction/i);
+	assert.match(handoffSection, /verbatim/i);
+	assert.match(handoffSection, /Hand off BEFORE executing/i);
+	assert.match(handoffSection, /nextInstruction/i);
+	assert.doesNotMatch(handoffSection, /draft a handoff prompt/i);
 	assert.match(handoffSection, /notebook/i);
 	assert.doesNotMatch(handoffSection, /\bbrief\b/i);
 	assert.match(CONTEXT_PRIMER, /When the ask no longer matches the topic, call the handoff tool\./i);
@@ -53,8 +57,7 @@ test("CONTEXT_PRIMER states the notebook, topic, and handoff contracts", () => {
 });
 
 test("before_agent_start injects notebook contracts plus live topic and page data", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	await pi.commands.get("notebook")!.handler("oauth", { hasUI: false, getContextUsage: () => null });
 	const notebookWrite = pi.tools.get("notebook_write");
 	await notebookWrite.execute("1", { name: "alpha", content: "first line\nsecond line" }, undefined, undefined, makeTUICtx());
@@ -74,8 +77,7 @@ test("before_agent_start injects notebook contracts plus live topic and page dat
 });
 
 test("before_agent_start injects no-topic guidance when the topic is unset", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const [handler] = pi.handlers.get("before_agent_start")!;
 	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
 	const result = await handler({ systemPrompt: "Base system prompt." }, ctx);

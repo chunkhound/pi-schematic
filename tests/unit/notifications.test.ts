@@ -7,10 +7,9 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import registerAgenticoding from "../../index.js";
 import { wrapWithBwrap, wrapWithSandboxExec } from "../../os-sandbox.js";
 import { applyReadonlyBashGuard, classifyBashCommand } from "../../readonly-bash.js";
-import { createTestPI } from "./helpers.js";
+import { createTestHost } from "./test-host.js";
 import {
 	READONLY_BASH_SCOPE,
 	READONLY_NON_TEMP_MUTATION_SCOPE,
@@ -18,7 +17,6 @@ import {
 	READONLY_EXPLICIT_HANDOFF,
 	READONLY_HANDOFF_TRIGGER,
 	READONLY_NEXT_CONTEXT_RESUMES,
-	READONLY_BYPASS_CLEARED,
 	READONLY_WRITE_EDIT_BASH,
 	READONLY_WRITE_EDIT_BLOCK_REASON,
 	READONLY_HANDOFF_BLOCK_REASON,
@@ -62,7 +60,6 @@ const allConstants = {
 	READONLY_EXPLICIT_HANDOFF,
 	READONLY_HANDOFF_TRIGGER,
 	READONLY_NEXT_CONTEXT_RESUMES,
-	READONLY_BYPASS_CLEARED,
 	READONLY_WRITE_EDIT_BASH,
 	READONLY_WRITE_EDIT_BLOCK_REASON,
 	READONLY_HANDOFF_BLOCK_REASON,
@@ -123,8 +120,7 @@ test("bash and sandbox consumers use centralized readonly copy", () => {
 });
 
 test("parent readonly tool-call consumer uses centralized block copy", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	await pi.commands.get("readonly")!.handler("", {
 		hasUI: true,
 		getContextUsage: () => null,
@@ -157,13 +153,13 @@ test("shared readonly fragments keep copy aligned across contexts", () => {
 	assert.match(READONLY_HANDOFF_EXCEPTION_NOTIFICATION, /fresh context resumes in readonly mode/i);
 	assert.match(buildReadonlyRequestedHandoffContinuation(), /fresh context resumes in readonly mode/i);
 	assert.match(buildReadonlyHandoffWaitNotice(), /readonly remains active/i);
-	assert.match(buildReadonlyHandoffCommandNotice(), /next context resumes readonly mode/i);
+	assert.ok(buildReadonlyHandoffCommandNotice().includes(READONLY_NEXT_CONTEXT_RESUMES),
+		"the /handoff notice must reuse the shared readonly continuation sentence");
 	assert.match(buildReadonlyTopicBoundaryNotification("oauth", "billing"), /handoff exception activates.*once the context is ready/i);
 	assert.match(buildReadonlyDisabledContextSuffix(42), /42%/);
 	assert.match(READONLY_NON_TEMP_MUTATION_SCOPE, /non-temp bash filesystem mutations/i);
 	assert.match(READONLY_HANDOFF_TRIGGER, /human topic boundary/i);
 	assert.match(READONLY_NEXT_CONTEXT_RESUMES, /readonly mode/i);
-	assert.match(READONLY_BYPASS_CLEARED, /no longer active/i);
 	assert.match(READONLY_PENDING_HANDOFF_READONLY_ON_NOTIFICATION, /resume in readonly mode/i);
 	assert.match(READONLY_PENDING_HANDOFF_READONLY_OFF_NOTIFICATION, /will not resume in readonly mode/i);
 	assert.match(READONLY_HANDOFF_RETRY_ADVICE, /temporary readonly exception/i);
@@ -176,9 +172,8 @@ test("shared readonly fragments keep copy aligned across contexts", () => {
 	assert.match(buildReadonlySandboxPathError("/tmp/'bad"), /cannot safely escape/i);
 });
 
-test("readonly command consumes the centralized description", () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+test("readonly command consumes the centralized description", async () => {
+	const pi = await createTestHost();
 	assert.equal(pi.commands.get("readonly")?.description, READONLY_COMMAND_DESCRIPTION);
 });
 

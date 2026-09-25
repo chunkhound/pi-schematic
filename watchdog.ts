@@ -17,34 +17,42 @@ import {
 import { STATUS_KEY_HANDOFF } from "./tui.js";
 
 /** Max turns a required handoff stays sticky before auto-clear.
- * 5 eligible turns gives the LLM ~2-3 response cycles to draft and execute a prompt,
- * including one async compaction retry path where handoff/tool.ts resets
- * toolCalled=false after failure so enforcement can resume. */
+ * 5 eligible turns gives the LLM ~2-3 response cycles to supply the instruction
+ * and context, including one async compaction retry path where handoff/tool.ts
+ * resets toolCalled=false after failure so enforcement can resume. */
 export const MAX_HANDOFF_ATTEMPTS = 5;
 
 type NudgeState = Pick<AgenticodingState, "activeNotebookTopic" | "pendingTopicBoundaryHint" | "readonlyEnabled" | "pendingRequestedHandoff">;
 
 function buildRequestedHandoffNudge(state: NudgeState, eligible: boolean): string {
 	if (!eligible) {
-		const readonlyWait = state.pendingRequestedHandoff?.resumeReadonlyAfterHandoff
+		const readonlyWait = state.readonlyEnabled
 			? buildReadonlyHandoffWaitNotice()
 			: "";
 		return "A handoff is requested, but context is not yet ready for compaction. Continue working and retry handoff later." + readonlyWait;
 	}
 	const requestedHandoff = state.pendingRequestedHandoff!;
-	const readonlyContinuation = requestedHandoff.resumeReadonlyAfterHandoff
+	const handoffArguments = requestedHandoff.nextInstruction === null
+		? "the next instruction and the remaining context"
+		: "only the remaining context";
+	const readonlyContinuation = state.readonlyEnabled
 		? buildReadonlyRequestedHandoffContinuation()
-		: "Draft the prompt so the next context can start cleanly.";
+		: "The successor receives the instruction verbatim.";
 	return `A real handoff is required in this session now.
-You must complete it before continuing normal work.
-Save durable findings to the notebook if needed, then call handoff.
+Do not perform the new instruction here — this context is discarded at compaction.
+Save durable findings to the notebook if needed, then call handoff with ${handoffArguments}.
 ${readonlyContinuation}`;
+}
+
+function buildHandoffCancellationNotice(readonly: boolean): string {
+	const retryAdvice = readonly ? READONLY_HANDOFF_RETRY_ADVICE : "Use /handoff <direction> again to retry.";
+	return `Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} turns without completion. ${retryAdvice}`;
 }
 
 function buildBoundaryNudge(state: NudgeState, eligible: boolean): string {
 	const boundary = state.pendingTopicBoundaryHint!;
 	const action = eligible
-		? "Prefer a deliberate handoff before continuing under the new topic: save durable findings to the notebook, draft a concise situational prompt, and call handoff."
+		? "Prefer a deliberate handoff before continuing under the new topic: save durable findings to the notebook, then call handoff with the next instruction and the remaining context."
 		: "Continue working until context is ready for handoff; this boundary remains advisory for now.";
 	return `Notebook topic changed from ${boundary.from ?? "(unset)"} to ${boundary.to}.
 Treat this as a strong task-boundary signal. ${action}
@@ -107,16 +115,11 @@ export function registerWatchdog(pi: ExtensionAPI, state: AgenticodingState): vo
 		if (requestedHandoff && !requestedHandoff.toolCalled && isHandoffEligible(ctx.getContextUsage())) {
 			requestedHandoff.enforcementAttempts += 1;
 			if (requestedHandoff.enforcementAttempts >= MAX_HANDOFF_ATTEMPTS) {
+				const notice = buildHandoffCancellationNotice(state.readonlyEnabled);
 				state.pendingRequestedHandoff = null;
 				if (ctx.hasUI) {
 					ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
-					const retryAdvice = state.readonlyEnabled
-						? READONLY_HANDOFF_RETRY_ADVICE
-						: "Use /handoff <direction> again to retry.";
-					ctx.ui.notify(
-						`Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} turns without completion. ${retryAdvice}`,
-						"warning",
-					);
+					ctx.ui.notify(notice, "warning");
 				}
 			}
 		}

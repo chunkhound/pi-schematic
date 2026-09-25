@@ -40,6 +40,8 @@ import { getReadonlyFromBranch } from "./readonly-rehydration.js";
 import { HANDOFF_REQUIRED_STATUS } from "./handoff/copy.js";
 import { registerHandoffCommand } from "./handoff/command.js";
 import { registerHandoffCompaction } from "./handoff/compact.js";
+import { getUndeliveredHandoffMessage } from "./handoff/recovery.js";
+import { sendFollowUp } from "./follow-up.js";
 import {
 	READONLY_ACTIVE_SUMMARY,
 	READONLY_COMMAND_DESCRIPTION,
@@ -129,15 +131,6 @@ const READONLY_BYPASS_COMMANDS = new Set(["readonly", "notebook", "handoff"]);
 
 function isBuiltinReadonlyBypassCommand(name: string): boolean {
 	return READONLY_BYPASS_COMMANDS.has(name);
-}
-
-function alignPendingReadonlyHandoff(state: AgenticodingState, readonly: boolean): void {
-	if (!state.pendingRequestedHandoff) return;
-	// pendingRequestedHandoff represents a required future handoff, not just a
-	// momentary bypass. Keep both fields aligned with the latest readonly intent:
-	// readonly ON => allow exactly one handoff path now and resume readonly after it;
-	// readonly OFF => remove the bypass flag because handoff is no longer blocked.
-	state.pendingRequestedHandoff.resumeReadonlyAfterHandoff = readonly;
 }
 
 type PendingCommand = { type: "skill" | "command"; name: string };
@@ -242,11 +235,6 @@ function consumePendingReadonlyCommands(
 			continue;
 		}
 
-		// Keep a queued required handoff aligned with the latest resolved readonly
-		// intent even when the frontmatter decision is a no-op for current mode.
-		// Otherwise the eventual handoff prompt could resume with stale readonly
-		// semantics despite the slash command itself producing no visible toggle.
-		alignPendingReadonlyHandoff(state, readonly);
 		if (state.readonlyEnabled === readonly) {
 			return;
 		}
@@ -503,12 +491,9 @@ export default function (pi: ExtensionAPI): void {
 	function toggleReadonly(ctx: ExtensionContext): void {
 		if (!ctx.hasUI) return; // Toggle is a UI-only command, no-op in headless.
 		state.readonlyEnabled = !state.readonlyEnabled;
-		// A pendingRequestedHandoff is a promise to perform a real handoff later.
-		// If the user flips readonly before that happens, update the stored
-		// post-handoff readonly contract immediately so the eventual compacted task
-		// reflects the newest intent instead of the mode at /handoff time.
+		// A pendingRequestedHandoff is a promise to perform a real handoff later; tell
+		// the user which mode the fresh context will follow, then nudge the model.
 		if (state.pendingRequestedHandoff) {
-			alignPendingReadonlyHandoff(state, state.readonlyEnabled);
 			if (state.readonlyEnabled) {
 				ctx.ui.notify(READONLY_PENDING_HANDOFF_READONLY_ON_NOTIFICATION, "info");
 			} else {
@@ -538,12 +523,46 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 
+	function recoverHandoffMessage(ctx: ExtensionContext): void {
+		// Never fight an in-flight cut: the compaction hook owns the reservation and
+		// will deliver its own payload on completion.
+		if (state.handoffCompactionGeneration !== null) return;
+		// A queued follow-up may be the successor message itself, not yet persisted;
+		// resending now would double-deliver once the queue drains.
+		if (ctx.hasPendingMessages?.()) return;
+		const branch = ctx.sessionManager?.getBranch?.() ?? [];
+		const candidate = getUndeliveredHandoffMessage(branch, ctx.sessionManager?.getEntries?.() ?? branch);
+		// The latch coalesces repeated triggers for one persisted cut. New cuts carry a
+		// durable recovery key; legacy cuts fall back to their persisted entry identity.
+		if (!candidate) return;
+		const requested = state.recoveryRequestedMessage;
+		if (requested?.message === candidate.message &&
+			((candidate.recoveryKey !== null && requested.recoveryKey === candidate.recoveryKey) ||
+				(candidate.recoveryKey === null && requested.handoffEntryId === candidate.handoffEntryId))) {
+			requested.handoffEntryId = candidate.handoffEntryId;
+			return;
+		}
+		state.recoveryRequestedMessage = candidate;
+		try {
+			sendFollowUp(pi, candidate.message);
+		} catch (error) {
+			state.recoveryRequestedMessage = null;
+			if (ctx.hasUI) {
+				const message = error instanceof Error ? error.message : String(error);
+				ctx.ui.notify(`Handoff recovery delivery failed: ${message}. It will retry when the session settles.`, "error");
+			}
+			throw error;
+		}
+	}
+
 	function rehydrateReadonlyState(ctx: ExtensionContext): void {
 		const wasEnabled = state.readonlyEnabled;
 		const branch = ctx.sessionManager?.getBranch?.() ?? [];
 		state.readonlyEnabled = getReadonlyFromBranch(branch, pi);
-		// Nudge on any rehydrated readonly authority change.
-		if (state.readonlyEnabled !== wasEnabled) {
+		// Nudge whenever readonly is (or was) active: the handoff summary is
+		// readonly-free by design, so a rebuilt context must relearn the ON posture from
+		// live state, and a toggle to OFF must still be announced.
+		if (state.readonlyEnabled || wasEnabled) {
 			state.readonlyNudgePending = true;
 		}
 	}
@@ -931,6 +950,10 @@ export default function (pi: ExtensionAPI): void {
 		}
 
 		rehydrateReadonlyState(ctx);
+		// A session start is a fresh delivery scope; drop any latch carried over from
+		// an in-process resume before scanning the newly active branch.
+		state.recoveryRequestedMessage = null;
+		recoverHandoffMessage(ctx);
 		updateIndicators(ctx, state);
 	});
 
@@ -947,7 +970,20 @@ export default function (pi: ExtensionAPI): void {
 		reconstructNotebook(state, ctx.sessionManager?.getBranch?.() ?? []);
 		ensureNotebookToolsActive(pi);
 		rehydrateReadonlyState(ctx);
+		recoverHandoffMessage(ctx);
 		updateIndicators(ctx, state);
+	});
+
+	// A failed fire-and-forget successor follow-up has no extension-visible error or
+	// acknowledgement. Once a later agent run settles with no queued messages, inspect
+	// the persisted branch and resend only when no user turn follows the cut (a
+	// delivered successor or newer user input ends recovery).
+	pi.on("agent_settled", async (_event, ctx: ExtensionContext) => {
+		// A settle is the retry boundary: the earlier request either landed (the branch
+		// now shows it) or failed silently (still absent). Clear the latch so an absent
+		// successor is retried, while repeats before the run settles stay coalesced.
+		state.recoveryRequestedMessage = null;
+		recoverHandoffMessage(ctx);
 	});
 
 	// ── update TUI indicators after each turn ───────────────────────

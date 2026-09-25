@@ -1,8 +1,9 @@
 /**
  * /handoff command for the agenticoding extension.
  *
- * Collects a user direction, asks the LLM to complete the picture in a
- * handoff prompt, and lets the handoff tool perform the actual compaction.
+ * Stores the human direction as the successor's instruction, then asks the LLM to
+ * prepare this context for the cut: curate the notebook and supply the remaining
+ * situational context. The handoff tool performs the actual compaction.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -18,12 +19,12 @@ import { STATUS_KEY_HANDOFF } from "../tui.js";
 export function registerHandoffCommand(pi: ExtensionAPI, state: AgenticodingState): void {
 	pi.registerCommand("handoff", {
 		description:
-			"Ask the LLM to draft a handoff prompt that completes the picture from " +
-			"your direction, then perform the handoff automatically.",
+			"Store the next context's instruction verbatim from your direction, have the LLM " +
+			"curate the notebook and supply the remaining context, then perform the handoff automatically.",
 
 		handler: async (args, ctx) => {
-			const direction = args.trim();
-			if (!direction) {
+			const direction = args;
+			if (!direction.trim()) {
 				if (ctx.hasUI) ctx.ui.notify("Usage: /handoff <direction>", "error");
 				return;
 			}
@@ -34,10 +35,11 @@ export function registerHandoffCommand(pi: ExtensionAPI, state: AgenticodingStat
 			// Invalidate queued work from an earlier request before replacing its intent.
 			state.handoffGeneration++;
 			state.pendingHandoff = null;
+			state.pendingHandoffDelivery = null;
 			state.pendingRequestedHandoff = {
 				toolCalled: false,
-				resumeReadonlyAfterHandoff: state.readonlyEnabled,
 				enforcementAttempts: 0,
+				nextInstruction: direction,
 			};
 
 			if (ctx.hasUI && state.readonlyEnabled) {
@@ -63,7 +65,16 @@ export function registerHandoffCommand(pi: ExtensionAPI, state: AgenticodingStat
 				: "\n\nA real handoff is required in the current session. Do not continue normal work instead.";
 
 			pi.sendUserMessage(
-				`Handoff direction: ${direction}\n\nPrepare a handoff in the current session now. First, update the notebook to match the direction: refresh non-recoverable knowledge (user guidance, decisions, design, task scope) and discard pages holding only recoverable code facts. Then draft a concise but sufficiently detailed handoff prompt capturing only the remaining situational context: current state, blockers, unresolved questions, failed paths worth avoiding, and next steps. The next context will read the notebook on demand, so do not duplicate notebook content in the prompt. Use any structure that makes the next work unambiguous. Reference notebook pages by name when relevant.${readonlyNotice}`,
+				`Handoff requested. The next context will execute this instruction verbatim:
+<next-instruction>
+${direction}
+</next-instruction>
+
+Do NOT start this instruction. This context is discarded at compaction, so acting on it now is wasted.
+
+Preparation duties for this context:
+1. Curate the notebook for what the instruction needs: refresh non-recoverable knowledge (user guidance, decisions, design, task scope) and discard pages holding only recoverable code facts.
+2. Call the handoff tool with \`context\`: the situational context still missing from the notebook — current state, blockers, unresolved questions, failed paths worth avoiding, and the concrete next step. Do NOT repeat the instruction; it is already stored and will be delivered verbatim.${readonlyNotice}`,
 				ctx.isIdle() ? undefined : { deliverAs: "followUp" },
 			);
 		},

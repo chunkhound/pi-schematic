@@ -15,7 +15,6 @@ import { createState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
 import { renderSpawnResult } from "../../spawn/renderer.js";
 import {
-	createTestPI,
 	theme,
 	ansiTheme,
 	createRenderContext,
@@ -25,13 +24,13 @@ import {
 	getLineContaining,
 	assertShellBackgroundPreserved,
 } from "./helpers.js";
+import { createTestHost } from "./test-host.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
 
 let h: TestHarness;
 
-function makeChildSpawnTool(state: any) {
-	const pi = createTestPI();
-	registerSpawnTool(pi as any, state);
+async function makeChildSpawnTool(state: any) {
+	const pi = await createTestHost((api) => registerSpawnTool(api, state));
 	return pi.tools.get("spawn");
 }
 
@@ -43,9 +42,9 @@ afterEach(() => {
 	h.teardown();
 });
 
-test("collapsed nested spawn render shows preview and stats", () => {
+test("collapsed nested spawn render shows preview and stats", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const session = createSession([
 		{ role: "assistant", content: [{ type: "text", text: "one\ntwo\nthree\nfour\nfive\nsix\nseven" }] },
 	]);
@@ -75,9 +74,9 @@ test("collapsed nested spawn render shows preview and stats", () => {
 	assert.ok(lines.some((l: string) => l.includes("trunc")));
 });
 
-test("spawn result identity formats default routed and unknown fallback", () => {
+test("spawn result identity formats default routed and unknown fallback", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const routed = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "done" }], details: { model: "gpt-routed", thinking: "high", truncated: false, outcome: "success", route: { status: "routed", group: "review", provider: "openai", modelId: "gpt-routed" } } },
 		{ expanded: false }, theme, createRenderContext(),
@@ -119,9 +118,9 @@ test("spawn result identity formats default routed and unknown fallback", () => 
 	assert.ok(escapedLines.every((line: string) => !line.includes("\u001b")));
 });
 
-test("collapsed nested spawn render keeps all text blocks from the last assistant message", () => {
+test("collapsed nested spawn render keeps all text blocks from the last assistant message", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const session = createSession([
 		{ role: "assistant", content: [{ type: "text", text: "first" }, { type: "text", text: "second" }] },
 	]);
@@ -142,9 +141,9 @@ test("collapsed nested spawn render keeps all text blocks from the last assistan
 	assert.ok(lines.some((l: string) => l.includes("second")));
 });
 
-test("collapsed nested spawn truncation preserves shell background across preview and stats lines", () => {
+test("collapsed nested spawn truncation preserves shell background across preview and stats lines", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const session = createSession([
 		{ role: "assistant", content: [{ type: "text", text: "Research the nudge on toggle off TODO from the readonly mode plan." }] },
 	]);
@@ -173,14 +172,14 @@ test("collapsed nested spawn truncation preserves shell background across previe
 	assert.match(stripAnsi(statsLine), /tok 12\/34/);
 });
 
-test("collapsed nested spawn keeps truncated stats line calm", () => {
+test("collapsed nested spawn keeps truncated stats line calm", async () => {
 	const markerTheme = {
 		fg: (name: string, text: string) => `<${name}>${text}</${name}>`,
 		bg: (_name: string, text: string) => text,
 		bold: (text: string) => text,
 	} as unknown as Theme;
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const session = createSession([
 		{ role: "assistant", content: [{ type: "text", text: "short preview" }] },
 	]);
@@ -207,9 +206,9 @@ test("collapsed nested spawn keeps truncated stats line calm", () => {
 	assert.equal(statsLine.includes("<warning>"), false);
 });
 
-test("static no-output child error with empty details renders without fabricated identity", () => {
+test("static no-output child error with empty details renders without fabricated identity", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 
 	const component = childSpawnTool.renderResult(
 		{
@@ -227,9 +226,9 @@ test("static no-output child error with empty details renders without fabricated
 	assert.equal(lines.some((line: string) => line.includes("unknown")), false);
 });
 
-test("retained nested spawn preserves identity when malformed terminal details report an error", () => {
+test("retained nested spawn preserves identity when malformed terminal details report an error", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const session = createSession([]);
 	state.childSessions.set("tool-call-1", session);
 
@@ -263,9 +262,9 @@ test("retained nested spawn preserves identity when malformed terminal details r
 	assert.ok(expandedLines.some((line: string) => line.includes("⚠ mock-model • high")));
 });
 
-test("spawn result ignores malformed route and stats fields", () => {
+test("spawn result ignores malformed route and stats fields", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const component = childSpawnTool.renderResult(
 		{
 			content: [{ type: "text", text: "done" }],
@@ -291,9 +290,9 @@ test("spawn result ignores malformed route and stats fields", () => {
 	assert.equal(lines.some((line: string) => line.includes("stats unavailable")), false);
 });
 
-test("nested spawn render is safe without details", () => {
+test("nested spawn render is safe without details", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const session = createSession([
 		{ role: "assistant", content: [{ type: "text", text: "hello" }] },
 	]);
@@ -310,9 +309,9 @@ test("nested spawn render is safe without details", () => {
 	assert.ok(lines.some((l: string) => l.includes("hello")));
 });
 
-test("expanded nested spawn header stays within width after indent", () => {
+test("expanded nested spawn header stays within width after indent", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const session = createSession([
 		{ role: "assistant", content: [{ type: "text", text: "hello" }] },
 	]);
@@ -334,9 +333,9 @@ test("expanded nested spawn header stays within width after indent", () => {
 	assert.ok(stripAnsi(headerLine).length <= 24);
 });
 
-test("nested spawn render cache preserves stable output for identical params", () => {
+test("nested spawn render cache preserves stable output for identical params", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const session = createSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -353,9 +352,9 @@ test("nested spawn render cache preserves stable output for identical params", (
 	assert.deepEqual(second, first);
 });
 
-test("nested spawn clears cached render when showImages changes", () => {
+test("nested spawn clears cached render when showImages changes", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const session = createSession([
 		{ role: "assistant", content: [{ type: "text", text: "hello" }, { type: "image", data: "iVBOR", mimeType: "image/png" }] },
 	]);
@@ -389,9 +388,9 @@ test("nested spawn clears cached render when showImages changes", () => {
 	assert.equal((sameComponent as any).cachedShowImages, false);
 });
 
-test("nested spawn rerenders when stats become unavailable", () => {
+test("nested spawn rerenders when stats become unavailable", async () => {
 	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
+	const childSpawnTool = await makeChildSpawnTool(state);
 	const session = createSession([
 		{ role: "assistant", content: [{ type: "text", text: "hello" }] },
 	]);

@@ -14,7 +14,15 @@
  *   → ui-events             — return current status values and emitted notifications
  *   → compact-success       — run queued handoff compaction success path
  *   → compact-fail [message] — run queued handoff compaction failure path
- *   → session-tree          — navigate the active session tree branch
+ *   → successor-turn        — drain a queued follow-up into the successor context hook
+ *   → user-turn <text>      — persist a newer user message without draining a follow-up
+ *   → session-tree          — fire a tree-navigation event without changing the active branch
+ *   → tree-edit-last-user   — open the latest user turn for editing and move the active branch to its parent
+ *   → agent-end             — run the first agent_end handler
+ *   → agent-settled         — run the first agent_settled handler
+ *   → drop-follow-up        — discard one queued follow-up without persisting it (simulated delivery loss)
+ *   → successor-count       — count sent messages starting with "## Next instruction"
+ *   → sent-messages         — return extension-sent user messages
  *   → tools                 — list registered tool names
  *   → cmds                  — list registered command names
  *   → exit                  — graceful shutdown
@@ -25,21 +33,18 @@
  */
 
 import { createInterface } from "node:readline";
-import registerAgenticoding from "../../index.js";
-import { createTestPI } from "../unit/helpers.js";
+import { createTestHost } from "../unit/test-host.js";
 
-// ── Mock ExtensionAPI ─────────────────────────────────────────────
-// Uses createTestPI() from the shared test utilities — a minimal object
-// that satisfies what index.ts needs at registration time.
-// No TUI dependencies — tools and commands access the state through
-// the pi object directly.
+// ── Real extension host ───────────────────────────────────────────
+// Loads the extension through pi's real loader so the host exercises the same
+// ExtensionAPI the runtime provides. No TUI dependencies — tools and commands
+// access the state through the pi object directly.
 
-const pi = createTestPI();
+const pi = await createTestHost();
+// Capture the maps after registration: `pi.tools` is derived from the loaded
+// Extension's registered tools.
 const commands = pi.commands;
 const tools = pi.tools;
-
-// Register the extension — this populates pi.commands and pi.tools
-registerAgenticoding(pi);
 
 // ── Mock ExtensionContext for tool/command execution ──────────────
 
@@ -48,8 +53,33 @@ type CompactRequest = { onComplete?: () => void; onError?: (error: Error) => voi
 
 let currentUsage: MockContextUsage = null;
 let lastCompactRequest: CompactRequest | null = null;
+const queuedFollowUps: string[] = [];
 const statuses = new Map<string, string | undefined>();
 const notifications: Array<{ message: string; level: string }> = [];
+// `branch` models the active path while `entries` preserves the session history.
+// Pi moves a selected user turn into the editor by moving the active leaf to its
+// parent, but the delivered turn remains in session history as recovery evidence.
+const branch: any[] = [];
+const entries: any[] = [];
+let entrySeq = 0;
+
+function appendEntry(entry: any): void {
+	// Mirror pi: each entry is a child of the current leaf, and the leaf advances.
+	entry.parentId = branch.at(-1)?.id ?? null;
+	branch.push(entry);
+	entries.push(entry);
+}
+
+// Model Pi's follow-up queue centrally: every extension send with
+// deliverAs "followUp" waits here until a run drains it. Recovery sends must
+// queue too, so the override cannot live inside a single REPL command.
+const originalSendUserMessage = pi.sendUserMessage;
+pi.sendUserMessage = (content: any, options?: any) => {
+	originalSendUserMessage.call(pi, content, options);
+	if (options?.deliverAs === "followUp") {
+		queuedFollowUps.push(typeof content === "string" ? content : content.map((part: any) => part.text ?? "").join("\n"));
+	}
+};
 
 const mockCtx = {
 	hasUI: true,
@@ -82,7 +112,7 @@ const mockCtx = {
 		setTheme: () => ({ ok: true }),
 	},
 	getContextUsage: () => currentUsage,
-	sessionManager: null,
+	sessionManager: { getBranch: () => branch, getEntries: () => entries },
 	modelRegistry: null,
 	isProjectTrusted: () => true,
 	// Required by spawn tool which checks ctx.model existence before using it
@@ -90,7 +120,7 @@ const mockCtx = {
 	isIdle: () => true,
 	signal: new AbortController().signal,
 	abort: () => {},
-	hasPendingMessages: () => false,
+	hasPendingMessages: () => queuedFollowUps.length > 0,
 	shutdown: () => process.exit(0),
 	compact: (request: { onComplete?: () => void; onError?: (error: Error) => void }) => {
 		lastCompactRequest = request;
@@ -143,8 +173,20 @@ for await (const line of rl) {
 				process.stdout.write("OK:null\n");
 				continue;
 			}
+			// Mirror Pi: the compaction entry lands in the branch before the successor
+			// delivery, so recovery scans observe the same order.
+			appendEntry({
+				type: "compaction",
+				id: `compaction-${++entrySeq}`,
+				summary: result.compaction.summary,
+				details: result.compaction.details,
+			});
 			compactRequest.onComplete();
-			process.stdout.write("OK:" + JSON.stringify(result.compaction) + "\n");
+			const lastMessage = pi.sentUserMessages.at(-1);
+			process.stdout.write("OK:" + JSON.stringify({
+				...result.compaction,
+				queuedFollowUp: lastMessage?.options?.deliverAs === "followUp",
+			}) + "\n");
 		} else {
 			if (typeof compactRequest.onError !== "function") {
 				process.stdout.write("ERR:no failure callback\n");
@@ -155,13 +197,76 @@ for await (const line of rl) {
 			const lastMessage = pi.sentUserMessages.at(-1)?.content ?? "";
 			process.stdout.write("OK:compaction failed:" + lastMessage + "\n");
 		}
-	} else if (trimmed === "session-tree") {
+	} else if (trimmed === "successor-turn") {
+		const successorMessage = queuedFollowUps.shift();
+		const [contextHandler] = pi.handlers.get("context") ?? [];
+		if (!successorMessage || !contextHandler) {
+			process.stdout.write("ERR:no queued successor turn\n");
+			continue;
+		}
+		// Model Pi persistence: draining the follow-up appends the user message as
+		// text content parts — the shape real Pi persists.
+		appendEntry({
+			type: "message",
+			id: `message-${++entrySeq}`,
+			message: { role: "user", content: [{ type: "text", text: successorMessage }] },
+		});
+		const result = await contextHandler({
+			messages: [{ role: "user", content: successorMessage, timestamp: Date.now() }],
+		}, mockCtx);
+		process.stdout.write("OK:" + JSON.stringify({ successorMessage, context: result ?? null }) + "\n");
+	} else if (trimmed.startsWith("user-turn ")) {
+		const content = trimmed.slice("user-turn ".length).trim();
+		if (!content) {
+			process.stdout.write("ERR:missing user-turn content\n");
+			continue;
+		}
+		appendEntry({
+			type: "message",
+			id: `message-${++entrySeq}`,
+			message: { role: "user", content: [{ type: "text", text: content }] },
+		});
+		process.stdout.write("OK\n");
+	} else if (trimmed === "agent-end") {
+		const [agentEnd] = pi.handlers.get("agent_end") ?? [];
+		if (!agentEnd) {
+			process.stdout.write("ERR:no agent_end handler\n");
+			continue;
+		}
+		await agentEnd({}, mockCtx);
+		process.stdout.write("OK\n");
+	} else if (trimmed === "agent-settled") {
+		const [agentSettled] = pi.handlers.get("agent_settled") ?? [];
+		if (!agentSettled) {
+			process.stdout.write("ERR:no agent_settled handler\n");
+			continue;
+		}
+		await agentSettled({}, mockCtx);
+		process.stdout.write("OK\n");
+	} else if (trimmed === "drop-follow-up") {
+		const dropped = queuedFollowUps.shift();
+		process.stdout.write(dropped ? "OK\n" : "ERR:no queued follow-up\n");
+	} else if (trimmed === "successor-count") {
+		const count = pi.sentUserMessages.filter((message) => message.content.startsWith("## Next instruction")).length;
+		process.stdout.write("OK:" + count + "\n");
+	} else if (trimmed === "sent-messages") {
+		process.stdout.write("OK:" + JSON.stringify(pi.sentUserMessages) + "\n");
+	} else if (trimmed === "session-tree" || trimmed === "tree-edit-last-user") {
 		const [sessionTree] = pi.handlers.get("session_tree") ?? [];
 		if (!sessionTree) {
 			process.stdout.write("ERR:no session_tree handler\n");
 			continue;
 		}
-		await sessionTree({ newLeafId: "fresh-leaf", oldLeafId: "old-leaf" }, mockCtx);
+		const oldLeafId = branch.at(-1)?.id ?? "old-leaf";
+		if (trimmed === "tree-edit-last-user") {
+			const index = branch.map((entry) => entry.message?.role).lastIndexOf("user");
+			if (index === -1) {
+				process.stdout.write("ERR:no user turn to edit\n");
+				continue;
+			}
+			branch.splice(index);
+		}
+		await sessionTree({ newLeafId: branch.at(-1)?.id ?? "root", oldLeafId }, mockCtx);
 		process.stdout.write("OK\n");
 	} else if (trimmed === "tools") {
 		const names = Array.from(tools.keys()).sort().join(",");

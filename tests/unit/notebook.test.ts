@@ -8,11 +8,12 @@ import { registerNotebookRehydration, reconstructNotebook } from "../../notebook
 import { commitNotebookDiscard, prepareNotebookDiscard, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
 import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
-import registerAgenticoding from "../../index.js";
 import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
-import { createTestPI, makeTUICtx, createDeferred, theme, stripAnsi } from "./helpers.js";
+import { makeTUICtx, createDeferred, theme, stripAnsi } from "./helpers.js";
+import { createTestHost } from "./test-host.js";
+import type { TestPI } from "./test-host.js";
 
-function persistedBranch(pi: ReturnType<typeof createTestPI>): object[] {
+function persistedBranch(pi: TestPI): object[] {
 	return pi.appendedEntries.map(({ customType, data }) => ({
 		type: "custom",
 		customType,
@@ -20,10 +21,9 @@ function persistedBranch(pi: ReturnType<typeof createTestPI>): object[] {
 	}));
 }
 
-async function rehydratePersistedNotebook(pi: ReturnType<typeof createTestPI>) {
+async function rehydratePersistedNotebook(pi: TestPI) {
 	const state = createState();
-	const restoredPi = createTestPI();
-	registerNotebookRehydration(restoredPi as any, state);
+	const restoredPi = await createTestHost((api) => registerNotebookRehydration(api, state));
 	const [handler] = restoredPi.handlers.get("session_start")!;
 	await handler({}, { sessionManager: { getBranch: () => persistedBranch(pi) } });
 	return state;
@@ -32,9 +32,8 @@ async function rehydratePersistedNotebook(pi: ReturnType<typeof createTestPI>) {
 // ── Notebook rehydration tests ────────────────────────────────────────
 
 test("notebook rehydration rebuilds the latest epoch and enables notebook tools", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerNotebookRehydration(pi as any, state);
+	const pi = await createTestHost((api) => registerNotebookRehydration(api, state));
 	const [handler] = pi.handlers.get("session_start")!;
 
 	await handler(
@@ -57,11 +56,9 @@ test("notebook rehydration rebuilds the latest epoch and enables notebook tools"
 
 
 test("notebook rehydration rebuilds from the latest persisted epoch and avoids duplicate active tools", async () => {
-	const pi = createTestPI();
-	pi.activeTools = ["read", "notebook_read", "notebook_index"];
 	const state = createState();
 	state.epoch = 7;
-	registerNotebookRehydration(pi as any, state);
+	const pi = await createTestHost((api) => registerNotebookRehydration(api, state), { activeTools: ["read", "notebook_read", "notebook_index"] });
 	const [handler] = pi.handlers.get("session_start")!;
 
 	await handler(
@@ -84,11 +81,10 @@ test("notebook rehydration rebuilds from the latest persisted epoch and avoids d
 
 
 test("notebook rehydration clears stale in-memory notebook state when persisted history is empty", async () => {
-	const pi = createTestPI();
 	const state = createState();
 	state.epoch = 7;
 	state.notebookPages.set("stale", "stale body");
-	registerNotebookRehydration(pi as any, state);
+	const pi = await createTestHost((api) => registerNotebookRehydration(api, state));
 	const [handler] = pi.handlers.get("session_start")!;
 
 	await handler(
@@ -106,9 +102,8 @@ test("notebook rehydration clears stale in-memory notebook state when persisted 
 });
 
 test("notebook rehydration ignores null and malformed branch entries", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerNotebookRehydration(pi as any, state);
+	const pi = await createTestHost((api) => registerNotebookRehydration(api, state));
 	const [handler] = pi.handlers.get("session_start")!;
 
 	await handler(
@@ -132,9 +127,8 @@ test("notebook rehydration ignores null and malformed branch entries", async () 
 });
 
 test("future-version notebook entries have zero effect on rehydrated state", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerNotebookRehydration(pi as any, state);
+	const pi = await createTestHost((api) => registerNotebookRehydration(api, state));
 	const [handler] = pi.handlers.get("session_start")!;
 
 	// Real writes through the real store (both land at epoch 1).
@@ -161,9 +155,8 @@ test("future-version notebook entries have zero effect on rehydrated state", asy
 });
 
 test("pre-versioned entries without a version field rehydrate on parity", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerNotebookRehydration(pi as any, state);
+	const pi = await createTestHost((api) => registerNotebookRehydration(api, state));
 	const [handler] = pi.handlers.get("session_start")!;
 
 	// Real writes through the real store, then strip the version discriminator
@@ -184,9 +177,7 @@ test("pre-versioned entries without a version field rehydrate on parity", async 
 });
 
 test("session_start rehydrates the latest persisted notebook state through the full hook chain", async () => {
-	const pi = createTestPI();
-	pi.activeTools = ["read", "notebook_read"];
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost(undefined, { activeTools: ["read", "notebook_read"] });
 
 	const notebookWrite = pi.tools.get("notebook_write");
 	await notebookWrite.execute(
@@ -227,7 +218,7 @@ test("session_start rehydrates the latest persisted notebook state through the f
 // ── Notebook tool contract tests ──────────────────────────────────────
 
 test("notebook tools add/get/list return stable contract details", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	const [notebookWrite, notebookRead, notebookIndex] = createNotebookToolDefinitions(pi as any, state);
 
@@ -251,7 +242,7 @@ test("notebook tools add/get/list return stable contract details", async () => {
 });
 
 test("child notebook tools reject stale access after reset", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	state.notebookPages.set("entry-a", "alpha");
 	let stale = false;
@@ -275,7 +266,7 @@ test("child notebook tools reject stale access after reset", async () => {
 });
 
 test("child notebook_write succeeds while child session is fresh", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	const [notebookWrite] = createNotebookToolDefinitions(pi as any, state, { isStale: () => false });
 
@@ -286,7 +277,7 @@ test("child notebook_write succeeds while child session is fresh", async () => {
 });
 
 test("notebook_read reports not found with current page names", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	state.notebookPages.set("entry-a", "alpha");
 	state.notebookPages.set("entry-b", "beta");
@@ -301,7 +292,7 @@ test("notebook_read reports not found with current page names", async () => {
 });
 
 test("notebook tools show empty-state placeholders", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	const [, notebookRead, notebookIndex] = createNotebookToolDefinitions(pi as any, state);
 
@@ -315,7 +306,7 @@ test("notebook tools show empty-state placeholders", async () => {
 });
 
 test("notebook_write pushes onUpdate and refreshes UI indicators", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	const [notebookWrite] = createNotebookToolDefinitions(pi as any, state);
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
@@ -336,7 +327,7 @@ test("notebook_write pushes onUpdate and refreshes UI indicators", async () => {
 });
 
 test("notebook tool renderers expose stable call/result summaries", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	const [notebookWrite, notebookRead, notebookIndex] = createNotebookToolDefinitions(pi as any, state);
 
@@ -384,16 +375,14 @@ test("notebook tool renderers expose stable call/result summaries", async () => 
 // ── Notebook command / overlay tests ──────────────────────────────────
 
 test("/notebook exits cleanly when headless", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 
 	await assert.doesNotReject(() => pi.commands.get("notebook")!.handler("", { hasUI: false }));
 });
 
 
 test("/notebook <topic> notifies with info on first set and warning on boundary change", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const notifications: Array<{ message: string; level: string }> = [];
 	const statuses = new Map<string, string | undefined>();
 	const widgets = new Map<string, string[] | undefined>();
@@ -419,8 +408,7 @@ test("/notebook <topic> notifies with info on first set and warning on boundary 
 });
 
 test("readonly /notebook boundary notification explains deferred handoff eligibility", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const notifications: Array<{ message: string; level: string }> = [];
 	const ctx = {
 		hasUI: true,
@@ -444,8 +432,7 @@ test("readonly /notebook boundary notification explains deferred handoff eligibi
 
 
 test("/notebook empty overlay renders empty state and closes on input", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	let overlay: any;
 	let doneCalls = 0;
 
@@ -467,8 +454,7 @@ test("/notebook empty overlay renders empty state and closes on input", async ()
 });
 
 test("/notebook selection previews the chosen entry", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const notebookWrite = pi.tools.get("notebook_write");
 	await notebookWrite.execute("1", { name: "alpha", content: "body line\nsecond line" }, undefined, undefined, makeTUICtx());
 	let overlay: any;
@@ -496,8 +482,7 @@ test("/notebook selection previews the chosen entry", async () => {
 });
 
 test("/notebook overlay sorts entries consistently", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const notebookWrite = pi.tools.get("notebook_write");
 	await notebookWrite.execute("1", { name: "zeta", content: "last" }, undefined, undefined, makeTUICtx());
 	await notebookWrite.execute("2", { name: "alpha", content: "first" }, undefined, undefined, makeTUICtx());
@@ -520,7 +505,7 @@ test("/notebook overlay sorts entries consistently", async () => {
 // ── saveNotebookPage tests ────────────────────────────────────────────
 
 test("saveNotebookPage serializes concurrent writes and preserves completion order", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	const firstGate = createDeferred();
 	const order: string[] = [];
@@ -545,7 +530,7 @@ test("saveNotebookPage serializes concurrent writes and preserves completion ord
 });
 
 test("saveNotebookPage keeps write order across runtime singleton swaps", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	const previousSingletons = getSingletons();
 	const firstGate = createDeferred();
@@ -583,7 +568,7 @@ test("saveNotebookPage keeps write order across runtime singleton swaps", async 
 });
 
 test("saveNotebookPage rejects true reentrancy explicitly", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 
 	await assert.rejects(
@@ -596,7 +581,7 @@ test("saveNotebookPage rejects true reentrancy explicitly", async () => {
 });
 
 test("saveNotebookPage stays non-reentrant across runtime singleton swaps", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	const previousSingletons = getSingletons();
 
@@ -625,7 +610,7 @@ test("saveNotebookPage stays non-reentrant across runtime singleton swaps", asyn
 });
 
 test("saveNotebookPage releases the lock when assertWritable throws", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 
 	await assert.rejects(
@@ -639,7 +624,7 @@ test("saveNotebookPage releases the lock when assertWritable throws", async () =
 });
 
 test("resetNotebookWriteLock clears abandoned lock state for later writes", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	const gate = createDeferred();
 	void saveNotebookPage(pi as any, state, "stuck", "value", async () => {
@@ -655,7 +640,7 @@ test("resetNotebookWriteLock clears abandoned lock state for later writes", asyn
 
 
 test("saveNotebookPage truncates oversized content before persisting", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	const content = "first line\n" + "detail\n".repeat(3000);
 
@@ -670,7 +655,7 @@ test("saveNotebookPage truncates oversized content before persisting", async () 
 
 
 test("resetState clears epoch and the next notebook write starts a fresh generation", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 
 	await saveNotebookPage(pi as any, state, "entry-a", "first");
@@ -689,8 +674,8 @@ test("resetState clears epoch and the next notebook write starts a fresh generat
 
 // ── Notebook tool definition metadata tests ───────────────────────────
 
-test("notebook tool definitions include prompt hints when withPromptHints is true", () => {
-	const pi = createTestPI();
+test("notebook tool definitions include prompt hints when withPromptHints is true", async () => {
+	const pi = await createTestHost();
 	const state = createState();
 	const tools = createNotebookToolDefinitions(pi as any, state, { withPromptHints: true });
 
@@ -723,8 +708,8 @@ test("notebook tool definitions include prompt hints when withPromptHints is tru
 	assert.match(notebookIndex.description, /notebook index|index/i);
 });
 
-test("notebook tool definitions omit prompt hints by default", () => {
-	const pi = createTestPI();
+test("notebook tool definitions omit prompt hints by default", async () => {
+	const pi = await createTestHost();
 	const state = createState();
 	const tools = createNotebookToolDefinitions(pi as any, state);
 
@@ -737,7 +722,7 @@ test("notebook tool definitions omit prompt hints by default", () => {
 // ── Transactional handoff discard tests ───────────────────────────────
 
 test("prepared discard remains invisible to a fresh active-branch rehydration", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	await saveNotebookPage(pi as any, state, "page-a", "content-a");
 	await saveNotebookPage(pi as any, state, "page-b", "content-b");
@@ -754,7 +739,7 @@ test("prepared discard remains invisible to a fresh active-branch rehydration", 
 });
 
 test("committed discard advances the active generation and persists survivors", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	await saveNotebookPage(pi as any, state, "page-a", "content-a");
 	await saveNotebookPage(pi as any, state, "page-b", "content-b");
@@ -772,7 +757,7 @@ test("committed discard advances the active generation and persists survivors", 
 });
 
 test("partial survivor staging failure rehydrates the prior committed generation", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	await saveNotebookPage(pi as any, state, "page-a", "content-a");
 	await saveNotebookPage(pi as any, state, "page-b", "content-b");
@@ -796,9 +781,8 @@ test("partial survivor staging failure rehydrates the prior committed generation
 });
 
 test("rehydration uses only the active session branch", async () => {
-	const pi = createTestPI();
 	const state = createState();
-	registerNotebookRehydration(pi as any, state);
+	const pi = await createTestHost((api) => registerNotebookRehydration(api, state));
 	const [handler] = pi.handlers.get("session_start")!;
 
 	await handler({}, { sessionManager: { getBranch: () => [
@@ -810,7 +794,7 @@ test("rehydration uses only the active session branch", async () => {
 });
 
 test("failed discard retry with same set uses fresh epoch and does not resurrect orphaned survivors", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	await saveNotebookPage(pi as any, state, "page-a", "content-a");
 	await saveNotebookPage(pi as any, state, "page-b", "content-b");
@@ -842,7 +826,7 @@ test("failed discard retry with same set uses fresh epoch and does not resurrect
 });
 
 test("failed discard retry with different set uses fresh epoch", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	await saveNotebookPage(pi as any, state, "page-a", "content-a");
 	await saveNotebookPage(pi as any, state, "page-b", "content-b");
@@ -868,7 +852,7 @@ test("failed discard retry with different set uses fresh epoch", async () => {
 });
 
 test("failed discard retry with all-pages discard uses fresh epoch", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	await saveNotebookPage(pi as any, state, "page-a", "content-a");
 	await saveNotebookPage(pi as any, state, "page-b", "content-b");
@@ -890,7 +874,7 @@ test("failed discard retry with all-pages discard uses fresh epoch", async () =>
 });
 
 test("branch invalidation preserves the discard watermark until reconstruction derives a fresh one", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	await saveNotebookPage(pi as any, state, "page-a", "content-a");
 	await saveNotebookPage(pi as any, state, "page-b", "content-b");
@@ -918,7 +902,7 @@ test("branch invalidation preserves the discard watermark until reconstruction d
 });
 
 test("resetState clears the discard watermark for a fresh session", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	await saveNotebookPage(pi as any, state, "page-a", "content-a");
 	await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
@@ -930,7 +914,7 @@ test("resetState clears the discard watermark for a fresh session", async () => 
 });
 
 test("restart after a failed discard derives the watermark from observed epochs and cannot resurrect orphaned survivors", async () => {
-	const pi = createTestPI();
+	const pi = await createTestHost();
 	const state = createState();
 	await saveNotebookPage(pi as any, state, "page-a", "content-a");
 	await saveNotebookPage(pi as any, state, "page-b", "content-b");
@@ -943,8 +927,7 @@ test("restart after a failed discard derives the watermark from observed epochs 
 	// Restart: a fresh process state rehydrates from the persisted branch. The
 	// watermark must come from the branch itself, not from lost memory.
 	const restarted = createState();
-	const restartedPi = createTestPI();
-	registerNotebookRehydration(restartedPi as any, restarted);
+	const restartedPi = await createTestHost((api) => registerNotebookRehydration(api, restarted));
 	const [handler] = restartedPi.handlers.get("session_start")!;
 	await handler({}, { sessionManager: { getBranch: () => persistedBranch(pi) } });
 
@@ -969,8 +952,7 @@ test("restart after a failed discard derives the watermark from observed epochs 
 });
 
 test("session_tree rehydrates notebook state branch-scoped: pages and epoch follow the branch, writes use B state", async () => {
-	const pi = createTestPI();
-	registerAgenticoding(pi as any);
+	const pi = await createTestHost();
 	const notebookWrite = pi.tools.get("notebook_write");
 	const notebookIndex = pi.tools.get("notebook_index");
 	const [sessionTree] = pi.handlers.get("session_tree")!;

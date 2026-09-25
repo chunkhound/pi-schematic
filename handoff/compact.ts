@@ -1,12 +1,13 @@
 /**
  * session_before_compact hook for deliberate handoff compactions.
  *
- * Replaces the active context with the queued handoff task and keeps no
- * pre-handoff messages in LLM context.
+ * Replaces the active context with the constant continuation frame and keeps no
+ * pre-handoff messages in LLM context. The instruction and situational context are
+ * NOT summarized here — tool.ts delivers them as one real user message afterwards.
  */
 
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { buildEnrichedTask } from "./format.js";
+import { buildHandoffCompactionSummary } from "./format.js";
 import type { AgenticodingState } from "../state.js";
 
 function getImpossibleKeptId(branchEntries: SessionEntry[]): string {
@@ -17,27 +18,26 @@ function getImpossibleKeptId(branchEntries: SessionEntry[]): string {
 export function registerHandoffCompaction(pi: ExtensionAPI, state: AgenticodingState): void {
 	pi.on("session_before_compact", async (event, _ctx: ExtensionContext) => {
 		const pending = state.pendingHandoff;
-		if (!pending || pending.generation !== state.handoffGeneration) {
+		const delivery = state.pendingHandoffDelivery;
+		if (!pending || !delivery || pending.generation !== state.handoffGeneration || delivery.generation !== pending.generation) {
 			return;
 		}
 
 		state.pendingHandoff = null;
 		// Two-phase clear contract:
-		//   pendingHandoff — cleared here (the compaction hook consumed the queued task)
+		//   pendingHandoff — cleared here (the compaction hook consumed the queued request)
 		//   pendingRequestedHandoff — kept; cleared later by completeHandoff in tool.ts
 		//                              (on success) or preserved for retry (on error).
-		// Read readonlyEnabled at the cut so the prompt reflects a toggle made after
-		// the handoff tool was called but before Pi consumes the queued task.
-		const task = buildEnrichedTask(pending.task, {
-			resumeReadonlyAfterHandoff: state.readonlyEnabled,
-		});
-
+		// Readonly is deliberately NOT read at the cut: the frame is fixed and the live
+		// `context` hook re-emits the current readonly state after the handoff. Pi finds
+		// `session_compact.compactionEntry` by summary, so the invisible cut marker keeps
+		// that host event attached to this cut without adding mutable model guidance.
 		return {
 			compaction: {
-				summary: task,
+				summary: buildHandoffCompactionSummary(delivery.recoveryKey),
 				firstKeptEntryId: getImpossibleKeptId(event.branchEntries),
 				tokensBefore: event.preparation.tokensBefore,
-				details: { handoff: true, task },
+				details: { handoff: true, payload: delivery.payload, recoveryKey: delivery.recoveryKey },
 			},
 		};
 	});

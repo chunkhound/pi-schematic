@@ -9,7 +9,7 @@ import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 
 /** Scope of bash filesystem mutations blocked by readonly mode. */
 export const READONLY_BASH_SCOPE = "bash writes/deletions outside temp blocked";
-/** Scope of all non-temporary mutations blocked after a readonly handoff. */
+/** Scope of non-temporary mutations blocked while readonly is active. */
 export const READONLY_NON_TEMP_MUTATION_SCOPE = "write, edit, and non-temp bash filesystem mutations remain blocked";
 /** Message emitted when the OS sandbox rejects a readonly mutation. */
 export const READONLY_SANDBOX_BLOCK_NOTICE = "[readonly mode] The OS sandbox blocked a filesystem write outside the OS temp dir.\nUse /readonly to disable, or write within the OS temp dir.";
@@ -17,10 +17,8 @@ export const READONLY_SANDBOX_BLOCK_NOTICE = "[readonly mode] The OS sandbox blo
 export const READONLY_EXPLICIT_HANDOFF = "explicit /handoff";
 /** All supported ways to activate the temporary readonly handoff exception. */
 export const READONLY_HANDOFF_TRIGGER = "explicit /handoff or an eligible human topic boundary";
-/** Constraint carried into the fresh context after readonly handoff. */
+/** Post-handoff readonly outcome announced while this context prepares the handoff. */
 export const READONLY_NEXT_CONTEXT_RESUMES = "Fresh context resumes in readonly mode.";
-/** Constraint stating that the temporary exception is cleared after handoff. */
-export const READONLY_BYPASS_CLEARED = "The temporary handoff-only exception used to reach this context is no longer active.";
 /** Child-agent summary of the readonly mutation policy. */
 export const READONLY_WRITE_EDIT_BASH = `write/edit blocked; ${READONLY_BASH_SCOPE}`;
 
@@ -113,7 +111,7 @@ export function buildReadonlyHandoffWaitNotice(): string {
 
 /** Add readonly-specific instructions to the explicit /handoff command. */
 export function buildReadonlyHandoffCommandNotice(): string {
-	return `\n\n${READONLY_HANDOFF_EXCEPTION_SUMMARY} Draft the prompt so the next context resumes readonly mode.`;
+	return `\n\n${READONLY_HANDOFF_EXCEPTION_SUMMARY} ${READONLY_NEXT_CONTEXT_RESUMES}`;
 }
 
 // ── Model Group Frontmatter Notifications ────────────────────────────

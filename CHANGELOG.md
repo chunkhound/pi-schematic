@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Handoff carries the next instruction verbatim** — the handoff tool now takes `nextInstruction?`, `context?`, `discardPages?` (replacing the old `task` field). The successor's objective is delivered word-for-word in a real user message (`## Next instruction` + `## Context`), so it can no longer be paraphrased away at compaction. Human-facing behavior is unchanged (`/handoff <direction>` works as before); the break is limited to the internal LLM-facing tool contract, where stale callers passing `task` fail loudly.
+
+### Changed
+
+- **Handoff splits instruction from preparation** — the next instruction is carried by the extension and delivered verbatim (`/handoff <direction>` queues it, otherwise the model supplies it); the model owns only preparation: writing `context` (state, blockers, open questions, failed paths, concrete next step) and curating the notebook. The instruction must not be started in the current context, which is discarded at compaction.
+- **Fixed continuation frame** — the compaction summary now has a fixed frame with no task text; each cut adds only an identity marker so Pi reports the correct compaction entry. The old synthetic "Proceed." is gone. The exact, versioned successor payload is also stored in compaction details, so `/tree` and resume recover it only when session-tree lineage shows no successor was delivered.
+- **Readonly is live, not frozen** — the summary no longer embeds execution constraints (a `/tree` rollback can change readonly). On handoff completion a pending nudge re-announces the ON posture on the first post-handoff turn (a clean OFF-to-OFF handoff stays silent), and `/tree` navigation into an enabled branch re-announces it again; `tool_call` enforcement stays live.
+- **Queue-safe post-compaction delivery** — handoff completion, failure guidance, and the successor's instruction are sent with `deliverAs: "followUp"`, so they queue while a run is active instead of being rejected (previously failure guidance could itself throw while streaming).
+- **Recoverable successor delivery** — the exact payload remains in compaction details; `/tree`, resume, and a later settled run requeue it only when no user turn follows the cut and no session-tree descendant owned by that cut proves delivery. Pi exposes no delivery acknowledgement, so a failed fire-and-forget follow-up is recovered from persisted state rather than treated as confirmed delivery. Any user turn after the cut — the delivered successor or newer user input — ends recovery, while a delivered successor retained outside the active branch proves recovery is unnecessary during `/tree` editing, and an identical payload on another cut can neither mask a loss nor provoke a duplicate. Recovery coalesces repeated triggers through an in-process latch, waits for a queued follow-up to drain before rescanning (so a successor still in Pi's queue is never double-delivered), and clears the latch at every settled run so a genuinely lost send is retried while a persisted successor is never re-sent.
+
+### Fixed
+
+- **Lineage-based handoff recovery** — successor delivery is now attributed through the session tree: a user turn belongs to the nearest handoff cut on its `parentId` chain. Identical payloads on different cuts can therefore neither mask a genuinely lost delivery nor provoke a duplicate resend, replacing the previous same-message heuristic.
+- **Malformed session content no longer crashes recovery** — unvalidated persisted user-message content (non-array content or non-object parts) is skipped instead of throwing during `session_start`, `/tree`, and settled-run recovery scans.
+
 ## [0.5.0] - 2026-08-21
 
 ### Added
