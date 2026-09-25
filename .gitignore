@@ -150,7 +150,7 @@ vite.config.ts.timestamp-*
 
 # package-lock.json committed for reproducible CI installs (excluded from publish)
 
-# Agenticoding local config (credentials, API keys)
+# pi-schematic local config (credentials, API keys)
 .chunkhound.json
 .chunkhound/
 .mcp.json

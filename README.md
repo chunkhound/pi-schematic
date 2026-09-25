@@ -1,8 +1,8 @@
-# pi-agenticoding
+# pi-schematic
 
-[![pi.dev package](https://img.shields.io/badge/pi.dev-package-purple)](https://pi.dev/packages/pi-agenticoding)
-[![npm version](https://img.shields.io/npm/v/pi-agenticoding?logo=npm)](https://www.npmjs.com/package/pi-agenticoding)
-[![CI](https://github.com/agenticoding/pi-agenticoding/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/agenticoding/pi-agenticoding/actions/workflows/test.yml)
+[![pi.dev package](https://img.shields.io/badge/pi.dev-package-purple)](https://pi.dev/packages/pi-schematic)
+[![npm version](https://img.shields.io/npm/v/pi-schematic?logo=npm)](https://www.npmjs.com/package/pi-schematic)
+[![CI](https://github.com/chunkhound/pi-schematic/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/chunkhound/pi-schematic/actions/workflows/test.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 > A composable workflow layer for [Pi](https://pi.dev). Define task-specific workflows in saved prompts or skills, with declarative policy, short-lived shared memory, provider-independent delegation, and deliberate context boundaries.
@@ -14,7 +14,7 @@
 Requires [Pi](https://pi.dev) 0.84.1 or later and Node.js 22.19.0 or later.
 
 ```bash
-pi install npm:pi-agenticoding
+pi install npm:pi-schematic
 ```
 
 To let **handoff** own deliberate restarts, disable Pi's built-in compaction in `~/.pi/agent/settings.json`:
@@ -31,7 +31,7 @@ You now have `spawn`, notebook, and `handoff` tools; `/model-groups`, `/readonly
 
 Coding agents can research, implement, and review, but operators still have to define which specialists to involve, which models fill those roles, what may modify the tree, and which decisions must survive noisy exploration.
 
-pi-agenticoding moves that procedure into saved prompts or skills. Model Groups keep roles independent of provider choices, `spawn` isolates specialist work, the notebook carries only canonical decisions, and `handoff` starts the next phase without dragging forward the transcript.
+pi-schematic moves that procedure into saved prompts or skills. Model Groups keep roles independent of provider choices, `spawn` isolates specialist work, the notebook carries only canonical decisions, and `handoff` starts the next phase without dragging forward the transcript.
 
 ## Example: make critical review repeatable
 
@@ -156,8 +156,8 @@ Toggle it with `/readonly`, `Ctrl+Shift+R`, `--readonly`, or workflow frontmatte
 - [Why agent-managed context](docs/why.md)
 - [Architecture and exact lifecycle behavior](docs/architecture.md)
 - [Changelog](CHANGELOG.md)
-- [Questions, bugs, and feature requests](https://github.com/agenticoding/pi-agenticoding/issues)
-- [Pi package page](https://pi.dev/packages/pi-agenticoding)
+- [Questions, bugs, and feature requests](https://github.com/chunkhound/pi-schematic/issues)
+- [Pi package page](https://pi.dev/packages/pi-schematic)
 - [Agentic Coding](https://agenticoding.ai) — companion methodology
 
 ## Contributing

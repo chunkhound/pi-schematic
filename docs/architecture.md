@@ -1,6 +1,6 @@
 # Architecture
 
-pi-agenticoding is a Pi extension. It registers tools and hooks into the agent lifecycle, and keeps session state in one `AgenticodingState` instance.
+pi-schematic is a Pi extension. It registers tools and hooks into the agent lifecycle, and keeps session state in one `SchematicState` instance.
 
 ## Lifecycle hooks
 
@@ -20,7 +20,7 @@ pi-agenticoding is a Pi extension. It registers tools and hooks into the agent l
 ## State
 
 ```typescript
-interface AgenticodingState {
+interface SchematicState {
   notebookPages: Map<string, string>
   activeNotebookTopic: string | null
   activeNotebookTopicSource: "human" | "agent" | null

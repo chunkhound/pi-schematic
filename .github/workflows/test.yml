@@ -1,4 +1,4 @@
-# Cross-platform CI for pi-agenticoding
+# Cross-platform CI for pi-schematic
 #
 # Runs the full unit suite on Linux, macOS, and Windows
 # on the minimum Node.js version required by pi coding agent. Snapshot
@@ -68,7 +68,7 @@ jobs:
 
       # E2E tests — process-isolated child-process harness (stdin/stdout, no PTY).
       # Verified cross-platform: runs on Linux, macOS, and Windows.
-      # See https://github.com/agenticoding/pi-agenticoding/issues/12
+      # See https://github.com/chunkhound/pi-schematic/issues/12
       - name: E2E tests
         run: npm run test:e2e
 

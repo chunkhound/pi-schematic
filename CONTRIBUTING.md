@@ -1,4 +1,4 @@
-# Contributing to pi-agenticoding
+# Contributing to pi-schematic
 
 Welcome! This project welcomes focused, well-validated contributions. Use coding agents deliberately: research before editing, keep changes small, follow existing patterns, and document the validation you ran.
 
@@ -68,4 +68,4 @@ Use GitHub Issues for bug reports and feature requests. Keep discussions concret
 
 ## License
 
-By contributing to this project, you agree that your contributions will be licensed under the same MIT License as pi-agenticoding.
+By contributing to this project, you agree that your contributions will be licensed under the same MIT License as pi-schematic.
