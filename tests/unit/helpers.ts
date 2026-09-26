@@ -110,7 +110,7 @@ export function createDeferred() {
 export type ToolCall = (event: { toolName: string; input?: Record<string, unknown> }, ctx: { cwd?: string }) => Promise<any>;
 
 /**
- * Create a test PI instance with agenticoding registered and the tool_call handler extracted.
+ * Create a test PI instance with pi-schematic registered and the tool_call handler extracted.
  */
 export async function registerReadonlyPI(): Promise<{ pi: TestPI; toolCall: ToolCall }> {
 	const pi = await createTestHost();
@@ -222,7 +222,7 @@ export async function runRealChildInvocation(params: {
 	/** Inside the FIRST stream call, abort the parent controller — spawn rejects with /mid-prompt abort/. */
 	abortMidPrompt?: boolean;
 }): Promise<RealChildInvocationResult> {
-	const tempRoot = await mkdtemp(join(os.tmpdir(), "pi-agenticoding-runtime-"));
+	const tempRoot = await mkdtemp(join(os.tmpdir(), "pi-schematic-runtime-"));
 	const cwd = join(tempRoot, "project");
 	// M3: For cwdOutsideTemp the write target is placed OUTSIDE os.tmpdir() so the
 	// readonly bash guard (which only permits writes under the session temp root)

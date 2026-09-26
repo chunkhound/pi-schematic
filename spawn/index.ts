@@ -1,5 +1,5 @@
 /**
- * Spawn tool for the agenticoding extension.
+ * Spawn tool for the pi-schematic extension.
  *
  * Creates an isolated in-memory child AgentSession for focused subtask execution.
  * Children inherit the parent's model, thinking level, cwd, active registered
@@ -29,7 +29,7 @@ import {
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { abortChildSession, type AgenticodingState } from "../state.js";
+import { abortChildSession, type SchematicState } from "../state.js";
 import { formatPageList } from "../notebook/store.js";
 import { createNotebookToolDefinitions } from "../notebook/tools.js";
 import { resolveSpawnModelRoute } from "../model-groups/router.js";
@@ -174,12 +174,12 @@ function collectSpawnStats(session: { getSessionStats?: () => unknown }): { stat
 	}
 }
 
-function clearSpawnSession(state: AgenticodingState, toolCallId: string, session: AgentSession): void {
+function clearSpawnSession(state: SchematicState, toolCallId: string, session: AgentSession): void {
 	if (state.childSessions.get(toolCallId) === session) state.childSessions.delete(toolCallId);
 	if (state.liveChildSessions.get(toolCallId) === session) state.liveChildSessions.delete(toolCallId);
 }
 
-function createSpawnAbortContext(state: AgenticodingState, session: AgentSession, ctx: ExtensionContext, toolCallId: string) {
+function createSpawnAbortContext(state: SchematicState, session: AgentSession, ctx: ExtensionContext, toolCallId: string) {
 	const invalidatedError = new Error("Spawn invalidated by reset.");
 	let wasAborted = false;
 	let reported: Promise<void> | undefined;
@@ -335,7 +335,7 @@ export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
  */
 export function createChildTools(
 	pi: ExtensionAPI,
-	state: AgenticodingState,
+	state: SchematicState,
 	options?: { isStale?: () => boolean },
 ): ToolDefinition[] {
 	return createNotebookToolDefinitions(pi, state, { isStale: options?.isStale });
@@ -381,7 +381,7 @@ export function executeSpawn(
 	toolCallId: string,
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
-	state: AgenticodingState,
+	state: SchematicState,
 	params: SpawnParameters,
 	signal: AbortSignal | undefined,
 	onUpdate:
@@ -652,7 +652,7 @@ export function executeSpawn(
  */
 export function registerSpawnTool(
 	pi: ExtensionAPI,
-	state: AgenticodingState,
+	state: SchematicState,
 	sessionFactory: typeof createAgentSession = createAgentSession,
 	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
 ): void {

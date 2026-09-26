@@ -12,12 +12,12 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isHandoffEligible } from "./handoff/eligibility.js";
 import { HANDOFF_REQUIRED_STATUS } from "./handoff/copy.js";
 import { buildReadonlyBoundaryPromotionNotification } from "./notifications.js";
-import type { AgenticodingState } from "./state.js";
+import type { SchematicState } from "./state.js";
 import { STATUS_KEY_HANDOFF } from "./tui.js";
 
 /** Can the queued human-set topic boundary be promoted to a handoff bypass right now? */
 export function canPromoteBoundary(
-	state: AgenticodingState,
+	state: SchematicState,
 	usage: ReturnType<ExtensionContext["getContextUsage"]>,
 ): boolean {
 	const boundary = state.pendingTopicBoundaryHint;
@@ -25,7 +25,7 @@ export function canPromoteBoundary(
 }
 
 /** Consume a boundary that cannot authorize a readonly handoff. */
-export function discardNonHumanBoundary(state: AgenticodingState): boolean {
+export function discardNonHumanBoundary(state: SchematicState): boolean {
 	const boundary = state.pendingTopicBoundaryHint;
 	if (!boundary || boundary.source === "human") return false;
 	state.pendingTopicBoundaryHint = null;
@@ -33,7 +33,7 @@ export function discardNonHumanBoundary(state: AgenticodingState): boolean {
 }
 
 /** Create pendingRequestedHandoff from the queued topic boundary and notify the user. */
-export function promoteBoundary(state: AgenticodingState, ctx: ExtensionContext): void {
+export function promoteBoundary(state: SchematicState, ctx: ExtensionContext): void {
 	state.pendingRequestedHandoff = {
 		toolCalled: false,
 		enforcementAttempts: 0,
@@ -56,7 +56,7 @@ export function promoteBoundary(state: AgenticodingState, ctx: ExtensionContext)
  * Returns true the first time (so the caller knows to retain the hint for later
  * promotion); returns false on subsequent calls (already-advised, silent skip).
  */
-export function markBoundaryAdvisory(state: AgenticodingState): boolean {
+export function markBoundaryAdvisory(state: SchematicState): boolean {
 	const boundary = state.pendingTopicBoundaryHint;
 	if (!boundary || boundary.source !== "human") return false;
 	if (boundary.advisoryDelivered) return false;

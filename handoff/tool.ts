@@ -1,5 +1,5 @@
 /**
- * Handoff tool for the agenticoding extension.
+ * Handoff tool for the pi-schematic extension.
  *
  * Tools can trigger compaction directly, so handoff is implemented as a
  * deliberate compaction that replaces noisy context with a clean restart frame.
@@ -28,7 +28,7 @@ import {
 	isHandoffEligible,
 	normalizeContextPercent,
 } from "./eligibility.js";
-import type { AgenticodingState } from "../state.js";
+import type { SchematicState } from "../state.js";
 import { sendFollowUp } from "../follow-up.js";
 import { STATUS_KEY_HANDOFF } from "../tui.js";
 
@@ -65,7 +65,7 @@ function validateHandoffRequest(nextInstruction: string, ctx: ExtensionContext):
  * owns context normalization.
  */
 function resolveHandoffRequest(
-	state: AgenticodingState,
+	state: SchematicState,
 	params: { nextInstruction?: string; context?: string },
 ): { nextInstruction: string; context: string } {
 	const humanDirection = state.pendingRequestedHandoff?.nextInstruction ?? null;
@@ -108,7 +108,7 @@ function completeHandoff(
 function notifyHandoffFailure(
 	ctx: ExtensionContext,
 	error: Error,
-	pendingRequest: AgenticodingState["pendingRequestedHandoff"],
+	pendingRequest: SchematicState["pendingRequestedHandoff"],
 	phase = "Handoff compaction",
 ): void {
 	if (!ctx.hasUI) return;
@@ -123,7 +123,7 @@ function notifyHandoffFailure(
 	ctx.ui.notify(`${phase} failed: ${error.message}. The handoff can be retried.`, "error");
 }
 
-function sendHandoffFailure(pi: ExtensionAPI, error: Error, pendingRequest: AgenticodingState["pendingRequestedHandoff"]): void {
+function sendHandoffFailure(pi: ExtensionAPI, error: Error, pendingRequest: SchematicState["pendingRequestedHandoff"]): void {
 	const nextStep = pendingRequest
 		? "The required handoff remains pending; retry when context usage is eligible. "
 		: "No required handoff remains pending; retry when ready. ";
@@ -134,7 +134,7 @@ function sendHandoffFailure(pi: ExtensionAPI, error: Error, pendingRequest: Agen
 
 function failHandoff(
 	pi: ExtensionAPI,
-	state: AgenticodingState,
+	state: SchematicState,
 	ctx: ExtensionContext,
 	rawError: unknown,
 ): void {
@@ -150,7 +150,7 @@ function failHandoff(
 	sendHandoffFailure(pi, error, pendingRequest);
 }
 
-function finalizeHandoffState(state: AgenticodingState): void {
+function finalizeHandoffState(state: SchematicState): void {
 	// Completion side of the two-phase clear contract (compact.ts clears
 	// pendingHandoff at the cut). Every successful compaction finalizes the
 	// remaining durable state — including when the discard commit failed.
@@ -167,7 +167,7 @@ function finalizeHandoffState(state: AgenticodingState): void {
 
 function createHandoffCallbacks(
 	pi: ExtensionAPI,
-	state: AgenticodingState,
+	state: SchematicState,
 	ctx: ExtensionContext,
 	generation: number,
 	commitDiscard: (() => void) | undefined,
@@ -255,7 +255,7 @@ function createHandoffCallbacks(
 
 export function registerHandoffTool(
 	pi: ExtensionAPI,
-	state: AgenticodingState,
+	state: SchematicState,
 ): void {
 	pi.registerTool({
 		name: "handoff",

@@ -2,7 +2,7 @@
  * Property-based state invariant tests using fast-check.
  *
  * Generates random sequences of state operations and asserts invariants
- * that must hold after every operation on a pure AgenticodingState.
+ * that must hold after every operation on a pure SchematicState.
  */
 
 import test from "node:test";
@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import * as fc from "fast-check";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createState, resetState, abortAndClearChildSessions, invalidateHandoffState } from "../../state.js";
-import type { AgenticodingState } from "../../state.js";
+import type { SchematicState } from "../../state.js";
 import {
 	setActiveNotebookTopic,
 	clearActiveNotebookTopic,
@@ -49,7 +49,7 @@ const arbSessionId = fc
 // ── Apply ─────────────────────────────────────────────────────────────
 
 async function apply(
-	state: AgenticodingState,
+	state: SchematicState,
 	action: StateAction,
 ): Promise<void> {
 	switch (action.type) {
@@ -77,7 +77,7 @@ async function apply(
 
 // ── Invariant helpers ─────────────────────────────────────────────────
 
-function assertTopicSourceCoupling(state: AgenticodingState): void {
+function assertTopicSourceCoupling(state: SchematicState): void {
 	const msg = `topic=${state.activeNotebookTopic} source=${state.activeNotebookTopicSource}`;
 	if (state.activeNotebookTopic === null) {
 		assert.equal(state.activeNotebookTopicSource, null, `topic null → source null: ${msg}`);
@@ -90,7 +90,7 @@ function assertTopicSourceCoupling(state: AgenticodingState): void {
 	}
 }
 
-function assertChildSessionContainment(state: AgenticodingState): void {
+function assertChildSessionContainment(state: SchematicState): void {
 	for (const key of state.childSessions.keys()) {
 		assert.ok(
 			state.liveChildSessions.has(key),
@@ -99,7 +99,7 @@ function assertChildSessionContainment(state: AgenticodingState): void {
 	}
 }
 
-function assertResetClears(state: AgenticodingState): void {
+function assertResetClears(state: SchematicState): void {
 	assert.equal(state.notebookPages.size, 0, "notebookPages must be empty after reset");
 	assert.equal(state.childSessions.size, 0, "childSessions must be empty after reset");
 	assert.equal(state.liveChildSessions.size, 0, "liveChildSessions must be empty after reset");

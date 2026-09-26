@@ -73,7 +73,7 @@ async function handoffCutAcrossReadonlyToggle(readonlyAfterCut: boolean) {
 		{ messages: [{ role: "user", content: "post-handoff", timestamp: 3 }] },
 		{ getContextUsage: () => null } as any,
 	);
-	const nudge = (next?.messages ?? []).filter((message: any) => message.customType === "agenticoding-readonly-nudge").at(-1);
+	const nudge = (next?.messages ?? []).filter((message: any) => message.customType === "pi-schematic-readonly-nudge").at(-1);
 	return { summary: cut.compaction.summary as string, nudgeContent: nudge?.content as string | undefined };
 }
 
@@ -648,8 +648,8 @@ test("session tree invalidates pending handoff work, releases the overlap guard,
 test("session resume restores readonly enforcement from persisted state", async () => {
 	const { toolCall, sessionStart } = await createHandoffPI();
 	const branch = [
-		{ type: "custom", customType: "agenticoding-readonly", data: { enabled: false } },
-		{ type: "custom", customType: "agenticoding-readonly", data: { enabled: true } },
+		{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: false } },
+		{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } },
 	];
 
 	await sessionStart({ reason: "resume" }, makeReadonlyResumeCtx(branch) as any);
@@ -672,13 +672,13 @@ test("session tree re-announces readonly even when the rehydrated value is uncha
 	await sessionTree({}, {
 		hasUI: false,
 		getContextUsage: () => null,
-		sessionManager: { getBranch: () => [{ type: "custom", customType: "agenticoding-readonly", data: { enabled: true } }] },
+		sessionManager: { getBranch: () => [{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } }] },
 	} as any);
 
 	const result = await contextHandler(
 		{ messages: [{ role: "user", content: "probe", timestamp: 2 }] },
 		{ getContextUsage: () => null } as any,
 	);
-	const lastNudge = (result?.messages ?? []).filter((message: any) => message.customType === "agenticoding-readonly-nudge").at(-1);
+	const lastNudge = (result?.messages ?? []).filter((message: any) => message.customType === "pi-schematic-readonly-nudge").at(-1);
 	assert.match(lastNudge?.content ?? "", /\[readonly\] enabled/);
 });

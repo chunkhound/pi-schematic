@@ -1,5 +1,5 @@
 /**
- * Agenticoding v2 — Extension factory.
+ * pi-schematic v2 — Extension factory.
  *
  * Wires together the three primitives:
  *   spawn     — delegate isolated work to child contexts
@@ -20,7 +20,7 @@ import {
 	SelectList,
 	Text,
 } from "@earendil-works/pi-tui";
-import { createState, invalidateHandoffState, resetState, type AgenticodingState } from "./state.js";
+import { createState, invalidateHandoffState, resetState, type SchematicState } from "./state.js";
 import { CONTEXT_PRIMER } from "./system-prompt.js";
 import { buildNudge, registerWatchdog } from "./watchdog.js";
 import { registerNotebookTools } from "./notebook/tools.js";
@@ -113,7 +113,7 @@ import { applyReadonlyBashGuard } from "./readonly-bash.js";
  * is fresh for the current input.
  */
 function populateFrontmatterCache(
-	state: AgenticodingState,
+	state: SchematicState,
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
 	skills?: Skill[],
@@ -158,7 +158,7 @@ const cacheResolver = {
 	},
 };
 
-function resolveModelSelection(state: AgenticodingState, pending: PendingCommand): ModelSelection {
+function resolveModelSelection(state: SchematicState, pending: PendingCommand): ModelSelection {
 	const resolver = cacheResolver[pending.type];
 	return {
 		model: resolver.model(state, pending.name),
@@ -172,7 +172,7 @@ function hasModelSelection(selection: ModelSelection): boolean {
 	return Boolean(selection.model || selection.group || selection.thinking);
 }
 
-function resolveReadonlySelection(state: AgenticodingState, pending: PendingCommand): boolean | null {
+function resolveReadonlySelection(state: SchematicState, pending: PendingCommand): boolean | null {
 	return cacheResolver[pending.type].readonly(state, pending.name);
 }
 
@@ -186,7 +186,7 @@ function recordFrontmatterIssue(
 	command: PendingCommand,
 	issue: FrontmatterIssue,
 ): void {
-	pi.appendEntry("agenticoding-frontmatter-issue", { name: command.name, type: command.type, issue });
+	pi.appendEntry("pi-schematic-frontmatter-issue", { name: command.name, type: command.type, issue });
 	if (ctx.hasUI) {
 		ctx.ui.notify(formatFrontmatterIssue(formatCommandRef(command), issue), "warning");
 	}
@@ -202,7 +202,7 @@ function isReadonlyFrontmatterIssue(issue: FrontmatterIssue): boolean {
  * Must be called after `populateFrontmatterCache` so the cache is populated.
  */
 function consumePendingReadonlyCommands(
-	state: AgenticodingState,
+	state: SchematicState,
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
 ): void {
@@ -241,7 +241,7 @@ function consumePendingReadonlyCommands(
 
 		state.readonlyEnabled = readonly;
 		state.readonlyNudgePending = true;
-		pi.appendEntry("agenticoding-readonly", { enabled: readonly });
+		pi.appendEntry("pi-schematic-readonly", { enabled: readonly });
 
 		if (ctx.hasUI) {
 			const commandRef = formatCommandRef(pendingCommand);
@@ -262,7 +262,7 @@ async function safeSetModel(pi: ExtensionAPI, model: Model<Api>, onError: () => 
 }
 
 async function preflightModelSelection(
-	state: AgenticodingState,
+	state: SchematicState,
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
 	pending: PendingCommand,
@@ -306,7 +306,7 @@ function recordExplicitModelSwitch(
 	const { provider, modelId } = splitModelId(modelRef);
 	if (thinking) pi.setThinkingLevel(thinking);
 	ctx.ui.notify(buildModelFrontmatterNotification(provider, modelId, commandRef), "info");
-	pi.appendEntry("agenticoding-model-switch", { command: commandRef, provider, modelId, thinking });
+	pi.appendEntry("pi-schematic-model-switch", { command: commandRef, provider, modelId, thinking });
 }
 
 async function handleExplicitModelFrontmatter(
@@ -330,7 +330,7 @@ async function handleExplicitModelFrontmatter(
 
 type ModelRoute = ReturnType<typeof resolveSpawnModelRoute>;
 
-function unknownGroupDetail(state: AgenticodingState, groupName: string): string {
+function unknownGroupDetail(state: SchematicState, groupName: string): string {
 	const names = getEffectiveModelGroupNames(state.modelGroups.groups);
 	const hint = names.length > 5 ? " Run /model-groups to see all available groups."
 		: names.length > 0 ? ` Available groups: ${names.join(", ")}.` : "";
@@ -347,7 +347,7 @@ function recordModelGroupSwitch(
 ): void {
 	pi.setThinkingLevel(thinking);
 	ctx.ui.notify(buildModelGroupNotification(groupName, route.provider, route.modelId, commandRef), "info");
-	pi.appendEntry("agenticoding-model-group-switch", {
+	pi.appendEntry("pi-schematic-model-group-switch", {
 		command: commandRef,
 		groupName,
 		provider: route.provider,
@@ -374,7 +374,7 @@ async function applyModelGroupRoute(
 }
 
 function resolveModelGroupRoute(
-	state: AgenticodingState,
+	state: SchematicState,
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
 	groupName: string,
@@ -390,7 +390,7 @@ function resolveModelGroupRoute(
 }
 
 async function handleModelGroupFrontmatter(
-	state: AgenticodingState, ctx: ExtensionContext, pi: ExtensionAPI,
+	state: SchematicState, ctx: ExtensionContext, pi: ExtensionAPI,
 	selection: ModelSelection, commandRef: string, currentModel: Model<Api>,
 ): Promise<boolean> {
 	try {
@@ -416,7 +416,7 @@ function handleThinkingOnlyFrontmatter(
 	const thinking = clampThinkingLevel(currentModel, explicitThinking);
 	pi.setThinkingLevel(thinking);
 	ctx.ui.notify(buildThinkingFrontmatterNotification(thinking, commandRef), "info");
-	pi.appendEntry("agenticoding-thinking-change", { command: commandRef, thinking });
+	pi.appendEntry("pi-schematic-thinking-change", { command: commandRef, thinking });
 	return false;
 }
 
@@ -441,7 +441,7 @@ function modelGroupsAccess(ctx: ExtensionContext): ModelGroupsAccess {
 	return { cwd: ctx.cwd, policy: ctx.isProjectTrusted() ? "global-project" : "global-only" };
 }
 
-function refreshModelGroupsState(state: AgenticodingState, ctx: ExtensionContext) {
+function refreshModelGroupsState(state: SchematicState, ctx: ExtensionContext) {
 	state.modelGroups.groups = [];
 	state.modelGroups.validation = null;
 	if (!ctx.cwd || !(ctx as any).modelRegistry) return null;
@@ -463,7 +463,7 @@ function modelGroupsPromptSection(groups: ResolvedModelGroup[]): string | undefi
 }
 
 export default function (pi: ExtensionAPI): void {
-	const state: AgenticodingState = createState();
+	const state: SchematicState = createState();
 
 	// ── Register all tools ──────────────────────────────────────────
 	registerNotebookTools(pi, state);
@@ -501,7 +501,7 @@ export default function (pi: ExtensionAPI): void {
 			}
 		}
 		state.readonlyNudgePending = true;
-		pi.appendEntry("agenticoding-readonly", { enabled: state.readonlyEnabled });
+		pi.appendEntry("pi-schematic-readonly", { enabled: state.readonlyEnabled });
 		updateIndicators(ctx, state);
 		ctx.ui.notify(
 			state.readonlyEnabled
@@ -823,7 +823,7 @@ export default function (pi: ExtensionAPI): void {
 			state.readonlyNudgePending = false;
 			readonlyNudgeMsg = {
 				role: "custom" as const,
-				customType: "agenticoding-readonly-nudge",
+				customType: "pi-schematic-readonly-nudge",
 				content: state.readonlyEnabled
 					? (state.pendingRequestedHandoff ||
 						(state.pendingTopicBoundaryHint?.source === "human" && isHandoffEligible(usage)))
@@ -911,7 +911,7 @@ export default function (pi: ExtensionAPI): void {
 				...(readonlyNudgeMsg ? [readonlyNudgeMsg as any] : []),
 				{
 					role: "custom",
-					customType: "agenticoding-watchdog",
+					customType: "pi-schematic-watchdog",
 					content: nudge,
 					display: false,
 					timestamp: Date.now(),

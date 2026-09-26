@@ -1,5 +1,5 @@
 /**
- * Notebook rehydration for the agenticoding extension.
+ * Notebook rehydration for the pi-schematic extension.
  *
  * `reconstructNotebook` rebuilds the in-memory notebook state from the active
  * session branch. It runs on session start and on session-tree navigation so
@@ -10,7 +10,7 @@
  */
 
 import type { CustomEntry, ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { AgenticodingState } from "../state.js";
+import type { SchematicState } from "../state.js";
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -58,7 +58,7 @@ function isKnownNotebookVersion(value: unknown): boolean {
  * a retry on a restarted process) therefore cannot reuse that staged epoch and
  * resurrect orphaned survivors; the next prepare moves past it.
  */
-export function reconstructNotebook(state: AgenticodingState, branch: readonly SessionEntry[]): void {
+export function reconstructNotebook(state: SchematicState, branch: readonly SessionEntry[]): void {
 	// A generation is visible only after its marker is appended. Staged
 	// survivor entries from an interrupted discard therefore cannot eclipse
 	// the last durable notebook generation.
@@ -125,7 +125,7 @@ export function ensureNotebookToolsActive(pi: ExtensionAPI): void {
 
 export function registerNotebookRehydration(
 	pi: ExtensionAPI,
-	state: AgenticodingState,
+	state: SchematicState,
 ): void {
 	pi.on("session_start", async (_event, ctx) => {
 		reconstructNotebook(state, ctx.sessionManager.getBranch());

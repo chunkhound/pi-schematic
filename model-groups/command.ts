@@ -1,9 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { AgenticodingState } from "../state.js";
+import type { SchematicState } from "../state.js";
 import type { ModelGroupsAccess } from "./types.js";
 import { createModelGroupsComponent } from "./tui.js";
 
-export function registerModelGroupsCommand(pi: ExtensionAPI, state: AgenticodingState): void {
+export function registerModelGroupsCommand(pi: ExtensionAPI, state: SchematicState): void {
 	pi.registerCommand("model-groups", {
 		description: "Manage Model Groups",
 		handler: async (_args, ctx) => {

@@ -5,7 +5,7 @@
  */
 
 /**
- * Scan a session branch for the `agenticoding-readonly` custom entry and
+ * Scan a session branch for the `pi-schematic-readonly` custom entry and
  * return whether readonly should be enabled. The most recent entry (found
  * by scanning in reverse) wins.
  *
@@ -22,7 +22,7 @@ export function getReadonlyFromBranch(
 		const entry = branch[i];
 		if (!entry || typeof entry !== "object") continue;
 		const e = entry as Record<string, unknown>;
-		if (e.type !== "custom" || e.customType !== "agenticoding-readonly") continue;
+		if (e.type !== "custom" || e.customType !== "pi-schematic-readonly") continue;
 		const d = e.data as Record<string, unknown> | undefined;
 		return d?.enabled === true;
 	}

@@ -1,5 +1,5 @@
 /**
- * Shared TUI indicator updates for the agenticoding extension.
+ * Shared TUI indicator updates for the pi-schematic extension.
  *
  * Extracted from index.ts so that tool execute handlers can push live
  * updates to the TUI during tool execution — not just at turn boundaries.
@@ -8,30 +8,30 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { normalizeContextPercent } from "./handoff/eligibility.js";
 import { READONLY_HANDOFF_TRIGGER } from "./notifications.js";
-import type { AgenticodingState } from "./state.js";
+import type { SchematicState } from "./state.js";
 
 // ── TUI status / widget keys ─────────────────────────────────────────
 
 /** Status bar key for the handoff-in-progress indicator. */
-export const STATUS_KEY_HANDOFF = "agenticoding-handoff";
+export const STATUS_KEY_HANDOFF = "pi-schematic-handoff";
 
 /** Widget key for the high-context warning banner above the editor. */
-export const WIDGET_KEY_WARNING = "agenticoding-warning";
+export const WIDGET_KEY_WARNING = "pi-schematic-warning";
 
 /** Status bar key for context usage percentage. */
-export const STATUS_KEY_CTX = "agenticoding-ctx";
+export const STATUS_KEY_CTX = "pi-schematic-ctx";
 
 /** Status bar key for notebook page count. */
-export const STATUS_KEY_NOTEBOOK = "agenticoding-notebook";
+export const STATUS_KEY_NOTEBOOK = "pi-schematic-notebook";
 
 /** Status bar key for the active notebook topic. */
-export const STATUS_KEY_TOPIC = "agenticoding-topic";
+export const STATUS_KEY_TOPIC = "pi-schematic-topic";
 
 /** Status bar key for the readonly mode indicator. */
-export const STATUS_KEY_READONLY = "agenticoding-readonly";
+export const STATUS_KEY_READONLY = "pi-schematic-readonly";
 
 /** Update TUI indicators: context usage, notebook count, topic, warning widget. */
-export function updateIndicators(ctx: ExtensionContext, state: AgenticodingState): void {
+export function updateIndicators(ctx: ExtensionContext, state: SchematicState): void {
 	if (!ctx.hasUI) return;
 
 	const theme = ctx.ui.theme;

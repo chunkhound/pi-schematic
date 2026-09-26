@@ -1,5 +1,5 @@
 /**
- * Process-isolated E2E tests for the agenticoding extension.
+ * Process-isolated E2E tests for the pi-schematic extension.
  *
  * These tests spawn a fresh Node.js process per test case. Process isolation
  * means no shared singletons and no console races between test cases.
@@ -30,7 +30,7 @@ async function withHarness(run: (h: ProcessHarness) => Promise<void>): Promise<v
 	}
 }
 
-describe("agenticoding E2E", () => {
+describe("pi-schematic E2E", () => {
 	it("host starts and extension registers", async () => withHarness(async (h) => {
 		h.write("tools");
 		await h.waitForText("OK:");
@@ -130,7 +130,7 @@ describe("agenticoding E2E", () => {
 		await h.waitForText("OK");
 		// Drain the toggle nudge so the successor nudge proves post-handoff live state.
 		h.write("context");
-		await h.waitForText("agenticoding-readonly-nudge");
+		await h.waitForText("pi-schematic-readonly-nudge");
 		h.write("cmd handoff continue readonly work");
 		await h.waitForText("OK");
 		h.write('usage {"tokens":50000,"percent":25,"contextWindow":200000}');
@@ -323,7 +323,7 @@ describe("agenticoding E2E", () => {
 		await h.waitForText("Handoff failed");
 		h.clear();
 		h.write("ui-events");
-		await h.waitForText('"agenticoding-handoff":"🤝 Handoff required — ready to compact"');
+		await h.waitForText('"pi-schematic-handoff":"🤝 Handoff required — ready to compact"');
 		await h.waitForText("Handoff compaction failed");
 		h.write('tool handoff {"nextInstruction":"retry after failure"}');
 		await h.waitForText("OK:Handoff started.");
@@ -343,7 +343,7 @@ describe("agenticoding E2E", () => {
 		h.clear();
 		h.write("ui-events");
 		await h.waitForText("OK:");
-		assert.doesNotMatch(h.snapshot(), /agenticoding-handoff/);
+		assert.doesNotMatch(h.snapshot(), /pi-schematic-handoff/);
 	}));
 
 	it("readonly lifecycle: handoff bypass clears after compaction while readonly persists", async () => withHarness(async (h) => {
@@ -351,7 +351,7 @@ describe("agenticoding E2E", () => {
 		await h.waitForText("OK");
 		// Drain the readonly toggle nudge
 		h.write("context");
-		await h.waitForText("agenticoding-readonly-nudge");
+		await h.waitForText("pi-schematic-readonly-nudge");
 		// Issue /handoff command — creates the bypass
 		h.write("cmd handoff continue readonly work");
 		await h.waitForText("OK");
@@ -365,7 +365,7 @@ describe("agenticoding E2E", () => {
 		await h.waitForText("queuedFollowUp");
 		// After compaction: bypass cleared, readonly persists and is re-announced live.
 		h.write("context");
-		await h.waitForText("agenticoding-readonly-nudge");
+		await h.waitForText("pi-schematic-readonly-nudge");
 		await h.waitForText("[readonly] enabled");
 		// handoff tool should now be blocked again
 		h.write('toolcall handoff {"nextInstruction":"direct call"}');
@@ -379,7 +379,7 @@ describe("agenticoding E2E", () => {
 		h.write("cmd readonly");
 		await h.waitForText("OK");
 		h.write("context");
-		await h.waitForText("agenticoding-readonly-nudge");
+		await h.waitForText("pi-schematic-readonly-nudge");
 		h.write("cmd notebook oauth");
 		await h.waitForText("OK");
 		h.write("cmd notebook billing");
@@ -390,7 +390,7 @@ describe("agenticoding E2E", () => {
 		await h.waitForText("temporary handoff exception active");
 		h.clear();
 		h.write("ui-events");
-		await h.waitForText('"agenticoding-handoff":"🤝 Handoff required — ready to compact"');
+		await h.waitForText('"pi-schematic-handoff":"🤝 Handoff required — ready to compact"');
 		await h.waitForText("Readonly topic boundary detected");
 		h.write('toolcall handoff {"nextInstruction":"continue billing work"}');
 		await h.waitForText('OK:null');
@@ -398,16 +398,16 @@ describe("agenticoding E2E", () => {
 		await h.waitForText('OK:Handoff started.');
 		h.clear();
 		h.write("ui-events");
-		await h.waitForText('"agenticoding-handoff":"🤝 Handoff in progress"');
+		await h.waitForText('"pi-schematic-handoff":"🤝 Handoff in progress"');
 		h.write("compact-success");
 		await h.waitForText("queuedFollowUp");
 		// Readonly persists after the handoff and is re-announced live
 		h.write("context");
-		await h.waitForText("agenticoding-readonly-nudge");
+		await h.waitForText("pi-schematic-readonly-nudge");
 		h.clear();
 		h.write("ui-events");
 		await h.waitForText("OK:");
-		assert.doesNotMatch(h.snapshot(), /agenticoding-handoff/);
+		assert.doesNotMatch(h.snapshot(), /pi-schematic-handoff/);
 		h.write('toolcall handoff {"nextInstruction":"direct call"}');
 		await h.waitForText('"block":true');
 	}));

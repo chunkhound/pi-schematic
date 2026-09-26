@@ -16,7 +16,7 @@ const VALID_THINKING = new Set<ModelThinkingLevel>(["off", "minimal", "low", "me
 type FsOps = Pick<typeof fs, "existsSync" | "mkdirSync" | "readFileSync" | "writeFileSync" | "renameSync" | "copyFileSync" | "unlinkSync">;
 let fsOps: FsOps = fs;
 export function __setModelGroupsFsForTests(next: Partial<FsOps> | null): void { fsOps = next ? { ...fs, ...next } : fs; }
-export function modelGroupsPath(scope: ModelGroupScope, cwd: string, projectConfigDirName = CONFIG_DIR_NAME): string { return scope === "global" ? path.join(homedir(), ".pi", "agent", "pi-agenticoding", "model-groups.json") : path.join(cwd, projectConfigDirName, "pi-agenticoding", "model-groups.json"); }
+export function modelGroupsPath(scope: ModelGroupScope, cwd: string, projectConfigDirName = CONFIG_DIR_NAME): string { return scope === "global" ? path.join(homedir(), ".pi", "agent", "pi-schematic", "model-groups.json") : path.join(cwd, projectConfigDirName, "pi-schematic", "model-groups.json"); }
 function ownGroups(): Record<string, ModelGroupDef> { return Object.create(null) as Record<string, ModelGroupDef>; }
 function cloneDef(def: ModelGroupDef): ModelGroupDef {
 	// Deep-clone the constraint envelope: persisted constraint values are

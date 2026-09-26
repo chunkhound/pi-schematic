@@ -18,7 +18,7 @@ All three manage context **around** the model. The agent stays a passive recipie
 
 ## The flip
 
-**pi-agenticoding** gives the agent tools to manage its own context: isolate noisy subtasks, keep what still matters, and drop the rest on purpose — instead of hoping the runtime’s compacter guessed right. (If you like systems metaphors: it’s garbage collection for the transcript, with the agent holding the controls.)
+**pi-schematic** gives the agent tools to manage its own context: isolate noisy subtasks, keep what still matters, and drop the rest on purpose — instead of hoping the runtime’s compacter guessed right. (If you like systems metaphors: it’s garbage collection for the transcript, with the agent holding the controls.)
 
 | Move | Primitive | Prevents |
 |---|---|---|

@@ -1,5 +1,5 @@
 /**
- * Shared singleton container for the agenticoding extension.
+ * Shared singleton container for the pi-schematic extension.
  *
  * Allows tests to replace all module-level singletons (write lock, frame
  * scheduler, etc.) with one atomic swap via __setSingletons(), instead of

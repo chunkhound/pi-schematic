@@ -12,7 +12,7 @@ const REGISTER_LOADER = pathToFileURL(resolve(ROOT, "register-loader.mjs")).href
 const ENTRY = fileURLToPath(new URL("./fixtures/register-loader-entry.mjs", import.meta.url));
 
 test("register-loader resolves test-loader relative to itself instead of cwd", () => {
-	const cwd = mkdtempSync(resolve(tmpdir(), "pi-agenticoding-loader-"));
+	const cwd = mkdtempSync(resolve(tmpdir(), "pi-schematic-loader-"));
 
 	try {
 		const result = spawnSync(
@@ -33,7 +33,7 @@ test("register-loader resolves test-loader relative to itself instead of cwd", (
 });
 
 test("register-loader errors when entry file does not exist", () => {
-	const cwd = mkdtempSync(resolve(tmpdir(), "pi-agenticoding-loader-fail-"));
+	const cwd = mkdtempSync(resolve(tmpdir(), "pi-schematic-loader-fail-"));
 	try {
 		const result = spawnSync(
 			process.execPath,
@@ -57,7 +57,7 @@ test("register-loader errors when entry file does not exist", () => {
 });
 
 test("register-loader resolves typebox exports from the project dependency tree", () => {
-	const cwd = mkdtempSync(resolve(tmpdir(), "pi-agenticoding-loader-typebox-"));
+	const cwd = mkdtempSync(resolve(tmpdir(), "pi-schematic-loader-typebox-"));
 	try {
 		const result = spawnSync(
 			process.execPath,
@@ -99,7 +99,7 @@ test("register-loader resolves typebox exports from the project dependency tree"
 });
 
 test("register-loader surfaces a clear error for missing typebox exports", () => {
-	const cwd = mkdtempSync(resolve(tmpdir(), "pi-agenticoding-loader-typebox-missing-"));
+	const cwd = mkdtempSync(resolve(tmpdir(), "pi-schematic-loader-typebox-missing-"));
 	try {
 		const result = spawnSync(
 			process.execPath,

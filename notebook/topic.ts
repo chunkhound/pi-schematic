@@ -1,4 +1,4 @@
-import type { AgenticodingState } from "../state.js";
+import type { SchematicState } from "../state.js";
 
 export type NotebookTopicSource = "human" | "agent";
 
@@ -20,7 +20,7 @@ export function normalizeNotebookTopic(input: string): string {
 }
 
 export function setActiveNotebookTopic(
-	state: AgenticodingState,
+	state: SchematicState,
 	topic: string,
 	source: NotebookTopicSource,
 ): { changed: boolean; previous: string | null; current: string; boundaryHint: NotebookTopicBoundaryHint | null } {
@@ -47,7 +47,7 @@ export function setActiveNotebookTopic(
 	};
 }
 
-export function clearActiveNotebookTopic(state: AgenticodingState): void {
+export function clearActiveNotebookTopic(state: SchematicState): void {
 	state.activeNotebookTopic = null;
 	state.activeNotebookTopicSource = null;
 	state.pendingTopicBoundaryHint = null;

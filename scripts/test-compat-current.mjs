@@ -12,7 +12,7 @@ const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
 async function main() {
   const root = repoRootFromScript(import.meta.url);
   const artifactDir = process.env.COMPAT_ARTIFACT_DIR;
-  const { temp, copy } = createCompatCopy(root, "pi-agenticoding-current-");
+  const { temp, copy } = createCompatCopy(root, "pi-schematic-current-");
 
   try {
     prepareCompatCopy(copy);

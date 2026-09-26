@@ -7,7 +7,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { AgenticodingState } from "./state.js";
+import type { SchematicState } from "./state.js";
 import { isHandoffEligible, normalizeContextPercent } from "./handoff/eligibility.js";
 import {
 	READONLY_HANDOFF_RETRY_ADVICE,
@@ -22,7 +22,7 @@ import { STATUS_KEY_HANDOFF } from "./tui.js";
  * resets toolCalled=false after failure so enforcement can resume. */
 export const MAX_HANDOFF_ATTEMPTS = 5;
 
-type NudgeState = Pick<AgenticodingState, "activeNotebookTopic" | "pendingTopicBoundaryHint" | "readonlyEnabled" | "pendingRequestedHandoff">;
+type NudgeState = Pick<SchematicState, "activeNotebookTopic" | "pendingTopicBoundaryHint" | "readonlyEnabled" | "pendingRequestedHandoff">;
 
 function buildRequestedHandoffNudge(state: NudgeState, eligible: boolean): string {
 	if (!eligible) {
@@ -104,7 +104,7 @@ export function buildNudge(state: NudgeState, percent: number | null, eligible: 
  *
  * Must be called from the extension factory in index.ts after state creation.
  */
-export function registerWatchdog(pi: ExtensionAPI, state: AgenticodingState): void {
+export function registerWatchdog(pi: ExtensionAPI, state: SchematicState): void {
 	pi.on("agent_end", async (_event: unknown, ctx: ExtensionContext) => {
 		// ── Enforcement counter: prevent infinite handoff nudges ──
 		// pendingRequestedHandoff is the sticky "user still expects a real
