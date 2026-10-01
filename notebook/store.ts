@@ -71,13 +71,33 @@ export function formatPageList(state: SchematicState): string {
 		.join("\n");
 }
 
+/**
+ * Human-facing `/notebook` selector preview. Adds the TUI clipped badge on top
+ * of the plain preview; the badge is TUI-only and must never be fed back into
+ * model-visible text (`formatPagePreview`/`formatPageList` stay untouched).
+ */
+export function formatPageTuiPreview(content: string, clipped: boolean): string {
+	const preview = formatPagePreview(content);
+	if (!clipped) return preview;
+	return preview ? `${preview} [truncated]` : "[truncated]";
+}
+
+/** Ephemeral write-time truncation account; never persisted. */
+export interface TruncationReport {
+	truncatedBy: "lines" | "bytes";
+	totalLines: number;
+	totalBytes: number;
+	outputLines: number;
+	outputBytes: number;
+}
+
 export async function saveNotebookPage(
 	pi: ExtensionAPI,
 	state: SchematicState,
 	name: string,
 	content: string,
 	assertWritable?: () => void | Promise<void>,
-): Promise<{ entries: string[]; preview: string }> {
+): Promise<{ entries: string[]; preview: string; truncation: TruncationReport | null; clipped: boolean }> {
 	return withWriteLock(async () => {
 		await assertWritable?.();
 		const truncated = truncateHead(content, {
@@ -85,21 +105,46 @@ export async function saveNotebookPage(
 			maxBytes: DEFAULT_MAX_BYTES,
 		});
 
+		// A first line that alone exceeds the byte cap cannot be represented by
+		// head truncation. Reject before any epoch/page/persist mutation so the
+		// prior page and its clipped flag stay intact.
+		if (truncated.firstLineExceedsLimit) {
+			throw new Error(
+				`Notebook page "${name}" rejected: first line exceeds 50 KiB (51200 bytes). Split it into shorter lines or smaller pages.`,
+			);
+		}
+
+		const clipped = truncated.truncated;
+		const truncation: TruncationReport | null = clipped
+			? {
+					truncatedBy: truncated.truncatedBy === "bytes" ? "bytes" : "lines",
+					totalLines: truncated.totalLines,
+					totalBytes: truncated.totalBytes,
+					outputLines: truncated.outputLines,
+					outputBytes: truncated.outputBytes,
+				}
+			: null;
+
 		if (state.epoch === 0) {
 			state.epoch = 1;
 		}
 
 		state.notebookPages.set(name, truncated.content);
+		if (clipped) state.clippedPages.add(name);
+		else state.clippedPages.delete(name);
 		pi.appendEntry("notebook-entry", {
 			version: 1,
 			epoch: state.epoch,
 			name,
 			content: truncated.content,
+			clipped,
 		});
 
 		return {
 			entries: getPageNames(state),
 			preview: formatPagePreview(truncated.content),
+			truncation,
+			clipped,
 		};
 	});
 }
@@ -131,7 +176,13 @@ export async function prepareNotebookDiscard(
 		const deletedSet = new Set(deleted);
 		for (const [name, content] of state.notebookPages) {
 			if (!deletedSet.has(name)) {
-				pi.appendEntry("notebook-entry", { version: 1, epoch: nextEpoch, name, content });
+				pi.appendEntry("notebook-entry", {
+					version: 1,
+					epoch: nextEpoch,
+					name,
+					content,
+					clipped: state.clippedPages.has(name),
+				});
 			}
 		}
 		state.pendingNotebookDiscard = { generation, nextEpoch, deleted };
@@ -148,7 +199,10 @@ export async function prepareNotebookDiscard(
 	if (!pending || pending.generation !== generation) return;
 	pi.appendEntry("notebook-generation", { version: 1, epoch: pending.nextEpoch });
 	state.epoch = pending.nextEpoch;
-	for (const name of pending.deleted) state.notebookPages.delete(name);
+	for (const name of pending.deleted) {
+		state.notebookPages.delete(name);
+		state.clippedPages.delete(name);
+	}
 	state.pendingNotebookDiscard = null;
 	state.discardEpochWatermark = 0;
 }

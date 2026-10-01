@@ -5,11 +5,11 @@ import { Text } from "@earendil-works/pi-tui";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { createState, resetState, invalidateHandoffState } from "../../state.js";
 import { registerNotebookRehydration, reconstructNotebook } from "../../notebook/rehydration.js";
-import { commitNotebookDiscard, prepareNotebookDiscard, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
+import { commitNotebookDiscard, formatPagePreview, prepareNotebookDiscard, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
 import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
 import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
-import { makeTUICtx, createDeferred, theme, stripAnsi } from "./helpers.js";
+import { makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
 
@@ -27,6 +27,53 @@ async function rehydratePersistedNotebook(pi: TestPI) {
 	const [handler] = restoredPi.handlers.get("session_start")!;
 	await handler({}, { sessionManager: { getBranch: () => persistedBranch(pi) } });
 	return state;
+}
+
+// ── Notebook write-size fixtures (issue #42) ──────────────────────────
+
+const C = "first\nsecond";
+const L = (n: number) => Array(n).fill("x").join("\n");
+const B = "a".repeat(25600) + "\n" + "b".repeat(25600);
+const U = "é".repeat(12800) + "\n" + "z".repeat(25600);
+const R = "x".repeat(51201);
+const UR = "é".repeat(25600) + "x";
+const F = "x".repeat(51200);
+const M = "a".repeat(25600) + "\n" + "b".repeat(25599);
+
+const Tlines = { truncatedBy: "lines", totalLines: 2001, totalBytes: 4001, outputLines: 2000, outputBytes: 3999 } as const;
+const Tbytes = { truncatedBy: "bytes", totalLines: 2, totalBytes: 51201, outputLines: 1, outputBytes: 25600 } as const;
+const ReportLines = "TRUNCATED by lines: kept 2000 of 2001 lines (3999 of 4001 bytes); tail dropped. Split this page into smaller pages.";
+const Notice = "Notice: This page was clipped at write time; its stored body is incomplete.";
+const rejectMessage = (name: string) => `Notebook page "${name}" rejected: first line exceeds 50 KiB (51200 bytes). Split it into shorter lines or smaller pages.`;
+const DescriptionSuffix = "Content is limited to 2000 lines / 50 KiB (51200 bytes). The beginning is kept, the tail is dropped, and truncation is reported. A first line exceeding 50 KiB (51200 bytes) is rejected.";
+
+/** Complete-write final text for a single page. */
+function completeFinalText(name: string, body: string): string {
+	const preview = formatPagePreview(body);
+	return `Saved notebook page "${name}".` + (preview ? `\n${preview}` : "") + `\n\nNotebook Pages:\n  ${name}: ${preview}`;
+}
+
+/** Clipped-write final text: report lands after the preview and before the page list. */
+function clippedFinalText(name: string, body: string, report: string): string {
+	const preview = formatPagePreview(body);
+	return `Saved notebook page "${name}".` + (preview ? `\n${preview}` : "") + `\n\n${report}\n\nNotebook Pages:\n  ${name}: ${preview}`;
+}
+
+/** Complete-write onUpdate text. */
+function completeUpdateText(name: string, body: string): string {
+	const preview = formatPagePreview(body);
+	return `Saved "${name}"` + (preview ? `: ${preview}` : "");
+}
+
+/** Clipped-write onUpdate text: report appended after the preview. */
+function clippedUpdateText(name: string, body: string, report: string): string {
+	const preview = formatPagePreview(body);
+	return `Saved "${name}"` + (preview ? `: ${preview}` : "") + `\n\n${report}`;
+}
+
+/** Single-page read envelope without any notice. */
+function readBase(name: string, body: string): string {
+	return `--- ${name} ---\n${body}\n---\nNotebook Pages:\n  ${name}: ${formatPagePreview(body)}`;
 }
 
 // ── Notebook rehydration tests ────────────────────────────────────────
@@ -164,7 +211,8 @@ test("pre-versioned entries without a version field rehydrate on parity", async 
 	await saveNotebookPage(pi as any, state, "legacy", "old");
 	await saveNotebookPage(pi as any, state, "current", "new");
 	const branch = persistedBranch(pi);
-	delete (branch[0] as { data: { version?: unknown } }).data.version;
+	delete (branch[0] as { data: { version?: unknown; clipped?: unknown } }).data.version;
+	delete (branch[0] as { data: { version?: unknown; clipped?: unknown } }).data.clipped;
 
 	await handler({}, { sessionManager: { getBranch: () => branch } });
 
@@ -223,7 +271,7 @@ test("notebook tools add/get/list return stable contract details", async () => {
 	const [notebookWrite, notebookRead, notebookIndex] = createNotebookToolDefinitions(pi as any, state);
 
 	const addResult = await notebookWrite.execute("1", { name: "entry-a", content: "first line\nsecond line" }, undefined, undefined, {} as any);
-	assert.deepEqual(addResult.details, { entries: ["entry-a"], preview: "first line" });
+	assert.deepEqual(addResult.details, { entries: ["entry-a"], preview: "first line", truncation: null, clipped: false });
 	assert.equal(state.notebookPages.get("entry-a"), "first line\nsecond line");
 	assert.equal(pi.appendedEntries.length, 1);
 	assert.equal(pi.appendedEntries[0].customType, "notebook-entry");
@@ -271,7 +319,7 @@ test("child notebook_write succeeds while child session is fresh", async () => {
 	const [notebookWrite] = createNotebookToolDefinitions(pi as any, state, { isStale: () => false });
 
 	const result = await notebookWrite.execute("1", { name: "entry-a", content: "alpha" }, undefined, undefined, {} as any);
-	assert.deepEqual(result.details, { entries: ["entry-a"], preview: "alpha" });
+	assert.deepEqual(result.details, { entries: ["entry-a"], preview: "alpha", truncation: null, clipped: false });
 	assert.equal(state.notebookPages.get("entry-a"), "alpha");
 	assert.equal(pi.appendedEntries.length, 1);
 });
@@ -321,9 +369,9 @@ test("notebook_write pushes onUpdate and refreshes UI indicators", async () => {
 	);
 
 	assert.equal((update.content[0] as any).text, 'Saved "entry-a": first line');
-	assert.deepEqual(update.details, { entries: ["entry-a"], preview: "first line" });
+	assert.deepEqual(update.details, { entries: ["entry-a"], preview: "first line", truncation: null, clipped: false });
 	assert.equal(record.statuses.get("pi-schematic-notebook"), "📒 1");
-	assert.deepEqual(result.details, { entries: ["entry-a"], preview: "first line" });
+	assert.deepEqual(result.details, { entries: ["entry-a"], preview: "first line", truncation: null, clipped: false });
 });
 
 test("notebook tool renderers expose stable call/result summaries", async () => {
@@ -335,7 +383,7 @@ test("notebook tool renderers expose stable call/result summaries", async () => 
 	assert.match(stripAnsi(addCall.render(120).join("\n")), /notebook_write "entry-a": first line/);
 
 	const addResult = notebookWrite.renderResult!(
-		{ content: [{ type: "text", text: "" }], details: { entries: ["entry-a"], preview: "first line" } },
+		{ content: [{ type: "text", text: "" }], details: { entries: ["entry-a"], preview: "first line", truncation: null, clipped: false } },
 		{ expanded: true, isPartial: false },
 		theme,
 		{ args: { name: "entry-a", content: "first line\nsecond line" } } as any,
@@ -344,7 +392,7 @@ test("notebook tool renderers expose stable call/result summaries", async () => 
 	assert.match(stripAnsi(addResult.render(120).join("\n")), /entry-a/);
 
 	const getResult = notebookRead.renderResult!(
-		{ content: [{ type: "text", text: "ignored" }], details: { entries: ["entry-a"], found: true, body: "body" } },
+		{ content: [{ type: "text", text: "ignored" }], details: { entries: ["entry-a"], found: true, body: "body", clipped: false } },
 		{ expanded: true, isPartial: false },
 		theme,
 		{ args: { name: "entry-a" } } as any,
@@ -353,7 +401,7 @@ test("notebook tool renderers expose stable call/result summaries", async () => 
 	assert.match(stripAnsi(getResult.render(120).join("\n")), /body/);
 
 	const getResultWithDelimiters = notebookRead.renderResult!(
-		{ content: [{ type: "text", text: "ignored" }], details: { entries: ["entry-a"], found: true, body: "line 1\n---\nline 2" } },
+		{ content: [{ type: "text", text: "ignored" }], details: { entries: ["entry-a"], found: true, body: "line 1\n---\nline 2", clipped: false } },
 		{ expanded: true, isPartial: false },
 		theme,
 		{ args: { name: "entry-a" } } as any,
@@ -994,4 +1042,416 @@ test("session_tree rehydrates notebook state branch-scoped: pages and epoch foll
 	assert.deepEqual(indexResult.details.entries, ["page-a", "page-b"], "returning to A must restore its pages");
 	await notebookWrite.execute("6", { name: "page-a", content: "a-v2" }, undefined, undefined, makeTUICtx({ hasUI: false }));
 	assert.equal(pi.appendedEntries.at(-1)!.data.epoch, 1, "write after returning to A must use A's epoch");
+});
+
+// ── Notebook write-size contract (issue #42) ───────────────────────────
+
+test("complete write exposes null truncation and false clipped", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	const [notebookWrite] = createNotebookToolDefinitions(pi as any, state);
+
+	const saved = await saveNotebookPage(pi as any, state, "page", C);
+	assert.deepEqual(saved, { entries: ["page"], preview: "first", truncation: null, clipped: false });
+	assert.deepEqual(pi.appendedEntries[0].data, { version: 1, epoch: 1, name: "page", content: C, clipped: false });
+
+	let update: any;
+	const result = await notebookWrite.execute("2", { name: "page", content: C }, undefined, (payload: any) => { update = payload; }, makeTUICtx({ hasUI: false }));
+	assert.equal((result.content[0] as any).text, completeFinalText("page", C));
+	assert.equal((update.content[0] as any).text, completeUpdateText("page", C));
+	assert.deepEqual(result.details, { entries: ["page"], preview: "first", truncation: null, clipped: false });
+	assert.deepEqual(update.details, { entries: ["page"], preview: "first", truncation: null, clipped: false });
+});
+
+test("line overflow returns exact head and line report", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+
+	const saved = await saveNotebookPage(pi as any, state, "page", L(2001));
+	assert.equal(state.notebookPages.get("page"), L(2000));
+	assert.deepEqual(saved, { entries: ["page"], preview: "x", truncation: Tlines, clipped: true });
+	assert.deepEqual(pi.appendedEntries[0].data, { version: 1, epoch: 1, name: "page", content: L(2000), clipped: true });
+});
+
+test("byte overflow retains whole lines and reports bytes (ASCII + UTF-8)", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+
+	const ascii = await saveNotebookPage(pi as any, state, "page", B);
+	assert.equal(state.notebookPages.get("page"), "a".repeat(25600));
+	assert.deepEqual(ascii, { entries: ["page"], preview: formatPagePreview("a".repeat(25600)), truncation: Tbytes, clipped: true });
+	assert.deepEqual(pi.appendedEntries[0].data, { version: 1, epoch: 1, name: "page", content: "a".repeat(25600), clipped: true });
+
+	const utf8 = await saveNotebookPage(pi as any, state, "page", U);
+	assert.equal(state.notebookPages.get("page"), "é".repeat(12800));
+	assert.deepEqual(utf8, { entries: ["page"], preview: formatPagePreview("é".repeat(12800)), truncation: Tbytes, clipped: true });
+	assert.deepEqual(pi.appendedEntries[1].data, { version: 1, epoch: 1, name: "page", content: "é".repeat(12800), clipped: true });
+});
+
+test("write final and update text report clipping without a badge", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	const [notebookWrite] = createNotebookToolDefinitions(pi as any, state);
+
+	let update: any;
+	const result = await notebookWrite.execute("1", { name: "page", content: L(2001) }, undefined, (payload: any) => { update = payload; }, makeTUICtx({ hasUI: false }));
+
+	const body = L(2000);
+	assert.equal((result.content[0] as any).text, clippedFinalText("page", body, ReportLines));
+	assert.equal(update.content[0].text, clippedUpdateText("page", body, ReportLines));
+	assert.deepEqual(result.details, { entries: ["page"], preview: "x", truncation: Tlines, clipped: true });
+	assert.deepEqual(update.details, { entries: ["page"], preview: "x", truncation: Tlines, clipped: true });
+	assert.doesNotMatch((result.content[0] as any).text, /\[truncated\]/);
+	assert.doesNotMatch(update.content[0].text, /\[truncated\]/);
+});
+
+test("read appends a generic notice only for a flagged page", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	const [notebookWrite, notebookRead] = createNotebookToolDefinitions(pi as any, state);
+
+	await notebookWrite.execute("1", { name: "page", content: L(2001) }, undefined, undefined, makeTUICtx({ hasUI: false }));
+	const clipped = await notebookRead.execute("2", { name: "page" }, undefined, undefined, {} as any);
+	const body = L(2000);
+	assert.equal((clipped.content[0] as any).text, `${readBase("page", body)}\n\n${Notice}`);
+	assert.equal((clipped.content[0] as any).text.split(Notice).length - 1, 1);
+	assert.deepEqual(clipped.details, { entries: ["page"], found: true, body, clipped: true });
+
+	await notebookWrite.execute("3", { name: "page", content: C }, undefined, undefined, makeTUICtx({ hasUI: false }));
+	const complete = await notebookRead.execute("4", { name: "page" }, undefined, undefined, {} as any);
+	assert.equal((complete.content[0] as any).text, readBase("page", C));
+	assert.doesNotMatch((complete.content[0] as any).text, /Notice:/);
+	assert.deepEqual(complete.details, { entries: ["page"], found: true, body: C, clipped: false });
+});
+
+test("oversized first line rejects a new page without side effects", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	const [notebookWrite, , notebookIndex] = createNotebookToolDefinitions(pi as any, state);
+	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
+
+	for (const content of [R, UR]) {
+		await assert.rejects(
+			() => saveNotebookPage(pi as any, state, "page", content),
+			(error: unknown) => error instanceof Error && error.message === rejectMessage("page"),
+		);
+	}
+
+	let updateCalled = false;
+	await assert.rejects(
+		() => notebookWrite.execute("1", { name: "page", content: R }, undefined, () => { updateCalled = true; }, makeTUICtx({ hasUI: true, record })),
+		(error: unknown) => error instanceof Error && error.message === rejectMessage("page"),
+	);
+	assert.equal(updateCalled, false);
+	assert.equal(state.notebookPages.size, 0);
+	assert.equal(state.epoch, 0);
+	assert.equal(state.discardEpochWatermark, 0);
+	assert.equal(pi.appendedEntries.length, 0);
+	assert.equal(record.statuses.size, 0);
+	assert.equal(record.widgets.size, 0);
+
+	await saveNotebookPage(pi as any, state, "page", C);
+	assert.equal(state.notebookPages.get("page"), C);
+	const index = await notebookIndex.execute("2", {}, undefined, undefined, {} as any);
+	assert.deepEqual(index.details, { entries: ["page"] });
+});
+
+test("rejected overwrite preserves prior body and clipped flag", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	const [, notebookRead] = createNotebookToolDefinitions(pi as any, state);
+
+	await saveNotebookPage(pi as any, state, "page", C);
+	const epochBefore = state.epoch;
+	await assert.rejects(
+		() => saveNotebookPage(pi as any, state, "page", R),
+		(error: unknown) => error instanceof Error && error.message === rejectMessage("page"),
+	);
+	assert.equal(state.notebookPages.get("page"), C);
+	assert.equal(state.epoch, epochBefore);
+	assert.equal(pi.appendedEntries.length, 1);
+	let read = await notebookRead.execute("2", { name: "page" }, undefined, undefined, {} as any);
+	assert.equal((read.content[0] as any).text, readBase("page", C));
+	assert.equal((read.details as any).clipped, false);
+
+	await saveNotebookPage(pi as any, state, "page", L(2001));
+	const epochClipped = state.epoch;
+	await assert.rejects(
+		() => saveNotebookPage(pi as any, state, "page", R),
+		(error: unknown) => error instanceof Error && error.message === rejectMessage("page"),
+	);
+	assert.equal(state.notebookPages.get("page"), L(2000));
+	assert.equal(state.epoch, epochClipped);
+	read = await notebookRead.execute("3", { name: "page" }, undefined, undefined, {} as any);
+	assert.equal((read.details as any).clipped, true);
+	assert.equal((read.content[0] as any).text.endsWith(`\n\n${Notice}`), true);
+});
+
+test("clipped flag survives fresh reconstruction without persisted quantities", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	const [notebookWrite] = createNotebookToolDefinitions(pi as any, state);
+	await notebookWrite.execute("1", { name: "page", content: L(2001) }, undefined, undefined, makeTUICtx({ hasUI: false }));
+
+	assert.deepEqual(Object.keys(pi.appendedEntries[0].data).sort(), ["clipped", "content", "epoch", "name", "version"]);
+	assert.equal((pi.appendedEntries[0].data as any).clipped, true);
+
+	const restored = await rehydratePersistedNotebook(pi);
+	const restoredPi = await createTestHost();
+	const [, restoredRead] = createNotebookToolDefinitions(restoredPi as any, restored);
+	const read = await restoredRead.execute("1", { name: "page" }, undefined, undefined, {} as any);
+	assert.equal((read.details as any).clipped, true);
+	assert.equal((read.content[0] as any).text.endsWith(`\n\n${Notice}`), true);
+});
+
+test("complete overwrite clears a durable clipped flag", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	const [notebookWrite, notebookRead] = createNotebookToolDefinitions(pi as any, state);
+
+	await notebookWrite.execute("1", { name: "page", content: L(2001) }, undefined, undefined, makeTUICtx({ hasUI: false }));
+	await notebookWrite.execute("2", { name: "page", content: C }, undefined, undefined, makeTUICtx({ hasUI: false }));
+
+	assert.equal((pi.appendedEntries.at(-1)!.data as any).clipped, false);
+	const read = await notebookRead.execute("3", { name: "page" }, undefined, undefined, {} as any);
+	assert.deepEqual(read.details, { entries: ["page"], found: true, body: C, clipped: false });
+	assert.equal((read.content[0] as any).text, readBase("page", C));
+
+	const restored = await rehydratePersistedNotebook(pi);
+	const restoredPi = await createTestHost();
+	const [, restoredRead] = createNotebookToolDefinitions(restoredPi as any, restored);
+	const restoredResult = await restoredRead.execute("4", { name: "page" }, undefined, undefined, {} as any);
+	assert.equal((restoredResult.details as any).clipped, false);
+});
+
+test("legacy page entries without clipped read as false", async () => {
+	const state = createState();
+	const pi = await createTestHost((api) => registerNotebookRehydration(api, state));
+	const [handler] = pi.handlers.get("session_start")!;
+	await handler({}, { sessionManager: { getBranch: () => [
+		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "v1", content: C } },
+		{ type: "custom", customType: "notebook-entry", data: { epoch: 1, name: "unversioned", content: C } },
+		{ type: "custom", customType: "ledger-entry", data: { epoch: 1, name: "ledger", content: C } },
+	] } });
+
+	const toolPi = await createTestHost();
+	const [, notebookRead] = createNotebookToolDefinitions(toolPi as any, state);
+	const list = `  ledger: first\n  unversioned: first\n  v1: first`;
+	for (const name of ["v1", "unversioned", "ledger"]) {
+		const read = await notebookRead.execute("1", { name }, undefined, undefined, {} as any);
+		assert.equal((read.content[0] as any).text, `--- ${name} ---\n${C}\n---\nNotebook Pages:\n${list}`);
+		assert.deepEqual(read.details, { entries: ["ledger", "unversioned", "v1"], found: true, body: C, clipped: false });
+	}
+});
+
+test("discard survivor retains its durable clipped flag", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	await saveNotebookPage(pi as any, state, "drop", C);
+	await saveNotebookPage(pi as any, state, "keep", L(2001));
+
+	await prepareNotebookDiscard(pi as any, state, 1, ["drop"]);
+	const staged = pi.appendedEntries.find((entry) => entry.customType === "notebook-entry" && entry.data.name === "keep" && entry.data.epoch === 2)!;
+	assert.deepEqual(staged.data, { version: 1, epoch: 2, name: "keep", content: L(2000), clipped: true });
+
+	commitNotebookDiscard(pi as any, state, 1);
+	assert.equal(state.notebookPages.get("keep"), L(2000));
+	assert.deepEqual(pi.appendedEntries.filter((entry) => entry.customType === "notebook-generation").map((entry) => entry.data), [
+		{ version: 1, epoch: 1 }, { version: 1, epoch: 2 },
+	]);
+
+	const restored = await rehydratePersistedNotebook(pi);
+	assert.equal(restored.notebookPages.get("keep"), L(2000));
+	const restoredPi = await createTestHost();
+	const [, restoredRead] = createNotebookToolDefinitions(restoredPi as any, restored);
+	const read = await restoredRead.execute("1", { name: "keep" }, undefined, undefined, {} as any);
+	assert.equal((read.details as any).clipped, true);
+});
+
+test("formatPageTuiPreview appends a badge only when clipped", async () => {
+	const mod = (await import("../../notebook/store.js")) as unknown as Record<string, unknown>;
+	assert.equal(typeof mod["formatPageTuiPreview"], "function");
+	const formatPageTuiPreview = mod["formatPageTuiPreview"] as (content: string, clipped: boolean) => string;
+
+	assert.equal(formatPageTuiPreview(L(2000), true), "x [truncated]");
+	assert.equal(formatPageTuiPreview(C, false), "first");
+	assert.equal(formatPageTuiPreview("p".repeat(81) + "\ntail", true), "p".repeat(77) + "... [truncated]");
+});
+
+test("/notebook selector badges clipped pages without changing stored bodies", async () => {
+	const pi = await createTestHost();
+	const notebookWrite = pi.tools.get("notebook_write");
+	await notebookWrite.execute("1", { name: "clipped-page", content: L(2001) }, undefined, undefined, makeTUICtx());
+	await notebookWrite.execute("2", { name: "complete-page", content: C }, undefined, undefined, makeTUICtx());
+
+	let overlay: any;
+	await pi.commands.get("notebook")!.handler("", {
+		hasUI: true,
+		ui: { theme, custom: async (build: any) => { overlay = build({ requestRender: () => {} }, theme, {}, () => {}); } },
+	});
+
+	const lines = stripAnsi(overlay.render(200).join("\n")).split("\n");
+	const clippedLine = lines.find((line) => line.includes("clipped-page"))!;
+	assert.match(clippedLine, /x \[truncated\]/);
+	const completeLine = lines.find((line) => line.includes("complete-page"))!;
+	assert.match(completeLine, /first/);
+	assert.doesNotMatch(completeLine, /\[truncated\]/);
+
+	const read = pi.tools.get("notebook_read");
+	const clippedRead = await read.execute("3", { name: "clipped-page" }, undefined, undefined, {} as any);
+	assert.equal((clippedRead.details as any).body, L(2000));
+	assert.equal((clippedRead.details as any).clipped, true);
+	const completeRead = await read.execute("4", { name: "complete-page" }, undefined, undefined, {} as any);
+	assert.equal((completeRead.details as any).body, C);
+	assert.equal((completeRead.details as any).clipped, false);
+});
+
+test("notebook_write descriptions state the shared write-size semantics", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	const [notebookWrite] = createNotebookToolDefinitions(pi as any, state);
+
+	assert.equal(notebookWrite.description.endsWith(DescriptionSuffix), true);
+	const contentDescription = (notebookWrite.parameters as any).properties.content.description as string;
+	assert.equal(contentDescription.endsWith(DescriptionSuffix), true);
+	assert.doesNotMatch(JSON.stringify(notebookWrite.parameters), /Truncated at 50KB \/ 2000 lines\./);
+	assert.doesNotMatch(notebookWrite.description, /Truncated at 50KB \/ 2000 lines\./);
+});
+
+// ── Notebook write-size green regression net ───────────────────────────
+
+test("plain preview preserves the 80-character boundary", async () => {
+	assert.equal(formatPagePreview("p".repeat(80)), "p".repeat(80));
+	assert.equal(formatPagePreview("p".repeat(81) + "\ntail"), "p".repeat(77) + "...");
+});
+
+test("plain page list and index preserve previews and alphabetical order", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	const [, , notebookIndex] = createNotebookToolDefinitions(pi as any, state);
+	await saveNotebookPage(pi as any, state, "zeta", "last");
+	await saveNotebookPage(pi as any, state, "alpha", "first");
+
+	const index = await notebookIndex.execute("1", {}, undefined, undefined, {} as any);
+	assert.deepEqual(index.details, { entries: ["alpha", "zeta"] });
+	assert.match((index.content[0] as any).text, /  alpha: first\n  zeta: last/);
+	assert.doesNotMatch((index.content[0] as any).text, /\[truncated\]|Notice:/);
+});
+
+test("line overflow retains exactly 2000 whole lines", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	await saveNotebookPage(pi as any, state, "page", L(2001));
+	assert.equal(state.notebookPages.get("page"), L(2000));
+	assert.equal(state.notebookPages.get("page")!.split("\n").length, 2000);
+});
+
+test("byte overflow preserves the first whole line in ASCII and UTF-8", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	await saveNotebookPage(pi as any, state, "page", B);
+	assert.equal(state.notebookPages.get("page"), "a".repeat(25600));
+	assert.equal(state.notebookPages.get("page")!.includes("\n"), false);
+	await saveNotebookPage(pi as any, state, "page", U);
+	assert.equal(state.notebookPages.get("page"), "é".repeat(12800));
+	assert.equal(state.notebookPages.get("page")!.includes("\n"), false);
+});
+
+test("complete and empty bodies remain accepted at the existing caps", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	const [, notebookRead] = createNotebookToolDefinitions(pi as any, state);
+	const cases: Array<[string, string]> = [["c", C], ["l", L(2000)], ["f", F], ["m", M], ["empty", ""]];
+	for (const [name, body] of cases) {
+		await saveNotebookPage(pi as any, state, name, body);
+		assert.equal(state.notebookPages.get(name), body);
+	}
+	const read = await notebookRead.execute("1", { name: "empty" }, undefined, undefined, {} as any);
+	assert.equal((read.details as any).found, true);
+	assert.equal((read.details as any).body, "");
+});
+
+test("complete writes preserve their text list and existing detail fields", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	const [notebookWrite] = createNotebookToolDefinitions(pi as any, state);
+	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
+	let update: any;
+
+	const result = await notebookWrite.execute("1", { name: "page", content: C }, undefined, (payload: any) => { update = payload; }, makeTUICtx({ percent: 42, record }));
+	assert.equal((result.content[0] as any).text, completeFinalText("page", C));
+	assert.equal(update.content[0].text, completeUpdateText("page", C));
+	const project = (details: any) => ({ entries: details.entries, preview: details.preview });
+	assert.deepEqual(project(result.details), { entries: ["page"], preview: "first" });
+	assert.deepEqual(project(update.details), { entries: ["page"], preview: "first" });
+	assert.equal(record.statuses.get("pi-schematic-notebook"), "📒 1");
+
+	const childPi = await createTestHost();
+	const childState = createState();
+	const [childWrite] = createNotebookToolDefinitions(childPi as any, childState, { isStale: () => false });
+	const childResult = await childWrite.execute("2", { name: "alpha", content: "alpha" }, undefined, undefined, {} as any);
+	assert.deepEqual(project(childResult.details), { entries: ["alpha"], preview: "alpha" });
+});
+
+test("complete reads preserve their body envelope and existing detail fields", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	await saveNotebookPage(pi as any, state, "page", C);
+	const [, notebookRead] = createNotebookToolDefinitions(pi as any, state);
+
+	const read = await notebookRead.execute("1", { name: "page" }, undefined, undefined, {} as any);
+	assert.equal((read.content[0] as any).text, readBase("page", C));
+	const details = read.details as any;
+	assert.deepEqual({ entries: details.entries, found: details.found, body: details.body }, { entries: ["page"], found: true, body: C });
+	assert.doesNotMatch((read.content[0] as any).text, /Notice:|\[truncated\]/);
+});
+
+test("model listing surfaces remain free of clipping decorations", async () => {
+	const pi = await createTestHost();
+	const notebookWrite = pi.tools.get("notebook_write");
+	const notebookRead = pi.tools.get("notebook_read");
+	const notebookIndex = pi.tools.get("notebook_index");
+	let update: any;
+	const writeResult = await notebookWrite.execute("1", { name: "page", content: L(2001) }, undefined, (payload: any) => { update = payload; }, makeTUICtx());
+	const writeTexts = [(writeResult.content[0] as any).text, update.content[0].text];
+	const indexResult = await notebookIndex.execute("2", {}, undefined, undefined, {} as any);
+	const readResult = await notebookRead.execute("3", { name: "page" }, undefined, undefined, {} as any);
+	const readText = (readResult.content[0] as any).text;
+
+	for (const text of [...writeTexts, (indexResult.content[0] as any).text, readText]) {
+		assert.doesNotMatch(text, /\[truncated\]/, `model text must not carry the TUI badge: ${text}`);
+	}
+	for (const text of [...writeTexts, (indexResult.content[0] as any).text]) {
+		assert.doesNotMatch(text, /Notice:/, `notice must not leak into non-read surfaces: ${text}`);
+	}
+
+	// System prompt listing through the real before_agent_start hook.
+	const [beforeAgentStart] = pi.handlers.get("before_agent_start")!;
+	const promptResult = await beforeAgentStart(
+		{ systemPrompt: "Base system prompt." },
+		{ ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false },
+	);
+	assert.doesNotMatch(promptResult.systemPrompt, /\[truncated\]/);
+	assert.doesNotMatch(promptResult.systemPrompt, /Notice:/);
+	assert.match(promptResult.systemPrompt, /  page: x/);
+
+	// Spawn prompt through the real child-session seam.
+	const proof = await runRealChildInvocation({ prompt: "Do the task.", notebookPages: { page: L(2001) } });
+	for (const message of proof.observedMessages) {
+		assert.doesNotMatch(message, /\[truncated\]/);
+		assert.doesNotMatch(message, /Notice:/);
+	}
+});
+
+test("unknown notebook entry types have zero effect on reconstructed state", async () => {
+	const pi = await createTestHost();
+	const state = createState();
+	await saveNotebookPage(pi as any, state, "page", C);
+	pi.appendEntry("unknown-notebook-type", { version: 1, epoch: 9, name: "ghost", content: "x" });
+	pi.appendEntry("some-other-entry", { version: 1, epoch: 9 });
+
+	const restored = await rehydratePersistedNotebook(pi);
+	assert.equal(restored.epoch, 1);
+	assert.equal(restored.discardEpochWatermark, 1);
+	assert.deepEqual(Array.from(restored.notebookPages.entries()), [["page", C]]);
 });
