@@ -51,7 +51,22 @@ const EXPECTED_MATRIX = new Set([
 	"macos-latest@24",
 	"windows-latest@24",
 ]);
-const EXPECTED_ALLOWLIST_KEYS = new Set<string>();
+const EXPECTED_ALLOWLIST_KEYS = new Set<string>([
+	// Transitive advisories inside the pinned test host
+	// @earendil-works/pi-coding-agent@0.84.1 (devDependency; this extension ships no
+	// runtime dependencies). Patched in the host's newer releases; remove these
+	// entries when the pinned host is bumped. Expiry forces periodic re-review.
+	"GHSA-2jfj-6hjv-fm6j",
+	"GHSA-3wwx-pv8p-q78v",
+	"GHSA-3xpg-4rpp-hhhm",
+	"GHSA-6j4f-fj2g-mc7p",
+	"GHSA-pmjh-fq2x-6v4x",
+	"GHSA-q2hr-2g5m-vwhr",
+	"GHSA-qhr7-859c-m2p7",
+	"GHSA-rfgv-xxqx-mfg5",
+	"GHSA-rx4f-c7p8-82vq",
+	"GHSA-w293-vg96-wgc3",
+]);
 
 function readText(url: URL): string {
 	return readFileSync(url, "utf8");
@@ -152,7 +167,7 @@ test("pinned Pi compatibility metadata and source boundaries stay exact", () => 
 	assert.doesNotMatch(rendererSource, /process\.(?:stdout|stderr)\.write\s*\(/);
 });
 
-test("audit-ci config enforces the empty allowlist policy", () => {
+test("audit-ci config enforces the reviewed allowlist policy", () => {
 	const config = parseAuditConfig();
 	assert.equal(config.$schema, AUDIT_SCHEMA);
 	assert.equal(config.moderate, true);
