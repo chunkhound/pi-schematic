@@ -19,6 +19,7 @@ import {
 	type SelectItem,
 	SelectList,
 	Text,
+	type TUI,
 } from "@earendil-works/pi-tui";
 import { createState, invalidateHandoffState, resetState, type SchematicState } from "./state.js";
 import { CONTEXT_PRIMER } from "./system-prompt.js";
@@ -28,6 +29,7 @@ import { ensureNotebookToolsActive, registerNotebookRehydration, reconstructNote
 import { registerNotebookTopicTool } from "./notebook/topic-tool.js";
 import { setActiveNotebookTopic } from "./notebook/topic.js";
 import { formatPagePreview } from "./notebook/store.js";
+import { pagerRuntime } from "./notebook/pager.js";
 import { registerHandoffTool } from "./handoff/tool.js";
 import {
 	canPromoteBoundary,
@@ -667,85 +669,118 @@ export default function (pi: ExtensionAPI): void {
 				return;
 			}
 
-			await ctx.ui.custom<void>((tui, theme, _kb, done) => {
-				const container = new Container();
+			let lastSelectedName: string | undefined = state.activeNotebookTopic ?? undefined;
+			// Resolve once per /notebook invocation: $PAGER and `command -v less`
+			// don't change mid-session, and running execSync inside the render
+			// callback on every Enter is needless UI-thread work.
+			const pager = pagerRuntime.resolvePager();
+			while (true) {
+				// Captured so we can hand the TUI to openInPager after the overlay closes.
+				// Relies on pi-tui keeping the TUI handle live past done() — stop()/start() must still work.
+				let capturedTui: TUI | undefined;
+				const result = await ctx.ui.custom<{ action: "view"; name: string } | undefined>((tui, theme, _kb, done) => {
+					capturedTui = tui;
+					const container = new Container();
 
-				container.addChild(
-					new DynamicBorder((s: string) => theme.fg("accent", s)),
-				);
-				container.addChild(
-					new Text(theme.fg("accent", theme.bold(` Notebook (${state.notebookPages.size} pages) `)), 1, 0),
-				);
-
-				const entries = Array.from(state.notebookPages.entries()).sort(([a], [b]) => a.localeCompare(b));
-				let selectList: SelectList | undefined;
-				let finished = false;
-
-				if (entries.length === 0) {
 					container.addChild(
-						new Text(theme.fg("dim", " (empty) — use notebook_write to create pages"), 1, 0),
+						new DynamicBorder((s: string) => theme.fg("accent", s)),
 					);
-				} else {
-					const items: SelectItem[] = entries.map(([name, content]) => ({
-						value: name,
-						label: name,
-						description: formatPagePreview(content),
-					}));
+					container.addChild(
+						new Text(theme.fg("accent", theme.bold(` Notebook (${state.notebookPages.size} pages) `)), 1, 0),
+					);
 
-					selectList = new SelectList(items, Math.min(items.length, 10), {
-						selectedPrefix: (t) => theme.fg("accent", t),
-						selectedText: (t) => theme.fg("accent", t),
-						description: (t) => theme.fg("muted", t),
-						scrollInfo: (t) => theme.fg("dim", t),
-						noMatch: (t) => theme.fg("warning", t),
-					});
-					selectList.onSelect = ({ value }) => {
-						// Guard: selectList is set to undefined below, so this handler
-						// cannot fire twice — no re-entrancy guard needed here.
-						const body = state.notebookPages.get(value);
-						if (!body) { done(); return; }
-						// Switch to body view: show the selected entry body inline
-						container.clear();
-						container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-						container.addChild(new Text(theme.fg("accent", theme.bold(` ${value} `)), 1, 0));
-						const truncated = body.length > 500 ? body.slice(0, 500) + "\n..." : body;
-						container.addChild(new Text(theme.fg("toolOutput", truncated), 1, 0));
-						container.addChild(new Text(theme.fg("dim", " press any key to close "), 1, 0));
-						container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-						selectList = undefined;
-						tui.requestRender();
+					const entries = Array.from(state.notebookPages.entries()).sort(([a], [b]) => a.localeCompare(b));
+					let selectList: SelectList | undefined;
+					let finished = false;
+
+					if (entries.length === 0) {
+						container.addChild(
+							new Text(theme.fg("dim", " (empty) — use notebook_write to create pages"), 1, 0),
+						);
+					} else {
+						const items: SelectItem[] = entries.map(([name, content]) => ({
+							value: name,
+							label: name,
+							description: formatPagePreview(content),
+						}));
+
+						selectList = new SelectList(items, Math.min(items.length, 10), {
+							selectedPrefix: (t) => theme.fg("accent", t),
+							selectedText: (t) => theme.fg("accent", t),
+							description: (t) => theme.fg("muted", t),
+							scrollInfo: (t) => theme.fg("dim", t),
+							noMatch: (t) => theme.fg("warning", t),
+						});
+						if (lastSelectedName !== undefined) {
+							const idx = items.findIndex((it) => it.value === lastSelectedName);
+							if (idx >= 0) selectList.setSelectedIndex(idx);
+						}
+						selectList.onSelect = ({ value }) => {
+							// Guard: selectList is set to undefined below, so this handler
+							// cannot fire twice — no re-entrancy guard needed here.
+							const body = state.notebookPages.get(value);
+							if (body === undefined) { done(undefined); return; }
+							// Prefer a real pager when available; else fall back to a
+							// truncated inline preview.
+							if (pager) {
+								finished = true;
+								done({ action: "view", name: value });
+								return;
+							}
+							container.clear();
+							container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+							container.addChild(new Text(theme.fg("accent", theme.bold(` ${value} `)), 1, 0));
+							const truncated = body.length > 500 ? body.slice(0, 500) + "\n..." : body;
+							container.addChild(new Text(theme.fg("toolOutput", truncated), 1, 0));
+							container.addChild(new Text(theme.fg("dim", " any key close "), 1, 0));
+							container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+							selectList = undefined;
+							tui.requestRender();
+						};
+						selectList.onCancel = () => {
+							if (finished) return;
+							finished = true;
+							done(undefined);
+						};
+						container.addChild(selectList);
+					}
+
+					container.addChild(
+						new Text(theme.fg("dim", entries.length === 0
+							? " esc close "
+							: " \u2191\u2195 navigate \u2022 enter view \u2022 esc close "), 1, 0),
+					);
+					container.addChild(
+						new DynamicBorder((s: string) => theme.fg("accent", s)),
+					);
+
+					return {
+						render: (w) => container.render(w),
+						invalidate: () => container.invalidate(),
+						handleInput: (data) => {
+							if (finished) return;
+							if (!selectList) {
+								finished = true;
+								done(undefined);
+								return;
+							}
+							selectList.handleInput?.(data);
+							// Conservative: always repaint after key input.
+							// SelectList.handleInput returns void in the current API,
+							// so we can't conditionally skip — the cost is negligible.
+							tui.requestRender();
+						},
 					};
-					selectList.onCancel = () => {
-						if (finished) return;
-						finished = true;
-						done();
-					};
-					container.addChild(selectList);
-				}
+				});
+				if (result?.action !== "view") return;
+				lastSelectedName = result.name;
 
-				container.addChild(
-					new Text(theme.fg("dim", entries.length === 0
-						? " esc close "
-						: " \u2191\u2195 navigate \u2022 enter select \u2022 esc close "), 1, 0),
-				);
-				container.addChild(
-					new DynamicBorder((s: string) => theme.fg("accent", s)),
-				);
-
-				return {
-					render: (w) => container.render(w),
-					invalidate: () => container.invalidate(),
-					handleInput: (data) => {
-						if (finished) return;
-						if (!selectList) { finished = true; done(); return; }
-						selectList.handleInput?.(data);
-						// Conservative: always repaint after key input.
-						// SelectList.handleInput returns void in the current API,
-						// so we can't conditionally skip — the cost is negligible.
-						tui.requestRender();
-					},
-				};
-			});
+				// onSelect only returns "view" when `pager` was truthy at resolve time.
+				if (!pager || !capturedTui) return;
+				const body = state.notebookPages.get(result.name) ?? "";
+				const err = await pagerRuntime.openInPager(capturedTui, body, pager);
+				if (err) ctx.ui.notify(`pager failed: ${err.message}`, "warning");
+			}
 		},
 	});
 

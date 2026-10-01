@@ -6,6 +6,7 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { createState, resetState, invalidateHandoffState } from "../../state.js";
 import { registerNotebookRehydration, reconstructNotebook } from "../../notebook/rehydration.js";
 import { commitNotebookDiscard, prepareNotebookDiscard, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
+import { pagerRuntime, resolvePager, spawnPager } from "../../notebook/pager.js";
 import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
 import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
@@ -453,7 +454,11 @@ test("/notebook empty overlay renders empty state and closes on input", async ()
 	assert.equal(doneCalls, 1);
 });
 
-test("/notebook selection previews the chosen entry", async () => {
+test("/notebook selection previews the chosen entry when no pager is available", async (t) => {
+	const original = pagerRuntime.resolvePager;
+	pagerRuntime.resolvePager = () => undefined;
+	t.after(() => { pagerRuntime.resolvePager = original; });
+
 	const pi = await createTestHost();
 	const notebookWrite = pi.tools.get("notebook_write");
 	await notebookWrite.execute("1", { name: "alpha", content: "body line\nsecond line" }, undefined, undefined, makeTUICtx());
@@ -500,6 +505,288 @@ test("/notebook overlay sorts entries consistently", async () => {
 
 	const lines = stripAnsi(overlay.render(120).join("\n"));
 	assert.ok(lines.indexOf("alpha") < lines.indexOf("zeta"), lines);
+	assert.match(lines, /enter view/);
+});
+
+function notebookListCtx(options: {
+	custom: (build: any) => Promise<unknown>;
+	notifications?: Array<{ message: string; level: string }>;
+}) {
+	return {
+		hasUI: true,
+		getContextUsage: () => ({ percent: 20 }),
+		ui: {
+			theme,
+			notify: (message: string, level: string) => {
+				options.notifications?.push({ message, level });
+			},
+			setStatus: () => {},
+			setWidget: () => {},
+			custom: options.custom,
+		},
+	};
+}
+
+test("/notebook initially selects the current topic page, falling back to the first page", async (t) => {
+	const original = pagerRuntime.resolvePager;
+	pagerRuntime.resolvePager = () => undefined;
+	t.after(() => { pagerRuntime.resolvePager = original; });
+
+	for (const topic of [undefined, "zeta", "missing"]) {
+		const pi = await createTestHost();
+		const notebookWrite = pi.tools.get("notebook_write");
+		await notebookWrite.execute("1", { name: "alpha", content: "a" }, undefined, undefined, makeTUICtx());
+		await notebookWrite.execute("2", { name: "zeta", content: "z" }, undefined, undefined, makeTUICtx());
+		if (topic) {
+			await pi.commands.get("notebook")!.handler(topic, { hasUI: false });
+		}
+
+		await pi.commands.get("notebook")!.handler("", notebookListCtx({
+			custom: async (build: any) => {
+				const overlay = build({ requestRender: () => {} }, theme, {}, () => {});
+				overlay.handleInput("\r"); // open preview of the initially-selected page
+				const preview = stripAnsi(overlay.render(120).join("\n"));
+				const expected = topic === "zeta" ? "zeta" : "alpha";
+				const other = expected === "zeta" ? "alpha" : "zeta";
+				assert.match(preview, new RegExp(expected), `topic=${topic}`);
+				assert.doesNotMatch(preview, new RegExp(other), `topic=${topic}`);
+				return undefined;
+			},
+		}) as any);
+	}
+});
+
+test("resolvePager keeps fallback less interactive without changing LESS", () => {
+	for (const PAGER of [undefined, "", "   "]) {
+		const env = { PAGER, LESS: "-FRX" };
+		assert.deepEqual(
+			resolvePager(env, "linux", () => true),
+			{ cmd: "less", args: ["-R", "-+F"] },
+		);
+		assert.deepEqual(env, { PAGER, LESS: "-FRX" });
+	}
+	assert.deepEqual(
+		resolvePager({}, "darwin", () => true),
+		{ cmd: "less", args: ["-R", "-+F"] },
+	);
+	assert.equal(resolvePager({}, "linux", () => false), undefined);
+	// Windows never probes less — $PAGER is the only way to get a pager.
+	assert.equal(resolvePager({}, "win32", () => assert.fail("must not probe on Windows")), undefined);
+});
+
+test("resolvePager overrides quit-if-one-screen for configured less executables", () => {
+	const cases: Array<{ pager: string; platform: NodeJS.Platform; cmd: string; args: string[] }> = [
+		{ pager: "less", platform: "linux", cmd: "less", args: ["-+F"] },
+		{ pager: "  less\t-R  ", platform: "linux", cmd: "less", args: ["-R", "-+F"] },
+		{ pager: "less -F", platform: "linux", cmd: "less", args: ["-F", "-+F"] },
+		{ pager: "less -FRX", platform: "linux", cmd: "less", args: ["-FRX", "-+F"] },
+		{ pager: "less --quit-if-one-screen -S", platform: "linux", cmd: "less", args: ["--quit-if-one-screen", "-S", "-+F"] },
+		{ pager: "less -+F -F", platform: "linux", cmd: "less", args: ["-+F", "-F", "-+F"] },
+		{ pager: "/usr/bin/less -R", platform: "linux", cmd: "/usr/bin/less", args: ["-R", "-+F"] },
+		{ pager: "./less -F", platform: "darwin", cmd: "./less", args: ["-F", "-+F"] },
+		{ pager: "less -FRX --", platform: "linux", cmd: "less", args: ["-FRX", "-+F", "--"] },
+		{ pager: "less -- -F", platform: "linux", cmd: "less", args: ["-+F", "--", "-F"] },
+		{ pager: "less", platform: "win32", cmd: "less", args: ["-+F"] },
+		{ pager: "LESS -R", platform: "win32", cmd: "LESS", args: ["-R", "-+F"] },
+		{ pager: "less.exe -FRX", platform: "win32", cmd: "less.exe", args: ["-FRX", "-+F"] },
+		{ pager: "C:\\tools\\LESS.EXE -F", platform: "win32", cmd: "C:\\tools\\LESS.EXE", args: ["-F", "-+F"] },
+		{ pager: "C:/tools/less.exe -R", platform: "win32", cmd: "C:/tools/less.exe", args: ["-R", "-+F"] },
+	];
+	for (const { pager, platform, cmd, args } of cases) {
+		const env = { PAGER: pager, LESS: "-FRX" };
+		assert.deepEqual(
+			resolvePager(env, platform, () => assert.fail("configured pagers must not probe less")),
+			{ cmd, args },
+			`${platform}: ${pager}`,
+		);
+		assert.deepEqual(env, { PAGER: pager, LESS: "-FRX" });
+	}
+});
+
+test("resolvePager leaves other pagers and wrappers unchanged", () => {
+	const cases: Array<{ pager: string; platform: NodeJS.Platform; cmd: string; args: string[] }> = [
+		{ pager: "bat --plain", platform: "linux", cmd: "bat", args: ["--plain"] },
+		{ pager: "/opt/less/bat --plain", platform: "linux", cmd: "/opt/less/bat", args: ["--plain"] },
+		{ pager: "less-wrapper -F", platform: "linux", cmd: "less-wrapper", args: ["-F"] },
+		{ pager: "env less -FRX", platform: "linux", cmd: "env", args: ["less", "-FRX"] },
+		{ pager: "LESS -F", platform: "linux", cmd: "LESS", args: ["-F"] },
+		{ pager: "less.exe -F", platform: "linux", cmd: "less.exe", args: ["-F"] },
+		{ pager: "less.cmd -F", platform: "win32", cmd: "less.cmd", args: ["-F"] },
+		{ pager: "bat.exe --plain", platform: "win32", cmd: "bat.exe", args: ["--plain"] },
+	];
+	for (const { pager, platform, cmd, args } of cases) {
+		assert.deepEqual(
+			resolvePager({ PAGER: pager }, platform, () => assert.fail("configured pagers must not probe less")),
+			{ cmd, args },
+			`${platform}: ${pager}`,
+		);
+	}
+});
+
+test("spawnPager rejects with a readable error when the pager binary is missing", async () => {
+	await assert.rejects(
+		spawnPager("body", { cmd: "pi-schematic-definitely-missing-xyz", args: [] }),
+		/pi-schematic-definitely-missing-xyz not found/,
+	);
+});
+
+test("/notebook enter suspends the TUI, awaits the pager, then restores the TUI and reopens the list", async (t) => {
+	const originalResolve = pagerRuntime.resolvePager;
+	const originalSpawn = pagerRuntime.spawnPager;
+	const events: string[] = [];
+	let spawnGate: (() => void) | undefined;
+	pagerRuntime.resolvePager = () => ({ cmd: "pager", args: [] });
+	pagerRuntime.spawnPager = async (body, pager) => {
+		events.push(`spawn:${pager.cmd}:${body}`);
+		await new Promise<void>((r) => { spawnGate = r; });
+	};
+	t.after(() => {
+		pagerRuntime.resolvePager = originalResolve;
+		pagerRuntime.spawnPager = originalSpawn;
+	});
+
+	const pi = await createTestHost();
+	const notebookWrite = pi.tools.get("notebook_write");
+	await notebookWrite.execute("1", { name: "zeta", content: "other" }, undefined, undefined, makeTUICtx());
+	await notebookWrite.execute("2", { name: "alpha", content: "old body" }, undefined, undefined, makeTUICtx());
+
+	const tui = {
+		stop: () => events.push("stop"),
+		start: () => events.push("start"),
+		requestRender: (force?: boolean) => events.push(`render:${force ? "force" : "soft"}`),
+	};
+
+	let customCalls = 0;
+	const renders: string[] = [];
+	const handlerPromise = pi.commands.get("notebook")!.handler("", notebookListCtx({
+		custom: async (build: any) => {
+			customCalls++;
+			if (customCalls > 2) return undefined;
+			let result: unknown;
+			const overlay = build(tui, theme, {}, (value: unknown) => { result = value; });
+			if (customCalls === 1) {
+				overlay.handleInput("\r"); // Enter on the initially-selected page (alpha)
+			} else {
+				renders.push(stripAnsi(overlay.render(120).join("\n")));
+				return undefined;
+			}
+			return result;
+		},
+	}) as any);
+
+	// Let the first custom resolve + spawnPager start before the pager exits.
+	await new Promise<void>((r) => setTimeout(r, 0));
+	// Ignore any overlay-side renders queued by handleInput before done() resolved.
+	const lifecycle = () => events.filter((e) => e === "stop" || e === "start" || e.startsWith("spawn:") || e === "render:force");
+	assert.deepEqual(lifecycle(), ["stop", "spawn:pager:old body"], "TUI must be stopped before spawn");
+	spawnGate!();
+	await handlerPromise;
+
+	assert.deepEqual(lifecycle(), ["stop", "spawn:pager:old body", "start", "render:force"]);
+	assert.equal(customCalls, 2, "list must reopen after pager exits");
+	const arrowLine = renders[0]!.split("\n").find((l) => l.includes("→"));
+	assert.ok(arrowLine, `expected a cursor row, got:\n${renders[0]}`);
+	assert.match(arrowLine!, /alpha/);
+	assert.doesNotMatch(arrowLine!, /zeta/);
+});
+
+test("/notebook pager interaction installs and removes a SIGINT guard", async (t) => {
+	const originalResolve = pagerRuntime.resolvePager;
+	const originalSpawn = pagerRuntime.spawnPager;
+	const baselineSigint = process.listeners("SIGINT").length;
+	let duringSpawnListenerCount = -1;
+	pagerRuntime.resolvePager = () => ({ cmd: "pager", args: [] });
+	pagerRuntime.spawnPager = async () => {
+		duringSpawnListenerCount = process.listeners("SIGINT").length;
+	};
+	t.after(() => {
+		pagerRuntime.resolvePager = originalResolve;
+		pagerRuntime.spawnPager = originalSpawn;
+	});
+
+	const pi = await createTestHost();
+	const notebookWrite = pi.tools.get("notebook_write");
+	await notebookWrite.execute("1", { name: "alpha", content: "body" }, undefined, undefined, makeTUICtx());
+
+	let customCalls = 0;
+	await pi.commands.get("notebook")!.handler("", notebookListCtx({
+		custom: async (build: any) => {
+			customCalls++;
+			if (customCalls > 1) return undefined;
+			let result: unknown;
+			const overlay = build(
+				{ stop: () => {}, start: () => {}, requestRender: () => {} },
+				theme,
+				{},
+				(value: unknown) => { result = value; },
+			);
+			overlay.handleInput("\r");
+			return result;
+		},
+	}) as any);
+
+	assert.equal(duringSpawnListenerCount, baselineSigint + 1, "SIGINT guard must be installed during pager");
+	assert.equal(process.listeners("SIGINT").length, baselineSigint, "SIGINT guard must be removed after pager");
+});
+
+test("/notebook surfaces pager spawn errors as a warning notification", async (t) => {
+	const originalResolve = pagerRuntime.resolvePager;
+	const originalSpawn = pagerRuntime.spawnPager;
+	pagerRuntime.resolvePager = () => ({ cmd: "pager", args: [] });
+	pagerRuntime.spawnPager = async () => { throw new Error("boom"); };
+	t.after(() => {
+		pagerRuntime.resolvePager = originalResolve;
+		pagerRuntime.spawnPager = originalSpawn;
+	});
+
+	const pi = await createTestHost();
+	const notebookWrite = pi.tools.get("notebook_write");
+	await notebookWrite.execute("1", { name: "alpha", content: "body" }, undefined, undefined, makeTUICtx());
+
+	const notifications: Array<{ message: string; level: string }> = [];
+	let customCalls = 0;
+	await pi.commands.get("notebook")!.handler("", notebookListCtx({
+		notifications,
+		custom: async (build: any) => {
+			customCalls++;
+			if (customCalls > 1) return undefined;
+			let result: unknown;
+			const overlay = build(
+				{ stop: () => {}, start: () => {}, requestRender: () => {} },
+				theme,
+				{},
+				(value: unknown) => { result = value; },
+			);
+			overlay.handleInput("\r");
+			return result;
+		},
+	}) as any);
+
+	assert.deepEqual(notifications, [{ message: "pager failed: boom", level: "warning" }]);
+});
+
+test("/notebook inline preview closes on any key when no pager is available", async (t) => {
+	const original = pagerRuntime.resolvePager;
+	pagerRuntime.resolvePager = () => undefined;
+	t.after(() => { pagerRuntime.resolvePager = original; });
+
+	const pi = await createTestHost();
+	const notebookWrite = pi.tools.get("notebook_write");
+	await notebookWrite.execute("1", { name: "alpha", content: "body line" }, undefined, undefined, makeTUICtx());
+
+	let customCalls = 0;
+	await pi.commands.get("notebook")!.handler("", notebookListCtx({
+		custom: async (build: any) => {
+			customCalls++;
+			let result: unknown = "sentinel";
+			const overlay = build({ requestRender: () => {} }, theme, {}, (value: unknown) => { result = value; });
+			overlay.handleInput("\r"); // opens the inline preview
+			overlay.handleInput(" ");  // any key closes it
+			return result;
+		},
+	}) as any);
+
+	assert.equal(customCalls, 1);
 });
 
 // ── saveNotebookPage tests ────────────────────────────────────────────

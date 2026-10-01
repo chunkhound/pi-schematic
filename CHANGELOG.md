@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Notebook page view via `$PAGER`/`less`** — in the interactive `/notebook` picker, Enter now opens the selected page in `$PAGER` (or `less` if unset) on POSIX. On platforms without either (typically Windows without `PAGER`), the existing 500-char inline preview is used as a fallback and any key closes it. The list reopens with the cursor on the just-viewed page. `$PAGER` may include args (whitespace-split, no shell quoting); on Windows the pager must accept piped stdin (`bat`, `less`), so `more.exe` won't work.
+- **Notebook picker seeds selection from the active topic** — on open, `/notebook` points at the page matching `state.activeNotebookTopic` (fallback: first entry alphabetically), matching how the topic is already treated elsewhere as the current-page hint.
+
 ## [0.6.0] - 2026-09-26
 
 ### Added

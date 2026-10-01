@@ -127,6 +127,7 @@ function buildAllTools(state: HostState): ToolInfo[] {
 		name,
 		description: "",
 		parameters: {} as any,
+		exposure: "direct" as const,
 		sourceInfo: {
 			path: `<${state.toolSources.get(name) ?? defaultToolSource()}:${name}>`,
 			source: state.toolSources.get(name) ?? defaultToolSource(),
