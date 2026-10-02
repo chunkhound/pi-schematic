@@ -120,20 +120,23 @@ function applyAllTools(state: HostState, tools: string[]): void {
 
 // Synthesizes `getAllTools()` entries. Production reads only `.name` (see
 // getInheritableParentToolNames); the remaining fields are placeholders so the
-// `ToolInfo` shape stays valid.
+// `ToolInfo` shape stays valid. `exposure` is required by Pi >=0.99 ToolInfo but
+// unknown to the pinned 0.84.1 type, so the entries are cast: the field is a
+// no-op here and the cast keeps both host versions type-checking.
 function buildAllTools(state: HostState): ToolInfo[] {
 	const names = state.allToolNames.length ? state.allToolNames : state.activeTools;
 	return names.map((name) => ({
 		name,
 		description: "",
 		parameters: {} as any,
+		exposure: "direct",
 		sourceInfo: {
 			path: `<${state.toolSources.get(name) ?? defaultToolSource()}:${name}>`,
 			source: state.toolSources.get(name) ?? defaultToolSource(),
 			scope: "temporary" as const,
 			origin: "top-level" as const,
 		},
-	}));
+	})) as ToolInfo[];
 }
 
 function createHostState(seed: TestHostSeed): HostState {
