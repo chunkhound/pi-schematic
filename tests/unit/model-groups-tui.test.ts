@@ -72,6 +72,12 @@ function openModelEdit(c: Parameters<typeof selectRenderedLabel>[0], modelLabel:
 	press(c, ENTER);                       // EDITOR → MODEL_EDIT
 }
 
+function openAddModelWizard(c: Parameters<typeof selectRenderedLabel>[0]): void {
+	press(c, ENTER);                       // LIST → open the selected group editor
+	selectRenderedLabel(c, "+ Add model"); // EDITOR → the add-model row
+	press(c, ENTER);                       // EDITOR → WIZARD_PROVIDER
+}
+
 function pressAndRender(c: { handleInput?: (data: string) => void; render: (width: number) => string[] }, ...inputs: string[]): void {
 	for (const input of inputs) {
 		c.render(100);
@@ -1414,7 +1420,7 @@ test("model groups TUI WIZARD thinking step still starts on inherit and persists
 	};
 	const { c } = component({ groups, store });
 	// EDITOR → + Add model → WIZARD_PROVIDER → openai → WIZARD_MODEL (gpt-5) → WIZARD_THINKING.
-	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
+	openAddModelWizard(c);
 	press(c, DOWN, ENTER);
 	press(c, ENTER);
 	assert.match(rendered(c), /Add model — Step 3\/3 Thinking/);
