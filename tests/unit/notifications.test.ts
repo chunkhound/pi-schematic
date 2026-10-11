@@ -184,6 +184,13 @@ test("buildModelGroupNotification includes group, model, and command ref", () =>
 	assert.equal(msg, "Model changed to openai/gpt-4o via group `reviewer` from `/review` frontmatter");
 });
 
+test("buildModelGroupNotification appends a warning only for degraded groups", () => {
+	const healthy = buildModelGroupNotification("reviewer", "openai", "gpt-4o", "/review");
+	const degraded = buildModelGroupNotification("reviewer", "openai", "gpt-4o", "/review", { degraded: true });
+	assert.equal(healthy.includes("⚠"), false);
+	assert.equal(degraded, `${healthy} (⚠ Model Group \`reviewer\` is degraded; unavailable models were skipped)`);
+});
+
 test("buildModelGroupErrorNotification includes group and detail", () => {
 	const msg = buildModelGroupErrorNotification("reviewer", "/review", "not defined");
 	assert.equal(msg, "Cannot execute `/review`: Model Group `reviewer` error — not defined.");

@@ -117,8 +117,17 @@ export function buildReadonlyHandoffCommandNotice(): string {
 // ── Model Group Frontmatter Notifications ────────────────────────────
 
 /** Notification shown when a frontmatter model-group triggers a model change. */
-export function buildModelGroupNotification(groupName: string, provider: string, modelId: string, commandRef: string): string {
-	return `Model changed to ${provider}/${modelId} via group \`${groupName}\` from \`${commandRef}\` frontmatter`;
+export function buildModelGroupNotification(
+	groupName: string,
+	provider: string,
+	modelId: string,
+	commandRef: string,
+	options?: { degraded?: boolean },
+): string {
+	const message = `Model changed to ${provider}/${modelId} via group \`${groupName}\` from \`${commandRef}\` frontmatter`;
+	return options?.degraded
+		? `${message} (⚠ Model Group \`${groupName}\` is degraded; unavailable models were skipped)`
+		: message;
 }
 
 /** Error notification when a frontmatter model-group cannot be resolved. */

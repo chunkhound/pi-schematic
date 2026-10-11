@@ -21,6 +21,40 @@ export async function withTemp(
 	}
 }
 
+export function createDeferredRefreshRegistry<T extends { provider: string; id: string }>(
+	initial: T[],
+	refreshed: T[],
+	authenticated: (model: T) => boolean = () => true,
+) {
+	let visible = initial;
+	let refreshing = false;
+	let releaseRefresh!: () => void;
+	const released = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+	const refreshOptions: unknown[] = [];
+	return {
+		getAll: () => visible,
+		getAvailable: () => visible.filter(authenticated),
+		find: (provider: string, id: string) => {
+			if (refreshing) throw new Error("synchronous registry read before refresh completed");
+			return visible.find((model) => model.provider === provider && model.id === id);
+		},
+		hasConfiguredAuth: (model: T) => {
+			if (refreshing) throw new Error("synchronous registry read before refresh completed");
+			return authenticated(model);
+		},
+		refresh: async (options: unknown) => {
+			refreshOptions.push(options);
+			refreshing = true;
+			await released;
+			visible = refreshed;
+			refreshing = false;
+			return { aborted: false, errors: new Map() };
+		},
+		releaseRefresh,
+		refreshOptions,
+	};
+}
+
 export function group(
 	name: string,
 	opts: {

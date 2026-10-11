@@ -32,7 +32,8 @@ import { Type } from "typebox";
 import { abortChildSession, type SchematicState } from "../state.js";
 import { formatPageList } from "../notebook/store.js";
 import { createNotebookToolDefinitions } from "../notebook/tools.js";
-import { resolveSpawnModelRoute } from "../model-groups/router.js";
+import { getEffectiveModelGroups, resolveSpawnModelRoute } from "../model-groups/router.js";
+import { refreshModelGroupsState } from "../model-groups/refresh.js";
 import { productionConstraintRegistry, type ConstraintRegistry } from "../model-groups/constraints/registry.js";
 import { MODEL_GROUP_MODALITY_PROSE } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
@@ -403,6 +404,13 @@ export function executeSpawn(
 
 		const inheritedChildThinking: ThinkingValue = params.thinking ?? defaultThinking;
 		const constraints = normalizeSpawnRequirements(params, constraintRegistry);
+		if (typeof (ctx.modelRegistry as { refresh?: unknown } | undefined)?.refresh === "function") {
+			await state.registryFreshness.ensureFresh(ctx);
+			// Production ExtensionContext always provides this. The guard preserves the
+			// direct executeSpawn test seam, whose minimal contexts carry an already
+			// prepared snapshot but no project-trust resolver.
+			if (typeof ctx.isProjectTrusted === "function") refreshModelGroupsState(state, ctx);
+		}
 		const route = resolveSpawnModelRoute({
 			requestedGroup: params.group,
 			constraints,
@@ -414,12 +422,19 @@ export function executeSpawn(
 		});
 		const childModel = route.model;
 		const requestedChildThinking: ThinkingValue = route.thinking;
+		const routeGroupName = route.groupName ?? route.requestedGroup ?? params.group?.trim() ?? "";
+		const effectiveRouteGroup = route.status === "routed"
+			? getEffectiveModelGroups(state.modelGroups.groups).find((group) => group.name === routeGroupName)
+			: undefined;
+		const unavailableRefs = effectiveRouteGroup?.validation?.unavailableRefs ?? [];
 		const routeDetails: SpawnResultDetails["route"] = route.status === "routed"
 			? {
 					status: "routed",
-					group: route.groupName ?? route.requestedGroup ?? params.group?.trim() ?? "",
+					group: routeGroupName,
 					provider: route.provider,
 					modelId: route.modelId,
+					...(effectiveRouteGroup?.validation?.degraded ? { degraded: true } : {}),
+					...(unavailableRefs.length > 0 ? { unavailableRefs } : {}),
 				}
 			: route.status === "unknown-fallback"
 				? {

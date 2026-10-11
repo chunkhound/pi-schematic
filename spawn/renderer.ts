@@ -121,7 +121,19 @@ function normalizeRoute(value: unknown): SpawnRouteDetails | undefined {
 		&& typeof value.provider === "string"
 		&& typeof value.modelId === "string"
 	) {
-		return { status: "routed", group: value.group, provider: value.provider, modelId: value.modelId };
+		const unavailableRefs = Array.isArray(value.unavailableRefs)
+			? value.unavailableRefs.filter((ref): ref is { provider: string; modelId: string } => (
+				isRecord(ref) && typeof ref.provider === "string" && typeof ref.modelId === "string"
+			))
+			: [];
+		return {
+			status: "routed",
+			group: value.group,
+			provider: value.provider,
+			modelId: value.modelId,
+			...(typeof value.degraded === "boolean" ? { degraded: value.degraded } : {}),
+			...(unavailableRefs.length > 0 ? { unavailableRefs } : {}),
+		};
 	}
 	if (
 		value.status === "unknown-fallback"
@@ -236,12 +248,19 @@ function equalRoute(a: SpawnResultDetails["route"], b: SpawnResultDetails["route
 	return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
 
+function formatUnavailableRefs(route: Extract<SpawnRouteDetails, { status: "routed" }>): string | undefined {
+	if (!route.unavailableRefs?.length) return undefined;
+	return `Skipped unavailable models: ${route.unavailableRefs
+		.map((ref) => `${escapeDisplayLabel(ref.provider)}/${escapeDisplayLabel(ref.modelId)}`)
+		.join(", ")}`;
+}
+
 function formatSpawnIdentity(details: Pick<SpawnResultDetails, "model" | "thinking" | "route">): string {
 	if (details.route?.status === "routed") {
 		const group = escapeDisplayLabel(details.route.group);
 		const provider = escapeDisplayLabel(details.route.provider);
 		const modelId = escapeDisplayLabel(details.route.modelId);
-		return `${group} → ${provider}/${modelId} • ${details.thinking}`;
+		return `${group}${details.route.degraded ? " ⚠" : ""} → ${provider}/${modelId} • ${details.thinking}`;
 	}
 	if (details.route?.status === "unknown-fallback") {
 		const requestedGroup = escapeDisplayLabel(details.route.requestedGroup);
@@ -1043,6 +1062,10 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 				colorExpanded("dim", header),
 				childWidth,
 			));
+			if (this.details.route?.status === "routed") {
+				const skipped = formatUnavailableRefs(this.details.route);
+				if (skipped) lines.push(leftPad + truncateToWidth(colorExpanded("warning", skipped), childWidth));
+			}
 		}
 
 		for (const child of this.children) {
@@ -1356,8 +1379,12 @@ function renderSpawnResult(
 	const outcome = context.isError ? "error" : details?.outcome ?? "running";
 	const meta = details ? `${getOutcomeMarker(outcome)}${formatSpawnIdentity(details)}` : "";
 	const status = getOutcomeStatusText(outcome);
+	const skipped = expanded && details?.route?.status === "routed"
+		? formatUnavailableRefs(details.route)
+		: undefined;
 	const text = [
 		meta ? theme.fg("dim", meta) : "",
+		skipped ? theme.fg("warning", skipped) : "",
 		status ? theme.fg(outcome === "error" ? "warning" : "dim", status) : "",
 		theme.fg("toolOutput", summary),
 	].filter(Boolean).join("\n");

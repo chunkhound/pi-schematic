@@ -6,7 +6,7 @@ import { escapeDisplayLabel } from "../../model-groups/display.js";
 import { __setModelGroupsFsForTests, modelGroupsPath } from "../../model-groups/store.js";
 import { theme } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
-import { withTemp } from "./model-groups-helpers.js";
+import { createDeferredRefreshRegistry, withTemp } from "./model-groups-helpers.js";
 
 function registry(available = new Set(["openai:gpt-5"])): any {
 	const models = [{ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } }];
@@ -15,6 +15,7 @@ function registry(available = new Set(["openai:gpt-5"])): any {
 		getAvailable: () => models.filter((m) => available.has(`${m.provider}:${m.id}`)),
 		find: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id),
 		hasConfiguredAuth: (model: any) => available.has(`${model.provider}:${model.id}`),
+		refresh: async () => ({ aborted: false, errors: new Map() }),
 	};
 }
 
@@ -183,6 +184,23 @@ test("before_agent_start injects fresh names-and-effective-modalities guidance",
 	assert.match(result.systemPrompt, /omit group and inherit/);
 	assert.doesNotMatch(result.systemPrompt, /gpt-5/);
 	assert.doesNotMatch(result.systemPrompt, /model-groups\.json/);
+}));
+
+test("before_agent_start awaits registry refresh before synchronous group revalidation", async () => withTemp(async ({ cwd }) => {
+	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
+	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 1, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }), "utf8");
+	const pi = await createTestHost();
+	const handler = pi.handlers.get("before_agent_start")!.at(-1)!;
+	const model = { provider: "openai", id: "gpt-5", input: ["text"], reasoning: true };
+	const deferred = createDeferredRefreshRegistry([], [model]);
+	const pending = handler({ systemPrompt: "Base." }, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: deferred, getContextUsage: () => null });
+	for (let attempt = 0; deferred.refreshOptions.length === 0 && attempt < 20; attempt++) {
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	}
+	assert.deepEqual(deferred.refreshOptions, [{ allowNetwork: false }]);
+	deferred.releaseRefresh();
+	const result = await pending;
+	assert.match(result.systemPrompt, /Available Model Groups: review \(text, reasoning\)/);
 }));
 
 test("before_agent_start exposes union-effective modalities for automatic mixed groups", async () => withTemp(async ({ cwd }) => {
