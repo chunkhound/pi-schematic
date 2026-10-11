@@ -598,6 +598,9 @@ test("model groups TUI MODEL_EDIT shows an unsupported/unavailable current level
 	assert.match(text, /→ Thinking: max/);
 	assert.match(text, /Thinking: max ⚠ current, unavailable/);
 	press(c, ENTER);
+	// Assert a NEW persist happened; `calls.at(-1)` alone would also pass if the
+	// second Enter did nothing and simply re-read the first call's value.
+	assert.equal(calls.length, 2);
 	assert.deepEqual(calls.at(-1), "anthropic/claude/high,missing/nope/max");
 });
 

@@ -11,7 +11,7 @@ import {
 	summarizeBootValidation,
 	updateGroup,
 } from "./store.js";
-import { MODEL_GROUP_MODALITIES, ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModel, type ModelGroupModality, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ResolvedModelGroup } from "./types.js";
+import { MODEL_GROUP_MODALITIES, ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModality, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ResolvedModelGroup } from "./types.js";
 import { canonicalizeModelGroupName } from "./names.js";
 import { decodeDisplayLabel, escapeDisplayLabel } from "./display.js";
 import { MODALITY_FG, MODALITY_LETTER, modalityLetterRun as buildModalityLetterRun } from "./modality.js";
@@ -296,22 +296,30 @@ export function createModelGroupsComponent(
 	}
 
 	// The MODEL_EDIT thinking rows: the supported options, plus the configured
-	// level when it is no longer supported/available — inserted right after
-	// `inherit` so the current value stays on screen (marked `current,
+	// level when it is no longer supported/available — inserted immediately after
+	// the `inherit` option so the current value stays on screen (marked `current,
 	// unavailable`) and is preserved unless the user deliberately picks another
-	// option. `maxRow`, selection and rendering all share this list so their row
-	// indices can never drift apart.
+	// option. The anchor is the `undefined` inherit sentinel, located by value, so
+	// reordering `thinkingOptionsFor` cannot silently move the stale row (and, in
+	// particular, cannot park it next to `Remove model`). `maxRow`, selection and
+	// rendering all share this list so their row indices can never drift apart.
 	function modelEditThinkingOptions(found: Model<Api> | undefined, configured: ModelThinkingLevel | undefined): Array<ModelThinkingLevel | undefined> {
 		const options = thinkingOptionsFor(found);
 		if (options.includes(configured)) return options;
-		return [options[0], configured, ...options.slice(1)];
+		const inheritIndex = options.indexOf(undefined);
+		if (inheritIndex < 0) return [configured, ...options];
+		return [...options.slice(0, inheritIndex + 1), configured, ...options.slice(inheritIndex + 1)];
 	}
 
 	// Row for the model's configured level, so MODEL_EDIT opens on the current
 	// value instead of always on the first option (inherit).
 	function modelEditRowFor(model: Model<Api> | undefined, configured: ModelThinkingLevel | undefined): number {
 		const index = modelEditThinkingOptions(model, configured).indexOf(configured);
-		return index > 0 ? index : 0;
+		// `index === -1` is unreachable: modelEditThinkingOptions injects the
+		// configured level. Keep the fallback explicit (named by this comment) so a
+		// future projection that drops the injection fails here instead of silently
+		// reopening #29 on the inherit row.
+		return index === -1 ? 0 : index;
 	}
 
 	function activeConstraintEditor(): { descriptor: AnyConstraintDescriptor; evaluation: ErasedConstraintEvaluation } | undefined {
@@ -795,7 +803,7 @@ export function createModelGroupsComponent(
 		container.addChild(textLine(theme.fg("accent", "Edit model")));
 		container.addChild(textLine(`Provider: ${escapeDisplayLabel(model.provider)}`));
 		container.addChild(textLine(`Model ID: ${escapeDisplayLabel(model.modelId)}`));
-		container.addChild(textLine(`Status: ${found && modelRegistry.hasConfiguredAuth(found) ? "available" : "unavailable"}`));
+		container.addChild(textLine(`Status: ${modelAvailable(modelRegistry, model.provider, model.modelId) ? "available" : "unavailable"}`));
 		const supported = thinkingOptionsFor(found);
 		const options = modelEditThinkingOptions(found, model.thinkingLevel);
 		options.forEach((level, index) => {
