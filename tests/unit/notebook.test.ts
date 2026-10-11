@@ -9,7 +9,7 @@ import { registerNotebookRehydration, reconstructNotebook } from "../../notebook
 import { commitNotebookDiscard, formatByteCap, formatPagePreview, prepareNotebookDiscard, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
 import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
-import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
+import { STATUS_KEY_NOTEBOOK, STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
 import { makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
@@ -376,7 +376,7 @@ test("notebook_write pushes onUpdate and refreshes UI indicators", async () => {
 
 	assert.equal((update.content[0] as any).text, 'Saved "entry-a": first line');
 	assert.deepEqual(update.details, { entries: ["entry-a"], preview: "first line", truncation: null, clipped: false });
-	assert.equal(record.statuses.get("pi-schematic-notebook"), "📒 1");
+	assert.equal(record.statuses.get(STATUS_KEY_NOTEBOOK), "📒 1");
 	assert.deepEqual(result.details, { entries: ["entry-a"], preview: "first line", truncation: null, clipped: false });
 });
 
@@ -439,7 +439,7 @@ test("/notebook <topic> notifies with info on first set and warning on boundary 
 	const pi = await createTestHost();
 	const notifications: Array<{ message: string; level: string }> = [];
 	const statuses = new Map<string, string | undefined>();
-	const widgets = new Map<string, string[] | undefined>();
+	const widgets = new Map<string, unknown>();
 	const ctx = {
 		hasUI: true,
 		getContextUsage: () => ({ percent: 20 }),
@@ -447,7 +447,8 @@ test("/notebook <topic> notifies with info on first set and warning on boundary 
 			theme: { fg: (_name: string, text: string) => text },
 			notify: (message: string, level: string) => { notifications.push({ message, level }); },
 			setStatus: (key: string, status: string | undefined) => { statuses.set(key, status); },
-			setWidget: (key: string, content: string[] | undefined) => { widgets.set(key, content); },
+			setWidget: (key: string, content: unknown) => { widgets.set(key, content); },
+			addAutocompleteProvider: () => {},
 		},
 	};
 
@@ -472,6 +473,7 @@ test("readonly /notebook boundary notification explains deferred handoff eligibi
 			notify: (message: string, level: string) => { notifications.push({ message, level }); },
 			setStatus: () => {},
 			setWidget: () => {},
+			addAutocompleteProvider: () => {},
 		},
 	};
 
@@ -1458,7 +1460,7 @@ test("complete writes preserve their text list and existing detail fields", asyn
 	const project = (details: any) => ({ entries: details.entries, preview: details.preview });
 	assert.deepEqual(project(result.details), { entries: ["page"], preview: "first" });
 	assert.deepEqual(project(update.details), { entries: ["page"], preview: "first" });
-	assert.equal(record.statuses.get("pi-schematic-notebook"), "📒 1");
+	assert.equal(record.statuses.get(STATUS_KEY_NOTEBOOK), "📒 1");
 
 	const childPi = await createTestHost();
 	const childState = createState();

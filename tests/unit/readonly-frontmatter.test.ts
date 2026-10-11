@@ -37,6 +37,7 @@ function makeNotifyBeforeStartCtx() {
 					theme: { fg: (_name: string, text: string) => text },
 					setStatus: () => {},
 					setWidget: () => {},
+					addAutocompleteProvider: () => {},
 				},
 			}),
 			cwd: process.cwd(),

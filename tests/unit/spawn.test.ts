@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { createState, resetState } from "../../state.js";
 import {
 	buildChildToolNames,
+	childUsageByCall,
 	createChildTools,
 	executeSpawn,
 	normalizeSpawnRequirements,
@@ -607,6 +608,96 @@ test("spawn execute returns result and stats", async () => {
 	});
 });
 
+test("spawn execute reports child usage on the tool result", async () => {
+	const state = createState();
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactoryWith({
+		prompt: async () => {},
+		getSessionStats: () => ({
+			tokens: { input: 11, output: 22, cacheRead: 3, cacheWrite: 4, total: 40 },
+			cost: 0.5,
+			assistantMessages: 2,
+		}),
+	})), { activeTools: ["read", "bash", "spawn"] });
+
+	const result = await pi.tools.get("spawn").execute(
+		"spawn-usage",
+		{ prompt: "Do the task" },
+		undefined,
+		undefined,
+		{ model: { id: "mock-model" }, cwd: "/tmp" },
+	);
+
+	// Every session-cost consumer reads usage.cost.total; usage and display stats
+	// must come from the same snapshot so they cannot drift.
+	assert.deepEqual(result.usage, {
+		input: 11,
+		output: 22,
+		cacheRead: 3,
+		cacheWrite: 4,
+		totalTokens: 40,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.5 },
+	});
+	assert.equal(result.usage.cost.total, result.details.stats.cost);
+
+	// A success result already carries usage; the hook must not add a second copy.
+	const [onToolResult] = pi.handlers.get("tool_result")!;
+	const patch = await onToolResult({
+		type: "tool_result",
+		toolName: "spawn",
+		toolCallId: "spawn-usage",
+		input: {},
+		content: [],
+		isError: false,
+		usage: result.usage,
+	});
+	assert.equal(patch, undefined);
+	assert.equal(childUsageByCall().get("spawn-usage"), undefined, "success results never record in the backfill map");
+});
+
+test("spawn backfills child usage on an error tool result", async () => {
+	const state = createState();
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactoryWith({
+		prompt: async () => { throw new Error("prompt failed"); },
+		getSessionStats: () => ({
+			tokens: { input: 5, output: 6, cacheRead: 0, cacheWrite: 0, total: 11 },
+			cost: 0.25,
+			assistantMessages: 1,
+		}),
+	})), { activeTools: ["read", "bash", "spawn"] });
+
+	await assert.rejects(() => pi.tools.get("spawn").execute(
+		"spawn-error",
+		{ prompt: "Do the task" },
+		undefined,
+		undefined,
+		{ model: { id: "mock-model" }, cwd: "/tmp" },
+	));
+
+	// Pi builds the error result, so the recorded usage is backfilled by the hook.
+	const [onToolResult] = pi.handlers.get("tool_result")!;
+	const patch = await onToolResult({
+		type: "tool_result",
+		toolName: "spawn",
+		toolCallId: "spawn-error",
+		input: {},
+		content: [],
+		isError: true,
+	});
+	assert.equal(patch.usage.totalTokens, 11);
+	assert.equal(patch.usage.cost.total, 0.25);
+	assert.equal(childUsageByCall().get("spawn-error"), undefined, "the backfill consumes its map entry");
+	// A second delivery for the same call backfills nothing: no double count, no leak.
+	const again = await onToolResult({
+		type: "tool_result",
+		toolName: "spawn",
+		toolCallId: "spawn-error",
+		input: {},
+		content: [],
+		isError: true,
+	});
+	assert.equal(again, undefined);
+});
+
 test("spawn execute marks stats unavailable when stats collection throws", async () => {
 	const state = createState();
 
@@ -692,7 +783,7 @@ test("UI spawn notifies when cleanup also fails after a primary failure", async 
 	assertChildRegistriesCleared(state);
 });
 
-test("UI spawn aggregates failures without mutating a frozen primary error", async () => {
+test("UI spawn swallows a throwing notify and aggregates without mutating a frozen primary error", async () => {
 	const originalCause = new Error("original cause");
 	const primaryFailure = new Error("prompt failed", { cause: originalCause });
 	const cleanupFailure = new Error("dispose failed");
@@ -707,15 +798,15 @@ test("UI spawn aggregates failures without mutating a frozen primary error", asy
 		() => execution,
 		(error: unknown) => assertAggregateFailure(
 			error,
-			"Spawn, cleanup, and notification failed.",
-			[primaryFailure, cleanupFailure, notifyError],
+			"Spawn failed and cleanup failed.",
+			[primaryFailure, cleanupFailure],
 		),
 	);
 	assert.equal(primaryFailure.cause, originalCause);
 	assertChildRegistriesCleared(state);
 });
 
-test("UI spawn aggregates primitive primary, cleanup, and notification failures", async () => {
+test("UI spawn swallows a throwing notify and aggregates primitive primary and cleanup failures", async () => {
 	const primaryFailure = "prompt failed";
 	const cleanupFailure = new Error("dispose failed");
 	const notifyError = new Error("notify failed");
@@ -729,11 +820,11 @@ test("UI spawn aggregates primitive primary, cleanup, and notification failures"
 		() => execution,
 		(error: unknown) => assertAggregateFailure(
 			error,
-			"Spawn, cleanup, and notification failed.",
-			[primaryFailure, cleanupFailure, notifyError],
+			"Spawn failed and cleanup failed.",
+			[primaryFailure, cleanupFailure],
 		),
 	);
-	assert.equal(notifications.length, 1, "notification is attempted exactly once");
+	assert.equal(notifications.length, 1, "notification is attempted exactly once, then its failure is swallowed");
 	assertChildRegistriesCleared(state);
 });
 

@@ -75,6 +75,7 @@ test("index session_start stores model group validation and notifies load and va
 			notify: (message: string) => notifications.push(message),
 			setStatus: () => {},
 			setWidget: () => {},
+			addAutocompleteProvider: () => {},
 		},
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
@@ -99,7 +100,7 @@ test("index session_start notifies empty-common and stale-override boot counts",
 		cwd,
 		modelRegistry: registry(),
 		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {} },
+		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {}, addAutocompleteProvider: () => {} },
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
@@ -120,7 +121,7 @@ test("index session_start notifies corrupt/schema/unsupported load issues", asyn
 		cwd,
 		modelRegistry: registry(),
 		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {} },
+		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {}, addAutocompleteProvider: () => {} },
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
@@ -140,7 +141,7 @@ test("index session_start notifies schema-invalid load issues", async () => with
 		cwd,
 		modelRegistry: registry(),
 		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {} },
+		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {}, addAutocompleteProvider: () => {} },
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
@@ -162,7 +163,7 @@ test("index session_start includes backup-failure detail in load issue notificat
 		cwd,
 		modelRegistry: registry(),
 		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {} },
+		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {}, addAutocompleteProvider: () => {} },
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
@@ -271,7 +272,7 @@ test("index session_start does not notify when load and validation issues are ab
 		cwd,
 		modelRegistry: registry(),
 		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {} },
+		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {}, addAutocompleteProvider: () => {} },
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);

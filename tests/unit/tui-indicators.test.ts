@@ -1,8 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createState } from "../../state.js";
-import { updateIndicators, STATUS_KEY_TOPIC, STATUS_KEY_READONLY } from "../../tui.js";
-import { makeTUICtx } from "./helpers.js";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import {
+	formatCost,
+	formatElapsed,
+	installWorkflowFooter,
+	renderUnifiedBar,
+	uninstallWorkflowFooter,
+	updateIndicators,
+	workflowLabel,
+	workflowSegments,
+	STATUS_KEY_TOPIC,
+	STATUS_KEY_READONLY,
+	type BarSegment,
+} from "../../tui.js";
+import { makeTUICtx, renderFooterAt, TEST_TUI_THEME, type TUIRecord } from "./helpers.js";
+import type { Theme } from "@earendil-works/pi-coding-agent";
+
+/** TEST_TUI_THEME carries only `fg`; `workflowSegments` needs the full Theme surface. */
+const tuiTheme = TEST_TUI_THEME as unknown as Theme;
 
 test("updateIndicators sets context usage status with correct color tone", () => {
 	const state = createState();
@@ -115,7 +132,7 @@ test("updateIndicators shows readonly indicator when enabled", () => {
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get(STATUS_KEY_READONLY);
-	assert.ok(s?.includes("\u{1F512}"), "readonly indicator should show lock emoji when enabled");
+	assert.ok(s?.includes("🔒"), "readonly indicator should show lock emoji when enabled");
 	assert.ok(s?.includes("readonly"), "readonly indicator should show 'readonly' text when enabled");
 });
 
@@ -153,4 +170,89 @@ test("updateIndicators hides widget below 70% context", () => {
 
 	updateIndicators(ctx, state);
 	assert.equal(record.widgets.get("pi-schematic-warning"), undefined, "warning widget should be cleared below 70%");
+});
+
+test("renderUnifiedBar keeps the run on the left and drops conversation cells first", () => {
+	const segments: BarSegment[] = [
+		{ key: "wf-name", text: "RUNNAME", priority: 0, zone: "workflow" },
+		{ key: "wf-cp", text: "CP", priority: 1, zone: "workflow" },
+		{ key: "wf-el", text: "EL", priority: 2, zone: "workflow" },
+		{ key: "wf-cost", text: "$0.00", priority: 3, zone: "workflow" },
+		{ key: "ctx", text: "ctx 42%", priority: 4, zone: "conversation" },
+		{ key: "topic", text: "TOPIC", priority: 5, zone: "conversation" },
+	];
+	assert.equal(renderUnifiedBar(segments, 200), "RUNNAME \u00B7 CP \u00B7 EL \u00B7 $0.00 \u2502 ctx 42% \u00B7 TOPIC");
+
+	const narrow = renderUnifiedBar(segments, 18);
+	assert.ok(narrow.includes("RUNNAME"), narrow);
+	assert.equal(narrow.includes("TOPIC"), false, "conversation drops before any run cell");
+	assert.ok(visibleWidth(narrow) <= 18, narrow);
+
+	const tiny = renderUnifiedBar(segments, 6);
+	assert.ok(visibleWidth(tiny) <= 6, tiny);
+});
+
+test("workflowSegments label elapsed with a clock and cost with $, most important first", () => {
+	const segments = workflowSegments({ name: "review", checkpoints: 3, costUsd: 0.42, elapsedMs: 529_000, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, currentEffect: null }, tuiTheme);
+	assert.deepEqual(segments.map((segment) => [segment.text, segment.priority]), [
+		["\u{1F6E0}\u{FE0F} review", 0],
+		["\u{1F6A9} 3", 1],
+		["\u{23F1} 8:49", 2],
+		["$0.42", 3],
+	]);
+});
+
+test("workflowSegments appends the soft target and pins a pending stop against elision", () => {
+	const view = { name: "review", checkpoints: 3, costUsd: 6.4, elapsedMs: 529_000, pendingStop: "cost-limit" as const, limits: { costLimit: 5, timeBudgetMs: 3_600_000 }, currentEffect: null };
+	const segments = workflowSegments(view, tuiTheme);
+	const pill = segments.find((segment) => segment.key === "workflow-soft-stop");
+	assert.ok(pill, "pending soft stop pill present");
+	assert.ok(pill.text.includes("stopping at next checkpoint"), pill.text);
+	assert.equal(pill.priority, -1, "pill outranks identity so elision cannot drop it");
+	assert.equal(segments.find((segment) => segment.key === "workflow-cost")?.text, "$6.40/$5.00");
+	assert.ok(segments.find((segment) => segment.key === "workflow-elapsed")?.text.includes("/1:00:00"));
+	const narrow = renderUnifiedBar(segments, 40);
+	assert.ok(narrow.includes("target reached"), narrow);
+	assert.equal(narrow.includes("review"), false, "the pill outranks the run name when eliding");
+});
+
+test("installWorkflowFooter replaces the footer once; uninstall restores the built-in one", () => {
+	const state = createState();
+	const record: TUIRecord = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
+	const ctx = makeTUICtx({ percent: 62, record });
+	const view = () => ({ state, progress: { name: "review", checkpoints: 1, costUsd: 0.1, elapsedMs: 1000, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, currentEffect: null } });
+
+	installWorkflowFooter(ctx, view);
+	installWorkflowFooter(ctx, view);
+	assert.equal(record.footerInstalls, 1, "repeated progress ticks reuse the installed footer");
+
+	const lines = renderFooterAt(record, 120) ?? [];
+	assert.equal(lines.length, 2, "unified bar plus the dim ambient line");
+	assert.ok(lines[0].includes("review") && lines[0].includes("\u2502 [dim:ctx ]"), lines[0]);
+
+	uninstallWorkflowFooter(ctx);
+	assert.equal(record.footer, undefined, "run end restores the built-in footer");
+	assert.equal(record.footerRestores, 1);
+});
+
+test("installWorkflowFooter stays silent headless", () => {
+	const state = createState();
+	const record: TUIRecord = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
+	const headless = makeTUICtx({ hasUI: false, record });
+	installWorkflowFooter(headless, () => ({ state, progress: { name: "review", checkpoints: 0, costUsd: 0, elapsedMs: 0, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, currentEffect: null } }));
+	assert.equal(record.footerInstalls ?? 0, 0, "headless installs no footer");
+});
+
+test("workflow progress helpers share one formatting source", () => {
+	assert.equal(formatCost(1.2), "$1.20");
+	assert.equal(formatElapsed(3_725_000), "1:02:05");
+	assert.equal(workflowLabel("review"), "\u{1F6E0}\u{FE0F} review");
+});
+
+test("workflow footer pins zero-state and boundary formatting", () => {
+	assert.equal(formatCost(0), "$0.00");
+	assert.equal(formatElapsed(0), "0:00");
+	assert.equal(formatElapsed(59_000), "0:59");
+	assert.equal(formatElapsed(3_600_000), "1:00:00");
+	assert.equal(formatElapsed(-5_000), "0:00", "negative ticks clamp instead of printing garbage");
 });

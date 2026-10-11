@@ -6,6 +6,7 @@ import path from "node:path";
 import { registerReadonlyPI, makeReadonlyUICtx } from "./helpers.js";
 import type { ToolCall } from "./helpers.js";
 import type { TestPI } from "./test-host.js";
+import { applyReadonlyBashGuard, classifyBashCommand } from "../../readonly-bash.js";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -333,4 +334,34 @@ test("blocks nested wrapper sudo+env+xargs", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertBlocked(toolCall, "sudo env xargs rm /etc/passwd");
+});
+
+// WHY: `=>` is an arrow function in non-shell payloads, not an assignment redirect.
+test("arrow one-liners are allowed as non-redirects", () => {
+	assert.deepEqual(classifyBashCommand("node -e 'const f = () => 1; console.log(f())'", "/"), { ok: true });
+	assert.deepEqual(classifyBashCommand('node -e "const f = () => 1; console.log(f())"', "/"), { ok: true });
+	assert.deepEqual(classifyBashCommand('python3 -c "print(list(map(lambda x: x, [1])))"', "/"), { ok: true });
+});
+
+// WHY: shell payloads are real shell syntax, so `=>` there is a write redirect.
+test("shell -c payloads keep `=>` as a write redirect", () => {
+	assert.equal(classifyBashCommand('bash -c "echo a=>/etc/pwned"', "/").ok, false);
+	assert.equal(classifyBashCommand('sh -c "echo a=>/etc/pwned"', "/").ok, false);
+	assert.equal(classifyBashCommand('zsh -c "echo a=>/etc/pwned"', "/").ok, false);
+});
+
+test("a real write redirect outside temp stays blocked", () => {
+	assert.equal(applyReadonlyBashGuard("echo hi > /Users/ofri/blocked-out.txt", "/").action, "block");
+});
+
+test("spaced arrows in interpreter payloads are allowed", () => {
+	// `=>` with whitespace before `>` is a JS/Python arrow function, not a write redirect.
+	assert.deepEqual(classifyBashCommand("node -e 'const f = (x) => x + 1'", "/"), { ok: true });
+	assert.deepEqual(classifyBashCommand("node -e 'const f = x => x + 1'", "/"), { ok: true });
+	assert.deepEqual(classifyBashCommand('python3 -c "print([x for x in range(10) if x => 0])"', "/"), { ok: true });
+});
+
+test("arrow leniency is interpreter-scoped: a top-level assignment redirect stays blocked", () => {
+	// `a=>/etc/x` is `a=` plus a real redirect; only interpreter payloads treat `=>` as an arrow.
+	assert.equal(applyReadonlyBashGuard("a=>/etc/pi-guard-probe", "/").action, "block");
 });

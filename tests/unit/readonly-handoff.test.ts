@@ -622,6 +622,7 @@ test("session tree invalidates pending handoff work, releases the overlap guard,
 			theme: { fg: (_name: string, text: string) => text },
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
 			setWidget: () => {},
+			addAutocompleteProvider: () => {},
 		},
 		getContextUsage: () => null,
 	} as any);

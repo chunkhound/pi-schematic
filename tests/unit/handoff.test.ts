@@ -7,7 +7,7 @@ import { registerHandoffCommand } from "../../handoff/command.js";
 import { registerHandoffTool } from "../../handoff/tool.js";
 import { buildContinuationFrame, buildHandoffCompactionSummary, buildNextUserMessage } from "../../handoff/format.js";
 import { registerHandoffCompaction } from "../../handoff/compact.js";
-import { STATUS_KEY_HANDOFF, WIDGET_KEY_WARNING, updateIndicators } from "../../tui.js";
+import { STATUS_KEY_HANDOFF, WIDGET_KEY_WARNING } from "../../tui.js";
 import { registerWatchdog } from "../../watchdog.js";
 import { createTestHost } from "./test-host.js";
 
@@ -937,6 +937,7 @@ test("turn_end fallback keeps requested handoff status sticky until real handoff
 			theme: { fg: (_name: string, text: string) => text },
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
 			setWidget: () => {},
+			addAutocompleteProvider: () => {},
 		},
 		getContextUsage: () => null,
 	});
@@ -1512,6 +1513,7 @@ test("session_start new clears stale handoff status and warning widget", async (
 			theme: { fg: (_name: string, text: string) => text },
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
 			setWidget: (key: string, value: string[] | undefined) => { widgets.set(key, value); },
+			addAutocompleteProvider: () => {},
 		},
 		sessionManager: { getBranch: () => [] },
 		getContextUsage: () => null,

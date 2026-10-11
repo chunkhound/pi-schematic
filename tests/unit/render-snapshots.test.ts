@@ -14,12 +14,16 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { createState, type SchematicState } from "../../state.js";
 import {
 	renderSpawnCall,
 	renderSpawnResult,
 } from "../../spawn/renderer.js";
 import { updateIndicators } from "../../tui.js";
+import { renderWorkflowSummary, MAX_EFFECT_ROWS } from "../../workflow/summary-renderer.js";
+import type { WorkflowRunSummaryData } from "../../workflow/summary.js";
+import { UNATTRIBUTED_MODEL, type ModelSpend } from "../../usage.js";
 import { createTestHarness } from "../test-utils.js";
 import { createSession, makeTUICtx } from "./helpers.js";
 
@@ -46,6 +50,8 @@ class RenderTestBackend {
 const theme: Theme = {
 	fg: (_name: string, text: string) => text,
 	bold: (text: string) => text,
+	bg: (_name: string, text: string) => text,
+	italic: (text: string) => text,
 } as unknown as Theme;
 
 // ── Snapshot helpers ──────────────────────────────────────────────────
@@ -311,4 +317,95 @@ test("context indicator at 70% matches snapshot", () => {
 	updateIndicators(ctx, state);
 	const status = record.statuses.get("pi-schematic-ctx") ?? "";
 	matchSnapshot("indicator-70", status);
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// 12–13: Workflow run overview card
+// ═══════════════════════════════════════════════════════════════════════
+
+function spendRow(key: string, model: string, costUsd: number, tokens: number, calls: number): ModelSpend {
+	return {
+		key,
+		provider: model === UNATTRIBUTED_MODEL ? null : key.split("/")[0],
+		model,
+		costUsd,
+		totalTokens: tokens,
+		inputTokens: Math.round(tokens * 0.6),
+		outputTokens: Math.round(tokens * 0.3),
+		cacheReadTokens: Math.round(tokens * 0.09),
+		cacheWriteTokens: Math.round(tokens * 0.01),
+		calls,
+	};
+}
+
+function overviewData(): WorkflowRunSummaryData {
+	const startedAt = Date.UTC(2026, 0, 2, 3, 0, 0);
+	return {
+		workflow: "review-worktree",
+		reason: "approved",
+		startedAt: new Date(startedAt).toISOString(),
+		endedAt: new Date(startedAt + 5_025_000).toISOString(),
+		elapsedMs: 5_025_000,
+		checkpoints: 3,
+		steps: 5,
+		turns: 14,
+		classifySteps: 2,
+		activity: { run: 5, checkpoint: 3, classify: 2, shell: 4, handoff: 1, notebookWrite: 6, new: 1 },
+		costUsd: 1.87,
+		spend: [
+			spendRow("anthropic/claude-opus-4-5", "claude-opus-4-5", 1.5, 1_200_000, 8),
+			spendRow("anthropic/claude-haiku-4", "claude-haiku-4", 0.3, 200_000, 4),
+			spendRow("typesafe/jev", "jev", 0.07, 12_000, 2),
+		],
+		limits: { costLimit: null, timeBudgetMs: null },
+		crossedAt: null,
+	};
+}
+
+test("workflow overview collapsed matches snapshot", () => {
+	const component = renderWorkflowSummary(overviewData(), false, theme);
+	const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
+	matchSnapshot("workflow-overview-collapsed", rtb.toSnapshot());
+});
+
+test("workflow overview expanded matches snapshot", () => {
+	const component = renderWorkflowSummary(overviewData(), true, theme);
+	const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
+	matchSnapshot("workflow-overview-expanded", rtb.toSnapshot());
+});
+
+test("workflow overview with a salvaged checkpoint payload matches snapshot", () => {
+	const component = renderWorkflowSummary({ ...overviewData(), reason: "time-limit", partial: { round: 3, approved: true } }, false, theme);
+	const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
+	matchSnapshot("workflow-overview-salvaged", rtb.toSnapshot());
+});
+
+test("workflow overview never renders a line wider than the viewport", () => {
+	for (const width of [1, 2, 5, 12, 40, SNAP_WIDTH]) {
+		for (const data of [overviewData(), { ...overviewData(), spend: [] }]) {
+			const lines = renderWorkflowSummary(data, false, theme).render(width);
+			for (const line of lines) {
+				assert.ok(visibleWidth(line) <= width, `width ${width}: line is ${visibleWidth(line)} wide`);
+			}
+		}
+	}
+});
+
+test("workflow overview trims the expanded effect log to MAX_EFFECT_ROWS with an earlier count", () => {
+	// summary-renderer.ts slices the expanded card to the last MAX_EFFECT_ROWS effects
+	// (host caps the stored log at MAX_EFFECTS=100). This pins the renderer cap so a
+	// regression cannot render an unbounded log or drop the wrong end.
+	const extra = 5;
+	const effects = Array.from({ length: MAX_EFFECT_ROWS + extra }, (_, i) => ({
+		id: i,
+		name: "shell" as const,
+		detail: `echo ${i}`,
+		ok: true,
+		durationMs: 10,
+	}));
+	const data: WorkflowRunSummaryData = { ...overviewData(), effects };
+	const rendered = new RenderTestBackend().render(renderWorkflowSummary(data, true, theme), SNAP_WIDTH).toSnapshot();
+	assert.ok(rendered.includes(`… ${extra} earlier`), "older effects are summarized, not rendered individually");
+	assert.equal(rendered.includes("echo 0"), false, "the oldest effect is trimmed");
+	assert.equal(rendered.includes(`echo ${MAX_EFFECT_ROWS + extra - 1}`), true, "the newest effect is kept");
 });

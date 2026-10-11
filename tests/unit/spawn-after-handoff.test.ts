@@ -95,6 +95,7 @@ describe("spawn after handoff initialization", () => {
 			getThinkingLevel: () => "low" as const,
 			getActiveTools: () => ["read", "bash", "notebook_write", "notebook_read", "notebook_index"],
 			getAllTools: () => [],
+			on: () => () => {},
 			registerTool: () => {},
 		};
 
