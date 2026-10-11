@@ -12,6 +12,7 @@ import {
 	filterReadonlyToolNames,
 } from "../../spawn/index.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
+import { canUseOsSandbox } from "../../os-sandbox.js";
 import { runRealChildInvocation } from "./helpers.js";
 
 // ── Tool filtering ───────────────────────────────────────────────────
@@ -76,6 +77,12 @@ test("readonly bash guard blocks non-temp writes and allows temp writes", () => 
 
 	const tempResult = applyReadonlyBashGuard(`touch ${insideTemp} && rm ${insideTemp}`, cwd);
 	assert.notEqual(tempResult.action, "block", "temp dir writes should not be blocked");
+	// Pin the dispatch the existing assertion left loose: when no OS sandbox is
+	// available, L2 is the sole defense and must return the exact "allow" branch
+	// (not "sandbox"); a sandbox-available host returns "sandbox". Pinning both
+	// branches per-platform closes the gap where the no-sandbox fallback was never
+	// asserted end-to-end (Windows, or Linux without bwrap).
+	assert.equal(tempResult.action, canUseOsSandbox() ? "sandbox" : "allow");
 });
 
 // ── Integration ──────────────────────────────────────────────────────
