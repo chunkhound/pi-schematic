@@ -107,6 +107,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	// that delivers it, in a new run or queued into the running one; a run awaits agent_settled.
 	const handoffCallsAwaitingCompaction: string[] = [];
 	const compactionsAwaitingSuccessor: string[] = [];
+	let failedCompactionsAwaitingReport = 0;
 	const inputsAwaitingDelivery: string[] = [];
 	let runsAwaitingSettle = 0;
 	const accountingErrors: string[] = [];
@@ -120,6 +121,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	const outstanding = (ctx: ExtensionCommandContext): string[] => [
 		...handoffCallsAwaitingCompaction.map((id) => `handoff call ${id} has no compaction outcome`),
 		...compactionsAwaitingSuccessor.map((id) => `handoff compaction ${id} has no successor input`),
+		...(failedCompactionsAwaitingReport > 0 ? [`${failedCompactionsAwaitingReport} failed handoff compaction(s) have no failure-report input`] : []),
 		...inputsAwaitingDelivery.map((text) => `extension input ${JSON.stringify(text.slice(0, 80))} has no user message`),
 		...(runsAwaitingSettle > 0 ? [`${runsAwaitingSettle} run(s) have no agent_settled`] : []),
 		...(ctx.isIdle() ? [] : ["pi is not idle"]),
@@ -228,6 +230,8 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 			dropNextSuccessor = false;
 			log({ kind: "successor-send", text: event.text, dropped });
 			compactionsAwaitingSuccessor.shift();
+		} else if (failedCompactionsAwaitingReport > 0) {
+			failedCompactionsAwaitingReport--;
 		}
 		if (!dropped) inputsAwaitingDelivery.push(event.text);
 		wake();
@@ -247,6 +251,11 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 			if (handoffCallsAwaitingCompaction.shift() === undefined) accountingErrors.push(`handoff compaction ${entryId} without a handoff call`);
 			compactionsAwaitingSuccessor.push(entryId);
 		}
+		wake();
+	});
+
+	pi.on("session_compact_failed", async () => {
+		if (handoffCallsAwaitingCompaction.shift() !== undefined) failedCompactionsAwaitingReport++;
 		wake();
 	});
 
