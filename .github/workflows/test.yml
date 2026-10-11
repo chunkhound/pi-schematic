@@ -29,6 +29,8 @@ jobs:
   # to catch regressions in the newest runtime. This asymmetry is intentional: it
   # balances CI cost with meaningful coverage while ensuring the minimum version works
   # correctly on the platform most likely to encounter toolchain edge cases.
+  # Windows has no OS sandbox and no POSIX differential: readonly shell/git/heredoc
+  # suites run classifier-only there (POSIX-gated cases skip by design).
   test:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -62,9 +64,21 @@ jobs:
       - name: Security audit
         run: npx audit-ci --config audit-ci.jsonc
 
-      # Unit suite (unit tests + snapshot tests + property-based tests)
+      # Unit suite (unit tests + snapshot tests + property-based tests). This lane has no
+      # OS sandbox, so the outside-temp regression suites must really run: fail rather than
+      # silently skip if a runner cannot write outside temp.
       - name: Unit tests
+        env:
+          REQUIRE_OUTSIDE_TEMP_WRITES: "1"
         run: npm test
+
+      # Readonly coverage gate. Linux only: the Windows job skips POSIX differential
+      # cases, so its coverage would under-count and fail the threshold spuriously.
+      - name: Readonly coverage
+        if: runner.os == 'Linux'
+        env:
+          REQUIRE_OUTSIDE_TEMP_WRITES: "1"
+        run: npm run test:coverage
 
       # E2E tests — process-isolated child-process harness (stdin/stdout, no PTY).
       # Verified cross-platform: runs on Linux, macOS, and Windows.
@@ -119,6 +133,34 @@ jobs:
           path: |
             tests/snapshots/
           retention-days: 30
+
+  # This lane must exercise kernel enforcement, never silently pass skipped tests.
+  sandbox-enforcement:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      REQUIRE_OS_SANDBOX: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          cache: "npm"
+      - run: npm ci
+      - name: Enable bubblewrap namespaces on the isolated Linux runner
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          # The AppArmor key is absent on some images, so a non-zero sysctl must not fail
+          # the lane: the test-side REQUIRE_OS_SANDBOX assertion is the real gate on whether
+          # bwrap can actually create a namespace, and it fails loudly when it cannot.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Verify real filesystem enforcement
+        run: node ./scripts/run-node-test.mjs tests/unit/os-sandbox.test.ts
 
   current-pi:
     runs-on: ubuntu-latest
