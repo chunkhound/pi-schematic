@@ -22,12 +22,13 @@ import {
 } from "@earendil-works/pi-tui";
 import { createState, invalidateHandoffState, resetState, type SchematicState } from "./state.js";
 import { CONTEXT_PRIMER } from "./system-prompt.js";
+import { formatCurrentDatePrompt } from "./time/format.js";
 import { buildNudge, registerWatchdog } from "./watchdog.js";
 import { registerNotebookTools } from "./notebook/tools.js";
 import { ensureNotebookToolsActive, registerNotebookRehydration, reconstructNotebook } from "./notebook/rehydration.js";
 import { registerNotebookTopicTool } from "./notebook/topic-tool.js";
 import { setActiveNotebookTopic } from "./notebook/topic.js";
-import { formatPagePreview } from "./notebook/store.js";
+import { formatPageTuiPreview } from "./notebook/store.js";
 import { registerHandoffTool } from "./handoff/tool.js";
 import {
 	canPromoteBoundary,
@@ -689,7 +690,7 @@ export default function (pi: ExtensionAPI): void {
 					const items: SelectItem[] = entries.map(([name, content]) => ({
 						value: name,
 						label: name,
-						description: formatPagePreview(content),
+						description: formatPageTuiPreview(content, state.clippedPages.has(name)),
 					}));
 
 					selectList = new SelectList(items, Math.min(items.length, 10), {
@@ -765,6 +766,9 @@ export default function (pi: ExtensionAPI): void {
 
 		// Inject context management primer at the end of the system prompt
 		parts.push("\n" + CONTEXT_PRIMER);
+
+		// Date anchor. Caching/DST semantics: docs/architecture.md "Date anchor".
+		parts.push("\n" + formatCurrentDatePrompt(new Date()));
 
 		if (state.activeNotebookTopic) {
 			parts.push(

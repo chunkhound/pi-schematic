@@ -43,6 +43,7 @@ async function main() {
       "tests/unit/compat-process.test.ts",
     ], { cwd: copy });
     runChecked(process.execPath, ["./scripts/run-node-test.mjs", "tests/e2e/basic.test.ts"], { cwd: copy });
+    runChecked(process.execPath, ["./scripts/run-node-test.mjs", "tests/e2e/real-host.test.ts"], { cwd: copy });
     writeCompatArtifacts(artifactDir, copy, { piVersion, typeboxVersion: latestPi.typeboxVersion });
     process.stdout.write(`Current synchronized Pi compatibility passed at ${piVersion}.\n`);
   } catch (error) {

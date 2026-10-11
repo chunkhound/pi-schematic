@@ -17,7 +17,7 @@
 
 ## Quick start
 
-Requires [Pi](https://pi.dev) 0.84.1 or later and Node.js 22.19.0 or later.
+Requires [Pi](https://pi.dev) 0.99.2 or later and Node.js 22.19.0 or later.
 
 ```bash
 pi install npm:pi-schematic
@@ -144,7 +144,7 @@ When you delegate a task with `spawn`, you can declare which capabilities it nee
 
 | Area | Current behavior |
 |---|---|
-| **Runtime** | Requires Pi 0.84.1+ and Node.js 22.19.0+. Spawn passes the selected public model into a child-owned runtime. Persisted, environment-based, and extension-rediscoverable provider/auth configuration is available; parent-only transient credentials, inline provider factories, and in-memory catalog changes may not be. Resolution failures are explicit and never silently select another model. |
+| **Runtime** | Requires Pi 0.99.2+ and Node.js 22.19.0+. Spawn passes the selected public model into a child-owned runtime. Persisted, environment-based, and extension-rediscoverable provider/auth configuration is available; parent-only transient credentials, inline provider factories, and in-memory catalog changes may not be. Resolution failures are explicit and never silently select another model. |
 | **Frontmatter** | `model: <provider>/<model-id>` overrides `model-group`; `thinking: off|minimal|low|medium|high|xhigh|max` is capability-clamped and overrides group thinking; `readonly` is boolean. Interactive model selection runs at idle input, while readonly is deferred to `before_agent_start`. Model/thinking changes are sticky. Failed or streaming selection blocks expansion; headless/RPC invocations ignore this policy. |
 | **Group routing** | A known group samples uniformly **with replacement** from authenticated, usable entries, so repeated calls may select the same model. Unknown spawn groups visibly fall back to the parent; known groups with no usable entries fail before child creation. There is no weighting, no-repeat selection, health routing, retry/failover, or optimizer. |
 | **Context and cache** | Spawn creates a separate child context; handoff starts a new input prefix. A model/provider switch starts a different cache—the extension creates cache-aware boundaries, not cache preservation or provider cache configuration. |

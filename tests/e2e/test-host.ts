@@ -10,21 +10,10 @@
  *   → toolcall <name> <json> — run the first tool_call hook directly
  *   → context [json]        — run the first context hook
  *   → usage <json|null>     — set getContextUsage() result for later calls
- *   → ui / headless         — select UI mode for subsequent calls
+ *   → headless              — select headless mode for subsequent calls
  *   → ui-events             — return current status values and emitted notifications
  *   → compact-success       — run queued handoff compaction success path
- *   → compact-fail [message] — run queued handoff compaction failure path
- *   → successor-turn        — drain a queued follow-up into the successor context hook
- *   → user-turn <text>      — persist a newer user message without draining a follow-up
  *   → session-tree          — fire a tree-navigation event without changing the active branch
- *   → tree-edit-last-user   — open the latest user turn for editing and move the active branch to its parent
- *   → agent-end             — run the first agent_end handler
- *   → agent-settled         — run the first agent_settled handler
- *   → drop-follow-up        — discard one queued follow-up without persisting it (simulated delivery loss)
- *   → successor-count       — count sent messages starting with "## Next instruction"
- *   → sent-messages         — return extension-sent user messages
- *   → tools                 — list registered tool names
- *   → cmds                  — list registered command names
  *   → exit                  — graceful shutdown
  *
  *   ← READY\n               — sent after extension registration
@@ -53,7 +42,6 @@ type CompactRequest = { onComplete?: () => void; onError?: (error: Error) => voi
 
 let currentUsage: MockContextUsage = null;
 let lastCompactRequest: CompactRequest | null = null;
-const queuedFollowUps: string[] = [];
 const statuses = new Map<string, string | undefined>();
 const notifications: Array<{ message: string; level: string }> = [];
 // `branch` models the active path while `entries` preserves the session history.
@@ -69,17 +57,6 @@ function appendEntry(entry: any): void {
 	branch.push(entry);
 	entries.push(entry);
 }
-
-// Model Pi's follow-up queue centrally: every extension send with
-// deliverAs "followUp" waits here until a run drains it. Recovery sends must
-// queue too, so the override cannot live inside a single REPL command.
-const originalSendUserMessage = pi.sendUserMessage;
-pi.sendUserMessage = (content: any, options?: any) => {
-	originalSendUserMessage.call(pi, content, options);
-	if (options?.deliverAs === "followUp") {
-		queuedFollowUps.push(typeof content === "string" ? content : content.map((part: any) => part.text ?? "").join("\n"));
-	}
-};
 
 const mockCtx = {
 	hasUI: true,
@@ -120,7 +97,8 @@ const mockCtx = {
 	isIdle: () => true,
 	signal: new AbortController().signal,
 	abort: () => {},
-	hasPendingMessages: () => queuedFollowUps.length > 0,
+	// The line host keeps no follow-up queue: sends are only recorded in pi.sentUserMessages.
+	hasPendingMessages: () => false,
 	shutdown: () => process.exit(0),
 	compact: (request: { onComplete?: () => void; onError?: (error: Error) => void }) => {
 		lastCompactRequest = request;
@@ -139,8 +117,8 @@ for await (const line of rl) {
 
 	if (trimmed === "exit") {
 		process.exit(0);
-	} else if (trimmed === "ui" || trimmed === "headless") {
-		mockCtx.hasUI = trimmed === "ui";
+	} else if (trimmed === "headless") {
+		mockCtx.hasUI = false;
 		process.stdout.write("OK\n");
 	} else if (trimmed === "ui-events") {
 		process.stdout.write("OK:" + JSON.stringify({ statuses: Object.fromEntries(statuses), notifications }) + "\n");
@@ -152,128 +130,49 @@ for await (const line of rl) {
 		} catch (e: unknown) {
 			process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n");
 		}
-	} else if (trimmed === "compact-success" || trimmed.startsWith("compact-fail")) {
+	} else if (trimmed === "compact-success") {
 		const [beforeCompact] = pi.handlers.get("session_before_compact") ?? [];
 		const compactRequest = lastCompactRequest as any;
 		if (!beforeCompact || !compactRequest) {
 			process.stdout.write("ERR:no queued compaction\n");
 			continue;
 		}
-		if (trimmed === "compact-success") {
-			if (typeof compactRequest.onComplete !== "function") {
-				process.stdout.write("ERR:no success callback\n");
-				continue;
-			}
-			const result = await beforeCompact(
-				{ preparation: { tokensBefore: 1 }, branchEntries: [{ id: "leaf-e2e" }] },
-				mockCtx,
-			);
-			lastCompactRequest = null;
-			if (!result?.compaction) {
-				process.stdout.write("OK:null\n");
-				continue;
-			}
-			// Mirror Pi: the compaction entry lands in the branch before the successor
-			// delivery, so recovery scans observe the same order.
-			appendEntry({
-				type: "compaction",
-				id: `compaction-${++entrySeq}`,
-				summary: result.compaction.summary,
-				details: result.compaction.details,
-			});
-			compactRequest.onComplete();
-			const lastMessage = pi.sentUserMessages.at(-1);
-			process.stdout.write("OK:" + JSON.stringify({
-				...result.compaction,
-				queuedFollowUp: lastMessage?.options?.deliverAs === "followUp",
-			}) + "\n");
-		} else {
-			if (typeof compactRequest.onError !== "function") {
-				process.stdout.write("ERR:no failure callback\n");
-				continue;
-			}
-			compactRequest.onError(new Error(trimmed.slice("compact-fail".length).trim() || "simulated compaction failure"));
-			lastCompactRequest = null;
-			const lastMessage = pi.sentUserMessages.at(-1)?.content ?? "";
-			process.stdout.write("OK:compaction failed:" + lastMessage + "\n");
-		}
-	} else if (trimmed === "successor-turn") {
-		const successorMessage = queuedFollowUps.shift();
-		const [contextHandler] = pi.handlers.get("context") ?? [];
-		if (!successorMessage || !contextHandler) {
-			process.stdout.write("ERR:no queued successor turn\n");
+		if (typeof compactRequest.onComplete !== "function") {
+			process.stdout.write("ERR:no success callback\n");
 			continue;
 		}
-		// Model Pi persistence: draining the follow-up appends the user message as
-		// text content parts — the shape real Pi persists.
+		const result = await beforeCompact(
+			{ preparation: { tokensBefore: 1 }, branchEntries: [{ id: "leaf-e2e" }] },
+			mockCtx,
+		);
+		lastCompactRequest = null;
+		if (!result?.compaction) {
+			process.stdout.write("OK:null\n");
+			continue;
+		}
+		// Mirror Pi: the compaction entry lands in the branch before the successor
+		// delivery, so recovery scans observe the same order.
 		appendEntry({
-			type: "message",
-			id: `message-${++entrySeq}`,
-			message: { role: "user", content: [{ type: "text", text: successorMessage }] },
+			type: "compaction",
+			id: `compaction-${++entrySeq}`,
+			summary: result.compaction.summary,
+			details: result.compaction.details,
 		});
-		const result = await contextHandler({
-			messages: [{ role: "user", content: successorMessage, timestamp: Date.now() }],
-		}, mockCtx);
-		process.stdout.write("OK:" + JSON.stringify({ successorMessage, context: result ?? null }) + "\n");
-	} else if (trimmed.startsWith("user-turn ")) {
-		const content = trimmed.slice("user-turn ".length).trim();
-		if (!content) {
-			process.stdout.write("ERR:missing user-turn content\n");
-			continue;
-		}
-		appendEntry({
-			type: "message",
-			id: `message-${++entrySeq}`,
-			message: { role: "user", content: [{ type: "text", text: content }] },
-		});
-		process.stdout.write("OK\n");
-	} else if (trimmed === "agent-end") {
-		const [agentEnd] = pi.handlers.get("agent_end") ?? [];
-		if (!agentEnd) {
-			process.stdout.write("ERR:no agent_end handler\n");
-			continue;
-		}
-		await agentEnd({}, mockCtx);
-		process.stdout.write("OK\n");
-	} else if (trimmed === "agent-settled") {
-		const [agentSettled] = pi.handlers.get("agent_settled") ?? [];
-		if (!agentSettled) {
-			process.stdout.write("ERR:no agent_settled handler\n");
-			continue;
-		}
-		await agentSettled({}, mockCtx);
-		process.stdout.write("OK\n");
-	} else if (trimmed === "drop-follow-up") {
-		const dropped = queuedFollowUps.shift();
-		process.stdout.write(dropped ? "OK\n" : "ERR:no queued follow-up\n");
-	} else if (trimmed === "successor-count") {
-		const count = pi.sentUserMessages.filter((message) => message.content.startsWith("## Next instruction")).length;
-		process.stdout.write("OK:" + count + "\n");
-	} else if (trimmed === "sent-messages") {
-		process.stdout.write("OK:" + JSON.stringify(pi.sentUserMessages) + "\n");
-	} else if (trimmed === "session-tree" || trimmed === "tree-edit-last-user") {
+		compactRequest.onComplete();
+		const lastMessage = pi.sentUserMessages.at(-1);
+		process.stdout.write("OK:" + JSON.stringify({
+			...result.compaction,
+			queuedFollowUp: lastMessage?.options?.deliverAs === "followUp",
+		}) + "\n");
+	} else if (trimmed === "session-tree") {
 		const [sessionTree] = pi.handlers.get("session_tree") ?? [];
 		if (!sessionTree) {
 			process.stdout.write("ERR:no session_tree handler\n");
 			continue;
 		}
 		const oldLeafId = branch.at(-1)?.id ?? "old-leaf";
-		if (trimmed === "tree-edit-last-user") {
-			const index = branch.map((entry) => entry.message?.role).lastIndexOf("user");
-			if (index === -1) {
-				process.stdout.write("ERR:no user turn to edit\n");
-				continue;
-			}
-			branch.splice(index);
-		}
 		await sessionTree({ newLeafId: branch.at(-1)?.id ?? "root", oldLeafId }, mockCtx);
 		process.stdout.write("OK\n");
-	} else if (trimmed === "tools") {
-		const names = Array.from(tools.keys()).sort().join(",");
-		process.stdout.write("OK:" + names + "\n");
-	} else if (trimmed === "cmds") {
-		const names = Array.from(commands.keys()).sort().join(",");
-		process.stdout.write("OK:" + names + "\n");
 	} else if (trimmed.startsWith("toolcall ")) {
 		const rest = trimmed.slice(9).trim();
 		const spaceIdx = rest.indexOf(" ");

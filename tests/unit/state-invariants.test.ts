@@ -9,6 +9,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fc from "fast-check";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
 import { createState, resetState, abortAndClearChildSessions, invalidateHandoffState } from "../../state.js";
 import type { SchematicState } from "../../state.js";
 import {
@@ -22,6 +23,9 @@ import { createTestHarness } from "../test-utils.js";
 
 const mockPi = { appendEntry: () => {} } as unknown as ExtensionAPI;
 
+/** First line fits, second line alone exceeds the byte cap: truncates to a clipped head. */
+const CLIPPED_BODY = "head\n" + "x".repeat(DEFAULT_MAX_BYTES + 1);
+
 // ── Action types ──────────────────────────────────────────────────────
 
 type StateAction =
@@ -29,6 +33,7 @@ type StateAction =
 	| { type: "setTopic"; name: string }
 	| { type: "clearTopic" }
 	| { type: "savePage"; name: string }
+	| { type: "saveClippedPage"; name: string }
 	| { type: "addChildSession"; id: string }
 	| { type: "abortChildren" };
 
@@ -65,6 +70,9 @@ async function apply(
 		case "savePage":
 			await saveNotebookPage(mockPi, state, action.name, "content-" + action.name);
 			break;
+		case "saveClippedPage":
+			await saveNotebookPage(mockPi, state, action.name, CLIPPED_BODY);
+			break;
 		case "addChildSession":
 			state.childSessions.set(action.id, { abort: () => Promise.resolve() } as any);
 			state.liveChildSessions.set(action.id, { abort: () => Promise.resolve() } as any);
@@ -99,8 +107,18 @@ function assertChildSessionContainment(state: SchematicState): void {
 	}
 }
 
+function assertClippedPagesContained(state: SchematicState): void {
+	for (const name of state.clippedPages) {
+		assert.ok(
+			state.notebookPages.has(name),
+			`clipped page "${name}" must exist in notebookPages`,
+		);
+	}
+}
+
 function assertResetClears(state: SchematicState): void {
 	assert.equal(state.notebookPages.size, 0, "notebookPages must be empty after reset");
+	assert.equal(state.clippedPages.size, 0, "clippedPages must be empty after reset");
 	assert.equal(state.childSessions.size, 0, "childSessions must be empty after reset");
 	assert.equal(state.liveChildSessions.size, 0, "liveChildSessions must be empty after reset");
 	assert.equal(state.epoch, 0, "epoch must be 0 after reset");
@@ -381,6 +399,17 @@ test("reset clears deferred readonly frontmatter commands", () => {
 	assert.equal(state.pendingReadonlyCommands.length, 0, "readonly queue cleared");
 });
 
+test("clipped page flags stay contained and reset clears them", async () => {
+	const state = createState();
+	await saveNotebookPage(mockPi, state, "clipped-page", CLIPPED_BODY);
+	assertClippedPagesContained(state);
+	assert.equal(state.clippedPages.has("clipped-page"), true, "oversized write must flag the page clipped");
+
+	resetState(state);
+	assertClippedPagesContained(state);
+	assertResetClears(state);
+});
+
 test("Property 6: childSessionEpoch monotonicity (never decreases)", async () => {
 	const h = createTestHarness();
 	try {
@@ -406,6 +435,41 @@ test("Property 6: childSessionEpoch monotonicity (never decreases)", async () =>
 							`childSessionEpoch must never decrease: was ${maxSeenEpoch}, got ${state.childSessionEpoch}`,
 						);
 						maxSeenEpoch = Math.max(maxSeenEpoch, state.childSessionEpoch);
+					}
+				},
+			),
+			{ numRuns: 100 },
+		);
+	} finally {
+		h.teardown();
+	}
+});
+
+test("Property 7: clipped pages are a subset of notebook pages", async () => {
+	const h = createTestHarness();
+	try {
+		await fc.assert(
+			fc.asyncProperty(
+				fc.array(
+					fc.oneof(
+						fc.constant({ type: "reset" } as StateAction),
+						fc.record({ type: fc.constant("savePage"), name: arbPageName }),
+						fc.record({ type: fc.constant("saveClippedPage"), name: arbPageName }),
+					),
+					{ maxLength: 30 },
+				),
+				async (actions) => {
+					const state = createState();
+					for (const action of actions) {
+						await apply(state, action);
+						assertClippedPagesContained(state);
+						if (action.type === "saveClippedPage") {
+							assert.equal(
+								state.clippedPages.has(action.name),
+								true,
+								`clipped write "${action.name}" must set the clipped flag`,
+							);
+						}
 					}
 				},
 			),

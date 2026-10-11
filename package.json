@@ -15,10 +15,10 @@
     "node": ">=22.19.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": ">=0.84.1",
-    "@earendil-works/pi-coding-agent": ">=0.84.1",
-    "@earendil-works/pi-tui": ">=0.84.1",
-    "typebox": ">=1.3.7"
+    "@earendil-works/pi-ai": ">=0.99.2",
+    "@earendil-works/pi-coding-agent": ">=0.99.2",
+    "@earendil-works/pi-tui": ">=0.99.2",
+    "typebox": ">=1.3.27"
   },
   "scripts": {
     "prepare": "husky",
@@ -33,14 +33,14 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.84.1",
-    "@earendil-works/pi-coding-agent": "0.84.1",
-    "@earendil-works/pi-tui": "0.84.1",
+    "@earendil-works/pi-ai": "0.99.2",
+    "@earendil-works/pi-coding-agent": "0.99.2",
+    "@earendil-works/pi-tui": "0.99.2",
     "@types/node": "^25.9.3",
     "audit-ci": "^7.1.0",
     "fast-check": "^4.8.0",
     "husky": "^9.1.7",
-    "typebox": "1.3.7",
+    "typebox": "1.3.27",
     "typescript": "^6.0.3"
   },
   "pi": {

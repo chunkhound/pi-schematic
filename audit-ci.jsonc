@@ -1,5 +1,27 @@
 {
   "$schema": "https://github.com/IBM/audit-ci/raw/main/docs/schema.json",
   "moderate": true,
-  "allowlist": []
+  "allowlist": [
+    {
+      "GHSA-6j4f-fj2g-mc7p": {
+        "active": true,
+        "notes": "brace-expansion: uncontrolled recursion in parseCommaParts. npm audit affected range: <5.0.10. Installed 5.0.9, via minimatch@10.2.6 under @earendil-works/pi-coding-agent@0.99.2 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@0.99.2 (devDependency; the extension ships no runtime deps).",
+        "expiry": "2026-12-31"
+      }
+    },
+    {
+      "GHSA-qhr7-859c-m2p7": {
+        "active": true,
+        "notes": "brace-expansion: uncontrolled recursion on nested brace groups. npm audit affected range: <5.0.11. Installed 5.0.9, via minimatch@10.2.6 under @earendil-works/pi-coding-agent@0.99.2 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@0.99.2 (devDependency; the extension ships no runtime deps).",
+        "expiry": "2026-12-31"
+      }
+    },
+    {
+      "GHSA-q2hr-2g5m-vwhr": {
+        "active": true,
+        "notes": "brace-expansion: quadratic-time expansion of the {a},b} rewrite. npm audit affected range: <5.0.12. Installed 5.0.9, via minimatch@10.2.6 under @earendil-works/pi-coding-agent@0.99.2 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@0.99.2 (devDependency; the extension ships no runtime deps).",
+        "expiry": "2026-12-31"
+      }
+    }
+  ]
 }

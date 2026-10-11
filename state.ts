@@ -15,6 +15,9 @@ export interface SchematicState {
 	/** Compact notebook pages keyed by kebab-case name */
 	notebookPages: Map<string, string>;
 
+	/** Names of pages whose latest accepted write was clipped by the write-size cap. */
+	clippedPages: Set<string>;
+
 	/** Notebook generation counter. 0 = no writes yet; 1 = first write; bumped on discard. */
 	epoch: number;
 
@@ -168,6 +171,7 @@ export function createState(): SchematicState {
 	const frontmatterPromptIssues = new Map<string, FrontmatterIssue>();
 	const state: SchematicState = {
 		notebookPages: new Map(),
+		clippedPages: new Set(),
 		epoch: 0,
 		activeNotebookTopic: null,
 		activeNotebookTopicSource: null,
@@ -217,6 +221,7 @@ export function createState(): SchematicState {
 export function resetState(state: SchematicState): void {
 	state.childSessionEpoch++;
 	state.notebookPages.clear();
+	state.clippedPages.clear();
 	state.epoch = 0; // sentinel: 0 = not yet initialized; set to 1 on first write
 	// /new abandons the previous session tree; the watermark dies with it. A
 	// fresh session has no staged epochs, so derivation on its empty branch is 0.

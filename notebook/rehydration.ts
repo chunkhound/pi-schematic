@@ -19,6 +19,7 @@ interface NotebookEntryData {
 	epoch: number;
 	name: string;
 	content: string;
+	clipped?: boolean;
 }
 
 interface NotebookGenerationData {
@@ -29,6 +30,7 @@ interface NotebookGenerationData {
 interface NotebookCandidate {
 	epoch: number;
 	content: string;
+	clipped: boolean;
 }
 
 // ── Rehydration entry types ───────────────────────────────────────────
@@ -99,11 +101,15 @@ export function reconstructNotebook(state: SchematicState, branch: readonly Sess
 		const data = customEntry.data as NotebookEntryData;
 		const epoch = isNotebookEpoch(data?.epoch) ? data.epoch : 0;
 		if (!isKnownNotebookVersion(data?.version) || !data?.name || typeof data.content !== "string" || epoch !== currentEpoch || candidates.has(data.name)) continue;
-		candidates.set(data.name, { epoch, content: data.content });
+		candidates.set(data.name, { epoch, content: data.content, clipped: data.clipped === true });
 	}
 
 	state.notebookPages.clear();
-	for (const [name, candidate] of candidates) state.notebookPages.set(name, candidate.content);
+	state.clippedPages.clear();
+	for (const [name, candidate] of candidates) {
+		state.notebookPages.set(name, candidate.content);
+		if (candidate.clipped) state.clippedPages.add(name);
+	}
 }
 
 /** Ensure notebook_read and notebook_index are active so the LLM can fetch pages. */

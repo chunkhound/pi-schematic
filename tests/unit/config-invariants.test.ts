@@ -41,8 +41,8 @@ const SPAWN_SOURCE_PATH = new URL("spawn/index.ts", REPO_ROOT_URL);
 const RENDERER_SOURCE_PATH = new URL("spawn/renderer.ts", REPO_ROOT_URL);
 // Pinned versions verified against package.json + lockfile.
 // Update when Pi devDependencies are bumped.
-const EXPECTED_PI_VERSION = "0.84.1";
-const EXPECTED_TYPEBOX_VERSION = "1.3.7";
+const EXPECTED_PI_VERSION = "0.99.2";
+const EXPECTED_TYPEBOX_VERSION = "1.3.27";
 // Approved peer floors — must track the pinned devDependency versions above.
 const EXPECTED_PI_PEER = `>=${EXPECTED_PI_VERSION}`;
 const EXPECTED_TYPEBOX_PEER = `>=${EXPECTED_TYPEBOX_VERSION}`;
@@ -52,7 +52,14 @@ const EXPECTED_MATRIX = new Set([
 	"macos-latest@24",
 	"windows-latest@24",
 ]);
-const EXPECTED_ALLOWLIST_KEYS = new Set<string>();
+// Transitive brace-expansion advisories in the pinned test host
+// @earendil-works/pi-coding-agent@0.99.2 (devDependency). Remove them when a
+// pinned host ships a patched brace-expansion; the expiry forces periodic re-review.
+const EXPECTED_ALLOWLIST_KEYS = new Set<string>([
+	"GHSA-6j4f-fj2g-mc7p",
+	"GHSA-qhr7-859c-m2p7",
+	"GHSA-q2hr-2g5m-vwhr",
+]);
 
 function readText(url: URL): string {
 	return readFileSync(url, "utf8");
@@ -136,7 +143,7 @@ test("pinned Pi compatibility metadata and source boundaries stay exact", () => 
 	assert.doesNotMatch(rendererSource, /process\.(?:stdout|stderr)\.write\s*\(/);
 });
 
-test("audit-ci config enforces the empty allowlist policy", () => {
+test("audit-ci config enforces the reviewed allowlist policy", () => {
 	const config = parseAuditConfig();
 	assert.equal(config.$schema, AUDIT_SCHEMA);
 	assert.equal(config.moderate, true);

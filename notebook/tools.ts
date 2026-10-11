@@ -7,11 +7,21 @@
  */
 
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import type { SchematicState } from "../state.js";
 import { updateIndicators } from "../tui.js";
-import { formatPageList, formatPagePreview, getPageNames, saveNotebookPage } from "./store.js";
+import { formatByteCap, formatPageList, formatPagePreview, getPageNames, saveNotebookPage, type TruncationReport } from "./store.js";
+
+const WRITE_SIZE_SUFFIX =
+	`Content is limited to ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. ` +
+	"The beginning is kept, the tail is dropped, and truncation is reported. " +
+	"A write whose retained head would be empty (for example, an oversized first line) is rejected.";
+
+function formatTruncationReport(report: TruncationReport): string {
+	return `TRUNCATED by ${report.truncatedBy}: kept ${report.outputLines} of ${report.totalLines} lines (${report.outputBytes} of ${report.totalBytes} bytes); tail dropped. Split this page into smaller pages.`;
+}
 
 // ── Parameter schemas ────────────────────────────────────────────────
 // Extracted to const so type inference works through ToolDefinition<TParams>.
@@ -25,7 +35,8 @@ const notebookWriteParams = Type.Object({
 		description:
 			"Compact markdown for one notebook page. Capture only high-value knowledge for the current " +
 			"work stream (user guidance, decisions, design, constraints); keep re-derivable code facts minimal. " +
-			"Compact sections like Facts / Architecture / Decisions / Constraints / Open questions work well. Truncated at 50KB / 2000 lines.",
+			"Compact sections like Facts / Architecture / Decisions / Constraints / Open questions work well. " +
+			WRITE_SIZE_SUFFIX,
 	}),
 });
 
@@ -70,7 +81,8 @@ export function createNotebookToolDefinitions(
 			"One page covers one subject, thread, or subsystem. " +
 			"Same name overwrites the previous page (refinement). " +
 			"Writes are serialized via a process-local lock; same-name writes overwrite in completion order. " +
-			"Always returns the current list of up to date pages.",
+			"Successful writes return the current list of up to date pages. " +
+			WRITE_SIZE_SUFFIX,
 		...(withHints
 			? {
 					promptSnippet: "Write or refine a compact notebook page",
@@ -114,12 +126,20 @@ export function createNotebookToolDefinitions(
 			const saved = await saveNotebookPage(pi, state, params.name, params.content, assertFresh);
 			updateIndicators(ctx, state);
 
+			const report = saved.truncation ? formatTruncationReport(saved.truncation) : null;
+			const details = {
+				entries: saved.entries,
+				preview: saved.preview,
+				truncation: saved.truncation,
+				clipped: saved.clipped,
+			};
+
 			onUpdate?.({
 				content: [{
 					type: "text" as const,
-					text: `Saved "${params.name}"` + (saved.preview ? `: ${saved.preview}` : ""),
+					text: `Saved "${params.name}"` + (saved.preview ? `: ${saved.preview}` : "") + (report ? `\n\n${report}` : ""),
 				}],
-				details: { entries: saved.entries, preview: saved.preview },
+				details,
 			});
 			return {
 				content: [
@@ -127,10 +147,11 @@ export function createNotebookToolDefinitions(
 						type: "text" as const,
 						text: `Saved notebook page "${params.name}".` +
 							(saved.preview ? `\n${saved.preview}` : "") +
+							(report ? `\n\n${report}` : "") +
 							`\n\nNotebook Pages:\n${formatPageList(state) || "(empty)"}`,
 					},
 				],
-				details: { entries: saved.entries, preview: saved.preview },
+				details,
 			};
 		},
 	};
@@ -141,7 +162,8 @@ export function createNotebookToolDefinitions(
 		description:
 			"Read a notebook page's full body by name. " +
 			"Open one notebook page to recover state for that topic or thread. " +
-			"Always returns the current notebook page names.",
+			"Always returns the current notebook page names. " +
+			"A page clipped at write time returns a truncation notice with its stored body.",
 		...(withHints
 			? {
 					promptSnippet: "Read a notebook page by name",
@@ -187,16 +209,20 @@ export function createNotebookToolDefinitions(
 				};
 			}
 
+			const clipped = state.clippedPages.has(params.name);
 			return {
 				content: [
 					{
 						type: "text" as const,
 						text:
 							`--- ${params.name} ---\n${content}\n` +
-							`---\nNotebook Pages:\n${formatPageList(state) || "(empty)"}`,
+							`---\nNotebook Pages:\n${formatPageList(state) || "(empty)"}` +
+							(clipped
+								? `\n\nNotice: This page was clipped at write time; its stored body is incomplete.`
+								: ""),
 					},
 				],
-				details: { entries: names, found: true, body: content },
+				details: { entries: names, found: true, body: content, clipped },
 			};
 		},
 	};
