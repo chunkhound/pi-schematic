@@ -7,9 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`/workflow` workflow engine** — `/workflow <workflow> [args]` runs a user-authored synchronous JavaScript file in a codemode sandbox (QuickJS worker, wall-clock deadline, 256 MiB memory cap). The host compiles the file (acorn validates the synchronous contract and inserts `await` before every `workflow.*` call), suppresses input for the run, and exposes the `workflow.*` handles: `run`, `handoff`, `classify`, `shell`, `state`, `entries`, `notebookIndex`, `notebookRead`, `notebookWrite`, `notebookTopic`, `budget`, `readonly`, `new`, `checkpoint`, and `exit`. Every workflow must declare at least one `workflow.checkpoint(...)`; on a cost or time target the engine defers the stop to the next checkpoint and salvages its metadata as the run's partial result, while cancellation and errors abort immediately. Cost and time are soft targets, not hard limits: they come from the pre-run dialogs or `--workflow-cost`/`--workflow-time`; the flag descriptions, the footer, and the end-of-run summary say so, and the summary adds a `target → final` overshoot row. Every finished run records one `workflow-exit` entry. The `/workflow` footer status counts checkpoints passed (🚩), and the end-of-run overview breaks the run down into checkpoints, `workflow.run` steps, model turns, classifier steps, and per-handle activity, under the 🛠️ label. The author contract is documented in `docs/workflows.md`.
+
 ### Changed
 
-- **Pi minimum** — Pi 0.99.2 is now the documented minimum for the `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` peers, and the `typebox` peer minimum is 1.3.27.
+- **Pi minimum** — Pi 1.0.4 is now the documented minimum for the `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` peers, and the `typebox` peer minimum is 1.3.27. The `package-lock.json` churn follows from this bump (the pi 1.0.4 tree re-hoists deduped transitive entries) plus the four new workflow dependencies below; no unrelated version moves.
+- **Workflow dependencies** — new runtime dependencies `@earendil-works/pi-codemode`, `acorn`, `acorn-walk`, `magic-string` for the `/workflow` sandbox and compiler.
+
+### Fixed
+
+- **Spawned-agent cost attribution** — the `spawn` tool now reports each child session's usage on its tool result and backfills it on error results. Parent session totals and the `/workflow` cost total include child-agent spend, which was previously invisible because children run in separate sessions.
+- **Bash classifier arrow false-positive** — interpreter payloads (`node -e`, `python -c`, `awk`, `perl`) no longer misread `=>` as a write redirect. Kept with the workflow change because `workflow.shell` routes through the same classifier and workflow scripts commonly run `node -e` with arrow functions.
 
 ## [0.6.0] - 2026-09-26
 
