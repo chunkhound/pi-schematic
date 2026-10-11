@@ -30,7 +30,7 @@
     "test:snapshots:update": "node ./scripts/run-node-test.mjs --update-snapshots tests/unit/render-snapshots.test.ts",
     "test:compat:current": "node ./scripts/test-compat-current.mjs",
     "test:package-host": "node ./scripts/test-package-host.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node ./scripts/dependency-graph-assertions.mjs && tsc --noEmit"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.99.2",

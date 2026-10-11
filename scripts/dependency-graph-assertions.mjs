@@ -1,3 +1,49 @@
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+/** Pi peers and TypeBox whose installed version must equal the exact version package.json pins. */
+export const GUARDED_PACKAGES = [
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-coding-agent",
+  "@earendil-works/pi-tui",
+  "typebox",
+];
+
+function readInstalledVersion(root, name) {
+  try {
+    return JSON.parse(readFileSync(join(root, "node_modules", name, "package.json"), "utf8")).version;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Fail when an installed Pi/TypeBox package differs from the exact version package.json
+ * pins. This catches a stale node_modules (for example Pi 0.84.1 installed while the repo
+ * targets 0.99.2), which would otherwise make tests and typecheck silently run against an
+ * older host API. `npm ci` restores the pinned versions.
+ */
+export function assertInstalledMatchesDeclared(root, packageNames = GUARDED_PACKAGES) {
+  const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  const declared = manifest.devDependencies ?? {};
+  const mismatches = [];
+  for (const name of packageNames) {
+    const expected = declared[name];
+    if (typeof expected !== "string") continue;
+    const installed = readInstalledVersion(root, name);
+    if (installed !== expected) {
+      mismatches.push(`${name}: installed ${installed ?? "missing"}, package.json declares ${expected}`);
+    }
+  }
+  if (mismatches.length > 0) {
+    throw new Error(
+      "Installed dependencies do not match package.json; run `npm ci` before testing. " +
+        mismatches.join("; "),
+    );
+  }
+}
+
 function collectPackageOccurrences(graph, packageNames) {
   const targets = new Set(packageNames);
   const occurrences = new Map(packageNames.map((name) => [name, []]));
@@ -42,4 +88,10 @@ export function assertSynchronizedPackageVersions(graph, packageNames) {
   }
   if (packages[0].version === undefined) throw new Error(`Expected synchronized package versions; found missing version`);
   return packages[0].version;
+}
+
+const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
+if (isMain) {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  assertInstalledMatchesDeclared(root);
 }
