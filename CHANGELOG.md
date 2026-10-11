@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Empty notebook pages** — selecting a page with an empty body in `/notebook` now opens it like any other page instead of closing the picker.
+- **Discarded notebook pages** — selecting a page removed by a handoff discard while the `/notebook` list was open now reopens the refreshed list instead of closing the picker.
 
 ## [0.6.0] - 2026-09-26
 

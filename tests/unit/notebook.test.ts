@@ -565,7 +565,7 @@ test("/notebook inline preview hints at $PI_PAGER when it cuts a long page", asy
 	overlay.handleInput("\r");
 	const preview = stripAnsi(overlay.render(120).join("\n"));
 	assert.doesNotMatch(preview, /TAIL/);
-	assert.match(preview, /set \$PI_PAGER to view the full page/);
+	assert.match(preview, /set \$PI_PAGER to a full-screen pager \(e\.g\. less\) to view the full page/);
 });
 
 test("/notebook overlay sorts entries consistently", async () => {

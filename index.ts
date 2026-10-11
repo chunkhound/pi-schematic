@@ -737,7 +737,7 @@ export default function (pi: ExtensionAPI): void {
 							container.addChild(new Text(theme.fg("accent", theme.bold(` ${value} `)), 1, 0));
 							const truncated = body.length > 500;
 							container.addChild(new Text(theme.fg("toolOutput", truncated ? body.slice(0, 500) : body), 1, 0));
-							if (truncated) container.addChild(new Text(theme.fg("dim", " ... set $PI_PAGER to view the full page "), 1, 0));
+							if (truncated) container.addChild(new Text(theme.fg("dim", " ... set $PI_PAGER to a full-screen pager (e.g. less) to view the full page "), 1, 0));
 							container.addChild(new Text(theme.fg("dim", " any key back "), 1, 0));
 							container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 							previewName = value;
