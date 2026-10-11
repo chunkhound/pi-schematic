@@ -88,6 +88,10 @@ const INTERPRETER_EXEC_FLAGS: Record<string, string[]> = {
 
 const INTERPRETERS = new Set(Object.keys(INTERPRETER_EXEC_FLAGS));
 
+// WHY: shell payloads are real shell syntax, so `a=>file` there is a write redirect.
+// Only non-shell payloads may use `=>` as an arrow function.
+const SHELL_INTERPRETERS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
+
 // Package managers are blocked unconditionally — they mutate system state
 // outside any single directory (npm install writes to node_modules, pip
 // installs to site-packages, etc.). Temp-dir path checking is not meaningful.
@@ -109,7 +113,7 @@ const PACKAGE_MANAGERS = new Set(["npm", "yarn", "pnpm", "pip", "pip3", "pipx", 
  * @returns {ok: true} if allowed, or {ok: false, reason} with explanation
  */
 
-export function classifyBashCommand(cmd: string, cwd: string = process.cwd(), depth: number = 0, shellVars: ReadonlyMap<string, string> = new Map()): Verdict {
+export function classifyBashCommand(cmd: string, cwd: string = process.cwd(), depth: number = 0, shellVars: ReadonlyMap<string, string> = new Map(), interpreterPayload: boolean = false): Verdict {
 	if (depth > 10) return { ok: false, reason: "recursion depth exceeded in command classification" };
 	const localVars = new Map(shellVars);
 	for (const rawSegment of splitUnquotedShellSegments(cmd)) {
@@ -123,7 +127,7 @@ export function classifyBashCommand(cmd: string, cwd: string = process.cwd(), de
 			}
 		}
 
-		const redirectTarget = getUnsafeWriteRedirectTarget(segment, cwd, localVars);
+		const redirectTarget = getUnsafeWriteRedirectTarget(segment, cwd, localVars, interpreterPayload);
 		if (redirectTarget) {
 			return { ok: false, reason: `write redirect blocked outside temp dir: ${redirectTarget}` };
 		}
@@ -201,7 +205,10 @@ function classifyInterpreter(command: string, tokens: string[], cwd: string, dep
 	for (const flag of INTERPRETER_EXEC_FLAGS[command]) {
 		const idx = args.indexOf(flag);
 		if (idx === -1 || idx + 1 >= args.length) continue;
-		const nested = classifyBashCommand(stripMatchingQuotes(args[idx + 1]), cwd, depth + 1, shellVars);
+		// WHY: non-shell payloads (node -e, python -c) use `=>` as an arrow, which quote-stripping
+		// would otherwise expose to the redirect scanner. Shell payloads keep real redirect semantics.
+		const arrowPayload = !SHELL_INTERPRETERS.has(command);
+		const nested = classifyBashCommand(stripMatchingQuotes(args[idx + 1]), cwd, depth + 1, shellVars, arrowPayload);
 		if (!nested.ok) return `${command} ${flag} blocked: ${nested.reason}`;
 	}
 	return null;
@@ -933,7 +940,7 @@ function readRedirectTarget(
  * Heredoc redirect targets (<<EOF) are stdin, not file writes, and are not checked.
  * This is a best-effort inspection layer, not a security sandbox.
  */
-function getUnsafeWriteRedirectTarget(cmd: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map()): string | null {
+function getUnsafeWriteRedirectTarget(cmd: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map(), interpreterPayload: boolean = false): string | null {
 	let quote: '"' | "'" | null = null;
 	let escaped = false;
 
@@ -950,6 +957,14 @@ function getUnsafeWriteRedirectTarget(cmd: string, cwd: string, shellVars: Reado
 		if (next === "&" && /^[\d-]$/.test(cmd[i + 2] ?? "")) continue;
 		// >= is the comparison operator (e.g., in [[ or node -e), not a write redirect
 		if (next === "=") continue;
+		// => is an arrow function inside non-shell interpreter code (node -e/python -c/perl/ruby),
+		// not an assignment redirect. Only lenient for a classified interpreter payload:
+		// a top-level `a=>file` is still a real redirect and stays blocked.
+		if (interpreterPayload) {
+			let j = i - 1;
+			while (j >= 0 && /\s/.test(cmd[j])) j--;
+			if (j >= 0 && cmd[j] === "=") continue;
+		}
 		// >& = combined stdout+stderr redirect to a file, treat as 2-char operator
 		const opLen = next === ">" || next === "|" || next === "&" ? 2 : 1;
 		const { target, end } = readRedirectTarget(cmd, i + opLen);
