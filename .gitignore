@@ -156,8 +156,9 @@ vite.config.ts.timestamp-*
 .chunkhound.json
 .chunkhound/
 .mcp.json
-# Only .pi/mcp.json is local. .pi/workflows/*.js stays versioned via the exception above.
-.pi/mcp.json
+# Local pi state is ignored, except authored project workflows (see exception above).
+.pi/*
+!.pi/workflows/
 
 # macOS
 .DS_Store
