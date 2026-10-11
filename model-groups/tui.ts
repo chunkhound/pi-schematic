@@ -13,6 +13,7 @@ import {
 } from "./store.js";
 import { MODEL_GROUP_MODALITIES, ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModality, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ResolvedModelGroup } from "./types.js";
 import { canonicalizeModelGroupName } from "./names.js";
+import { isModelUsable, isUsableModel } from "./availability.js";
 import { decodeDisplayLabel, escapeDisplayLabel } from "./display.js";
 import { MODALITY_FG, MODALITY_LETTER, modalityLetterRun as buildModalityLetterRun } from "./modality.js";
 import { getModalitiesModelFact } from "./constraints/modalities.js";
@@ -60,11 +61,6 @@ function groupKey(group: Pick<ResolvedModelGroup, "scope" | "name">): string {
 
 function thinkingLabel(level: ModelThinkingLevel | undefined): string {
 	return level ?? "inherit";
-}
-
-function modelAvailable(registry: ModelRegistry, provider: string, modelId: string): boolean {
-	const model = registry.find(provider, modelId);
-	return Boolean(model && registry.hasConfiguredAuth(model));
 }
 
 function modelDisplay(model: Model<Api>): string {
@@ -262,7 +258,7 @@ export function createModelGroupsComponent(
 
 	function availableModels(): Model<Api>[] {
 		return modelRegistry.getAvailable()
-			.filter((model) => modelRegistry.hasConfiguredAuth(model));
+			.filter((model) => isUsableModel(modelRegistry, model));
 	}
 
 	function allProviders(): string[] {
@@ -736,7 +732,7 @@ export function createModelGroupsComponent(
 		container.addChild(textLine(modelsBar));
 
 		state.editDraft?.models.forEach((model, index) => {
-			const available = modelAvailable(modelRegistry, model.provider, model.modelId) ? "available" : "unavailable";
+			const available = isModelUsable(modelRegistry, model.provider, model.modelId) ? "available" : "unavailable";
 			const found = modelRegistry.find(model.provider, model.modelId) as Model<Api> | undefined;
 			// Per-model capability chip, mirroring the Add-model picker (D2). Unresolved
 			// members have no fact, so they render without a chip.
@@ -803,7 +799,7 @@ export function createModelGroupsComponent(
 		container.addChild(textLine(theme.fg("accent", "Edit model")));
 		container.addChild(textLine(`Provider: ${escapeDisplayLabel(model.provider)}`));
 		container.addChild(textLine(`Model ID: ${escapeDisplayLabel(model.modelId)}`));
-		container.addChild(textLine(`Status: ${modelAvailable(modelRegistry, model.provider, model.modelId) ? "available" : "unavailable"}`));
+		container.addChild(textLine(`Status: ${isModelUsable(modelRegistry, model.provider, model.modelId) ? "available" : "unavailable"}`));
 		const supported = thinkingOptionsFor(found);
 		const options = modelEditThinkingOptions(found, model.thinkingLevel);
 		options.forEach((level, index) => {

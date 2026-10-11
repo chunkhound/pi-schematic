@@ -80,6 +80,7 @@ import { loadModelGroups, summarizeBootValidation, validateModelGroups } from ".
 import { escapeDisplayLabel } from "./model-groups/display.js";
 import { presentConstraintPrompt } from "./model-groups/constraints/presentation.js";
 import { productionConstraintRegistry } from "./model-groups/constraints/registry.js";
+import { isUsableModel } from "./model-groups/availability.js";
 import {
 	cacheLookupCommand,
 	cacheLookupCommandExplicitModel,
@@ -292,7 +293,7 @@ function findExplicitModel(ctx: ExtensionContext, raw: string, commandRef: strin
 		ctx.ui.notify(buildModelFrontmatterErrorNotification(provider, modelId, commandRef, "not found in registry"), "error");
 		return null;
 	}
-	if (ctx.modelRegistry.hasConfiguredAuth(model)) return model;
+	if (isUsableModel(ctx.modelRegistry, model)) return model;
 	ctx.ui.notify(buildModelFrontmatterAuthErrorNotification(provider, modelId, commandRef), "error");
 	return null;
 }

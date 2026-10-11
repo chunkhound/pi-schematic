@@ -9,6 +9,7 @@ import { presentConstraintDiagnosticRecords } from "./constraints/presentation.j
 import { productionConstraintRegistry, type ConstraintRegistry } from "./constraints/registry.js";
 import { resolveConstraintMembers } from "./constraints/resolution.js";
 import { canonicalizeModelGroupName } from "./names.js";
+import { isModelUsable } from "./availability.js";
 import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModalities, type ModelGroupModality, type ModelGroupModel, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ModelGroupsConfig, type ModelGroupsLoadedGroup, type ModelGroupsLoadIssue, type ModelGroupsLoadResult, type ResolvedModelGroup } from "./types.js";
 
 const CURRENT_VERSION = 2;
@@ -341,10 +342,7 @@ export function validateModelGroups(loadResult: ModelGroupsLoadResult, modelRegi
 	const projectNames = new Set(Object.keys(loadResult.configs.project.groups));
 	return loadResult.merged.map((group) => {
 		const unavailableRefs = group.models
-			.filter((ref) => {
-				const model = modelRegistry.find(ref.provider, ref.modelId);
-				return !model || !modelRegistry.hasConfiguredAuth(model);
-			})
+			.filter((ref) => !isModelUsable(modelRegistry, ref.provider, ref.modelId))
 			.map(({ provider, modelId }) => ({ provider, modelId }));
 		const evaluations = evaluateConstraints(resolveConstraintMembers(group.models, modelRegistry), group.constraints ?? {}, constraintRegistry);
 		// The legacy `modalities` projection derives from the modalities descriptor

@@ -66,6 +66,12 @@ function selectRenderedLabel(c: { handleInput?: (data: string) => void; render: 
 	assert.fail(`did not select rendered label: ${label}`);
 }
 
+function openModelEdit(c: Parameters<typeof selectRenderedLabel>[0], modelLabel: string): void {
+	press(c, ENTER);                       // LIST → open the selected group editor
+	selectRenderedLabel(c, modelLabel);    // EDITOR → put the cursor on the model row
+	press(c, ENTER);                       // EDITOR → MODEL_EDIT
+}
+
 function pressAndRender(c: { handleInput?: (data: string) => void; render: (width: number) => string[] }, ...inputs: string[]): void {
 	for (const input of inputs) {
 		c.render(100);
@@ -560,7 +566,7 @@ test("model groups TUI MODEL_EDIT opens on the configured thinking level and pre
 	};
 	const { c } = component({ groups, store });
 	// EDITOR → first model row → MODEL_EDIT.
-	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
+	openModelEdit(c, "gpt-5");
 	const text = rendered(c);
 	assert.match(text, /→ Thinking: high/);
 	assert.match(text, /Thinking: high ✓ current/);
@@ -583,7 +589,7 @@ test("model groups TUI MODEL_EDIT shows an unsupported/unavailable current level
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
-	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
+	openModelEdit(c, "claude");
 	let text = rendered(c);
 	assert.match(text, /→ Thinking: high/);
 	assert.match(text, /Thinking: high ⚠ current, unavailable/);
@@ -1287,7 +1293,7 @@ test("model groups TUI MODEL_EDIT opens on a mid-list configured level and marks
 	};
 	const { c } = component({ groups, store });
 	// EDITOR → first model row → MODEL_EDIT.
-	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
+	openModelEdit(c, "gpt-5");
 	const text = rendered(c);
 	// Cursor lands on the configured mid-list level, not on the first (inherit) row.
 	assert.match(text, /→ Thinking: medium/);
@@ -1312,7 +1318,7 @@ test("model groups TUI MODEL_EDIT stale level on an available model keeps its ro
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
-	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
+	openModelEdit(c, "claude");
 	const text = rendered(c);
 	// The configured-but-unsupported value is on screen exactly once, owns the cursor, and is flagged.
 	assert.equal(text.match(/Thinking: high/g)?.length, 1);
@@ -1355,7 +1361,7 @@ test("model groups TUI MODEL_EDIT keeps an unsupported level after inherit when 
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store, modelRegistry: catalog(models) });
-	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
+	openModelEdit(c, "gpt-partial");
 	const text = rendered(c);
 	assert.equal(text.match(/Thinking: medium/g)?.length, 1);
 	assert.match(text, /→ Thinking: medium ⚠ current, unavailable/);
@@ -1382,7 +1388,7 @@ test("model groups TUI MODEL_EDIT stale level on an unavailable model keeps Stat
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
-	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
+	openModelEdit(c, "nope");
 	const text = rendered(c);
 	assert.match(text, /Status: unavailable/);
 	assert.equal(text.match(/Thinking: max/g)?.length, 1);
@@ -1427,7 +1433,7 @@ test("model groups TUI MODEL_EDIT clamps DOWN on Remove model and D removes a st
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
-	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
+	openModelEdit(c, "claude");
 	// DOWN clamps on the final row regardless of how many thinking rows exist.
 	press(c, DOWN, DOWN, DOWN, DOWN, DOWN);
 	assert.match(rendered(c), /→ Remove model/);
@@ -1446,7 +1452,7 @@ test("model groups TUI MODEL_EDIT dropping a stale level back to inherit deliber
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
-	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
+	openModelEdit(c, "claude");
 	// Explicitly choosing inherit drops the stale value; this path is already green on
 	// the pre-fix baseline, so it is sealed rather than claimed as red-first.
 	press(c, UP);
@@ -1465,7 +1471,7 @@ test("model groups TUI MODEL_EDIT marks the default inherit row current when no 
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
-	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
+	openModelEdit(c, "gpt-5");
 	const text = rendered(c);
 	// With no configured level, inherit is the current value and the only marked row.
 	assert.match(text, /→ Thinking: inherit ✓ current/);
@@ -1487,7 +1493,7 @@ test("model groups TUI MODEL_EDIT opens on a supported level for a registered-bu
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
-	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
+	openModelEdit(c, "gpt-no-auth");
 	const text = rendered(c);
 	assert.match(text, /Status: unavailable/);
 	assert.match(text, /→ Thinking: high/);
@@ -1509,7 +1515,7 @@ test("model groups TUI MODEL_EDIT treats a stale off level on a non-reasoning mo
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
-	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
+	openModelEdit(c, "claude");
 	const text = rendered(c);
 	assert.match(text, /→ Thinking: off/);
 	assert.match(text, /Thinking: off ⚠ current, unavailable/);
