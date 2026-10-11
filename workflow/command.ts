@@ -1,0 +1,573 @@
+// WHY: `/workflow` is the single blocking entry point for the workflow engine. This
+// module owns the TUI budget dialog, compile/execute orchestration, input
+// suppression, cancellation, and the two context-shift deps (`new`, `handoff`).
+// A replacement session invalidates the captured pi/state/deps, so every runtime
+// reference is read through the live bundle and rebound from the coordinator, and
+// all user-visible output goes through ctx.ui — never console.*.
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { isKeyRelease, isKeyRepeat, matchesKey } from "@earendil-works/pi-tui";
+import type { CodemodeResult, CodemodeSandbox } from "@earendil-works/pi-codemode";
+import type { SchematicState } from "../state.js";
+import { installWorkflowFooter, uninstallWorkflowFooter, updateIndicators, reasonLabel, type WorkflowProgressView } from "../tui.js";
+import { discardWorkflowRuntime, publishWorkflowRuntime, releaseWorkflow, reserveWorkflow } from "./coordinator.js";
+import { registerWorkflowAutocomplete } from "./autocomplete.js";
+import { compileWorkflow } from "./compile.js";
+import { composeWorkflow } from "./driver.js";
+import { messageOf, safeAppendEntry, withRecordStatus } from "./errors.js";
+import { createWorkflowHost, mapSandboxError } from "./host.js";
+import { notify, resolveLimits } from "./limits-dialog.js";
+import { performHandoff, performNewSession, type RebindableDeps, type RebindBundle, type RebindHooks, type RunCtl, type RunOutcome } from "./rebind.js";
+import type { RunRegistry } from "./run-registry.js";
+import { createShellActivity, WORKFLOW_LOG_ENTRY_TYPE, type ShellActivity } from "./activity.js";
+import { READONLY_DISABLED_NOTIFICATION, READONLY_ENABLED_STATUS } from "../notifications.js";
+import { registeredState } from "../process-state.js";
+import type { ShellRun } from "./shell.js";
+import { createWorkflowSandbox, hardDeadlineMs } from "./sandbox.js";
+import { WORKFLOW_SUMMARY_ENTRY_TYPE, buildWorkflowSummary } from "./summary.js";
+import type { WorkflowHost, WorkflowHostDeps, WorkflowProgress, WorkflowSandboxFactory, ReservedReason, ExitRecord } from "./types.js";
+import { WORKFLOW_ERROR_ENTRY_TYPE, WORKFLOW_EXIT_ENTRY_TYPE } from "./types.js";
+import { parseWorkflowArgs, listWorkflows, readWorkflow, resolveWorkflowPath } from "./file.js";
+
+type CancelKey = "escape" | "ctrl+c";
+const CANCEL_KEYS: readonly CancelKey[] = ["escape", "ctrl+c"];
+// Arm-then-confirm window for cancellation, matching pi's double-press interrupt guard
+// (`lastSigintTime`/`lastEscapeTime`): one stray keypress must not kill a long run.
+/** Arm-then-confirm window: two presses of the same cancel key within this window abort. Rule: docs/workflows.md (Targets, exit, cancellation, salvage). */
+export const CANCEL_CONFIRM_MS = 500;
+const CANCEL_LABEL: Record<CancelKey, string> = { escape: "Escape", "ctrl+c": "Ctrl+C" };
+// Sandbox memory cap; listed in docs/workflow-engine.md (Stable vs internal).
+const MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
+
+export interface WorkflowCommandDeps extends RebindableDeps {
+	/** Test seam. Production builds the real CodemodeSandbox. */
+	sandboxFactory?: WorkflowSandboxFactory;
+	/** Test seam: overrides the cancel arm-then-confirm window (default {@link CANCEL_CONFIRM_MS}). */
+	cancelConfirmMs?: number;
+	/** Test seam: overrides the total handoff deadline for compaction + successor settle (default {@link HANDOFF_COMPACTION_TIMEOUT_MS}). */
+	handoffTimeoutMs?: number;
+	/** Test seam: progress tick period; production uses {@link WORKFLOW_PROGRESS_TICK_MS}. */
+	progressTickMs?: number;
+	/** Test seam: replaces pi's bash tool so command tests never spawn. */
+	shellRun?: ShellRun;
+}
+
+// Elapsed time only advances between host effects, so a one-second ticker keeps the
+// indicator honest through long model turns; effect completion republishes at once.
+const WORKFLOW_PROGRESS_TICK_MS = 1000;
+
+export function registerWorkflowCommand(pi: ExtensionAPI, state: SchematicState, deps: WorkflowCommandDeps): void {
+	pi.registerFlag("workflow-cost", { description: "Soft cost target in USD: stops at the next checkpoint, so the final cost can run over", type: "string" });
+	pi.registerFlag("workflow-time", { description: "Soft wall-clock target in milliseconds, e.g. 1800000 for 30 minutes: stops at the next checkpoint, so the final time can run over", type: "string" });
+	publishRuntimeOnSessionStart(pi, state, deps);
+	pi.registerCommand("workflow", {
+		description: "Run a workflow: /workflow <workflow> [args]. The workflow runs in a codemode sandbox and owns control flow and the exit.",
+		handler: async (raw, ctx) => runWorkflow(pi, state, deps, raw, ctx),
+	});
+}
+
+/** Publish this runtime's live bindings so a workflow rebinding into a replacement session
+ * reaches the current pi/state/deps, not a stale captured set. */
+function publishRuntimeOnSessionStart(pi: ExtensionAPI, state: SchematicState, deps: WorkflowCommandDeps): void {
+	const publishedFor = new Set<string>();
+	pi.on("session_start", (_event, ctx) => {
+		registerWorkflowAutocomplete(ctx);
+		// Partial event contexts (test stubs) may omit the session manager; a missing
+		// publication then surfaces explicitly when a replacement tries to rebind.
+		const sessionId = ctx.sessionManager?.getSessionId?.();
+		if (!sessionId) return;
+		publishedFor.add(sessionId);
+		publishWorkflowRuntime(sessionId, { pi, state, setReadonly: deps.setReadonly, requestHandoff: deps.requestHandoff, prepareRunFrontmatter: deps.prepareRunFrontmatter });
+	});
+	pi.on("session_shutdown", () => {
+		// SessionShutdownEvent carries no session id and pi emits shutdown(old) before
+		// session_start(new) (agent-session-runtime), so the single slot is safe to discard here.
+		for (const sessionId of publishedFor) discardWorkflowRuntime(sessionId);
+	});
+}
+
+async function runWorkflow(pi: ExtensionAPI, state: SchematicState, deps: WorkflowCommandDeps, raw: string, ctx: ExtensionCommandContext): Promise<void> {
+	// Claimed before any await: one workflow per process, and the reservation survives
+	// session replacements so a replacement cannot admit a second workflow.
+	if (!reserveWorkflow()) {
+		rejectSecondRun(pi, ctx);
+		return;
+	}
+	try {
+		await startWorkflow(pi, state, deps, raw, ctx);
+	} finally {
+		releaseWorkflow();
+	}
+}
+
+/** docs/workflows.md (Constraints): a second `/workflow` is rejected with a visible notice. `notify` no-ops
+ * headless, so the transcript carries a workflow-error entry instead. */
+function rejectSecondRun(pi: ExtensionAPI, ctx: ExtensionCommandContext): void {
+	const message = "A workflow is already running in this process. Wait for it to finish or press Escape or Ctrl+C twice to cancel it before you start a new one.";
+	notify(ctx, message, "error");
+	if (!ctx.hasUI) pi.appendEntry(WORKFLOW_ERROR_ENTRY_TYPE, { phase: "reserve", error: message });
+}
+
+/** Start-failure visibility: `notify` no-ops headless, so the transcript carries a
+ * workflow-error entry instead (mirrors {@link rejectSecondRun}). */
+function reportStartFailure(pi: ExtensionAPI, ctx: ExtensionCommandContext, message: string): void {
+	notify(ctx, message, "error");
+	if (!ctx.hasUI) pi.appendEntry(WORKFLOW_ERROR_ENTRY_TYPE, { phase: "start", error: message });
+}
+
+async function startWorkflow(pi: ExtensionAPI, state: SchematicState, deps: WorkflowCommandDeps, raw: string, ctx: ExtensionCommandContext): Promise<void> {
+	const program = await resolveProgram(pi, raw, ctx);
+	if (!program) return;
+	// Compile before limits: a broken workflow must fail without prompting for a budget.
+	const outcome = await resolveLimits(pi, ctx);
+	if (outcome.kind === "cancelled") {
+		// An invalid flag already showed its own error; only a user cancel adds the generic notice.
+		if (!outcome.notified) notify(ctx, "Workflow cancelled.", "info");
+		return;
+	}
+	await executeWorkflow({ pi, state, deps, limits: outcome.limits }, { ...program, ctx });
+}
+
+/** Resolve the workflow source, or surface why it cannot start. Null means reported and done. */
+async function resolveProgram(pi: ExtensionAPI, raw: string, ctx: ExtensionCommandContext): Promise<{ name: string; args: string; compiled: string } | null> {
+	const { name, args } = parseWorkflowArgs(raw);
+	if (!name) {
+		reportStartFailure(pi, ctx, "Usage: /workflow <workflow> [args]");
+		return null;
+	}
+	const path = resolveWorkflowPath(name, ctx.cwd, getAgentDir());
+	if (!path) {
+		reportStartFailure(pi, ctx, await workflowNotFound(name, ctx.cwd));
+		return null;
+	}
+	const compiled = await readAndCompile(pi, path, ctx);
+	return compiled === null ? null : { name, args, compiled };
+}
+
+/** Name the available workflows so a typo is self-correcting. */
+async function workflowNotFound(name: string, cwd: string): Promise<string> {
+	const available = (await listWorkflows(cwd, getAgentDir())).map((entry) => entry.name);
+	return available.length > 0 ? `Workflow not found: ${name}. Available: ${available.join(", ")}.` : `Workflow not found: ${name}.`;
+}
+
+async function readAndCompile(pi: ExtensionAPI, path: string, ctx: ExtensionCommandContext): Promise<string | null> {
+	let source: string;
+	try {
+		source = await readWorkflow(path);
+	} catch (error) {
+		reportStartFailure(pi, ctx, `Cannot read workflow: ${messageOf(error)}`);
+		return null;
+	}
+	try {
+		return composeWorkflow(compileWorkflow(source));
+	} catch (error) {
+		reportStartFailure(pi, ctx, messageOf(error));
+		return null;
+	}
+}
+
+
+/** Live run bindings with command test seams; rebindable fields come from {@link RebindBundle}. */
+interface RunBundle extends RebindBundle {
+	deps: WorkflowCommandDeps;
+}
+
+interface RunProgram {
+	compiled: string;
+	args: string;
+	name: string;
+	ctx: ExtensionCommandContext;
+}
+
+/** Fold a host snapshot into the run's view and repaint every visible surface. */
+function publishProgress(ctl: RunCtl, bundle: RunBundle, progress: WorkflowProgress): void {
+	ctl.progress = { name: ctl.name, ...progress };
+	applyWorkflowProgress(ctl, bundle);
+}
+
+function applyWorkflowProgress(ctl: RunCtl, bundle: RunBundle): void {
+	// No live ctx while replacing: skip the paint; rebindRun repaints on the fresh ctx.
+	if (!ctl.progress || !ctl.ctx) return;
+	// Persistent indicators feed the non-workflow footer; the unified footer replaces it
+	// for the run. Both share the workflow tick so they cannot drift while it drives turns.
+	updateIndicators(ctl.ctx, bundle.state);
+	installWorkflowFooter(ctl.ctx, () => ({ state: bundle.state, progress: ctl.progress as WorkflowProgressView }));
+}
+
+/** The current run's registry, shared across jiti module copies (see process-state.ts):
+ * a module-global would fork per copy and a rebind could reset the wrong copy's registry. */
+interface RegistrySlot {
+	current: RunRegistry | null;
+}
+const REGISTRY_SLOT_KEY = "pi-schematic.workflow-run-registry";
+
+function runRegistrySlot(): RegistrySlot {
+	return registeredState<RegistrySlot>(REGISTRY_SLOT_KEY, () => ({ current: null }));
+}
+
+/** Command-owned resubscription applied after every session replacement. */
+const rebindHooks: RebindHooks<RunBundle> = {
+	onRebound(bundle, ctl, next) {
+		ctl.unsubscribeInput();
+		ctl.unsubscribeInput = suppressInput(bundle);
+		ctl.unsubscribeCancel();
+		ctl.unsubscribeCancel = subscribeCancellation(bundle, ctl, next);
+		applyWorkflowProgress(ctl, bundle);
+	},
+	get registry() {
+		// rebindRun only runs inside a live run, which always owns a registry.
+		const registry = runRegistrySlot().current;
+		if (!registry) throw new Error("workflow run registry is not set");
+		return registry;
+	},
+};
+
+/** Host deps for one run: pi/state are read live through the bundle getters so the host
+ * survives replacements (rebindRun swaps bundle.pi/state/deps without rebuilding it).
+ * The run registry subscribes to agent_settled lazily on first correlate (deps.pi.on)
+ * and resolves runs via getBranch on these live getters; effects are serial, so no run
+ * correlation is pending across a rebind. */
+function hostDeps(bundle: RunBundle, ctl: RunCtl, onEffect: WorkflowHostDeps["onEffect"]): WorkflowHostDeps {
+	return {
+		get pi() { return bundle.pi; },
+		get state() { return bundle.state; },
+		limits: bundle.limits,
+		getCtx: () => ctl.ctx,
+		isReadonly: () => bundle.state.readonlyEnabled,
+		setReadonly: (enabled) => bundle.deps.setReadonly(enabled),
+		prepareRunFrontmatter: (text, ctx) => bundle.deps.prepareRunFrontmatter(text, ctx),
+		handoff: (direction) => performHandoff(bundle, ctl, direction),
+		newSession: () => performNewSession(bundle, ctl, rebindHooks),
+		onProgress: (progress) => publishProgress(ctl, bundle, progress),
+		onEffect,
+		shellRun: bundle.deps.shellRun,
+		// The host never formats UI text: command.ts owns the UI channel and drops it
+		// when no live UI context exists.
+		notify: (message, tone) => { if (ctl.ctx) notify(ctl.ctx, message, tone); },
+		onReadonlyToggled: (enabled) => announceReadonlyToggle(ctl, bundle, enabled),
+	};
+}
+
+function buildHost(bundle: RunBundle, ctl: RunCtl, onEffect: WorkflowHostDeps["onEffect"]): WorkflowHost {
+	return createWorkflowHost(hostDeps(bundle, ctl, onEffect));
+}
+
+/** Workflow-driven readonly mirrors `/readonly`'s visible effect: refresh the indicators
+ * and notify the human so the posture is visible mid-run. */
+function announceReadonlyToggle(ctl: RunCtl, bundle: RunBundle, enabled: boolean): void {
+	if (!ctl.ctx) return;
+	updateIndicators(ctl.ctx, bundle.state);
+	notify(ctl.ctx, enabled ? READONLY_ENABLED_STATUS : READONLY_DISABLED_NOTIFICATION, "info");
+}
+
+/** Open one live run: bindings, shell activity channel, and the host wired to them. */
+function openRun(bundle: RunBundle, program: RunProgram): { ctl: RunCtl; host: WorkflowHost; activity: ShellActivity } {
+	const ctl: RunCtl = { ctx: program.ctx, host: null, name: program.name, progress: null, exitRecorded: false, outcome: null, unsubscribeInput: () => {}, unsubscribeCancel: () => {}, registry: null };
+	// Shell visibility is UI-only and never enters LLM context: a live widget plus CustomEntry audit rows.
+	const activity = createShellActivity({ getPi: () => bundle.pi, getCtx: () => ctl.ctx });
+	const host = buildHost(bundle, ctl, (event) => activity.onEffect(event));
+	ctl.host = host;
+	ctl.registry = host.registry;
+	runRegistrySlot().current = host.registry;
+	return { ctl, host, activity };
+}
+
+async function executeWorkflow(bundle: RunBundle, program: RunProgram): Promise<void> {
+	const { ctl, host, activity } = openRun(bundle, program);
+	let stopTicker: () => void = () => {};
+	try {
+		// ALL setup lives inside the try: a throwing seam (progress paint, cancel funnel)
+		// must still reach the finally so input stays usable and the host gets disposed.
+		stopTicker = armRun(bundle, ctl, host, program.ctx);
+		await runSandbox(bundle, program, host, ctl);
+	} catch (error) {
+		// runSandbox records its own failures; anything escaping it is a setup failure
+		// (suppression, cancel, first paint), recorded here so no run ends silently.
+		recordInfraExit(bundle.pi, host, ctl, error);
+	} finally {
+		stopTicker();
+		finalizeRun(bundle, ctl, host);
+		releaseRun(bundle, ctl, host, activity);
+	}
+}
+
+/** Arm input suppression, the cancel funnel, and the first progress paint; start the idle
+ * ticker and return its stop. Runs inside executeWorkflow's try so any throw still cleans up. */
+function armRun(bundle: RunBundle, ctl: RunCtl, host: WorkflowHost, ctx: ExtensionCommandContext): () => void {
+	ctl.unsubscribeInput = suppressInput(bundle);
+	ctl.unsubscribeCancel = subscribeCancellation(bundle, ctl, ctx);
+	publishProgress(ctl, bundle, host.progress());
+	return startTicker(bundle, ctl, host);
+}
+
+/** Idle backoff: elapsed ticks alone must not repaint every second when no effect is
+ * running and nothing material changed. Effect start/end republishes immediately via
+ * onProgress, so the ticker only covers long model turns (currentEffect set) and
+ * pending-stop flips; otherwise it skips the paint. Baseline is the last published
+ * view, so effect-driven publishes also reset the idle comparison. */
+function startTicker(bundle: RunBundle, ctl: RunCtl, host: WorkflowHost): () => void {
+	const ticker = setInterval(() => {
+		const next = host.progress();
+		const prev = ctl.progress;
+		const idle = prev !== null && next.currentEffect === null && next.pendingStop === null
+			&& prev.currentEffect === null && prev.pendingStop === null
+			&& next.costUsd === prev.costUsd && next.checkpoints === prev.checkpoints;
+		if (idle) return;
+		publishProgress(ctl, bundle, next);
+	}, bundle.deps.progressTickMs ?? WORKFLOW_PROGRESS_TICK_MS);
+	return () => clearInterval(ticker);
+}
+
+/** User-facing release first: a throwing footer/indicator restore must not leave input
+ * suppressed, cancel armed, or the host undisposed. */
+function releaseRun(bundle: RunBundle, ctl: RunCtl, host: WorkflowHost, activity: ShellActivity): void {
+	ctl.unsubscribeInput();
+	ctl.unsubscribeCancel();
+	activity.dispose();
+	if (ctl.ctx) {
+		uninstallWorkflowFooter(ctl.ctx);
+		updateIndicators(ctl.ctx, bundle.state);
+	}
+	host.dispose();
+	runRegistrySlot().current = null;
+}
+
+async function runSandbox(bundle: RunBundle, program: RunProgram, host: WorkflowHost, ctl: RunCtl): Promise<void> {
+	let sandbox: CodemodeSandbox | null = null;
+	try {
+		sandbox = createWorkflowSandbox(
+			{ globals: host.globals(), timeoutMs: hardDeadlineMs(bundle.limits.timeBudgetMs), memoryLimitBytes: MEMORY_LIMIT_BYTES },
+			bundle.deps.sandboxFactory,
+		);
+		const result = await sandbox.execute(program.compiled, { store: { intent: program.args, args: program.args }, signal: host.signal });
+		reportResult(bundle.pi, host, result, ctl);
+		surfaceConsoleOutput(bundle.pi, result, ctl.ctx);
+	} catch (error) {
+		recordInfraExit(bundle.pi, host, ctl, error);
+	} finally {
+		if (sandbox) await closeSandbox(sandbox, bundle.pi, ctl.ctx);
+	}
+}
+
+/** Persist the workflow script's `console.log`/`text()` output as a UI-only entry. Advisory:
+ * a failed append must never mask the run outcome established by `reportResult`. */
+function surfaceConsoleOutput(pi: ExtensionAPI, result: CodemodeResult, ctx: ExtensionCommandContext | null): void {
+	const text = result.output
+		.filter((item): item is { type: "text"; text: string } => item.type === "text")
+		.map((item) => item.text)
+		.join("")
+		.trim();
+	if (!text) return;
+	// Advisory: visibility only; the exit record and summary already carry the outcome.
+	if (!safeAppendEntry(pi, WORKFLOW_LOG_ENTRY_TYPE, { text }) && ctx) advisoryNotify(ctx, "workflow output could not be persisted", "warning");
+}
+
+function reportResult(pi: ExtensionAPI, host: WorkflowHost, result: CodemodeResult, ctl: RunCtl): void {
+	// Read the exit BEFORE aborting: a controlled checkpoint/exit stop must not be
+	// re-labelled as a cancelled/error sandbox abort.
+	const exit = host.exitRecord();
+	if (result.ok === false && !exit) host.abort(mapSandboxError(result.error, host.abortedReason()), result.error.message);
+	const aborted = host.abortedReason();
+	// A controlled checkpoint/exit stop is not an error: only a real sandbox failure or the
+	// exit record's own escalation message (docs/workflows.md, Targets, exit, cancellation, salvage) carries one.
+	const error = exit ? exit.error : result.ok === false ? result.error.message : undefined;
+	recordExitOnce(pi, ctl, {
+		reason: exit ? exitRecordReason(exit) : aborted ?? "returned",
+		error,
+		partial: salvagedPartial(host, exit, result.ok === false || aborted !== null),
+	}, !exit);
+	notifyRunOutcome(ctl, exit, aborted, result, error);
+}
+
+/** Interactive notice for the run outcome; headless runs rely on the transcript records. */
+function notifyRunOutcome(ctl: RunCtl, exit: ReturnType<WorkflowHost["exitRecord"]>, aborted: ReservedReason | null, result: CodemodeResult, error: string | undefined): void {
+	if (ctl.ctx?.hasUI) advisoryNotify(ctl.ctx, exitNotice(exit, aborted, result), error !== undefined ? "error" : "info");
+}
+
+/** Advisory UI notice: a throwing UI must never escape cleanup or mask the run outcome. */
+function advisoryNotify(ctx: ExtensionCommandContext, message: string, level: "info" | "warning" | "error"): void {
+	try {
+		notify(ctx, message, level);
+	} catch {
+		// Advisory only: the transcript records already stand.
+	}
+}
+
+/** Infrastructure failure: abort the turn, keep the single-exit invariant, record the error. */
+function recordInfraExit(pi: ExtensionAPI, host: WorkflowHost, ctl: RunCtl, error: unknown): void {
+	// Read the exit before aborting: a controlled checkpoint/exit stop that reached this
+	// path (e.g. its own append threw) must keep its reason, not become "error".
+	const exit = host.exitRecord();
+	host.abort("error", messageOf(error));
+	try {
+		recordExitOnce(pi, ctl, infraOutcome(host, exit, error), !exit);
+	} catch (recordError) {
+		// Both append attempts failed: the run would end with zero persisted records.
+		// Surface the loss on whatever surface is left instead of staying silent.
+		surfaceLostExitRecord(pi, ctl, recordError);
+	}
+	notifyInfraFailure(ctl, error);
+}
+
+/** Outcome fields for an infra failure; a prior controlled exit keeps its reason and error. */
+function infraOutcome(host: WorkflowHost, exit: ExitRecord | null, error: unknown): RunOutcome {
+	return {
+		reason: exit ? exitRecordReason(exit) : host.abortedReason() ?? "error",
+		error: exit ? exit.error : messageOf(error),
+		partial: salvagedPartial(host, exit, true),
+	};
+}
+
+/** Advisory notice: the exit record already stands, so a throwing UI never escapes cleanup. */
+function notifyInfraFailure(ctl: RunCtl, error: unknown): void {
+	if (ctl.ctx) advisoryNotify(ctl.ctx, messageOf(error), "error");
+}
+
+/** Salvage (docs/workflows.md, Targets, exit, cancellation, salvage): only a checkpoint stop or an abort after a checkpoint carries the last
+ * checkpoint's metadata; a plain `workflow.exit` or a normal return carries none. */
+function salvagedPartial(host: WorkflowHost, exit: ExitRecord | null, abortedRun: boolean): unknown {
+	if (exit) return exit.checkpoint ? host.checkpointRecord()?.metadata : undefined;
+	return abortedRun ? host.checkpointRecord()?.metadata : undefined;
+}
+
+/** Last-resort visibility when even the workflow-error append fails on a headless run:
+ * no surface is left, so fail the command loudly rather than drop the record silently. */
+function surfaceLostExitRecord(pi: ExtensionAPI, ctl: RunCtl, error: unknown): void {
+	const message = `workflow exit record could not be persisted: ${messageOf(error)}`;
+	try {
+		pi.appendEntry(WORKFLOW_ERROR_ENTRY_TYPE, { phase: "exit-record", error: message });
+	} catch {
+		if (!ctl.ctx) throw new Error(message, { cause: error });
+		notify(ctl.ctx, message, "error");
+	}
+}
+
+/** Exactly one exit record per finished run — workflow exit (appended by workflow.exit),
+ * a reserved abort reason, or "returned" — so headless runs never end silently. The guard
+ * owns append + outcome together; a throwing append resets the guard so the sibling
+ * infra-failure path can still record the run's single exit. `entryPending` is false when
+ * `workflow.exit` already wrote the record itself. */
+function recordExitOnce(pi: ExtensionAPI, ctl: RunCtl, fields: RunOutcome, entryPending: boolean): void {
+	ctl.outcome = {
+		reason: fields.reason,
+		...(fields.error !== undefined ? { error: fields.error } : {}),
+		...(fields.partial !== undefined ? { partial: fields.partial } : {}),
+	};
+	if (!entryPending || ctl.exitRecorded) return;
+	// Guard before append: a throwing append resets it so the infra path can still record.
+	ctl.exitRecorded = true;
+	try {
+		pi.appendEntry(WORKFLOW_EXIT_ENTRY_TYPE, ctl.outcome);
+	} catch (error) {
+		ctl.exitRecorded = false;
+		throw error;
+	}
+}
+
+/**
+ * End-of-run overview: append the persisted summary card exactly once from the cleanup
+ * path, so both the sandbox-success and the sandbox-failure exits show it. Advisory:
+ * a failed append must never mask the run outcome or escape as a throw from cleanup.
+ */
+function finalizeRun(bundle: RunBundle, ctl: RunCtl, host: WorkflowHost): void {
+	// No live ctx after a replacement that never rebound: still attempt the overview via
+	// the last-known-good runtime pi. A rejecting append stays advisory — the exit record
+	// already stands, so the single-record invariant is intact either way.
+	const outcome = ctl.outcome ?? { reason: host.abortedReason() ?? "returned" };
+	try {
+		bundle.pi.appendEntry(WORKFLOW_SUMMARY_ENTRY_TYPE, buildWorkflowSummary(ctl.name, outcome.reason, outcome.error, host.metrics(), outcome.partial));
+	} catch (error) {
+		reportSummaryFailure(bundle.pi, ctl, error);
+	}
+}
+
+/** Falls back to a UI notice when the advisory append fails; never masks the outcome. */
+function reportSummaryFailure(pi: ExtensionAPI, ctl: RunCtl, error: unknown): void {
+	const appended = safeAppendEntry(pi, WORKFLOW_ERROR_ENTRY_TYPE, { phase: "summary", error: messageOf(error) });
+	if (!appended && ctl.ctx) notify(ctl.ctx, `workflow overview could not be persisted: ${messageOf(error)}`, "warning");
+}
+
+/** Reportable reason of an exit record. The host derives every recorded reason with
+ * `deriveExitReason` (workflow/types.ts), so `?? "returned"` is only a defensive
+ * fallback for an undefined one, never the normal path. */
+function exitRecordReason(exit: ExitRecord): string {
+	return exit.reason ?? "returned";
+}
+
+function exitNotice(exit: ReturnType<WorkflowHost["exitRecord"]>, aborted: ReservedReason | null, result: CodemodeResult): string {
+	if (exit) return exit.reason ? reasonLabel(exit.reason) : exitRecordReason(exit);
+	if (aborted) return reasonLabel(aborted);
+	if (result.ok === false) return result.error.message;
+	return "returned";
+}
+
+/** A close failure must not mask the run's own outcome: it is always recorded, and noticed when a live ctx exists. */
+async function closeSandbox(sandbox: CodemodeSandbox, pi: ExtensionAPI, ctx: ExtensionCommandContext | null): Promise<void> {
+	try {
+		await sandbox.close();
+	} catch (error) {
+		const message = `workflow sandbox close failed: ${messageOf(error)}`;
+		const recorded = safeAppendEntry(pi, WORKFLOW_ERROR_ENTRY_TYPE, { phase: "cleanup", error: message });
+		if (ctx) advisoryNotify(ctx, withRecordStatus(message, recorded), "warning");
+	}
+}
+
+/**
+ * Suppress non-extension input for the run. Also raises `state.inputSuppressed` so the
+ * frontmatter `input` hook (registered at load, hence earlier in pi's dispatch order)
+ * skips dropped submissions instead of mutating model/readonly state ahead of the drop.
+ * Takes the bundle so rebindRun sets the flag on the replacement's live state.
+ *
+ * Input exclusion is not atomic, including across `workflow.new`: see docs/workflows.md (Host gaps).
+ */
+function suppressInput(bundle: RunBundle): () => void {
+	// Capture the state: the unsubscribe that runs AFTER a rebind must clear the state
+	// this subscription raised, not the replacement's (they are one object in production,
+	// but distinct in tests — clearing must not depend on that identity).
+	const state = bundle.state;
+	// Register before raising the flag: a throwing registration then leaves no stuck flag.
+	const off = bundle.pi.on("input", (event) => (event.source === "extension" ? undefined : { action: "handled" as const }));
+	state.inputSuppressed = true;
+	return () => {
+		state.inputSuppressed = false;
+		off();
+	};
+}
+
+/** Register cancellation for a live context. Arm state is per registration, so a
+ * `workflow.new` rebind starts with no inherited armed press. */
+function subscribeCancellation(bundle: RunBundle, ctl: RunCtl, ctx: ExtensionCommandContext): () => void {
+	return registerCancellation(ctx, bundle.deps.cancelConfirmMs ?? CANCEL_CONFIRM_MS, () => ctl.host?.abort("cancelled"));
+}
+
+/** Escape / Ctrl+C arm a two-step funnel: the first press warns, a second press of the same
+ * key inside the window aborts. This mirrors pi's double-press interrupt guard so a single
+ * stray keypress cannot kill a long run. Terminal input is TUI-only. */
+function registerCancellation(ctx: ExtensionCommandContext, confirmMs: number, onCancel: () => void): () => void {
+	if (ctx.mode !== "tui") return () => {};
+	const armedAt = new Map<CancelKey, number>();
+	return ctx.ui.onTerminalInput((data) => {
+		// pi enables Kitty flag 2 (press/repeat/release): one physical key emits a press then a
+		// release, and matchesKey ignores the event type, so both would arm then confirm. Reuse
+		// pi's event predicates so only a discrete press can arm or confirm; non-press events
+		// pass through untouched.
+		if (isKeyRelease(data) || isKeyRepeat(data)) return undefined;
+		// Only the funnel's cancel keys are consumed: every other keypress must still reach
+		// the editor while a run is active, instead of being swallowed wholesale.
+		const key = CANCEL_KEYS.find((candidate) => matchesKey(data, candidate));
+		if (!key) return undefined;
+		if (confirmCancel(armedAt, key, Date.now(), confirmMs)) onCancel();
+		else notify(ctx, `Press ${CANCEL_LABEL[key]} again within ${confirmMs}ms to cancel the workflow`, "warning");
+		return { consume: true };
+	});
+}
+
+/** Arm or confirm per key: a press inside the window consumes the arm and returns true; a
+ * first press, or one after the window, (re)arms and returns false. Keys never cross-confirm. */
+function confirmCancel(armedAt: Map<CancelKey, number>, key: CancelKey, now: number, windowMs: number): boolean {
+	const at = armedAt.get(key);
+	armedAt.delete(key);
+	if (at !== undefined && now - at < windowMs) return true;
+	armedAt.set(key, now);
+	return false;
+}
