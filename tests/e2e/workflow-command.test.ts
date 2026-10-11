@@ -376,7 +376,8 @@ describe("workflow command E2E — target crossing and salvage", () => {
 
 	it("a branch already over --workflow-time defers the stop to the checkpoint and salvages its partial", () => withWorkflowChild(async (h) => {
 		await sendOk(h, "flag workflow-time 200");
-		await sendOk(h, "shell-delay 260"); // cross the 200ms budget, stay inside the 400ms hard deadline
+		await sendOk(h, "sandbox no-deadline"); // isolate the soft stop from the sandbox's 2x safeguard
+		await sendOk(h, "shell-delay 260"); // cross the 200ms budget
 		const entries = await runWorkflowArgs(h, SHELLS, '{"count":1,"checkpoint":{"round":7}}');
 		const events = await readUiEvents(h);
 		assert.ok(events.notifications.some((n) => n.message === "time target reached"), "soft time stop notified with its human label");

@@ -49,7 +49,7 @@
  *   → fault append-throws [n] [skip] | send-throws [n] | progress-throws [n] | shell <result|throws|error>
  *            | abort-throws | model-restore | thinking-restore | thinking-throws [n]
  *   → readonly <on|off>      — set the readonly posture through branch rehydration
- *   → sandbox <mode>         — install a sandbox seam: real|aborted|timeout|oom|factory-error|execute-throws|close-throws
+ *   → sandbox <mode>         — install a sandbox seam: real|no-deadline|aborted|timeout|oom|factory-error|execute-throws|close-throws
  *   → sandbox-options       — the CodemodeSandboxOptions last handed to the sandbox factory (null)
  *   → footer                — render the installed footer's first line (null when none)
  *   → mock-model [json]     — seed the run's current model + getModelOfType result ({current,resolve})
@@ -73,7 +73,7 @@
 
 import { createInterface } from "node:readline";
 import { ExtensionRunner, createExtensionRuntime, type Extension, type InputSource } from "@earendil-works/pi-coding-agent";
-import type { CodemodeResult, CodemodeSandbox, CodemodeSandboxOptions } from "@earendil-works/pi-codemode";
+import { CodemodeSandbox, type CodemodeResult, type CodemodeSandboxOptions } from "@earendil-works/pi-codemode";
 import { createTestHost } from "../unit/test-host.js";
 import { setShellRunForTests, type ShellToolResult } from "../../workflow/shell.js";
 import { setSandboxFactoryForTests } from "../../workflow/sandbox.js";
@@ -346,6 +346,12 @@ function installSandboxFault(mode: string): void {
 		setSandboxFactoryForTests(() => {
 			throw new Error("e2e sandbox factory fault");
 		});
+		return;
+	}
+	// Real sandbox with its own deadline removed: host-side timing tests must not
+	// race the sandbox safeguard, which would mask the soft stop under test.
+	if (mode === "no-deadline") {
+		setSandboxFactoryForTests((options) => new CodemodeSandbox({ ...options, timeoutMs: Number.POSITIVE_INFINITY }));
 		return;
 	}
 	const aborted = { ok: false, error: { kind: "aborted", message: "e2e sandbox aborted" }, output: [], calls: [] } as unknown as CodemodeResult;
