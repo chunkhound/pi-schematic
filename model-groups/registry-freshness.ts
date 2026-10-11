@@ -14,12 +14,14 @@ type StatFile = (path: string) => Promise<FileRevision>;
 export type RegistryFreshnessResult = {
 	refreshed: boolean;
 	error?: string;
-	/** True only for the first failure after a successful reconciliation. */
-	failureTransition?: boolean;
+	/** True when an unreported failure should be surfaced at an interactive boundary. */
+	reportPending?: boolean;
 };
 
 export interface RegistryFreshness {
 	ensureFresh(ctx: ExtensionContext): Promise<RegistryFreshnessResult>;
+	/** Records that the current failure streak has been reported, so it warns at most once. */
+	markFailureReported(): void;
 }
 
 export interface RegistryFreshnessOptions {
@@ -49,6 +51,7 @@ export function createRegistryFreshness(options: RegistryFreshnessOptions = {}):
 	const statFile = options.statFile ?? stat;
 	let successfulSignature: string | undefined;
 	let failing = false;
+	let reported = false;
 	let inFlight: Promise<RegistryFreshnessResult> | undefined;
 
 	async function signature(): Promise<string> {
@@ -72,17 +75,16 @@ export function createRegistryFreshness(options: RegistryFreshnessOptions = {}):
 			const result = await ctx.modelRegistry.refresh({ allowNetwork: false });
 			const error = refreshError(result);
 			if (error) {
-				const failureTransition = !failing;
 				failing = true;
-				return { refreshed: false, error, failureTransition };
+				return { refreshed: false, error, reportPending: !reported };
 			}
 			successfulSignature = currentSignature;
 			failing = false;
+			reported = false;
 			return { refreshed: true };
 		} catch (error) {
-			const failureTransition = !failing;
 			failing = true;
-			return { refreshed: false, error: errorMessage(error), failureTransition };
+			return { refreshed: false, error: errorMessage(error), reportPending: !reported };
 		}
 	}
 
@@ -92,6 +94,9 @@ export function createRegistryFreshness(options: RegistryFreshnessOptions = {}):
 				inFlight = refresh(ctx).finally(() => { inFlight = undefined; });
 			}
 			return inFlight;
+		},
+		markFailureReported() {
+			if (failing) reported = true;
 		},
 	};
 }

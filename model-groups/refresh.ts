@@ -28,8 +28,9 @@ export async function refreshModelGroupsStateFresh(
 ) {
 	if (!ctx.modelRegistry) return refreshModelGroupsState(state, ctx);
 	const result = await freshness.ensureFresh(ctx);
-	if (result.failureTransition && ctx.hasUI) {
+	if (result.reportPending && ctx.hasUI) {
 		ctx.ui.notify("Model registry refresh failed; using last known models", "warning");
+		freshness.markFailureReported();
 	}
 	return refreshModelGroupsState(state, ctx);
 }

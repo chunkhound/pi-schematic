@@ -55,7 +55,7 @@ test("registry freshness retries an errored refresh without advancing its waterm
 	const failed = await f.freshness.ensureFresh(f.ctx);
 	assert.equal(failed.refreshed, false);
 	assert.match(failed.error ?? "", /bad credentials/);
-	assert.equal(failed.failureTransition, true);
+	assert.equal(failed.reportPending, true);
 	assert.deepEqual(await f.freshness.ensureFresh(f.ctx), { refreshed: true });
 	assert.equal(f.calls.length, 2);
 });
@@ -78,6 +78,23 @@ test("refresh failure warning fires once per failure streak and resets after suc
 	await refreshModelGroupsStateFresh(state, ctx as any);
 	assert.deepEqual(notifications, [
 		{ message: "Model registry refresh failed; using last known models", level: "warning" },
+		{ message: "Model registry refresh failed; using last known models", level: "warning" },
+	]);
+});
+
+test("an unreported failure observed by the silent pre-routing refresh still warns at the next boundary", async () => {
+	const f = fixture(() => ({ aborted: false, errors: new Map([["provider", new Error("unavailable")]]) }));
+	const notifications: Array<{ message: string; level: string }> = [];
+	const ctx = { ...f.ctx, hasUI: true, ui: { notify: (message: string, level: string) => notifications.push({ message, level }) } };
+	const state = createState(f.freshness);
+	// The silent pre-routing refresh observes the failure first but does not report it.
+	const silent = await f.freshness.ensureFresh(ctx as any);
+	assert.equal(silent.reportPending, true);
+	assert.equal(notifications.length, 0);
+	// The next interactive boundary still warns, exactly once for the streak.
+	await refreshModelGroupsStateFresh(state, ctx as any);
+	await refreshModelGroupsStateFresh(state, ctx as any);
+	assert.deepEqual(notifications, [
 		{ message: "Model registry refresh failed; using last known models", level: "warning" },
 	]);
 });
