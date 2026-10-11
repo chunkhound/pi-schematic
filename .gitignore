@@ -161,3 +161,6 @@ vite.config.ts.timestamp-*
 # PR review artifacts
 AGENT_REVIEW.md
 HUMAN_REVIEW.md
+
+# pi extension local config
+.pi/
