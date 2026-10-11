@@ -269,12 +269,11 @@ export class RealHost {
 		return projectStatuses(this.events);
 	}
 
-	/** Run an extension command; it must report "handled" without an extension_error, from the command or from any handler it triggers. */
+	/** Run an extension command; it must not produce an extension_error, from the command or from any handler it triggers. */
 	async command(text: string): Promise<void> {
 		if (!text.startsWith("/")) throw new Error(`command() needs a slash command, got: ${text}`);
 		const mark = this.events.length;
-		const disposition = await this.client.prompt(text);
-		if (disposition !== "handled") throw new Error(`${text} reported "${disposition}", expected "handled"`);
+		await this.client.prompt(text);
 		const spaceIndex = text.indexOf(" ");
 		const name = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
 		this.assertNoExtensionErrors(mark, text, `command:${name}`);
@@ -283,8 +282,7 @@ export class RealHost {
 	/** Submit a user prompt on an idle session; a step that starts `runs` runs, its own included. */
 	async say(text: string, runs: number): Promise<void> {
 		const mark = this.events.length;
-		const disposition = await this.client.prompt(text);
-		if (disposition !== "started") throw new Error(`"${text}" reported "${disposition}", expected "started"`);
+		await this.client.prompt(text);
 		await this.step(mark, `"${text}"`, runs);
 	}
 

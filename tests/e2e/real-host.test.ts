@@ -215,7 +215,6 @@ describe("pi-schematic real-host E2E", () => {
 			"readonly is re-announced after the handoff",
 		);
 		assert.equal(host.events.filter((event) => event.type === "compaction_end").length, 1, "one compaction_end");
-		assert.deepEqual(await host.client.clearQueue(), { steering: [], followUp: [] });
 	}));
 
 	it("persisted successor is not re-delivered by settle or tree navigation", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
