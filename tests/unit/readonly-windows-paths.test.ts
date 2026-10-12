@@ -1,5 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { mkdir, rm } from "node:fs/promises";
@@ -85,6 +86,25 @@ test("Windows native and slash paths preserve temp containment", windowsOnly, as
 	for (const target of [path.join(workspace, "file with spaces"), outside]) {
 		for (const spelling of [target, shellPath(target)]) assertWrites(spelling, cwd, target !== outside);
 	}
+});
+
+test("Windows short (8.3) and long temp spellings canonicalize identically", windowsOnly, (t) => {
+	// The runner's tmpdir may be the 8.3 short name (`RUNNER~1`). The classifier must expand it
+	// exactly like the OS resolver, or a git-written long path canonicalizes differently and is
+	// judged outside. Before the native resolver, the long spelling blocked here.
+	const short = os.tmpdir();
+	const long = fs.realpathSync.native(short);
+	// The two spellings must differ, or this test proves nothing. Skip honestly on a long-name runner.
+	if (short === long) return t.skip("runner tmpdir is already long; no 8.3 spelling to compare");
+	for (const spelling of [short, long]) {
+		assert.equal(classifyBashCommand(`touch ${quoteShellArgument(spelling)}/readonly-83-probe`, short).ok, true, spelling);
+	}
+});
+
+test("Windows mktemp ambient base keeps a native backslash TMPDIR proven", windowsOnly, () => {
+	// A bare `mktemp -d` builds its name under the host temp dir. That base must not be
+	// shell-decoded: decoding would strip `C:\Users\...` separators and lose temp provenance.
+	assert.equal(classifyBashCommand(`D=$(mktemp -d) && cd "$D" && touch f`, os.tmpdir()).ok, true);
 });
 
 test("Windows drive-relative writes follow an explicit same-drive cwd", windowsOnly, async (t) => {

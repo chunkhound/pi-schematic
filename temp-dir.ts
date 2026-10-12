@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveRealPath } from "./resolve-path.js";
@@ -6,16 +5,16 @@ import { resolveRealPath } from "./resolve-path.js";
 const tmpdirResolved = path.resolve(os.tmpdir());
 
 /**
- * Canonical (symlink-resolved) OS temp dir path, resolved at module import time.
+ * Canonical (symlink- and Windows-8.3-resolved) OS temp dir path, resolved at module
+ * import time through the same resolver as containment checks (resolveRealPath), so a
+ * short-name tmpdir and a long-name target can never canonicalize to different roots.
  *
  * Lives in its own module so every consumer shares one authority without
  * importing the enforcement layers: os-sandbox.ts (sandbox write roots),
  * readonly-shell-utils.ts (classifier path checks), readonly-bash-mktemp.ts
  * (synthetic mktemp paths).
  */
-export const TEMP_DIR = (() => {
-	try { return fs.realpathSync(tmpdirResolved); } catch { return tmpdirResolved; }
-})();
+export const TEMP_DIR = resolveRealPath(tmpdirResolved);
 
 /**
  * Every filesystem root readonly mode treats as writable scratch space.

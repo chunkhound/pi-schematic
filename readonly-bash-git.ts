@@ -9,6 +9,7 @@ import {
 	decodeShellOperand,
 	splitFlagValue,
 	isTempLiteralPath,
+	hasUnprovableValueChars,
 } from "./readonly-shell-utils.js";
 import { FAIL_CLOSED_HINT } from "./notifications.js";
 import { expandGitShortBundlesArgs } from "./readonly-bash-git-options.js";
@@ -145,11 +146,13 @@ type GitInvocation = GitPathFlags & { subcommand: string; args: string[] };
  * than a subcommand's own destination; the flag selects the outside-temp block wording. */
 type GitWriteRoot = { path: string; metadata: boolean };
 
-/** Assignment quote context is unavailable; dynamic/escaped values cannot prove a path. */
+/** Dynamic values cannot prove a path. A backslash is literal data: `decodeShellAssignmentValue`
+ * already fails closed for unquoted escapes, and process-env values are trusted host paths
+ * (Windows uses `\` as its separator). */
 function gitEnvironmentOperand(name: string, vars: ReadonlyMap<string, string>): string | null | undefined {
 	const supplied = vars.get(name);
 	if (supplied === undefined) return process.env[name];
-	return /[$`\\*?{}\[\]"']/.test(supplied) || supplied.startsWith("~") ? null : supplied;
+	return hasUnprovableValueChars(supplied) || supplied.startsWith("~") ? null : supplied;
 }
 
 const GIT_POINTER_ENV = new Set(["GIT_DIR", "GIT_COMMON_DIR"]);
@@ -1114,7 +1117,8 @@ function gitTemporaryWriteRoots(vars: ReadonlyMap<string, string>, base: string)
 	for (const name of ["TMPDIR", "TEMP", "TMP"]) {
 		const supplied = vars.get(name);
 		if (supplied === undefined) continue;
-		const resolved = /[$`\\*?{}\[\]"']/.test(supplied) || supplied.startsWith("~") ? null : resolveGitPath(supplied, base);
+		// A `\` is literal data: unquoted escapes already fail closed at assignment decode.
+		const resolved = hasUnprovableValueChars(supplied) || supplied.startsWith("~") ? null : resolveGitPath(supplied, base);
 		if (resolved === null) return null;
 		roots.push(resolved);
 	}

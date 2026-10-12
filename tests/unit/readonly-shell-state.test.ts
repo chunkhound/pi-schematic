@@ -133,7 +133,7 @@ test("a single-quoted wrapper argument stays literal and keeps the caller cwd", 
 		`C=cd; builtin '$C' /tmp; touch leak`,
 	];
 	const allowed = [
-		`C=cd; command "$C" /tmp; touch leak`,
+		`C=cd; command "$C" ${shellPath(os.tmpdir())}; touch leak`,
 		`C=cd; command "$C" ${shellPath(os.tmpdir())} && touch leak`,
 	];
 	for (const command of blocked) {

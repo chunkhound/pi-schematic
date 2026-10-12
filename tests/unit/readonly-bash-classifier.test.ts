@@ -8,7 +8,6 @@ import type { ToolCall } from "./helpers.js";
 import type { TestPI } from "./test-host.js";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { classifyBashCommand } from "../../readonly-bash.js";
 import { TEMP_WRITE_ROOTS_CANONICAL } from "../../temp-dir.js";
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
@@ -355,7 +354,7 @@ test("brace-dense glob targets do not exhaust the classifier heap (#41)", () => 
 		+ `process.stdout.write("blocked");});`;
 	const output = execFileSync(process.execPath, [
 		"--max-old-space-size=64",
-		"--import", fileURLToPath(new URL("../../register-loader.mjs", import.meta.url)),
+		"--import", new URL("../../register-loader.mjs", import.meta.url).href,
 		"-e", script,
 	], { encoding: "utf8", timeout: 30000 });
 	assert.equal(output, "blocked");
@@ -380,15 +379,17 @@ test("trailing redirects never change a command's operand classification", () =>
 	]) assert.equal(classifyBashCommand(command, "/workspace").ok, true, command);
 
 	// An outside target keeps the real target in the reason — never the redirect token.
-	const outside = classifyBashCommand("touch /etc/readonly-redirect-probe 2>/dev/null", "/workspace");
+	// Derive it from the temp root's parent so the assertion is host-agnostic (`/etc` is POSIX-only).
+	const outsideRoot = path.parse(os.tmpdir()).root;
+	const outside = classifyBashCommand(`touch ${shellPath(path.join(outsideRoot, "readonly-redirect-probe"))} 2>/dev/null`, "/workspace");
 	assert.equal(outside.ok, false);
-	assert.match(outside.reason, /touch blocked outside temp dir: \/etc\/readonly-redirect-probe/);
-	const outsideGit = classifyBashCommand("git init /etc/readonly-redirect-repo 2>/dev/null", "/workspace");
+	assert.match(outside.reason, /touch blocked outside temp dir: .*readonly-redirect-probe$/);
+	const outsideGit = classifyBashCommand(`git init ${shellPath(path.join(outsideRoot, "readonly-redirect-repo"))} 2>/dev/null`, "/workspace");
 	assert.equal(outsideGit.ok, false);
-	assert.match(outsideGit.reason, /blocked outside temp dir: \/etc\/readonly-redirect-repo/);
+	assert.match(outsideGit.reason, /blocked outside temp dir: .*readonly-redirect-repo$/);
 
 	// A redirect target outside temp stays blocked by the redirect scanner itself.
-	const redir = classifyBashCommand("echo hi > /etc/readonly-redirect-redir", "/workspace");
+	const redir = classifyBashCommand(`echo hi > ${shellPath(path.join(outsideRoot, "readonly-redirect-redir"))}`, "/workspace");
 	assert.equal(redir.ok, false);
 	assert.match(redir.reason, /write redirect blocked outside temp dir/);
 });
@@ -1173,9 +1174,11 @@ test("bash <() process substitution classifies inner command targets", () => {
 	// CONTRACT: classifyScriptProcessSubstitution (readonly-bash-commands.ts:198) and
 	// extractCommandSubstitutions both see <(...). The inner command is path-checked:
 	// writes outside temp block, writes inside temp allow.
-	assert.equal(classifyBashCommand("bash <(touch /etc/probe)", "/workspace").ok, false,
+	const outside = shellPath(path.join(path.parse(os.tmpdir()).root, "readonly-ps-probe"));
+	const temp = shellPath(path.join(os.tmpdir(), "readonly-ps-allowed"));
+	assert.equal(classifyBashCommand(`bash <(touch ${outside})`, "/workspace").ok, false,
 		"inside-substitution outside write must block");
-	assert.equal(classifyBashCommand("bash <(touch /tmp/allowed)", "/workspace").ok, true,
+	assert.equal(classifyBashCommand(`bash <(touch ${temp})`, "/workspace").ok, true,
 		"inside-substitution temp write must allow");
 });
 
@@ -1217,8 +1220,39 @@ test("find mutations block outside temp, allow inside temp, naming real targets"
 		`find ${tmp} -delete`,
 		`find ${tmp} -fprint ${tmp}/find.out`,
 		`find / -fls ${tmp}/find.lst`,
+		// `()` inside a name is literal (e.g. `Program Files (x86)`), not a find grouping token.
+		`find ${tmp}/ProgramFiles(x86) -delete`,
+		// Escaped grouping operators (`\(`/`\)`) must NOT be treated as roots either —
+		// they are find syntax, not filesystem targets, so an in-temp root stays allowed.
+		`find ${tmp}/safe \( -name '*.txt' \) -delete`,
+		`find ${tmp}/safe \( -name '*.txt' -o -name '*.md' \) -delete`,
 	];
 	for (const cmd of allowed) assert.equal(classifyBashCommand(cmd, "/workspace").ok, true, cmd);
+	// The real search root is named, never the grouping operator token.
+	const groupedOutside = classifyBashCommand(`find /etc \( -name '*.txt' \) -delete`, "/workspace");
+	assert.equal(groupedOutside.ok, false);
+	assert.match(groupedOutside.reason, /find blocked outside temp dir: \/etc$/);
+});
+
+// A backslash in a *quoted* assignment value is literal data (decodeShellAssignmentValue
+// fails closed only for unquoted escapes). Unquoted `$VAR` usage must therefore not
+// re-reject a backslash value as shell syntax — `\` is a Windows separator and a valid
+// POSIX filename char. This pins the `\`-removal from decodeShellPathOperand's unquoted
+// fail-closed regex; on the old regex the in-temp target below was blocked as unproven.
+test("unquoted $VAR whose value holds a backslash decodes once and stays inside temp", () => {
+	const tmp = shellPath(os.tmpdir());
+	// The backslash sits in a subdirectory name under temp so the resolved path stays inside.
+	const command = `D="${tmp}/sub\\\\dir"; touch $D/probe`;
+	assert.equal(classifyBashCommand(command, "/workspace").ok, true, command);
+});
+
+test("a backslash suffix after $VAR is shell source and fails closed", () => {
+	// Bash decodes `\/` to `/` in the literal suffix, but the classifier appends the suffix to
+	// the assignment value verbatim. Accepting it would let `$D\/..\/..` escape temp while the
+	// classified path stays inside. Both plain and braced-default spellings must fail closed.
+	const tmp = shellPath(os.tmpdir());
+	assert.equal(classifyBashCommand(`D=${JSON.stringify(tmp)}; touch $D\\/..\\/..\\/etc/passwd`, "/workspace").ok, false);
+	assert.equal(classifyBashCommand(`touch \${N:-${JSON.stringify(tmp)}\\/..\\/..\\/etc/passwd}`, "/workspace").ok, false);
 });
 
 test("sed -i mutations block outside temp, allow inside temp, naming file operands", () => {

@@ -101,18 +101,24 @@ test("--tmpdir without a value follows the runtime TMPDIR like bare mktemp", () 
 });
 
 test("bare mktemp honors the ambient TMPDIR and fails closed when it is not temp", () => {
-	// With no template or --tmpdir, mktemp creates inside the ambient temp dir.
-	const savedTmpDir = process.env.TMPDIR;
+	// With no template or --tmpdir, mktemp creates inside the ambient temp dir. Clear every
+	// inherited temp var: the classifier consults TMPDIR/TMP/TEMP in order, so a host-provided
+	// `TMP`/`TEMP` (default on Windows) would otherwise shadow the command's own assignment.
+	const names = ["TMPDIR", "TMP", "TEMP"] as const;
+	const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
 	try {
-		delete process.env.TMPDIR;
+		for (const name of names) delete process.env[name];
 		verdict(`export TMPDIR=${quote(outside)}; D=$(mktemp -d) && cd "$D" && touch f`, false);
 		verdict(`export TMPDIR=${quote(shellPath(TEMP_DIR))}; D=$(mktemp -d) && cd "$D" && touch f`, true);
 		// TMP/TEMP are consulted only when TMPDIR names no base.
 		verdict(`export TMP=${quote(outside)}; D=$(mktemp -d) && cd "$D" && touch f`, false);
 		verdict(`export TEMP=${quote(outside)}; D=$(mktemp -d) && cd "$D" && touch f`, false);
 	} finally {
-		if (savedTmpDir === undefined) delete process.env.TMPDIR;
-		else process.env.TMPDIR = savedTmpDir;
+		for (const name of names) {
+			const value = saved[name];
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
 	}
 });
 

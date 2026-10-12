@@ -600,8 +600,15 @@ export function getMutationTargets(command: string, tokens: string[]): string[] 
 }
 
 function getFindMutationTargets(args: string[]): string[] | null {
-	// Skip glob-pattern args (e.g., -name '*.txt') — these cannot be filesystem roots.
-	const roots = args.filter((arg) => arg && !arg.startsWith("-") && !/[*?{}()\[\]~]/.test(arg));
+	// Skip flags, home expansion (`~user`), glob patterns (e.g., -name '*.txt'), and find's own
+	// grouping tokens (bare `(`/`)` or escaped `\(`/`\)`) — none can be a filesystem root.
+	// A `~` or `()` inside a name is literal data (Windows `Program Files (x86)`), so the grouping
+	// check operates on the decoded token and never touches embedded parentheses.
+	const isFindGroupOperator = (arg: string): boolean => {
+		const decoded = unescapeCommandWord(arg);
+		return decoded === "(" || decoded === ")";
+	};
+	const roots = args.filter((arg) => arg && !arg.startsWith("-") && !arg.startsWith("~") && !/[*?{}\[\]]/.test(arg) && !isFindGroupOperator(arg));
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 		if (arg === "-delete") return roots.length > 0 ? roots : ["."];

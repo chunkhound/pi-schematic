@@ -150,6 +150,31 @@ else {
 		check(`git --work-tree=${quote(outside)} add file`, repo, false);
 	});
 
+	test("Git command-provided env values with a backslash decode as literal data", (t) => {
+		// A backslash in a command-provided env value is literal data (decodeShellAssignmentValue
+		// fails closed only for unquoted escapes; quoted values keep the `\` as a path char).
+		// The fail-closed regex no longer rejects `\`, so an in-temp index file with a
+		// backslash-bearing name resolves inside temp. This mirrors the decodeShellPathOperand
+		// backslash pin for the git env path; the old regex blocked the in-temp value as unproven.
+		const repo = repository(fixture(t));
+		const backslashInsideTemp = path.join(repo, "idx\\file");
+		check(`${"GIT_INDEX_FILE"}=${quote(backslashInsideTemp)}; git add file`, repo, true);
+	});
+
+	test("Git rejects backslash-escaped suffixes after a dynamic assignment", (t) => {
+		// Bash decodes `\/` to `/` in the literal suffix, but the classifier appends the suffix to
+		// the assignment value verbatim. Accepting it would let `$D\/..\/..` escape temp while the
+		// classified path stays inside. Both plain and braced-default spellings must block.
+		const repo = repository(fixture(t));
+		const inside = path.join(os.tmpdir(), "pi-escape-probe");
+		check(`D=${quote(inside)}; git -C $D\\/..\\/..\\/etc init`, repo, false);
+		check(`D=${quote(inside)}; git --git-dir=$D\\/..\\/..\\/etc init`, repo, false);
+		check(`git -C \${NOVAR:-${quote(inside)}\\/..\\/..\\/etc} init`, repo, false);
+		// Control: the same traversal in plain form blocks too, and the Windows value case stays allowed.
+		check(`git -C ${quote(inside + "/../../etc")} init`, repo, false);
+		check(`D=${quote(inside)}; git -C $D/sub init`, repo, true);
+	});
+
 	test("Git local pushes check destination repositories, including configured remotes", (t) => {
 		const root = fixture(t);
 		const repo = repository(root);

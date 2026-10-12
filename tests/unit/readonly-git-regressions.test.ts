@@ -103,7 +103,7 @@ test("Git abbreviations write outside temp while exact temp options remain allow
 test("Git decodes unquoted path escapes before checking containment", gitSuiteOptions, (t) => {
 	const root = fixture(t), external = fixture(t, os.homedir());
 	const target = path.join(external, "escaped-repo");
-	const canonicalRoot = realpathSync(root);
+	const canonicalRoot = realpathSync.native(root);
 	const relative = path.relative(canonicalRoot, target).split(path.sep).map((part) => part === ".." ? "\\.." : part).join("/");
 	const operand = `${quote(canonicalRoot)}/${relative}`;
 	const command = `git init --quiet ${operand}`;
@@ -173,7 +173,7 @@ test("Git maintenance register checks the global configuration it changes", gitS
 		check(command, repo, allowed);
 		assert.equal(existsSync(config), false);
 		shell(command, repo);
-		assert.equal(git(repo, "config", "--global", "--get", "maintenance.repo"), realpathSync(repo));
+		assert.equal(git(repo, "config", "--global", "--get", "maintenance.repo"), realpathSync.native(repo));
 	}
 });
 
@@ -187,7 +187,7 @@ test("Git maintenance register checks default user configuration paths", gitSuit
 		check(command, repo, allowed);
 		assert.equal(existsSync(config), false);
 		shell(command, repo);
-		assert.equal(git(repo, "config", "--file", config, "--get", "maintenance.repo"), realpathSync(repo));
+		assert.equal(git(repo, "config", "--file", config, "--get", "maintenance.repo"), realpathSync.native(repo));
 	}
 });
 
@@ -480,7 +480,7 @@ test("Git resolves core.worktree against repository metadata", gitSuiteOptions, 
 	shell("git reset --hard HEAD", repo);
 	assert.equal(readFileSync(path.join(repo, "file"), "utf8"), "initial\n");
 	const destination = fixture(t, os.homedir());
-	git(repo, "config", "core.worktree", path.relative(realpathSync(path.join(repo, ".git")), realpathSync(destination)));
+	git(repo, "config", "core.worktree", path.relative(realpathSync.native(path.join(repo, ".git")), realpathSync.native(destination)));
 	check("git reset --hard HEAD", repo, false);
 	shell("git reset --hard HEAD", repo);
 	assert.equal(readFileSync(path.join(destination, "file"), "utf8"), "initial\n");

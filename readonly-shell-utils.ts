@@ -63,14 +63,29 @@ export function decodeShellWord(token: string): string | null {
 	return quote ? null : word;
 }
 
+/** Chars that make a dynamic value unprovable as a path: shell syntax and globs. One
+ * source of truth for the value checks here and in the git environment/temp-root readers. */
+export function hasUnprovableValueChars(value: string): boolean {
+	return /[$`*?{}\[\]"']/.test(value);
+}
+
+/** Literal shell-source fragments (a `$VAR` suffix, or a braced `:-` default) must carry no
+ * escapes. Bash decodes `\/` -> `/`, but the classifier appends the fragment to the expansion
+ * value verbatim, so a `\` here would desync the classified path from the executed one and
+ * could let a `..` traversal escape temp. Expansion *values* stay raw data. */
+function hasSourceEscape(fragment: string): boolean {
+	return fragment.includes("\\");
+}
+
 /** Expand a leading variable or home prefix, then decode escapes exactly once. */
 export function decodeShellOperand(token: string, vars: ReadonlyMap<string, string> = new Map()): string | null {
 	const raw = stripMatchingQuotes(token);
 	if (!token.startsWith("'") && raw.startsWith("$")) {
 		const expanded = expandShellVariable(raw, vars);
-		// Expansion results are data, not shell source; never decode their backslashes again.
-		// The classifier's variable map does not retain assignment quote context.
-		return expanded === null || /[$`\\*?{}\[\]"']/.test(expanded) || (!token.startsWith('"') && /\s/.test(expanded)) ? null : expanded;
+		// The expanded value is data: its backslashes are literal (a Windows separator from a
+		// quoted assignment or the host env). The literal suffix is shell source; expandShellVariable
+		// fails closed when it carries an escape, because Bash would decode it.
+		return expanded === null || hasUnprovableValueChars(expanded) || (!token.startsWith('"') && /\s/.test(expanded)) ? null : expanded;
 	}
 	if (token === "~" || token.startsWith("~/")) return decodeShellWord(os.homedir() + token.slice(1));
 	return decodeShellWord(token);
@@ -203,8 +218,9 @@ function expandBracedVariable(match: RegExpMatchArray, vars: ReadonlyMap<string,
 	if (visited.has(varName!)) return null;
 	visited.add(varName!);
 	const value = vars.get(varName!) ?? process.env[varName!];
-	if (value !== undefined && value !== "") return value + suffix;
-	return operator === ":-" || operator === ":=" ? fallback + suffix : null;
+	if (value !== undefined && value !== "") return hasSourceEscape(suffix) ? null : value + suffix;
+	if (operator !== ":-" && operator !== ":=") return null;
+	return hasSourceEscape(fallback) || hasSourceEscape(suffix) ? null : fallback + suffix;
 }
 
 /** Plain `$VAR` with a trailing suffix; a cyclic self-reference fails closed. */
@@ -213,7 +229,8 @@ function expandPlainVariable(match: RegExpMatchArray, vars: ReadonlyMap<string, 
 	if (visited.has(varName)) return null;
 	visited.add(varName);
 	const value = vars.get(varName) ?? process.env[varName];
-	return value !== undefined && value !== "" ? value + match[2] : null;
+	if (value === undefined || value === "") return null;
+	return hasSourceEscape(match[2]!) ? null : value + match[2];
 }
 
 /**
@@ -293,8 +310,10 @@ export function decodeShellPathOperand(token: string, vars: ReadonlyMap<string, 
 		// Unsupported suffix syntax must not be concatenated as literal data.
 		if (!/^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*(?::[-=][^$`\\"'{}]*)?\})[^$`\\"']*$/.test(raw)) return null;
 		const value = expandShellVariable(raw, vars);
-		// Assignment expansion context is unknown; dynamic values cannot prove safety.
-		if (value === null || /[$`]/.test(value) || (!quoted && /[\s\\"'{}]/.test(value))) return null;
+		// Dynamic values cannot prove safety. The raw-token regex above already excludes glob/quote
+		// and source-escape syntax; the value's own backslashes are literal data (a Windows
+		// separator). Source-fragment escapes fail closed inside expandShellVariable.
+		if (value === null || /[$`]/.test(value) || (!quoted && /[\s"'{}]/.test(value))) return null;
 		return { value, glob: !quoted && /[*?{}\[\]]/.test(value) };
 	}
 	const value = decodeShellOperand(token, vars);

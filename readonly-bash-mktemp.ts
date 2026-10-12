@@ -74,7 +74,9 @@ function looksLikeDirectory(token: string): boolean {
 
 export function resolveMktempSyntheticPath(template: string | null, tmpdirBase: string | null, cwd: string, shellVars: ReadonlyMap<string, string>, name: string, ambientBase = false): string | null {
 	const synthetic = path.join(TEMP_DIR, `.pi-mktemp-${name.toLowerCase()}`);
-	const base = tmpdirBase === null ? null : decodeShellPathOperand(tmpdirBase, shellVars);
+	// `ambientBase` marks tmpdirBase as the host temp dir (TEMP_DIR), not a shell token:
+	// decoding it would treat Windows backslashes as escapes and mangle the path.
+	const base = tmpdirBase === null ? null : ambientBase ? { value: tmpdirBase, glob: false } : decodeShellPathOperand(tmpdirBase, shellVars);
 	const operand = template ? decodeShellPathOperand(template, shellVars) : null;
 	if ((tmpdirBase !== null && (!base || base.glob)) || (template && (!operand || operand.glob))) return null;
 	if (base) {
