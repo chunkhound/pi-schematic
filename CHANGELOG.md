@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`#group` autocomplete restored** — per-provider install keys let the workflow and model-groups providers stack on one UI; the second install was previously dropped, leaving `#group` dead whenever both registered.
 - **Spawned-agent cost attribution** — the `spawn` tool now reports each child session's usage on its tool result and backfills it on error results. Parent session totals and the `/workflow` cost total include child-agent spend, which was previously invisible because children run in separate sessions.
 - **Bash classifier arrow false-positive** — interpreter payloads (`node -e`, `python -c`, `awk`, `perl`) no longer misread `=>` as a write redirect. Kept with the workflow change because `workflow.shell` routes through the same classifier and workflow scripts commonly run `node -e` with arrow functions.
 

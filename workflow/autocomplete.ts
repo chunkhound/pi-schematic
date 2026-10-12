@@ -93,5 +93,5 @@ function workflowItem(entry: WorkflowFileEntry): AutocompleteItem {
 /** Install the workflow name provider once per UI; later sessions refresh {@link currentCwd}. */
 export function registerWorkflowAutocomplete(ctx: ExtensionContext): void {
 	if (ctx.cwd) currentCwd = ctx.cwd;
-	installAutocompleteProviderOnce(ctx, () => createWorkflowAutocompleteProvider(() => listWorkflows(currentCwd, getAgentDir())));
+	installAutocompleteProviderOnce(ctx, "workflow", () => createWorkflowAutocompleteProvider(() => listWorkflows(currentCwd, getAgentDir())));
 }

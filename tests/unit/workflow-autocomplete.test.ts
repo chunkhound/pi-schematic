@@ -3,6 +3,8 @@ import test from "node:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createWorkflowAutocompleteProvider, registerWorkflowAutocomplete } from "../../workflow/autocomplete.js";
+import { registerModelGroupAutocomplete } from "../../model-groups/autocomplete.js";
+import { createState } from "../../state.js";
 import type { WorkflowFileEntry } from "../../workflow/file.js";
 import { tmpDir } from "./helpers.js";
 
@@ -114,7 +116,7 @@ test("a discovery failure delegates to the built-in provider", async () => {
 	assert.deepEqual(suggestions, sentinel, "a discovery failure falls back to the built-in provider");
 });
 
-test("registerWorkflowAutocomplete installs one provider per UI and none headless", () => {
+test("registerWorkflowAutocomplete installs one workflow provider per UI and none headless", () => {
 	const providers: any[] = [];
 	const ctx = { hasUI: true, cwd: "/proj", ui: { addAutocompleteProvider: (factory: any) => providers.push(factory) } };
 	registerWorkflowAutocomplete(ctx as any);
@@ -148,20 +150,41 @@ test("the installed provider follows the cwd of the latest session, without a se
 		const names = async (provider: any) => (await suggest(provider, "/workflow "))?.items.map((item: any) => item.value);
 
 		registerWorkflowAutocomplete({ hasUI: true, cwd: first, ui } as any);
-		// A later session on the same UI: WeakSet dedup keeps one install, ctx.cwd still refreshes.
+		// A later session on the same UI: per-key dedup keeps one install, ctx.cwd still refreshes.
 		registerWorkflowAutocomplete({ hasUI: true, cwd: second, ui } as any);
-		assert.equal(factories.length, 1, "one provider per UI");
+		assert.equal(factories.length, 1, "one workflow provider per UI");
 		const provider = factories[0](builtin);
 		assert.deepEqual(await names(provider), ["/workflow beta "], "completion reads the refreshed cwd, not the install-time cwd");
 
 		// A replacement UI gets its own install, bound to its own session.
 		const nextFactories: Array<(current: any) => any> = [];
 		registerWorkflowAutocomplete({ hasUI: true, cwd: first, ui: { addAutocompleteProvider: (f: any) => nextFactories.push(f) } } as any);
-		assert.equal(nextFactories.length, 1, "a fresh UI is not blocked by the WeakSet");
+		assert.equal(nextFactories.length, 1, "a fresh UI is not blocked by the per-key guard");
 		assert.deepEqual(await names(nextFactories[0](builtin)), ["/workflow alpha "]);
 	} finally {
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		await Promise.all([agentDir, first, second].map((dir) => rm(dir, { recursive: true, force: true })));
 	}
+});
+
+test("workflow and model-groups providers stack on the same UI", () => {
+	const factories: any[] = [];
+	const ui = { addAutocompleteProvider: (factory: any) => factories.push(factory) };
+	const state = createState();
+	registerWorkflowAutocomplete({ hasUI: true, cwd: "/proj", ui } as any);
+	registerModelGroupAutocomplete({ hasUI: true, ui } as any, state);
+	assert.equal(factories.length, 2, "one install per key on the same UI");
+	// Re-registering neither key installs again.
+	registerWorkflowAutocomplete({ hasUI: true, cwd: "/proj", ui } as any);
+	registerModelGroupAutocomplete({ hasUI: true, ui } as any, state);
+	assert.equal(factories.length, 2, "per-key idempotency across providers");
+});
+
+test("neither provider installs headless", () => {
+	const factories: any[] = [];
+	const ui = { addAutocompleteProvider: (factory: any) => factories.push(factory) };
+	registerWorkflowAutocomplete({ hasUI: false, cwd: "/proj", ui } as any);
+	registerModelGroupAutocomplete({ hasUI: false, ui } as any, createState());
+	assert.equal(factories.length, 0, "headless contexts install neither key");
 });

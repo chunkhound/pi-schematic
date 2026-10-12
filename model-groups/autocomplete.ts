@@ -100,7 +100,7 @@ export function createModelGroupAutocompleteProvider(state: SchematicState, colo
 }
 
 export function registerModelGroupAutocomplete(ctx: ExtensionContext, state: SchematicState): void {
-	installAutocompleteProviderOnce(ctx, () => createModelGroupAutocompleteProvider(state, liveColorizer(ctx.ui)));
+	installAutocompleteProviderOnce(ctx, "model-groups", () => createModelGroupAutocompleteProvider(state, liveColorizer(ctx.ui)));
 }
 
 /** Holds the UI, not the ctx: the provider outlives a stale ctx but reads the live theme. */
