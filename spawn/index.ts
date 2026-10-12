@@ -42,7 +42,7 @@ import { productionConstraintRegistry, type ConstraintRegistry } from "../model-
 import { MODEL_GROUP_MODALITY_PROSE } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
 import { messageOf, safeAppendEntry } from "../workflow/errors.js";
-import { sessionStatsToUsage } from "../usage.js";
+import { addUsage, sessionStatsToUsage } from "../usage.js";
 import {
 	renderSpawnCall,
 	renderSpawnResult,
@@ -737,9 +737,10 @@ export function registerSpawnTool(
 		if (event.toolName !== "spawn") return;
 		const record = childUsageByCall().get(event.toolCallId);
 		childUsageByCall().delete(event.toolCallId);
-		return event.usage || !record
-			? undefined
-			: { usage: record.usage, details: { model: record.model, route: record.provider ? { provider: record.provider } : undefined } };
+		if (!record) return undefined;
+		const details = { model: record.model, route: record.provider ? { provider: record.provider } : undefined };
+		if (!event.usage) return { usage: record.usage, details };
+		return { usage: addUsage(record.usage, event.usage), details };
 	});
 
 	pi.registerTool({

@@ -65,6 +65,31 @@ test("error-path backfill still records usage and the hook consumes it", async (
 	assert.equal(childUsageByCall().get("spawn-backfill"), undefined, "the backfill consumes its map entry");
 });
 
+test("partial event usage merges with the backfill record instead of dropping it", async () => {
+	const state = createState();
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, undefined as never), {
+		activeTools: ["read", "bash", "spawn"],
+	});
+	recordChildUsage(childUsageByCall(), "spawn-merge", { usage: usage(0.25), provider: null, model: "child-model" });
+	const [onToolResult] = pi.handlers.get("tool_result")!;
+	const partial: Usage = { ...usage(0.1), input: 5, output: 6, totalTokens: 11 };
+	const patch = await onToolResult({
+		type: "tool_result",
+		toolName: "spawn",
+		toolCallId: "spawn-merge",
+		input: {},
+		content: [],
+		isError: true,
+		usage: partial,
+	});
+	assert.equal(patch.usage.input, 6, "backfill input (1) merges with partial input (5)");
+	assert.equal(patch.usage.output, 7, "backfill output (1) merges with partial output (6)");
+	assert.equal(patch.usage.totalTokens, 13, "totals sum instead of the backfill being dropped");
+	assert.equal(patch.usage.cost.total, 0.35);
+	assert.equal(patch.details?.model, "child-model");
+	assert.equal(childUsageByCall().get("spawn-merge"), undefined, "the backfill consumes its map entry");
+});
+
 test("the backfill map evicts oldest entries at the cap", () => {
 	const map = childUsageByCall();
 	let lastEvicted: string | null = null;
