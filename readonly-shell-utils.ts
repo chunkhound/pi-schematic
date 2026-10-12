@@ -324,16 +324,34 @@ function isTempGlobPath(normalized: string, cwd: string): boolean | null | "unpr
 	return null;
 }
 
-/** Win32 escape syntax the POSIX resolver cannot model, tested on the DECODED value:
- * unquoted `\/` decodes to `/` (a real temp path), so raw text proves nothing.
- * Fail-closed: `\\` leaders (device `\\?\`, `\\.\`, UNC), `\?`/`\.` leaders (NT
- * `\??\`), `//?/` + `//./`, and drive anchors (`C:\`, `C:/`, `C:rel`). A decoded
- * `\/` leader (double-quoted `\"\/etc\/probe\"`) stays a relative path. */
-const WINDOWS_RISKY_PATH_PATTERN = /^(?:\\\\|\\[?.]|\/\/[?.]\/|[A-Za-z]:)/;
+/** Device-namespace prefixes (`\\?\`, `\\.\`, `\??\`, `//?/`, `//./`) name the NT object
+ * manager, not a filesystem path. No host resolver can prove where they lead, so they stay
+ * fail-closed everywhere. Tested on the DECODED value: unquoted `\/` decodes to `/` (a real
+ * temp path), so raw text proves nothing. A decoded `\/` leader (double-quoted
+ * `\"\/etc\/probe\"`) stays a relative path. */
+const WINDOWS_DEVICE_NAMESPACE_PATTERN = /^(?:\\\\[?.]|\\[?.]|\/\/[?.]\/)/;
 
-/** True when a decoded path uses Win32-only syntax. `$`/glob forms stay dynamic. */
-export function isWindowsRiskyPathTarget(decodedValue: string): boolean {
-	return WINDOWS_RISKY_PATH_PATTERN.test(decodedValue);
+/** Drive-anchored (`C:\`, `C:/`, `C:rel`) and backslash-UNC (`\\server\share`) forms. A POSIX
+ * resolver reads `C:\Temp\x` as a relative filename, so it cannot prove containment. The win32
+ * resolver models these natively, so isWindowsRiskyPathTarget defers to it on win32.
+ * Forward-slash `//server/share` matches neither pattern; both resolvers land it outside temp. */
+const WINDOWS_RESOLVER_ONLY_PATTERN = /^(?:\\\\|[A-Za-z]:)/;
+
+/** True when a decoded path must be treated as unprovable. Device namespaces always are; drive
+ * and UNC forms are only unprovable on a POSIX host, whose resolver cannot model them.
+ * Cross-drive-relative needs `cwd`, so it lives in isCrossDriveRelative, not here. */
+export function isWindowsRiskyPathTarget(decodedValue: string, platform: NodeJS.Platform = process.platform): boolean {
+	if (WINDOWS_DEVICE_NAMESPACE_PATTERN.test(decodedValue)) return true;
+	return platform !== "win32" && WINDOWS_RESOLVER_ONLY_PATTERN.test(decodedValue);
+}
+
+/** Drive-relative (`C:rel`, not `C:\`/`C:/`) naming another drive than `cwd`. Win32 resolves it
+ * against that drive's ambient cwd, which the classifier cannot see, so the target is unproven.
+ * Pure (no platform read) so Linux CI exercises the win32 branch directly. */
+export function isCrossDriveRelative(value: string, cwd: string): boolean {
+	const target = value.match(/^([A-Za-z]):(?![\\/])/)?.[1]?.toLowerCase();
+	const base = cwd.match(/^([A-Za-z]):/)?.[1]?.toLowerCase();
+	return target !== undefined && base !== undefined && target !== base;
 }
 
 /** Basename of the UNKNOWN_CWD sentinel (readonly-bash-dirchange.ts). Structural check
@@ -348,6 +366,8 @@ export function classifyTempPath(rawPath: string, cwd: string, shellVars: Readon
 	// Dynamic values (unknown vars, substitutions) prove nothing — callers must fail closed.
 	if (operand === null) return "unproven";
 	if (isWindowsRiskyPathTarget(operand.value)) return "unproven";
+	// Cross-drive-relative resolves against another drive's ambient cwd: unprovable on win32.
+	if (process.platform === "win32" && isCrossDriveRelative(operand.value, cwd)) return "unproven";
 	if (isInertPath(operand.value)) return "inside";
 	const globResult = operand.glob ? isTempGlobPath(operand.value, cwd) : null;
 	if (globResult === "unproven") return "unproven";

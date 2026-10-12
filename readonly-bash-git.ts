@@ -162,7 +162,9 @@ function resolveGitEnvironmentValue(name: string, value: string, base: string): 
 	return GIT_POINTER_ENV.has(name) ? resolveGitDir(value, base) : resolveGitPath(value, base);
 }
 
-/** Shell operands are decoded at entry. Metadata/config values are data, never shell source. */
+/** Shell operands are decoded at entry. Metadata/config values are data, never shell source.
+ * NOTE: bare path.resolve inherits the cross-drive-relative ambient-cwd caveat on win32
+ * (see isCrossDriveRelative); benign here because callers re-check containment, do not widen. */
 function resolveGitPath(value: string, base: string): string | null {
 	// The dynamic-operand sentinel (and any NUL) cannot name a path: fail closed here so it
 	// never reaches the filesystem, while the surrounding flag still parses as data.

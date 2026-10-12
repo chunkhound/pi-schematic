@@ -9,7 +9,7 @@ import path from "node:path";
 import os from "node:os";
 import { accessSync, constants, statSync } from "node:fs";
 import { FAIL_CLOSED_HINT } from "./notifications.js";
-import { decodeShellPathOperand, decodeShellWord, getCommandTokens, normalizedCommand, unescapeCommandWord, stripMatchingQuotes, stripRedirectTokens, SHELL_WORD_PATTERN, skipLeadingRedirections, STDIN_DATA_CONSUMERS, isWindowsRiskyPathTarget } from "./readonly-shell-utils.js";
+import { decodeShellPathOperand, decodeShellWord, getCommandTokens, normalizedCommand, unescapeCommandWord, stripMatchingQuotes, stripRedirectTokens, SHELL_WORD_PATTERN, skipLeadingRedirections, STDIN_DATA_CONSUMERS, isWindowsRiskyPathTarget, isCrossDriveRelative } from "./readonly-shell-utils.js";
 import { splitUnquotedShellSegments } from "./readonly-bash-scanner.js";
 import { parseCommandPrefix, getFilesystemMutationReason } from "./readonly-bash-commands.js";
 import { classifyBashCommand, getStandaloneShellAssignments, redirectMayAbortCommand } from "./readonly-bash.js";
@@ -338,7 +338,8 @@ export function getDirectoryTarget(tokens: string[]): string | null {
 function expandDirectoryTarget(target: string, shellVars: ReadonlyMap<string, string>, commandVars: ReadonlyMap<string, string>): string | null {
 	const operand = decodeShellPathOperand(target, shellVars);
 	if (operand === null || operand.value === "-" || (operand.glob && /[*?{}\[\]]/.test(operand.value))) return null;
-	// Win32-only syntax (device prefixes, drive anchors) is unprovable on a POSIX resolve.
+	// Win32-only syntax is platform-gated: device namespaces always fail closed, drive/UNC only
+	// off win32, cross-drive-relative only on win32 (see isCrossDriveRelative in resolveDirectoryTarget).
 	if (isWindowsRiskyPathTarget(operand.value)) return null;
 	return gateRelativeCdPath(operand.value, commandVars);
 }
@@ -352,7 +353,10 @@ function gateRelativeCdPath(value: string, commandVars: ReadonlyMap<string, stri
 /** Resolve a directory operand to an absolute path, or null when it is dynamic. */
 export function resolveDirectoryTarget(target: string, cwd: string, shellVars: ReadonlyMap<string, string>, commandVars: ReadonlyMap<string, string> = shellVars): string | null {
 	const expanded = expandDirectoryTarget(target, shellVars, commandVars);
-	return expanded === null ? null : path.resolve(cwd, expanded);
+	if (expanded === null) return null;
+	// Cross-drive-relative resolves against another drive's ambient cwd, not `cwd`: unprovable.
+	if (process.platform === "win32" && isCrossDriveRelative(expanded, cwd)) return null;
+	return path.resolve(cwd, expanded);
 }
 
 // ── Deferred code (trap handlers, alias definitions) ──
