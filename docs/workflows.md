@@ -317,7 +317,7 @@ While a run is live in the interactive TUI, the workflow replaces the built-in f
   2. run cells: the `currentEffect` cell, cost, elapsed, then checkpoints;
   3. the run name. With a stop pill on the bar, the name drops out first. Without one, the name shrinks with `…`.
   The stop pill shrinks last.
-- A dim second line preserves the built-in cwd/branch, session token/cost totals, and model/context-window detail.
+- A dim second line preserves the built-in cwd/branch, session token/cost totals, and model/context-window detail. The live bar and the dim line are two projections that converge after settle: the bar reads `runSpendRows` (`workflow/spend.ts`) while the dim line reads `collectUsage` (`tui.ts`).
 
 </details>
 
