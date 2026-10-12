@@ -485,16 +485,26 @@ function countParentheses(s: string): number {
 	return diff;
 }
 
-/** True when `word` ends inside an unclosed quote (backslash escapes honored). */
-function hasUnbalancedQuote(word: string): boolean {
-	let quote = "", escaped = false;
-	for (const ch of word) {
+/** Walk `cmd` once, Bash-quote-aware: single quotes make backslash literal,
+ * double quotes honor escapes. Returns indices of unquoted characters and
+ * the quote (if any) left open at the end. */
+function scanUnquoted(cmd: string): { unquoted: number[]; openQuote: '"' | "'" | null } {
+	const unquoted: number[] = [];
+	let quote: '"' | "'" | null = null, escaped = false;
+	for (let i = 0; i < cmd.length; i++) {
+		const ch = cmd[i];
 		if (escaped) { escaped = false; continue; }
 		if (ch === "\\" && quote !== "'") { escaped = true; continue; }
-		if (quote) { if (ch === quote) quote = ""; continue; }
-		if (ch === "'" || ch === '"') quote = ch;
+		if (quote) { if (ch === quote) quote = null; continue; }
+		if (ch === '"' || ch === "'") { quote = ch; continue; }
+		unquoted.push(i);
 	}
-	return quote !== "";
+	return { unquoted, openQuote: quote };
+}
+
+/** True when `word` ends inside an unclosed quote (backslash escapes honored). */
+function hasUnbalancedQuote(word: string): boolean {
+	return scanUnquoted(word).openQuote !== null;
 }
 
 /** True while a `$(` / backtick substitution at the value start is still unterminated. */
@@ -632,19 +642,13 @@ function isNonFileRedirect(cmd: string, i: number): boolean {
 
 /** First write-redirect block reason, or null when all targets stay inside the temp roots. */
 function writeRedirectBlockReason(cmd: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map()): string | null {
-	let quote: '"' | "'" | null = null, escaped = false;
-	for (let i = 0; i < cmd.length; i++) {
+	for (const i of scanUnquoted(cmd).unquoted) {
 		const ch = cmd[i];
-		if (escaped) { escaped = false; continue; }
-		if (ch === "\\") { escaped = true; continue; }
-		if (quote) { if (ch === quote) quote = null; continue; }
-		if (ch === '"' || ch === "'") { quote = ch; continue; }
 		if (ch !== ">" || isNonFileRedirect(cmd, i)) continue;
 		const opLen = ">|&".includes(cmd[i + 1] ?? "") ? 2 : 1;
 		const { target, end } = readRedirectTarget(cmd, i + opLen);
 		const reason = tempPathBlockReason("write redirect", target, cwd, shellVars);
 		if (reason) return reason;
-		i = Math.max(i, end - 1);
 	}
 	return null;
 }
@@ -655,13 +659,8 @@ function writeRedirectBlockReason(cmd: string, cwd: string, shellVars: ReadonlyM
  * Keep that failure branch without tracking shell options; && selects success only.
  */
 export function redirectMayAbortCommand(segment: string): boolean {
-	let quote: '"' | "'" | null = null, escaped = false;
-	for (let i = 0; i < segment.length; i++) {
+	for (const i of scanUnquoted(segment).unquoted) {
 		const ch = segment[i];
-		if (escaped) { escaped = false; continue; }
-		if (ch === "\\") { escaped = true; continue; }
-		if (quote) { if (ch === quote) quote = null; continue; }
-		if (ch === '"' || ch === "'") { quote = ch; continue; }
 		const next = segment[i + 1] ?? "";
 		if ((ch === "<" || ch === ">") && next === "&") return true; // Untracked fd may be closed.
 		if (ch === "<" ? ["<", "(", ">"].includes(next) : ch !== ">" || isNonFileRedirect(segment, i)) continue;
