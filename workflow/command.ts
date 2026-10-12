@@ -58,7 +58,7 @@ const WORKFLOW_PROGRESS_TICK_MS = 1000;
 
 export function registerWorkflowCommand(pi: ExtensionAPI, state: SchematicState, deps: WorkflowCommandDeps): void {
 	pi.registerFlag("workflow-cost", { description: "Soft cost target in USD: stops at the next checkpoint, so the final cost can run over", type: "string" });
-	pi.registerFlag("workflow-time", { description: "Soft wall-clock target in milliseconds, e.g. 1800000 for 30 minutes: stops at the next checkpoint, so the final time can run over", type: "string" });
+	pi.registerFlag("workflow-time", { description: "Soft wall-clock target in milliseconds, e.g. 3600000 for 1 hour: stops at the next checkpoint, so the final time can run over", type: "string" });
 	publishRuntimeOnSessionStart(pi, state, deps);
 	pi.registerCommand("workflow", {
 		description: "Run a workflow: /workflow <workflow> [args]. The workflow runs in a codemode sandbox and owns control flow and the exit.",

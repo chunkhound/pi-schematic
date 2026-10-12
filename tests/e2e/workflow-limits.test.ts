@@ -81,10 +81,7 @@ describe("workflow limits E2E", () => {
 	it("maps every time preset and the custom minutes to its exact budget", async () => withWorkflowChild(async (h) => {
 		// Literal expectations: reading TIME_PRESET_MS would test the map against itself.
 		const expected: Record<string, number | null> = {
-			"15 minutes": 900_000,
-			"30 minutes": 1_800_000,
 			"1 hour": 3_600_000,
-			"2 hours": 7_200_000,
 			"4 hours": 14_400_000,
 			"8 hours": 28_800_000,
 			"Custom…": 2 * 60_000,
@@ -101,9 +98,9 @@ describe("workflow limits E2E", () => {
 	}));
 
 	it("maps a preset cost and a custom USD input exactly", async () => withWorkflowChild(async (h) => {
-		await sendOk(h, "mock-select $0.25");
+		await sendOk(h, "mock-select $1");
 		await sendOk(h, "mock-select No target");
-		assert.equal(summaryOf(await runWorkflow(h, WORKFLOW)).limits.costLimit, 0.25);
+		assert.equal(summaryOf(await runWorkflow(h, WORKFLOW)).limits.costLimit, 1);
 
 		await sendOk(h, "mock-select Custom…");
 		await sendOk(h, "mock-input 3");

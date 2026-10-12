@@ -17,13 +17,10 @@ const NO_TARGET = "No target";
 const CUSTOM = "Custom…";
 // The array is the UI order; the map is the value source. The Record type pins every
 // non-special label to an entry, so a label added without a value fails compile.
-const COST_PRESETS = ["$1", "$5", "$10", "$0.25", NO_TARGET, CUSTOM];
-const TIME_PRESETS_BASE = ["15 minutes", "30 minutes", "1 hour", "2 hours", "4 hours", "8 hours", NO_TARGET, CUSTOM] as const;
+const COST_PRESETS = ["$1", "$5", "$10", NO_TARGET, CUSTOM];
+const TIME_PRESETS_BASE = ["1 hour", "4 hours", "8 hours", NO_TARGET, CUSTOM] as const;
 export const TIME_PRESET_MS: Record<Exclude<(typeof TIME_PRESETS_BASE)[number], typeof NO_TARGET | typeof CUSTOM>, number> = {
-	"15 minutes": 900_000,
-	"30 minutes": 1_800_000,
 	"1 hour": 3_600_000,
-	"2 hours": 7_200_000,
 	"4 hours": 14_400_000,
 	"8 hours": 28_800_000,
 };
