@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Pi minimum** — Pi 0.99.2 is now the documented minimum for the `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` peers, and the `typebox` peer minimum is 1.3.27.
 
+### Fixed
+
+- **Model edit opens on the current thinking level** — opening a model in the Model Groups TUI now puts the cursor on the model's configured thinking level and marks it `✓ current`, instead of always landing on `inherit`, where Enter silently reset the value. A configured level the model no longer supports (or whose model is not in the registry) is still shown as `⚠ current, unavailable` and preserved unless another option is deliberately chosen (#29).
+
 ## [0.6.0] - 2026-09-26
 
 ### Added
