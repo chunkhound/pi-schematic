@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { classifyBashCommand } from "../../readonly-bash.js";
 import { check, fixture, git, gitSuiteOptions, gitSuiteSkipped, installGitIsolation, localEnvironment, outside, outsideWritesRequired, posixHost, quote, repository } from "./readonly-git-helpers.js";
+import { shellPath } from "./helpers.js";
 
 // POSIX-only readonly-git regression tests: they assert bash semantics via real `bash`
 // differentials, literal POSIX temp paths, and shebang fixtures. The platform-agnostic
@@ -288,7 +289,7 @@ test("Git config read forms with output modifiers really only read", gitSuiteOpt
 	for (const query of ["--show-scope -l", "--show-scope -z --name-only --list", "--show-origin --type=int core.fsmonitor", "--show-scope --local user.name"]) {
 		check(`git config ${query}`, repo, true);
 	}
-	check(`git config --show-scope --file ${quote(path.join(fixture(t, os.homedir()), "config"))} --get user.name`, repo, true);
+	check(`git config --show-scope --file ${quote(shellPath(path.join(fixture(t, os.homedir()), "config")))} --get user.name`, repo, true);
 });
 
 test("Git format-patch honors configured format.outputDirectory", gitSuiteOptions, (t) => {

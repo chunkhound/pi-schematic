@@ -7,6 +7,7 @@ import os from "node:os";
 import { classifyBashCommand } from "../../readonly-bash.js";
 import { TEMP_DIR, TEMP_WRITE_ROOTS_CANONICAL } from "../../temp-dir.js";
 import { canWriteOutsideTemp, capabilityGate, posixHost } from "./readonly-git-helpers.js";
+import { shellPath } from "./helpers.js";
 
 // Differential fixtures intentionally write OUTSIDE the temp dir to prove real writes are
 // blocked, so this suite cannot run under this extension's own readonly sandbox: expect
@@ -18,25 +19,25 @@ import { canWriteOutsideTemp, capabilityGate, posixHost } from "./readonly-git-h
 // the exit hook runs leaves the dir behind; the startup sweep below removes stale ones.
 import { FIXTURE_MARKER, sweepStaleFixtures } from "./fixture-sweep.js";
 
-sweepStaleFixtures(os.homedir(), ".readonly-shell-test-");
+sweepStaleFixtures(shellPath(os.homedir()), ".readonly-shell-test-");
 const outside = (() => {
 	try {
 		const root = mkdtempSync(path.join(os.homedir(), ".readonly-shell-test-"));
 		writeFileSync(path.join(root, FIXTURE_MARKER), "");
 		// Normal runs remove the root; a kill leaves at worst one empty home dir, not repo litter.
 		process.on("exit", () => rmSync(root, { recursive: true, force: true }));
-		return root;
+		return shellPath(root);
 	}
 	// Unwritable home cannot host the fixture: fall back so the gate below skips the suite.
-	catch { return os.homedir(); }
+	catch { return shellPath(os.homedir()); }
 })();
 const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 // Unquoted Bash `\/` escapes decode to separators: the encoded spelling of `value`.
 const escapeSeparators = (value: string): string => value.replaceAll("/", "\\/");
 
 function withDirectories(run: (work: string, temp: string) => void): void {
-	const work = mkdtempSync(path.join(outside, ".readonly-shell-test-"));
-	const temp = mkdtempSync(path.join(os.tmpdir(), "readonly-shell-test-"));
+	const work = shellPath(mkdtempSync(path.join(outside, ".readonly-shell-test-")));
+	const temp = shellPath(mkdtempSync(path.join(os.tmpdir(), "readonly-shell-test-")));
 	try { run(work, temp); }
 	finally { rmSync(work, { recursive: true, force: true }); rmSync(temp, { recursive: true, force: true }); }
 }
@@ -691,7 +692,7 @@ test("standalone escaped assignments cannot authorize outside-temp writes", () =
 test("wget output flag spellings cannot hide an outside destination", () => {
 	for (const flag of ['"-O/etc/probe"', '\\-O/etc/probe', '"--output-document=/etc/probe"', '"-O" /etc/probe']) {
 		const command = `wget ${flag} https://example.com/x`;
-		assert.equal(classifyBashCommand(command, TEMP_DIR).ok, false, command);
+		assert.equal(classifyBashCommand(command, shellPath(TEMP_DIR)).ok, false, command);
 	}
 });
 
@@ -831,7 +832,7 @@ test("cd and pushd through a missing or non-directory intermediate fail closed",
 
 test("missing synthetic-looking paths cannot establish directory provenance", () => {
 	withDirectories((work) => {
-		const missing = path.join(TEMP_DIR, `.pi-mktemp-missing-${process.pid}`);
+		const missing = shellPath(path.join(TEMP_DIR, `.pi-mktemp-missing-${process.pid}`));
 		assert.equal(existsSync(missing), false);
 		assertShellWrite(`cd ${quote(missing)}; touch escaped`, work, path.join(work, "escaped"), false);
 	});
@@ -1250,16 +1251,16 @@ test("tracked command definitions fail closed even without a subsequent write", 
 			`'${name}' () { :; }`, `if true; then ${name}() { :; }; fi`,
 			`f() { ${name}() { :; }; }`, `alias '${name}=:'`, `builtin alias ${name}=:`,
 			`if true; then alias ${name}=:; fi`,
-		]) assertTrackedDefinitionBlocked(definition, TEMP_DIR);
+		]) assertTrackedDefinitionBlocked(definition, shellPath(TEMP_DIR));
 	}
-	for (const dynamic of ['alias "$NAME=:"', 'alias "$NAME"', "ARGS='cd=:'; alias $ARGS"]) assertTrackedDefinitionBlocked(dynamic, TEMP_DIR);
-	assert.equal(classifyBashCommand("echo 'cd() { :; }'; alias cd", TEMP_DIR).ok, true);
+	for (const dynamic of ['alias "$NAME=:"', 'alias "$NAME"', "ARGS='cd=:'; alias $ARGS"]) assertTrackedDefinitionBlocked(dynamic, shellPath(TEMP_DIR));
+	assert.equal(classifyBashCommand("echo 'cd() { :; }'; alias cd", shellPath(TEMP_DIR)).ok, true);
 });
 
 test("mktemp option forms resolve a temp base and fail closed on a foreign base", () => {
 	const foreign = path.join(os.homedir(), "readonly-mktemp-foreign");
 	// CONTRACT: every base option the parser accepts keeps the synthetic in-temp directory.
-	for (const base of [`-p ${classifierQuote(TEMP_DIR)}`, `-p${classifierQuote(TEMP_DIR)}`, `--tmpdir ${classifierQuote(TEMP_DIR)}`, `--tmpdir=${classifierQuote(TEMP_DIR)}`]) {
+	for (const base of [`-p ${classifierQuote(shellPath(TEMP_DIR))}`, `-p${classifierQuote(shellPath(TEMP_DIR))}`, `--tmpdir ${classifierQuote(shellPath(TEMP_DIR))}`, `--tmpdir=${classifierQuote(shellPath(TEMP_DIR))}`]) {
 		assert.equal(classifyBashCommand(`D=$(mktemp -d ${base} pi-x.XXXXXX) && cd "$D" && touch f`, outside).ok, true, base);
 	}
 	// A base outside temp makes the created directory unprovable, so the later write blocks.
@@ -1268,7 +1269,7 @@ test("mktemp option forms resolve a temp base and fail closed on a foreign base"
 	}
 	// An absolute template is resolved against the base, so an outside template blocks.
 	const absTemplate = classifierQuote(path.join(foreign, "abs.XXXXXX"));
-	assert.equal(classifyBashCommand(`D=$(mktemp -d -p ${classifierQuote(TEMP_DIR)} ${absTemplate}) && cd "$D" && touch f`, outside).ok, false);
+	assert.equal(classifyBashCommand(`D=$(mktemp -d -p ${classifierQuote(shellPath(TEMP_DIR))} ${absTemplate}) && cd "$D" && touch f`, outside).ok, false);
 	// `-t` names the OS temp dir on darwin; every other platform rejects the form and fails closed.
 	assert.equal(classifyBashCommand("D=$(mktemp -d -t pi-x.XXXXXX) && cd \"$D\" && touch f", outside).ok, process.platform === "darwin");
 });
@@ -1290,12 +1291,12 @@ test("heredoc stdin owners decide whether the body is code or inert", () => {
 test("file mktemp proves file paths without proving directories", () => {
 	// The fixed regression: a bare `mktemp` file supports writes through the variable.
 	assert.equal(classifyBashCommand(`f=$(mktemp) && printf x > "$f"`, outside).ok, true);
-	assert.equal(classifyBashCommand(`f=$(mktemp ${classifierQuote(`${TEMP_DIR}/f.XXXXXX`)}) && printf x > "$f"`, outside).ok, true);
+	assert.equal(classifyBashCommand(`f=$(mktemp ${classifierQuote(`${shellPath(TEMP_DIR)}/f.XXXXXX`)}) && printf x > "$f"`, outside).ok, true);
 	// File provenance never proves a directory, even with a temp template.
 	assert.equal(classifyBashCommand(`D=$(mktemp) && cd "$D" && touch f`, outside).ok, true);
 	assert.equal(classifyBashCommand(`D=$(mktemp); cd "$D"; touch f`, outside).ok, false);
 	// Unsafe templates and foreign bases stay blocked for files too.
-	const foreignFile = classifierQuote(`${TEMP_DIR}/../readonly-mktemp-foreign.XXXXXX`);
+	const foreignFile = classifierQuote(`${shellPath(TEMP_DIR)}/../readonly-mktemp-foreign.XXXXXX`);
 	assert.equal(classifyBashCommand(`f=$(mktemp ${foreignFile}) && printf x > "$f"`, outside).ok, false);
 	assert.equal(classifyBashCommand(`f=$(mktemp -p ${classifierQuote(outside)} f.XXXXXX) && printf x > "$f"`, outside).ok, false);
 	// Failed-substitution guards apply to files: masked status and extra substitutions prove nothing.
@@ -1309,14 +1310,14 @@ test("no-sandbox classifier decodes escaped separators in operands and redirects
 }, () => {
 	// L2 contract with no OS sandbox: the decoded targets are /etc paths, so
 	// classification alone must reject them from both the temp root and outside.
-	for (const cwd of [outside, TEMP_DIR]) {
+	for (const cwd of [outside, shellPath(TEMP_DIR)]) {
 		for (const command of [
 			`touch ${escapeSeparators("/etc/no-sandbox")}`,
 			`cd /tmp && touch ${escapeSeparators("/etc/no-sandbox")}`,
 			`rm ${escapeSeparators("/etc/no-sandbox")}`,
 			`echo hi > ${escapeSeparators("/etc/no-sandbox")}`,
 			`cd /tmp && echo hi > ${escapeSeparators("/etc/no-sandbox")}`,
-			`touch ${TEMP_DIR}/*/../../etc/no-sandbox`,
+			`touch ${shellPath(TEMP_DIR)}/*/../../etc/no-sandbox`,
 		]) assert.equal(classifyBashCommand(command, cwd).ok, false, command);
 	}
 });
@@ -1326,9 +1327,9 @@ test("no-sandbox classifier allows decoded escaped temp targets and keeps quoted
 }, () => {
 	// Unquoted escapes decode to the real temp path and stay allowed.
 	for (const command of [
-		`touch ${escapeSeparators(TEMP_DIR)}/allowed`,
-		`cd ${escapeSeparators(TEMP_DIR)}; touch allowed`,
-		`echo hi > ${escapeSeparators(TEMP_DIR)}/allowed`,
+		`touch ${escapeSeparators(shellPath(TEMP_DIR))}/allowed`,
+		`cd ${escapeSeparators(shellPath(TEMP_DIR))}; touch allowed`,
+		`echo hi > ${escapeSeparators(shellPath(TEMP_DIR))}/allowed`,
 	]) assert.equal(classifyBashCommand(command, outside).ok, true, command);
 	// Quoted ordinary backslashes keep `cd` on a missing root entry: the change fails
 	// and later relative writes keep the caller cwd, while the plain form reaches /tmp.
@@ -1336,20 +1337,20 @@ test("no-sandbox classifier allows decoded escaped temp targets and keeps quoted
 	assert.equal(classifyBashCommand('cd "/tmp"; touch rel', outside).ok, true);
 	// A double-quoted `\/` operand is a relative path, so its verdict follows the cwd:
 	// inside the temp root it may write, from outside it must stay blocked.
-	assert.equal(classifyBashCommand('touch "\\/etc\\/probe"', TEMP_DIR).ok, true);
+	assert.equal(classifyBashCommand('touch "\\/etc\\/probe"', shellPath(TEMP_DIR)).ok, true);
 	assert.equal(classifyBashCommand('touch "\\/etc\\/probe"', outside).ok, false);
 });
 
 test("brace trailing redirects share redirect checks and preserve abort state", () => {
-	const log = classifierQuote(`${TEMP_DIR}/brace.log`);
+	const log = classifierQuote(`${shellPath(TEMP_DIR)}/brace.log`);
 	// Safe trailing redirects are allowed and the body stays parent-shell.
 	assert.equal(classifyBashCommand(`{ touch ${log}; } >${log}`, outside).ok, true);
-	assert.equal(classifyBashCommand(`{ cd ${classifierQuote(TEMP_DIR)}; }; touch rel`, outside).ok, true);
+	assert.equal(classifyBashCommand(`{ cd ${classifierQuote(shellPath(TEMP_DIR))}; }; touch rel`, outside).ok, true);
 	// Unsafe trailing targets block; non-redirect trailing words fail closed.
 	assert.equal(classifyBashCommand(`{ printf x; } >${classifierQuote(`${outside}/blocked`)}`, outside).ok, false);
 	assert.equal(classifyBashCommand(`{ echo safe; } trailing`, outside).ok, false);
 	// An aborting redirect keeps the caller state: `;` stays blocked, `&&` skips vacuously.
-	const abort = `{ cd ${classifierQuote(TEMP_DIR)}; } >${classifierQuote(`${TEMP_DIR}/missing/out`)}`;
+	const abort = `{ cd ${classifierQuote(shellPath(TEMP_DIR))}; } >${classifierQuote(`${shellPath(TEMP_DIR)}/missing/out`)}`;
 	assert.equal(classifyBashCommand(`${abort}; touch rel`, outside).ok, false);
 	assert.equal(classifyBashCommand(`${abort} && touch rel`, outside).ok, true);
 });

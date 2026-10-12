@@ -13,7 +13,7 @@ import {
 } from "../../spawn/index.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
 import { canUseOsSandbox } from "../../os-sandbox.js";
-import { runRealChildInvocation } from "./helpers.js";
+import { runRealChildInvocation, shellPath } from "./helpers.js";
 
 // ── Tool filtering ───────────────────────────────────────────────────
 
@@ -67,8 +67,8 @@ test("readonly bash guard rejects non-string commands", () => {
 });
 
 test("readonly bash guard blocks non-temp writes and allows temp writes", () => {
-	const outsideTemp = path.join(os.homedir(), `readonly-child-test-${process.pid}-${Date.now()}`);
-	const insideTemp = path.join(os.tmpdir(), `readonly-child-test-${Date.now()}`);
+	const outsideTemp = shellPath(path.join(os.homedir(), `readonly-child-test-${process.pid}-${Date.now()}`));
+	const insideTemp = shellPath(path.join(os.tmpdir(), `readonly-child-test-${Date.now()}`));
 	const cwd = process.cwd();
 
 	const blockResult = applyReadonlyBashGuard(`touch ${outsideTemp}`, cwd);

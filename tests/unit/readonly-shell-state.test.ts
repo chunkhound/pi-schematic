@@ -4,6 +4,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { classifyBashCommand } from "../../readonly-bash.js";
+import { shellPath } from "./helpers.js";
 
 // Contracts under test: every operator chain returns a DEFINITIVE verdict, never a vacuous
 // {ok:true} from classifying zero states. Each blocked case is a benign prefix chained to an
@@ -14,7 +15,7 @@ import { classifyBashCommand } from "../../readonly-bash.js";
 // classifyShellGroup. That edge is currently unreachable — every shell part yields at least one
 // success state by induction — so the guard is defence in depth, and no test can fail without it.
 test("operator chains keep a definitive verdict instead of passing vacuously", (t) => {
-	const workspace = path.join(os.tmpdir(), `readonly-shell-state-${process.pid}`);
+	const workspace = shellPath(path.join(os.tmpdir(), `readonly-shell-state-${process.pid}`));
 	mkdirSync(workspace, { recursive: true });
 	t.after(() => rmSync(workspace, { recursive: true, force: true }));
 	const blocked = [
@@ -42,11 +43,11 @@ test("operator chains keep a definitive verdict instead of passing vacuously", (
 // that moved the shell, an eval/source child, and a `$VAR` command word. The failure branch must
 // still classify at the moved cwd so a relative write there cannot pass as a temp write.
 test("failure branches retain the cwd a group, eval, or dynamic command word moved to", (t) => {
-	const workspace = path.join(os.tmpdir(), `readonly-shell-state-moved-${process.pid}`);
+	const workspace = shellPath(path.join(os.tmpdir(), `readonly-shell-state-moved-${process.pid}`));
 	mkdirSync(workspace, { recursive: true });
 	t.after(() => rmSync(workspace, { recursive: true, force: true }));
 	// Sibling of the workspace root, never inside a temp root, so relative writes resolve outside.
-	const outside = path.join(path.parse(workspace).root, `readonly-shell-state-outside-${process.pid}`);
+	const outside = shellPath(path.join(path.parse(workspace).root, `readonly-shell-state-outside-${process.pid}`));
 	const blocked = [
 		`{ cd ${outside}; false; } || touch leak`,
 		`eval "cd ${outside}; false" || touch leak`,
@@ -72,10 +73,10 @@ test("failure branches retain the cwd a group, eval, or dynamic command word mov
 // `command eval`, `builtin eval`, and a quoted command word all leave the tracked cwd
 // unprovable. The wrapper/quotes must not hide that, or a later relative write runs there.
 test("wrapper prefixes and double-quoted command words cannot hide an unknown cwd", (t) => {
-	const workspace = path.join(os.tmpdir(), `readonly-shell-state-wrapped-${process.pid}`);
+	const workspace = shellPath(path.join(os.tmpdir(), `readonly-shell-state-wrapped-${process.pid}`));
 	mkdirSync(workspace, { recursive: true });
 	t.after(() => rmSync(workspace, { recursive: true, force: true }));
-	const outside = path.join(path.parse(workspace).root, `readonly-shell-state-wrapped-out-${process.pid}`);
+	const outside = shellPath(path.join(path.parse(workspace).root, `readonly-shell-state-wrapped-out-${process.pid}`));
 	const blocked = [
 		`command eval "cd ${outside}"; touch leak`,
 		`builtin eval "cd ${outside}"; touch leak`,
@@ -100,10 +101,10 @@ test("wrapper prefixes and double-quoted command words cannot hide an unknown cw
 // The wrapper must not hide the `$VAR` command word from cwd tracking, or a chained
 // relative write classifies at the caller cwd instead of the real one.
 test("a dynamic cd wrapped in command/builtin still moves the tracked cwd", (t) => {
-	const workspace = path.join(os.tmpdir(), `readonly-shell-state-wrap-cd-${process.pid}`);
+	const workspace = shellPath(path.join(os.tmpdir(), `readonly-shell-state-wrap-cd-${process.pid}`));
 	mkdirSync(workspace, { recursive: true });
 	t.after(() => rmSync(workspace, { recursive: true, force: true }));
-	const outside = path.join(path.parse(workspace).root, `readonly-shell-state-wrap-out-${process.pid}`);
+	const outside = shellPath(path.join(path.parse(workspace).root, `readonly-shell-state-wrap-out-${process.pid}`));
 	const blocked = [
 		`C=cd; command "$C" ${outside}; touch leak`,
 		`C=cd; builtin "$C" ${outside}; touch leak`,
@@ -126,14 +127,14 @@ test("a dynamic cd wrapped in command/builtin still moves the tracked cwd", (t) 
 // wrapper argument must NOT be expanded into a tracked `cd` — that would move the cwd to
 // temp while the real shell never ran `cd`, letting `;`-chained writes pass as temp writes.
 test("a single-quoted wrapper argument stays literal and keeps the caller cwd", (t) => {
-	const outside = path.join(path.parse(os.tmpdir()).root, `readonly-shell-state-sq-${process.pid}`);
+	const outside = shellPath(path.join(path.parse(shellPath(os.tmpdir())).root, `readonly-shell-state-sq-${process.pid}`));
 	const blocked = [
 		`C=cd; command '$C' /tmp; touch leak`,
 		`C=cd; builtin '$C' /tmp; touch leak`,
 	];
 	const allowed = [
 		`C=cd; command "$C" /tmp; touch leak`,
-		`C=cd; command "$C" ${os.tmpdir()} && touch leak`,
+		`C=cd; command "$C" ${shellPath(os.tmpdir())} && touch leak`,
 	];
 	for (const command of blocked) {
 		const verdict = classifyBashCommand(command, outside);

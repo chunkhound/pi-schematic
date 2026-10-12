@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { registerReadonlyPI, makeReadonlyUICtx } from "./helpers.js";
+import { registerReadonlyPI, makeReadonlyUICtx, shellPath } from "./helpers.js";
 import type { ToolCall } from "./helpers.js";
 import type { TestPI } from "./test-host.js";
 import os from "node:os";
@@ -37,17 +37,17 @@ async function assertAllowed(toolCall: ToolCall, command: string, cwd = "/worksp
 // Windows has no OS sandbox: the L2 classifier is the only write barrier.
 // This test states that contract explicitly and keeps the POSIX fallback honest.
 test("windows contract: classifier-only enforcement", () => {
-	const inside = path.join(os.tmpdir(), "pi-win-contract-file");
-	const outside = path.join(os.homedir(), "pi-win-contract-file");
+	const inside = shellPath(path.join(os.tmpdir(), "pi-win-contract-file"));
+	const outside = shellPath(path.join(os.homedir(), "pi-win-contract-file"));
 	if (process.platform === "win32") {
 		assert.equal(canUseOsSandbox(), false, "win32 must not claim OS sandbox support");
 		assert.equal(
-			classifyBashCommand(`touch ${quoteShellArgument(inside)}`, os.tmpdir()).ok,
+			classifyBashCommand(`touch ${quoteShellArgument(inside)}`, shellPath(os.tmpdir())).ok,
 			true,
 			"inside-temp touch stays allowed",
 		);
 		assert.equal(
-			classifyBashCommand(`touch ${quoteShellArgument(outside)}`, os.homedir()).ok,
+			classifyBashCommand(`touch ${quoteShellArgument(outside)}`, shellPath(os.homedir())).ok,
 			false,
 			"outside-temp touch must be blocked by the classifier alone",
 		);
@@ -66,7 +66,7 @@ test("windows contract: classifier-only enforcement", () => {
 test("blocks bash writes outside temp dir", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const outsideTemp = path.join(os.homedir(), "readonly-test-file");
+	const outsideTemp = shellPath(path.join(os.homedir(), "readonly-test-file"));
 
 	// Representative mutation commands targeting a concrete non-temp path.
 	// Tests the CONTRACT: writes outside temp dir are blocked.
@@ -104,7 +104,7 @@ test("allows bash reads and non-mutating commands", async () => {
 test("allows bash writes to temp dir", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: temp dir writes are allowed.
 	await assertAllowed(toolCall, `echo ok > ${tmp}/readonly-test.txt`);
@@ -114,7 +114,7 @@ test("allows bash writes to temp dir", async () => {
 test("blocks command substitutions that write outside temp", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const outsideTemp = path.join(os.homedir(), "readonly-test-file");
+	const outsideTemp = shellPath(path.join(os.homedir(), "readonly-test-file"));
 
 	// CONTRACT: evasion via command substitution is caught.
 	await assertBlocked(toolCall, `touch $(echo ${outsideTemp})`);
@@ -123,7 +123,7 @@ test("blocks command substitutions that write outside temp", async () => {
 test("blocks write redirects outside temp dir", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const outsideTemp = path.join(os.homedir(), "readonly-test-file");
+	const outsideTemp = shellPath(path.join(os.homedir(), "readonly-test-file"));
 
 	// CONTRACT: write redirects to non-temp paths are blocked.
 	await assertBlocked(toolCall, `echo hello > ${outsideTemp}`);
@@ -144,7 +144,7 @@ test("block reasons separate unproven targets from proven-outside writes", () =>
 		'echo a | tee "$(printf /tmp/x%s.mjs 1)"',
 		'touch /tmp/[$(printf x)]*.mjs',
 	]) {
-		const verdict = classifyBashCommand(command, os.tmpdir());
+		const verdict = classifyBashCommand(command, shellPath(os.tmpdir()));
 		assert.equal(verdict.ok, false, command);
 		assert.match(verdict.reason!.replace(/\n/g, " "), /cannot prove target stays inside temp/, command);
 		assert.doesNotMatch(verdict.reason!.replace(/\n/g, " "), /blocked outside temp dir/, command);
@@ -168,7 +168,7 @@ test("blocks package managers unconditionally", async () => {
 test("blocks archivers that extract outside temp", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: tar/rsync/unzip destinations are path-checked like other mutations.
 	await assertBlocked(toolCall, `tar xf archive.tar -C /outside`);
@@ -198,7 +198,7 @@ test("blocks archivers that extract outside temp", async () => {
 test("blocks tar bundles whose attached value cannot be attributed", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: a bundle with a non-letter tail means an option letter consumed the
 	// rest of the word as its value, and unmodeled letters can also take that value —
@@ -218,7 +218,7 @@ test("blocks tar bundles whose attached value cannot be attributed", async () =>
 test("treats every token after -- as an operand", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: `--` ends option parsing, so `-r` after it is a write target, not a
 	// value flag whose argument may be skipped.
@@ -229,7 +229,7 @@ test("treats every token after -- as an operand", async () => {
 test("allows unzip -p and -c as read-only", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: -p/-c pipe members to stdout without extracting, like -l/-t/-v.
 	// Extraction without a read flag targets the cwd, so it blocks from outside temp.
@@ -252,7 +252,7 @@ test("classifies git commands correctly", async () => {
 test("blocks cwd-relative downloads outside temp but allows inside temp", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: cwd-relative downloads follow temp-dir rules.
 	await assertBlocked(toolCall, "curl -O https://example.com/file.txt", "/workspace");
@@ -281,7 +281,7 @@ test("allows piped read commands", async () => {
 test("blocks chained commands that write outside temp", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const outside = path.join(os.homedir(), "readonly-test-file");
+	const outside = shellPath(path.join(os.homedir(), "readonly-test-file"));
 
 	await assertBlocked(toolCall, `echo a && touch ${outside}`);
 	await assertBlocked(toolCall, `ls; rm -f ${outside}`);
@@ -291,7 +291,7 @@ test("blocks chained commands that write outside temp", async () => {
 test("allows chained commands that only read or write to temp", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	await assertAllowed(toolCall, "echo a && ls");
 	await assertAllowed(toolCall, `echo a > ${tmp}/x && cat ${tmp}/x`);
@@ -300,7 +300,7 @@ test("allows chained commands that only read or write to temp", async () => {
 test("blocks heredoc redirects outside temp", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const outside = path.join(os.homedir(), "readonly-test-file");
+	const outside = shellPath(path.join(os.homedir(), "readonly-test-file"));
 
 	await assertBlocked(toolCall, `cat <<'EOF' > ${outside}\nhello\nEOF`);
 });
@@ -308,8 +308,8 @@ test("blocks heredoc redirects outside temp", async () => {
 test("blocks dd of= outside temp and allows it in temp", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
-	const outside = path.join(os.homedir(), "readonly-test-file");
+	const tmp = shellPath(os.tmpdir());
+	const outside = shellPath(path.join(os.homedir(), "readonly-test-file"));
 
 	await assertBlocked(toolCall, `dd if=/dev/zero of=${outside} bs=1 count=1`);
 	await assertAllowed(toolCall, `dd if=/dev/zero of=${tmp}/dd-test bs=1 count=1`);
@@ -333,7 +333,7 @@ test("blocks hidden-file globs outside temp dir", async () => {
 	await enableReadonly(pi);
 	// Home dir already has hidden files (.gitconfig, .ssh, etc.) and is
 	// outside the temp dir — no filesystem writes needed for the glob to match.
-	await assertBlocked(toolCall, "rm -f *", os.homedir());
+	await assertBlocked(toolCall, "rm -f *", shellPath(os.homedir()));
 });
 
 // ── Regression tests for review findings ────────────────────────────────
@@ -361,7 +361,7 @@ test("brace-dense glob targets do not exhaust the classifier heap (#41)", () => 
 	assert.equal(output, "blocked");
 	// The cap must not newly over-block: a literal-in-temp target of the same density
 	// still resolves through the literal containment path and is allowed.
-	assert.equal(classifyBashCommand(`touch ${dense}probe`, os.tmpdir()).ok, true, "brace-dense temp target stays allowed by literal fallback");
+	assert.equal(classifyBashCommand(`touch ${dense}probe`, shellPath(os.tmpdir())).ok, true, "brace-dense temp target stays allowed by literal fallback");
 });
 
 // Trailing redirects are validated on the raw segment by the redirect scanner; they
@@ -369,7 +369,7 @@ test("brace-dense glob targets do not exhaust the classifier heap (#41)", () => 
 // option or `>/dev/null` as a mutation target (false-block with a misleading reason).
 
 test("trailing redirects never change a command's operand classification", () => {
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 	for (const command of [
 		"git status 2>/dev/null",
 		"git log --oneline 2>&1",
@@ -487,7 +487,7 @@ test("blocks git tag creation", async () => {
 test("blocks command substitution with nested mutation", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const outside = path.join(os.homedir(), "readonly-test-file");
+	const outside = shellPath(path.join(os.homedir(), "readonly-test-file"));
 	await assertBlocked(toolCall, `echo $(touch ${outside})`);
 	await assertBlocked(toolCall, `echo $(rm /etc/passwd)`);
 });
@@ -495,7 +495,7 @@ test("blocks command substitution with nested mutation", async () => {
 test("blocks wget download-dir writes outside temp and allows them in temp", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 	await assertBlocked(toolCall, "wget -P /workspace https://example.com/file.txt");
 	await assertBlocked(toolCall, "wget --directory-prefix=/workspace https://example.com/file.txt");
 	await assertAllowed(toolCall, `wget -P ${tmp} https://example.com/file.txt`);
@@ -504,8 +504,8 @@ test("blocks wget download-dir writes outside temp and allows them in temp", asy
 test("blocks mixed curl output modes outside temp and allows them in temp", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
-	const tmpOutput = path.join(tmp, "out.txt");
+	const tmp = shellPath(os.tmpdir());
+	const tmpOutput = shellPath(path.join(tmp, "out.txt"));
 	await assertBlocked(toolCall, `curl -o ${tmpOutput} -O https://example.com/file.txt`, "/workspace");
 	await assertAllowed(toolCall, `curl -o ${tmpOutput} -O https://example.com/file.txt`, tmp);
 });
@@ -535,7 +535,7 @@ test("blocks nested wrapper sudo+env+xargs", async () => {
 test("allows mutable git rooted inside the temp dir", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: a mutable git command's write target decides — not its name.
 	await assertAllowed(toolCall, "git init", tmp);
@@ -551,7 +551,7 @@ test("allows mutable git rooted inside the temp dir", async () => {
 test("blocks mutable git rooted outside the temp dir", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	await assertBlocked(toolCall, "git init", "/workspace");
 	await assertBlocked(toolCall, "git add .", "/workspace");
@@ -567,13 +567,13 @@ test("allows read-only git from any directory", async () => {
 	await enableReadonly(pi);
 	await assertAllowed(toolCall, "git status", "/workspace");
 	await assertAllowed(toolCall, "git log --oneline", "/workspace");
-	await assertAllowed(toolCall, "git -C /workspace diff", os.tmpdir());
+	await assertAllowed(toolCall, "git -C /workspace diff", shellPath(os.tmpdir()));
 });
 
 test("tracks cd into the temp dir for relative mutations", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	await assertAllowed(toolCall, `cd ${tmp} && touch f`, "/workspace");
 	await assertAllowed(toolCall, `cd ${tmp} && mkdir d`, "/workspace");
@@ -584,7 +584,7 @@ test("tracks cd into the temp dir for relative mutations", async () => {
 test("blocks relative mutations after cd outside the temp dir", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	const outside = JSON.stringify(path.parse(tmp).root);
 	await assertBlocked(toolCall, `cd ${outside} && touch f`, tmp);
@@ -595,7 +595,7 @@ test("blocks relative mutations after cd outside the temp dir", async () => {
 test("directory changes fail closed when Bash would not execute them", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 	const root = path.parse(tmp).root;
 
 	// `command -v cd /tmp` is a lookup, not a directory change: cwd never moves.
@@ -614,7 +614,7 @@ test("directory changes fail closed when Bash would not execute them", async () 
 test("directory changes with provable redirects and quoted paths stay allowed", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 	const root = path.parse(tmp).root;
 
 	// Redirects whose application is provable do not poison the tracked cwd.
@@ -635,7 +635,7 @@ test("treats standard temp locations as writable", { skip: process.platform === 
 test("does not classify heredoc bodies as commands", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: a heredoc body is stdin data, not shell source.
 	await assertAllowed(toolCall, `cat > ${tmp}/hd.txt <<'EOF'\nfoo > bar\nEOF`);
@@ -666,9 +666,9 @@ test("awk stdin is executable code, unlike inert cat data", () => {
 test("env -S appends trailing argv to the wrapped command", () => {
 	// GNU `env -S` splits the string then appends the remaining argv, so the trailing
 	// token is still an operand of the wrapped command. Dropping it hid an outside write.
-	const root = path.parse(os.tmpdir()).root;
+	const root = path.parse(shellPath(os.tmpdir())).root;
 	assert.equal(classifyBashCommand(`env -S "touch" ${root}outside/x`, root).ok, false);
-	assert.equal(classifyBashCommand(`env -S "touch ${os.tmpdir()}/ok" ${root}outside/y`, root).ok, false);
+	assert.equal(classifyBashCommand(`env -S "touch ${shellPath(os.tmpdir())}/ok" ${root}outside/y`, root).ok, false);
 	// A benign trailing word stays allowed; the trailing tokens are the wrapped
 	// command's argv, so a `--` after the split string belongs to it, not to env.
 	assert.equal(classifyBashCommand('env -S "echo hi" there', root).ok, true);
@@ -678,7 +678,7 @@ test("env -S appends trailing argv to the wrapped command", () => {
 test("heredoc stdin escapes through groups, sed e, -c cwd, and var expansion fail closed", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 	const root = path.parse(tmp).root;
 
 	// B2: group members share the heredoc stdin — a shell in any member executes the body.
@@ -697,7 +697,7 @@ test("heredoc stdin escapes through groups, sed e, -c cwd, and var expansion fai
 test("inert heredoc owners, provable -c cwd, and resolvable var bodies stay allowed", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// Groups of pure data consumers keep the body inert.
 	await assertAllowed(toolCall, `{ cat; grep x; } <<'EOF'\ntouch /outside\nEOF`);
@@ -712,29 +712,29 @@ test("inert heredoc owners, provable -c cwd, and resolvable var bodies stay allo
 test("heredoc checks retain header execution position through the readonly hook", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = quoteShellArgument(os.tmpdir());
-	await assertBlocked(toolCall, `bash <<'EOF'; cd ${tmp}\ntouch relative\nEOF`, os.homedir());
-	await assertAllowed(toolCall, `bash <<'EOF'; cd ${quoteShellArgument(os.homedir())}\ntouch relative\nEOF`, os.tmpdir());
-	await assertAllowed(toolCall, `cd ${tmp}; bash <<'EOF'; cd /\ntouch relative\nEOF`, os.homedir());
+	const tmp = quoteShellArgument(shellPath(os.tmpdir()));
+	await assertBlocked(toolCall, `bash <<'EOF'; cd ${tmp}\ntouch relative\nEOF`, shellPath(os.homedir()));
+	await assertAllowed(toolCall, `bash <<'EOF'; cd ${quoteShellArgument(shellPath(os.homedir()))}\ntouch relative\nEOF`, shellPath(os.tmpdir()));
+	await assertAllowed(toolCall, `cd ${tmp}; bash <<'EOF'; cd /\ntouch relative\nEOF`, shellPath(os.homedir()));
 });
 
 test("unquoted shell stdin uses parent values, not child assignments", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = quoteShellArgument(os.tmpdir());
-	await assertBlocked(toolCall, `D=/; bash <<EOF\nD=${tmp}\ntouch "$D/relative"\nEOF`, os.tmpdir());
-	await assertAllowed(toolCall, `D=${tmp}; bash <<EOF\nD=/\ntouch "$D/relative"\nEOF`, os.tmpdir());
-	await assertAllowed(toolCall, `D=/; bash <<EOF\nD=${tmp}\ntouch "\\$D/relative"\nEOF`, os.tmpdir());
-	await assertBlocked(toolCall, "bash <<EOF\ntouch \"$(printf /)/relative\"\nEOF", os.tmpdir());
+	const tmp = quoteShellArgument(shellPath(os.tmpdir()));
+	await assertBlocked(toolCall, `D=/; bash <<EOF\nD=${tmp}\ntouch "$D/relative"\nEOF`, shellPath(os.tmpdir()));
+	await assertAllowed(toolCall, `D=${tmp}; bash <<EOF\nD=/\ntouch "$D/relative"\nEOF`, shellPath(os.tmpdir()));
+	await assertAllowed(toolCall, `D=/; bash <<EOF\nD=${tmp}\ntouch "\\$D/relative"\nEOF`, shellPath(os.tmpdir()));
+	await assertBlocked(toolCall, "bash <<EOF\ntouch \"$(printf /)/relative\"\nEOF", shellPath(os.tmpdir()));
 });
 
 test("output fd failures preserve the old cwd through the readonly hook", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = quoteShellArgument(os.tmpdir());
-	await assertBlocked(toolCall, `cd ${tmp} 3>&999; touch relative`, os.homedir());
-	await assertAllowed(toolCall, `cd ${tmp} 3>&999; touch relative`, os.tmpdir());
-	await assertAllowed(toolCall, `cd ${tmp} 3>&999 && touch relative`, os.homedir());
+	const tmp = quoteShellArgument(shellPath(os.tmpdir()));
+	await assertBlocked(toolCall, `cd ${tmp} 3>&999; touch relative`, shellPath(os.homedir()));
+	await assertAllowed(toolCall, `cd ${tmp} 3>&999; touch relative`, shellPath(os.tmpdir()));
+	await assertAllowed(toolCall, `cd ${tmp} 3>&999 && touch relative`, shellPath(os.homedir()));
 });
 
 test("does not treat arithmetic shifts as heredocs", async () => {
@@ -753,9 +753,9 @@ test("classifier agrees with the shared temp-root policy", () => {
 	// is anchored on the OS temp dir independently, so a truncated policy fails loudly
 	// instead of passing vacuously.
 	assert.ok(TEMP_WRITE_ROOTS_CANONICAL.length > 0, "temp-root policy must not be empty");
-	assert.equal(classifyBashCommand(`touch ${os.tmpdir()}/pi-parity-anchor`, "/workspace").ok, true, "OS temp dir must be writable");
+	assert.equal(classifyBashCommand(`touch ${shellPath(os.tmpdir())}/pi-parity-anchor`, "/workspace").ok, true, "OS temp dir must be writable");
 	for (const root of TEMP_WRITE_ROOTS_CANONICAL) {
-		assert.equal(classifyBashCommand(`touch ${root}/pi-parity`, "/workspace").ok, true, `expected ${root} to be temp`);
+		assert.equal(classifyBashCommand(`touch ${shellPath(root)}/pi-parity`, "/workspace").ok, true, `expected ${root} to be temp`);
 	}
 	assert.equal(classifyBashCommand("touch /pi-outside-parity", "/workspace").ok, false, "a non-temp root must stay blocked");
 });
@@ -767,16 +767,16 @@ test("group-owned heredocs and physical cd are classified against real shell sem
 	}
 	assert.equal(classifyBashCommand("{ cat; } <<'EOF'\nfoo > bar\nEOF", "/workspace").ok, true);
 	// `-P` resolves symlinks physically; the lexical tracker cannot follow it, so it fails closed.
-	assert.equal(classifyBashCommand(`cd -P ${os.tmpdir()}/.. && rm x`, "/workspace").ok, false, "cd -P must fail closed");
-	assert.equal(classifyBashCommand(`cd -LP ${os.tmpdir()}/.. && rm x`, "/workspace").ok, false, "combined -LP must fail closed");
-	assert.equal(classifyBashCommand(`cd -L ${os.tmpdir()} && rm x`, "/workspace").ok, true, "cd -L stays lexical");
-	assert.equal(classifyBashCommand(`cd -LL ${os.tmpdir()} && rm x`, "/workspace").ok, true, "logical-only flags stay tracked");
+	assert.equal(classifyBashCommand(`cd -P ${shellPath(os.tmpdir())}/.. && rm x`, "/workspace").ok, false, "cd -P must fail closed");
+	assert.equal(classifyBashCommand(`cd -LP ${shellPath(os.tmpdir())}/.. && rm x`, "/workspace").ok, false, "combined -LP must fail closed");
+	assert.equal(classifyBashCommand(`cd -L ${shellPath(os.tmpdir())} && rm x`, "/workspace").ok, true, "cd -L stays lexical");
+	assert.equal(classifyBashCommand(`cd -LL ${shellPath(os.tmpdir())} && rm x`, "/workspace").ok, true, "logical-only flags stay tracked");
 });
 
 test("tracks multiple heredocs on one line correctly", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: multiple heredocs on one line must all be tracked.
 	// Both heredoc bodies are data, not code, so mutations inside are allowed.
@@ -794,7 +794,7 @@ test("does not pass a command's heredoc to its fallback interpreter", async () =
 test("resolves git --git-dir relative to -C base", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: --git-dir resolves relative to the -C base, not the original cwd.
 	await assertAllowed(toolCall, `git -C ${tmp} --git-dir=repo init`, "/workspace");
@@ -805,13 +805,13 @@ test("bare cd goes to HOME and blocks subsequent mutations from temp", async () 
 	await enableReadonly(pi);
 
 	// CONTRACT: bare `cd` goes to $HOME (outside temp), so mutations are blocked.
-	await assertBlocked(toolCall, "cd && touch f", os.tmpdir());
+	await assertBlocked(toolCall, "cd && touch f", shellPath(os.tmpdir()));
 });
 
 test("popd restores the directory stack correctly", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	const outside = path.parse(tmp).root;
 	const target = JSON.stringify(outside);
@@ -823,7 +823,7 @@ test("popd restores the directory stack correctly", async () => {
 test("<<- strips leading tabs from heredoc body", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: <<- strips leading tabs before matching the delimiter.
 	await assertAllowed(toolCall, `cat > ${tmp}/hd.txt <<-EOF\n\t\thello\n\t\tEOF`);
@@ -832,10 +832,10 @@ test("<<- strips leading tabs from heredoc body", async () => {
 test("evaluates downstream commands in conditionals even when directory does not yet exist", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: pre-flight analysis must not prune && branch when dir does not yet exist.
-	const fresh = path.join(tmp, `test-fresh-dir-${process.pid}-${Date.now()}`);
+	const fresh = shellPath(path.join(tmp, `test-fresh-dir-${process.pid}-${Date.now()}`));
 	await assertBlocked(toolCall, `mkdir -p ${fresh} && cd ${fresh} && rm -rf /workspace`, "/workspace");
 	await assertBlocked(toolCall, `cd ${fresh} && rm -rf /workspace`, "/workspace");
 });
@@ -859,7 +859,7 @@ test("allows read-only git inspection subcommands with arguments", async () => {
 test("distrusts command-provided GIT_CONFIG_GLOBAL for every subcommand", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: a command-provided GIT_CONFIG_GLOBAL can redirect write roots for any
 	// subcommand, and the classifier's config probe cannot see it — so it fails closed.
@@ -884,7 +884,7 @@ test("classifier never executes a git binary chosen by the command's own PATH", 
 		await chmod(fakeGit, 0o755);
 		execFileSync("git", ["init", "--quiet"], { cwd: repo });
 		// CONTRACT: classification may spawn the trusted git, never a command-selected one.
-		await assertAllowed(toolCall, `PATH=${fakeDir}:$PATH git add .`, repo);
+		await assertAllowed(toolCall, `PATH=${shellPath(fakeDir)}:$PATH git add .`, repo);
 		assert.equal(existsSync(marker), false, "command-selected git must not run during classification");
 	} finally {
 		await rm(root, { recursive: true, force: true });
@@ -904,7 +904,7 @@ test("allows immutable git short flags the old blanket guard rejected", async ()
 test("blocks env -C directory escapes regardless of the command's cwd", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 	const outside = "/workspace";
 
 	// CONTRACT: `env -C` runs the child outside the tracked cwd, so `rm rel` there is a write
@@ -920,7 +920,7 @@ test("blocks env -C directory escapes regardless of the command's cwd", async ()
 test("eval and source cwd changes stay unknown so later relative writes fail closed", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: eval/source run code the classifier cannot see; it may cd anywhere, so a
 	// following relative write must be treated as landing outside temp.
@@ -940,7 +940,7 @@ test("unmatched globs are confined by their literal name", async () => {
 		// CONTRACT: no match means Bash passes the pattern literally, so its resolved literal
 		// path decides — allowed in temp, blocked outside.
 		await assertAllowed(toolCall, "rm -f readonly-absent-*", tmp);
-		await assertBlocked(toolCall, `rm -f ${os.homedir()}/readonly-absent-*`, tmp);
+		await assertBlocked(toolCall, `rm -f ${shellPath(os.homedir())}/readonly-absent-*`, tmp);
 	} finally {
 		await rm(tmp, { recursive: true, force: true });
 	}
@@ -949,7 +949,7 @@ test("unmatched globs are confined by their literal name", async () => {
 test("tracks assignment-driven workflows inside the temp dir", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: assignments earlier in the line resolve for downstream commands —
 	// the canonical mktemp scratch-repo workflow.
@@ -966,7 +966,7 @@ test("tracks assignment-driven workflows inside the temp dir", async () => {
 test("compound command bodies run in the parent shell", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 	const outside = JSON.stringify(path.parse(tmp).root);
 
 	// CONTRACT: a directory change inside a compound body can succeed, so inner
@@ -989,7 +989,7 @@ test("compound command bodies run in the parent shell", async () => {
 test("compound inner directory changes cannot hide behind prefixes", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 	const outside = JSON.stringify(path.parse(tmp).root);
 
 	// CONTRACT: prefix-wrapped and eval-driven cd inside a body still counts as
@@ -1008,7 +1008,7 @@ test("compound inner directory changes cannot hide behind prefixes", async () =>
 test("pushd stack rotation arguments fail closed", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 	const outside = JSON.stringify(path.parse(tmp).root);
 
 	// CONTRACT: +N/-N operands rotate the untracked directory stack.
@@ -1019,7 +1019,7 @@ test("pushd stack rotation arguments fail closed", async () => {
 test("git merge-tree writes are path-checked", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: modern merge-tree defaults to --write-tree and writes objects.
 	await assertBlocked(toolCall, "git merge-tree --write-tree HEAD HEAD~1", "/workspace");
@@ -1047,7 +1047,7 @@ test("sudo-wrapped heredoc bodies are classified as code", async () => {
 test("blocks command-executing and hook-injecting git flags", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	await assertBlocked(toolCall, "git rebase -x 'touch evil' HEAD~1", tmp);
 	await assertBlocked(toolCall, "git rebase -xevil HEAD~1", tmp);
@@ -1060,7 +1060,7 @@ test("blocks command-executing and hook-injecting git flags", async () => {
 test("trap handlers are classified and poison later relative writes", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: trap handlers run later (EXIT/DEBUG), so their code is classified now
 	// and a directory change inside forks UNKNOWN_CWD for subsequent segments.
@@ -1076,7 +1076,7 @@ test("trap handlers are classified and poison later relative writes", async () =
 test("alias values are classified and directory changes poison later writes", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: alias values run on later invocation — same posture as function bodies:
 	// mutations block at definition, cd forks UNKNOWN_CWD, harmless aliases stay clean.
@@ -1088,7 +1088,7 @@ test("alias values are classified and directory changes poison later writes", as
 test("git branch and name flags are not misread as paths", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// CONTRACT: -B (worktree branch) and --name (submodule) take names, not paths.
 	await assertAllowed(toolCall, `git worktree add -B foo ${tmp}/wt`, tmp);
@@ -1103,7 +1103,7 @@ test("quoted redirect targets resolve identically to unquoted targets", () => {
 	// redirect targets the same as unquoted — quotes are shell syntax, not part
 	// of the resolved path. Both double and single quoted forms must yield identical
 	// verdicts to their unquoted counterparts.
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 
 	// > outside temp: quoted and unquoted both block with the same resolved path.
 	const qDouble = classifyBashCommand('echo hi > "/etc/probe"', "/workspace");
@@ -1187,7 +1187,7 @@ test("bash <() process substitution classifies inner command targets", () => {
 // in-place edits inside temp stay allowed.
 
 test("find mutations block outside temp, allow inside temp, naming real targets", () => {
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 	// Contract: -delete and -exec/-ok/-okdir mutate the find roots; -fprint/-fprint0/-fprintf/-fls
 	// write results to a named output file (that output is the real target, not the roots).
 	const blocked = [
@@ -1222,7 +1222,7 @@ test("find mutations block outside temp, allow inside temp, naming real targets"
 });
 
 test("sed -i mutations block outside temp, allow inside temp, naming file operands", () => {
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 	// Contract: `sed -i` edits its file operands in place; the operand is the target. The backup
 	// extension (`-i.bak`) and expression forms (`-e`/`--expression` before or after `-i`)
 	// must all resolve to the file operand.
@@ -1258,7 +1258,7 @@ test("sed -i mutations block outside temp, allow inside temp, naming file operan
 });
 
 test("perl/ruby -i in-place edits block outside temp, allow inside temp, naming the file", () => {
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 	// Contract: `-i` enables in-place file mutation; the edited file is the target. Without -i,
 	// perl/ruby only print to stdout (handled by the interpreter inline-exec path, not here).
 	const blocked = [
@@ -1289,7 +1289,7 @@ test("perl/ruby -i in-place edits block outside temp, allow inside temp, naming 
 // The -e/-pe program argument is now stripped by getPerlRubyTargets, so the
 // reason names the real file target and in-temp edits are allowed.
 test("perl/ruby -i -pe inline edits name the edited file in the reason", () => {
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 	for (const cmd of ["perl", "ruby"]) {
 		const outside = classifyBashCommand(`${cmd} -i -pe 's/x/y/' /etc/passwd`, "/workspace");
 		assert.equal(outside.ok, false, `${cmd} -pe outside`);
@@ -1299,7 +1299,7 @@ test("perl/ruby -i -pe inline edits name the edited file in the reason", () => {
 });
 
 test("sed expression variants and read-only find stay on the right side of the line", () => {
-	const tmp = os.tmpdir();
+	const tmp = shellPath(os.tmpdir());
 	// filterSedExpressionTokens must also strip concatenated (-es/x/y/) and attached
 	// (--expression=...) -e forms, so only the file operand is checked against temp.
 	for (const cmd of ["sed -es/x/y/ -i /etc/passwd", "sed --expression='s/x/y/' -i /etc/passwd"]) {

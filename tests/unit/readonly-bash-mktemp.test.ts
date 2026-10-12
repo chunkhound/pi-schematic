@@ -5,6 +5,7 @@ import path from "node:path";
 import { classifyBashCommand } from "../../readonly-bash.js";
 import { parseMktempArgs, resolveMktempSyntheticPath } from "../../readonly-bash-mktemp.js";
 import { TEMP_DIR } from "../../temp-dir.js";
+import { shellPath } from "./helpers.js";
 
 // Verdict contracts for mktemp provenance: each case pins the user-facing
 // allow/block of a full `mktemp && use` chain from an outside cwd. Internal
@@ -12,7 +13,7 @@ import { TEMP_DIR } from "../../temp-dir.js";
 // parse output; `--` and `--tmpdir DIR template` cases live in
 // readonly-coverage-gaps.test.ts and are not repeated here.
 const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
-const outside = path.join(os.homedir(), "readonly-mktemp-outside");
+const outside = shellPath(path.join(os.homedir(), "readonly-mktemp-outside"));
 
 function verdict(command: string, allowed: boolean): void {
 	assert.equal(classifyBashCommand(command, outside).ok, allowed, command);
@@ -35,12 +36,12 @@ test("mktemp -d/--directory grants directory provenance", () => {
 
 test("mktemp -p with an outside base blocks, inside-temp base allows", () => {
 	verdict(`D=$(mktemp -d -p ${quote(outside)} x.XXXXXX) && cd "$D" && touch f`, false);
-	verdict(`D=$(mktemp -d -p${quote(TEMP_DIR)} x.XXXXXX) && cd "$D" && touch f`, true);
+	verdict(`D=$(mktemp -d -p${quote(shellPath(TEMP_DIR))} x.XXXXXX) && cd "$D" && touch f`, true);
 });
 
 test("mktemp --tmpdir=attached base follows the named base", () => {
 	verdict(`D=$(mktemp -d --tmpdir=${quote(outside)} x.XXXXXX) && cd "$D" && touch f`, false);
-	verdict(`D=$(mktemp -d --tmpdir=${quote(TEMP_DIR)} x.XXXXXX) && cd "$D" && touch f`, true);
+	verdict(`D=$(mktemp -d --tmpdir=${quote(shellPath(TEMP_DIR))} x.XXXXXX) && cd "$D" && touch f`, true);
 });
 
 test("mktemp -t fails closed on non-darwin", () => {
@@ -54,8 +55,8 @@ test("mktemp --suffix keeps file provenance", () => {
 });
 
 test("mktemp positional template inside temp allows, outside blocks", () => {
-	verdict(`F=$(mktemp ${quote(path.join(TEMP_DIR, "x.XXXXXX"))}) && echo > "$F"`, true);
-	verdict(`F=$(mktemp ${quote(path.join(outside, "x.XXXXXX"))}) && echo > "$F"`, false);
+	verdict(`F=$(mktemp ${quote(shellPath(path.join(TEMP_DIR, "x.XXXXXX")))}) && echo > "$F"`, true);
+	verdict(`F=$(mktemp ${quote(shellPath(path.join(outside, "x.XXXXXX")))}) && echo > "$F"`, false);
 });
 
 test("mktemp unknown flags fail closed", () => {
@@ -79,7 +80,7 @@ test("getSafeMktempFileSyntheticPath allows file provenance write", () => {
 });
 
 test("mktemp -d with outside base blocks", () => {
-	verdict(`mktemp -d ${quote(path.join(outside, "x.XXXXXX"))} && cd "$D" && touch f`, false);
+	verdict(`mktemp -d ${quote(shellPath(path.join(outside, "x.XXXXXX")))} && cd "$D" && touch f`, false);
 });
 
 test("--tmpdir without a value follows the runtime TMPDIR like bare mktemp", () => {
@@ -92,7 +93,7 @@ test("--tmpdir without a value follows the runtime TMPDIR like bare mktemp", () 
 		verdict(`export TMPDIR=${quote(outside)}; D=$(mktemp -d --tmpdir) && cd "$D" && touch f`, false);
 		// An explicit DIR operand plus a template stays proven regardless of the ambient base.
 		// (`--tmpdir DIR` with no template is an invalid mktemp invocation, so it over-blocks.)
-		verdict(`export TMPDIR=${quote(outside)}; D=$(mktemp -d --tmpdir ${quote(TEMP_DIR)} x.XXXXXX) && cd "$D" && touch f`, true);
+		verdict(`export TMPDIR=${quote(outside)}; D=$(mktemp -d --tmpdir ${quote(shellPath(TEMP_DIR))} x.XXXXXX) && cd "$D" && touch f`, true);
 	} finally {
 		if (savedTmpDir === undefined) delete process.env.TMPDIR;
 		else process.env.TMPDIR = savedTmpDir;
@@ -105,7 +106,7 @@ test("bare mktemp honors the ambient TMPDIR and fails closed when it is not temp
 	try {
 		delete process.env.TMPDIR;
 		verdict(`export TMPDIR=${quote(outside)}; D=$(mktemp -d) && cd "$D" && touch f`, false);
-		verdict(`export TMPDIR=${quote(TEMP_DIR)}; D=$(mktemp -d) && cd "$D" && touch f`, true);
+		verdict(`export TMPDIR=${quote(shellPath(TEMP_DIR))}; D=$(mktemp -d) && cd "$D" && touch f`, true);
 		// TMP/TEMP are consulted only when TMPDIR names no base.
 		verdict(`export TMP=${quote(outside)}; D=$(mktemp -d) && cd "$D" && touch f`, false);
 		verdict(`export TEMP=${quote(outside)}; D=$(mktemp -d) && cd "$D" && touch f`, false);

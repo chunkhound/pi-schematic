@@ -3,11 +3,12 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { classifyBashCommand } from "../../readonly-bash.js";
+import { shellPath } from "./helpers.js";
 
 // Per-module localization probes: one verdict-level contract per split module,
 // through the public classifier only (no internals). Each pins the module's
 // user-facing verdict so a refactor that drops its branch fails loudly.
-const workspace = os.tmpdir();
+const workspace = shellPath(os.tmpdir());
 
 function verdict(command: string, allowed: boolean, match?: RegExp): void {
 	const result = classifyBashCommand(command, workspace);
@@ -24,7 +25,7 @@ test("scanner: unterminated substitution fails closed", () => {
 test("heredoc: redirect target on a heredoc line is still checked", () => {
 	// The body is inert data, but `> /etc/x` on the header writes outside temp.
 	verdict("cat <<EOF > /etc/x\nhi\nEOF", false, /write redirect blocked outside temp dir/);
-	verdict(`cat <<EOF > ${path.join(workspace, "x")}\nhi\nEOF`, true);
+	verdict(`cat <<EOF > ${shellPath(path.join(workspace, "x"))}\nhi\nEOF`, true);
 });
 
 test("dirchange: tracked cd moves later relative writes", () => {
@@ -46,5 +47,5 @@ test("shell-utils: unprovable targets fail closed, never misdiagnosed", () => {
 		assert.match(result.reason, /cannot prove target stays inside temp/);
 		assert.doesNotMatch(result.reason, /blocked outside temp dir/);
 	}
-	verdict(`touch ${path.join(workspace, "x")} > /dev/null`, true);
+	verdict(`touch ${shellPath(path.join(workspace, "x"))} > /dev/null`, true);
 });

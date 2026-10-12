@@ -8,6 +8,7 @@ import { TEMP_WRITE_ROOTS_CANONICAL } from "../../temp-dir.js";
 import { classifyBashCommand } from "../../readonly-bash.js";
 import { FAIL_CLOSED_HINT } from "../../notifications.js";
 import { capabilityGate, check, fixture, git, hasGit, installGitIsolation, localEnvironment, outside, outsideWritable, outsideWritesRequired, posixHost, quote, repository } from "./readonly-git-helpers.js";
+import { shellPath } from "./helpers.js";
 
 // Platform-agnostic readonly-git classifier tests: every assertion goes through
 // classifyBashCommand, with fixtures built from the real `git` CLI only — no bash
@@ -57,17 +58,17 @@ else {
 
 	test("Git blocks shell operands with unproven expansions", (t) => {
 		const root = fixture(t);
-		for (const operand of ["$UNKNOWN_READONLY_GIT_PATH", `${root}/$UNKNOWN_READONLY_GIT_PATH`, `${root}/*`, String.raw`$'${root}/\x2e\x2e'`]) {
+		for (const operand of ["$UNKNOWN_READONLY_GIT_PATH", `${shellPath(root)}/$UNKNOWN_READONLY_GIT_PATH`, `${shellPath(root)}/*`, String.raw`$'${shellPath(root)}/\x2e\x2e'`]) {
 			check(`git init ${operand}`, root, false);
 		}
-		check(String.raw`DIR=${root}/\../escape; git init "$DIR"`, root, false);
+		check(String.raw`DIR=${shellPath(root)}/\../escape; git init "$DIR"`, root, false);
 	});
 
 	test("Git unknown expansions cannot supply hidden options or change argument count", (t) => {
 		const root = fixture(t);
 		for (const command of [
-			`ARGS="--file ${outside} demo.key changed"; git config $ARGS`,
-			`ARGS="--output ${outside}"; git log $ARGS`,
+			`ARGS="--file ${shellPath(outside)} demo.key changed"; git config $ARGS`,
+			`ARGS="--output ${shellPath(outside)}"; git log $ARGS`,
 			`git log $UNKNOWN_READONLY_GIT_ARGS`,
 			`git config "$UNKNOWN_READONLY_GIT_ARGS"`,
 			`git commit -m $UNKNOWN_READONLY_GIT_MESSAGE`,

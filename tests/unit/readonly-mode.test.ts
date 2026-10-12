@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
-import { registerReadonlyPI, makeReadonlyUICtx } from "./helpers.js";
+import { registerReadonlyPI, makeReadonlyUICtx, shellPath } from "./helpers.js";
 
 test("readonly toggle on blocks write, edit, handoff, and bash mutations", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
@@ -13,7 +13,7 @@ test("readonly toggle on blocks write, edit, handoff, and bash mutations", async
 	assert.equal((await toolCall({ toolName: "edit", input: { path: "/tmp/x", edits: [] } }, {})).block, true);
 	assert.equal((await toolCall({ toolName: "handoff", input: { task: "pivot" } }, {})).block, true);
 	assert.equal((await toolCall({ toolName: "bash", input: { command: "rm -rf /" } }, { cwd: "/workspace" })).block, true);
-	assert.equal(await toolCall({ toolName: "bash", input: { command: `rm ${os.tmpdir()}/x` } }, { cwd: "/workspace" }), undefined);
+	assert.equal(await toolCall({ toolName: "bash", input: { command: `rm ${shellPath(os.tmpdir())}/x` } }, { cwd: "/workspace" }), undefined);
 	assert.equal(await toolCall({ toolName: "read", input: { path: "/tmp/x" } }, {}), undefined);
 });
 

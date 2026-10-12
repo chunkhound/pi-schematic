@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { classifyBashCommand } from "../../readonly-bash.js";
+import { shellPath } from "./helpers.js";
 
 // Concurrency smoke: the classifier holds per-call state only (cwd/stack/vars
 // travel in ShellState, no shared mutable cache). Parallel batches over a mixed
@@ -12,9 +13,9 @@ const outside = path.join(os.homedir(), "readonly-concurrency-outside");
 const corpus: Array<{ command: string; cwd: string }> = [
 	{ command: "echo hi", cwd: workspace },
 	{ command: "touch /etc/x", cwd: workspace },
-	{ command: `touch ${path.join(workspace, "f")}`, cwd: workspace },
+	{ command: `touch ${shellPath(path.join(workspace, "f"))}`, cwd: workspace },
 	{ command: "cd /etc && touch f", cwd: workspace },
-	{ command: `cd ${workspace} && touch f`, cwd: workspace },
+	{ command: `cd ${shellPath(workspace)} && touch f`, cwd: workspace },
 	{ command: "D=$(mktemp -d) && touch f", cwd: workspace },
 	{ command: "echo $(touch /etc/x)", cwd: workspace },
 	{ command: "cat <<EOF > /etc/x\nhi\nEOF", cwd: workspace },
@@ -22,7 +23,7 @@ const corpus: Array<{ command: string; cwd: string }> = [
 	{ command: "git log --oneline", cwd: workspace },
 	{ command: "git add -Z file", cwd: workspace },
 	{ command: "touch /etc/x; echo hi", cwd: outside },
-	{ command: `touch ${path.join(os.tmpdir(), "g")}`, cwd: outside },
+	{ command: `touch ${shellPath(path.join(os.tmpdir(), "g"))}`, cwd: outside },
 	{ command: "false || touch /etc/x", cwd: workspace },
 	{ command: "{ cd /etc; false; } || touch leak", cwd: workspace },
 	{ command: "touch 'C:\\Temp\\x'", cwd: workspace },

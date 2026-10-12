@@ -5,6 +5,7 @@ import path from "node:path";
 import { classifyBashCommand } from "../../readonly-bash.js";
 import { TEMP_DIR } from "../../temp-dir.js";
 import { posixHost } from "./readonly-git-helpers.js";
+import { shellPath } from "./helpers.js";
 
 // Coverage-gap contracts: each case pins a user-facing verdict (allow inside temp /
 // block outside / fail closed) for a classifier branch the broader suites leave open.
@@ -12,15 +13,15 @@ import { posixHost } from "./readonly-git-helpers.js";
 const posixOnly = { skip: posixHost ? false : "POSIX path literal contracts" };
 const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 const outside = path.join(os.homedir(), "readonly-coverage-gaps-outside");
-const outsideFile = quote(path.join(outside, "f"));
-const tempFile = quote(path.join(TEMP_DIR, "f"));
+const outsideFile = quote(shellPath(path.join(outside, "f")));
+const tempFile = quote(shellPath(path.join(TEMP_DIR, "f")));
 
 function verdict(command: string, allowed: boolean): void {
 	assert.equal(classifyBashCommand(command, outside).ok, allowed, command);
 }
 
 test("mktemp -- ends option parsing and fails closed on extra operands", posixOnly, () => {
-	const template = quote(path.join(TEMP_DIR, "x.XXXXXX"));
+	const template = quote(shellPath(path.join(TEMP_DIR, "x.XXXXXX")));
 	// `--` makes the following word the template, even though it starts with `/`.
 	verdict(`D=$(mktemp -d -- ${template}) && cd "$D" && touch f`, true);
 	// A second operand cannot be modeled: mktemp accepts one template, so fail closed.
@@ -31,7 +32,7 @@ test("bare mktemp --tmpdir defaults to temp while a foreign base blocks", posixO
 	// No directory positional: the base falls back to the OS temp dir.
 	verdict('D=$(mktemp -d --tmpdir x.XXXXXX) && cd "$D" && touch f', true);
 	// A directory-looking positional becomes the base; inside temp it stays writable.
-	verdict(`D=$(mktemp -d --tmpdir ${quote(TEMP_DIR)} x.XXXXXX) && cd "$D" && touch f`, true);
+	verdict(`D=$(mktemp -d --tmpdir ${quote(shellPath(TEMP_DIR))} x.XXXXXX) && cd "$D" && touch f`, true);
 	verdict(`D=$(mktemp -d --tmpdir ${quote(outside)} x.XXXXXX) && cd "$D" && touch f`, false);
 });
 
@@ -53,14 +54,14 @@ test("mutation target extractors block outside writes and allow temp writes", po
 		verdict(blocked, false);
 	}
 	// Download/extract directories pointed at temp stay allowed.
-	verdict(`wget --directory-prefix=${quote(TEMP_DIR)} http://example.test/x`, true);
-	verdict(`tar --directory=${quote(TEMP_DIR)} -xf a.tar`, true);
+	verdict(`wget --directory-prefix=${quote(shellPath(TEMP_DIR))} http://example.test/x`, true);
+	verdict(`tar --directory=${quote(shellPath(TEMP_DIR))} -xf a.tar`, true);
 });
 
 test("command-substitution command words fail closed", () => {
 	// The substitution's inner code is classified separately, but its OUTPUT becomes
 	// argv[0]; the classifier cannot see which executable runs, so it must fail closed.
-	const cwd = os.tmpdir();
+	const cwd = shellPath(os.tmpdir());
 	const rmSub = classifyBashCommand("$(echo rm) -rf /etc/x", cwd);
 	assert.equal(rmSub.ok, false, "$(echo rm) -rf /etc/x");
 	if (!rmSub.ok) assert.match(rmSub.reason, /dynamic command blocked/);
@@ -77,7 +78,7 @@ test("attached env split-string forms classify the wrapped command", posixOnly, 
 });
 
 test("chmod --reference supplies the mode so every operand is a write target", posixOnly, () => {
-	const ref = quote(path.join(outside, "ref"));
+	const ref = quote(shellPath(path.join(outside, "ref")));
 	verdict(`chmod --reference=${ref} ${outsideFile}`, false);
 	verdict(`chmod --reference ${ref} ${outsideFile}`, false);
 	verdict(`chmod --reference=${tempFile} ${tempFile}`, true);
@@ -89,7 +90,7 @@ test("cp-family target-directory flags name the destination", posixOnly, () => {
 		verdict(`${cmd} -t ${quote(outside)} src`, false);
 		verdict(`${cmd} -t${quote(outside)} src`, false);
 		verdict(`${cmd} --target-directory=${quote(outside)} src`, false);
-		verdict(`${cmd} -t ${quote(TEMP_DIR)} src`, true);
+		verdict(`${cmd} -t ${quote(shellPath(TEMP_DIR))} src`, true);
 	}
 });
 
