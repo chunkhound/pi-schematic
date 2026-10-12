@@ -62,7 +62,9 @@ const EXPECTED_ALLOWLIST_KEYS = new Set<string>([
 ]);
 
 function readText(url: URL): string {
-	return readFileSync(url, "utf8");
+	// Normalize CRLF so the workflow regexes hold on Windows, where core.autocrlf=true
+	// rewrites LF to CRLF at checkout (the repo only pins tests/snapshots/**/*.txt to LF).
+	return readFileSync(url, "utf8").replaceAll("\r\n", "\n");
 }
 
 function parseAuditConfig(): AuditConfig {
