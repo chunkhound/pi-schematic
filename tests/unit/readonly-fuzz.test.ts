@@ -40,6 +40,8 @@ const SHAPES = [
 	"ln -s README.md {{t}}",
 	"tee {{t}}",
 	"echo hi > {{t}}",
+	// `\'` inside single quotes: the backslash is literal, so the redirect stays a redirect.
+	"echo 'a\\' > {{t}}",
 	"cat README.md >> {{t}}",
 	"echo hi 2> {{t}}",
 	"git init {{t}}",

@@ -1354,6 +1354,29 @@ test("terminal and fd redirect targets are inert, real files are not", () => {
 	}
 });
 
+test("backslash inside single quotes is literal, not escape", () => {
+	const tmp = os.tmpdir();
+
+	// Backslash inside single quotes should not escape the closing quote.
+	// Old bug: \' was treated as escape sequence, so the quote wasn't closed,
+	// and the > was incorrectly treated as inside the quote (not a redirect).
+	// New behavior: \ is literal inside single quotes, quote closes, > is a redirect.
+	const cmd = `echo 'a\\' > ${tmp}/file`;
+	const v = classifyBashCommand(cmd, "/workspace");
+	assert.equal(v.ok, true, "redirect after single-quoted backslash should be recognized");
+
+	// Verify the redirect is actually checked (redirect to outside should fail)
+	const cmd2 = `echo 'a\\' > /etc/file`;
+	const v2 = classifyBashCommand(cmd2, "/workspace");
+	assert.equal(v2.ok, false, "redirect should still be checked");
+	assert.match(v2.reason, /blocked outside temp/, "should block redirect outside temp");
+
+	// Backslash before > inside single quotes should not make it a redirect
+	const cmd3 = "echo 'a\\>' > /tmp/file";
+	const v3 = classifyBashCommand(cmd3, "/workspace");
+	assert.equal(v3.ok, true, "> inside single quotes should not be a redirect");
+});
+
 test("nested command substitution reports its block prefix once", () => {
 	const verdict = classifyBashCommand("echo $(echo $(touch /etc/passwd))", "/workspace");
 	assert.equal(verdict.ok, false);
