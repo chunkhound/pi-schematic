@@ -260,8 +260,24 @@ function announceReadonlyToggle(ctl: RunCtl, bundle: RunBundle, enabled: boolean
 	notify(ctl.ctx, enabled ? READONLY_ENABLED_STATUS : READONLY_DISABLED_NOTIFICATION, "info");
 }
 
+/** Backstop: `reserveWorkflow` guarantees no live run, so a set flag/sink/registry here is
+ * stale — `openRun` runs before `executeWorkflow`'s try/finally owns cleanup, so a throw
+ * from a binding seam would otherwise leave suppression stuck. Happy path is already
+ * false/null/null, so this is a noop there. Fresh `ctl` unsubscribe noops + `releaseRun`
+ * order stay the real cleanup; this only covers the bypassed-finally gap. */
+function clearStaleRunState(bundle: RunBundle): void {
+	bundle.state.inputSuppressed = false;
+	bundle.state.childUsageSink = null;
+	const stale = runRegistrySlot().current;
+	if (stale) {
+		runRegistrySlot().current = null;
+		stale.dispose();
+	}
+}
+
 /** Open one live run: bindings, shell activity channel, and the host wired to them. */
 function openRun(bundle: RunBundle, program: RunProgram): { ctl: RunCtl; host: WorkflowHost; activity: ShellActivity } {
+	clearStaleRunState(bundle);
 	const ctl: RunCtl = { ctx: program.ctx, host: null, name: program.name, progress: null, exitRecorded: false, outcome: null, unsubscribeInput: () => {}, unsubscribeCancel: () => {}, registry: null };
 	// Shell visibility is UI-only and never enters LLM context: a live widget plus CustomEntry audit rows.
 	const activity = createShellActivity({ getPi: () => bundle.pi, getCtx: () => ctl.ctx });

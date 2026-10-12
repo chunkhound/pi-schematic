@@ -9,6 +9,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
+import { registeredState } from "../../process-state.js";
 import { registerWorkflowCommand, type WorkflowCommandDeps } from "../../workflow/command.js";
 import { releaseWorkflow, reserveWorkflow } from "../../workflow/coordinator.js";
 import { runRealChildInvocation, tmpDir } from "../unit/helpers.js";
@@ -123,6 +124,48 @@ test("/workflow runs the real sandbox against a real model turn and attributes i
 		assert.equal(state.childUsageSink, null, "the disposed run uninstalls its sink");
 		assert.equal(reserveWorkflow(), true, "the run released the process-wide reservation");
 		releaseWorkflow();
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+// A checkpoint-only workflow: no model turns, so the run is fast and fully deterministic.
+const BACKSTOP_WORKFLOW = `return defineWorkflow((workflow) => {
+  workflow.checkpoint({});
+  workflow.exit({ reason: "done", text: "ok" });
+});
+`;
+
+// WHY: a run that dies before its cleanup (a bypassed finally) must never poison the next
+// run. This poisons the three run-state slots the way a crashed run would leave them and
+// runs a checkpoint-only workflow through the real command and sandbox; the openRun
+// backstop must clear them so the fresh run completes with clean state.
+test("a poisoned prior run never blocks the next run", { timeout: 60_000 }, async () => {
+	const dir = await tmpDir();
+	const state = createState();
+	const deps: WorkflowCommandDeps = {
+		setReadonly: () => false,
+		requestHandoff: async () => {},
+		prepareRunFrontmatter: async () => {},
+	};
+	let staleDisposed = false;
+	// Same key and shape as runRegistrySlot in workflow/command.ts; registeredState shares
+	// one instance per symbol, so this reaches the command's own slot.
+	const slot = registeredState<{ current: { dispose?: () => void } | null }>("pi-schematic.workflow-run-registry", () => ({ current: null }));
+	slot.current = { dispose: () => { staleDisposed = true; } };
+	state.inputSuppressed = true;
+	state.childUsageSink = () => {};
+	const pi = await createTestHost((api) => registerWorkflowCommand(api, state, deps));
+	try {
+		await mkdir(join(dir, ".pi", "workflows"), { recursive: true });
+		await writeFile(join(dir, ".pi", "workflows", "backstop-step.js"), BACKSTOP_WORKFLOW);
+		await pi.commands.get("workflow")!.handler("backstop-step", headlessCtx(dir, []));
+
+		assert.ok(staleDisposed, "the stale registry is disposed before the new run owns the slot");
+		const exits = pi.appendedEntries.filter((record) => record.customType === "workflow-exit");
+		assert.deepEqual(exits.map((record) => record.data), [{ reason: "done", text: "ok" }], "the run completes despite the poisoned state");
+		assert.equal(state.inputSuppressed, false, "input ends usable");
+		assert.equal(state.childUsageSink, null, "no sink survives the run");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
