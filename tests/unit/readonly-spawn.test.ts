@@ -12,6 +12,7 @@ import {
 	filterReadonlyToolNames,
 } from "../../spawn/index.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
+import { STRUCTURED_OUTPUT_TOOL } from "../../workflow/output.js";
 import { runRealChildInvocation } from "./helpers.js";
 
 // ── Tool filtering ───────────────────────────────────────────────────
@@ -33,11 +34,12 @@ test("filterReadonlyToolNames preserves all tools when readonly is off", () => {
 
 // ── Child tool names ─────────────────────────────────────────────────
 
-test("buildChildToolNames excludes spawn and handoff from inherited tools", () => {
-	const parentTools = ["read", "bash", "write", "edit", "spawn", "handoff"];
+test("buildChildToolNames excludes spawn, handoff, and the run-scoped output tool from inherited tools", () => {
+	const parentTools = ["read", "bash", "write", "edit", "spawn", "handoff", STRUCTURED_OUTPUT_TOOL];
 	const result = buildChildToolNames(parentTools, []);
 	assert.equal(result.includes("spawn"), false);
 	assert.equal(result.includes("handoff"), false);
+	assert.equal(result.includes(STRUCTURED_OUTPUT_TOOL), false);
 	assert.equal(result.includes("read"), true);
 	assert.equal(result.includes("bash"), true);
 	assert.equal(result.includes("write"), true);

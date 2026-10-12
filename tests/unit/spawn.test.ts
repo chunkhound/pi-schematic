@@ -13,6 +13,7 @@ import {
 	truncateText,
 } from "../../spawn/index.js";
 import { renderSpawnResult } from "../../spawn/renderer.js";
+import { STRUCTURED_OUTPUT_TOOL } from "../../workflow/output.js";
 import { SpawnRouteError } from "../../model-groups/router.js";
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import { Value } from "typebox/value";
@@ -405,18 +406,19 @@ test("truncateText applies byte limit after line limit", () => {
 
 // ── Build child tool names ─────────────────────────────────────────
 
-test("child tool names inherit active registered builtins and exclude recursive controls", async () => {
+test("child tool names inherit active registered builtins and exclude recursive controls and the run-scoped output tool", async () => {
 	const state = createState();
 	const childTools = createChildTools(await createTestHost(), state);
 	assert.equal(childTools.some(t => t.name === "spawn"), false);
 	const childToolNames = buildChildToolNames(
-		["read", "bash", "spawn", "handoff", "future_tool"],
+		["read", "bash", "spawn", "handoff", STRUCTURED_OUTPUT_TOOL, "future_tool"],
 		childTools,
 		[
 			{ name: "read", sourceInfo: { source: "builtin" } },
 			{ name: "bash", sourceInfo: { source: "builtin" } },
 			{ name: "spawn", sourceInfo: { source: "builtin" } },
 			{ name: "handoff", sourceInfo: { source: "builtin" } },
+			{ name: STRUCTURED_OUTPUT_TOOL, sourceInfo: { source: "extension" } },
 			{ name: "future_tool", sourceInfo: { source: "project" } },
 		] as any,
 	);
@@ -424,6 +426,7 @@ test("child tool names inherit active registered builtins and exclude recursive 
 	assert.equal(childToolNames.includes("bash"), true);
 	assert.equal(childToolNames.includes("spawn"), false);
 	assert.equal(childToolNames.includes("handoff"), false);
+	assert.equal(childToolNames.includes(STRUCTURED_OUTPUT_TOOL), false);
 });
 
 test("child tool names inherit active registered MCP extension tools", async () => {
@@ -480,10 +483,11 @@ test("child tool names exclude inactive registered and active phantom tools", as
 	assert.equal(toolNames.includes("spawn"), false);
 });
 
-test("buildChildToolNames (2-arg fallback) removes spawn and handoff from inherited tools", () => {
-	const result = buildChildToolNames(["read", "bash", "spawn", "handoff"], []);
+test("buildChildToolNames (2-arg fallback) removes spawn, handoff, and the run-scoped output tool from inherited tools", () => {
+	const result = buildChildToolNames(["read", "bash", "spawn", "handoff", STRUCTURED_OUTPUT_TOOL], []);
 	assert.ok(!result.includes("spawn"), "spawn must be filtered out");
 	assert.ok(!result.includes("handoff"), "handoff must be filtered out");
+	assert.ok(!result.includes(STRUCTURED_OUTPUT_TOOL), "workflow_output must be filtered out");
 	assert.ok(result.includes("read"), "read must be preserved");
 	assert.ok(result.includes("bash"), "bash must be preserved");
 });

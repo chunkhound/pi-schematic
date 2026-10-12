@@ -70,7 +70,7 @@ interface SchematicState {
 - An unknown group reports fallback and uses the parent model and thinking.
 - A known empty group, or one with no usable authenticated entries, fails before child-session creation.
 - The selected public model enters a child-owned runtime.
-- Children inherit cwd, the active registered tools they can run in that session, and readonly posture. They keep child-local notebook tools. They cannot spawn or handoff.
+- Children inherit cwd, the active registered tools they can run in that session, and readonly posture. They keep child-local notebook tools. They cannot spawn or handoff, and they never inherit the run-scoped `workflow_output` tool: a child call would satisfy the parent's structured-output contract.
 - The spawn result carries the child's usage. The parent session total and the workflow cost total therefore price child work.
 
 **Model Groups** — `/model-groups` manages versioned global and trusted-project JSON configuration. Project groups shadow same-named global groups. Configuration is loaded and validated against Pi's model registry into the `modelGroups` snapshot; only names are injected into the agent prompt. Routing uses the parent registry only to select configured/authenticated entries—the registry/auth objects are not passed into the child runtime.

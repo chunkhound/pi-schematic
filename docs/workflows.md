@@ -365,7 +365,7 @@ Precedence has one source: `workflowRoots` in `workflow/file.ts` lists `<cwd>/.p
 - Workflow code is synchronous; the rule is stated in [Model and invariants](#model-and-invariants).
 - `workflow.new` clears the context and starts a new session. After it, the old context and its session manager are invalid. The host rebinds pi, state, dependencies, input suppression, cancellation, and the run-visibility surfaces from the runtime that the replacement session published in `session_start`. A fresh cancellation registration means no armed press carries across the switch. A missing publication fails the workflow explicitly. A cancelled replacement fails the handle without switching. Cost stays cumulative across replacements.
 - Every workflow MUST declare at least one `workflow.checkpoint(...)`. The compiler refuses a file without one. `workflow.exit` does not satisfy the requirement.
-- Structured output changes the declared tool set for one run. The host registers and activates `workflow_output` before dispatch and restores the previous active set in `finally`. The change is transcript-visible and can invalidate the provider's cached prefix.
+- Structured output changes the declared tool set for one run. The host registers and activates `workflow_output` before dispatch and restores the previous active set in `finally`. The change is transcript-visible and can invalidate the provider's cached prefix. A spawned child never inherits `workflow_output`; the tool is host-owned and run-scoped, so only the parent turn can satisfy the contract.
 - The sandbox bounds resources. It is not a security boundary.
 - Readonly is the enforced posture, not a model hint:
   - `write` and `edit` tools are blocked;

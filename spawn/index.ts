@@ -4,7 +4,9 @@
  * Creates an isolated in-memory child AgentSession for focused subtask execution.
  * Children inherit the parent's model, thinking level, cwd, active registered
  * executable tools, and notebook access.
- * Children do not inherit the spawn or handoff tools (recursion prevention).
+ * Children do not inherit the spawn or handoff tools (recursion prevention), nor the
+ * run-scoped `workflow_output` tool (host-owned structured contract; a child call would
+ * satisfy the parent's capture).
  *
  * Spawn is context isolation, not a security boundary. Child agents are trusted
  * extensions of the parent and inherit parent authority by design.
@@ -42,6 +44,7 @@ import { productionConstraintRegistry, type ConstraintRegistry } from "../model-
 import { MODEL_GROUP_MODALITY_PROSE } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
 import { messageOf, safeAppendEntry } from "../workflow/errors.js";
+import { STRUCTURED_OUTPUT_TOOL } from "../workflow/output.js";
 import { addUsage, sessionStatsToUsage } from "../usage.js";
 import {
 	renderSpawnCall,
@@ -168,7 +171,7 @@ function truncateResult(text: string): { text: string; truncated: boolean } {
  * Local child custom tools are added separately. Parent-only custom tools are
  * intentionally excluded so the child never advertises a tool it cannot execute.
  *
- * handoff and spawn never carry into children.
+ * handoff, spawn, and workflow_output never carry into children.
  */
 function shouldSwallowPromptError(error: unknown, isStale: () => boolean, wasAborted: boolean): boolean {
 	if (isStale()) return false;
@@ -258,7 +261,9 @@ export function buildChildToolNames(
 	const inheritableParentToolNames = availableTools
 		? getInheritableParentToolNames(parentToolNames, availableTools)
 		: parentToolNames;
-	const inheritedTools = inheritableParentToolNames.filter((name) => name !== "spawn" && name !== "handoff");
+	const inheritedTools = inheritableParentToolNames.filter(
+		(name) => name !== "spawn" && name !== "handoff" && name !== STRUCTURED_OUTPUT_TOOL,
+	);
 	return [...new Set([...inheritedTools, ...childTools.map((tool) => tool.name)])];
 }
 
@@ -305,7 +310,7 @@ function createReadonlyChildBashTool(
 
 const SPAWN_DESCRIPTION =
 	"Spawn an isolated child agent for a focused subtask. " +
-	"Child inherits parent model, thinking level, cwd, active registered tools executable in the child session, and shared notebook tools unless an optional Model Group routes its model/thinking; children cannot spawn or handoff. " +
+	"Child inherits parent model, thinking level, cwd, active registered tools executable in the child session, and shared notebook tools unless an optional Model Group routes its model/thinking; children cannot spawn or handoff, and never inherit the run-scoped workflow_output tool. " +
 	"Reference notebook pages by name — child will notebook_read them on demand.";
 
 const SPAWN_PROMPT_SNIPPET = "Spawn a focused subtask agent";
