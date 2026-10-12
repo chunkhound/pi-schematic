@@ -334,3 +334,9 @@ test("a host error notice names a transcript record that could not be persisted"
 	await shell.execute(["echo hi"], context);
 	assert.equal(notices[0], "workflow progress failed: ui down");
 });
+
+// WHY: docs/workflows.md states the handle count in prose; the contract table must stay in
+// lockstep so a new handle cannot silently stale the docs number.
+test("the handle count stated in docs/workflows.md stays in sync", () => {
+	assert.equal(HANDLE_CONTRACT.length, 15, "docs/workflows.md states 15 handles; update both together");
+});
