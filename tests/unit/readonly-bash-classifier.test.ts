@@ -1377,6 +1377,15 @@ test("backslash inside single quotes is literal, not escape", () => {
 	assert.equal(v3.ok, true, "> inside single quotes should not be a redirect");
 });
 
+// rejoinValueTokens contract: a quoted value split across tokens (here by an operator
+// char) must rejoin before decoding, so the whole value is what gets path-checked —
+// not its truncated first fragment.
+test("quoted assignment value split by an operator token rejoins before decoding", () => {
+	const tmp = shellPath(os.tmpdir());
+	const verdict = classifyBashCommand(`D="${tmp}/a > b"; touch "$D"`, "/workspace");
+	assert.equal(verdict.ok, true, "whole in-temp value must decode and pass");
+});
+
 test("nested command substitution reports its block prefix once", () => {
 	const verdict = classifyBashCommand("echo $(echo $(touch /etc/passwd))", "/workspace");
 	assert.equal(verdict.ok, false);
