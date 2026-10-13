@@ -2,14 +2,15 @@
  * Watchdog: primacy-zone reminder plus sticky enforcement for required handoff.
  *
  * Exposes nudge text generation. `agent_end` records the latest context usage;
- * `agent_settled` enforces the required-handoff budget.
+ * `agent_settled` enforces the required-handoff budget for runs in which the
+ * `context` hook delivered the eligible required-handoff nudge.
  * Actual reminder injection happens in the `context` hook so it can appear
  * before every LLM call in the same agent run.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SchematicState } from "./state.js";
-import { isHandoffEligible, normalizeContextPercent } from "./handoff/eligibility.js";
+import { normalizeContextPercent } from "./handoff/eligibility.js";
 import {
 	READONLY_HANDOFF_RETRY_ADVICE,
 	buildReadonlyHandoffWaitNotice,
@@ -17,10 +18,11 @@ import {
 } from "./notifications.js";
 import { STATUS_KEY_HANDOFF } from "./tui.js";
 
-/** Max eligible settled runs a required handoff stays sticky before auto-clear.
- * 5 gives the model several response cycles to supply the instruction and
- * context, including the async compaction failure path where handoff/tool.ts
- * resets toolCalled=false so enforcement resumes. */
+/** Max settled runs in which the model received the eligible handoff nudge
+ * before a required handoff auto-clears. 5 gives the model several response
+ * cycles to supply the instruction and context, including the async compaction
+ * failure path where handoff/tool.ts resets toolCalled=false so enforcement
+ * resumes. */
 export const MAX_HANDOFF_ATTEMPTS = 5;
 
 type NudgeState = Pick<SchematicState, "activeNotebookTopic" | "pendingTopicBoundaryHint" | "readonlyEnabled" | "pendingRequestedHandoff">;
@@ -118,9 +120,13 @@ export function registerWatchdog(pi: ExtensionAPI, state: SchematicState): void 
 		// pendingRequestedHandoff is the sticky "user still expects a real
 		// handoff" contract. It survives normal turns and even compaction-prep
 		// failure recovery; only a successful handoff completion, reset, or
-		// exhausted enforcement attempts should clear it.
+		// exhausted enforcement attempts should clear it. A run counts only when
+		// the context hook told the model to hand off now; the flag is per run.
 		const requestedHandoff = state.pendingRequestedHandoff;
-		if (requestedHandoff && !requestedHandoff.toolCalled && isHandoffEligible(ctx.getContextUsage())) {
+		if (!requestedHandoff) return;
+		const nudged = requestedHandoff.eligibleNudgeDelivered;
+		requestedHandoff.eligibleNudgeDelivered = false;
+		if (!requestedHandoff.toolCalled && nudged) {
 			requestedHandoff.enforcementAttempts += 1;
 			if (requestedHandoff.enforcementAttempts >= MAX_HANDOFF_ATTEMPTS) {
 				const notice = buildHandoffCancellationNotice(state.readonlyEnabled);

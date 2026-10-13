@@ -39,6 +39,7 @@ export function registerHandoffCommand(pi: ExtensionAPI, state: SchematicState):
 			state.pendingRequestedHandoff = {
 				toolCalled: false,
 				enforcementAttempts: 0,
+				eligibleNudgeDelivered: false,
 				nextInstruction: direction,
 			};
 

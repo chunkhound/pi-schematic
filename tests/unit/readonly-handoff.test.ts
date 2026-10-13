@@ -156,7 +156,11 @@ test("watchdog cancellation clears the readonly handoff bypass", async () => {
 		},
 		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
 	};
-	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS; i++) await agentSettled(ctx);
+	const [contextHook] = pi.handlers.get("context")!;
+	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS; i++) {
+		await contextHook({ messages: [{ role: "user", content: "work", timestamp: i }] }, ctx as any);
+		await agentSettled(ctx);
+	}
 
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), undefined);
 	assert.equal((await toolCall({ toolName: "handoff", input: {} }, {})).block, true,

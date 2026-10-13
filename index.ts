@@ -949,7 +949,10 @@ export default function (pi: ExtensionAPI): void {
 			state.lastWatchdogBand = band;
 		}
 
-		const nudge = buildNudge(state, percent, isHandoffEligible(usage));
+		const eligible = isHandoffEligible(usage);
+		const nudge = buildNudge(state, percent, eligible);
+		// The model was told to hand off now; the watchdog counts this run when it settles.
+		if (state.pendingRequestedHandoff && eligible) state.pendingRequestedHandoff.eligibleNudgeDelivered = true;
 		if (!retainIneligibleHumanBoundary) state.pendingTopicBoundaryHint = null;
 		return {
 			messages: [

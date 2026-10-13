@@ -382,7 +382,7 @@ test("invalidateHandoffState clears branch-local compaction reservations", () =>
 	const state = createState();
 	state.handoffCompactionGeneration = 7;
 	setActiveNotebookTopic(state, "topic", "agent");
-	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 1, nextInstruction: null };
+	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 1, eligibleNudgeDelivered: false, nextInstruction: null };
 	const initial = state.handoffGeneration;
 	invalidateHandoffState(state);
 	assert.equal(state.handoffGeneration, initial + 1);

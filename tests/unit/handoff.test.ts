@@ -44,6 +44,7 @@ test("/handoff sends the direction back through the LLM without opening the edit
 
 	assert.deepEqual(state.pendingRequestedHandoff, {
 		enforcementAttempts: 0,
+		eligibleNudgeDelivered: false,
 		toolCalled: false,
 		nextInstruction: "implement auth",
 	});
@@ -80,7 +81,7 @@ test("/handoff requires a direction", async () => {
 test("handoff tool queues the split request and delivers it verbatim after compaction", async () => {
 	const state = createState();
 	state.notebookPages.set("auth-refresh", "sensitive notebook body");
-	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, nextInstruction: null };
+	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: null };
 	const pi = await createTestHost((api) => {
 		registerHandoffTool(api, state);
 	});
@@ -155,7 +156,7 @@ test("handoff onComplete fails gracefully when the discard commit marker throws"
 	state.epoch = 1;
 	state.notebookPages.set("stale", "obsolete");
 	state.activeNotebookTopic = "oauth";
-	state.pendingRequestedHandoff = { toolCalled: true, enforcementAttempts: 0, nextInstruction: null };
+	state.pendingRequestedHandoff = { toolCalled: true, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: null };
 	let callbacks: any;
 	const pi = await createTestHost((api) => {
 		registerHandoffTool(api, state);
@@ -240,7 +241,7 @@ test("a host delivery rejection finalizes the cut while its persisted payload re
 	state.epoch = 1;
 	state.notebookPages.set("stale", "obsolete");
 	state.activeNotebookTopic = "auth";
-	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, nextInstruction: "continue" };
+	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: "continue" };
 	let callbacks: any;
 	const pi = await createTestHost((api) => {
 		registerHandoffTool(api, state);
@@ -424,7 +425,7 @@ test("handoff compaction keeps the frame constant and the state contract intact"
 		payload: { version: 1, nextInstruction: "next task", context: "remaining state" },
 		recoveryKey: "recovery-key",
 	};
-	state.pendingRequestedHandoff = { enforcementAttempts: 1, toolCalled: true, nextInstruction: null };
+	state.pendingRequestedHandoff = { enforcementAttempts: 1, eligibleNudgeDelivered: false, toolCalled: true, nextInstruction: null };
 	state.activeNotebookTopic = "oauth";
 	state.activeNotebookTopicSource = "human";
 	const pi = await createTestHost((api) => {
@@ -607,7 +608,7 @@ test("handoff success sends a completion notification", async () => {
 test("async handoff compaction error retains discard pages and restores a ready retry status", async () => {
 	const state = createState();
 	state.notebookPages.set("stale", "obsolete");
-	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, nextInstruction: null };
+	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: null };
 	const pi = await createTestHost((api) => {
 		registerHandoffTool(api, state);
 	});
@@ -679,7 +680,7 @@ test("stored human direction survives a failed compaction and is delivered on re
 test("synchronous compaction failure retains discard pages and restores a retryable handoff", async () => {
 	const state = createState();
 	state.notebookPages.set("stale", "obsolete");
-	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, nextInstruction: null };
+	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: null };
 	const pi = await createTestHost((api) => {
 		registerHandoffTool(api, state);
 	});
@@ -714,7 +715,7 @@ test("synchronous compaction failure retains discard pages and restores a retrya
 
 test("failed handoff shows waiting status when usage becomes unavailable", async () => {
 	const state = createState();
-	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, nextInstruction: null };
+	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: null };
 	const pi = await createTestHost((api) => {
 		registerHandoffTool(api, state);
 	});
@@ -854,7 +855,7 @@ test("reset invalidates late handoff callbacks", async () => {
 	resetState(state);
 	const recreatedGeneration = state.handoffGeneration;
 	state.pendingHandoff = { generation: recreatedGeneration };
-	state.pendingRequestedHandoff = { toolCalled: true, enforcementAttempts: 0, nextInstruction: null };
+	state.pendingRequestedHandoff = { toolCalled: true, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: null };
 	callbacks.onComplete();
 
 	assert.equal(state.pendingHandoff?.generation, recreatedGeneration,
@@ -1102,7 +1103,7 @@ test("handoff tool rejects small session with clear error", async () => {
 
 test("handoff tool preserves pending requested handoff and re-engages LLM after synchronous small-session rejection", async () => {
 	const state = createState();
-	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, nextInstruction: null };
+	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: null };
 	const pi = await createTestHost((api) => {
 		registerHandoffTool(api, state);
 	});
@@ -1129,6 +1130,7 @@ test("handoff tool preserves pending requested handoff and re-engages LLM after 
 	assert.deepEqual(state.pendingRequestedHandoff, {
 		toolCalled: false,
 		enforcementAttempts: 0,
+		eligibleNudgeDelivered: false,
 		nextInstruction: null,
 	});
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), "🤝 Handoff in progress");
@@ -1443,7 +1445,7 @@ test("handoff tool rejects when context usage is unavailable", async () => {
 
 test("handoff tool preserves pending requested handoff and re-engages LLM after synchronous unavailable-usage rejection", async () => {
 	const state = createState();
-	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, nextInstruction: null };
+	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: null };
 	const pi = await createTestHost((api) => {
 		registerHandoffTool(api, state);
 	});
@@ -1470,6 +1472,7 @@ test("handoff tool preserves pending requested handoff and re-engages LLM after 
 	assert.deepEqual(state.pendingRequestedHandoff, {
 		toolCalled: false,
 		enforcementAttempts: 0,
+		eligibleNudgeDelivered: false,
 		nextInstruction: null,
 	});
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), "🤝 Handoff in progress");
