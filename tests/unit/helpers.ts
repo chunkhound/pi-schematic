@@ -105,6 +105,15 @@ export function createDeferred() {
 	return { promise, resolve };
 }
 
+/**
+ * Run every handler registered for `event` in registration order, as pi does.
+ */
+export async function emitAll(pi: TestPI, event: string, payload: unknown, ctx: unknown): Promise<void> {
+	for (const handler of pi.handlers.get(event) ?? []) {
+		await handler(payload, ctx);
+	}
+}
+
 // ── Readonly test helpers ────────────────────────────────────────────
 
 export type ToolCall = (event: { toolName: string; input?: Record<string, unknown> }, ctx: { cwd?: string }) => Promise<any>;

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import fc from "fast-check";
 import { appendHandoffReport, buildNextUserMessage, HANDOFF_REPORT_DELIMITER } from "../../handoff/format.js";
 import { getUndeliveredHandoffMessage } from "../../handoff/recovery.js";
+import { emitAll } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
 
 const payload = { version: 1 as const, nextInstruction: "resume\nexactly", context: "blocked on CI" };
@@ -198,7 +199,6 @@ test("a newer user turn abandons recovery even while the queue is still pending"
 	const pi = await createTestHost();
 	const branch: any[] = [handoff(), delivered([{ type: "text", text: "newer user work" }])];
 	const [sessionTree] = pi.handlers.get("session_tree")!;
-	const [agentSettled] = pi.handlers.get("agent_settled")!;
 
 	// A queued follow-up may be the unpersisted successor, so the queue gate
 	// suppresses recovery first — but the newer user turn must own the branch
@@ -207,7 +207,7 @@ test("a newer user turn abandons recovery even while the queue is still pending"
 	await sessionTree({}, pendingCtx);
 	assert.deepEqual(pi.sentUserMessages, [], "an undrained queue must not be scanned for recovery");
 
-	await agentSettled({}, { ...pendingCtx, hasPendingMessages: () => false });
+	await emitAll(pi, "agent_settled", {}, { ...pendingCtx, hasPendingMessages: () => false });
 	assert.deepEqual(pi.sentUserMessages, [], "a drained queue must not resend superseded handoff work");
 });
 
@@ -279,13 +279,12 @@ test("repeated tree triggers coalesce and a settled run retries only while absen
 	assert.deepEqual(pi.sentUserMessages, [{ content: message, options: { deliverAs: "followUp" } }],
 		"repeated triggers must coalesce into one delivery");
 
-	const [agentSettled] = pi.handlers.get("agent_settled")!;
 	const settleCtx = { ...ctx, hasPendingMessages: () => false };
-	await agentSettled({}, settleCtx);
+	await emitAll(pi, "agent_settled", {}, settleCtx);
 	assert.equal(pi.sentUserMessages.length, 2, "a settled run retries a still-absent successor");
 
 	branch.push(delivered([{ type: "text", text: message }]));
-	await agentSettled({}, settleCtx);
+	await emitAll(pi, "agent_settled", {}, settleCtx);
 	assert.equal(pi.sentUserMessages.length, 2, "a persisted successor must not be re-sent");
 });
 
@@ -317,8 +316,7 @@ test("a settled run during an in-flight cut does not recover an older payload", 
 		},
 	);
 
-	const [agentSettled] = pi.handlers.get("agent_settled")!;
-	await agentSettled({}, {
+	await emitAll(pi, "agent_settled", {}, {
 		hasUI: false,
 		hasPendingMessages: () => false,
 		getContextUsage: () => null,
@@ -369,8 +367,7 @@ test("a direct delivery is latched against duplicate tree recovery until settle"
 	assert.equal(successorCount(), 1, "tree recovery must not duplicate an outstanding direct delivery");
 
 	// A settled run proves the delivery is still absent, so recovery retries once.
-	const [agentSettled] = pi.handlers.get("agent_settled")!;
-	await agentSettled({}, { ...ctx, hasPendingMessages: () => false });
+	await emitAll(pi, "agent_settled", {}, { ...ctx, hasPendingMessages: () => false });
 	assert.equal(successorCount(), 2, "a settle must retry a delivery that never persisted");
 });
 
@@ -460,8 +457,7 @@ test("tree and session-start recovery wait for a queued follow-up to drain", asy
 		"a queued follow-up may be the unpersisted successor; resending would double-deliver");
 
 	// Once the queue drains, the next settle is the retry boundary and recovers once.
-	const [agentSettled] = pi.handlers.get("agent_settled")!;
-	await agentSettled({}, { ...queuedCtx, hasPendingMessages: () => false });
+	await emitAll(pi, "agent_settled", {}, { ...queuedCtx, hasPendingMessages: () => false });
 	assert.deepEqual(pi.sentUserMessages, [{ content: message, options: { deliverAs: "followUp" } }]);
 });
 
@@ -483,7 +479,6 @@ test("session start recovers on reasons other than load when the queue is empty"
 test("a later settled run recovers an absent successor only after its queue drains", async () => {
 	const pi = await createTestHost();
 	const branch: any[] = [handoff()];
-	const [agentSettled] = pi.handlers.get("agent_settled")!;
 	const ctx = {
 		hasUI: false,
 		hasPendingMessages: () => false,
@@ -491,15 +486,14 @@ test("a later settled run recovers an absent successor only after its queue drai
 		sessionManager: { getBranch: () => branch },
 	};
 
-	await agentSettled({}, ctx);
+	await emitAll(pi, "agent_settled", {}, ctx);
 	assert.deepEqual(pi.sentUserMessages, [{ content: message, options: { deliverAs: "followUp" } }]);
 
 	branch.push({ type: "message", message: { role: "user", content: message } });
-	await agentSettled({}, ctx);
+	await emitAll(pi, "agent_settled", {}, ctx);
 	assert.equal(pi.sentUserMessages.length, 1, "persisted delivery must not be sent again");
 
 	const pendingPi = await createTestHost();
-	const [pendingSettled] = pendingPi.handlers.get("agent_settled")!;
-	await pendingSettled({}, { ...ctx, hasPendingMessages: () => true });
+	await emitAll(pendingPi, "agent_settled", {}, { ...ctx, hasPendingMessages: () => true });
 	assert.deepEqual(pendingPi.sentUserMessages, [], "an undrained queue must not be duplicated");
 });

@@ -1,9 +1,10 @@
 /**
  * Watchdog: primacy-zone reminder plus sticky enforcement for required handoff.
  *
- * Exposes nudge text generation and records the latest context usage at
- * `agent_end` for UI/state purposes. Actual reminder injection happens in the
- * `context` hook so it can appear before every LLM call in the same agent run.
+ * Exposes nudge text generation. `agent_end` records the latest context usage
+ * for UI/state purposes; `agent_settled` enforces the required-handoff budget.
+ * Actual reminder injection happens in the `context` hook so it can appear
+ * before every LLM call in the same agent run.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -16,10 +17,11 @@ import {
 } from "./notifications.js";
 import { STATUS_KEY_HANDOFF } from "./tui.js";
 
-/** Max turns a required handoff stays sticky before auto-clear.
- * 5 eligible turns gives the LLM ~2-3 response cycles to supply the instruction
- * and context, including one async compaction retry path where handoff/tool.ts
- * resets toolCalled=false after failure so enforcement can resume. */
+/** Max eligible settled agent runs a required handoff stays sticky before
+ * auto-clear. Each settled run counts once, however many `agent_end` events
+ * (automatic retry, compaction, queued or before-settle continuations) it
+ * contained. A run is eligible when context usage allows a handoff at settle
+ * time; ineligible runs do not count. */
 export const MAX_HANDOFF_ATTEMPTS = 5;
 
 type NudgeState = Pick<SchematicState, "activeNotebookTopic" | "pendingTopicBoundaryHint" | "readonlyEnabled" | "pendingRequestedHandoff">;
@@ -46,7 +48,7 @@ ${readonlyContinuation}`;
 
 function buildHandoffCancellationNotice(readonly: boolean): string {
 	const retryAdvice = readonly ? READONLY_HANDOFF_RETRY_ADVICE : "Use /handoff <direction> again to retry.";
-	return `Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} turns without completion. ${retryAdvice}`;
+	return `Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} settled agent runs without completion. ${retryAdvice}`;
 }
 
 function buildBoundaryNudge(state: NudgeState, eligible: boolean): string {
@@ -100,17 +102,24 @@ export function buildNudge(state: NudgeState, percent: number | null, eligible: 
 }
 
 /**
- * Register the watchdog's `agent_end` handler.
+ * Registers the `agent_end` usage recorder and the `agent_settled` handoff enforcer.
  *
  * Must be called from the extension factory in index.ts after state creation.
  */
 export function registerWatchdog(pi: ExtensionAPI, state: SchematicState): void {
 	pi.on("agent_end", async (_event: unknown, ctx: ExtensionContext) => {
+		// ── Context usage ───────────────────────────────────────────
+		// Null or malformed usage — right after compaction or when the host cannot
+		// provide a real percentage — is recorded as null, never as an invalid value.
+		state.lastContextPercent = normalizeContextPercent(ctx.getContextUsage()?.percent);
+	});
+
+	pi.on("agent_settled", async (_event: unknown, ctx: ExtensionContext) => {
 		// ── Enforcement counter: prevent infinite handoff nudges ──
 		// pendingRequestedHandoff is the sticky "user still expects a real
 		// handoff" contract. It survives normal turns and even compaction-prep
-		// failure recovery; only a successful handoff completion, reset, or maxed
-		// retries should clear it.
+		// failure recovery; only a successful handoff completion, reset, or
+		// exhausted enforcement attempts should clear it.
 		const requestedHandoff = state.pendingRequestedHandoff;
 		if (requestedHandoff && !requestedHandoff.toolCalled && isHandoffEligible(ctx.getContextUsage())) {
 			requestedHandoff.enforcementAttempts += 1;
@@ -123,19 +132,5 @@ export function registerWatchdog(pi: ExtensionAPI, state: SchematicState): void 
 				}
 			}
 		}
-
-		// ── Primacy-zone nudge ──────────────────────────────────────
-		const usage = ctx.getContextUsage();
-		const percent = normalizeContextPercent(usage?.percent);
-
-		// Null or malformed usage — right after compaction or when the host cannot
-		// provide a real percentage. Do not persist or display invalid values.
-		if (percent === null) {
-			state.lastContextPercent = null;
-			return;
-		}
-
-		state.lastContextPercent = percent;
-
 	});
 }

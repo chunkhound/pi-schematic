@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Empty notebook pages** — selecting a page with an empty body in `/notebook` now opens it like any other page instead of closing the picker.
 - **Discarded notebook pages** — selecting a page removed by a handoff discard while the `/notebook` list was open now reopens the refreshed list instead of closing the picker.
 - **Model edit opens on the current thinking level** — opening a model in the Model Groups TUI now puts the cursor on the model's configured thinking level and marks it `✓ current`, instead of always landing on `inherit`, where Enter silently reset the value. A configured level the model no longer supports (or whose model is not in the registry) is still shown as `⚠ current, unavailable` and preserved unless another option is deliberately chosen (#29).
+- **Handoff enforcement ignores automatic retries** — the watchdog counts a required handoff's enforcement attempts once per settled agent run instead of once per `agent_end`. Automatic retries, automatic compaction, queued-message continuations, and `agent_before_settle` continuations no longer cancel a requested handoff early.
 
 ## [0.6.0] - 2026-09-26
 

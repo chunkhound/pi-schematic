@@ -1148,7 +1148,7 @@ test("command handoff waits for eligibility and retries without watchdog cancell
 		registerHandoffTool(api, state);
 		registerWatchdog(api, state);
 	});
-	const [watchdogHandler] = pi.handlers.get("agent_end")!;
+	const [watchdogHandler] = pi.handlers.get("agent_settled")!;
 
 	await pi.commands.get("handoff")!.handler("continue work", { hasUI: false, isIdle: () => true } as any);
 	await assert.rejects(

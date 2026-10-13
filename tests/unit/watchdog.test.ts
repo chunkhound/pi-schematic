@@ -252,7 +252,7 @@ test("watchdog stays advisory for a fresh user-requested handoff", async () => {
 		registerHandoffCommand(api, state);
 		registerWatchdog(api, state);
 	});
-	const [handler] = pi.handlers.get("agent_end")!;
+	const [handler] = pi.handlers.get("agent_settled")!;
 
 	await pi.commands.get("handoff").handler("implement auth", {
 		...makeReadonlyUICtx(),
@@ -268,12 +268,13 @@ test("watchdog stays advisory for a fresh user-requested handoff", async () => {
 				notify: (message: string) => notifications.push(message),
 				setStatus: () => {},
 			},
-			getContextUsage: () => ({ percent: 20 }),
+			getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
 		},
 	);
 
 	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
 	assert.ok(state.pendingRequestedHandoff, "handoff request should remain active after one turn");
+	assert.equal(state.pendingRequestedHandoff.enforcementAttempts, 1);
 	assert.deepEqual(notifications, []);
 });
 
@@ -294,7 +295,7 @@ test("watchdog does not cancel an in-flight handoff", async () => {
 		compact: (options: any) => { compactOptions = options; },
 	});
 
-	const [handler] = pi.handlers.get("agent_end")!;
+	const [handler] = pi.handlers.get("agent_settled")!;
 	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS + 2; i++) {
 		await handler({}, { hasUI: false, getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }) });
 	}
@@ -303,13 +304,13 @@ test("watchdog does not cancel an in-flight handoff", async () => {
 	assert.equal(state.pendingRequestedHandoff, null);
 });
 
-test("watchdog auto-cancels a required handoff after enough unanswered turns", async () => {
+test("watchdog auto-cancels a required handoff after enough unanswered settled runs", async () => {
 	const state = createState();
 	const pi = await createTestHost((api) => {
 		registerHandoffCommand(api, state);
 		registerWatchdog(api, state);
 	});
-	const [handler] = pi.handlers.get("agent_end")!;
+	const [handler] = pi.handlers.get("agent_settled")!;
 
 	await pi.commands.get("handoff").handler("implement auth", {
 		...makeReadonlyUICtx(),
@@ -327,7 +328,7 @@ test("watchdog auto-cancels a required handoff after enough unanswered turns", a
 		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
 	};
 
-	// Ineligible turns do not consume the cancellation budget.
+	// Ineligible runs do not consume the cancellation budget.
 	for (let i = 0; i < 3; i++) {
 		await handler({}, { ...ctx, getContextUsage: () => ({ tokens: 5000, percent: 2.5, contextWindow: 200000 }) });
 	}
@@ -345,6 +346,97 @@ test("watchdog auto-cancels a required handoff after enough unanswered turns", a
 	assert.ok(notifications.length > 0, "user should receive a cancellation notification");
 	assert.match(notifications[0] as string, /Required handoff cancelled/i, "notification should mention cancellation without source-specific wording");
 	assert.doesNotMatch(notifications[0] as string, /user-requested|temporary bypass/i);
+});
+
+async function createPendingHandoffHost() {
+	const state = createState();
+	const pi = await createTestHost((api) => {
+		registerHandoffCommand(api, state);
+		registerWatchdog(api, state);
+	});
+	await pi.commands.get("handoff").handler("implement auth", {
+		...makeReadonlyUICtx(),
+		isIdle: () => true,
+	} as any);
+	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
+	const [agentEnd] = pi.handlers.get("agent_end")!;
+	const [agentSettled] = pi.handlers.get("agent_settled")!;
+	return { state, agentEnd, agentSettled };
+}
+
+const eligibleUsage = () => ({ tokens: 50000, percent: 25, contextWindow: 200000 });
+
+test("agent_end events within a run add no attempt", async () => {
+	const { state, agentEnd, agentSettled } = await createPendingHandoffHost();
+	const ctx = { hasUI: false, getContextUsage: eligibleUsage };
+
+	// One run whose first attempt failed and was retried automatically, then a second run.
+	await agentEnd({}, ctx);
+	await agentEnd({}, ctx);
+	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 0, "agent_end must not count an attempt");
+	await agentSettled({ type: "agent_settled" }, ctx);
+	await agentEnd({}, ctx);
+	await agentSettled({ type: "agent_settled" }, ctx);
+
+	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 2);
+});
+
+test("a continued run cancels only after MAX_HANDOFF_ATTEMPTS settled runs", async () => {
+	const { state, agentEnd, agentSettled } = await createPendingHandoffHost();
+	const notifications: { message: string; level: string }[] = [];
+	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "handoff pending"]]);
+	const ctx = {
+		hasUI: true,
+		ui: {
+			notify: (message: string, level: string) => notifications.push({ message, level }),
+			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
+		},
+		getContextUsage: eligibleUsage,
+	};
+
+	for (let run = 1; run <= MAX_HANDOFF_ATTEMPTS; run++) {
+		for (let i = 0; i < 3; i++) await agentEnd({}, ctx);
+		if (run < MAX_HANDOFF_ATTEMPTS) {
+			await agentSettled({ type: "agent_settled" }, ctx);
+			assert.ok(state.pendingRequestedHandoff, `handoff must remain pending after settled run ${run}`);
+			assert.deepEqual(notifications, [], "cancellation must not notify early");
+		}
+	}
+
+	await agentSettled({ type: "agent_settled" }, ctx);
+	assert.equal(state.pendingRequestedHandoff, null);
+	assert.equal(statuses.get(STATUS_KEY_HANDOFF), undefined);
+	assert.equal(notifications.length, 1);
+	assert.equal(notifications[0].level, "warning");
+	assert.match(notifications[0].message, /Required handoff cancelled/i);
+});
+
+test("settled run with unknown usage does not count", async () => {
+	const { state, agentSettled } = await createPendingHandoffHost();
+
+	await agentSettled({ type: "agent_settled" }, { hasUI: false, getContextUsage: () => undefined });
+	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 0);
+
+	await agentSettled({ type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage });
+	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 1);
+});
+
+test("an aborted settle with eligible usage counts as an attempt", async () => {
+	const { state, agentSettled } = await createPendingHandoffHost();
+
+	await agentSettled({ type: "agent_settled", aborted: true }, { hasUI: false, getContextUsage: eligibleUsage });
+
+	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 1);
+});
+
+test("agent_settled does not record context usage", async () => {
+	const state = createState();
+	const pi = await createTestHost((api) => registerWatchdog(api, state));
+	const [handler] = pi.handlers.get("agent_settled")!;
+
+	await handler({ type: "agent_settled" }, { hasUI: false, getContextUsage: () => ({ percent: 70 }) });
+
+	assert.equal(state.lastContextPercent, null);
 });
 
 // ── Readonly-specific injection contracts ─────────────────────────

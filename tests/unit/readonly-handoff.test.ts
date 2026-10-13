@@ -7,7 +7,7 @@ import path from "node:path";
 import { createState } from "../../state.js";
 import { canPromoteBoundary, discardNonHumanBoundary } from "../../readonly-boundary.js";
 import { setActiveNotebookTopic } from "../../notebook/topic.js";
-import { makeReadonlyUICtx } from "./helpers.js";
+import { emitAll, makeReadonlyUICtx } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
@@ -16,7 +16,7 @@ import { buildContinuationFrame } from "../../handoff/format.js";
 async function createHandoffPI() {
 	const pi = await createTestHost();
 	const [toolCall] = pi.handlers.get("tool_call")!;
-	const [agentEnd] = pi.handlers.get("agent_end")!;
+	const agentSettled = (ctx: unknown) => emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 	const [beforeCompact] = pi.handlers.get("session_before_compact")!;
 	const [sessionTree] = pi.handlers.get("session_tree")!;
 	const sessionStartHandlers = pi.handlers.get("session_start") ?? [];
@@ -25,7 +25,7 @@ async function createHandoffPI() {
 			await handler(event, ctx);
 		}
 	};
-	return { pi, toolCall, agentEnd, beforeCompact, sessionTree, sessionStart };
+	return { pi, toolCall, agentSettled, beforeCompact, sessionTree, sessionStart };
 }
 
 async function dispatchTool(pi: any, toolName: string, input: Record<string, unknown>, ctx: any): Promise<any> {
@@ -144,7 +144,7 @@ test("blocked readonly handoff never invokes compaction", async () => {
 });
 
 test("watchdog cancellation clears the readonly handoff bypass", async () => {
-	const { pi, toolCall, agentEnd } = await createHandoffPI();
+	const { pi, toolCall, agentSettled } = await createHandoffPI();
 	const statuses = new Map<string, string | undefined>();
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 	await pi.commands.get("handoff").handler("continue readonly work", {
@@ -161,7 +161,7 @@ test("watchdog cancellation clears the readonly handoff bypass", async () => {
 		},
 		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
 	};
-	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS; i++) await agentEnd({}, ctx as any);
+	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS; i++) await agentSettled(ctx);
 
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), undefined);
 	assert.equal((await toolCall({ toolName: "handoff", input: {} }, {})).block, true,
