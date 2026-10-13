@@ -270,9 +270,10 @@ export async function createTestHost(
  * prompt options and a `systemPrompt` getter that renders them. Without
  * `systemPrompt`, pi's default preamble applies.
  *
- * Pi 1.x types the event as a union discriminated by `messageType`; pi 0.99
- * has no such field. The event is returned through a variable rather than as a
- * literal, so pi 0.99's type accepts the extra `messageType` property.
+ * Pi 1.2 and later type the event as a union discriminated by `messageType`;
+ * pi 0.99 through 1.1 have no such field. The event is returned through a
+ * variable rather than as a literal, so the older type accepts the extra
+ * `messageType` property.
  */
 export function createBeforeAgentStartEvent(init?: { systemPrompt?: string; skills?: Skill[] }): BeforeAgentStartEvent {
 	const systemPromptOptions = normalizeBuildSystemPromptOptions({
@@ -294,27 +295,34 @@ export function createBeforeAgentStartEvent(init?: { systemPrompt?: string; skil
 }
 
 type EmitBeforeAgentStartArgs = Parameters<ExtensionRunner["emitBeforeAgentStart"]>;
+// Pi 0.99 through 1.1 take the prompt string first; pi 1.2 and later take a trigger object.
+type TakesPromptFirst = EmitBeforeAgentStartArgs extends [string, ...unknown[]] ? true : false;
+// Each shape is the real argument list on the pi versions that take it, and `unknown` on the others.
+type PromptShapeArgs = TakesPromptFirst extends true ? EmitBeforeAgentStartArgs : unknown;
+type TriggerShapeArgs = TakesPromptFirst extends true ? unknown : EmitBeforeAgentStartArgs;
 
 /**
- * Arguments for an empty user-prompt run on the installed runner. Pi 0.99 takes
- * `(prompt, images, systemPromptOptions)`; pi 1.x takes `(trigger,
- * systemPromptOptions)`. The runner's arity picks the shape, and any other arity
- * throws. The cast is unavoidable: no single argument list type-checks against
- * both signatures, so the shape for the version not installed goes unchecked.
+ * Arguments for an empty user-prompt run on the installed runner. Pi 0.99
+ * through 1.1 take `(prompt, images, systemPromptOptions)`; pi 1.2 and later
+ * take `(trigger, systemPromptOptions)`. The runner's arity picks the shape, and
+ * any other arity throws. The shape for the installed pi is type-checked against
+ * its signature; the other shape is typed `unknown` and goes unchecked.
  */
 function userPromptRunArgs(runner: ExtensionRunner, systemPromptOptions: BuildSystemPromptOptions): EmitBeforeAgentStartArgs {
 	const arity = runner.emitBeforeAgentStart.length;
-	let args: unknown[];
 	if (arity === 3) {
-		args = ["", undefined, systemPromptOptions];
-	} else if (arity === 2) {
-		args = [{ messageType: "user", prompt: "" }, systemPromptOptions];
-	} else {
-		throw new Error(
-			`pi's ExtensionRunner.emitBeforeAgentStart takes ${arity} parameters; the test host knows 3 (pi 0.99) and 2 (pi 1.x). Update tests/unit/test-host.ts for the installed Pi version.`,
-		);
+		const args: PromptShapeArgs = ["", undefined, systemPromptOptions];
+		// Identity on pi 0.99 through 1.1; on pi 1.2 and later `args` is `unknown` and this branch never runs.
+		return args as EmitBeforeAgentStartArgs;
 	}
-	return args as EmitBeforeAgentStartArgs;
+	if (arity === 2) {
+		const args: TriggerShapeArgs = [{ messageType: "user", prompt: "" }, systemPromptOptions];
+		// Identity on pi 1.2 and later; on pi 0.99 through 1.1 `args` is `unknown` and this branch never runs.
+		return args as EmitBeforeAgentStartArgs;
+	}
+	throw new Error(
+		`pi's ExtensionRunner.emitBeforeAgentStart takes ${arity} parameters; the test host knows 3 (pi 0.99 to 1.1) and 2 (pi 1.2 and later). Update tests/unit/test-host.ts for the installed Pi version.`,
+	);
 }
 
 /**

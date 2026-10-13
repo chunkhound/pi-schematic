@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Date anchor** — `before_agent_start` injects a `## Current date` block (ISO date, weekday, IANA zone, UTC offset, plus a resolve-relative-references directive) into the system prompt. It is rebuilt once per run and is byte-stable within a calendar day, so while the host zone stays fixed it changes the system prompt at most once per day; on a DST transition day the offset adds one more change. A zone Intl cannot render falls back to `UTC` rather than throwing.
+- **Date anchor** — the `schematic_date` prompt section holds a `## Current date` block (ISO date, weekday, IANA zone, UTC offset, plus a resolve-relative-references directive). `before_agent_start` renders it once per user prompt, and it is byte-stable within a calendar day, so while the host zone stays fixed it changes at most once per day; on a DST transition day the offset adds one more change. When it changes, Pi appends a section-update message and the leading system message stays unchanged. A zone Intl cannot render falls back to `UTC` rather than throwing.
 - **Notebook pages open in a pager** — Enter in the interactive `/notebook` picker opens the selected page in `$PI_PAGER`, else `$PAGER`, else `less` if installed (not on Windows); with no pager or a `cat` or `more` pager it shows the inline preview instead. Quitting either returns to the list on the same page. See [Compatibility and limits](README.md#compatibility-and-limits).
 
 ### Changed
