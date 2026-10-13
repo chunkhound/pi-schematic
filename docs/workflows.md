@@ -138,12 +138,13 @@ Handles are **two-level only**. A global name has at most one dot. Any `workflow
 - Frontmatter resolves before `model` and `thinking`. Explicit run options therefore win for the turn. A frontmatter model persists as the post-run session model.
 - A blocked frontmatter route rejects the run before any message is sent.
 
-`RunResult` = `{ text, fromEntryId, toEntryId, usage, state, output? }`:
+`RunResult` = `{ text, fromEntryId, toEntryId, usage, state, model, output? }`:
 
 - `text` is the assistant's final text.
 - `fromEntryId` and `toEntryId` bound the settled run.
 - `usage` sums the run's usage entries, including spawned-child usage.
 - `state` is the same digest as `workflow.state()`.
+- `model` is the concrete model of the run's final assistant turn as `{ provider, model, thinkingLevel? }`, or null when the branch names none. A group-routed turn reports the chosen member, not the requested group.
 - `output` is the validated object from a structured-output run. It is present only when the run requested it.
 
 The host rejects the step when the settled final assistant's `stopReason` is `error` or `aborted`. Retries inside one settle stay in the same step. The host does not parse `text` for findings. A workflow persists findings as a notebook page (`workflow.notebookWrite`) or takes them from a structured-output run, then reads pages with `workflow.notebookRead`. `workflow.entries` reads the conversation entries the model produced.

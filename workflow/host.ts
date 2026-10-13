@@ -14,7 +14,7 @@ import { armStructuredOutput, disarmStructuredOutput, type OutputCapture } from 
 import { addModelSpend, assistantCount, collectUsage, mergeModelSpend, spendRowsTotal } from "../usage.js";
 import { armPendingStop, branchSpend, computeCurrentCost, liveBranch, limitReason, runSpendRows, type SpendState } from "./spend.js";
 import type { ChildUsageSink } from "../state.js";
-import { buildEntryDigests, buildStateDigest, contextPercentOf, lastAssistantText } from "./state-digest.js";
+import { buildEntryDigests, buildStateDigest, contextPercentOf, lastAssistantModel, lastAssistantText } from "./state-digest.js";
 import type {
 	Budget,
 	CheckpointRecord,
@@ -757,6 +757,7 @@ async function settleRun(deps: WorkflowHostDeps, state: HostState, prepared: Pre
 		toEntryId: match.toEntryId,
 		usage: collectUsage(match.branch),
 		state: buildDigest(deps, state),
+		model: lastAssistantModel(match.branch),
 	};
 }
 

@@ -120,6 +120,17 @@ export interface RunOptions {
 }
 
 /**
+ * The model that produced a settled run's final assistant turn.
+ * The host derives it from the branch entry, so group-routed turns report the concrete member,
+ * not the requested group. `model` is the provider's id; `provider` is null only when unrecorded.
+ */
+export interface RunModel {
+	provider: string | null;
+	model: string;
+	thinkingLevel?: string;
+}
+
+/**
  * Result of one settled `workflow.run` call.
  * Entry IDs bound the settled run; usage sums the run's entries.
  */
@@ -131,6 +142,8 @@ export interface RunResult {
 	usage: Usage;
 	/** Conversation digest captured after the run settled. */
 	state: StateDigest;
+	/** Model of the run's final assistant turn; null when the branch names none. */
+	model: RunModel | null;
 	/** Validated object from the injected output tool. Present iff `options.output` was set. */
 	output?: unknown;
 }

@@ -45,7 +45,7 @@
  *   → spent <usd>            — append a usage entry so session cost is non-zero
  *   → mock-select [value]    — queue one `ctx.ui.select` answer; empty queue falls back to "No target"
  *   → mock-input [value]     — queue one `ctx.ui.input` answer; empty queue falls back to ""
- *   → turn <json>            — queue one scripted `workflow.run` turn ({text,cost,stopReason,output,toolResults})
+ *   → turn <json>            — queue one scripted `workflow.run` turn ({text,cost,stopReason,provider,model,output,toolResults})
  *   → fault append-throws [n] [skip] | send-throws [n] | progress-throws [n] | shell <result|throws|error>
  *            | abort-throws | model-restore | thinking-restore | thinking-throws [n]
  *   → readonly <on|off>      — set the readonly posture through branch rehydration
@@ -118,12 +118,15 @@ interface ScriptedTurn {
 	text?: string;
 	cost?: number;
 	stopReason?: string;
+	/** Recorded on the assistant entry so a run's model attribution is observable. */
+	provider?: string;
+	model?: string;
 	/** When present, the host executes the armed workflow_output tool with this value. */
 	output?: unknown;
 	/** Tool-result entries appended between the user and assistant turns (spawned-child usage). */
 	toolResults?: Array<{ toolName?: string; cost?: number; text?: string }>;
 	/** Multiple assistant entries (a tool-use loop) with per-entry usage; overrides `text`/`cost`/`stopReason`. */
-	assistants?: Array<{ text?: string; cost?: number; stopReason?: string }>;
+	assistants?: Array<{ text?: string; cost?: number; stopReason?: string; provider?: string; model?: string }>;
 	/** Fire `agent_settled` this many times before the assistant entry lands (correlation must wait). */
 	prematureSettles?: number;
 }
@@ -302,13 +305,15 @@ function scriptTurn(promptText: string): void {
 			...(result.cost !== undefined ? { usage: usageOf(result.cost) } : {}),
 		});
 	}
-	const assistants = turn.assistants ?? [{ text: turn.text, cost: turn.cost, stopReason: turn.stopReason }];
+	const assistants = turn.assistants ?? [{ text: turn.text, cost: turn.cost, stopReason: turn.stopReason, provider: turn.provider, model: turn.model }];
 	for (const assistant of assistants) {
 		appendMessage({
 			role: "assistant",
 			content: [{ type: "text", text: assistant.text ?? "ok" }],
 			stopReason: assistant.stopReason ?? "stop",
 			timestamp: Date.now(),
+			...(assistant.provider !== undefined ? { provider: assistant.provider } : {}),
+			...(assistant.model !== undefined ? { model: assistant.model } : {}),
 			...(assistant.cost !== undefined ? { usage: usageOf(assistant.cost) } : {}),
 		});
 	}

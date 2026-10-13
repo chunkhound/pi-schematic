@@ -123,6 +123,16 @@ describe("workflow host E2E — run correlation", () => {
 		assert.ok(result.fromEntryId, "fromEntryId is the first run entry, not an override append");
 		assert.equal(result.text, "final answer");
 	}));
+	it("reports the model that answered the run, so a routed run is attributable", async () => withWorkflowChild(async (h) => {
+		await sendOk(h, 'turn {"text":"final answer","provider":"deepseek","model":"deepseek-flash"}');
+		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"run","prompt":"hello"}');
+		assert.deepEqual(exitOf(entries).result.model, { provider: "deepseek", model: "deepseek-flash" });
+	}));
+	it("reports a null model when the settled branch names none", async () => withWorkflowChild(async (h) => {
+		await sendOk(h, 'turn {"text":"final answer"}');
+		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"run","prompt":"hello"}');
+		assert.equal(exitOf(entries).result.model, null);
+	}));
 	it("records an explicit exit reason and metadata", async () => withWorkflowChild(async (h) => {
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"exit","metadata":{"reason":"approved","note":1}}');
 		assert.deepEqual(exitOf(entries), { reason: "approved", note: 1 });

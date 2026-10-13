@@ -8,6 +8,7 @@ import {
 	buildEntryDigests,
 	buildStateDigest,
 	contextPercentOf,
+	lastAssistantModel,
 	lastAssistantText,
 	sliceAfter,
 	type StateDigestInput,
@@ -148,6 +149,39 @@ test("lastAssistantText returns empty when the newest assistant turn carries onl
 test("lastAssistantText returns empty for a branch without assistant messages", () => {
 	assert.equal(lastAssistantText([]), "");
 	assert.equal(lastAssistantText([message("u0", "user", "hi"), compaction("c1", "summary")]), "");
+});
+
+test("lastAssistantModel reports the newest assistant turn's model and thinking level", () => {
+	const entries = [
+		message("a1", "assistant", [{ type: "text", text: "first" }], { provider: "openai", model: "gpt-6.1-sol" }),
+		message("u1", "user", "note"),
+		message("a2", "assistant", [{ type: "text", text: "second" }], { provider: "deepseek", model: "deepseek-flash", thinkingLevel: "high" }),
+	];
+	assert.deepEqual(lastAssistantModel(entries), { provider: "deepseek", model: "deepseek-flash", thinkingLevel: "high" });
+});
+
+test("lastAssistantModel reports the answering model when the provider fell back to a different one", () => {
+	// pi sets responseModel only on a fallback: model names the request, responseModel the answer.
+	const entries = [message("a1", "assistant", [{ type: "text", text: "x" }], { provider: "anthropic", model: "claude-sonnet-4-5", responseModel: "claude-sonnet-4-5-20260101" })];
+	assert.deepEqual(lastAssistantModel(entries), { provider: "anthropic", model: "claude-sonnet-4-5-20260101" });
+});
+
+test("lastAssistantModel omits thinkingLevel when the turn records none and nulls an unrecorded provider", () => {
+	const entries = [message("a1", "assistant", [{ type: "text", text: "hi" }], { model: "anonymous-model" })];
+	assert.deepEqual(lastAssistantModel(entries), { provider: null, model: "anonymous-model" });
+});
+
+test("lastAssistantModel returns null when the final turn named no model or no assistant exists", () => {
+	assert.equal(lastAssistantModel([]), null);
+	assert.equal(lastAssistantModel([message("u0", "user", "hi")]), null);
+	// The final turn is authoritative: an unrecorded model must not borrow an earlier turn's.
+	assert.equal(
+		lastAssistantModel([
+			message("a1", "assistant", [{ type: "text", text: "first" }], { provider: "openai", model: "gpt-6.1-sol" }),
+			message("a2", "assistant", [{ type: "text", text: "second" }]),
+		]),
+		null,
+	);
 });
 
 test("contextPercentOf passes real percentages through, including zero", () => {

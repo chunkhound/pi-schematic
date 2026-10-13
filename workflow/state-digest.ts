@@ -1,10 +1,12 @@
 // WHY: one module derives every digest value from raw session entries so the host
 // never duplicates usage/entry parsing. Pure: callers pass the branch in.
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { WorkflowEntry, StateDigest } from "./types.js";
+import type { WorkflowEntry, StateDigest, RunModel } from "./types.js";
 
 // AgentMessage widens to custom roles; the digest reads only these optional fields.
-type AnyMessage = { role?: string; content?: unknown; toolName?: string };
+// Assistant entries record the model that answered; see pi's docs/session-format.md
+// (ships in @earendil-works/pi-coding-agent, not this repo).
+type AnyMessage = { role?: string; content?: unknown; toolName?: string; provider?: string; model?: string; responseModel?: string; thinkingLevel?: string };
 type ContentBlock = { type?: string; text?: string; name?: string };
 
 function contentText(content: unknown): string {
@@ -82,6 +84,26 @@ export function lastAssistantText(entries: readonly SessionEntry[]): string {
 			return contentText((entry.message as AnyMessage).content);
 	}
 	return "";
+}
+
+/** The model that wrote a run's final assistant turn. WHY backwards scan: the settled run's
+ * last assistant entry is the turn whose model the workflow attributes the result to.
+ * WHY responseModel first: pi records it only when the provider answered with a model other
+ * than the requested one (a fallback), and it names the model that actually wrote the turn. */
+export function lastAssistantModel(branch: readonly SessionEntry[]): RunModel | null {
+	for (let i = branch.length - 1; i >= 0; i--) {
+		const entry = branch[i];
+		if (entry.type !== "message" || (entry.message as AnyMessage).role !== "assistant") continue;
+		const message = entry.message as AnyMessage;
+		const model = message.responseModel ?? message.model;
+		if (!model) return null;
+		return {
+			provider: message.provider ?? null,
+			model,
+			...(message.thinkingLevel ? { thinkingLevel: message.thinkingLevel } : {}),
+		};
+	}
+	return null;
 }
 
 /** Null-safe context-window percent; null when the provider exposed no usage. */
