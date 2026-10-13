@@ -88,6 +88,9 @@ test("isTimeoutMessage matches pi's stable timeout text only", () => {
 	assert.equal(isTimeoutMessage("spawn failure: request timed out"), false);
 	assert.equal(isTimeoutMessage("Command aborted"), false);
 	assert.equal(isTimeoutMessage("spawn failure: no such file"), false);
+	assert.equal(isTimeoutMessage("Command timed out after 0.01 seconds"), true);
+	assert.equal(isTimeoutMessage("Command timed out after 1.5 seconds"), true);
+	assert.equal(isTimeoutMessage("spawn failure: Command timed out after 5 seconds"), false);
 });
 
 test("createShellRunner reports a timed-out run as killed", async () => {

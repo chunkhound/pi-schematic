@@ -114,7 +114,7 @@ export function setShellRunForTests(run: ShellRun | null): void {
  * in core/tools/bash.js), so the status is the last line, not the whole message. A spawn
  * failure that merely mentions "timed out" must not match. */
 export function isTimeoutMessage(message: string): boolean {
-	return /Command timed out after \d+ seconds$/.test(message);
+	return /^(?:[\s\S]*\n)?Command timed out after \d+(?:\.\d+)? seconds$/.test(message);
 }
 
 async function executeShell(deps: ShellRunnerDeps, command: string, options: ShellOptions): Promise<ShellResult> {
