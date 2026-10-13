@@ -124,9 +124,14 @@ export function workflowSegments(view: WorkflowProgressView, theme: Theme): BarS
 			zone: "workflow",
 		});
 	}
+	// A checkpoint count is meaningless without checkpoints: the same slot carries the
+	// unbounded marker, in an informative tone (not a warning) since unbounded is expected.
+	const progressCell: BarSegment = view.unbounded
+		? { key: "workflow-unbounded", text: theme.fg("accent", "\u221E unbounded"), priority: 1, zone: "workflow" }
+		: { key: "workflow-checkpoints", text: `\u{1F6A9} ${view.checkpoints}`, priority: 1, zone: "workflow" };
 	cells.push(
 		{ key: "workflow-name", text: workflowLabel(view.name), priority: 0, zone: "workflow" },
-		{ key: "workflow-checkpoints", text: `\u{1F6A9} ${view.checkpoints}`, priority: 1, zone: "workflow" },
+		progressCell,
 		{ key: "workflow-elapsed", text: elapsedCell(view), priority: 2, zone: "workflow" },
 		{ key: "workflow-cost", text: costCell(view), priority: 3, zone: "workflow" },
 	);

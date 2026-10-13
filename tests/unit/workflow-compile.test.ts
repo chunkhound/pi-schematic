@@ -7,10 +7,7 @@ import { WORKFLOW_DRIVER, composeWorkflow } from "../../workflow/driver.js";
 // ── helpers ───────────────────────────────────────────────────────
 
 function wrapBody(body: string, isAsync = false): string {
-	// WHY: a checkpoint is the only safe exit point the engine stops at. Appending one to
-	// every wrapped body keeps the presence check passing, so each rejects() case fails
-	// for its real violation instead of being masked by "no checkpoint".
-	return `return defineWorkflow(${isAsync ? "async " : ""}(workflow) => {\n${body}\n  workflow.checkpoint(null);\n});\n`;
+	return `return defineWorkflow(${isAsync ? "async " : ""}(workflow) => {\n${body}\n});\n`;
 }
 
 function rejects(source: string, match?: RegExp): void {
@@ -77,7 +74,7 @@ test("composed driver plus compiled body executes as real JS", async () => {
 		exit: async (value: unknown) => { effects.push("exit"); return value; },
 	};
 	// `workflow` is the single free name the driver reads: the host scope the sandbox builds.
-	const invoke = new Function("workflow", composeWorkflow(compileWorkflow(source))) as (w: typeof workflow) => Promise<unknown>;
+	const invoke = new Function("workflow", composeWorkflow(compileWorkflow(source).code)) as (w: typeof workflow) => Promise<unknown>;
 
 	assert.deepEqual(await invoke(workflow), "result-of-x", "the awaited value, never a Promise: the compiler's inserts are load-bearing");
 	assert.deepEqual(effects, ["run:x", "checkpoint", "exit"], "the driver reached the host object; each effect ran once in author order");
@@ -87,28 +84,41 @@ test("composed driver plus compiled body executes as real JS", async () => {
 
 test("wraps direct calls and marks the workflow lambda async", () => {
 	const source = 'return defineWorkflow((workflow) => {\n  const r = workflow.run("x");\n  workflow.checkpoint(null);\n  return r;\n});\n';
-	const out = compileWorkflow(source);
+	const out = compileWorkflow(source).code;
 	assert.ok(out.includes("async (workflow) =>"), "arrow made async");
 	assert.ok(out.includes("(await workflow.run("), "await inserted on run");
 	assert.ok(out.includes("(await workflow.checkpoint("), "await inserted on checkpoint");
 
 });
 
-test("refuses a workflow that declares no checkpoint safe exit point", () => {
+test("a workflow without a checkpoint compiles and reports hasCheckpoint: false", () => {
 	const source = "return defineWorkflow((workflow) => {\n  const x = 1;\n  return x;\n});\n";
-	rejects(source, /at least one workflow\.checkpoint/);
+	const compiled = compileWorkflow(source);
+	assert.equal(compiled.hasCheckpoint, false, "checkpoints are optional: no checkpoint leaves the run unbounded");
+	assert.equal(compiled.code, source, "no checkpoint and no workflow calls: the source is returned unchanged");
 });
 
-test("workflow.exit is terminal and does not satisfy the checkpoint requirement", () => {
-	// `exit` stops a run but is never a safe exit point (docs/workflows.md: File and entry point; Targets, exit, cancellation, salvage): a workflow with
-	// only an exit still lacks checkpoint coverage. wrapBody now injects a checkpoint, so
-	// this case builds a checkpoint-less source by hand to keep the absence real.
-	rejects('return defineWorkflow((workflow) => {\n  workflow.exit({ reason: "done" });\n});\n', /at least one workflow\.checkpoint/);
+test("workflow.exit is terminal and does not count as a checkpoint", () => {
+	// `exit` stops a run but is never a safe exit point (docs/workflows.md: Targets, exit, cancellation, salvage): a workflow with only an exit still lacks checkpoint coverage.
+	const source = 'return defineWorkflow((workflow) => {\n  workflow.exit({ reason: "done" });\n});\n';
+	const compiled = compileWorkflow(source);
+	assert.equal(compiled.hasCheckpoint, false, "exit is terminal, not a checkpoint");
+	assert.ok(compiled.code.includes("(await workflow.exit("), "direct workflow calls are still await-inserted");
+	assert.ok(compiled.code.includes("async (workflow) =>"), "the lambda is still made async when it has direct calls");
 });
 
-test("accepts a computed checkpoint name", () => {
+test("a workflow declaring a checkpoint reports hasCheckpoint: true", () => {
+	const source = 'return defineWorkflow((workflow) => {\n  workflow.checkpoint({ phase: "ready" });\n  return workflow.exit({ reason: "ok" });\n});\n';
+	const compiled = compileWorkflow(source);
+	assert.equal(compiled.hasCheckpoint, true, "a declared checkpoint marks the run bounded");
+	assert.ok(compiled.code.includes("(await workflow.checkpoint("), "the declared checkpoint is still await-inserted");
+});
+
+test("accepts a computed checkpoint name and still reports the run as bounded", () => {
 	const source = 'return defineWorkflow((workflow) => {\n  workflow["checkpoint"](null);\n});\n';
-	assert.equal(compileWorkflow(source), 'return defineWorkflow(async (workflow) => {\n  (await workflow["checkpoint"](null));\n});\n');
+	const compiled = compileWorkflow(source);
+	assert.equal(compiled.hasCheckpoint, true, "a computed checkpoint marks the run bounded");
+	assert.equal(compiled.code, 'return defineWorkflow(async (workflow) => {\n  (await workflow["checkpoint"](null));\n});\n');
 });
 
 test("rejects a checkpoint inside a nested scope before the presence check", () => {
@@ -117,12 +127,12 @@ test("rejects a checkpoint inside a nested scope before the presence check", () 
 
 test("accepts an already-awaited direct workflow call byte-identically", () => {
 	const source = 'return defineWorkflow(async (workflow) => {\n  const x = await workflow.run("x");\n  await workflow.checkpoint(null);\n  return x;\n});\n';
-	assert.equal(compileWorkflow(source), source);
+	assert.equal(compileWorkflow(source).code, source);
 });
 
 test("allows the identifier `workflow` as a non-reference property key", () => {
 	const source = "return defineWorkflow(async (workflow) => {\n  await workflow.checkpoint(null);\n  return { workflow: 1 };\n});\n";
-	assert.equal(compileWorkflow(source), source);
+	assert.equal(compileWorkflow(source).code, source);
 });
 test("rejects a bare workflow(...) expression statement (docs/workflows.md File and entry point requires a return)", () => {
 	// `return` is mandatory: a bare statement resolves the codemode wrapper to undefined
@@ -134,7 +144,7 @@ test("rejects a bare workflow(...) expression statement (docs/workflows.md File 
 test("wraps computed string keys and optional chains", () => {
 	const source = 'return defineWorkflow((workflow) => {\n  workflow["a"]();\n  workflow?.b();\n  workflow.c?.();\n  workflow.checkpoint(null);\n});\n';
 	assert.equal(
-		compileWorkflow(source),
+		compileWorkflow(source).code,
 		'return defineWorkflow(async (workflow) => {\n  (await workflow["a"]());\n  (await workflow?.b());\n  (await workflow.c?.());\n  (await workflow.checkpoint(null));\n});\n',
 	);
 });
@@ -150,7 +160,7 @@ test("wraps workflow calls in workflow heads, tests, updates, and iterables", ()
 		"});",
 		"",
 	].join("\n");
-	const out = compileWorkflow(source);
+	const out = compileWorkflow(source).code;
 	assert.ok(out.includes("for (let i = (await workflow.start()); i < (await workflow.limit()); i = (await workflow.step(i))) {}"));
 	assert.ok(out.includes("for (const x of (await workflow.items())) {}"));
 	assert.ok(out.includes("while ((await workflow.more())) {}"));
@@ -332,8 +342,8 @@ test("compilation is idempotent and line-preserving for arbitrary valid bodies",
 	fc.assert(
 		fc.property(arbBody, (body) => {
 			const source = wrapBody(`workflow.checkpoint(null);\n${body}`);
-			const once = compileWorkflow(source);
-			const twice = compileWorkflow(once);
+			const once = compileWorkflow(source).code;
+			const twice = compileWorkflow(once).code;
 			assert.equal(twice, once, `not idempotent for:\n${source}`);
 			assert.equal(countNewlines(once), countNewlines(source), `newline count changed for:\n${source}`);
 			assert.match(once, /async \(workflow\)/);
@@ -346,8 +356,8 @@ test("compilation is idempotent and line-preserving for arbitrary valid bodies",
 test("compiling an already-compiled body is byte-identical", () => {
 	fc.assert(
 		fc.property(arbBody, (body) => {
-			const once = compileWorkflow(wrapBody(`workflow.checkpoint(null);\n${body}`));
-			assert.equal(compileWorkflow(once), once);
+			const once = compileWorkflow(wrapBody(`workflow.checkpoint(null);\n${body}`)).code;
+			assert.equal(compileWorkflow(once).code, once);
 		}),
 		{ seed: 424242, numRuns: 250 },
 	);

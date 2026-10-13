@@ -44,6 +44,7 @@ function digestHost(branch: SessionEntry[], state = createState()): { host: Work
 		pi: { appendEntry: () => {}, getActiveTools: () => ["bash", "read"] } as unknown as WorkflowHostDeps["pi"],
 		state,
 		limits: { costLimit: null, timeBudgetMs: null },
+		unbounded: false,
 		getCtx: () => ctx,
 		isReadonly: () => true,
 		setReadonly: (enabled: boolean) => enabled,

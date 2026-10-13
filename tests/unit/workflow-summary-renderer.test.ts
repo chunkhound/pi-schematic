@@ -56,6 +56,7 @@ function makeData(overrides: Partial<WorkflowRunSummaryData> = {}): WorkflowRunS
 		costUsd: 1.0,
 		spend: [spendRow("model-a", 1.0)],
 		limits: { costLimit: null, timeBudgetMs: null },
+		unbounded: false,
 		crossedAt: null,
 		...overrides,
 	};
@@ -129,6 +130,16 @@ test("counts row labels checkpoints instead of a bare glyph", () => {
 	const lines = renderWorkflowSummary(makeData({ checkpoints: 3 }), false, identityTheme).render(80);
 	assert.ok(lines.some((line) => line.includes("checkpoints 3")), "checkpoints count is labelled");
 	assert.ok(!lines.some((line) => line.includes("\u{1F6A9}")), "no bare flag glyph");
+});
+
+test("an unbounded run renders the limits row and no target row", () => {
+	const lines = renderWorkflowSummary(makeData({ unbounded: true }), false, identityTheme).render(80);
+	const unbounded = lines.find((line) => line.includes("unbounded \u2014 no checkpoint declared")) ?? "";
+	assert.ok(unbounded, "the unbounded limits row is present");
+	assert.ok(unbounded.includes("limits"), "the row is keyed under limits");
+	assert.equal(lines.some((line) => line.includes("target ")), false, "an unbounded run carries no soft-target row");
+	const checkpoints = lines.find((line) => line.includes("checkpoints ")) ?? "";
+	assert.equal(checkpoints.includes("\u221E"), false, "the counts row never carries the unbounded glyph");
 });
 
 test("collapsed model rows split tokens into input and output", () => {

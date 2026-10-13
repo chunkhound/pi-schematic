@@ -36,6 +36,7 @@ function fakeDeps(shellRun: NonNullable<WorkflowHostDeps["shellRun"]>): Workflow
 		pi,
 		state: createState(),
 		limits: { costLimit: null, timeBudgetMs: null },
+		unbounded: false,
 		getCtx: () => ctx,
 		isReadonly: () => false,
 		setReadonly: () => false,

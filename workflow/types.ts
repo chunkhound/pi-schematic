@@ -250,6 +250,9 @@ export interface WorkflowProgress {
 	pendingStop: ReservedReason | null;
 	/** The configured soft targets, so the bar can show current-vs-target. */
 	limits: WorkflowLimits;
+	/** True when the workflow declares no checkpoint: no soft target can stop it, so the
+	 * surfaces show an unbounded indicator instead of a checkpoint count. */
+	unbounded: boolean;
 	/** Detail of the effect currently running (shell command, run prompt); null between effects. */
 	currentEffect: string | null;
 }
@@ -274,6 +277,8 @@ export interface WorkflowRunMetrics {
 	spend: ModelSpend[];
 	/** The soft targets the run was given; carried into the overview for target-vs-final. */
 	limits: WorkflowLimits;
+	/** True when the workflow declares no checkpoint: the overview states the run was unbounded. */
+	unbounded: boolean;
 	/** Cost/time when the first soft target was crossed; null when none was. Overshoot forensics. */
 	crossedAt: { costUsd: number; elapsedMs: number } | null;
 	/** Bounded log of effect calls, for the end-of-run overview. Never sent to the LLM. */
@@ -339,6 +344,8 @@ export interface WorkflowHostDeps {
 	pi: ExtensionAPI;
 	state: SchematicState;
 	limits: WorkflowLimits;
+	/** True when the compiled workflow declares no checkpoint; surfaced in progress and metrics. */
+	unbounded: boolean;
 	/** Null while a session replacement is in flight: pi invalidates the old command ctx at
 	 * `newSession` teardown and only `withSession` yields a valid one. Host effect handlers
 	 * use {@link requireCtx}; progress and metrics degrade to committed spend instead. */

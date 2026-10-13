@@ -119,17 +119,20 @@ async function startWorkflow(pi: ExtensionAPI, state: SchematicState, deps: Work
 	const program = await resolveProgram(pi, raw, ctx);
 	if (!program) return;
 	// Compile before limits: a broken workflow must fail without prompting for a budget.
-	const outcome = await resolveLimits(pi, ctx);
+	const outcome = await resolveLimits(pi, ctx, program.hasCheckpoint);
 	if (outcome.kind === "cancelled") {
 		// An invalid flag already showed its own error; only a user cancel adds the generic notice.
 		if (!outcome.notified) notify(ctx, "Workflow cancelled.", "info");
 		return;
 	}
-	await executeWorkflow({ pi, state, deps, limits: outcome.limits }, { ...program, ctx });
+	await executeWorkflow(
+		{ pi, state, deps, limits: outcome.limits, unbounded: !program.hasCheckpoint },
+		{ name: program.name, args: program.args, compiled: program.compiled, ctx },
+	);
 }
 
 /** Resolve the workflow source, or surface why it cannot start. Null means reported and done. */
-async function resolveProgram(pi: ExtensionAPI, raw: string, ctx: ExtensionCommandContext): Promise<{ name: string; args: string; compiled: string } | null> {
+async function resolveProgram(pi: ExtensionAPI, raw: string, ctx: ExtensionCommandContext): Promise<{ name: string; args: string; compiled: string; hasCheckpoint: boolean } | null> {
 	const { name, args } = parseWorkflowArgs(raw);
 	if (!name) {
 		reportStartFailure(pi, ctx, "Usage: /workflow <workflow> [args]");
@@ -141,7 +144,7 @@ async function resolveProgram(pi: ExtensionAPI, raw: string, ctx: ExtensionComma
 		return null;
 	}
 	const compiled = await readAndCompile(pi, path, ctx);
-	return compiled === null ? null : { name, args, compiled };
+	return compiled === null ? null : { name, args, compiled: compiled.code, hasCheckpoint: compiled.hasCheckpoint };
 }
 
 /** Name the available workflows so a typo is self-correcting. */
@@ -150,7 +153,7 @@ async function workflowNotFound(name: string, cwd: string): Promise<string> {
 	return available.length > 0 ? `Workflow not found: ${name}. Available: ${available.join(", ")}.` : `Workflow not found: ${name}.`;
 }
 
-async function readAndCompile(pi: ExtensionAPI, path: string, ctx: ExtensionCommandContext): Promise<string | null> {
+async function readAndCompile(pi: ExtensionAPI, path: string, ctx: ExtensionCommandContext): Promise<{ code: string; hasCheckpoint: boolean } | null> {
 	let source: string;
 	try {
 		source = await readWorkflow(path);
@@ -159,7 +162,8 @@ async function readAndCompile(pi: ExtensionAPI, path: string, ctx: ExtensionComm
 		return null;
 	}
 	try {
-		return composeWorkflow(compileWorkflow(source));
+		const compiled = compileWorkflow(source);
+		return { code: composeWorkflow(compiled.code), hasCheckpoint: compiled.hasCheckpoint };
 	} catch (error) {
 		reportStartFailure(pi, ctx, messageOf(error));
 		return null;
@@ -232,6 +236,7 @@ function hostDeps(bundle: RunBundle, ctl: RunCtl, onEffect: WorkflowHostDeps["on
 		get pi() { return bundle.pi; },
 		get state() { return bundle.state; },
 		limits: bundle.limits,
+		unbounded: bundle.unbounded,
 		getCtx: () => ctl.ctx,
 		isReadonly: () => bundle.state.readonlyEnabled,
 		setReadonly: (enabled) => bundle.deps.setReadonly(enabled),

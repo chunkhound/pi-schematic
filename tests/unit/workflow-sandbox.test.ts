@@ -151,7 +151,7 @@ test("a returned workflow runs every effect through the wrapper; a bare statemen
 		memoryLimitBytes: 256 * 1024 * 1024,
 	});
 	const source = 'return defineWorkflow((workflow) => {\n  workflow.echo("a");\n  workflow.echo("b");\n  workflow.checkpoint(null);\n});\n';
-	const result = await sandbox.execute(composeWorkflow(compileWorkflow(source)), { store: { intent: "x", args: "x" } });
+	const result = await sandbox.execute(composeWorkflow(compileWorkflow(source).code), { store: { intent: "x", args: "x" } });
 	await sandbox.close();
 	assert.equal(result.ok, true, "a returned workflow settles the wrapper only after the workflow completes");
 	assert.equal(calls, 2, "both effects observe through the wrapper");

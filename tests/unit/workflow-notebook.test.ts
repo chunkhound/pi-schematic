@@ -16,6 +16,7 @@ function notebookHost(state = createState()): { host: WorkflowHost; state: Retur
 		} as unknown as WorkflowHostDeps["pi"],
 		state,
 		limits: { costLimit: null, timeBudgetMs: null },
+		unbounded: false,
 		getCtx: () => null,
 		isReadonly: () => false,
 		setReadonly: (enabled: boolean) => enabled,

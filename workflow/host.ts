@@ -410,6 +410,7 @@ function buildMetrics(deps: WorkflowHostDeps, state: HostState): WorkflowRunMetr
 		costUsd: spendRowsTotal(rows),
 		spend: [...rows.values()].sort((a, b) => b.costUsd - a.costUsd),
 		limits: deps.limits,
+		unbounded: deps.unbounded,
 		crossedAt: state.crossedAt,
 		effects: state.effects,
 	};
@@ -522,6 +523,7 @@ function currentProgress(deps: WorkflowHostDeps, state: HostState): WorkflowProg
 		elapsedMs: Date.now() - state.startedAt,
 		pendingStop: state.pendingStop,
 		limits: deps.limits,
+		unbounded: deps.unbounded,
 		currentEffect: state.currentEffect,
 	};
 }

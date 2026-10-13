@@ -70,6 +70,8 @@ function summaryRows(data: WorkflowRunSummaryData, expanded: boolean, theme: The
 	const rows = [...headlineRows(data, theme)];
 	const target = targetRow(data, theme);
 	if (target) rows.push(target);
+	// Unbounded is expected, not a failure: an informative row, never a warning tone.
+	if (data.unbounded) rows.push(`${theme.fg("dim", "limits ")}${theme.fg("muted", "unbounded \u2014 no checkpoint declared")}`);
 	if (data.error) rows.push(`${theme.fg("dim", "error  ")}${theme.fg("error", data.error)}`);
 	const stopped = stoppedRow(data, theme);
 	if (stopped) rows.push(stopped);

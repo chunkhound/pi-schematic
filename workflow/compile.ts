@@ -165,16 +165,16 @@ function validateLambda(lambda: Ast, allowedParam: Ast): void {
 	);
 }
 
-// Every workflow must declare a safe exit point: the engine can only stop mid-run at a
-// checkpoint, so a workflow without one cannot salvage partial results on a limit.
-function requireCheckpoint(lambda: Ast): void {
+// A checkpoint is the engine's only safe exit point, so the host needs to know whether one
+// exists: a workflow without one cannot be soft-stopped and is reported as unbounded.
+function declaresCheckpoint(lambda: Ast): boolean {
 	let found = false;
 	walk.simple<any>(lambda as any, {
 		CallExpression(node: Ast) {
 			if (isDirectWorkflowCall(node) && workflowMemberName(node.callee) === "checkpoint") found = true;
 		},
 	});
-	if (!found) fail(lambda, "workflow must declare at least one workflow.checkpoint(...) safe exit point (e.g. workflow.checkpoint(null))");
+	return found;
 }
 
 function patternIdentifiers(node: Ast | null | undefined): Ast[] {
@@ -322,8 +322,17 @@ function insertAwaits(source: string, lambda: Ast): string {
 	return s.toString();
 }
 
+/** One compiled workflow: the sandbox script plus the host-relevant contract facts. */
+export interface CompiledWorkflow {
+	/** Await-annotated script body for the sandbox. */
+	code: string;
+	/** True when the workflow declares a `workflow.checkpoint(...)` safe exit point.
+	 * False marks the run unbounded: no soft target can stop it, so none is offered. */
+	hasCheckpoint: boolean;
+}
+
 /** Compile one workflow file into an await-annotated script body. Throws {@link WorkflowCompileError}. */
-export function compileWorkflow(source: string): string {
+export function compileWorkflow(source: string): CompiledWorkflow {
 	const program = parseProgram(source);
 	const statement = findWorkflowStatement(program);
 	const lambda = extractLambda(statement);
@@ -331,10 +340,10 @@ export function compileWorkflow(source: string): string {
 	validateGlobalObject(program);
 	validateDestructuringKeys(program);
 	validateLambda(lambda, lambda.params[0]);
-	requireCheckpoint(lambda);
+	const hasCheckpoint = declaresCheckpoint(lambda);
 	const compiled = insertAwaits(source, lambda);
 	// WHY: the injected `async` must yield valid JS. Without this, a sloppy identifier
 	// such as `await` silently becomes a reserved word and the output fails to parse.
 	parseProgram(compiled);
-	return compiled;
+	return { code: compiled, hasCheckpoint };
 }

@@ -1,6 +1,6 @@
 # Workflow Author Contract
 
-> **Checkpoint mandate:** the full rule lives in [Constraints](#constraints).
+> **Checkpoints:** optional; the full rule lives in [Constraints](#constraints).
 >
 > **Headless runs:** with no UI the budget dialogs are skipped and the run starts with no targets (unbounded until it exits or aborts; the host records this decision — see [Targets](#targets-exit-cancellation-salvage)).
 
@@ -41,7 +41,7 @@ A workflow is one JavaScript file. The host compiles it and runs it as the sandb
 
 - The file returns `defineWorkflow(fn)`.
 - `fn` takes exactly one parameter named `workflow`.
-- `fn` declares at least one `workflow.checkpoint(...)` call — the full rule is in [Constraints](#constraints).
+- `fn` may declare `workflow.checkpoint(...)` calls. Without one, the workflow is unbounded — see [Targets](#targets-exit-cancellation-salvage).
 - `fn` has no imports, file access, network, or timers.
 - Project workflows live in `<cwd>/.pi/workflows`. Global workflows live in `<agent dir>/workflows`: `~/.pi/agent`, or the `PI_CODING_AGENT_DIR` path when set. Name rules: [Command surface](#command-surface).
 
@@ -247,7 +247,7 @@ The workflow owns the exit condition. It marks safe exit points with `workflow.c
 
 **Numbers.** This page states each author-visible value once. The named code constant owns the value; the engine doc names the constant only.
 
-The host applies two soft targets. The host stops the workflow only at a checkpoint.
+The host applies two soft targets. The host stops the workflow only at a checkpoint. A workflow without a checkpoint is unbounded: it has no soft stop point.
 
 - **Cost** is checked before these handles: `run`, `handoff`, `classify`, `shell`, `entries`, `notebookWrite`, `readonly`, `new`.
 - **Time** is checked before the same handles.
@@ -261,7 +261,9 @@ The host applies two soft targets. The host stops the workflow only at a checkpo
 - To bound an unreachable or far-away checkpoint, the host escalates to a hard abort after 16 guarded effects past the pending stop (`MAX_DEFERRED_EFFECTS = 16`). The last checkpoint metadata still salvages.
 - A checkpoint that never runs hits the sandbox hard backstop at **twice** the soft time target. The sandbox returns `error.kind: "timeout"`, which the host records as `time-limit` with the last checkpoint salvaged.
 
-The `--workflow-cost` flag parses USD and the `--workflow-time` flag parses milliseconds: `--workflow-time 30` means 30 ms, not 30 minutes (1 hour is `--workflow-time 3600000`). When either flag parses to a finite positive number, the flags bypass the dialogs and the other target stays unset. A flag that is present but does not parse to a finite positive number cancels the run with a visible error instead of silently running unbounded. The dialogs use minutes: the time presets are `1 hour`, `4 hours`, and `8 hours`; the custom time input takes minutes. Otherwise an interactive session shows the cost and time dialogs, and a headless session runs with no targets. The headless no-target start is recorded as a `workflow-limits` transcript entry so the run never looks silently unbounded.
+A checkpoint-less workflow skips the cost/time dialog. `--workflow-cost` and `--workflow-time` are ignored, and the sandbox hard time deadline is disabled because it derives from the soft time target. Only cancellation (Escape or Ctrl+C twice) stops the run. The normal path stays silent: `∞ unbounded` replaces the checkpoint cell in the live footer, and the overview shows `limits  unbounded — no checkpoint declared`. When the operator did supply a target flag, one warning notice names it, because a flag that cannot act must not look applied. The `workflow-limits` entry is UI/transcript-only, so it never reaches the LLM.
+
+The `--workflow-cost` flag parses USD and the `--workflow-time` flag parses milliseconds: `--workflow-time 30` means 30 ms, not 30 minutes (1 hour is `--workflow-time 3600000`). When either flag parses to a finite positive number, the flags bypass the dialogs and the other target stays unset. A flag that is present but does not parse to a finite positive number cancels the run with a visible error instead of continuing without a target. An unbounded workflow never reaches this check: its flags are ignored (see the checkpoint-less paragraph above). The dialogs use minutes: the time presets are `1 hour`, `4 hours`, and `8 hours`; the custom time input takes minutes. Otherwise an interactive session shows the cost and time dialogs, and a headless session runs with no targets. The headless no-target start is recorded as a `workflow-limits` transcript entry so the run never looks silently unbounded.
 
 **Cancellation** aborts the run through the sandbox signal and the active model turn. Cancellation is immediate. It does not defer to the next checkpoint, because a deferred emergency stop would keep a model turn spending.
 
@@ -310,18 +312,18 @@ Headless and RPC runs render nothing and keep pi's defaults. Run end restores th
 <details>
 <summary>Card and footer layout</summary>
 
-The interactive transcript draws the summary as a bordered card. Collapsed, it shows the reason, time, the checkpoint/step/turn/classify counts, cost, and one line per model with cost and input/output tokens. Expanded, it adds the remaining per-handle activity, cache-token detail, the bounded shell effect log (up to `MAX_EFFECT_ROWS` recent commands; see [workflow-engine.md](workflow-engine.md)), and the start and end timestamps.
+The interactive transcript draws the summary as a bordered card. Collapsed, it shows the reason, time, the checkpoint/step/turn/classify counts, cost, and one line per model with cost and input/output tokens. An unbounded run adds `limits  unbounded — no checkpoint declared`. Expanded, it adds the remaining per-handle activity, cache-token detail, the bounded shell effect log (up to `MAX_EFFECT_ROWS` recent commands; see [workflow-engine.md](workflow-engine.md)), and the start and end timestamps.
 
 While a run is live in the interactive TUI, the workflow replaces the built-in footer with one unified bar in two zones:
 
-- **Run zone:** `🛠️ <name>`, checkpoints as `🚩 <n>`, elapsed as `⏱ <m:ss>` (`h:mm:ss` from one hour), cost as `$<n>.<nn>`, each paired with its target when one is set, plus a warning pill `⏸ <reason> — stopping at next checkpoint` while a stop is pending. The `currentEffect` cell (the shell command or the run prompt) also lives here.
+- **Run zone:** `🛠️ <name>`, checkpoints as `🚩 <n>` or `∞ unbounded` when no checkpoint is declared, elapsed as `⏱ <m:ss>` (`h:mm:ss` from one hour), cost as `$<n>.<nn>`, each paired with its target when one is set, plus a warning pill `⏸ <reason> — stopping at next checkpoint` while a stop is pending. The `currentEffect` cell (the shell command or the run prompt) also lives here.
 - **Conversation zone:** `ctx <n>%`, topic, readonly, notebook count.
 - Elision drops one cell at a time, least important first:
   1. conversation cells: notebook, readonly, topic, then `ctx`;
   2. run cells: the `currentEffect` cell, cost, elapsed, then checkpoints;
   3. the run name. With a stop pill on the bar, the name drops out first. Without one, the name shrinks with `…`.
   The stop pill shrinks last.
-- A dim second line preserves the built-in cwd/branch, session token/cost totals, and model/context-window detail. The live bar and the dim line are two projections that converge after settle: the bar reads `runSpendRows` (`workflow/spend.ts`) while the dim line reads `collectUsage` (`tui.ts`).
+- A dim second line preserves the built-in cwd/branch, session token/cost totals, and model/context-window detail. The bar shows the run cost (`runSpendRows` in `workflow/spend.ts`); the dim line shows the session cost (`collectUsage` in `tui.ts`).
 
 </details>
 
@@ -368,7 +370,7 @@ Precedence has one source: `workflowRoots` in `workflow/file.ts` lists `<cwd>/.p
 - One `/workflow` runs per process. The command claims a process-global reservation synchronously before any await and releases it in `finally`. A second `/workflow` is rejected with a visible notice. The reservation survives session replacements.
 - Workflow code is synchronous; the rule is stated in [Model and invariants](#model-and-invariants).
 - `workflow.new` clears the context and starts a new session. After it, the old context and its session manager are invalid. The host rebinds pi, state, dependencies, input suppression, cancellation, and the run-visibility surfaces from the runtime that the replacement session published in `session_start`. A fresh cancellation registration means no armed press carries across the switch. A missing publication fails the workflow explicitly. A cancelled replacement fails the handle without switching. Cost stays cumulative across replacements.
-- Every workflow MUST declare at least one `workflow.checkpoint(...)`. The compiler refuses a file without one. `workflow.exit` does not satisfy the requirement.
+- Checkpoints are optional. Without `workflow.checkpoint(...)`, the workflow is unbounded: the cost/time dialog is skipped, `--workflow-cost` and `--workflow-time` are ignored, and the sandbox hard time deadline is disabled. Only cancellation (Escape or Ctrl+C twice) stops it. The operator sees `∞ unbounded` in the live footer and `limits  unbounded — no checkpoint declared` in the overview. `workflow.exit` is terminal and is not a checkpoint.
 - Structured output changes the declared tool set for one run. The host registers and activates `workflow_output` before dispatch and restores the previous active set in `finally`. The change is transcript-visible and can invalidate the provider's cached prefix. A spawned child never inherits `workflow_output`; the tool is host-owned and run-scoped, so only the parent turn can satisfy the contract.
 - The sandbox bounds resources. It is not a security boundary.
 - Readonly is the enforced posture, not a model hint:

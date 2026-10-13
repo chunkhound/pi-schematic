@@ -32,6 +32,8 @@ export interface WorkflowRunSummaryData {
 	spend: ModelSpend[];
 	/** Soft targets the run was given; used to explain a soft stop's overshoot. */
 	limits: WorkflowLimits;
+	/** True when the workflow declares no checkpoint: no soft target could apply. */
+	unbounded: boolean;
 	/** Cost/time at the first target crossing; null when no target was crossed. */
 	crossedAt: { costUsd: number; elapsedMs: number } | null;
 	/** Last `workflow.checkpoint(...)` metadata when a limit stopped the run; absent otherwise. */
@@ -62,6 +64,7 @@ export function buildWorkflowSummary(
 		costUsd: metrics.costUsd,
 		spend: metrics.spend,
 		limits: metrics.limits,
+		unbounded: metrics.unbounded,
 		crossedAt: metrics.crossedAt,
 		...(metrics.effects.length > 0 ? { effects: metrics.effects } : {}),
 		...(partial !== undefined ? { partial } : {}),

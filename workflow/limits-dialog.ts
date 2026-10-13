@@ -1,4 +1,5 @@
-// WHY: budget dialog is the run's first user decision (flags bypass, headless skips).
+// WHY: budget dialog is the run's first user decision (flags bypass, headless skips,
+// checkpoint-less workflows skip it entirely: no soft target can stop them).
 // Isolated so command.ts keeps orchestration only; notify lives here as the shared
 // UI-notice helper (leaf module, no cycle back into command).
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -30,10 +31,13 @@ export const TIME_PRESETS: string[] = [...TIME_PRESETS_BASE];
 export type LimitsOutcome = { kind: "ok"; limits: WorkflowLimits } | { kind: "cancelled"; notified: boolean };
 
 /** Flags bypass the dialog when they parse to a finite positive number; a present but
- * unparsable flag visibly cancels the run instead of silently falling back to unlimited. */
-export async function resolveLimits(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<LimitsOutcome> {
+ * unparsable flag visibly cancels the run instead of silently falling back to unlimited.
+ * A workflow with no checkpoint is unbounded: no soft target can stop it, so the dialog,
+ * the flags, and the sandbox deadline are all skipped and the decision is recorded. */
+export async function resolveLimits(pi: ExtensionAPI, ctx: ExtensionCommandContext, hasCheckpoint: boolean): Promise<LimitsOutcome> {
 	const rawCost = pi.getFlag("workflow-cost");
 	const rawTime = pi.getFlag("workflow-time");
+	if (!hasCheckpoint) return unboundedLimits(pi, ctx, rawCost, rawTime);
 	const cost = parseLimitFlag(rawCost);
 	const time = parseLimitFlag(rawTime);
 	const invalid = invalidFlagsNotice(rawCost, cost, rawTime, time);
@@ -47,6 +51,39 @@ export async function resolveLimits(pi: ExtensionAPI, ctx: ExtensionCommandConte
 	if (!ctx.hasUI) return headlessNoTarget(pi);
 	const limits = await promptLimits(ctx);
 	return limits ? { kind: "ok", limits } : { kind: "cancelled", notified: false };
+}
+
+/** Unbounded run: no checkpoint means no soft target can act, so none is offered and any
+ * target flags are ignored. The live footer's `∞ unbounded` cell is the always-on indicator;
+ * a UI-only transcript entry records the decision. One warning notice fires only when the
+ * operator supplied target flags, because those flags silently have no effect. */
+function unboundedLimits(
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+	rawCost: boolean | string | undefined,
+	rawTime: boolean | string | undefined,
+): LimitsOutcome {
+	const flags = presentFlagNames([
+		["--workflow-cost", rawCost],
+		["--workflow-time", rawTime],
+	]);
+	const notice =
+		"This workflow declares no checkpoint: it is unbounded. No cost or time target applies." +
+		(flags.length > 0 ? ` Ignoring ${flags.join(" and ")}: a target stops the run only at a checkpoint.` : "");
+	if (flags.length > 0) notify(ctx, notice, "warning");
+	safeAppendEntry(pi, "workflow-limits", {
+		costLimit: null,
+		timeBudgetMs: null,
+		unbounded: true,
+		...(flags.length > 0 ? { ignoredFlags: flags } : {}),
+		notice,
+	});
+	return { kind: "ok", limits: { costLimit: null, timeBudgetMs: null } };
+}
+
+/** Names of flags the operator actually supplied; an absent flag or an empty-string value does not count. */
+function presentFlagNames(flags: Array<[string, boolean | string | undefined]>): string[] {
+	return flags.filter(([, raw]) => raw !== undefined && !(typeof raw === "string" && raw.trim() === "")).map(([name]) => name);
 }
 
 /** Headless runs set no targets: record the explicit no-target decision so the run never

@@ -6,10 +6,11 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { withWorkflowChild, sendOk, runWorkflow, readUiEvents, latestSummary } from "./workflow-harness.js";
+import { withWorkflowChild, sendOk, runWorkflow, readUiEvents, readFooter, readAppended, latestSummary } from "./workflow-harness.js";
 import type { ProcessHarness } from "./pty-harness.js";
 
 const WORKFLOW = "tests/e2e/fixtures/exit-workflow.js";
+const NO_CHECKPOINT = "tests/e2e/fixtures/command-no-checkpoint.js";
 
 function summaryOf(entries: Awaited<ReturnType<typeof runWorkflow>>): Record<string, any> {
 	const summary = latestSummary(entries);
@@ -145,5 +146,36 @@ describe("workflow limits E2E", () => {
 		await sendOk(h, "mock-select Custom…");
 		await sendOk(h, "mock-input 40000");
 		assert.equal(summaryOf(await runWorkflow(h, WORKFLOW)).limits.timeBudgetMs, 2_400_000_000);
+	}));
+
+	it("a checkpoint-less workflow runs unbounded: no dialog, no notice, unbounded footer, summary", async () => withWorkflowChild(async (h) => {
+		// Hold the run inside its fake shell so the live footer (uninstalled at run end) is observable.
+		await sendOk(h, "tui");
+		await sendOk(h, "hold-exec");
+		h.write(`cmd-bg workflow ${NO_CHECKPOINT}`);
+		await h.waitForText("OK:started");
+		await h.waitForText("EXEC-HELD");
+		// hasCheckpoint is false => resolveLimits short-circuits: no pickers are invoked.
+		const events = await readUiEvents(h);
+		assert.equal(events.notifications.length, 0, "no start-up notice: the live footer carries the unbounded indicator");
+		// The footer renders live from the progress view: the ∞ cell, not the checkpoint count.
+		const footer = await readFooter(h);
+		assert.ok(footer?.includes("\u221E unbounded"), "the footer shows the unbounded cell, not the checkpoint count");
+		assert.equal(footer?.includes("\u{1F6A9}"), false, "no checkpoints cell in the unbounded footer");
+		await sendOk(h, "release-exec");
+		await sendOk(h, "cmd-wait");
+		const entries = await readAppended(h);
+		const summary = summaryOf(entries);
+		assert.equal(summary.unbounded, true, "summary carries unbounded");
+		assert.deepEqual(summary.limits, { costLimit: null, timeBudgetMs: null }, "no targets on an unbounded run");
+		const limitsEntry = entries.find((entry) => entry.customType === "workflow-limits");
+		assert.ok(limitsEntry, "the unbounded decision is persisted as a workflow-limits entry");
+		assert.equal((limitsEntry.data as { unbounded: boolean }).unbounded, true);
+		assert.deepEqual(
+			{ costLimit: (limitsEntry.data as { costLimit: unknown }).costLimit, timeBudgetMs: (limitsEntry.data as { timeBudgetMs: unknown }).timeBudgetMs },
+			{ costLimit: null, timeBudgetMs: null },
+		);
+		// The unbounded decision is UI/transcript-only: no model-facing workflow-log entry is added.
+		assert.equal(entries.some((entry) => entry.customType === "workflow-log"), false, "unbounded decision never reaches the LLM");
 	}));
 });

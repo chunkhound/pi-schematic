@@ -30,6 +30,8 @@ export interface RebindBundle {
 	state: SchematicState;
 	deps: RebindableDeps;
 	limits: WorkflowLimits;
+	/** True when the workflow declares no checkpoint: the run is unbounded. */
+	unbounded: boolean;
 }
 
 /** Final exit outcome: set once per run, consumed by the overview. */

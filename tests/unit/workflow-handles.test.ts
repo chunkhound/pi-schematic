@@ -47,6 +47,7 @@ function fakeDeps(): WorkflowHostDeps {
 		pi,
 		state: createState(),
 		limits: { costLimit: null, timeBudgetMs: null },
+		unbounded: false,
 		getCtx: () => ctx,
 		isReadonly: () => false,
 		setReadonly: () => false,

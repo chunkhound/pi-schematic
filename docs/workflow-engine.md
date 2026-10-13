@@ -14,7 +14,7 @@ One `/workflow <file> [args]` run. Each step names its owner module.
 | 4 | Read | `workflow/file.ts` | `readWorkflow` reads the source; `workflow/command.ts` (`readAndCompile`) wraps the failure. |
 | 5 | Compile | `workflow/compile.ts` | `compileWorkflow` parses, validates the synchronous contract, and rewrites calls. |
 | 6 | Compose driver | `workflow/driver.ts` | `composeWorkflow` prepends `WORKFLOW_DRIVER`, which defines `defineWorkflow`. |
-| 7 | Resolve limits | `workflow/limits-dialog.ts` | `resolveLimits` (defined here, called from `startWorkflow` in `workflow/command.ts`): `--workflow-cost`/`--workflow-time` bypass the dialogs; an interactive session prompts; a headless session runs with no targets. |
+| 7 | Resolve limits | `workflow/limits-dialog.ts` | `resolveLimits` receives `hasCheckpoint`; without a checkpoint it skips the dialog and flags and marks the run unbounded. |
 | 8 | Build host | `workflow/host.ts` | `createWorkflowHost` via `command.ts` (`buildHost`): run registry, child-usage sink, exit state, and metrics. `host.globals()` supplies the handle list. |
 | 9 | Suppress input, arm cancel | `workflow/command.ts` | Installs the `input` handler and the arm-then-confirm cancellation funnel. |
 | 10 | Build sandbox | `workflow/sandbox.ts` | `createWorkflowSandbox` clamps the deadline; `command.ts` (`runSandbox`) supplies `MEMORY_LIMIT_BYTES` and `hardDeadlineMs(timeBudgetMs)`. |
@@ -63,7 +63,7 @@ One `/workflow <file> [args]` run. Each step names its owner module.
 
 **Rewrite.** `insertAwaits` (magic-string) wraps every direct `workflow.<member>(...)` call in `(await ...)`, including optional-chain forms. It prepends `async ` to the arrow when it wrapped at least one call. A call already awaited is not wrapped twice.
 
-**Rejections.** The rules live in [workflows.md](workflows.md) — the author contract owns them (checkpoint rule in "Constraints", language rejections in "Accepted control flow"). Mechanism: every violation throws `WorkflowCompileError` with `line:column`. Non-reference positions (property keys, method names, labels) are exempt from the global-object, dynamic-code, and `workflow` reference checks.
+**Rejections.** The rules live in [workflows.md](workflows.md) — the author contract owns them (language rejections in "Accepted control flow"). Checkpoints are optional. `compileWorkflow` returns `{ code, hasCheckpoint }`; the command passes `hasCheckpoint` to limit resolution and threads `unbounded` through run progress and summary. Mechanism: every compile violation throws `WorkflowCompileError` with `line:column`. Non-reference positions (property keys, method names, labels) are exempt from the global-object, dynamic-code, and `workflow` reference checks.
 
 ## Sandbox
 
@@ -118,7 +118,7 @@ All surfaces are CustomEntry or UI only. None enter the LLM context.
 | `workflow-shell` entry | `workflow/activity.ts` | One shell call: exit status, duration, bounded output tail. |
 | `workflow-log` entry | `workflow/command.ts` | The script's `console`/`text()` output. |
 | `workflow-error` entry | `workflow/command.ts`, `workflow/limits-dialog.ts`, `workflow/host.ts` | Diagnostic `{ phase, error }`. |
-| `workflow-limits` entry | `workflow/limits-dialog.ts` | Headless no-target start: `costLimit` and `timeBudgetMs` both null, with a notice. |
+| `workflow-limits` entry | `workflow/limits-dialog.ts` | Headless no-target or unbounded start; unbounded runs include `unbounded: true` (and `ignoredFlags` when the operator supplied target flags, which also raises one warning notice). UI/transcript-only; never enters LLM context. |
 | `workflow-activity` widget | `workflow/activity.ts` | Live shell progress above the editor. TUI only. |
 
 `workflow-error` phases: `command.ts` writes `reserve`, `start`, `exit-record`, `summary`, `cleanup`; `limits-dialog.ts` writes `start`; `host.ts` writes `abort`, `effect`, `progress`.

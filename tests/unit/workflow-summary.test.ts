@@ -30,6 +30,7 @@ function metrics(overrides: Partial<WorkflowRunMetrics> = {}): WorkflowRunMetric
 			},
 		],
 		limits: { costLimit: null, timeBudgetMs: null },
+		unbounded: false,
 		crossedAt: null,
 		effects: [],
 		...overrides,
@@ -71,4 +72,12 @@ test("buildWorkflowSummary carries the salvaged partial only when one exists", (
 	const input = metrics();
 	assert.equal("partial" in buildWorkflowSummary("wf", "cost-limit", undefined, input), false);
 	assert.deepEqual(buildWorkflowSummary("wf", "cost-limit", undefined, input, { round: 3 }).partial, { round: 3 });
+});
+
+test("buildWorkflowSummary carries the unbounded flag through from metrics", () => {
+	const bounded = buildWorkflowSummary("wf", "approved", undefined, metrics({ unbounded: false }));
+	assert.equal(bounded.unbounded, false, "a checkpointed run reports bounded");
+	const unbounded = buildWorkflowSummary("wf", "returned", undefined, metrics({ unbounded: true }));
+	assert.equal(unbounded.unbounded, true, "a checkpoint-less run reports unbounded");
+	assert.deepEqual(unbounded.limits, { costLimit: null, timeBudgetMs: null }, "an unbounded run carries null targets");
 });

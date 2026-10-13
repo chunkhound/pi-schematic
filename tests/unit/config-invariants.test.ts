@@ -278,9 +278,9 @@ test("workflow docs keep one owner per shared rule", () => {
 	assert.match(workflowsDoc, /Full rejection list \(compiler contract\)/);
 	assert.match(engineDoc, /The rules live in \[workflows\.md\]/);
 	assert.doesNotMatch(engineDoc, /\| Rejection \| Rule \|/);
-	// Checkpoint mandate: the full statement (incl. workflow.exit) lives only in Constraints.
-	assert.match(workflowsDoc, /`workflow\.exit` does not satisfy the requirement\./);
-	assert.equal((workflowsDoc.match(/The compiler refuses a file without one\./g) ?? []).length, 1);
+	// Checkpoint optionality: the unbounded rule (incl. workflow.exit being terminal, not a checkpoint) lives only in Constraints.
+	assert.match(workflowsDoc, /Checkpoints are optional\. Without `workflow\.checkpoint\(\.\.\.\)`, the workflow is unbounded/);
+	assert.match(workflowsDoc, /`workflow\.exit` is terminal and is not a checkpoint/);
 	// Example: workflows.md links the runnable script; it embeds no copy and no model id.
 	assert.match(workflowsDoc, /examples\/workflows\/review\.js/);
 	assert.doesNotMatch(workflowsDoc, /jev-latest|"typesafe"/);

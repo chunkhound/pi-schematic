@@ -193,7 +193,7 @@ test("renderUnifiedBar keeps the run on the left and drops conversation cells fi
 });
 
 test("workflowSegments label elapsed with a clock and cost with $, most important first", () => {
-	const segments = workflowSegments({ name: "review", checkpoints: 3, costUsd: 0.42, elapsedMs: 529_000, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, currentEffect: null }, tuiTheme);
+	const segments = workflowSegments({ name: "review", checkpoints: 3, costUsd: 0.42, elapsedMs: 529_000, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, unbounded: false, currentEffect: null }, tuiTheme);
 	assert.deepEqual(segments.map((segment) => [segment.text, segment.priority]), [
 		["\u{1F6E0}\u{FE0F} review", 0],
 		["\u{1F6A9} 3", 1],
@@ -203,7 +203,7 @@ test("workflowSegments label elapsed with a clock and cost with $, most importan
 });
 
 test("workflowSegments appends the soft target and pins a pending stop against elision", () => {
-	const view = { name: "review", checkpoints: 3, costUsd: 6.4, elapsedMs: 529_000, pendingStop: "cost-limit" as const, limits: { costLimit: 5, timeBudgetMs: 3_600_000 }, currentEffect: null };
+	const view = { name: "review", checkpoints: 3, costUsd: 6.4, elapsedMs: 529_000, pendingStop: "cost-limit" as const, limits: { costLimit: 5, timeBudgetMs: 3_600_000 }, unbounded: false, currentEffect: null };
 	const segments = workflowSegments(view, tuiTheme);
 	const pill = segments.find((segment) => segment.key === "workflow-soft-stop");
 	assert.ok(pill, "pending soft stop pill present");
@@ -216,11 +216,21 @@ test("workflowSegments appends the soft target and pins a pending stop against e
 	assert.equal(narrow.includes("review"), false, "the pill outranks the run name when eliding");
 });
 
+test("workflowSegments renders an unbounded view with the ∞ cell and no checkpoints cell", () => {
+	const view = { name: "review", checkpoints: 5, costUsd: 0.42, elapsedMs: 529_000, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, unbounded: true, currentEffect: null };
+	const segments = workflowSegments(view, tuiTheme);
+	const keys = segments.map((segment) => segment.key);
+	assert.equal(keys.includes("workflow-unbounded"), true, "an unbounded run carries the ∞ cell");
+	assert.equal(keys.includes("workflow-checkpoints"), false, "no checkpoint count cell on an unbounded run");
+	const unbounded = segments.find((segment) => segment.key === "workflow-unbounded")!;
+	assert.ok(unbounded.text.includes("\u221E unbounded"), "the cell text is the unbounded marker");
+});
+
 test("installWorkflowFooter replaces the footer once; uninstall restores the built-in one", () => {
 	const state = createState();
 	const record: TUIRecord = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
 	const ctx = makeTUICtx({ percent: 62, record });
-	const view = () => ({ state, progress: { name: "review", checkpoints: 1, costUsd: 0.1, elapsedMs: 1000, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, currentEffect: null } });
+	const view = () => ({ state, progress: { name: "review", checkpoints: 1, costUsd: 0.1, elapsedMs: 1000, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, unbounded: false, currentEffect: null } });
 
 	installWorkflowFooter(ctx, view);
 	installWorkflowFooter(ctx, view);
@@ -239,7 +249,7 @@ test("installWorkflowFooter stays silent headless", () => {
 	const state = createState();
 	const record: TUIRecord = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
 	const headless = makeTUICtx({ hasUI: false, record });
-	installWorkflowFooter(headless, () => ({ state, progress: { name: "review", checkpoints: 0, costUsd: 0, elapsedMs: 0, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, currentEffect: null } }));
+	installWorkflowFooter(headless, () => ({ state, progress: { name: "review", checkpoints: 0, costUsd: 0, elapsedMs: 0, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, unbounded: false, currentEffect: null } }));
 	assert.equal(record.footerInstalls ?? 0, 0, "headless installs no footer");
 });
 
@@ -250,7 +260,7 @@ test("an RPC context with a UI renders no workflow chrome", () => {
 	const record: TUIRecord = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
 	const rpc = makeTUICtx({ hasUI: true, mode: "rpc", percent: 62, record });
 	updateIndicators(rpc, state);
-	installWorkflowFooter(rpc, () => ({ state, progress: { name: "review", checkpoints: 0, costUsd: 0, elapsedMs: 0, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, currentEffect: null } }));
+	installWorkflowFooter(rpc, () => ({ state, progress: { name: "review", checkpoints: 0, costUsd: 0, elapsedMs: 0, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, unbounded: false, currentEffect: null } }));
 	uninstallWorkflowFooter(rpc);
 	assert.equal(record.statuses.size, 0, "no indicator statuses in RPC mode");
 	assert.equal(record.footerInstalls ?? 0, 0, "no workflow footer in RPC mode");

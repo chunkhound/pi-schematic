@@ -91,6 +91,7 @@ function createEnv(limits: WorkflowLimits = { costLimit: null, timeBudgetMs: nul
 		pi: pi as unknown as ExtensionAPI,
 		state,
 		limits,
+		unbounded: false,
 		getCtx: () => ctx,
 		isReadonly: () => false,
 		setReadonly: () => false,

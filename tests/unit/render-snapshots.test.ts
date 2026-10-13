@@ -358,6 +358,7 @@ function overviewData(): WorkflowRunSummaryData {
 			spendRow("typesafe/jev", "jev", 0.07, 12_000, 2),
 		],
 		limits: { costLimit: null, timeBudgetMs: null },
+		unbounded: false,
 		crossedAt: null,
 	};
 }
