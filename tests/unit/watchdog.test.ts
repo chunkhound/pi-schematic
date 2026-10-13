@@ -251,22 +251,30 @@ function deliverEligibleNudge(state: ReturnType<typeof createState>): void {
 	state.pendingRequestedHandoff!.eligibleNudgeDelivered = true;
 }
 
-test("watchdog stays advisory for a fresh user-requested handoff", async () => {
+async function createPendingHandoffHost() {
 	const state = createState();
 	const pi = await createTestHost((api) => {
 		registerHandoffCommand(api, state);
 		registerWatchdog(api, state);
 	});
-	const [handler] = pi.handlers.get("agent_settled")!;
-
 	await pi.commands.get("handoff").handler("implement auth", {
 		...makeReadonlyUICtx(),
 		isIdle: () => true,
 	} as any);
+	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
+	const [agentEnd] = pi.handlers.get("agent_end")!;
+	const [agentSettled] = pi.handlers.get("agent_settled")!;
+	return { state, agentEnd, agentSettled };
+}
+
+const eligibleUsage = () => ({ tokens: 50000, percent: 25, contextWindow: 200000 });
+
+test("watchdog stays advisory for a fresh user-requested handoff", async () => {
+	const { state, agentSettled } = await createPendingHandoffHost();
 
 	const notifications: string[] = [];
 	deliverEligibleNudge(state);
-	await handler(
+	await agentSettled(
 		{},
 		{
 			hasUI: true,
@@ -274,7 +282,7 @@ test("watchdog stays advisory for a fresh user-requested handoff", async () => {
 				notify: (message: string) => notifications.push(message),
 				setStatus: () => {},
 			},
-			getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
+			getContextUsage: eligibleUsage,
 		},
 	);
 
@@ -312,17 +320,7 @@ test("watchdog does not cancel an in-flight handoff", async () => {
 });
 
 test("watchdog auto-cancels a required handoff after enough unanswered settled runs", async () => {
-	const state = createState();
-	const pi = await createTestHost((api) => {
-		registerHandoffCommand(api, state);
-		registerWatchdog(api, state);
-	});
-	const [handler] = pi.handlers.get("agent_settled")!;
-
-	await pi.commands.get("handoff").handler("implement auth", {
-		...makeReadonlyUICtx(),
-		isIdle: () => true,
-	} as any);
+	const { state, agentSettled: handler } = await createPendingHandoffHost();
 
 	const notifications: unknown[] = [];
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "handoff pending"]]);
@@ -332,7 +330,7 @@ test("watchdog auto-cancels a required handoff after enough unanswered settled r
 			notify: (message: unknown) => notifications.push(message),
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
 		},
-		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
+		getContextUsage: eligibleUsage,
 	};
 
 	// Runs without the eligible nudge do not consume the cancellation budget.
@@ -357,23 +355,36 @@ test("watchdog auto-cancels a required handoff after enough unanswered settled r
 	assert.doesNotMatch(notifications[0] as string, /user-requested|temporary bypass/i);
 });
 
-async function createPendingHandoffHost() {
+test("a nudged run whose handoff call failed synchronously counts one attempt", async () => {
 	const state = createState();
 	const pi = await createTestHost((api) => {
 		registerHandoffCommand(api, state);
+		registerHandoffTool(api, state);
 		registerWatchdog(api, state);
 	});
-	await pi.commands.get("handoff").handler("implement auth", {
+	await pi.commands.get("handoff").handler("continue work", {
 		...makeReadonlyUICtx(),
 		isIdle: () => true,
 	} as any);
-	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
-	const [agentEnd] = pi.handlers.get("agent_end")!;
-	const [agentSettled] = pi.handlers.get("agent_settled")!;
-	return { state, agentEnd, agentSettled };
-}
 
-const eligibleUsage = () => ({ tokens: 50000, percent: 25, contextWindow: 200000 });
+	deliverEligibleNudge(state);
+	let toolCalledAtCompaction: boolean | undefined;
+	await assert.rejects(
+		() => pi.tools.get("handoff").execute("sync-failure", { nextInstruction: "continue work" }, undefined, undefined, {
+			getContextUsage: eligibleUsage,
+			compact: () => {
+				toolCalledAtCompaction = state.pendingRequestedHandoff?.toolCalled;
+				throw new Error("synchronous compact failure");
+			},
+		}),
+		/synchronous compact failure/,
+	);
+	assert.equal(toolCalledAtCompaction, true, "the tool marks the handoff called before compaction");
+	assert.equal(state.pendingRequestedHandoff?.toolCalled, false, "failHandoff resets toolCalled");
+
+	await emitAll(pi, "agent_settled", { type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage });
+	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 1);
+});
 
 test("agent_end events within a run add no attempt", async () => {
 	const { state, agentEnd, agentSettled } = await createPendingHandoffHost();

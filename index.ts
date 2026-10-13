@@ -24,7 +24,7 @@ import {
 import { createState, invalidateHandoffState, resetState, type SchematicState } from "./state.js";
 import { CONTEXT_PRIMER } from "./system-prompt.js";
 import { formatCurrentDatePrompt } from "./time/format.js";
-import { buildNudge, registerWatchdog } from "./watchdog.js";
+import { buildAndRecordNudge, registerWatchdog } from "./watchdog.js";
 import { registerNotebookTools } from "./notebook/tools.js";
 import { ensureNotebookToolsActive, registerNotebookRehydration, reconstructNotebook } from "./notebook/rehydration.js";
 import { registerNotebookTopicTool } from "./notebook/topic-tool.js";
@@ -949,10 +949,7 @@ export default function (pi: ExtensionAPI): void {
 			state.lastWatchdogBand = band;
 		}
 
-		const eligible = isHandoffEligible(usage);
-		const nudge = buildNudge(state, percent, eligible);
-		// The model was told to hand off now; the watchdog counts this run when it settles.
-		if (state.pendingRequestedHandoff && eligible) state.pendingRequestedHandoff.eligibleNudgeDelivered = true;
+		const nudge = buildAndRecordNudge(state, percent, isHandoffEligible(usage));
 		if (!retainIneligibleHumanBoundary) state.pendingTopicBoundaryHint = null;
 		return {
 			messages: [

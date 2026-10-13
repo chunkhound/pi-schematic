@@ -417,7 +417,8 @@ export class RealHost {
 
 	/**
 	 * End a step that began at event index `mark`: wait for the barrier, require no extension_error
-	 * since `mark`, then require exactly `runs` agent_start events since `mark`.
+	 * since `mark`, then require exactly `runs` runs started since `mark`, counted by `countRuns`
+	 * (the passes of one run up to its agent_settled are one run).
 	 *
 	 * A run a command, session_tree or agent_settled handler starts is first visible to the probe at
 	 * its "input" event, so a barrier can report quiet before that run has started. A step that has

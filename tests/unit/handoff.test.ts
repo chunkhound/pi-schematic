@@ -8,7 +8,8 @@ import { registerHandoffTool } from "../../handoff/tool.js";
 import { buildContinuationFrame, buildHandoffCompactionSummary, buildNextUserMessage } from "../../handoff/format.js";
 import { registerHandoffCompaction } from "../../handoff/compact.js";
 import { STATUS_KEY_HANDOFF, WIDGET_KEY_WARNING, updateIndicators } from "../../tui.js";
-import { registerWatchdog } from "../../watchdog.js";
+import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
+import { emitAll } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
 
 /**
@@ -1143,30 +1144,53 @@ test("handoff tool preserves pending requested handoff and re-engages LLM after 
 });
 
 test("command handoff waits for eligibility and retries without watchdog cancellation", async () => {
-	const state = createState();
-	let compactOptions: any;
-	const pi = await createTestHost((api) => {
-		registerHandoffCommand(api, state);
-		registerHandoffTool(api, state);
-		registerWatchdog(api, state);
+	// Full host: the real context hook sends the not-ready nudge. Runs that carried only
+	// that nudge must not count, so MAX_HANDOFF_ATTEMPTS of them leave the handoff pending.
+	const pi = await createTestHost();
+	const [contextHook] = pi.handlers.get("context")!;
+	const smallUsage = { tokens: 5000, percent: 2.5, contextWindow: 200000 };
+	const eligibleUsage = { tokens: 50000, percent: 25, contextWindow: 200000 };
+	const warnings: string[] = [];
+	const ctxAt = (usage: unknown) => ({
+		hasUI: true,
+		ui: {
+			notify: (message: string, level: string) => { if (level === "warning") warnings.push(message); },
+			theme: { fg: (_name: string, text: string) => text },
+			setStatus: () => {},
+			setWidget: () => {},
+		},
+		getContextUsage: () => usage,
 	});
-	const [watchdogHandler] = pi.handlers.get("agent_settled")!;
+	const runContextHook = async (usage: unknown): Promise<string> => {
+		const result = await contextHook(
+			{ messages: [{ role: "user", content: "work", timestamp: 1 }] },
+			ctxAt(usage),
+		);
+		return result.messages.find((message: any) => message.customType === "pi-schematic-watchdog").content;
+	};
 
 	await pi.commands.get("handoff")!.handler("continue work", { hasUI: false, isIdle: () => true } as any);
-	await assert.rejects(
-		() => pi.tools.get("handoff").execute("small", { nextInstruction: "continue work" }, undefined, undefined, {
-			getContextUsage: () => ({ tokens: 5000, percent: 2.5, contextWindow: 200000 }),
-		}),
-	);
-	await watchdogHandler({}, { hasUI: false, getContextUsage: () => ({ tokens: 5000, percent: 2.5, contextWindow: 200000 }) } as any);
-	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 0);
+	for (let run = 0; run < MAX_HANDOFF_ATTEMPTS; run++) {
+		assert.match(await runContextHook(smallUsage), /not yet ready for compaction/);
+		await assert.rejects(
+			() => pi.tools.get("handoff").execute("small", { nextInstruction: "continue work" }, undefined, undefined, ctxAt(smallUsage)),
+		);
+		await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctxAt(smallUsage));
+	}
+	assert.deepEqual(warnings, [], "runs nudged only to keep working must not cancel the handoff");
 
+	assert.match(await runContextHook(eligibleUsage), /A real handoff is required/);
+	let compactOptions: any;
 	await pi.tools.get("handoff").execute("eligible", { nextInstruction: "continue work" }, undefined, undefined, {
-		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
+		...ctxAt(eligibleUsage),
 		compact: (options: any) => { compactOptions = options; },
 	});
 	compactOptions.onComplete();
-	assert.equal(state.pendingRequestedHandoff, null);
+	assertSuccessorTurn(pi.sentUserMessages.at(-1)?.content ?? "", { nextInstruction: "continue work" });
+	assert.equal(await contextHook(
+		{ messages: [{ role: "user", content: "next", timestamp: 2 }] },
+		ctxAt(eligibleUsage),
+	), undefined, "a completed handoff leaves no requested-handoff nudge");
 });
 
 test("handoff tool rejects small session with null percent without crashing", async () => {
@@ -1508,7 +1532,6 @@ test("session_start new clears stale handoff status and warning widget", async (
 	const pi = await createTestHost();
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "stale"]]);
 	const widgets = new Map<string, string[] | undefined>([[WIDGET_KEY_WARNING, ["stale"]]]);
-	const sessionStartHandlers = pi.handlers.get("session_start")!;
 	const ctx = {
 		hasUI: true,
 		ui: {
@@ -1519,9 +1542,7 @@ test("session_start new clears stale handoff status and warning widget", async (
 		sessionManager: { getBranch: () => [] },
 		getContextUsage: () => null,
 	};
-	for (const sessionStart of sessionStartHandlers) {
-		await sessionStart({ reason: "new" }, ctx);
-	}
+	await emitAll(pi, "session_start", { reason: "new" }, ctx);
 
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), undefined);
 	assert.equal(widgets.get(WIDGET_KEY_WARNING), undefined);

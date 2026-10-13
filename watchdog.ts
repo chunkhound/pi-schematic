@@ -1,9 +1,9 @@
 /**
  * Watchdog: primacy-zone reminder plus sticky enforcement for required handoff.
  *
- * Exposes nudge text generation. `agent_end` records the latest context usage;
- * `agent_settled` enforces the required-handoff budget for runs in which the
- * `context` hook delivered the eligible required-handoff nudge.
+ * Exposes nudge text generation and marks when the eligible required-handoff
+ * nudge is sent. `agent_end` records the latest context usage; `agent_settled`
+ * enforces the required-handoff budget for runs that sent that nudge.
  * Actual reminder injection happens in the `context` hook so it can appear
  * before every LLM call in the same agent run.
  */
@@ -18,8 +18,8 @@ import {
 } from "./notifications.js";
 import { STATUS_KEY_HANDOFF } from "./tui.js";
 
-/** Max settled runs in which the model received the eligible handoff nudge
- * before a required handoff auto-clears. 5 gives the model several response
+/** Max settled runs in which the eligible handoff nudge was sent before a
+ * required handoff auto-clears. 5 gives the model several response
  * cycles to supply the instruction and context, including the async compaction
  * failure path where handoff/tool.ts resets toolCalled=false so enforcement
  * resumes. */
@@ -94,12 +94,27 @@ Save durable findings to the notebook before handoff.`;
 No active notebook topic is set. ${noTopicUrgency}`;
 }
 
+/** Pick the watchdog message; `handoffRequiredNow` marks the eligible required-handoff nudge. */
+function selectNudge(state: NudgeState, percent: number | null, eligible: boolean): { text: string; handoffRequiredNow: boolean } {
+	const pct = percent === null ? null : Math.round(percent);
+	if (state.pendingRequestedHandoff) return { text: buildRequestedHandoffNudge(state, eligible), handoffRequiredNow: eligible };
+	if (state.pendingTopicBoundaryHint) return { text: buildBoundaryNudge(state, eligible), handoffRequiredNow: false };
+	return { text: buildDefaultNudge(pct, state.activeNotebookTopic, eligible), handoffRequiredNow: false };
+}
+
 /** Build a watchdog message using the caller's current handoff eligibility. */
 export function buildNudge(state: NudgeState, percent: number | null, eligible: boolean): string {
-	const pct = percent === null ? null : Math.round(percent);
-	if (state.pendingRequestedHandoff) return buildRequestedHandoffNudge(state, eligible);
-	if (state.pendingTopicBoundaryHint) return buildBoundaryNudge(state, eligible);
-	return buildDefaultNudge(pct, state.activeNotebookTopic, eligible);
+	return selectNudge(state, percent, eligible).text;
+}
+
+/**
+ * Build the watchdog message the context hook sends. When it is the eligible
+ * required-handoff nudge, mark it sent so `agent_settled` counts this run.
+ */
+export function buildAndRecordNudge(state: NudgeState, percent: number | null, eligible: boolean): string {
+	const { text, handoffRequiredNow } = selectNudge(state, percent, eligible);
+	if (handoffRequiredNow) state.pendingRequestedHandoff!.eligibleNudgeDelivered = true;
+	return text;
 }
 
 /**
@@ -116,12 +131,12 @@ export function registerWatchdog(pi: ExtensionAPI, state: SchematicState): void 
 	});
 
 	pi.on("agent_settled", async (_event: unknown, ctx: ExtensionContext) => {
-		// ── Enforcement counter: prevent infinite handoff nudges ──
+		// ── Enforcement counter: cap nudged runs of an unanswered handoff ──
 		// pendingRequestedHandoff is the sticky "user still expects a real
 		// handoff" contract. It survives normal turns and even compaction-prep
 		// failure recovery; only a successful handoff completion, reset, or
 		// exhausted enforcement attempts should clear it. A run counts only when
-		// the context hook told the model to hand off now; the flag is per run.
+		// the context hook sent the hand-off-now nudge; the flag is per run.
 		const requestedHandoff = state.pendingRequestedHandoff;
 		if (!requestedHandoff) return;
 		const nudged = requestedHandoff.eligibleNudgeDelivered;
