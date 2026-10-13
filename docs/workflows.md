@@ -84,16 +84,19 @@ The compiler rejects a `workflow` reference that is not a direct member call. It
 - `globalThis` and `global` references anywhere (the sandbox exposes `workflow` on the global object, so these would bypass the rewrite);
 - `this`;
 - dynamic `import()`;
-- member access named `constructor` or `__proto__` (dot or string-key form), which reaches code generation past the checks;
+- any computed member or destructuring key that is not a literal or a constant template string (for example `o[k]`, `o["con" + "structor"]`), because the compiler cannot prove it is not `constructor`;
+- member access or destructuring named `constructor` or `__proto__` (dot, string-key, or constant template form), which reaches code generation past the checks;
+- `getOwnPropertyDescriptor` and `getOwnPropertyDescriptors` member access, which read a member value by name the same way;
 - `async` on anything except the workflow arrow;
 - `await` on anything except a direct `workflow.<member>(...)` call;
 - `for await`;
 - `with`;
 - `eval` and `Function`, which could hide a `workflow` call from the checks;
+- `Reflect`, which reads a member by a runtime string and reaches `constructor` the same way;
 - any binding named `workflow` other than the workflow arrow's parameter;
 - `workflow.*` inside nested functions, methods, getters, setters, parameter defaults, class fields, static blocks, and constructors.
 
-Calls reach the host only as `workflow.<member>(...)` or `workflow['<member>'](...)`, optionally with `?.`.
+Calls reach the host only as `workflow.<member>(...)` or `workflow['<member>'](...)`, optionally with `?.`. A constant template key (`` workflow[`run`](...) ``) is rejected too: the rewrite recognizes only dot and string-literal forms.
 
 The whole file MUST be exactly one top-level `return defineWorkflow(<arrow>)` statement. A bare top-level `workflow.*` call is rejected. It would escape the serial contract.
 </details>

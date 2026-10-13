@@ -213,11 +213,56 @@ test("rejects constructor and __proto__ member access, which reaches Function wi
 	rejects(wrapBody('({}).constructor.constructor("return workflow.shell(\'x\')")();'), /constructor member access is not allowed/);
 	rejects(wrapBody('const c = ({})["constructor"];'), /constructor member access is not allowed/);
 	rejects(wrapBody('const p = workflow.run.__proto__;'), /__proto__ member access is not allowed/);
-	rejects(wrapBody('const p = ({})["__proto__"];'), /__proto__ member access is not allowed/);
+	rejects(wrapBody('const p = ({}).__proto__;'), /__proto__ member access is not allowed/);
+	rejects(wrapBody('const p = ({}["__proto__"]);'), /__proto__ member access is not allowed/);
 });
 
-test("accepts ordinary member access and object literals", () => {
-	const source = wrapBody('const o = { constructorName: 1 };\n  const n = o.constructorName + o["constructorName"];');
+test("rejects computed member keys that cannot be statically resolved", () => {
+	rejects(wrapBody('const k = "constructor"; const c = ({}[k][k]);'), /computed member keys must be a literal or constant template string/);
+	rejects(wrapBody('const c = ({}["const" + "ructor"]);'), /computed member keys must be a literal or constant template string/);
+	rejects(wrapBody('const c = ({}[`con${1}structor`]);'), /computed member keys must be a literal or constant template string/);
+});
+
+test("rejects constant template and dot forms of the prototype-escape names", () => {
+	rejects(wrapBody('const c = ({}[`constructor`]);'), /constructor member access is not allowed/);
+	rejects(wrapBody('const p = ({}[`__proto__`]);'), /__proto__ member access is not allowed/);
+});
+
+test("rejects reflection that reads a member by a runtime string", () => {
+	rejects(wrapBody('const c = Reflect.get(({}), "constructor");'), /Reflect is not allowed/);
+	rejects(wrapBody('const { get } = Reflect;'), /Reflect is not allowed/);
+	rejects(wrapBody('const d = Object.getOwnPropertyDescriptor(Object, "constructor");'), /getOwnPropertyDescriptor member access is not allowed/);
+	rejects(wrapBody('const d = Object?.getOwnPropertyDescriptor(Object, "constructor");'), /getOwnPropertyDescriptor member access is not allowed/);
+	rejects(wrapBody('const d = Object[`getOwnPropertyDescriptor`](Object, "constructor");'), /getOwnPropertyDescriptor member access is not allowed/);
+	rejects(wrapBody('const d = Object["getOwnPropertyDescriptors"](Object);'), /getOwnPropertyDescriptors member access is not allowed/);
+});
+
+test("rejects prototype/reflection names in destructuring patterns", () => {
+	rejects(wrapBody('const { constructor } = Object;'), /constructor destructuring is not allowed/);
+	rejects(wrapBody('const { constructor: F } = ({});'), /constructor destructuring is not allowed/);
+	rejects(wrapBody('const { ["constructor"]: F } = ({});'), /constructor destructuring is not allowed/);
+	// WHY: a non-computed string-literal key is parsed as computed:false, so it must be resolved too.
+	rejects(wrapBody('const { "constructor": F } = (()=>{});'), /constructor destructuring is not allowed/);
+	rejects(wrapBody('const { "__proto__": p } = ({});'), /__proto__ destructuring is not allowed/);
+	rejects(wrapBody('const { "getOwnPropertyDescriptor": g } = Object;'), /getOwnPropertyDescriptor destructuring is not allowed/);
+	rejects(wrapBody('const { "getOwnPropertyDescriptors": g } = Object;'), /getOwnPropertyDescriptors destructuring is not allowed/);
+	rejects(wrapBody('const { getOwnPropertyDescriptor: g } = Object;'), /getOwnPropertyDescriptor destructuring is not allowed/);
+	rejects(wrapBody('let F; ({ "constructor": F } = (()=>{}));'), /constructor destructuring is not allowed/);
+	rejects(wrapBody('for (const { "constructor": F } of []) {}'), /constructor destructuring is not allowed/);
+	rejects(wrapBody('try {} catch ({ "constructor": F }) {}'), /constructor destructuring is not allowed/);
+	rejects(wrapBody('const { [k]: c } = ({});'), /computed destructuring keys must be a literal or constant template string/);
+});
+
+test("accepts ordinary member access, numeric keys, and safe reflection-free reads", () => {
+	const source = wrapBody(
+		'const o = { constructorName: 1 };\n' +
+		'const a = [1, 2];\n' +
+		'const n = o.constructorName + o["constructorName"] + o.constructorName;\n' +
+		'const first = a[0];\n' +
+		'const p = Object.getPrototypeOf(o);\n' +
+		'const keys = Object.keys(o);\n' +
+		'const t = o[`constructorName`];',
+	);
 	assert.doesNotThrow(() => compileWorkflow(source));
 });
 

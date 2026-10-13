@@ -104,8 +104,7 @@ function isDirectWorkflowCall(node: Ast | undefined): boolean {
 /** The `workflow.<member>` name a member expression names, or null when it is not the workflow object. */
 function workflowMemberName(member: Ast | undefined | null): string | null {
 	if (!member || !isMemberOnWorkflow(member)) return null;
-	if (!member.computed) return member.property.name;
-	return member.property.value;
+	return staticMemberKey(member.property, member.computed);
 }
 
 // Optional chains wrap the call; `await workflow?.run()` awaits the ChainExpression.
@@ -207,23 +206,42 @@ const GLOBAL_OBJECTS = new Set(["globalThis", "global"]);
 // code would skip every static check above. Same bypass family as the global objects.
 const DYNAMIC_CODE = new Set(["eval", "Function"]);
 
-// `x.constructor.constructor(src)` reaches Function without any banned identifier, so the
-// identifier checks above cannot see it. Both prototype-escape names are rejected in member form.
-const PROTOTYPE_ESCAPE_MEMBERS = new Set(["constructor", "__proto__"]);
+// `Reflect.get(target, key)` reads any member by a runtime string, so it reaches `constructor`
+// without a banned member name. Same bypass family as the dynamic-code identifiers.
+const REFLECTION_OBJECTS = new Set(["Reflect"]);
 
-function memberName(node: any): string | undefined {
-	if (!node.computed) return node.property.type === "Identifier" ? node.property.name : undefined;
-	const isStringKey = node.property.type === "Literal" && typeof node.property.value === "string";
-	return isStringKey ? node.property.value : undefined;
+// Property names whose read reaches code generation past the static checks. `constructor`
+// reaches `Function` directly; the own-property-descriptor APIs read a member value by a
+// runtime string the same way.
+const BANNED_PROPERTY_READS = new Set(["constructor", "__proto__", "getOwnPropertyDescriptor", "getOwnPropertyDescriptors"]);
+
+/** Statically resolve a member/property key to its string form, or null when it cannot be
+ * proven at compile time. A non-computed Literal is the object-pattern string-key form
+ * (`{ "constructor": F }`), which reads the same property as the dot form. Non-computed
+ * private names (`#x`) still yield null and are caller-judged. */
+function staticMemberKey(property: Ast, computed: boolean): string | null {
+	if (!computed && property.type === "Identifier") return property.name;
+	if (property.type === "Literal") {
+		const value = property.value;
+		if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null)
+			return String(value);
+		return null;
+	}
+	// A template with no expressions is a constant string; anything else is runtime-dependent.
+	if (computed && property.type === "TemplateLiteral" && property.expressions.length === 0)
+		return property.quasis[0].value.cooked ?? property.quasis[0].value.raw;
+	return null;
 }
 
 function validateGlobalObject(program: Ast): void {
 	walk.fullAncestor<any>(program as any, (node: Ast, _state: unknown, ancestors: Ast[]) => {
 		if (node.type === "MemberExpression") {
-			const name = memberName(node);
-			if (name !== undefined && PROTOTYPE_ESCAPE_MEMBERS.has(name)) {
+			const name = staticMemberKey(node.property, node.computed);
+			// An unresolved computed key can hide `constructor`; reject instead of ignoring it.
+			if (node.computed && name === null)
+				fail(node, "computed member keys must be a literal or constant template string");
+			if (name !== null && BANNED_PROPERTY_READS.has(name))
 				fail(node, `${name} member access is not allowed; it can reach code generation past the compile checks`);
-			}
 		}
 		// WHY: dynamic import loads code at runtime past every static check above,
 		// the same bypass as eval/Function — reject it with the same loud failure.
@@ -238,6 +256,26 @@ function validateGlobalObject(program: Ast): void {
 		if (DYNAMIC_CODE.has(node.name)) {
 			if (isNonReference(node, ancestors[ancestors.length - 2])) return;
 			fail(node, `${node.name} is not allowed; it can hide a workflow call from the compile checks`);
+		}
+		if (REFLECTION_OBJECTS.has(node.name)) {
+			if (isNonReference(node, ancestors[ancestors.length - 2])) return;
+			fail(node, `${node.name} is not allowed; it can read a prototype member by name past the compile checks`);
+		}
+	});
+}
+
+/** Destructuring reads a property by name without a MemberExpression, so the same
+ * prototype/reflection names must be rejected in every ObjectPattern key. */
+function validateDestructuringKeys(program: Ast): void {
+	walk.fullAncestor<any>(program as any, (node: Ast) => {
+		if (node.type !== "ObjectPattern") return;
+		for (const property of node.properties) {
+			if (property.type === "RestElement") continue;
+			const name = staticMemberKey(property.key, property.computed);
+			if (property.computed && name === null)
+				fail(property, "computed destructuring keys must be a literal or constant template string");
+			if (name !== null && BANNED_PROPERTY_READS.has(name))
+				fail(property.key, `${name} destructuring is not allowed; it can reach code generation past the compile checks`);
 		}
 	});
 }
@@ -291,6 +329,7 @@ export function compileWorkflow(source: string): string {
 	const lambda = extractLambda(statement);
 	validateBindings(program, lambda.params[0]);
 	validateGlobalObject(program);
+	validateDestructuringKeys(program);
 	validateLambda(lambda, lambda.params[0]);
 	requireCheckpoint(lambda);
 	const compiled = insertAwaits(source, lambda);
