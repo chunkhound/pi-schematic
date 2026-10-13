@@ -54,10 +54,18 @@ describe("workflow E2E", () => {
 	it("a cost-limited run records the exit and the session stays responsive", async () => withHarness(async (h) => {
 		h.write("flag workflow-cost 0.05");
 		await h.waitForText("OK");
+		// Park the run inside workflow.shell, then inject the spend mid-run: run cost
+		// is scoped from run start, so a pre-run seed would no longer count.
+		h.write("hold-exec");
+		await h.waitForText("OK");
+		h.write("cmd-bg workflow examples/workflows/smoke.js");
+		await h.waitForText("OK:started");
+		await h.waitForText("EXEC-HELD");
 		h.write("spent 1");
 		await h.waitForText("OK");
-
-		h.write("cmd workflow examples/workflows/smoke.js");
+		h.write("release-exec");
+		await h.waitForText("OK");
+		h.write("cmd-wait");
 		await h.waitForText("OK");
 
 		// The crossing guard ran; the checkpoint deferred the stop: exit recorded and human notified.

@@ -241,9 +241,9 @@ describe("workflow command E2E — run outcome and salvage", () => {
 
 	it("a throwing checkpoint exit append persists one exit with the stop reason and partial", () => withWorkflowChild(async (h) => {
 		await sendOk(h, "flag workflow-cost 0.1");
-		await sendOk(h, 'seed-entry {"type":"usage","cost":1}');
+		await sendOk(h, 'turn {"cost":1}');
 		await sendOk(h, "fault append-throws 1");
-		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"checkpoint","metadata":{"round":1}}');
+		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"checkpoint","metadata":{"round":1},"spend":true}');
 		const list = exits(entries);
 		assert.equal(list.length, 1, "exactly one exit record despite the checkpoint's append throwing");
 		assert.equal(list[0].reason, "cost-limit", "the retry keeps the pending-stop reason instead of relabelling it as error");
@@ -347,8 +347,8 @@ describe("workflow command E2E — sandbox failures and cleanup", () => {
 
 	it("a 16-deferred-effects hard abort reaches the overview error field", () => withWorkflowChild(async (h) => {
 		await sendOk(h, "flag workflow-cost 0.1");
-		await sendOk(h, 'seed-entry {"type":"usage","cost":1}');
-		const entries = await runWorkflowArgs(h, SHELLS, '{"count":18}');
+		await sendOk(h, 'turn {"cost":1}');
+		const entries = await runWorkflowArgs(h, SHELLS, '{"count":18,"spend":true}');
 		const summary = lastSummary(entries);
 		assert.equal(summary.reason, "cost-limit", "the overview records the escalation reason");
 		assert.match(String(summary.error), /hard-aborted after 16 deferred effects past the cost-limit stop/, "the overview carries the escalation message");
@@ -357,10 +357,10 @@ describe("workflow command E2E — sandbox failures and cleanup", () => {
 });
 
 describe("workflow command E2E — target crossing and salvage", () => {
-	it("a branch already over --workflow-cost runs the crossing shell, then stops at the checkpoint", () => withWorkflowChild(async (h) => {
+	it("a run crossing --workflow-cost runs the crossing shell, then stops at the checkpoint", () => withWorkflowChild(async (h) => {
 		await sendOk(h, "flag workflow-cost 0.1");
-		await sendOk(h, 'seed-entry {"type":"usage","cost":1}');
-		const entries = await runWorkflowArgs(h, SHELLS, '{"count":1,"checkpoint":{"round":1}}');
+		await sendOk(h, 'turn {"cost":1}');
+		const entries = await runWorkflowArgs(h, SHELLS, '{"count":1,"checkpoint":{"round":1},"spend":true}');
 		const events = await readUiEvents(h);
 		assert.ok(events.notifications.some((n) => n.message === "cost target reached" && n.level === "info"), "soft cost stop notified with its human label");
 		const list = exits(entries);

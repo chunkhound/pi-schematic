@@ -6,7 +6,7 @@ return defineWorkflow((workflow) => {
 		workflow.run("first");
 		workflow.new();
 		workflow.run("second");
-	}
+	} else if (spec.spend) workflow.run("spend"); // in-run spend: run cost is scoped from run start, so pre-run seeds no longer count
 	workflow.new();
 	workflow.checkpoint({ phase: "new" });
 	return workflow.exit({ reason: "ok" });

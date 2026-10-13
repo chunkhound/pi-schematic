@@ -3,6 +3,9 @@
 return defineWorkflow((workflow) => {
 	const spec = JSON.parse(load("intent") || "{}");
 	let result;
+	// Optional in-run spend: run cost is scoped from run start, so tests generate
+	// spend with a scripted turn consumed here instead of pre-run seeds.
+	if (spec.spend) workflow.run("spend");
 	if (spec.handle === "budget") result = workflow.budget();
 	else if (spec.handle === "state") result = workflow.state();
 	else if (spec.handle === "entries") result = workflow.entries(spec.options || {});

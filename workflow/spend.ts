@@ -8,6 +8,8 @@ export interface SpendState {
 	baselineSpend: Map<string, ModelSpend>;
 	childSpend: Map<string, ChildSpend>;
 	classifierSpend: Map<string, ModelSpend>;
+	/** Branch entry ids that predate the run; the run-scoped scan drops them. */
+	excludedEntryIds: ReadonlySet<string>;
 	startedAt: number;
 	pendingStop: ReservedReason | null;
 	crossedAt: { costUsd: number; elapsedMs: number } | null;
@@ -24,14 +26,18 @@ export function liveBranch(deps: WorkflowHostDeps): readonly SessionEntry[] {
 }
 
 /** Live-branch spend via a direct usageByModel scan per call; no cache. */
-export function branchSpend(deps: WorkflowHostDeps, state: Pick<SpendState, "childSpend">): Map<string, ModelSpend> {
-	return usageByModel(liveBranch(deps), { skipToolCalls: new Set(state.childSpend.keys()) });
+export function branchSpend(deps: WorkflowHostDeps, state: Pick<SpendState, "childSpend" | "excludedEntryIds">): Map<string, ModelSpend> {
+	return usageByModel(liveBranch(deps), {
+		skipToolCalls: new Set(state.childSpend.keys()),
+		skipEntries: state.excludedEntryIds,
+	});
 }
 
 /**
- * Authoritative run spend rows: baseline (replaced sessions) + the current branch with
- * child-owned tool results excluded + the child ledger that owns them + classifier calls.
- * One projection feeds both the cost limit and the run overview, so they cannot diverge.
+ * Authoritative run spend rows: usage from run start onward. Baseline (replaced sessions)
+ * plus the current branch (pre-run conversation dropped, child-owned tool results excluded)
+ * plus the child ledger that owns them plus classifier calls. One projection feeds both the
+ * cost limit and the run overview, so they cannot diverge.
  */
 export function runSpendRows(deps: WorkflowHostDeps, state: SpendState): Map<string, ModelSpend> {
 	return mergeModelSpend(

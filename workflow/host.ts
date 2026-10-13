@@ -383,8 +383,8 @@ function handleReadonly(deps: WorkflowHostDeps, state: HostState, args: unknown)
 
 async function handleNew(deps: WorkflowHostDeps, state: HostState): Promise<null> {
 	ensureActive(state);
-	// WHY: baseline folds only the settled branch. Child spend lives in the run-scoped
-	// child ledger and must not be folded again on replacement, so only the branch rows
+	// WHY: baseline folds only the settled run portion. The pre-run conversation is excluded
+	// by id and child spend lives in the run-scoped child ledger, so only the run rows
 	// (child-owned tool results skipped) commit after the replacement succeeds. A
 	// cancelled `workflow.new` therefore cannot double-count the unchanged branch.
 	const spend = branchSpend(deps, state);
@@ -813,8 +813,8 @@ async function releaseStructuredRun(deps: WorkflowHostDeps, previousActive: read
 }
 
 /** Spend ledgers start empty; startedAt and pendingStop are set by the host/stop state. */
-function initialSpendState(): Pick<SpendState, "baselineSpend" | "childSpend" | "classifierSpend"> {
-	return { baselineSpend: new Map(), childSpend: new Map(), classifierSpend: new Map() };
+function initialSpendState(): Pick<SpendState, "baselineSpend" | "childSpend" | "classifierSpend" | "excludedEntryIds"> {
+	return { baselineSpend: new Map(), childSpend: new Map(), classifierSpend: new Map(), excludedEntryIds: new Set() };
 }
 
 /** Stop/exit bookkeeping starts empty: nothing armed, nothing recorded. */
@@ -850,6 +850,9 @@ function createHostState(deps: WorkflowHostDeps): HostState {
 			getBranch: () => liveBranch(deps),
 		}),
 	);
+	// Freeze the pre-run branch by id so spend rows and the cost limit count usage from
+	// run start onward; the host is created as `/workflow` claims the run.
+	state.excludedEntryIds = new Set(liveBranch(deps).map((entry) => entry.id));
 	// Spawn writes each child's cumulative stats here as it works; identity is kept so a
 	// disposed host never uninstalls the sink a newer host installed.
 	state.installedSink = (toolCallId, provider, model, usage) => {

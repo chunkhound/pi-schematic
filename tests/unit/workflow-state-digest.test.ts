@@ -113,17 +113,15 @@ test("workflow.state reports the newest assistant text across content blocks", a
 });
 
 test("workflow.state reports the host-composed view of the session", async () => {
-	// The branch carries 0.4 of usage; `cost` is the host's spend projection
-	// (workflow/spend.ts adds baseline, child-ledger, and classifier rows on top of
-	// this live-branch scan — composed once for the limit and every surface).
-	const entries: SessionEntry[] = [
-		message("u0", "user", "hello"),
-		message("a1", "assistant", [{ type: "text", text: "answer" }], { usage: usd(0.4) }),
-	];
+	// `cost` is the host's run-scoped spend projection (workflow/spend.ts composes the
+	// live-branch scan with baseline, child-ledger, and classifier rows). The host freezes
+	// the pre-run branch by id, so usage appended after host creation is the run's.
+	const entries: SessionEntry[] = [message("u0", "user", "hello")];
 	const state = createState();
 	state.activeNotebookTopic = "runtime";
 	state.activeNotebookTopicSource = "agent";
 	const { host } = digestHost(entries, state);
+	entries.push(message("a1", "assistant", [{ type: "text", text: "answer" }], { usage: usd(0.4) }));
 	const digest = (await handle(host, "workflow.state").execute()) as Record<string, unknown>;
 	assert.equal(digest.sessionId, "s1");
 	assert.equal(digest.leafId, "a1");

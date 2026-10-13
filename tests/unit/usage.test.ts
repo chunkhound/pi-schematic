@@ -145,6 +145,19 @@ test("usageByModel skips a child-owned tool result when claimed, and counts it o
 	assert.equal(unclaimed.get("anthropic/haiku")?.costUsd, 0.2, "unclaimed tool result is attributed");
 });
 
+// SSOT contract: the run-scoped spend scan drops the conversation that predates the run,
+// so only entries kept by the run's id-exclusion set reach the cost rows.
+test("usageByModel omits every entry whose id is excluded", () => {
+	const entries: SessionEntry[] = [
+		modelAssistant("a1", "anthropic", "opus", 0.5),
+		modelAssistant("a2", "anthropic", "opus", 0.25),
+	];
+	const kept = usageByModel(entries, { skipEntries: new Set(["a1"]) });
+	assert.equal(kept.get("anthropic/opus")?.costUsd, 0.25, "excluded entry is omitted");
+	assert.equal(kept.get("anthropic/opus")?.calls, 1);
+	assert.equal(usageByModel(entries).get("anthropic/opus")?.costUsd, 0.75, "omitting the option keeps every entry");
+});
+
 // SSOT contract: each child contributes one call, and repeated model rows merge.
 test("childSpendRows merges children by model with one call each", () => {
 	const children = new Map<string, ChildSpend>([

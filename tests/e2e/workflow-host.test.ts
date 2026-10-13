@@ -221,8 +221,8 @@ describe("workflow host E2E — prompt composition", () => {
 
 describe("workflow host E2E — budget and limits", () => {
 	it("reports null remainders without targets and the live cost", async () => withWorkflowChild(async (h) => {
-		await sendOk(h, 'seed-entry {"type":"usage","cost":0.5}');
-		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"budget"}');
+		await sendOk(h, 'turn {"cost":0.5}');
+		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"budget","spend":true}');
 		const budget = exitOf(entries).result;
 		assert.equal(budget.cost, 0.5);
 		assert.equal(budget.costRemaining, null);
@@ -232,23 +232,22 @@ describe("workflow host E2E — budget and limits", () => {
 	it("reports numeric remainders when targets are set", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, "flag workflow-cost 1");
 		await sendOk(h, "flag workflow-time 60000");
-		await sendOk(h, 'seed-entry {"type":"usage","cost":0.5}');
-		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"budget"}');
+		await sendOk(h, 'turn {"cost":0.5}');
+		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"budget","spend":true}');
 		const budget = exitOf(entries).result;
 		assert.equal(budget.costRemaining, 0.5);
 		assert.ok(typeof budget.timeRemainingMs === "number" && budget.timeRemainingMs > 0 && budget.timeRemainingMs <= 60000);
 	}));
 
 	it("counts spawned-agent usage carried by a tool result", async () => withWorkflowChild(async (h) => {
-		await sendOk(h, 'seed-entry {"role":"toolResult","cost":0.5}');
-		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"budget"}');
+		await sendOk(h, 'turn {"toolResults":[{"toolName":"spawn","cost":0.5}]}');
+		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"budget","spend":true}');
 		assert.equal(exitOf(entries).result.cost, 0.5);
 	}));
 
 	it("a cost limit crossed at workflow.run defers the stop to the checkpoint", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, "flag workflow-cost 0.1");
-		await sendOk(h, 'seed-entry {"role":"assistant","cost":0.5}');
-		await sendOk(h, 'turn {"text":"answer"}');
+		await sendOk(h, 'turn {"text":"answer","cost":0.5}');
 		const entries = await runWorkflowArgs(h, RUNS, '{"count":1,"prompt":"hello"}');
 		const summary = summaryOf(entries);
 		assert.equal(summary.reason, "cost-limit");
@@ -259,15 +258,14 @@ describe("workflow host E2E — budget and limits", () => {
 
 	it("a shell past a crossed cost target runs, then the checkpoint stops the run", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, "flag workflow-cost 0.1");
-		await sendOk(h, 'seed-entry {"role":"assistant","cost":0.5}');
-		const entries = await runWorkflowArgs(h, SHELLS, '{"count":1}');
+		await sendOk(h, 'turn {"cost":0.5}');
+		const entries = await runWorkflowArgs(h, SHELLS, '{"count":1,"spend":true}');
 		assert.equal(exitOf(entries).reason, "cost-limit");
 	}));
 
 	it("a checkpoint whose exit append throws keeps the pending-stop reason", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, "flag workflow-cost 0.1");
-		await sendOk(h, 'seed-entry {"role":"assistant","cost":0.5}');
-		await sendOk(h, 'turn {"text":"answer"}');
+		await sendOk(h, 'turn {"text":"answer","cost":0.5}');
 		await sendOk(h, "fault append-throws 1");
 		const entries = await runWorkflowArgs(h, RUNS, '{"count":1,"prompt":"hello"}');
 		assert.equal(exitOf(entries).reason, "cost-limit");
@@ -288,8 +286,8 @@ describe("workflow host E2E — budget and limits", () => {
 
 	it("hard-aborts without a checkpoint with a null partial and one exit", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, "flag workflow-cost 0.1");
-		await sendOk(h, 'seed-entry {"role":"assistant","cost":0.5}');
-		const entries = await runWorkflowArgs(h, SHELLS, '{"count":18}');
+		await sendOk(h, 'turn {"cost":0.5}');
+		const entries = await runWorkflowArgs(h, SHELLS, '{"count":18,"spend":true}');
 		assert.equal(exitOf(entries).reason, "cost-limit");
 		assert.equal(exitOf(entries).partial, null, "no checkpoint means no salvage");
 		assert.equal(entries.filter((entry) => entry.customType === "workflow-exit").length, 1, "exactly one exit record");
@@ -306,8 +304,8 @@ describe("workflow host E2E — budget and limits", () => {
 	}));
 
 	it("state digest carries the live cost", async () => withWorkflowChild(async (h) => {
-		await sendOk(h, 'seed-entry {"type":"usage","cost":0.5}');
-		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"state"}');
+		await sendOk(h, 'turn {"cost":0.5}');
+		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"state","spend":true}');
 		assert.equal(exitOf(entries).result.cost, 0.5);
 	}));
 });
@@ -341,27 +339,27 @@ describe("workflow host E2E — readonly, entries, session folding", () => {
 	}));
 
 	it("a successful new folds settled branch spend exactly once", async () => withWorkflowChild(async (h) => {
-		await sendOk(h, 'seed-entry {"role":"assistant","cost":0.5}');
+		await sendOk(h, 'turn {"cost":0.5}');
 		await sendOk(h, "new-session clear");
-		const entries = await runWorkflowArgs(h, NEW, "{}");
+		const entries = await runWorkflowArgs(h, NEW, '{"spend":true}');
 		const summary = summaryOf(entries);
 		assert.equal(summary.costUsd, 0.5, "baseline committed once");
 		assert.equal(summary.activity.new, 1);
 	}));
 
 	it("a failed new commits neither baseline cost nor spend", async () => withWorkflowChild(async (h) => {
-		await sendOk(h, 'seed-entry {"role":"assistant","cost":0.5}');
+		await sendOk(h, 'turn {"cost":0.5}');
 		await sendOk(h, "new-session fail");
-		const entries = await runWorkflowArgs(h, NEW, "{}");
+		const entries = await runWorkflowArgs(h, NEW, '{"spend":true}');
 		const summary = summaryOf(entries);
 		assert.match(String(summary.error), /e2e new session failed/);
 		assert.equal(summary.costUsd, 0.5, "the unchanged branch is not double-counted");
 	}));
 
 	it("a cancelled new does not double the branch cost", async () => withWorkflowChild(async (h) => {
-		await sendOk(h, 'seed-entry {"role":"assistant","cost":0.5}');
+		await sendOk(h, 'turn {"cost":0.5}');
 		await sendOk(h, "new-session cancel");
-		const entries = await runWorkflowArgs(h, NEW, "{}");
+		const entries = await runWorkflowArgs(h, NEW, '{"spend":true}');
 		const summary = summaryOf(entries);
 		assert.match(String(summary.error), /cancelled/);
 		assert.equal(summary.costUsd, 0.5);

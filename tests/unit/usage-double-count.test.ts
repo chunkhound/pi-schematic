@@ -1,13 +1,13 @@
-// SSOT contract: baseline (replaced sessions) + the current branch (with child-owned
-// tool results skipped) + the child ledger + classifier spend sum exactly once in the
-// run metrics, and a cancelled workflow.new never double-counts.
+// SSOT contract: baseline (replaced sessions) + the current branch (pre-run conversation
+// excluded, child-owned tool results skipped) + the child ledger + classifier spend sum
+// exactly once in the run metrics, and a cancelled workflow.new never double-counts.
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { createState, type SchematicState } from "../../state.js";
 import { createWorkflowHost } from "../../workflow/host.js";
-import type { WorkflowHost, WorkflowHostDeps } from "../../workflow/types.js";
+import type { WorkflowHost, WorkflowHostDeps, WorkflowLimits } from "../../workflow/types.js";
 
 const usd = (total: number): Usage => ({
 	input: 1,
@@ -47,7 +47,7 @@ interface Env {
 	failNew: boolean;
 }
 
-function createEnv(): Env {
+function createEnv(limits: WorkflowLimits = { costLimit: null, timeBudgetMs: null }): Env {
 	const state = createState();
 	const branch: SessionEntry[] = [];
 	const classifierModel = { id: "jev", provider: "typesafe" };
@@ -90,7 +90,7 @@ function createEnv(): Env {
 	env.deps = {
 		pi: pi as unknown as ExtensionAPI,
 		state,
-		limits: { costLimit: null, timeBudgetMs: null },
+		limits,
 		getCtx: () => ctx,
 		isReadonly: () => false,
 		setReadonly: () => false,
@@ -117,8 +117,9 @@ function spendSum(host: WorkflowHost): number {
 
 test("baseline + branch + child ledger + classifier spend sums exactly once", async () => {
 	const env = createEnv();
-	env.branch.push(assistant("a0", "anthropic", "opus", 0.5));
 	const host = createWorkflowHost(env.deps);
+	// The host freezes the pre-run branch by id, so entries appended after it are run spend.
+	env.branch.push(assistant("a0", "anthropic", "opus", 0.5));
 	// A child reports cumulative stats through the run sink; the same spend later lands
 	// on the branch as its tool result and must be skipped, not counted twice.
 	env.state.childUsageSink!("c1", "anthropic", "widget", usd(0.3));
@@ -137,8 +138,8 @@ test("baseline + branch + child ledger + classifier spend sums exactly once", as
 
 test("a cancelled workflow.new counts the unchanged branch and child once", async () => {
 	const env = createEnv();
-	env.branch.push(assistant("a0", "anthropic", "opus", 0.5));
 	const host = createWorkflowHost(env.deps);
+	env.branch.push(assistant("a0", "anthropic", "opus", 0.5));
 	env.state.childUsageSink!("c1", "anthropic", "widget", usd(0.3));
 	env.branch.push(childToolResult("tr1", "c1", "anthropic", "widget", 0.3));
 	await call(host, "classify", { model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} });
@@ -149,4 +150,17 @@ test("a cancelled workflow.new counts the unchanged branch and child once", asyn
 	assert.ok(Math.abs(spendSum(host) - metrics.costUsd) < 1e-9, "spend rows sum to the total once");
 	assert.equal(metrics.costUsd, metrics.spend.reduce((total, row) => total + row.costUsd, 0));
 	assert.deepEqual(metrics.spend.map((row) => row.key).sort(), ["anthropic/opus", "anthropic/widget", "typesafe/jev"].sort());
+});
+
+test("run spend starts at the run: pre-run conversation spend is excluded and cannot trip the target", async () => {
+	const env = createEnv({ costLimit: 1, timeBudgetMs: null });
+	// Pre-run spend exists BEFORE the host freezes the branch, so it must stay outside the run.
+	env.branch.push(assistant("pre1", "anthropic", "opus", 5));
+	const host = createWorkflowHost(env.deps);
+	env.branch.push(assistant("run1", "anthropic", "opus", 0.2));
+	await call(host, "classify", { model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} });
+	const budget = (await call(host, "budget", undefined)) as { cost: number; costRemaining: number | null };
+	assert.ok(Math.abs(budget.cost - 0.45) < 1e-9, "budget cost counts only run entries: 0.2 branch + 0.25 classifier");
+	assert.ok(Math.abs((budget.costRemaining ?? 0) - 0.55) < 1e-9, "the target measures from run start");
+	assert.equal(host.metrics().crossedAt, null, "prior conversation spend arms no soft stop");
 });

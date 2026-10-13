@@ -81,14 +81,18 @@ export function addModelSpend(map: Map<string, ModelSpend>, provider: string | n
  * provider/model, and model-less usage (compaction and branch summaries) falls into
  * {@link UNATTRIBUTED_MODEL} with its tokens. Child-owned tool results are skipped so the
  * child ledger (`childSpendRows`) is their single owner and a settled child is counted once.
+ * Entries whose `id` is in `skipEntries` are omitted entirely; the run-scoped spend scan uses
+ * this to drop the conversation that predates the run.
  */
 export function usageByModel(
 	entries: readonly SessionEntry[],
-	options?: { skipToolCalls?: ReadonlySet<string> },
+	options?: { skipToolCalls?: ReadonlySet<string>; skipEntries?: ReadonlySet<string> },
 ): Map<string, ModelSpend> {
 	const map = new Map<string, ModelSpend>();
 	const skip = options?.skipToolCalls;
+	const skipEntries = options?.skipEntries;
 	for (const entry of entries) {
+		if (skipEntries?.has(entry.id)) continue;
 		if (entry.type === "message") {
 			const message = entry.message as AnyMessage;
 			const usage = message.usage;
