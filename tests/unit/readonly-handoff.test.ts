@@ -19,12 +19,7 @@ async function createHandoffPI() {
 	const agentSettled = (ctx: unknown) => emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 	const [beforeCompact] = pi.handlers.get("session_before_compact")!;
 	const [sessionTree] = pi.handlers.get("session_tree")!;
-	const sessionStartHandlers = pi.handlers.get("session_start") ?? [];
-	const sessionStart = async (event: unknown, ctx: unknown) => {
-		for (const handler of sessionStartHandlers) {
-			await handler(event, ctx);
-		}
-	};
+	const sessionStart = (event: unknown, ctx: unknown) => emitAll(pi, "session_start", event, ctx);
 	return { pi, toolCall, agentSettled, beforeCompact, sessionTree, sessionStart };
 }
 
@@ -145,7 +140,7 @@ test("blocked readonly handoff never invokes compaction", async () => {
 
 test("watchdog cancellation clears the readonly handoff bypass", async () => {
 	const { pi, toolCall, agentSettled } = await createHandoffPI();
-	const statuses = new Map<string, string | undefined>();
+	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "handoff pending"]]);
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 	await pi.commands.get("handoff").handler("continue readonly work", {
 		...makeReadonlyUICtx(),

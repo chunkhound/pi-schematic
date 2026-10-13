@@ -297,7 +297,7 @@ test("a session start re-opens the delivery scope after an in-process session lo
 	await sessionTree({}, ctx);
 	assert.equal(pi.sentUserMessages.length, 1);
 
-	for (const handler of pi.handlers.get("session_start") ?? []) await handler({ reason: "load" }, ctx);
+	await emitAll(pi, "session_start", { reason: "load" }, ctx);
 	assert.equal(pi.sentUserMessages.length, 2, "a new session scope evaluates recovery freshly");
 });
 
@@ -334,7 +334,7 @@ test("tree navigation and resume queue a missing successor in a fresh process", 
 	assert.deepEqual(pi.sentUserMessages, [{ content: message, options: { deliverAs: "followUp" } }]);
 
 	const resumedPi = await createTestHost();
-	for (const handler of resumedPi.handlers.get("session_start") ?? []) await handler({ reason: "load" }, ctx);
+	await emitAll(resumedPi, "session_start", { reason: "load" }, ctx);
 	assert.deepEqual(resumedPi.sentUserMessages, [{ content: message, options: { deliverAs: "followUp" } }]);
 });
 
@@ -452,7 +452,7 @@ test("tree and session-start recovery wait for a queued follow-up to drain", asy
 
 	const [sessionTree] = pi.handlers.get("session_tree")!;
 	await sessionTree({}, queuedCtx);
-	for (const handler of pi.handlers.get("session_start") ?? []) await handler({ reason: "load" }, queuedCtx);
+	await emitAll(pi, "session_start", { reason: "load" }, queuedCtx);
 	assert.deepEqual(pi.sentUserMessages, [],
 		"a queued follow-up may be the unpersisted successor; resending would double-deliver");
 
@@ -471,7 +471,7 @@ test("session start recovers on reasons other than load when the queue is empty"
 		sessionManager: { getBranch: () => branch },
 	};
 
-	for (const handler of pi.handlers.get("session_start") ?? []) await handler({ reason: "resume" }, ctx);
+	await emitAll(pi, "session_start", { reason: "resume" }, ctx);
 	assert.deepEqual(pi.sentUserMessages, [{ content: message, options: { deliverAs: "followUp" } }],
 		"recovery must not be gated on a specific session_start reason");
 });

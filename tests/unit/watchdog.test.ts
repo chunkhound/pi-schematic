@@ -318,7 +318,7 @@ test("watchdog auto-cancels a required handoff after enough unanswered settled r
 	} as any);
 
 	const notifications: unknown[] = [];
-	const statuses = new Map<string, string | undefined>();
+	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "handoff pending"]]);
 	const ctx = {
 		hasUI: true,
 		ui: {
@@ -413,6 +413,8 @@ test("a continued run cancels only after MAX_HANDOFF_ATTEMPTS settled runs", asy
 test("settled run with unknown usage does not count", async () => {
 	const { state, agentSettled } = await createPendingHandoffHost();
 
+	// After compaction pi reports unknown token counts until the next assistant response.
+	await agentSettled({ type: "agent_settled" }, { hasUI: false, getContextUsage: () => ({ tokens: null, contextWindow: 200000, percent: null }) });
 	await agentSettled({ type: "agent_settled" }, { hasUI: false, getContextUsage: () => undefined });
 	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 0);
 

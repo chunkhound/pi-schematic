@@ -7,7 +7,7 @@ pi-schematic is a Pi extension. It registers tools and hooks into the agent life
 | Hook | Role |
 |---|---|
 | `before_agent_start` | Refreshes Model Groups, resolves deferred readonly frontmatter, then injects the context-management primer, a per-run current-date anchor, names-only group guidance, and live notebook index |
-| `context` | Advisory watchdog reminders when context is elevated; readonly toggle nudges |
+| `context` | Advisory watchdog reminders when context is elevated; a handoff nudge before every LLM call while a requested handoff is pending; readonly toggle nudges |
 | `input` | Resolves model-selection frontmatter during idle input; blocks it during streaming; queues readonly resolution |
 | `tool_call` | Readonly blocks write/edit/unguarded bash; blocks handoff unless a requested bypass is active |
 | `session_start` | Reconstructs notebook pages/epoch/watermark from the active branch, rehydrates readonly state, and recovers an absent successor handoff message; loads and validates Model Groups, registers group autocomplete, reports config issues, and resets session state on `/new` |
@@ -73,7 +73,7 @@ A failed model change visibly blocks command expansion and records no success en
 
 Coding-agent guardrail on every OS — not a hardened security boundary. Strongest on macOS/Linux with sandbox binaries present; weakest on Windows. UI-oriented toggle; state rehydrates on resume.
 
-**Watchdog** — Band-throttled advisory reminders as context crosses practical pressure bands; high-usage TUI widget reinforces spawn-vs-handoff guidance (topic- and readonly-aware).
+**Watchdog** — Band-throttled advisory reminders as context crosses practical pressure bands; high-usage TUI widget reinforces spawn-vs-handoff guidance (topic- and readonly-aware). A requested handoff is not advisory: while it is pending, every LLM call carries a handoff nudge, and the watchdog cancels it after `MAX_HANDOFF_ATTEMPTS` eligible settled runs without a completed handoff.
 
 ## Package layout (high level)
 
@@ -85,7 +85,7 @@ Coding-agent guardrail on every OS — not a hardened security boundary. Stronge
 | `notebook/` | Page store, tools, topic, rehydration, external pager |
 | `handoff/` | Verbatim next-instruction delivery, model-owned context prep, constant-frame compaction bridge, live readonly nudge |
 | `readonly-*.ts` / `os-sandbox.ts` | Readonly posture, bash policy, sandbox |
-| `watchdog.ts` / `tui.ts` / `state.ts` | Pressure advisories, status UI, shared state |
+| `watchdog.ts` / `tui.ts` / `state.ts` | Pressure advisories and required-handoff enforcement, status UI, shared state |
 
 ## See also
 

@@ -17,11 +17,10 @@ import {
 } from "./notifications.js";
 import { STATUS_KEY_HANDOFF } from "./tui.js";
 
-/** Max eligible settled agent runs a required handoff stays sticky before
- * auto-clear. Each settled run counts once, however many `agent_end` events
- * (automatic retry, compaction, queued or before-settle continuations) it
- * contained. A run is eligible when context usage allows a handoff at settle
- * time; ineligible runs do not count. */
+/** Max eligible settled runs a required handoff stays sticky before auto-clear.
+ * 5 gives the model several response cycles to supply the instruction and
+ * context, including the async compaction failure path where handoff/tool.ts
+ * resets toolCalled=false so enforcement resumes. */
 export const MAX_HANDOFF_ATTEMPTS = 5;
 
 type NudgeState = Pick<SchematicState, "activeNotebookTopic" | "pendingTopicBoundaryHint" | "readonlyEnabled" | "pendingRequestedHandoff">;
@@ -48,7 +47,7 @@ ${readonlyContinuation}`;
 
 function buildHandoffCancellationNotice(readonly: boolean): string {
 	const retryAdvice = readonly ? READONLY_HANDOFF_RETRY_ADVICE : "Use /handoff <direction> again to retry.";
-	return `Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} settled agent runs without completion. ${retryAdvice}`;
+	return `Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts without completion. ${retryAdvice}`;
 }
 
 function buildBoundaryNudge(state: NudgeState, eligible: boolean): string {
