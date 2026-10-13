@@ -28,7 +28,7 @@ import {
 	PROBE_PROVIDER,
 	type BarrierReport,
 	type ProbeRecord,
-	type ScriptedCall,
+	type ScriptedStep,
 } from "./real-host-protocol.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -98,8 +98,15 @@ export type Notification = { message: string; notifyType: string | undefined };
 export type Status = { statusKey: string; statusText: string | undefined };
 export type ToolResult = { isError: boolean; text: string };
 
+/** pi settings a test sets; each section is merged over the harness default for it. */
+export interface RealHostSettings {
+	compaction?: Record<string, unknown>;
+	retry?: Record<string, unknown>;
+}
+
 export interface RealHostOptions {
 	seedSession?: (session: SessionManager) => void;
+	settings?: RealHostSettings;
 }
 
 function pathEnv(): Record<string, string> {
@@ -115,8 +122,23 @@ function requireString(event: RpcEvent, field: string): string {
 	return value;
 }
 
+/**
+ * Runs started in `events`, which must begin with no run open. pi emits agent_start for each pass
+ * inside a run (an automatic retry or continuation) but agent_settled once per run, so an
+ * agent_start opens a run only when the previous one has settled.
+ */
 function countRuns(events: RpcEvent[]): number {
-	return events.filter((event) => event.type === "agent_start").length;
+	let runs = 0;
+	let open = false;
+	for (const event of events) {
+		if (event.type === "agent_start" && !open) {
+			runs++;
+			open = true;
+		} else if (event.type === "agent_settled") {
+			open = false;
+		}
+	}
+	return runs;
 }
 
 function describeError(error: unknown): string {
@@ -215,8 +237,8 @@ export class RealHost {
 			for (const dir of [agentDir, homeDir, projectDir, sessionsDir]) mkdirSync(dir);
 			writeFileSync(logPath, "");
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({
-				compaction: { enabled: false, keepRecentTokens: 1 },
-				retry: { enabled: false },
+				compaction: { enabled: false, keepRecentTokens: 1, ...options.settings?.compaction },
+				retry: { enabled: false, ...options.settings?.retry },
 			}));
 			const args = [
 				"--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
@@ -295,12 +317,12 @@ export class RealHost {
 		await this.step(mark, text, runs);
 	}
 
-	async arm(calls: ScriptedCall[]): Promise<void> {
+	async arm(calls: ScriptedStep[]): Promise<void> {
 		await this.command("/" + PROBE_COMMAND.script + " " + JSON.stringify(calls));
 	}
 
 	/** Arm `calls` and say "go"; a step that starts `runs` runs. */
-	async script(calls: ScriptedCall[], runs: number): Promise<void> {
+	async script(calls: ScriptedStep[], runs: number): Promise<void> {
 		await this.arm(calls);
 		await this.say("go", runs);
 	}
