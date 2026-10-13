@@ -73,9 +73,16 @@ export function createWorkflowAutocompleteProvider(
 			// so replace the token ourselves. Delegated items keep the built-in behavior.
 			if (!item.value.startsWith(WORKFLOW_VALUE_PREFIX)) return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
 			const line = lines[cursorLine] ?? "";
+			const start = cursorCol - prefix.length;
+			// Replace from the token start and drop the overlapped tail up to the token end (next
+			// whitespace), then the whitespace run itself: item.value already ends with a space, so a
+			// mid-token accept cannot duplicate the suffix (`/workflow rev|iew` -> `/workflow review `).
+			const nextWs = line.slice(cursorCol).search(/\s/);
+			let end = nextWs === -1 ? line.length : cursorCol + nextWs;
+			while (end < line.length && /\s/.test(line[end]!)) end++;
 			const next = [...lines];
-			next[cursorLine] = `${line.slice(0, cursorCol - prefix.length)}${item.value}${line.slice(cursorCol)}`;
-			return { lines: next, cursorLine, cursorCol: cursorCol - prefix.length + item.value.length };
+			next[cursorLine] = `${line.slice(0, start)}${item.value}${line.slice(end)}`;
+			return { lines: next, cursorLine, cursorCol: start + item.value.length };
 		},
 		shouldTriggerFileCompletion: (lines, cursorLine, cursorCol) =>
 			current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true,

@@ -104,6 +104,24 @@ test("workflow completion replaces the token without a second slash and delegate
 	assert.equal(provide.shouldTriggerFileCompletion!([], 0, 0), false);
 });
 
+// WHY: accepting with the cursor inside the token must not keep the overlapped suffix, or
+// Enter runs the workflow with spurious args (`/workflow review iew`).
+test("a mid-token accept drops the overlapped tail", () => {
+	const { provide } = harness();
+	// "/workflow rev|iew": cursor at index 13, prefix "/workflow rev".
+	assert.deepEqual(provide.applyCompletion(["/workflow review"], 0, 13, { value: "/workflow review ", label: "review" }, "/workflow rev"), {
+		lines: ["/workflow review "],
+		cursorLine: 0,
+		cursorCol: 17,
+	});
+	// Args after the token survive, separated by the item's trailing space exactly once.
+	assert.deepEqual(provide.applyCompletion(["/workflow rev extra"], 0, 13, { value: "/workflow review ", label: "review" }, "/workflow rev"), {
+		lines: ["/workflow review extra"],
+		cursorLine: 0,
+		cursorCol: 17,
+	});
+});
+
 test("a discovery failure delegates to the built-in provider", async () => {
 	const sentinel = { prefix: "SENTINEL", items: [{ value: "sentinel", label: "sentinel" }] };
 	const current = {
