@@ -203,7 +203,8 @@ function applyWorkflowProgress(ctl: RunCtl, bundle: RunBundle): void {
 interface RegistrySlot {
 	current: RunRegistry | null;
 }
-const REGISTRY_SLOT_KEY = "pi-schematic.workflow-run-registry";
+/** Shared with the cleanup tests, which observe the same slot to assert release. */
+export const REGISTRY_SLOT_KEY = "pi-schematic.workflow-run-registry";
 
 function runRegistrySlot(): RegistrySlot {
 	return registeredState<RegistrySlot>(REGISTRY_SLOT_KEY, () => ({ current: null }));
