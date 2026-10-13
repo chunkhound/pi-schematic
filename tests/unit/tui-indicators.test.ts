@@ -243,6 +243,19 @@ test("installWorkflowFooter stays silent headless", () => {
 	assert.equal(record.footerInstalls ?? 0, 0, "headless installs no footer");
 });
 
+// WHY: an RPC context reports hasUI but is not the TUI; rendering workflow chrome there
+// contradicts docs/workflows.md ("Headless and RPC runs render nothing").
+test("an RPC context with a UI renders no workflow chrome", () => {
+	const state = createState();
+	const record: TUIRecord = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
+	const rpc = makeTUICtx({ hasUI: true, mode: "rpc", percent: 62, record });
+	updateIndicators(rpc, state);
+	installWorkflowFooter(rpc, () => ({ state, progress: { name: "review", checkpoints: 0, costUsd: 0, elapsedMs: 0, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, currentEffect: null } }));
+	uninstallWorkflowFooter(rpc);
+	assert.equal(record.statuses.size, 0, "no indicator statuses in RPC mode");
+	assert.equal(record.footerInstalls ?? 0, 0, "no workflow footer in RPC mode");
+});
+
 test("workflow progress helpers share one formatting source", () => {
 	assert.equal(formatCost(1.2), "$1.20");
 	assert.equal(formatElapsed(3_725_000), "1:02:05");

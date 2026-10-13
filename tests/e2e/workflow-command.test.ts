@@ -489,6 +489,9 @@ describe("workflow command E2E — reservation and input", () => {
 	}));
 
 	it("a throwing progress seam releases input suppression and still records one error exit", () => withWorkflowChild(async (h) => {
+		// Workflow chrome paints only in TUI mode; a progress fault needs that path to arm.
+		h.write("tui");
+		await h.waitForText("OK");
 		await sendOk(h, "sandbox ok");
 		await sendOk(h, "fault progress-throws 1");
 		const entries = await runWorkflow(h, RETURN);

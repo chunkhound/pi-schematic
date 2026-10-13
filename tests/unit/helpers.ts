@@ -502,6 +502,7 @@ export function makeTUICtx(
 	overrides: Partial<{
 		percent: number | null;
 		hasUI: boolean;
+		mode: string;
 		record: TUIRecord;
 		branch: SessionEntry[];
 	}> = {},
@@ -513,6 +514,7 @@ export function makeTUICtx(
 	const branch = overrides.branch ?? [];
 	return {
 		hasUI,
+		mode: overrides.mode ?? "tui",
 		ui: {
 			theme: TEST_TUI_THEME,
 			setStatus: (key: string, status: string | undefined) => { record.statuses.set(key, status); },

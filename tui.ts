@@ -271,7 +271,7 @@ const installedFooters = new WeakSet<ExtensionContext>();
  * context because `applyWorkflowProgress` runs again on rebind.
  */
 export function installWorkflowFooter(ctx: ExtensionContext, read: () => WorkflowBarView): void {
-	if (!ctx.hasUI || installedFooters.has(ctx)) return;
+	if (!ctx.hasUI || ctx.mode !== "tui" || installedFooters.has(ctx)) return;
 	installedFooters.add(ctx);
 	ctx.ui.setFooter((tui, theme, footerData) => {
 		const unsubscribe = footerData.onBranchChange(() => tui.requestRender());
@@ -291,7 +291,7 @@ export function installWorkflowFooter(ctx: ExtensionContext, read: () => Workflo
 
 /** Restore pi's built-in footer when the run ends. */
 export function uninstallWorkflowFooter(ctx: ExtensionContext): void {
-	if (!installedFooters.has(ctx)) return;
+	if (ctx.mode !== "tui" || !installedFooters.has(ctx)) return;
 	installedFooters.delete(ctx);
 	if (ctx.hasUI) ctx.ui.setFooter(undefined);
 }
@@ -300,7 +300,7 @@ export function uninstallWorkflowFooter(ctx: ExtensionContext): void {
 
 /** Update TUI indicators: context usage, notebook count, topic, warning widget. */
 export function updateIndicators(ctx: ExtensionContext, state: SchematicState): void {
-	if (!ctx.hasUI) return;
+	if (!ctx.hasUI || ctx.mode !== "tui") return;
 
 	const theme = ctx.ui.theme;
 

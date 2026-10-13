@@ -314,6 +314,9 @@ describe("workflow host E2E — budget and limits", () => {
 
 describe("workflow host E2E — readonly, entries, session folding", () => {
 	it("enabling readonly refreshes the indicator and notifies", async () => withWorkflowChild(async (h) => {
+		// The indicator is TUI chrome; the default mock ctx is non-interactive.
+		h.write("tui");
+		await h.waitForText("OK");
 		await runWorkflowArgs(h, READONLY, '{"value":true}');
 		const events = await readUiEvents(h);
 		assert.ok(events.notifications.some((n) => n.message === READONLY_ENABLED_STATUS), "enabling notifies");
