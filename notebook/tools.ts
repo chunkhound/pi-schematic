@@ -12,16 +12,12 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import type { SchematicState } from "../state.js";
 import { updateIndicators } from "../tui.js";
-import { formatByteCap, formatPageList, formatPagePreview, getPageNames, saveNotebookPage, type TruncationReport } from "./store.js";
+import { CLIPPED_PAGE_NOTICE, formatByteCap, formatPageList, formatPagePreview, formatTruncationReport, getPageNames, saveNotebookPage } from "./store.js";
 
 const WRITE_SIZE_SUFFIX =
 	`Content is limited to ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. ` +
 	"The beginning is kept, the tail is dropped, and truncation is reported. " +
 	"A write whose retained head would be empty (for example, an oversized first line) is rejected.";
-
-function formatTruncationReport(report: TruncationReport): string {
-	return `TRUNCATED by ${report.truncatedBy}: kept ${report.outputLines} of ${report.totalLines} lines (${report.outputBytes} of ${report.totalBytes} bytes); tail dropped. Split this page into smaller pages.`;
-}
 
 // ── Parameter schemas ────────────────────────────────────────────────
 // Extracted to const so type inference works through ToolDefinition<TParams>.
@@ -217,9 +213,7 @@ export function createNotebookToolDefinitions(
 						text:
 							`--- ${params.name} ---\n${content}\n` +
 							`---\nNotebook Pages:\n${formatPageList(state) || "(empty)"}` +
-							(clipped
-								? `\n\nNotice: This page was clipped at write time; its stored body is incomplete.`
-								: ""),
+							(clipped ? `\n\n${CLIPPED_PAGE_NOTICE}` : ""),
 					},
 				],
 				details: { entries: names, found: true, body: content, clipped },

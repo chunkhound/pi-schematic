@@ -2,7 +2,7 @@
 // preview so the next `workflow.run` can show what changed without injecting a
 // custom_message mid-run. Persistence stays in notebook/store.ts.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { formatPagePreview, getPageNames, saveNotebookPage } from "../notebook/store.js";
+import { CLIPPED_PAGE_NOTICE, formatPagePreview, formatTruncationReport, getPageNames, saveNotebookPage } from "../notebook/store.js";
 import type { SchematicState } from "../state.js";
 import type { NotebookPageInfo, NotebookTopic } from "./types.js";
 
@@ -30,7 +30,8 @@ export function notebookRead(state: SchematicState, name: unknown): string {
 	if (typeof name !== "string") throw new Error("workflow.notebookRead requires a string page name");
 	const page = state.notebookPages.get(name);
 	if (page === undefined) throw new Error(`workflow.notebookRead: no page named "${name}"`);
-	return page;
+	// Mirror the notebook_read tool: a write-truncated page must never read back silently clipped.
+	return state.clippedPages.has(name) ? `${page}\n\n${CLIPPED_PAGE_NOTICE}` : page;
 }
 
 export function buildNotebookWritePreview(name: string, preview: string): string {
@@ -47,8 +48,11 @@ export function parseNotebookWrite(args: unknown): { name: string; content: stri
 /** Persist one page and buffer its preview for the next run. Returns null (JSON-safe). */
 export async function notebookWrite(deps: NotebookDeps, args: unknown): Promise<null> {
 	const { name, content } = parseNotebookWrite(args);
-	const { preview } = await saveNotebookPage(deps.pi, deps.state, name, content);
-	deps.bufferPreview(buildNotebookWritePreview(name, preview));
+	const { preview, truncation } = await saveNotebookPage(deps.pi, deps.state, name, content);
+	// Surface clipping in the buffered preview: the handle returns null, so this notice is the
+	// only signal the next run gets (mirrors the notebook_write tool's TRUNCATED report).
+	const notice = truncation ? `\n${formatTruncationReport(truncation)}` : "";
+	deps.bufferPreview(buildNotebookWritePreview(name, preview) + notice);
 	return null;
 }
 

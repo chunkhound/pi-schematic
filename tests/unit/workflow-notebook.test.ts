@@ -80,3 +80,15 @@ test("workflow.notebookTopic reports the active topic and its source", async () 
 	state.activeNotebookTopicSource = "agent";
 	assert.deepEqual(await handle(host, "workflow.notebookTopic").execute(undefined), { topic: "runtime", source: "agent" });
 });
+
+// WHY: a write-truncated page must not read back silently: the reader mirrors the
+// notebook_read tool's clipped-at-write-time notice.
+test("workflow.notebookRead surfaces a page that was clipped at write time", async () => {
+	const state = createState();
+	state.notebookPages.set("big", "kept");
+	state.clippedPages.add("big");
+	const { host } = notebookHost(state);
+	const body = await handle(host, "workflow.notebookRead").execute("big") as string;
+	assert.match(body, /^kept/);
+	assert.match(body, /clipped at write time/);
+});

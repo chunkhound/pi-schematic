@@ -6,7 +6,7 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import { createState, resetState, invalidateHandoffState } from "../../state.js";
 import { registerNotebookRehydration, reconstructNotebook } from "../../notebook/rehydration.js";
-import { commitNotebookDiscard, formatByteCap, formatPagePreview, prepareNotebookDiscard, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
+import { CLIPPED_PAGE_NOTICE, commitNotebookDiscard, formatByteCap, formatPagePreview, prepareNotebookDiscard, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
 import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
 import { STATUS_KEY_NOTEBOOK, STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
@@ -45,7 +45,7 @@ const Tlines = { truncatedBy: "lines", totalLines: 2001, totalBytes: 4001, outpu
 const Tbytes = { truncatedBy: "bytes", totalLines: 2, totalBytes: 51201, outputLines: 1, outputBytes: 25600 } as const;
 const ReportLines = "TRUNCATED by lines: kept 2000 of 2001 lines (3999 of 4001 bytes); tail dropped. Split this page into smaller pages.";
 const ReportBytes = "TRUNCATED by bytes: kept 1 of 2 lines (25600 of 51201 bytes); tail dropped. Split this page into smaller pages.";
-const Notice = "Notice: This page was clipped at write time; its stored body is incomplete.";
+const Notice = CLIPPED_PAGE_NOTICE;
 const rejectMessage = (name: string) => `Notebook page "${name}" rejected: first line exceeds ${formatByteCap(DEFAULT_MAX_BYTES)}. Split it into shorter lines or smaller pages.`;
 const emptyHeadRejectMessage = (name: string) => `Notebook page "${name}" rejected: the first non-empty line exceeds ${formatByteCap(DEFAULT_MAX_BYTES)}, so truncation would retain no content. Split it into shorter lines or smaller pages.`;
 const DescriptionSuffix =
@@ -442,6 +442,7 @@ test("/notebook <topic> notifies with info on first set and warning on boundary 
 	const widgets = new Map<string, unknown>();
 	const ctx = {
 		hasUI: true,
+		mode: "tui",
 		getContextUsage: () => ({ percent: 20 }),
 		ui: {
 			theme: { fg: (_name: string, text: string) => text },
@@ -467,6 +468,7 @@ test("readonly /notebook boundary notification explains deferred handoff eligibi
 	const notifications: Array<{ message: string; level: string }> = [];
 	const ctx = {
 		hasUI: true,
+		mode: "tui",
 		getContextUsage: () => ({ percent: 20 }),
 		ui: {
 			theme: { fg: (_name: string, text: string) => text },
