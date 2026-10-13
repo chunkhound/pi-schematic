@@ -174,3 +174,39 @@ test("a headless run keeps the subscription failure visible in the transcript", 
 		data: { phase: "spawn-event-subscribe-failed", message: "Spawn event subscription failed: subscribe boom" },
 	}]);
 });
+
+// WHY: every route carries a provider, so the ledger keys on `provider/model`. Dropping it for
+// the inherited route split one model's spend across a bare-model row and a provider/model row.
+test("an inherited child's backfilled usage carries the parent provider", async () => {
+	const state = createState();
+	const factory = async () => ({
+		session: {
+			messages: [] as unknown[],
+			prompt: async () => { throw new Error("prompt failed"); },
+			abort: async () => {},
+			dispose: () => {},
+			getSessionStats: () => ({
+				tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2 },
+				cost: 0.1,
+				assistantMessages: 1,
+			}),
+		},
+		extensionsResult: undefined as never,
+	});
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, factory as never), {
+		activeTools: ["read", "bash", "spawn"],
+	});
+
+	await assert.rejects(() => pi.tools.get("spawn").execute(
+		"spawn-inherited",
+		{ prompt: "Do the task" },
+		undefined,
+		undefined,
+		{ model: { provider: "openai", id: "parent-model" }, cwd: "/tmp" },
+	));
+	assert.equal(
+		childUsageByCall().get("spawn-inherited")?.provider,
+		"openai",
+		"the inherited route's provider reaches the backfill record",
+	);
+});

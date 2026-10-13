@@ -532,7 +532,9 @@ export function executeSpawn(
 	// cumulative stats on every message_end keeps the live cost attributed to the child's
 	// model, so an aborted run can never leave a model-less residual. The sink is null
 	// outside a workflow run. Cumulative (not delta) makes the settle flush idempotent.
-	const childProvider = routeDetails.status === "inherited" ? null : routeDetails.provider;
+	// Every route (including inherited) carries the provider, so the ledger keys on `provider/model`
+	// instead of splitting one model across a bare-model row and a provider-qualified row.
+	const childProvider = route.provider;
 	const flushChildSpend = () => {
 		const sink = state.childUsageSink;
 		if (!sink) return;
