@@ -266,9 +266,13 @@ export async function createTestHost(
 }
 
 /**
- * A `before_agent_start` event shaped like pi's: fresh normalized prompt options
- * and a `systemPrompt` getter that renders them. Without `systemPrompt`, pi's
- * default preamble applies.
+ * A user-prompt `before_agent_start` event shaped like pi's: fresh normalized
+ * prompt options and a `systemPrompt` getter that renders them. Without
+ * `systemPrompt`, pi's default preamble applies.
+ *
+ * Pi 1.x types the event as a union discriminated by `messageType`; pi 0.99
+ * has no such field. The event is returned through a variable rather than as a
+ * literal, so pi 0.99's type accepts the extra `messageType` property.
  */
 export function createBeforeAgentStartEvent(init?: { systemPrompt?: string; skills?: Skill[] }): BeforeAgentStartEvent {
 	const systemPromptOptions = normalizeBuildSystemPromptOptions({
@@ -276,8 +280,9 @@ export function createBeforeAgentStartEvent(init?: { systemPrompt?: string; skil
 		skills: init?.skills ?? [],
 		customPrompt: init?.systemPrompt,
 	});
-	return {
-		type: "before_agent_start",
+	const event = {
+		type: "before_agent_start" as const,
+		messageType: "user" as const,
 		prompt: "",
 		images: undefined,
 		get systemPrompt() {
@@ -285,6 +290,31 @@ export function createBeforeAgentStartEvent(init?: { systemPrompt?: string; skil
 		},
 		systemPromptOptions,
 	};
+	return event;
+}
+
+type EmitBeforeAgentStartArgs = Parameters<ExtensionRunner["emitBeforeAgentStart"]>;
+
+/**
+ * Arguments for an empty user-prompt run on the installed runner. Pi 0.99 takes
+ * `(prompt, images, systemPromptOptions)`; pi 1.x takes `(trigger,
+ * systemPromptOptions)`. The runner's arity picks the shape, and any other arity
+ * throws. The cast is unavoidable: no single argument list type-checks against
+ * both signatures, so the shape for the version not installed goes unchecked.
+ */
+function userPromptRunArgs(runner: ExtensionRunner, systemPromptOptions: BuildSystemPromptOptions): EmitBeforeAgentStartArgs {
+	const arity = runner.emitBeforeAgentStart.length;
+	let args: unknown[];
+	if (arity === 3) {
+		args = ["", undefined, systemPromptOptions];
+	} else if (arity === 2) {
+		args = [{ messageType: "user", prompt: "" }, systemPromptOptions];
+	} else {
+		throw new Error(
+			`pi's ExtensionRunner.emitBeforeAgentStart takes ${arity} parameters; the test host knows 3 (pi 0.99) and 2 (pi 1.x). Update tests/unit/test-host.ts for the installed Pi version.`,
+		);
+	}
+	return args as EmitBeforeAgentStartArgs;
 }
 
 /**
@@ -319,7 +349,7 @@ export async function emitBeforeAgentStart(init: {
 	runner.onError((error) => {
 		errors.push(error);
 	});
-	const result = await runner.emitBeforeAgentStart("", undefined, { cwd: process.cwd() });
+	const result = await runner.emitBeforeAgentStart(...userPromptRunArgs(runner, { cwd: process.cwd() }));
 	if (errors.length > 0) throw new AggregateError(errors, "before_agent_start handler failed");
 	return { result, prompt: buildSystemPrompt(result.systemPromptOptions) };
 }
