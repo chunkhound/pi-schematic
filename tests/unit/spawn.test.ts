@@ -1,6 +1,7 @@
 import test, { afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import fs from "node:fs";
 import { resolve } from "node:path";
 import { createState, resetState } from "../../state.js";
 import {
@@ -19,6 +20,8 @@ import { testMinContext } from "./model-groups-constraints-fixture.js";
 import { createRenderContext, createSession, theme, createDeferred } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
+import { modelGroupsPath } from "../../model-groups/store.js";
+import { createDeferredRefreshRegistry, withTemp } from "./model-groups-helpers.js";
 
 let h: TestHarness;
 
@@ -189,8 +192,15 @@ test("spawn execute composes Model Group routing with readonly child guards", as
 		name: "review",
 		scope: "project",
 		sourcePath: "<project>",
-		models: [{ provider: "openai", modelId: "gpt-routed", thinkingLevel: "low" }],
-		validation: { unavailableRefs: [], shadowedByProject: false, degraded: false },
+		models: [
+			{ provider: "openai", modelId: "gpt-routed", thinkingLevel: "low" },
+			{ provider: "anthropic", modelId: "missing" },
+		],
+		validation: {
+			unavailableRefs: [{ provider: "anthropic", modelId: "missing" }],
+			shadowedByProject: false,
+			degraded: true,
+		},
 	} as any];
 	const parentRegistry = {
 		find: (provider: string, modelId: string) => provider === "openai" && modelId === "gpt-routed" ? routedModel : undefined,
@@ -228,8 +238,38 @@ test("spawn execute composes Model Group routing with readonly child guards", as
 	assert.ok(!seenConfig.tools.includes("handoff"));
 	assert.match(seenPrompt, /inherit readonly authority/i);
 	assert.match(seenPrompt, /\[readonly\] write\/edit blocked/i);
-	assert.deepEqual(result.details.route, { status: "routed", group: "review", provider: "openai", modelId: "gpt-routed" });
+	assert.deepEqual(result.details.route, {
+		status: "routed",
+		group: "review",
+		provider: "openai",
+		modelId: "gpt-routed",
+		degraded: true,
+		unavailableRefs: [{ provider: "anthropic", modelId: "missing" }],
+	});
 });
+
+test("spawn awaits registry refresh then revalidates groups before routing", async () => withTemp(async ({ cwd }) => {
+	fs.mkdirSync(resolve(modelGroupsPath("project", cwd), ".."), { recursive: true });
+	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 1, groups: { review: { models: [{ provider: "openai", modelId: "gpt-routed" }] } } }), "utf8");
+	const routedModel = { provider: "openai", id: "gpt-routed", input: ["text"], reasoning: true };
+	const deferred = createDeferredRefreshRegistry([], [routedModel]);
+	const state = createState();
+	let selected: any;
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, async (config: any) => {
+		selected = config.model;
+		return { session: mockSessionFactory(), extensionsResult: undefined as any };
+	}), { activeTools: ["read", "spawn"] });
+	const pending = pi.tools.get("spawn").execute("fresh-route", { prompt: "Do it", group: "review" }, undefined, undefined, {
+		model: { provider: "openai", id: "parent" }, cwd, modelRegistry: deferred, isProjectTrusted: () => true,
+	});
+	for (let attempt = 0; deferred.refreshOptions.length === 0 && attempt < 20; attempt++) {
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	}
+	assert.deepEqual(deferred.refreshOptions, [{ allowNetwork: false }]);
+	deferred.releaseRefresh();
+	await pending;
+	assert.equal(selected, routedModel);
+}));
 
 test("spawn routes capability requirements to capable members via random selection on the filtered pool", async () => {
 	const state = createState();

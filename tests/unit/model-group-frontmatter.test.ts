@@ -29,6 +29,7 @@ function mockRegistry(
 	return {
 		find: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id),
 		hasConfiguredAuth: (m: any) => authenticated.has(`${m.provider}:${m.id}`),
+		refresh: async () => ({ aborted: false, errors: new Map() }),
 	};
 }
 
@@ -92,7 +93,12 @@ function makeSkillCommand(name: string, filePath: string) {
 // ── Tests ─────────────────────────────────────────────────────────────
 
 test("model-group frontmatter triggers model switch for /name command", async () => withTemp(async ({ cwd }) => {
-	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
+	writeModelGroupsConfig(cwd, {
+		reviewer: { models: [
+			{ provider: "openai", modelId: "gpt-4o" },
+			{ provider: "anthropic", modelId: "claude-missing" },
+		] },
+	});
 	const skillDir = await tmpDir();
 	try {
 		const filePath = await writeSkillMd(skillDir, "review", { "model-group": "reviewer" });
@@ -115,7 +121,9 @@ test("model-group frontmatter triggers model switch for /name command", async ()
 		assert.equal(setModelCalls.length, 1, "setModel should be called once");
 		assert.equal(setModelCalls[0].provider, "openai");
 		assert.equal(setModelCalls[0].id, "gpt-4o");
-		assert.ok(notifications.some((n) => /Model changed.*reviewer.*\/review/.test(n.message)));
+		const switchNotification = notifications.find((n) => /Model changed.*reviewer.*\/review/.test(n.message));
+		assert.ok(switchNotification);
+		assert.match(switchNotification!.message, /⚠.*degraded.*unavailable models were skipped/);
 
 		const groupEntries = pi.appendedEntries.filter((e: any) => e.customType === "pi-schematic-model-group-switch");
 		assert.equal(groupEntries.length, 1, "should append one model-group-switch entry");
@@ -581,7 +589,12 @@ test("valid model applies when model-group frontmatter is invalid", async () => 
 }));
 
 test("explicit model + model-group warns and uses explicit model", async () => withTemp(async ({ cwd }) => {
-	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "anthropic", modelId: "claude-sonnet" }] } });
+	writeModelGroupsConfig(cwd, {
+		reviewer: { models: [
+			{ provider: "openai", modelId: "gpt-4o" },
+			{ provider: "anthropic", modelId: "claude-missing" },
+		] },
+	});
 	const skillDir = await tmpDir();
 	try {
 		const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o", "model-group": "reviewer" });
@@ -603,6 +616,7 @@ test("explicit model + model-group warns and uses explicit model", async () => w
 		assert.equal(setModelCalls.length, 1, "setModel should be called once");
 		assert.equal(setModelCalls[0].id, "gpt-4o", "explicit model should win over model-group");
 		assert.ok(notifications.some((n) => /reviewer.*overridden/.test(n.message)), "should warn about override");
+		assert.equal(notifications.some((n) => /degraded/.test(n.message)), false, "explicit model path must not emit group degradation warning");
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}

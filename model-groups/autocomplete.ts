@@ -76,7 +76,7 @@ export function createModelGroupAutocompleteProvider(state: SchematicState, colo
 			const matched = groups.filter((group) => group.name.toLowerCase().startsWith(partial));
 			const rows = matched.map((group) => ({
 				value: `#${group.name}`,
-				label: `#${group.name}`,
+				label: group.validation.degraded ? `#${group.name} ⚠` : `#${group.name}`,
 				route: formatModelGroupRouteDetails(group),
 				letters: colorize ? buildCapsLetters(group, colorize) : "",
 			}));

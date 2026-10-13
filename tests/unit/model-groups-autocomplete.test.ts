@@ -25,6 +25,7 @@ test("#group autocomplete suggests effective live group names and delegates else
 	const suggestions = await provider.getSuggestions(["spawn #re"], 0, "spawn #re".length, {});
 	assert.equal(suggestions.prefix, "#re");
 	assert.deepEqual(suggestions.items.map((item: any) => item.value), ["#research", "#review"]);
+	assert.deepEqual(suggestions.items.map((item: any) => item.label), ["#research", "#review"]);
 	assert.deepEqual(suggestions.items.map((item: any) => item.description), [
 		"google/gemini-2.5-pro • xhigh",
 		"openai/gpt-5 • high; anthropic/claude-sonnet-4 • inherit",
@@ -34,7 +35,13 @@ test("#group autocomplete suggests effective live group names and delegates else
 	state.modelGroups.groups = [group("reviewers", { models: [{ provider: "openai", modelId: "gpt-5" }], unavailableRefs: [{ provider: "openai", modelId: "gpt-5" }] })];
 	const fresh = await provider.getSuggestions(["#rev"], 0, 4, {});
 	assert.deepEqual(fresh.items.map((item: any) => item.value), ["#reviewers"]);
+	assert.equal(fresh.items[0].label, "#reviewers ⚠");
+	assert.equal((fresh.items[0].label.match(/⚠/g) ?? []).length, 1);
 	assert.equal(fresh.items[0].description, "openai/gpt-5 • inherit (unavailable)");
+
+	state.modelGroups.groups = [group("reviewers", { models: [{ provider: "openai", modelId: "gpt-5" }] })];
+	const recovered = await provider.getSuggestions(["#rev"], 0, 4, {});
+	assert.equal(recovered.items[0].label, "#reviewers");
 
 	const other = await provider.getSuggestions(["no hash"], 0, 7, {});
 	assert.equal(delegated, 1);

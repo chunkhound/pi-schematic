@@ -83,6 +83,23 @@ test("spawn result identity formats default routed and unknown fallback", async 
 	) as any;
 	assert.ok(routed.render(120).some((l: string) => l.includes("review → openai/gpt-routed • high")));
 
+	const degraded = childSpawnTool.renderResult(
+		{
+			content: [{ type: "text", text: "done" }],
+			details: {
+				model: "gpt-routed", thinking: "high", truncated: false, outcome: "success",
+				route: {
+					status: "routed", group: "review", provider: "openai", modelId: "gpt-routed", degraded: true,
+					unavailableRefs: [{ provider: "anthropic", modelId: "claude-missing" }],
+				},
+			},
+		},
+		{ expanded: true }, theme, createRenderContext({ expanded: true }),
+	) as any;
+	const degradedLines = degraded.render(120);
+	assert.ok(degradedLines.some((l: string) => l.includes("review ⚠ → openai/gpt-routed • high")));
+	assert.ok(degradedLines.some((l: string) => l.includes("Skipped unavailable models: anthropic/claude-missing")));
+
 	const inherited = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "done" }], details: { model: "parent", thinking: "low", truncated: false, outcome: "success", route: { status: "inherited" } } },
 		{ expanded: false }, theme, createRenderContext(),

@@ -7,6 +7,7 @@
 
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ModelGroupsBootValidation, ResolvedModelGroup } from "./model-groups/types.js";
+import { createRegistryFreshness, type RegistryFreshness } from "./model-groups/registry-freshness.js";
 import type { FrontmatterEntry, FrontmatterIssue } from "./frontmatter-cache.js";
 import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
 import type { HandoffPayload } from "./handoff/format.js";
@@ -89,6 +90,9 @@ export interface SchematicState {
 		nextInstruction: string | null;
 	} | null;
 
+	/** Per-extension coordinator for model registry reconciliation. */
+	registryFreshness: RegistryFreshness;
+
 	/** Boot-time Model Groups validation snapshot used by /model-groups. */
 	modelGroups: {
 		groups: ResolvedModelGroup[];
@@ -162,7 +166,7 @@ export interface SchematicState {
 }
 
 /** Create a fresh state instance. Call reset() on /new. */
-export function createState(): SchematicState {
+export function createState(registryFreshness: RegistryFreshness = createRegistryFreshness()): SchematicState {
 	const childSessions = new Map<string, AgentSession>();
 	const liveChildSessions = new Map<string, AgentSession>();
 	const frontmatterSkillCache = new Map<string, FrontmatterEntry>();
@@ -185,6 +189,7 @@ export function createState(): SchematicState {
 		pendingNotebookDiscard: null,
 		discardEpochWatermark: 0,
 		pendingRequestedHandoff: null,
+		registryFreshness,
 		modelGroups: { groups: [], validation: null },
 		childSessions,
 		liveChildSessions,

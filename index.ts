@@ -22,6 +22,8 @@ import {
 	type TUI,
 } from "@earendil-works/pi-tui";
 import { createState, invalidateHandoffState, resetState, type SchematicState } from "./state.js";
+import { createRegistryFreshness } from "./model-groups/registry-freshness.js";
+import { refreshModelGroupsStateFresh } from "./model-groups/refresh.js";
 import { CONTEXT_PRIMER } from "./system-prompt.js";
 import { formatCurrentDatePrompt } from "./time/format.js";
 import { buildNudge, registerWatchdog } from "./watchdog.js";
@@ -77,8 +79,8 @@ import { registerModelGroupsCommand } from "./model-groups/command.js";
 import { resolveSpawnModelRoute, SpawnRouteError } from "./model-groups/router.js";
 import { registerModelGroupAutocomplete } from "./model-groups/autocomplete.js";
 import { getEffectiveModelGroups, getEffectiveModelGroupNames } from "./model-groups/router.js";
-import { MODEL_GROUP_MODALITY_PROSE, type ResolvedModelGroup, type ModelGroupsAccess } from "./model-groups/types.js";
-import { loadModelGroups, summarizeBootValidation, validateModelGroups } from "./model-groups/store.js";
+import { MODEL_GROUP_MODALITY_PROSE, type ResolvedModelGroup } from "./model-groups/types.js";
+import { summarizeBootValidation } from "./model-groups/store.js";
 import { escapeDisplayLabel } from "./model-groups/display.js";
 import { presentConstraintPrompt } from "./model-groups/constraints/presentation.js";
 import { productionConstraintRegistry } from "./model-groups/constraints/registry.js";
@@ -342,6 +344,7 @@ function unknownGroupDetail(state: SchematicState, groupName: string): string {
 }
 
 function recordModelGroupSwitch(
+	state: SchematicState,
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
 	route: Exclude<ModelRoute, { status: "unknown-fallback" }>,
@@ -350,7 +353,11 @@ function recordModelGroupSwitch(
 	commandRef: string,
 ): void {
 	pi.setThinkingLevel(thinking);
-	ctx.ui.notify(buildModelGroupNotification(groupName, route.provider, route.modelId, commandRef), "info");
+	const group = getEffectiveModelGroups(state.modelGroups.groups).find((candidate) => candidate.name === groupName);
+	ctx.ui.notify(
+		buildModelGroupNotification(groupName, route.provider, route.modelId, commandRef, { degraded: group?.validation.degraded }),
+		"info",
+	);
 	pi.appendEntry("pi-schematic-model-group-switch", {
 		command: commandRef,
 		groupName,
@@ -361,6 +368,7 @@ function recordModelGroupSwitch(
 }
 
 async function applyModelGroupRoute(
+	state: SchematicState,
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
 	route: Exclude<ModelRoute, { status: "unknown-fallback" }>,
@@ -373,7 +381,7 @@ async function applyModelGroupRoute(
 	);
 	if (!await safeSetModel(pi, route.model, onError)) return true;
 	const thinking = selection.thinking ? clampThinkingLevel(route.model, selection.thinking) : route.thinking;
-	recordModelGroupSwitch(ctx, pi, route, groupName, thinking, commandRef);
+	recordModelGroupSwitch(state, ctx, pi, route, groupName, thinking, commandRef);
 	return false;
 }
 
@@ -399,7 +407,7 @@ async function handleModelGroupFrontmatter(
 ): Promise<boolean> {
 	try {
 		const route = resolveModelGroupRoute(state, ctx, pi, selection.group!, currentModel);
-		if (route.status !== "unknown-fallback") return applyModelGroupRoute(ctx, pi, route, selection, commandRef);
+		if (route.status !== "unknown-fallback") return applyModelGroupRoute(state, ctx, pi, route, selection, commandRef);
 		const detail = unknownGroupDetail(state, selection.group!);
 		ctx.ui.notify(buildModelGroupErrorNotification(selection.group!, commandRef, detail), "error");
 		return true;
@@ -441,21 +449,6 @@ function blockStreamingFrontmatter(
 	return true;
 }
 
-function modelGroupsAccess(ctx: ExtensionContext): ModelGroupsAccess {
-	return { cwd: ctx.cwd, policy: ctx.isProjectTrusted() ? "global-project" : "global-only" };
-}
-
-function refreshModelGroupsState(state: SchematicState, ctx: ExtensionContext) {
-	state.modelGroups.groups = [];
-	state.modelGroups.validation = null;
-	if (!ctx.cwd || !(ctx as any).modelRegistry) return null;
-	const loadedModelGroups = loadModelGroups(modelGroupsAccess(ctx));
-	const resolvedModelGroups = validateModelGroups(loadedModelGroups, (ctx as any).modelRegistry);
-	state.modelGroups.groups = resolvedModelGroups;
-	state.modelGroups.validation = { groups: resolvedModelGroups, loadIssues: loadedModelGroups.issues };
-	return state.modelGroups.validation;
-}
-
 function modelGroupsPromptSection(groups: ResolvedModelGroup[]): string | undefined {
 	if (groups.length === 0) return undefined;
 	const labels = groups.map((group) => `${escapeDisplayLabel(group.name)} (${(group.evaluations ? presentConstraintPrompt(group.evaluations, productionConstraintRegistry).filter(Boolean).join(", ") : group.modalities?.effective.join(", ")) || "no common modalities"})`);
@@ -467,7 +460,7 @@ function modelGroupsPromptSection(groups: ResolvedModelGroup[]): string | undefi
 }
 
 export default function (pi: ExtensionAPI): void {
-	const state: SchematicState = createState();
+	const state: SchematicState = createState(createRegistryFreshness());
 
 	// ── Register all tools ──────────────────────────────────────────
 	registerNotebookTools(pi, state);
@@ -634,7 +627,7 @@ export default function (pi: ExtensionAPI): void {
 		// Command metadata is already available at input time. This prevents a
 		// failed selection from reaching Pi's expansion/agent-start lifecycle.
 		populateFrontmatterCache(state, ctx, pi);
-		refreshModelGroupsState(state, ctx);
+		await refreshModelGroupsStateFresh(state, ctx);
 
 		const selection = resolveModelSelection(state, pending);
 		const readonly = resolveReadonlySelection(state, pending);
@@ -802,7 +795,7 @@ export default function (pi: ExtensionAPI): void {
 
 		// Update TUI indicators before each user-prompt agent run
 		updateIndicators(ctx, state);
-		refreshModelGroupsState(state, ctx);
+		await refreshModelGroupsStateFresh(state, ctx);
 
 		const parts: string[] = [event.systemPrompt];
 
@@ -980,7 +973,7 @@ export default function (pi: ExtensionAPI): void {
 		}
 
 		registerModelGroupAutocomplete(ctx, state);
-		const validation = refreshModelGroupsState(state, ctx);
+		const validation = await refreshModelGroupsStateFresh(state, ctx);
 		if (validation && ctx.hasUI) {
 			for (const issue of validation.loadIssues) {
 				const sourcePath = escapeDisplayLabel(issue.sourcePath);

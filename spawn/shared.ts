@@ -3,7 +3,14 @@ export type SpawnOutcome = "running" | "success" | "aborted" | "error";
 
 export type SpawnRouteDetails =
 	| { status: "inherited" }
-	| { status: "routed"; group: string; provider: string; modelId: string }
+	| {
+		status: "routed";
+		group: string;
+		provider: string;
+		modelId: string;
+		degraded?: boolean;
+		unavailableRefs?: Array<{ provider: string; modelId: string }>;
+	}
 	| { status: "unknown-fallback"; requestedGroup: string; provider: string; modelId: string };
 
 export type SpawnResultDetails = {
