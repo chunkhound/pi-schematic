@@ -340,3 +340,79 @@ test("a host error notice names a transcript record that could not be persisted"
 test("the handle count stated in docs/workflows.md stays in sync", () => {
 	assert.equal(HANDLE_CONTRACT.length, 15, "docs/workflows.md states 15 handles; update both together");
 });
+
+// WHY: notebookWrite returns null, so the clipping notice must ride the buffered preview;
+// otherwise a truncated page reaches the next run silently.
+test("workflow.notebookWrite surfaces truncation in the next run's buffered preview", async () => {
+	const { deps } = fakeRunDeps();
+	const sent: string[] = [];
+	const dispatch = (deps.pi as unknown as { sendUserMessage: (...args: unknown[]) => void }).sendUserMessage;
+	(deps.pi as unknown as { sendUserMessage: unknown }).sendUserMessage = (...args: unknown[]) => {
+		sent.push(args[0] as string);
+		return dispatch(...args);
+	};
+	const tools = new Map(createWorkflowHost(deps).globals().map((tool) => [tool.name, tool]));
+	const context = { signal: new AbortController().signal } as never;
+	const long = Array.from({ length: 2001 }, (_, i) => `line ${i}`).join("\n");
+
+	await tools.get("workflow.notebookWrite")!.execute({ name: "big", content: long }, context);
+	await tools.get("workflow.run")!.execute(["/review"], context);
+	assert.equal(sent.length, 1);
+	assert.match(sent[0], /Notebook page "big" written/);
+	assert.match(sent[0], /TRUNCATED by lines/);
+});
+
+// WHY: a run-scoped override must never leak across turns, so each restored field is
+// independent: a throwing setModel restore must not skip the thinking restore.
+test("a throwing model restore still restores the run's thinking level", async () => {
+	const { deps } = fakeRunDeps();
+	const previousModel = { provider: "prev", id: "m" };
+	const requestedModel = { provider: "next", id: "m" };
+	const thinking: Array<string | undefined> = [];
+	let setModelCalls = 0;
+	(deps.pi as unknown as { setModel: unknown }).setModel = async () => {
+		setModelCalls += 1;
+		if (setModelCalls === 2) throw new Error("restore down");
+		return true;
+	};
+	(deps.pi as unknown as { setThinkingLevel: unknown }).setThinkingLevel = (level: string | undefined) => { thinking.push(level); };
+	(deps.pi as unknown as { getThinkingLevel: unknown }).getThinkingLevel = () => "medium";
+	const ctx = deps.getCtx() as unknown as { model: unknown; modelRegistry: { getModelOfType: unknown } };
+	ctx.model = previousModel;
+	ctx.modelRegistry.getModelOfType = () => requestedModel;
+	const tools = new Map(createWorkflowHost(deps).globals().map((tool) => [tool.name, tool]));
+	const context = { signal: new AbortController().signal } as never;
+
+	await assert.rejects(
+		async () => { await tools.get("workflow.run")!.execute(["/review", { model: requestedModel, thinking: "high" }], context); },
+		/override restore failed/,
+	);
+	assert.deepEqual(thinking, ["high", "medium"], "the thinking restore runs even though setModel threw");
+});
+
+// WHY: arming the output tool mutates run-scoped state, so a registration failure must still
+// run the override restore or the run's model/thinking leak into the next turn.
+test("a throwing output-tool arming still restores the run's model and thinking", async () => {
+	const { deps } = fakeRunDeps();
+	const previousModel = { provider: "prev", id: "m" };
+	const requestedModel = { provider: "next", id: "m" };
+	const models: unknown[] = [];
+	const thinking: Array<string | undefined> = [];
+	(deps.pi as unknown as { setModel: unknown }).setModel = async (model: unknown) => { models.push(model); return true; };
+	(deps.pi as unknown as { setThinkingLevel: unknown }).setThinkingLevel = (level: string | undefined) => { thinking.push(level); };
+	(deps.pi as unknown as { getThinkingLevel: unknown }).getThinkingLevel = () => "medium";
+	(deps.pi as unknown as { getActiveTools: unknown }).getActiveTools = () => ["bash"];
+	(deps.pi as unknown as { registerTool: unknown }).registerTool = () => { throw new Error("bad schema"); };
+	const ctx = deps.getCtx() as unknown as { model: unknown; modelRegistry: { getModelOfType: unknown } };
+	ctx.model = previousModel;
+	ctx.modelRegistry.getModelOfType = () => requestedModel;
+	const tools = new Map(createWorkflowHost(deps).globals().map((tool) => [tool.name, tool]));
+	const context = { signal: new AbortController().signal } as never;
+
+	await assert.rejects(
+		async () => { await tools.get("workflow.run")!.execute(["/review", { model: requestedModel, thinking: "high", output: {} }], context); },
+		/bad schema/,
+	);
+	assert.deepEqual(models, [requestedModel, previousModel], "the override restore runs after the arming failure");
+	assert.deepEqual(thinking, ["high", "medium"]);
+});

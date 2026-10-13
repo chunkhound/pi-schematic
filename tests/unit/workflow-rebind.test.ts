@@ -250,6 +250,33 @@ test("a failed rebind re-arms the restored session's subscriptions", async () =>
 	assert.equal(reboundWith, from, "the restored session is re-subscribed");
 });
 
+// WHY: the rollback runs on the SDK-invalidated pre-replacement context. A throw from that
+// dead context must never replace the real replacement error, and the rollback failure must
+// stay visible instead of being swallowed.
+test("a failed publication with a stale rollback keeps the original replacement error", async () => {
+	const next = { sessionManager: { getSessionId: () => "sess-stale" } } as unknown as ExtensionCommandContext;
+	const from = ctxThatReplaces(next);
+	const bundle = bundleWith(fakePi());
+	const previousPi = bundle.pi;
+	const ctl = ctlWith(from as unknown as ExtensionCommandContext, new AbortController().signal);
+	let rebounds = 0;
+
+	await assert.rejects(
+		performNewSession(bundle, ctl, {
+			onRebound: () => { rebounds += 1; throw new Error("stale context"); },
+			registry: noopRegistry(),
+		}),
+		(error: unknown) => {
+			assert.match(String(error), /no runtime was published/, "the original replacement error stays in the message");
+			assert.match(String(error), /rollback failed: stale context/, "the rollback failure is reported, not swallowed");
+			return true;
+		},
+	);
+	assert.equal(rebounds, 1, "the rollback re-armed once");
+	assert.equal(bundle.pi, previousPi, "the pre-replacement runtime is restored");
+	assert.equal(ctl.ctx, from, "the run keeps its pre-replacement context");
+});
+
 test("the rebound run's next turn runs the replacement's prepareRunFrontmatter", async () => {
 	const sessionId = "sess-rebind-frontmatter";
 	const boom = new Error("model group unavailable");

@@ -6,6 +6,7 @@ import type { ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@earen
 import type { SchematicState } from "../state.js";
 import type { WorkflowProgressView } from "../tui.js";
 import { takeWorkflowRuntime } from "./coordinator.js";
+import { messageOf } from "./errors.js";
 import { matchRun, type RunMatch, type RunRegistry } from "./run-registry.js";
 import { clampTimeoutMs } from "./sandbox.js";
 import type { WorkflowHost, WorkflowLimits, WorkflowProgress } from "./types.js";
@@ -95,16 +96,25 @@ export async function performNewSession<B extends RebindBundle>(bundle: B, ctl: 
 	// pi invalidates `from` the moment `newSession` starts tearing down the session, and a
 	// fresh ctx exists only inside `withSession`. Null the slot so every reader skips it.
 	ctl.ctx = null;
-	// Any failure — a cancelled replacement (before teardown) or a rebind error — restores
-	// the snapshot, so the run keeps the pre-replacement runtime and a live context instead
-	// of staying bound to a half-rebuilt runtime.
-	let rebindSucceeded = false;
 	try {
 		const result = await from.newSession({ withSession: async (next) => rebindRun(bundle, ctl, next, hooks) });
 		if (result.cancelled) throw new Error("workflow.new: new session was cancelled");
-		rebindSucceeded = true;
-	} finally {
-		if (!rebindSucceeded) restorePreReplacement(bundle, ctl, previous, from, hooks);
+	} catch (error) {
+		// WHY: any failure — a cancelled replacement (before teardown) or a rebind error —
+		// restores the snapshot, so the run keeps the pre-replacement runtime and a live context
+		// instead of staying bound to a half-rebuilt runtime. Cleanup and exit recording still run
+		// in the command's finally.
+		try {
+			restorePreReplacement(bundle, ctl, previous, from, hooks);
+		} catch (rollbackError) {
+			// The rollback failure must stay visible without replacing the original error: callers
+			// hold that error by identity (a rebind that throws inside `withSession` propagates its
+			// own object), so append to its message instead of wrapping it. A rollback that
+			// rethrows the same error has nothing to add.
+			if (rollbackError !== error && error instanceof Error)
+				error.message = `${error.message}; rollback failed: ${messageOf(rollbackError)}`;
+		}
+		throw error;
 	}
 }
 

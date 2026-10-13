@@ -592,12 +592,25 @@ function buildOverrideRestore(
 	previousThinking: ReturnType<ExtensionAPI["getThinkingLevel"]>,
 ): () => Promise<void> {
 	return async (): Promise<void> => {
-		try {
-			if (options.model && previousModel) await deps.pi.setModel(previousModel);
-			if (options.thinking) deps.pi.setThinkingLevel(previousThinking);
-		} catch (error) {
-			throw new Error(`workflow.run override restore failed: ${messageOf(error)}`);
+		// Restore each field independently: a throwing setModel must not skip the thinking restore.
+		// Aggregate both failures so neither is masked.
+		const failures: unknown[] = [];
+		if (options.model && previousModel) {
+			try {
+				await deps.pi.setModel(previousModel);
+			} catch (error) {
+				failures.push(error);
+			}
 		}
+		if (options.thinking) {
+			try {
+				deps.pi.setThinkingLevel(previousThinking);
+			} catch (error) {
+				failures.push(error);
+			}
+		}
+		if (failures.length > 0)
+			throw new Error(`workflow.run override restore failed: ${failures.map(messageOf).join("; ")}`);
 	};
 }
 
@@ -770,10 +783,13 @@ async function handleRun(deps: WorkflowHostDeps, state: HostState, args: unknown
 /** One run with `output` armed for this run only; the tool is inert otherwise. */
 async function runWithStructuredOutput(deps: WorkflowHostDeps, state: HostState, prepared: PreparedRun, marker: string | null, restore: () => Promise<void>, onDispatched?: () => void): Promise<RunResult> {
 	const capture: OutputCapture | null = prepared.options.output ? { request: prepared.options.output } : null;
-	const previousActive = capture ? armStructuredOutput(deps.pi, capture) : null;
+	let previousActive: string[] | null = null;
 	const release = (): Promise<void> => releaseStructuredRun(deps, previousActive, restore);
 	let result: RunResult;
 	try {
+		// Arm inside the try: a registration failure (e.g. a malformed output.schema) must still
+		// run the override restore, or this run's model/thinking leak into the next turn.
+		previousActive = capture ? armStructuredOutput(deps.pi, capture) : null;
 		result = await settleRun(deps, state, prepared, marker, onDispatched);
 		// WHY: a requested output with no captured object is an unsatisfied contract. Never
 		// resolve silently: the workflow may catch this, otherwise the run aborts as `error`.

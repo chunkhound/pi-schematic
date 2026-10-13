@@ -256,15 +256,20 @@ function buildHost(bundle: RunBundle, ctl: RunCtl, onEffect: WorkflowHostDeps["o
  * and notify the human so the posture is visible mid-run. */
 function announceReadonlyToggle(ctl: RunCtl, bundle: RunBundle, enabled: boolean): void {
 	if (!ctl.ctx) return;
-	updateIndicators(ctl.ctx, bundle.state);
-	notify(ctl.ctx, enabled ? READONLY_ENABLED_STATUS : READONLY_DISABLED_NOTIFICATION, "info");
+	// Advisory paint: a cosmetic failure must not reject the workflow.readonly handle and abort the run.
+	try {
+		updateIndicators(ctl.ctx, bundle.state);
+		notify(ctl.ctx, enabled ? READONLY_ENABLED_STATUS : READONLY_DISABLED_NOTIFICATION, "info");
+	} catch {
+		// Advisory chrome only; the posture is already applied.
+	}
 }
 
 /** Backstop: `reserveWorkflow` guarantees no live run, so a set flag/sink/registry here is
- * stale — `openRun` runs before `executeWorkflow`'s try/finally owns cleanup, so a throw
- * from a binding seam would otherwise leave suppression stuck. Happy path is already
- * false/null/null, so this is a noop there. Fresh `ctl` unsubscribe noops + `releaseRun`
- * order stay the real cleanup; this only covers the bypassed-finally gap. */
+ * stale. `executeWorkflow`'s try/finally now owns cleanup for every throw, including a
+ * throwing binding seam, so this only covers state a prior run could not reach cleanup for
+ * (for example a process killed between reserve and teardown). Happy path is already
+ * false/null/null, so this is a noop there. */
 function clearStaleRunState(bundle: RunBundle): void {
 	bundle.state.inputSuppressed = false;
 	bundle.state.childUsageSink = null;
@@ -289,21 +294,28 @@ function openRun(bundle: RunBundle, program: RunProgram): { ctl: RunCtl; host: W
 }
 
 async function executeWorkflow(bundle: RunBundle, program: RunProgram): Promise<void> {
-	const { ctl, host, activity } = openRun(bundle, program);
+	let ctl: RunCtl | null = null;
+	let host: WorkflowHost | null = null;
+	let activity: ShellActivity | null = null;
 	let stopTicker: () => void = () => {};
 	try {
-		// ALL setup lives inside the try: a throwing seam (progress paint, cancel funnel)
-		// must still reach the finally so input stays usable and the host gets disposed.
+		// ALL setup lives inside the try, including openRun: a throwing binding seam (progress
+		// paint, cancel funnel) must still reach the finally so input stays usable and the host
+		// gets disposed.
+		({ ctl, host, activity } = openRun(bundle, program));
 		stopTicker = armRun(bundle, ctl, host, program.ctx);
 		await runSandbox(bundle, program, host, ctl);
 	} catch (error) {
 		// runSandbox records its own failures; anything escaping it is a setup failure
-		// (suppression, cancel, first paint), recorded here so no run ends silently.
-		recordInfraExit(bundle.pi, host, ctl, error);
+		// (openRun binding, suppression, cancel, first paint), recorded here so no run ends silently.
+		if (host && ctl) recordInfraExit(bundle.pi, host, ctl, error);
+		else reportStartFailure(bundle.pi, program.ctx, `workflow failed to start: ${messageOf(error)}`);
 	} finally {
 		stopTicker();
-		finalizeRun(bundle, ctl, host);
-		releaseRun(bundle, ctl, host, activity);
+		if (host && ctl) {
+			finalizeRun(bundle, ctl, host);
+			if (activity) releaseRun(bundle, ctl, host, activity);
+		}
 	}
 }
 
@@ -323,29 +335,47 @@ function armRun(bundle: RunBundle, ctl: RunCtl, host: WorkflowHost, ctx: Extensi
  * view, so effect-driven publishes also reset the idle comparison. */
 function startTicker(bundle: RunBundle, ctl: RunCtl, host: WorkflowHost): () => void {
 	const ticker = setInterval(() => {
-		const next = host.progress();
-		const prev = ctl.progress;
-		const idle = prev !== null && next.currentEffect === null && next.pendingStop === null
-			&& prev.currentEffect === null && prev.pendingStop === null
-			&& next.costUsd === prev.costUsd && next.checkpoints === prev.checkpoints;
-		if (idle) return;
-		publishProgress(ctl, bundle, next);
+		// Advisory paint: a throwing UI must not escape the timer and kill pi mid-run.
+		try {
+			const next = host.progress();
+			const prev = ctl.progress;
+			const idle = prev !== null && next.currentEffect === null && next.pendingStop === null
+				&& prev.currentEffect === null && prev.pendingStop === null
+				&& next.costUsd === prev.costUsd && next.checkpoints === prev.checkpoints;
+			if (idle) return;
+			publishProgress(ctl, bundle, next);
+		} catch {
+			// Advisory chrome only; the run continues.
+		}
 	}, bundle.deps.progressTickMs ?? WORKFLOW_PROGRESS_TICK_MS);
 	return () => clearInterval(ticker);
 }
 
-/** User-facing release first: a throwing footer/indicator restore must not leave input
- * suppressed, cancel armed, or the host undisposed. */
-function releaseRun(bundle: RunBundle, ctl: RunCtl, host: WorkflowHost, activity: ShellActivity): void {
-	ctl.unsubscribeInput();
-	ctl.unsubscribeCancel();
-	activity.dispose();
-	if (ctl.ctx) {
-		uninstallWorkflowFooter(ctl.ctx);
-		updateIndicators(ctl.ctx, bundle.state);
+/** Run one teardown step in isolation: a throw must not skip the steps after it. Teardown is
+ * advisory — the run outcome is already recorded — so each step is best-effort. */
+function runCleanup(step: () => void): void {
+	try {
+		step();
+	} catch {
+		// Advisory teardown only; the next step must still run.
 	}
-	host.dispose();
-	runRegistrySlot().current = null;
+}
+
+/** Release every run-owned resource. Each step is independent, so a throw in one must not
+ * leave input suppressed, the cancel funnel armed, the host undisposed, the registry stale,
+ * or the footer/indicators unrestored. Order matters: the host (child-usage sink) is disposed
+ * before the registry slot is cleared, and chrome is restored last. */
+function releaseRun(bundle: RunBundle, ctl: RunCtl, host: WorkflowHost, activity: ShellActivity): void {
+	runCleanup(() => ctl.unsubscribeInput());
+	runCleanup(() => ctl.unsubscribeCancel());
+	runCleanup(() => activity.dispose());
+	runCleanup(() => host.dispose());
+	runCleanup(() => { runRegistrySlot().current = null; });
+	const ctx = ctl.ctx;
+	if (ctx) {
+		runCleanup(() => uninstallWorkflowFooter(ctx));
+		runCleanup(() => updateIndicators(ctx, bundle.state));
+	}
 }
 
 async function runSandbox(bundle: RunBundle, program: RunProgram, host: WorkflowHost, ctl: RunCtl): Promise<void> {
@@ -500,7 +530,7 @@ function finalizeRun(bundle: RunBundle, ctl: RunCtl, host: WorkflowHost): void {
 /** Falls back to a UI notice when the advisory append fails; never masks the outcome. */
 function reportSummaryFailure(pi: ExtensionAPI, ctl: RunCtl, error: unknown): void {
 	const appended = safeAppendEntry(pi, WORKFLOW_ERROR_ENTRY_TYPE, { phase: "summary", error: messageOf(error) });
-	if (!appended && ctl.ctx) notify(ctl.ctx, `workflow overview could not be persisted: ${messageOf(error)}`, "warning");
+	if (!appended && ctl.ctx) advisoryNotify(ctl.ctx, `workflow overview could not be persisted: ${messageOf(error)}`, "warning");
 }
 
 /** Reportable reason of an exit record. The host derives every recorded reason with
