@@ -108,11 +108,13 @@ export function setShellRunForTests(run: ShellRun | null): void {
 	TEST_SHELL_RUN.run = run;
 }
 
-/** pi kills the process on timeout and throws without aborting our signal. Its stable error
- * is exactly `timeout:<seconds>`; pi's own bash tool detects the same `timeout:` prefix
- * (core/tools/bash.js). A spawn failure that merely mentions "timed out" must not match. */
+/** pi kills the process on timeout and throws without aborting our signal. The bash tool
+ * definition rethrows the low-level `timeout:<seconds>` as
+ * `Command timed out after <n> seconds`, appended after any partial output (`appendStatus`
+ * in core/tools/bash.js), so the status is the last line, not the whole message. A spawn
+ * failure that merely mentions "timed out" must not match. */
 export function isTimeoutMessage(message: string): boolean {
-	return /^timeout:\d+$/.test(message);
+	return /Command timed out after \d+ seconds$/.test(message);
 }
 
 async function executeShell(deps: ShellRunnerDeps, command: string, options: ShellOptions): Promise<ShellResult> {

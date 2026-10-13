@@ -77,8 +77,14 @@ test("createShellRunner maps an aborted run to killed and keeps the message visi
 });
 
 test("isTimeoutMessage matches pi's stable timeout text only", () => {
-	assert.equal(isTimeoutMessage("timeout:1"), true);
-	assert.equal(isTimeoutMessage("timeout:"), false);
+	assert.equal(isTimeoutMessage("Command timed out after 1 seconds"), true);
+	assert.equal(isTimeoutMessage("Command timed out after 300 seconds"), true);
+	// appendStatus prepends the partial output, so the status is the last line of the message.
+	assert.equal(isTimeoutMessage("partial output\n\nCommand timed out after 1 seconds"), true);
+	assert.equal(isTimeoutMessage("line1\nline2\n\nCommand timed out after 300 seconds"), true);
+	// The low-level `timeout:<n>` is rethrown by the bash definition, so it must not match.
+	assert.equal(isTimeoutMessage("timeout:1"), false);
+	assert.equal(isTimeoutMessage("Command timed out after seconds"), false);
 	assert.equal(isTimeoutMessage("spawn failure: request timed out"), false);
 	assert.equal(isTimeoutMessage("Command aborted"), false);
 	assert.equal(isTimeoutMessage("spawn failure: no such file"), false);
@@ -87,14 +93,28 @@ test("isTimeoutMessage matches pi's stable timeout text only", () => {
 test("createShellRunner reports a timed-out run as killed", async () => {
 	const run = createShellRunner(deps({
 		run: async () => {
-			// pi's real timeout error is exactly `timeout:<seconds>`; partial output arrives via onUpdate.
-			throw new Error("timeout:1");
+			// pi's bash definition rethrows the low-level timeout as this user-facing text.
+			throw new Error("Command timed out after 1 seconds");
 		},
 	}));
 	const result = await run("sleep 100", { timeout: 1 });
 	assert.equal(result.ok, false);
 	assert.equal(result.killed, true, "pi's timeout kills the process without aborting our signal");
 	assert.equal(result.exitCode, null);
+});
+
+test("a timed-out run that produced partial output still reports killed", async () => {
+	const run = createShellRunner(deps({
+		run: async () => {
+			// appendStatus prepends the command's output before the timeout status.
+			throw new Error("building...\n\nCommand timed out after 200 seconds");
+		},
+	}));
+	const result = await run("sleep 100", { timeout: 200 });
+	assert.equal(result.ok, false);
+	assert.equal(result.killed, true, "partial output must not hide the timeout classification");
+	assert.equal(result.exitCode, null);
+	assert.match(result.output, /Command timed out after 200 seconds/);
 });
 
 test("createShellRunner forwards streaming display snapshots", async () => {
