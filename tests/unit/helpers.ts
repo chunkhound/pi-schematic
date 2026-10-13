@@ -505,6 +505,8 @@ export function makeTUICtx(
 		mode: string;
 		record: TUIRecord;
 		branch: SessionEntry[];
+		notify: (message: string, level: string) => void;
+		custom: (build: any) => Promise<unknown>;
 	}> = {},
 ): any {
 	const record: TUIRecord = overrides.record ?? { statuses: new Map(), widgets: new Map() };
@@ -517,6 +519,7 @@ export function makeTUICtx(
 		mode: overrides.mode ?? "tui",
 		ui: {
 			theme: TEST_TUI_THEME,
+			notify: overrides.notify ?? (() => {}),
 			setStatus: (key: string, status: string | undefined) => { record.statuses.set(key, status); },
 			setWorkingMessage: (message?: string) => { (record.workingMessages ??= []).push(message); },
 			setWidget: (key: string, content: string[] | undefined) => { record.widgets.set(key, content); },
@@ -526,6 +529,7 @@ export function makeTUICtx(
 				if (factory) record.footerInstalls = (record.footerInstalls ?? 0) + 1;
 				else record.footerRestores = (record.footerRestores ?? 0) + 1;
 			},
+			...(overrides.custom !== undefined ? { custom: overrides.custom } : {}),
 		},
 		sessionManager: {
 			getBranch: () => branch,

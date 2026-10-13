@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`/workflow` workflow engine** — `/workflow <workflow> [args]` runs a user-authored synchronous JavaScript file in a codemode sandbox (QuickJS worker, wall-clock deadline, 256 MiB memory cap). The host compiles the file (acorn validates the synchronous contract and inserts `await` before every `workflow.*` call), suppresses input for the run, and exposes the `workflow.*` handles: `run`, `handoff`, `classify`, `shell`, `state`, `entries`, `notebookIndex`, `notebookRead`, `notebookWrite`, `notebookTopic`, `budget`, `readonly`, `new`, `checkpoint`, and `exit`. Checkpoints are optional: without one the run is unbounded, skips the limits dialog and flags, and is marked `∞ unbounded`. On a cost or time target the engine defers the stop to the next checkpoint and salvages its metadata as the run's partial result, while cancellation and errors abort immediately. Cost and time are soft targets, not hard limits: they come from the pre-run dialogs or `--workflow-cost`/`--workflow-time`; the flag descriptions, the footer, and the end-of-run summary say so, and the summary adds a `target → final` overshoot row. Every finished run records one `workflow-exit` entry. The `/workflow` footer status counts checkpoints passed (🚩), and the end-of-run overview breaks the run down into checkpoints, `workflow.run` steps, model turns, classifier steps, and per-handle activity, under the 🛠️ label. The author contract is documented in `docs/workflows.md`.
 
 - **Date anchor** — `before_agent_start` injects a `## Current date` block (ISO date, weekday, IANA zone, UTC offset, plus a resolve-relative-references directive) into the system prompt. It is rebuilt once per run and is byte-stable within a calendar day, so while the host zone stays fixed it changes the system prompt at most once per day; on a DST transition day the offset adds one more change. A zone Intl cannot render falls back to `UTC` rather than throwing.
+- **Notebook pages open in a pager** — Enter in the interactive `/notebook` picker opens the selected page in `$PI_PAGER`, else `$PAGER`, else `less` if installed (not on Windows); with no pager or a `cat` or `more` pager it shows the inline preview instead. Quitting either returns to the list on the same page. See [Compatibility and limits](README.md#compatibility-and-limits).
 
 ### Changed
 
@@ -28,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workflow run-state backstop** — a run that dies before its cleanup has stale input suppression, child-usage sink, and run registry cleared at the next run's start, so input can no longer stay stuck after a crashed run.
 - **Spawned-agent cost attribution** — the `spawn` tool now reports each child session's usage on its tool result and backfills it on error results. Parent session totals and the `/workflow` cost total include child-agent spend, which was previously invisible because children run in separate sessions.
 - **Bash classifier arrow false-positive** — interpreter payloads (`node -e`, `python -c`, `awk`, `perl`) no longer misread `=>` as a write redirect. Kept with the workflow change because `workflow.shell` routes through the same classifier and workflow scripts commonly run `node -e` with arrow functions.
+
+### Fixed
+
+- **Empty notebook pages** — selecting a page with an empty body in `/notebook` now opens it like any other page instead of closing the picker.
+- **Discarded notebook pages** — selecting a page removed by a handoff discard while the `/notebook` list was open now reopens the refreshed list instead of closing the picker.
+- **Model edit opens on the current thinking level** — opening a model in the Model Groups TUI now puts the cursor on the model's configured thinking level and marks it `✓ current`, instead of always landing on `inherit`, where Enter silently reset the value. A configured level the model no longer supports (or whose model is not in the registry) is still shown as `⚠ current, unavailable` and preserved unless another option is deliberately chosen (#29).
 
 ## [0.6.0] - 2026-09-26
 
