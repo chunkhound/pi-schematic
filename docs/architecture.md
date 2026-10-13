@@ -14,7 +14,7 @@ pi-schematic is a Pi extension. It registers tools and hooks into the agent life
 | `session_tree` | Invalidates branch-local handoff work, reconstructs notebook pages/epoch/watermark from the newly active branch, rehydrates readonly state, recovers a successor only when no newer user turn exists and no session-tree descendant owned by that cut proves delivery, refreshes indicators |
 | `turn_end` | Updates TUI indicators (context %, notebook count, topic, readonly) |
 | `agent_end` | Records last context usage percent |
-| `agent_settled` | Counts handoff enforcement attempts per settled run and cancels a required handoff after MAX_HANDOFF_ATTEMPTS. Recovery in index.ts clears the recovery latch and, when no queued messages remain, resends an absent successor handoff message. |
+| `agent_settled` | Counts one handoff enforcement attempt per settled run with eligible context usage and cancels a required handoff after `MAX_HANDOFF_ATTEMPTS`. Recovery in index.ts clears the recovery latch and, when no queued messages remain, resends an absent successor handoff message. |
 | `session_before_compact` | Emits a fixed continuation frame plus a per-cut identity marker as the compaction summary; the successor's next instruction + context arrive as one real user message after compaction |
 
 ## State

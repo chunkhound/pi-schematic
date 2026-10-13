@@ -273,7 +273,7 @@ test("watchdog stays advisory for a fresh user-requested handoff", async () => {
 	);
 
 	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
-	assert.ok(state.pendingRequestedHandoff, "handoff request should remain active after one turn");
+	assert.ok(state.pendingRequestedHandoff, "handoff request should remain active after one settled run");
 	assert.equal(state.pendingRequestedHandoff.enforcementAttempts, 1);
 	assert.deepEqual(notifications, []);
 });
@@ -394,15 +394,14 @@ test("a continued run cancels only after MAX_HANDOFF_ATTEMPTS settled runs", asy
 		getContextUsage: eligibleUsage,
 	};
 
-	for (let run = 1; run <= MAX_HANDOFF_ATTEMPTS; run++) {
+	for (let run = 1; run < MAX_HANDOFF_ATTEMPTS; run++) {
 		for (let i = 0; i < 3; i++) await agentEnd({}, ctx);
-		if (run < MAX_HANDOFF_ATTEMPTS) {
-			await agentSettled({ type: "agent_settled" }, ctx);
-			assert.ok(state.pendingRequestedHandoff, `handoff must remain pending after settled run ${run}`);
-			assert.deepEqual(notifications, [], "cancellation must not notify early");
-		}
+		await agentSettled({ type: "agent_settled" }, ctx);
+		assert.ok(state.pendingRequestedHandoff, `handoff must remain pending after settled run ${run}`);
+		assert.deepEqual(notifications, [], "cancellation must not notify early");
 	}
 
+	for (let i = 0; i < 3; i++) await agentEnd({}, ctx);
 	await agentSettled({ type: "agent_settled" }, ctx);
 	assert.equal(state.pendingRequestedHandoff, null);
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), undefined);

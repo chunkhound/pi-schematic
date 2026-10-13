@@ -7,7 +7,7 @@
  *   handoff   — deliberate task pivot via compaction
  *
  * Also registers:
- *   - watchdog (advisory primacy-zone reminder after each turn)
+ *   - watchdog (primacy-zone reminder and required-handoff enforcement)
  *   - system prompt injection (CONTEXT_PRIMER, nudge, notebook listing)
  *   - state reset on /new
  */

@@ -107,9 +107,12 @@ export function createDeferred() {
 
 /**
  * Run every handler registered for `event` in registration order, as pi does.
+ * Throws when no handler is registered, so an unregistered event cannot pass vacuously.
  */
 export async function emitAll(pi: TestPI, event: string, payload: unknown, ctx: unknown): Promise<void> {
-	for (const handler of pi.handlers.get(event) ?? []) {
+	const handlers = pi.handlers.get(event);
+	if (!handlers?.length) throw new Error(`No handlers registered for "${event}"`);
+	for (const handler of handlers) {
 		await handler(payload, ctx);
 	}
 }
