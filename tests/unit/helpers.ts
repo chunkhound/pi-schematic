@@ -459,6 +459,8 @@ export function makeTUICtx(
 		percent: number | null;
 		hasUI: boolean;
 		record: { statuses: Map<string, string | undefined>; widgets: Map<string, string[] | undefined> };
+		notify: (message: string, level: string) => void;
+		custom: (build: any) => Promise<unknown>;
 	}> = {},
 ): any {
 	const record = overrides.record ?? { statuses: new Map(), widgets: new Map() };
@@ -470,8 +472,10 @@ export function makeTUICtx(
 			theme: {
 				fg: (name: string, text: string) => `[${name}:${text}]`,
 			},
+			notify: overrides.notify ?? (() => {}),
 			setStatus: (key: string, status: string | undefined) => { record.statuses.set(key, status); },
 			setWidget: (key: string, content: string[] | undefined) => { record.widgets.set(key, content); },
+			...(overrides.custom !== undefined ? { custom: overrides.custom } : {}),
 		},
 		getContextUsage: () => (percent !== null ? { percent } : null),
 	};

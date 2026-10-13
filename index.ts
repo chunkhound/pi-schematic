@@ -8,7 +8,7 @@
  *
  * Also registers:
  *   - watchdog (advisory primacy-zone reminder after each turn)
- *   - prompt sections (context primer, topic, model groups, notebook listing)
+ *   - prompt sections (context primer, current date, topic, model groups, notebook listing)
  *   - state reset on /new
  */
 
@@ -19,9 +19,10 @@ import {
 	type SelectItem,
 	SelectList,
 	Text,
+	type TUI,
 } from "@earendil-works/pi-tui";
 import { createState, invalidateHandoffState, resetState, type SchematicState } from "./state.js";
-import { contextPrimerSection } from "./system-prompt.js";
+import { contextPrimerSection, currentDateSection } from "./system-prompt.js";
 import { createPromptSectionRegistry, applyPromptSections } from "./prompt-sections.js";
 import { notebookPagesSection, notebookTopicSection } from "./notebook/prompt.js";
 import { modelGroupsSection } from "./model-groups/prompt.js";
@@ -31,6 +32,7 @@ import { ensureNotebookToolsActive, registerNotebookRehydration, reconstructNote
 import { registerNotebookTopicTool } from "./notebook/topic-tool.js";
 import { setActiveNotebookTopic } from "./notebook/topic.js";
 import { formatPageTuiPreview } from "./notebook/store.js";
+import { openInPager, pagerRuntime, type ResolvedPager } from "./notebook/pager.js";
 import { registerHandoffTool } from "./handoff/tool.js";
 import {
 	canPromoteBoundary,
@@ -81,6 +83,7 @@ import type { ModelGroupsAccess } from "./model-groups/types.js";
 import { loadModelGroups, summarizeBootValidation, validateModelGroups } from "./model-groups/store.js";
 import { escapeDisplayLabel } from "./model-groups/display.js";
 import { productionConstraintRegistry } from "./model-groups/constraints/registry.js";
+import { isUsableModel } from "./model-groups/availability.js";
 import {
 	cacheLookupCommand,
 	cacheLookupCommandExplicitModel,
@@ -293,7 +296,7 @@ function findExplicitModel(ctx: ExtensionContext, raw: string, commandRef: strin
 		ctx.ui.notify(buildModelFrontmatterErrorNotification(provider, modelId, commandRef, "not found in registry"), "error");
 		return null;
 	}
-	if (ctx.modelRegistry.hasConfiguredAuth(model)) return model;
+	if (isUsableModel(ctx.modelRegistry, model)) return model;
 	ctx.ui.notify(buildModelFrontmatterAuthErrorNotification(provider, modelId, commandRef), "error");
 	return null;
 }
@@ -475,6 +478,7 @@ export default function (pi: ExtensionAPI): void {
 	// ── Register prompt sections (render order = registration order) ──
 	const promptSections = createPromptSectionRegistry();
 	promptSections.register(contextPrimerSection());
+	promptSections.register(currentDateSection());
 	promptSections.register(notebookTopicSection(state));
 	promptSections.register(modelGroupsSection(state, productionConstraintRegistry));
 	promptSections.register(notebookPagesSection(state));
@@ -646,7 +650,7 @@ export default function (pi: ExtensionAPI): void {
 
 	// ── /notebook command — interactive page selector ────────────────
 	pi.registerCommand("notebook", {
-		description: "Select a notebook page to preview, or set the active notebook topic with /notebook <topic>",
+		description: "Select a notebook page to view, or set the active notebook topic with /notebook <topic>",
 		handler: async (args, ctx) => {
 			const topicArg = args.trim();
 			if (topicArg) {
@@ -666,85 +670,124 @@ export default function (pi: ExtensionAPI): void {
 				return;
 			}
 
-			await ctx.ui.custom<void>((tui, theme, _kb, done) => {
-				const container = new Container();
+			let lastSelectedName: string | undefined;
+			// Resolve once per /notebook so onSelect doesn't run `command -v less` on every Enter.
+			const pager = pagerRuntime.resolvePager();
+			while (true) {
+				// Pi has no extension API to suspend the TUI, so the "pager" result carries
+				// custom()'s handle for openInPager, which runs after done() closes the list.
+				// It is Pi's long-lived TUI reference, so it stays valid past done().
+				const result = await ctx.ui.custom<
+					| { action: "pager"; name: string; body: string; tui: TUI; pager: ResolvedPager }
+					| { action: "reopen"; name: string }
+					| undefined
+				>((tui, theme, _kb, done) => {
+					const container = new Container();
 
-				container.addChild(
-					new DynamicBorder((s: string) => theme.fg("accent", s)),
-				);
-				container.addChild(
-					new Text(theme.fg("accent", theme.bold(` Notebook (${state.notebookPages.size} pages) `)), 1, 0),
-				);
-
-				const entries = Array.from(state.notebookPages.entries()).sort(([a], [b]) => a.localeCompare(b));
-				let selectList: SelectList | undefined;
-				let finished = false;
-
-				if (entries.length === 0) {
 					container.addChild(
-						new Text(theme.fg("dim", " (empty) — use notebook_write to create pages"), 1, 0),
+						new DynamicBorder((s: string) => theme.fg("accent", s)),
 					);
-				} else {
-					const items: SelectItem[] = entries.map(([name, content]) => ({
-						value: name,
-						label: name,
-						description: formatPageTuiPreview(content, state.clippedPages.has(name)),
-					}));
+					container.addChild(
+						new Text(theme.fg("accent", theme.bold(` Notebook (${state.notebookPages.size} pages) `)), 1, 0),
+					);
 
-					selectList = new SelectList(items, Math.min(items.length, 10), {
-						selectedPrefix: (t) => theme.fg("accent", t),
-						selectedText: (t) => theme.fg("accent", t),
-						description: (t) => theme.fg("muted", t),
-						scrollInfo: (t) => theme.fg("dim", t),
-						noMatch: (t) => theme.fg("warning", t),
-					});
-					selectList.onSelect = ({ value }) => {
-						// Guard: selectList is set to undefined below, so this handler
-						// cannot fire twice — no re-entrancy guard needed here.
-						const body = state.notebookPages.get(value);
-						if (!body) { done(); return; }
-						// Switch to body view: show the selected entry body inline
-						container.clear();
-						container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-						container.addChild(new Text(theme.fg("accent", theme.bold(` ${value} `)), 1, 0));
-						const truncated = body.length > 500 ? body.slice(0, 500) + "\n..." : body;
-						container.addChild(new Text(theme.fg("toolOutput", truncated), 1, 0));
-						container.addChild(new Text(theme.fg("dim", " press any key to close "), 1, 0));
-						container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-						selectList = undefined;
-						tui.requestRender();
+					const entries = Array.from(state.notebookPages.entries()).sort(([a], [b]) => a.localeCompare(b));
+					let selectList: SelectList | undefined;
+					let previewName: string | undefined;
+					let finished = false;
+
+					if (entries.length === 0) {
+						container.addChild(
+							new Text(theme.fg("dim", " (empty) — use notebook_write to create pages"), 1, 0),
+						);
+					} else {
+						const items: SelectItem[] = entries.map(([name, content]) => ({
+							value: name,
+							label: name,
+							description: formatPageTuiPreview(content, state.clippedPages.has(name)),
+						}));
+
+						selectList = new SelectList(items, Math.min(items.length, 10), {
+							selectedPrefix: (t) => theme.fg("accent", t),
+							selectedText: (t) => theme.fg("accent", t),
+							description: (t) => theme.fg("muted", t),
+							scrollInfo: (t) => theme.fg("dim", t),
+							noMatch: (t) => theme.fg("warning", t),
+						});
+						if (lastSelectedName !== undefined) {
+							const idx = items.findIndex((it) => it.value === lastSelectedName);
+							if (idx >= 0) selectList.setSelectedIndex(idx);
+						}
+						selectList.onSelect = ({ value }) => {
+							const body = state.notebookPages.get(value);
+							// A handoff discard can commit while the list is open (its compaction finishes in the background).
+							if (body === undefined) {
+								finished = true;
+								done({ action: "reopen", name: value });
+								return;
+							}
+							// Prefer a real pager when available; else fall back to a
+							// truncated inline preview.
+							if (pager) {
+								finished = true;
+								done({ action: "pager", name: value, body, tui, pager });
+								return;
+							}
+							container.clear();
+							container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+							container.addChild(new Text(theme.fg("accent", theme.bold(` ${value} `)), 1, 0));
+							const truncated = body.length > 500;
+							container.addChild(new Text(theme.fg("toolOutput", truncated ? body.slice(0, 500) : body), 1, 0));
+							if (truncated) container.addChild(new Text(theme.fg("dim", " ... set $PI_PAGER to a full-screen pager (e.g. less) to view the full page "), 1, 0));
+							container.addChild(new Text(theme.fg("dim", " any key back "), 1, 0));
+							container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+							previewName = value;
+							selectList = undefined;
+							tui.requestRender();
+						};
+						selectList.onCancel = () => {
+							if (finished) return;
+							finished = true;
+							done(undefined);
+						};
+						container.addChild(selectList);
+					}
+
+					container.addChild(
+						new Text(theme.fg("dim", entries.length === 0
+							? " esc close "
+							: " \u2191\u2195 navigate \u2022 enter view \u2022 esc close "), 1, 0),
+					);
+					container.addChild(
+						new DynamicBorder((s: string) => theme.fg("accent", s)),
+					);
+
+					return {
+						render: (w) => container.render(w),
+						invalidate: () => container.invalidate(),
+						handleInput: (data) => {
+							if (finished) return;
+							if (!selectList) {
+								// Any key leaves the inline preview (back to the list) or the empty notebook.
+								finished = true;
+								done(previewName === undefined ? undefined : { action: "reopen", name: previewName });
+								return;
+							}
+							selectList.handleInput?.(data);
+							// Conservative: always repaint after key input.
+							// SelectList.handleInput returns void in the current API,
+							// so we can't conditionally skip — the cost is negligible.
+							tui.requestRender();
+						},
 					};
-					selectList.onCancel = () => {
-						if (finished) return;
-						finished = true;
-						done();
-					};
-					container.addChild(selectList);
+				});
+				if (!result) return;
+				lastSelectedName = result.name;
+				if (result.action === "pager") {
+					const err = await openInPager(result.tui, result.body, result.pager);
+					if (err) ctx.ui.notify(`pager failed: ${err.message}`, "warning");
 				}
-
-				container.addChild(
-					new Text(theme.fg("dim", entries.length === 0
-						? " esc close "
-						: " \u2191\u2195 navigate \u2022 enter select \u2022 esc close "), 1, 0),
-				);
-				container.addChild(
-					new DynamicBorder((s: string) => theme.fg("accent", s)),
-				);
-
-				return {
-					render: (w) => container.render(w),
-					invalidate: () => container.invalidate(),
-					handleInput: (data) => {
-						if (finished) return;
-						if (!selectList) { finished = true; done(); return; }
-						selectList.handleInput?.(data);
-						// Conservative: always repaint after key input.
-						// SelectList.handleInput returns void in the current API,
-						// so we can't conditionally skip — the cost is negligible.
-						tui.requestRender();
-					},
-				};
-			});
+			}
 		},
 	});
 

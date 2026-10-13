@@ -1,9 +1,10 @@
 /**
- * Static context-management primer, contributed as the `schematic` prompt section
- * (see prompt-sections.ts).
+ * Static context-management primer and the per-run date anchor, contributed as
+ * the `schematic` and `schematic_date` prompt sections (see prompt-sections.ts).
  */
 
 import type { PromptSection } from "./prompt-sections.js";
+import { formatCurrentDatePrompt } from "./time/format.js";
 
 const CONTEXT_PRIMER = `
 ## Context management
@@ -98,4 +99,9 @@ re-deriving what you already learned.
 
 export function contextPrimerSection(): PromptSection {
 	return { name: "schematic", render: () => CONTEXT_PRIMER };
+}
+
+/** Date anchor, rendered once per user prompt; placement and update semantics: docs/architecture.md "Date anchor". */
+export function currentDateSection(): PromptSection {
+	return { name: "schematic_date", render: () => formatCurrentDatePrompt(new Date()) };
 }

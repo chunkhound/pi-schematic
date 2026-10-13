@@ -154,6 +154,7 @@ vite.config.ts.timestamp-*
 .chunkhound.json
 .chunkhound/
 .mcp.json
+.pi/
 
 # macOS
 .DS_Store

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { contextPrimerSection } from "../../system-prompt.js";
+import { formatCurrentDatePrompt } from "../../time/format.js";
 import { createBeforeAgentStartEvent, createTestHost } from "./test-host.js";
 import { makeTUICtx } from "./helpers.js";
 
@@ -71,12 +72,66 @@ test("before_agent_start writes notebook contracts plus live topic and page data
 
 	const { sections } = event.systemPromptOptions;
 	assert.match(sections.schematic, /## Context management/);
+	assert.match(sections.schematic_date, /## Current date\n\d{4}-\d{2}-\d{2} \(\w+\)/);
+	assert.match(sections.schematic_date, /Resolve every relative or ambiguous time reference/);
 	assert.match(sections.schematic_topic, /## Active Notebook Topic/);
 	assert.match(sections.schematic_topic, /Current topic: `oauth`/);
 	assert.match(sections.schematic_notebook, /## Active Notebook Pages/);
 	assert.match(sections.schematic_notebook, /notebook_read/);
 	assert.match(sections.schematic_notebook, /Reference pages by name/i);
 	assert.match(sections.schematic_notebook, /alpha: first line/);
+});
+
+// Cached-prefix invariant: pi renders sections in key order, so the anchor sits
+// after the static primer and before every dynamic section, exactly once. A
+// notebook page first line may contain the same heading text, so the count
+// matches only full anchor blocks and excludes the notebook listing section.
+test("before_agent_start places date anchor after primer and before dynamic sections", async () => {
+	const pi = await createTestHost();
+	await pi.commands.get("notebook")!.handler("oauth", { hasUI: false, getContextUsage: () => null });
+	const notebookWrite = pi.tools.get("notebook_write");
+	await notebookWrite.execute("1", { name: "decoy", content: "## Current date decoy" }, undefined, undefined, makeTUICtx());
+
+	const [handler] = pi.handlers.get("before_agent_start")!;
+	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
+	const event = createBeforeAgentStartEvent();
+	await handler(event, ctx);
+
+	const schematicNames = Object.keys(event.systemPromptOptions.sections).filter((name) => name.startsWith("schematic"));
+	assert.deepEqual(schematicNames.slice(0, 3), ["schematic", "schematic_date", "schematic_topic"]);
+	// Extension-owned anchors only: skip the notebook listing, whose page text
+	// may reuse the heading, then count blocks that parse as a real anchor.
+	const anchorCount = Object.entries(event.systemPromptOptions.sections)
+		.filter(([name]) => name.startsWith("schematic") && name !== "schematic_notebook")
+		.reduce((count, [, body]) => count + (body.match(/## Current date\n\d{4}-\d{2}-\d{2} \(\w+\)/g)?.length ?? 0), 0);
+	assert.equal(anchorCount, 1);
+});
+
+// Same-day stability with pinned instants — no live clock, no midnight flake.
+test("date anchor is stable for two times on the same day", () => {
+	const morning = new Date(Date.UTC(2026, 9, 5, 0, 30));
+	const evening = new Date(Date.UTC(2026, 9, 5, 23, 30));
+	assert.equal(formatCurrentDatePrompt(evening, "UTC"), formatCurrentDatePrompt(morning, "UTC"));
+});
+
+// Freshness across midnight with pinned instants on either side.
+test("date anchor changes across midnight", () => {
+	const before = formatCurrentDatePrompt(new Date(Date.UTC(2026, 9, 5, 23, 59)), "UTC");
+	const after = formatCurrentDatePrompt(new Date(Date.UTC(2026, 9, 6, 0, 1)), "UTC");
+	assert.match(before, /2026-10-05/);
+	assert.match(after, /2026-10-06/);
+	assert.notEqual(before, after);
+});
+
+// Handler wiring smoke: the date section body is a whole, parseable anchor block.
+test("before_agent_start writes a parseable date anchor section", async () => {
+	const pi = await createTestHost();
+	const [handler] = pi.handlers.get("before_agent_start")!;
+	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
+	const event = createBeforeAgentStartEvent();
+	await handler(event, ctx);
+
+	assert.match(event.systemPromptOptions.sections.schematic_date, /^## Current date\n\d{4}-\d{2}-\d{2} \(\w+\), \S+ \(UTC[+-]\d{2}:\d{2}\)\n\n/);
 });
 
 test("before_agent_start writes no-topic guidance when the topic is unset", async () => {
