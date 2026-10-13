@@ -35,8 +35,7 @@ describe("workflow limits E2E", () => {
 		await sendOk(h, "flag workflow-time 900000");
 		const summary = summaryOf(await runWorkflow(h, WORKFLOW));
 		assert.deepEqual(summary.limits, { costLimit: 5, timeBudgetMs: 900000 });
-		const events = await readUiEvents(h);
-		assert.ok(!events.notifications.some((n) => n.message.includes("Soft targets")), "flags skip the dialog");
+		assert.equal((await readUiEvents(h)).notifications.some((n) => /Soft targets|unbounded/i.test(n.message)), false, "valid flags bypass the dialog with no banner notice");
 	}));
 
 	it("a cost-only flag leaves the time target unset", async () => withWorkflowChild(async (h) => {
@@ -111,10 +110,7 @@ describe("workflow limits E2E", () => {
 
 	it("a dismissed cost picker cancels before the time picker", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, "mock-select"); // undefined answer = dismissed
-		const entries = await runWorkflow(h, WORKFLOW);
-		assert.equal(hasExit(entries), false);
-		const events = await readUiEvents(h);
-		assert.ok(events.notifications.some((n) => n.message.includes("Soft targets")), "the soft-semantics disclosure precedes the pickers");
+		assert.equal(hasExit(await runWorkflow(h, WORKFLOW)), false);
 	}));
 
 	it("a dismissed time picker cancels after a chosen cost target", async () => withWorkflowChild(async (h) => {

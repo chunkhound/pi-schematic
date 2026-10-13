@@ -71,13 +71,7 @@ function unboundedLimits(
 		"This workflow declares no checkpoint: it is unbounded. No cost or time target applies." +
 		(flags.length > 0 ? ` Ignoring ${flags.join(" and ")}: a target stops the run only at a checkpoint.` : "");
 	if (flags.length > 0) notify(ctx, notice, "warning");
-	safeAppendEntry(pi, "workflow-limits", {
-		costLimit: null,
-		timeBudgetMs: null,
-		unbounded: true,
-		...(flags.length > 0 ? { ignoredFlags: flags } : {}),
-		notice,
-	});
+	safeAppendEntry(pi, "workflow-limits", { costLimit: null, timeBudgetMs: null, unbounded: true, ...(flags.length > 0 ? { ignoredFlags: flags } : {}), notice });
 	return { kind: "ok", limits: { costLimit: null, timeBudgetMs: null } };
 }
 
@@ -134,11 +128,7 @@ interface LimitChoice {
 }
 
 async function promptLimits(ctx: ExtensionCommandContext): Promise<WorkflowLimits | null> {
-	// Disclose the soft semantics before the pickers; the titles restate them at the point of choice.
-	ctx.ui.notify(
-		"Soft targets: after a target is crossed the run stops at its next checkpoint, so the final cost/time can run over.",
-		"info",
-	);
+	// Each picker title restates the soft semantics at the point of choice; no pre-picker toast.
 	const cost = await pickCost(ctx);
 	if (!cost.ok) return null;
 	const time = await pickTime(ctx);

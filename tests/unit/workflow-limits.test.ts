@@ -79,3 +79,14 @@ test("an unbounded workflow names the target flags it ignores in one warning not
 	assert.deepEqual(data.ignoredFlags, ["--workflow-cost", "--workflow-time"], "ignored flags are recorded");
 	assert.match(data.notice, /Ignoring --workflow-cost and --workflow-time/);
 });
+
+test("the pickers carry the soft-target disclosure at the point of choice", async () => {
+	const entries: Array<{ type: string; data?: unknown }> = [];
+	const notices: string[] = [];
+	const picker: PickerRecorder = { titles: [], answers: ["No target", "No target"] };
+	const outcome = await resolveLimits(fakePi({}, entries), fakeCtx(true, notices, picker), true);
+	assert.deepEqual(outcome, { kind: "ok", limits: { costLimit: null, timeBudgetMs: null } });
+	assert.equal(picker.titles.length, 2, "cost picker then time picker");
+	for (const title of picker.titles) assert.match(title, /stops at next checkpoint/, "each picker title restates the soft-stop semantics");
+	assert.equal(notices.length, 0, "no pre-picker toast");
+});
