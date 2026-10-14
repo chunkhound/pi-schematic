@@ -222,3 +222,37 @@ for (const sectionName of ["schematic", "schematic_topic", "schematic_model_grou
 		assert.equal(body, body.trim());
 	}));
 }
+
+test("re-renders the topic and notebook sections after a handoff completes", async () => {
+	const pi = await createTestHost();
+	const handler = pi.handlers.get("before_agent_start")![0];
+	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
+	await pi.commands.get("notebook")!.handler("oauth", { hasUI: false, getContextUsage: () => null });
+	await pi.tools.get("notebook_write").execute("1", { name: "stale", content: "obsolete finding" }, undefined, undefined, makeTUICtx());
+	await pi.tools.get("notebook_write").execute("2", { name: "keep", content: "durable decision" }, undefined, undefined, makeTUICtx());
+	const beforeHandoff = createBeforeAgentStartEvent();
+	await handler(beforeHandoff, ctx);
+	assert.ok(beforeHandoff.systemPromptOptions.sections.schematic_topic?.includes("Current topic: `oauth`"));
+	assert.ok(beforeHandoff.systemPromptOptions.sections.schematic_notebook?.includes("  stale: obsolete finding"));
+
+	let compaction: { onComplete(): void } | undefined;
+	await pi.tools.get("handoff").execute(
+		"handoff",
+		{ nextInstruction: "continue without the stale page", discardPages: ["stale"] },
+		undefined,
+		undefined,
+		{
+			getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
+			hasUI: false,
+			compact: (options: { onComplete(): void }) => { compaction = options; },
+		},
+	);
+	compaction!.onComplete();
+	const afterHandoff = createBeforeAgentStartEvent();
+	await handler(afterHandoff, ctx);
+
+	const sections = afterHandoff.systemPromptOptions.sections;
+	assert.ok(sections.schematic_topic?.includes("No active notebook topic is set."));
+	assert.ok(sections.schematic_notebook?.includes("  keep: durable decision"));
+	assert.ok(!sections.schematic_notebook?.includes("stale"));
+});

@@ -26,10 +26,13 @@ import {
 	fauxProvider,
 	fauxToolCall,
 	type FauxResponseFactory,
+	type Message,
 	type SystemMessage,
 } from "@earendil-works/pi-ai";
 import registerSchematic from "../../index.js";
-import { setTempHome } from "./helpers.js";
+import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
+import { buildNudge } from "../../watchdog.js";
+import { createDeferred, setTempHome } from "./helpers.js";
 
 let sandboxDir: string;
 let restoreHome: () => void;
@@ -105,5 +108,85 @@ describe("prompt sections in a real agent session", () => {
 			const topicBody = message.sections?.schematic_topic;
 			assert.ok(typeof topicBody === "string" && topicBody.includes("oauth"), `schematic_topic patch: ${String(topicBody)}`);
 		}
+	});
+
+	it("sends the eligible handoff nudge in the same request as the schematic sections", async () => {
+		const requests: Message[][] = [];
+		const recording = (respond: () => ReturnType<typeof fauxAssistantMessage>): FauxResponseFactory =>
+			(context) => {
+				requests.push(context.messages);
+				return respond();
+			};
+		const handoffRunRequested = createDeferred();
+		const callTopic = recording(() => fauxAssistantMessage(fauxToolCall("notebook_topic_set", { topic: "oauth" })));
+		const reply = recording(() => fauxAssistantMessage("ok"));
+		const handoffRunReply = recording(() => {
+			handoffRunRequested.resolve();
+			return fauxAssistantMessage("ok");
+		});
+
+		const faux = fauxProvider();
+		faux.setResponses([callTopic, reply, handoffRunReply]);
+		const modelRuntime = await ModelRuntime.create({
+			authPath: join(sandboxDir, "auth.json"),
+			modelsPath: null,
+			refreshOnCreate: false,
+		});
+		modelRuntime.registerNativeProvider(faux.provider);
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: sandboxDir,
+			agentDir: sandboxDir,
+			extensionFactories: [registerSchematic],
+			noSkills: true,
+			noPromptTemplates: true,
+			noThemes: true,
+			noContextFiles: true,
+		});
+		await resourceLoader.reload();
+		const { session } = await createAgentSession({
+			cwd: sandboxDir,
+			agentDir: sandboxDir,
+			model: faux.getModel(),
+			modelRuntime,
+			sessionManager: SessionManager.inMemory(sandboxDir),
+			resourceLoader,
+		});
+
+		try {
+			// The faux provider reports usage as chars / 4 of the prompt, so this first run leaves the session above the handoff threshold.
+			await session.prompt(`first ${"x".repeat(MIN_HANDOFF_TOKENS * 4)}`);
+			// The command queues the handoff request as a user message; that run starts after prompt() returns.
+			await session.prompt("/handoff finish the report");
+			await Promise.race([
+				handoffRunRequested.promise,
+				new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the /handoff run sent no provider request")), 5_000).unref()),
+			]);
+			await session.waitForIdle();
+		} finally {
+			session.dispose();
+		}
+
+		assert.equal(requests.length, 3);
+		const handoffRunRequest = requests[2];
+		const nudgeFirstLine = buildNudge({
+			activeNotebookTopic: null,
+			pendingTopicBoundaryHint: null,
+			readonlyEnabled: false,
+			pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: "x" },
+		}, null, true).split("\n")[0];
+		const nonSystemText = handoffRunRequest
+			.filter((message) => message.role !== "system")
+			.map((message) => JSON.stringify(message.content))
+			.join("\n");
+		assert.ok(nonSystemText.includes(JSON.stringify(nudgeFirstLine).slice(1, -1)), "the handoff run's request carries the eligible handoff nudge");
+		const sections: Record<string, string> = {};
+		for (const message of handoffRunRequest.filter((candidate): candidate is SystemMessage => candidate.role === "system")) {
+			for (const [name, body] of Object.entries(message.sections ?? {})) {
+				if (body === null) delete sections[name];
+				else sections[name] = body;
+			}
+		}
+		assert.ok(sections.schematic !== undefined, `schematic section missing; sections: ${Object.keys(sections).join(", ")}`);
+		assert.ok(sections.schematic_topic?.includes("Current topic: `oauth`"), `schematic_topic: ${String(sections.schematic_topic)}`);
 	});
 });
