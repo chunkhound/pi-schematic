@@ -136,8 +136,10 @@ export function workflowSegments(view: WorkflowProgressView, theme: Theme): BarS
 		{ key: "workflow-cost", text: costCell(view), priority: 3, zone: "workflow" },
 	);
 	// The command currently running, elided before every run stat (the widget shows the full form).
+	// Collapse whitespace first: the footer is one physical row, so a multi-line effect must not inject breaks.
 	if (view.currentEffect) {
-		const command = view.currentEffect.length > 40 ? `${view.currentEffect.slice(0, 37)}\u2026` : view.currentEffect;
+		const flat = view.currentEffect.replace(/\s+/g, " ");
+		const command = flat.length > 40 ? `${flat.slice(0, 37)}\u2026` : flat;
 		cells.push({ key: "workflow-effect", text: theme.fg("muted", `$ ${command}`), priority: 3.5, zone: "workflow" });
 	}
 	return cells;
@@ -303,9 +305,10 @@ export function uninstallWorkflowFooter(ctx: ExtensionContext): void {
 
 // ── Persistent indicators (non-workflow footer path) ─────────────────
 
-/** Update TUI indicators: context usage, notebook count, topic, warning widget. */
+/** Update indicators: context usage, notebook count, topic, warning widget. Any UI surface
+ * (TUI and RPC alike) receives statuses/widgets; only footer chrome is TUI-exclusive. */
 export function updateIndicators(ctx: ExtensionContext, state: SchematicState): void {
-	if (!ctx.hasUI || ctx.mode !== "tui") return;
+	if (!ctx.hasUI) return;
 
 	const theme = ctx.ui.theme;
 

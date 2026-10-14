@@ -14,6 +14,7 @@ import {
 	STATUS_KEY_TOPIC,
 	STATUS_KEY_READONLY,
 	type BarSegment,
+	type WorkflowProgressView,
 } from "../../tui.js";
 import { makeTUICtx, renderFooterAt, TEST_TUI_THEME, type TUIRecord } from "./helpers.js";
 import type { Theme } from "@earendil-works/pi-coding-agent";
@@ -253,17 +254,32 @@ test("installWorkflowFooter stays silent headless", () => {
 	assert.equal(record.footerInstalls ?? 0, 0, "headless installs no footer");
 });
 
-// WHY: an RPC context reports hasUI but is not the TUI; rendering workflow chrome there
-// contradicts docs/workflows.md ("Headless and RPC runs render nothing").
-test("an RPC context with a UI renders no workflow chrome", () => {
+// WHY: RPC reports hasUI, so it must receive setStatus/setWidget updates; workflow footer chrome
+// is TUI-exclusive and must not install there.
+test("an RPC context receives statuses but installs no footer", () => {
 	const state = createState();
 	const record: TUIRecord = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
 	const rpc = makeTUICtx({ hasUI: true, mode: "rpc", percent: 62, record });
 	updateIndicators(rpc, state);
 	installWorkflowFooter(rpc, () => ({ state, progress: { name: "review", checkpoints: 0, costUsd: 0, elapsedMs: 0, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, unbounded: false, currentEffect: null } }));
 	uninstallWorkflowFooter(rpc);
-	assert.equal(record.statuses.size, 0, "no indicator statuses in RPC mode");
+	assert.ok(record.statuses.get("pi-schematic-ctx")?.includes("62%"), "RPC receives indicator statuses");
 	assert.equal(record.footerInstalls ?? 0, 0, "no workflow footer in RPC mode");
+});
+
+// WHY: the footer is one physical row, so a multi-line currentEffect must be flattened before it
+// reaches the bar or it injects line breaks into the render.
+test("workflowSegments flattens a multi-line currentEffect into one cell", () => {
+	const view = {
+		name: "review", checkpoints: 1, costUsd: 0.1, elapsedMs: 1000, pendingStop: null,
+		limits: { costLimit: null, timeBudgetMs: null }, unbounded: false,
+		currentEffect: "line one\nline two\tline three",
+	} as WorkflowProgressView;
+	const effect = workflowSegments(view, tuiTheme).find((cell) => cell.key === "workflow-effect");
+	assert.ok(effect, "the effect cell is present");
+	assert.equal(effect.text.includes("\n"), false, "no newline reaches the footer row");
+	assert.equal(effect.text.includes("\t"), false, "no tab reaches the footer row");
+	assert.ok(effect.text.includes("line one line two"), effect.text);
 });
 
 test("workflow progress helpers share one formatting source", () => {
