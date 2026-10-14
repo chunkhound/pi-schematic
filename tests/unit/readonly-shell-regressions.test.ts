@@ -1203,6 +1203,19 @@ test("a brace group failure branch classifies in the body's moved cwd", () => {
 	});
 });
 
+test("a failed redirect inside a brace group keeps the intermediate cwd for the fallback", () => {
+	withDirectories((work, temp) => {
+		// Real bash: `cd work` runs first, the missing redirect aborts `cd temp`, so the group
+		// fails while the shell stays in work and `|| touch rel` writes outside temp.
+		const missing = quote(path.join(temp, "pi-definitely-missing-input"));
+		assertShellWrite(`cd ${quote(temp)} && { cd ${quote(work)}; cd ${quote(temp)} <${missing}; } || touch rel`,
+			work, path.join(work, "rel"), false, [path.join(temp, "rel")]);
+		// The all-inside variant stays allowed because the fallback runs in temp.
+		assertShellWrite(`cd ${quote(temp)} && { cd ${quote(temp)}; cd ${quote(temp)} <${missing}-inside; } || touch rel-inside`,
+			work, path.join(temp, "rel-inside"), true, [path.join(work, "rel-inside")]);
+	});
+});
+
 test("an eval failure branch keeps the unknown cwd so `||` writes fail closed", () => {
 	withDirectories((work, temp) => {
 		// Real bash: eval moves the shell outside, fails, and the `||` branch writes there.
@@ -1211,6 +1224,21 @@ test("an eval failure branch keeps the unknown cwd so `||` writes fail closed", 
 		// Non-mutating fallbacks stay allowed at the unknown cwd.
 		assert.equal(classifyBashCommand(`eval "cd ${quote(work)}; false" || echo ok`, temp).ok, true);
 		assert.equal(classifyBashCommand('eval "true" || echo x', temp).ok, true);
+	});
+});
+
+test("a provable brace success still checks the fallback in the caller cwd", () => {
+	withDirectories((work, temp) => {
+		// CONTRACT: the `||` union over-blocks provable success by design. Real bash
+		// never takes the branch, so no file lands anywhere; the classifier still
+		// checks the fallback in the caller cwd. A runtime failure the classifier
+		// cannot model would run the fallback there, so the superset stays safe.
+		const target = path.join(work, "rel-pinned");
+		const command = `cd ${quote(work)} && { cd ${quote(temp)}; } || touch rel-pinned`;
+		shell(command, work);
+		assert.equal(existsSync(target), false);
+		assert.equal(existsSync(path.join(temp, "rel-pinned")), false);
+		assert.equal(classifyBashCommand(command, work).ok, false, command);
 	});
 });
 

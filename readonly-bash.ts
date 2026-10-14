@@ -15,8 +15,8 @@ import type { HeredocBody } from "./readonly-bash-heredoc.js";
 import { getSafeMktempSyntheticPath, getSafeMktempFileSyntheticPath } from "./readonly-bash-mktemp.js";
 import { getFilesystemMutationReason, DECL_KEYWORDS, stripDeclKeywords } from "./readonly-bash-commands.js";
 import {
-	applyDirectoryChange, compoundChangesDirectory, compoundSegmentReason,
-	CWD_UNCERTAIN_BUILTINS, deferredCodeReason, parentShellBuiltinTokens,
+	applyDirectoryChange, compoundSegmentReason,
+	deferredCodeReason,
 	runWithPassDirectoryCache,
 } from "./readonly-bash-dirchange.js";
 
@@ -82,12 +82,15 @@ export type Verdict =
  *     `echo '$(rm -rf /)'` false-blocks. A benign literal (`echo '$(date)'`) passes
  *     because the inner command is itself allowed. Pre-existing; fails closed only.
  *   - **`||` after a brace group or `eval`/`source`** — the body runs in the parent
- *     shell, so a failed body may already have moved the cwd. The classifier now
- *     classifies the `||` branch in the body's final cwd (brace groups) or the
- *     unknown cwd (`eval`/`source`), so `{ cd /etc; false; } || touch x` blocks.
- *     A body whose last command is a directory change keeps the caller-cwd fallback.
- *     When the body's final cwd is only partly known the `||` branch is checked
- *     against every candidate, which over-blocks (fails closed) but never under-blocks.
+ *     shell, so a failed body may already have moved the cwd. The classifier checks the
+ *     `||` branch in every reachable body cwd plus the caller cwd: the body's final cwd
+ *     for brace groups, the unknown cwd for `eval`/`source`. A failure it cannot model
+ *     (an accessible `cd` that fails at runtime) still runs the fallback in the caller
+ *     cwd, so the extra candidates over-block when the body succeeded — safe, never
+ *     under-blocking. `{ cd /etc; false; } || touch x` therefore blocks. Provable LHS
+ *     success still unions the caller cwd (`{ cd /tmp; } || touch rel` blocks):
+ *     documented over-block, kept because a runtime failure the classifier cannot
+ *     model still runs the fallback in the caller cwd.
  *   - **`shopt -s lastpipe`** — pipelines normally do not leak the cwd, but with
  *     lastpipe the last stage runs in the parent shell: `shopt -s lastpipe;
  *     echo x | cd /etc; touch y` fails open. Only the OS sandbox blocks the write.
@@ -252,11 +255,16 @@ function classifyShellGroup(parts: ShellPart[], initial: ShellState[], depth: nu
 
 /** States entering the next pipeline. Invariant: at least one success state and at least one
  * failure branch always survive, because an empty set would iterate zero states, classify
- * nothing, and pass vacuously as {ok:true} — a silent fail-open. A `||` branch also keeps its
- * previous states when the LHS provably cannot fail: the runtime can still fail it. */
+ * nothing, and pass vacuously as {ok:true} — a silent fail-open. A `||` branch always keeps its
+ * previous states too: a failure that the classifier cannot model (an accessible `cd` that fails
+ * at runtime) still runs the fallback in the caller cwd. */
 function activeShellStates(operator: string, outcome: ShellOutcome, previous: ShellState[], initial: ShellState[]): ShellState[] {
+	// A `||` branch runs only when the LHS fails, and a failed directory change keeps the cwd it
+	// started from. Union those caller states with the LHS failure branches: an accessible final
+	// cd reports no failure branch, yet a runtime failure still runs the fallback in the caller
+	// cwd (`{ cd /tmp; } || touch rel`). A superset is conservative and cannot fail open.
 	const active = operator === "&&" ? outcome.success
-		: operator === "||" ? (outcome.failure.length > 0 ? outcome.failure : previous)
+		: operator === "||" ? uniqueShellStates([...outcome.failure, ...previous])
 		: initial;
 	return active.length === 0 ? initial : active;
 }
@@ -359,29 +367,6 @@ function isRedirectOnlyTrailing(trailing: string): boolean {
 	return true;
 }
 
-/** Last non-empty simple command in a brace body, or null when the body is empty. */
-function lastSimpleCommand(body: string): string | null {
-	const parts = splitUnquotedShellSegments(body);
-	for (let i = parts.length - 1; i >= 0; i--) {
-		const text = parts[i]!.text.trim();
-		if (text) return text;
-	}
-	return null;
-}
-
-/**
- * True when a brace body's final simple command may leave the shell in a new
- * directory (cd/pushd/popd, a compound holding one, or eval/source). Only then
- * can the group's `||` failure branch still run in the caller cwd.
- */
-function endsWithDirectoryChange(body: string): boolean {
-	const last = lastSimpleCommand(body);
-	if (last === null) return false;
-	if (parentShellBuiltinTokens(last) !== null || compoundChangesDirectory(last)) return true;
-	const lead = getCommandTokens(last)[0];
-	return lead !== undefined && CWD_UNCERTAIN_BUILTINS.has(normalizedCommand(lead));
-}
-
 /** Brace groups run in the parent shell; redirects apply before the body runs. */
 function classifyBraceGroup(segment: string, state: ShellState, depth: number):
 	{ ok: true; outcome: ShellOutcome } | { ok: false; reason: string } {
@@ -391,19 +376,13 @@ function classifyBraceGroup(segment: string, state: ShellState, depth: number):
 	if (unsafe) return { ok: false, reason: unsafe };
 	const result = classifyShellSequence(split.body, [state], depth + 1);
 	if (!result.ok) return result;
-	if (!split.trailing.trim()) return { ok: true, outcome: { success: result.states, failure: braceFailureBranches(split, result, state) } };
+	// The body's reachable cwds serve as both the `;` continuation states and the failure
+	// branches. A body state may already reflect an earlier command that moved the shell before
+	// a later failure (`{ cd /etc; cd /tmp <missing; }`), so the `||` fallback must classify
+	// there; the caller cwd joins at the `||` consumer (see activeShellStates).
+	if (!split.trailing.trim()) return { ok: true, outcome: { success: result.states, failure: result.states } };
 	// A failing trailing redirect skips the body, so the failure branch keeps caller state.
 	return { ok: true, outcome: { success: result.states, failure: [...result.states, state] } };
-}
-
-/** Failure branches of a group. When its last command is a directory change, the
- * failure branch runs in the caller cwd (a failed change leaves it unchanged), so
- * an empty failure set lets the `||` fallback reuse the caller states. Otherwise
- * the body's directory changes already ran, so `||` runs in the body's final cwd
- * and must be classified there; reusing the caller cwd instead let
- * `{ cd /etc; false; } || touch x` write outside temp. */
-function braceFailureBranches(split: { body: string }, result: { ok: true; states: ShellState[] }, state: ShellState): ShellState[] {
-	return endsWithDirectoryChange(split.body) ? [] : result.states;
 }
 
 function stripHeredocMarkers(segment: string, heredocs: ReadonlyMap<string, HeredocBody>): string {
