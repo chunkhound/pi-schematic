@@ -475,6 +475,10 @@ const GIT_CONFIG_TWO_OPERAND_ACTIONS = new Set(["--get", "--get-all", "--get-reg
  *
  * Unlisted options are rejected by supportedGitOptions before positional parsing.
  */
+/** Flags that consume a separate value token. Optional-argument options (`--track[=direct|inherit]`)
+ * bind only with `=` and must NOT be listed: consuming the next token swallows a following flag,
+ * which under-blocks recursion detection (recursesSubmodules) and miscounts operands. Their bare
+ * form belongs in GIT_BOOLEAN_FLAGS instead. */
 const GIT_VALUE_FLAGS: Record<string, ReadonlySet<string>> = {
 	init: new Set(["-b", "--initial-branch", "--object-format", "--ref-format", "--separate-git-dir", "--template"]),
 	clone: new Set([
@@ -491,8 +495,8 @@ const GIT_VALUE_FLAGS: Record<string, ReadonlySet<string>> = {
 	"format-patch": new Set(["-o", "--output-directory", "--output", "--start-number", "--subject-prefix"]),
 	grep: new Set(["-e", "--regexp", "-f", "--file", "-A", "--after-context", "-B", "--before-context", "-C", "--context"]),
 	commit: new Set(["-m", "--message", "-F", "--file", "-c", "-C", "--reedit-message", "--reuse-message", "--author", "--date"]),
-	checkout: new Set(["-b", "-B", "--track", "--orphan", "--conflict"]),
-	switch: new Set(["-c", "-C", "--track", "--orphan"]),
+	checkout: new Set(["-b", "-B", "--orphan", "--conflict"]),
+	switch: new Set(["-c", "-C", "--orphan"]),
 	merge: new Set(["-m", "--message", "-F", "--file", "-s", "--strategy", "-X", "--strategy-option", "--into-name"]),
 	tag: new Set(["-m", "--message", "-F", "--file", "-u", "--local-user", "-n"]),
 	stash: new Set(["-m", "--message"]),
@@ -520,8 +524,8 @@ const GIT_BOOLEAN_FLAGS: Record<string, string> = {
 	config: "--add --replace-all --unset --unset-all --rename-section --remove-section --edit -e",
 	add: "--all -A --update -u --force -f --intent-to-add -N --dry-run -n --ignore-errors --ignore-missing --renormalize",
 	apply: "--check --stat --numstat --summary --cached --index --3way --reverse -R --reject --whitespace=nowarn",
-	checkout: "--merge -m --detach --force -f --ours --theirs -t --recurse-submodules",
-	switch: "-d --detach -f --force --discard-changes --guess --no-guess -t",
+	checkout: "--merge -m --detach --force -f --ours --theirs -t --track --recurse-submodules",
+	switch: "-d --detach -f --force --discard-changes --guess --no-guess -t --track",
 	commit: "--all -a --amend --no-edit --allow-empty --allow-empty-message --no-verify -n --signoff -s --dry-run",
 	reset: "--hard --soft --mixed --merge --keep",
 	restore: "--staged --worktree --ours --theirs --merge --overlay --no-overlay --ignore-unmerged --ignore-skip-worktree-bits --quiet -q --recurse-submodules --no-recurse-submodules",
@@ -1228,16 +1232,54 @@ function gitRepositoryWriteRoots(invocation: GitInvocation, vars: ReadonlyMap<st
 	if (invocation.subcommand === "push") roots.push(...gitPushWriteRoots(invocation, metadata, invocation.workTree ?? repo.worktree, vars));
 	if (invocation.subcommand === "worktree") roots.push(...gitPositionalArgs("worktree", invocation.args.slice(1)));
 	if (invocation.subcommand === "submodule" && gitActionWord("submodule", invocation.args) === "add") roots.push(...gitPositionalArgs("submodule", invocation.args).slice(2));
-	roots.push(...gitSubmoduleWriteRoots(invocation, invocation.workTree ?? repo.worktree));
+	roots.push(...gitSubmoduleWriteRoots(invocation, invocation.workTree ?? repo.worktree, vars));
 	return roots;
 }
 
 /** `submodule update` and `checkout --recurse-submodules` materialize declared submodule
  * worktrees, so each `.gitmodules` path joins the write roots, resolved against the worktree. */
-function gitSubmoduleWriteRoots(invocation: GitInvocation, workTree: string): string[] {
+function gitSubmoduleWriteRoots(invocation: GitInvocation, workTree: string, vars: ReadonlyMap<string, string>): string[] {
 	const action = invocation.subcommand === "submodule" ? gitActionWord("submodule", invocation.args) : undefined;
-	const recursive = invocation.subcommand === "checkout" && invocation.args.includes("--recurse-submodules");
-	return action === "update" || recursive ? gitSubmodulePaths(workTree) : [];
+	const recursive = (invocation.subcommand === "submodule" && invocation.args.includes("--recursive"))
+		|| (invocation.subcommand === "checkout" && recursesSubmodules(invocation.subcommand, invocation.args));
+	return action === "update" || recursive ? collectSubmoduleWriteRoots(workTree, vars, recursive, new Set()) : [];
+}
+
+/** Checkout's recursion flag takes an optional value: the bare form recurses, `none` does not.
+ * (`switch`/`reset` carrying the flag fail closed as unsupported options, so only checkout
+ * reaches here.) An unknown value counts as recursive too — misreading the flag
+ * under-blocks, so only an explicit `none` may clear it. Value-flag values are skipped like
+ * `gitPositionalArgs` does, so `-b --recurse-submodules` cannot read as the flag.
+ * `-c submodule.recurse=true` and GIT_CONFIG_* need no check here: non-vetted `-c` fails
+ * closed in `safeGitConfig`, config env in `unsupportedGitConfigEnvironment`. */
+function recursesSubmodules(subcommand: string, args: readonly string[]): boolean {
+	const valueFlags = GIT_VALUE_FLAGS[subcommand] ?? NO_GIT_VALUE_FLAGS;
+	for (let i = 0; i < args.length; i++) {
+		const token = args[i]!;
+		if (token === "--") return false;
+		if (valueFlags.has(token)) { i++; continue; }
+		if (token === "--recurse-submodules" || token.startsWith("--recurse-submodules=")) {
+			return token !== "--recurse-submodules=none";
+		}
+	}
+	return false;
+}
+
+/** A submodule's `.git` file can point (via gitdir/commondir) outside its worktree, so the
+ * metadata and configured worktree must join the roots. Nested submodules recurse only for
+ * recursive operations; the visited set of worktree-plus-metadata realpaths keeps a malicious
+ * `.gitmodules` cycle finite and skips a repeated shared gitdir without re-probing it. */
+function collectSubmoduleWriteRoots(workTree: string, vars: ReadonlyMap<string, string>, recursive: boolean, visited: Set<string>): string[] {
+	const roots: string[] = [];
+	for (const declared of gitSubmodulePaths(workTree)) {
+		const repo = discoverGitRepository(declared);
+		const key = [resolveRealPath(repo.worktree), ...repo.metadata.map((directory) => resolveRealPath(directory))].join("\0");
+		if (visited.has(key)) continue;
+		visited.add(key);
+		roots.push(repo.worktree, ...repo.metadata, ...repo.metadata.flatMap((directory) => gitConfiguredWorktree(repo.worktree, directory, vars)));
+		if (recursive) roots.push(...collectSubmoduleWriteRoots(repo.worktree, vars, recursive, visited));
+	}
+	return roots;
 }
 
 /** `submodule.<name>.path` values from `.gitmodules`. A missing file means no submodules; an

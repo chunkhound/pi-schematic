@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, realpathSync, copyFileSync, utimesSync, chmodSync, symlinkSync } from "node:fs";
+import { mkdirSync, cpSync, rmSync, writeFileSync, readFileSync, existsSync, realpathSync, copyFileSync, utimesSync, chmodSync, symlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { classifyBashCommand } from "../../readonly-bash.js";
@@ -605,6 +605,7 @@ test("Git submodule update and recursive checkout check .gitmodules paths", gitS
 	mkdirSync(modules);
 	check("git submodule update --init", repo, false);
 });
+
 test("Git clone default destination follows a symlink outside temp", gitSuiteOptions, (t) => {
 	const root = fixture(t);
 	const cwd = path.join(root, "cwd");
@@ -806,6 +807,84 @@ test("Git clone rejects a HEAD that only JS whitespace accepts", gitSuiteOptions
 	check(`git clone ${quote(shellPath(source))}`, cwd, false);
 });
 
+test("Git submodule update checks the submodule metadata location", gitSuiteOptions, (t) => {
+	const repo = repository(fixture(t));
+	const source = repository(fixture(t));
+	const branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD");
+	git(repo, "-c", "protocol.file.allow=always", "submodule", "add", source, "outer");
+	// Real metadata lives under the superproject's `.git/modules`, inside temp: both commands stay allowed.
+	check("git submodule update --force", repo, true);
+	check(`git checkout --recurse-submodules ${branch}`, repo, true);
+	// `=none` disables recursion, so no submodule roots join and the command stays allowed.
+	check(`git checkout --recurse-submodules=none ${branch}`, repo, true);
+	// `--track` takes an OPTIONAL argument (binds only with `=`), so it never consumes the
+	// next token: the recursion flag after it must still count. The allowed control pins
+	// that removing `--track` from the value-flag set introduced no over-block.
+	check(`git checkout --track ${branch}`, repo, true);
+	// A path declared twice must not re-walk the same repository (visited-set dedup). Save the
+	// clean file first: the direct git run below needs a single-entry .gitmodules.
+	const gitmodules = readFileSync(path.join(repo, ".gitmodules"), "utf8");
+	writeFileSync(path.join(repo, ".gitmodules"), `[submodule "outer"]\n\tpath = outer\n\turl = ./outer\n[submodule "outer-again"]\n\tpath = outer\n\turl = ./outer\n`);
+	check("git submodule update --force", repo, true);
+	writeFileSync(path.join(repo, ".gitmodules"), gitmodules);
+	// Repointing the worktree's `.git` file outside temp makes git write metadata (and its index)
+	// there; the guard discovers the pointer and must block. Relocate the real metadata first so
+	// the direct git run proves git really writes there, not merely that the guard denies.
+	const outsideMetadata = path.join(fixture(t, os.homedir()), "modules", "outer");
+	const insideMetadata = path.join(repo, ".git", "modules", "outer");
+	cpSync(insideMetadata, outsideMetadata, { recursive: true });
+	rmSync(insideMetadata, { recursive: true, force: true });
+	const metadataConfig = path.join(outsideMetadata, "config");
+	writeFileSync(metadataConfig, readFileSync(metadataConfig, "utf8").replace(/worktree = .*/, `worktree = ${path.join(repo, "outer")}`));
+	writeFileSync(path.join(repo, "outer", ".git"), `gitdir: ${outsideMetadata}\n`);
+	rmSync(path.join(outsideMetadata, "index"), { force: true });
+	// Premise: git really writes the outside metadata (the deleted index reappears).
+	git(repo, "submodule", "update", "--force");
+	assert.ok(existsSync(path.join(outsideMetadata, "index")), "git must write the outside metadata index");
+	check("git submodule update --force", repo, false);
+	check(`git checkout --recurse-submodules ${branch}`, repo, false);
+	// The value form recurses like the bare flag: without it the escape would reopen.
+	check(`git checkout --recurse-submodules=checkout ${branch}`, repo, false);
+	// `--track` must not swallow a following `--recurse-submodules` as an optional value.
+	check(`git checkout --track --recurse-submodules ${branch}`, repo, false);
+	check(`git checkout --track=direct --recurse-submodules ${branch}`, repo, false);
+});
+
+test("Git recursive checkout checks nested submodule metadata", gitSuiteOptions, (t) => {
+	const repo = repository(fixture(t));
+	const source = repository(fixture(t));
+	const nested = repository(fixture(t));
+	const branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD");
+	git(repo, "-c", "protocol.file.allow=always", "submodule", "add", source, "outer");
+	const outer = path.join(repo, "outer");
+	git(outer, "-c", "protocol.file.allow=always", "submodule", "add", nested, "inner");
+	check(`git checkout --recurse-submodules ${branch}`, repo, true);
+	check("git submodule update --recursive --force", repo, true);
+	// The escape sits one level down: only a recursive walk reaches and blocks it.
+	const outsideMetadata = path.join(fixture(t, os.homedir()), "modules", "inner");
+	writeFileSync(path.join(outer, "inner", ".git"), `gitdir: ${outsideMetadata}\n`);
+	check(`git checkout --recurse-submodules ${branch}`, repo, false);
+	check("git submodule update --recursive --force", repo, false);
+});
+
+test("Git recursive submodule walk terminates on a cycle", gitSuiteOptions, (t) => {
+	const repoA = repository(fixture(t));
+	const repoB = repository(fixture(t));
+	// B must declare A BEFORE A clones B, or A/b's checkout lacks the `a` submodule and the
+	// walked graph is not a cycle: the visited-realpath set would never be exercised.
+	git(repoB, "-c", "protocol.file.allow=always", "submodule", "add", repoA, "a");
+	git(repoB, "-c", "user.name=Readonly Test", "-c", "user.email=readonly@example.invalid", "commit", "--quiet", "-m", "add a");
+	git(repoA, "-c", "protocol.file.allow=always", "submodule", "add", repoB, "b");
+	git(repoA, "-c", "user.name=Readonly Test", "-c", "user.email=readonly@example.invalid", "commit", "--quiet", "-m", "add b");
+	// A declares B, and the cloned A/b declares A again: the visited-realpath set must
+	// terminate the recursive walk instead of recursing without bound.
+	check("git submodule update --recursive --force", repoA, true);
+	// An outside-metadata escape inside the cycle still blocks.
+	const outsideMetadata = path.join(fixture(t, os.homedir()), "modules", "b");
+	writeFileSync(path.join(repoA, "b", ".git"), `gitdir: ${outsideMetadata}\n`);
+	check("git submodule update --recursive --force", repoA, false);
+});
+
 test("Git clone drops a trailing scp-style port from the derived name", gitSuiteOptions, (t) => {
 	const root = fixture(t);
 	const cwd = path.join(root, "cwd");
@@ -927,3 +1006,17 @@ test("Git clone bare abbreviations derive the .git name", gitSuiteOptions, (t) =
 	}
 });
 
+test("Git rejects non-vetted -c overrides fail closed", gitSuiteOptions, (t) => {
+	const repo = repository(fixture(t));
+	// PIN: safeGitConfig only vets color.ui, so any other -c key fails closed.
+	check("git -c submodule.recurse=true checkout", repo, false);
+	check("git -c protocol.file.allow=always status", repo, false);
+});
+
+test("Git clone with recurse-submodules stays allowed inside temp", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	const source = repository(root);
+	check(`git clone --recurse-submodules ${shellPath(source)}`, cwd, true);
+});
