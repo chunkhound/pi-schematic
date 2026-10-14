@@ -37,11 +37,12 @@ async function finishHeldRun(h: ProcessHarness): Promise<void> {
 describe("workflow.new cancellation carry", () => {
 	it("an armed press never confirms across workflow.new; a fresh pair still cancels", () => withWorkflowChild(async (h) => {
 		await startHeldRun(h);
-		await sendOk(h, "key escape"); // arm mid-run, before the switch
-		// Re-arm the gate in the same burst as the release so the post-rebind shell parks
-		// (release-exec clears the current gate; the fresh hold-exec outlives it).
-		h.write("release-exec\nhold-exec");
-		await h.waitForText("OK");
+		// Send the arm with the release/hold burst in one write: a >500ms round-trip gap before
+		// the post-switch probe would let the arm expire, making the carry assertion blind. The
+		// burst re-arms the gate so the post-rebind shell parks (release-exec clears the gate;
+		// the fresh hold-exec outlives it).
+		h.write("key escape\nrelease-exec\nhold-exec");
+		await h.waitForText('OK:{"consume":true}'); // the pre-switch arm
 		await h.waitForText("EXEC-HELD");
 		await sendOk(h, "key escape"); // a single fresh press after the switch
 		const events = await readUiEvents(h);

@@ -32,11 +32,10 @@ function ctxWith(branch: unknown[] = []): ExtensionCommandContext {
 	return { sessionManager: { getBranch: () => branch } } as unknown as ExtensionCommandContext;
 }
 
-function ctlWith(ctx: ExtensionCommandContext | null, signal: AbortSignal): RunCtl {
+function ctlWith(ctx: ExtensionCommandContext | null, signal: AbortSignal, aborts: Array<[string, string | undefined]> = []): RunCtl {
 	return {
-		ctx, host: { signal }, name: "w", progress: null, exitRecorded: false, outcome: null,
-		unsubscribeInput: () => {}, unsubscribeCancel: () => {},
-		registry: { correlate: () => ({ promise: Promise.reject(new Error("not correlated")), reject: () => {} }), dispose: () => {} },
+		ctx, host: { signal, abort: (reason: string, message?: string) => aborts.push([reason, message]) }, name: "w", progress: null, exitRecorded: false, outcome: null,
+		unsubscribeInput: () => {}, unsubscribeCancel: () => {}, unsubscribeTurnEnd: () => {},
 	} as unknown as RunCtl;
 }
 
@@ -216,27 +215,25 @@ test("a cancelled replacement restores the pre-replacement runtime and keeps its
 	assert.equal(reboundWith, from, "the restored session is re-subscribed");
 });
 
-// WHY: the restore above covers the cancelled path only. Once pi has built the replacement
-// session, its runtime is the live one, so a rebind that fails after installing it keeps
-// those bindings and fails the run loudly instead of silently reverting to a dead session.
+// WHY: once pi has torn the old session down, its runtime is dead; a rebind that fails after
+// installing the replacement keeps that live replacement and fails the run loudly, instead of
+// silently reverting to a dead session.
 test("a rebind that fails inside withSession aborts the run with its own error", async () => {
 	const fresh = publishReplacement("sess-rebind-fail");
 	const next = { sessionManager: { getSessionId: () => "sess-rebind-fail" } } as unknown as ExtensionCommandContext;
 	const from = ctxThatReplaces(next);
 	const bundle = bundleWith(fakePi());
-	const previousPi = bundle.pi;
 	const ctl = ctlWith(from as unknown as ExtensionCommandContext, new AbortController().signal);
 	const boom = new Error("workflow.new rebind failed");
 
 	await assert.rejects(performNewSession(bundle, ctl, { onRebound: () => { throw boom; }, registry: noopRegistry() }), (error: unknown) => error === boom);
-	assert.equal(bundle.pi, previousPi, "previous runtime is restored");
-	assert.equal(ctl.ctx, from, "previous context is restored");
+	assert.equal(bundle.pi, fresh.pi, "the run keeps the live replacement runtime");
+	assert.equal(ctl.ctx, next, "the run keeps the live replacement context");
 });
 
-// WHY: a rebind that fails after installing the replacement keeps the restored runtime,
-// but the teardown already dropped this run's subscriptions — the restored session must
-// be re-subscribed for input suppression and cancellation, or input leaks mid-run.
-test("a failed rebind re-arms the restored session's subscriptions", async () => {
+// WHY: a rebind that fails before installing the replacement leaves `ctl.ctx` null; re-arming
+// subscriptions on the invalidated pre-replacement session would leak input into a dead ctx.
+test("a failed rebind leaves no live context and arms no subscriptions", async () => {
 	const next = { sessionManager: { getSessionId: () => "sess-rebind-rearm" } } as unknown as ExtensionCommandContext;
 	const from = ctxThatReplaces(next);
 	const bundle = bundleWith(fakePi());
@@ -246,19 +243,19 @@ test("a failed rebind re-arms the restored session's subscriptions", async () =>
 
 	// No runtime is published for the replacement, so the rebind fails inside withSession.
 	await assert.rejects(performNewSession(bundle, ctl, hooks), /no runtime was published/);
-	assert.equal(ctl.ctx, from, "the run keeps its pre-replacement context");
-	assert.equal(reboundWith, from, "the restored session is re-subscribed");
+	assert.equal(ctl.ctx, null, "no live context: the run must fail, not use a dead session");
+	assert.equal(reboundWith, null, "no subscriptions are re-armed on a dead session");
 });
 
-// WHY: the rollback runs on the SDK-invalidated pre-replacement context. A throw from that
-// dead context must never replace the real replacement error, and the rollback failure must
-// stay visible instead of being swallowed.
-test("a failed publication with a stale rollback keeps the original replacement error", async () => {
+// WHY: a failed publication must preserve its own error (no masking rollback), abort the host,
+// and drop the swapped child-usage sink so a disposed host cannot keep spending into the ledger.
+test("a failed publication preserves its error, arms no suppression, and clears the sink", async () => {
 	const next = { sessionManager: { getSessionId: () => "sess-stale" } } as unknown as ExtensionCommandContext;
 	const from = ctxThatReplaces(next);
 	const bundle = bundleWith(fakePi());
-	const previousPi = bundle.pi;
-	const ctl = ctlWith(from as unknown as ExtensionCommandContext, new AbortController().signal);
+	bundle.state.childUsageSink = () => {};
+	const aborts: Array<[string, string | undefined]> = [];
+	const ctl = ctlWith(from as unknown as ExtensionCommandContext, new AbortController().signal, aborts);
 	let rebounds = 0;
 
 	await assert.rejects(
@@ -267,14 +264,15 @@ test("a failed publication with a stale rollback keeps the original replacement 
 			registry: noopRegistry(),
 		}),
 		(error: unknown) => {
-			assert.match(String(error), /no runtime was published/, "the original replacement error stays in the message");
-			assert.match(String(error), /rollback failed: stale context/, "the rollback failure is reported, not swallowed");
+			assert.match(String(error), /no runtime was published/, "the original replacement error stands");
+			assert.doesNotMatch(String(error), /rollback failed/, "no rollback runs for a non-cancelled failure");
 			return true;
 		},
 	);
-	assert.equal(rebounds, 1, "the rollback re-armed once");
-	assert.equal(bundle.pi, previousPi, "the pre-replacement runtime is restored");
-	assert.equal(ctl.ctx, from, "the run keeps its pre-replacement context");
+	assert.equal(rebounds, 0, "a failed publication never re-arms the run");
+	assert.equal(bundle.state.childUsageSink, null, "the swapped child-usage sink cannot leak");
+	assert.deepEqual(aborts, [["error", "workflow.new: no runtime was published for replacement session sess-stale"]], "the host is aborted with the failure");
+	assert.equal(ctl.ctx, null, "the dead replacement is never bound as the live context");
 });
 
 test("the rebound run's next turn runs the replacement's prepareRunFrontmatter", async () => {

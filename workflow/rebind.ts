@@ -57,9 +57,9 @@ export interface RunCtl {
 	outcome: RunOutcome | null;
 	unsubscribeInput: () => void;
 	unsubscribeCancel: () => void;
-	/** Run registry; set once the host exists (null before), disposed after rebind so the next
-	 * correlate re-subscribes to the new pi. */
-	registry: RunRegistry | null;
+	/** Bridges pi's per-turn outcome to the host, so an RPC/print abort (no TUI key funnel) still
+	 * cancels the run. Re-subscribed on rebind: the replacement has its own runner. */
+	unsubscribeTurnEnd: () => void;
 }
 
 /** Command-owned resubscription: input suppression, cancel funnel, progress repaint. */
@@ -98,26 +98,34 @@ export async function performNewSession<B extends RebindBundle>(bundle: B, ctl: 
 	// pi invalidates `from` the moment `newSession` starts tearing down the session, and a
 	// fresh ctx exists only inside `withSession`. Null the slot so every reader skips it.
 	ctl.ctx = null;
+	let result: { cancelled: boolean };
 	try {
-		const result = await from.newSession({ withSession: async (next) => rebindRun(bundle, ctl, next, hooks) });
-		if (result.cancelled) throw new Error("workflow.new: new session was cancelled");
+		result = await from.newSession({ withSession: async (next) => rebindRun(bundle, ctl, next, hooks) });
 	} catch (error) {
-		// WHY: any failure — a cancelled replacement (before teardown) or a rebind error —
-		// restores the snapshot, so the run keeps the pre-replacement runtime and a live context
-		// instead of staying bound to a half-rebuilt runtime. Cleanup and exit recording still run
-		// in the command's finally.
-		try {
-			restorePreReplacement(bundle, ctl, previous, from, hooks);
-		} catch (rollbackError) {
-			// The rollback failure must stay visible without replacing the original error: callers
-			// hold that error by identity (a rebind that throws inside `withSession` propagates its
-			// own object), so append to its message instead of wrapping it. A rollback that
-			// rethrows the same error has nothing to add.
-			if (rollbackError !== error && error instanceof Error)
-				error.message = `${error.message}; rollback failed: ${messageOf(rollbackError)}`;
-		}
+		// Any throw once teardown started leaves `from` dead; the replacement, when built, is the
+		// live runtime. Restoring either would bind the run to a dead session, so fail loudly on
+		// the current bindings instead.
+		failNewSession(bundle, ctl, error);
 		throw error;
 	}
+	if (!result.cancelled) return;
+	// Cancelled BEFORE teardown: `from` is still live, so put the run back on it and re-arm.
+	const cancelled = new Error("workflow.new: new session was cancelled");
+	try {
+		restorePreReplacement(bundle, ctl, previous, from, hooks);
+	} catch (rollbackError) {
+		// The rollback failure must stay visible without replacing the cancellation: append to
+		// the message instead of wrapping, so callers can still match the cancelled error.
+		cancelled.message = `${cancelled.message}; rollback failed: ${messageOf(rollbackError)}`;
+	}
+	throw cancelled;
+}
+
+/** Fail a replacement that never completed: abort the host and drop the swapped child-usage
+ * sink, so a disposed replacement host cannot keep spending into the run ledger. */
+function failNewSession<B extends RebindBundle>(bundle: B, ctl: RunCtl, error: unknown): void {
+	bundle.state.childUsageSink = null;
+	ctl.host?.abort("error", messageOf(error));
 }
 
 /** Put the run back on the pre-replacement runtime and re-arm the subscriptions the teardown dropped. */

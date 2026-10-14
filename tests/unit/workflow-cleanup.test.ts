@@ -6,6 +6,7 @@ import { createState } from "../../state.js";
 import { registeredState } from "../../process-state.js";
 import { READONLY_ENABLED_STATUS } from "../../notifications.js";
 import { releaseWorkflow, reserveWorkflow } from "../../workflow/coordinator.js";
+import { WORKFLOW_SHELL_ENTRY_TYPE } from "../../workflow/activity.js";
 import { REGISTRY_SLOT_KEY, registerWorkflowCommand, type WorkflowCommandDeps } from "../../workflow/command.js";
 import { WORKFLOW_SUMMARY_ENTRY_TYPE } from "../../workflow/summary.js";
 import { WORKFLOW_ERROR_ENTRY_TYPE, WORKFLOW_EXIT_ENTRY_TYPE } from "../../workflow/types.js";
@@ -321,4 +322,25 @@ test("a throwing summary-fallback notice still releases every run resource", asy
 	assert.equal(h.entries(WORKFLOW_SUMMARY_ENTRY_TYPE).length, 0, "the failed overview is not recorded");
 	h.assertReleased();
 	assert.ok(h.log.includes("footer:restore"), "chrome is restored even when every record path fails");
+});
+
+// WHY: an effect can outlive `releaseRun` (its promise resolves after the sandbox stops
+// awaiting it). A late end must not persist a shell row after the overview nor repaint
+// chrome: `ctl.ctx` is nulled before the chrome restore and the activity channel is disposed.
+test("an effect that outlives the run leaves no late audit row and reinstalls no chrome", async () => {
+	const h = await createCleanupHarness({
+		body: async (window) => {
+			// Fire-and-forget: the sandbox returns before this shell resolves.
+			void window.tools.get("workflow.shell")!.execute(["sleep 1"], { signal: window.signal });
+			return OK_RESULT;
+		},
+	});
+	await h.run();
+	assert.ok(h.log.includes("footer:restore"), "chrome is restored on release");
+	const rowsAtRelease = h.entries(WORKFLOW_SHELL_ENTRY_TYPE).length;
+	const logAtRelease = h.log.length;
+	await sleep(TICK_MS * 40);
+	assert.equal(h.entries(WORKFLOW_SHELL_ENTRY_TYPE).length, rowsAtRelease, "no late audit row after dispose");
+	assert.deepEqual(h.log.slice(logAtRelease), [], "no chrome write after release");
+	h.assertReleased();
 });

@@ -11,6 +11,8 @@
  *   → input <text>         — dispatch pi's real input hook (source "interactive"), print the action
  *   → input-ext <text>     — dispatch pi's real input hook (source "extension")
  *   → hold-exec / release-exec — park a run inside its shell call; a blocked call emits EXEC-HELD
+ *   → hold-turn / release-turn — park a `workflow.run` turn before its assistant entry lands
+ *   → turn-end <outcome>     — dispatch pi's turn_end event (outcome: completed|aborted|error)
  *   → workflow-mocks — opt in to the workflow-suite fakes (deterministic pi.exec shell,
  *     ui.select/input/confirm stubs); default is no fake exec and throwing picker stubs
  *   → tool <name> <json>    — call a registered tool with JSON params
@@ -137,6 +139,10 @@ let lastCompactRequest: CompactRequest | null = null;
 // command promise is reported later by cmd-wait, after its side effects settle.
 let execGate: Promise<void> | null = null;
 let execOpened: (() => void) | null = null;
+// A held turn parks a scripted `workflow.run` before its assistant entry/settle lands, so a
+// test can fire turn_end while the run awaits the turn.
+let turnGate: Promise<void> | null = null;
+let turnOpened: (() => void) | null = null;
 let backgroundCommand: Promise<void> | null = null;
 // Fault injection: remaining throw counts per seam plus the shell outcome mode.
 const faults = { append: 0, appendSkip: 0, send: 0, progress: 0, shell: "ok" as "ok" | "throws" | "error" };
@@ -207,7 +213,7 @@ pi.sendUserMessage = (content: any, options?: any) => {
 		queuedFollowUps.push(text);
 		return;
 	}
-	if (options?.expandPromptTemplates) scriptTurn(text);
+	if (options?.expandPromptTemplates) return scriptTurn(text);
 };
 // A faulted append must be visible: production's safeAppendEntry paths rely on the throw.
 const originalAppendEntry = pi.appendEntry;
@@ -286,8 +292,13 @@ function seedBranchEntry(spec: any): void {
 }
 
 /** Settle one `workflow.run` dispatch from the next queued turn; the default is a plain reply. */
-function scriptTurn(promptText: string): void {
+async function scriptTurn(promptText: string): Promise<void> {
 	appendMessage({ role: "user", content: promptText, timestamp: Date.now() });
+	// Hold before the assistant entry: the run is provably awaiting this turn.
+	if (turnGate) {
+		process.stdout.write("TURN-HELD\n");
+		await turnGate;
+	}
 	const turn = scriptedTurns.shift() ?? {};
 	// A premature settle proves correlation waits for an assistant entry past the marker.
 	for (let i = 0; i < (turn.prematureSettles ?? 0); i++) void fireSettled();
@@ -567,6 +578,16 @@ function releaseExec(): boolean {
 	const release = execOpened;
 	execGate = null;
 	execOpened = null;
+	release();
+	return true;
+}
+
+/** Open a held turn gate so a parked `workflow.run` turn settles; false when no gate is held. */
+function releaseTurn(): boolean {
+	if (!turnOpened) return false;
+	const release = turnOpened;
+	turnGate = null;
+	turnOpened = null;
 	release();
 	return true;
 }
@@ -906,6 +927,20 @@ for await (const line of rl) {
 		process.stdout.write("OK\n");
 	} else if (trimmed === "release-exec") {
 		process.stdout.write(releaseExec() ? "OK\n" : "ERR:no held exec\n");
+	} else if (trimmed === "hold-turn") {
+		turnGate = new Promise((resolve) => { turnOpened = () => resolve(); });
+		process.stdout.write("OK\n");
+	} else if (trimmed === "release-turn") {
+		process.stdout.write(releaseTurn() ? "OK\n" : "ERR:no held turn\n");
+	} else if (trimmed.startsWith("turn-end ")) {
+		const outcome = trimmed.slice("turn-end ".length).trim();
+		const handlers = pi.handlers.get("turn_end") ?? [];
+		if (!handlers.length) {
+			process.stdout.write("ERR:no turn_end handler\n");
+			continue;
+		}
+		for (const handler of handlers) await handler({ type: "turn_end", outcome }, mockCtx);
+		process.stdout.write("OK\n");
 	} else if (trimmed === "tui") {
 		enableTuiInput();
 		process.stdout.write("OK\n");

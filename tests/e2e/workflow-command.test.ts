@@ -591,8 +591,11 @@ describe("workflow command E2E — cancellation", () => {
 
 	it("Escape then Ctrl+C do not cross-confirm", () => withWorkflowChild(async (h) => {
 		await startHeldRun(h, SHELLS, '{"count":1}');
-		await sendOk(h, "key escape");
-		await sendOk(h, "key ctrl+c");
+		// Both presses in one write: a >500ms round-trip gap between them would let the first
+		// arm expire, making the cross-confirm assertion blind.
+		h.write("key escape\nkey ctrl+c");
+		await h.waitForText('OK:{"consume":true}'); // escape
+		await h.waitForText('OK:{"consume":true}'); // ctrl+c
 		assert.equal(exits(await readAppended(h)).length, 0, "a different key never confirms an armed press");
 		await cancelWith(h, "ctrl+c");
 		await finishHeldRun(h);
@@ -679,7 +682,7 @@ describe("workflow command E2E — session replacement", () => {
 		const entries = await runWorkflow(h, NEW_RUN);
 		const exit = lastExit(entries)!;
 		assert.equal(exit.reason, "ok");
-		assert.equal(exit.text, "done", "the run resolved through the replacement runtime");
+		assert.equal(exit.metadata.text, "done", "the run resolved through the replacement runtime");
 	}));
 
 	it("progress ticks never touch the replaced ctx during the replacement window", () => withWorkflowChild(async (h) => {

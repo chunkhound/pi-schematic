@@ -25,7 +25,7 @@ import { registeredState } from "../process-state.js";
 import type { ShellRun } from "./shell.js";
 import { createWorkflowSandbox, hardDeadlineMs } from "./sandbox.js";
 import { WORKFLOW_SUMMARY_ENTRY_TYPE, buildWorkflowSummary } from "./summary.js";
-import type { WorkflowHost, WorkflowHostDeps, WorkflowProgress, WorkflowSandboxFactory, ReservedReason, ExitRecord } from "./types.js";
+import type { WorkflowHost, WorkflowHostDeps, WorkflowProgress, WorkflowSandboxFactory, ReservedReason, ExitRecord, WorkflowErrorPhase } from "./types.js";
 import { WORKFLOW_ERROR_ENTRY_TYPE, WORKFLOW_EXIT_ENTRY_TYPE } from "./types.js";
 import { parseWorkflowArgs, listWorkflows, readWorkflow, resolveWorkflowPath } from "./file.js";
 
@@ -105,14 +105,14 @@ async function runWorkflow(pi: ExtensionAPI, state: SchematicState, deps: Workfl
 function rejectSecondRun(pi: ExtensionAPI, ctx: ExtensionCommandContext): void {
 	const message = "A workflow is already running in this process. Wait for it to finish or press Escape or Ctrl+C twice to cancel it before you start a new one.";
 	notify(ctx, message, "error");
-	if (!ctx.hasUI) pi.appendEntry(WORKFLOW_ERROR_ENTRY_TYPE, { phase: "reserve", error: message });
+	if (!ctx.hasUI) pi.appendEntry(WORKFLOW_ERROR_ENTRY_TYPE, { phase: "reserve" satisfies WorkflowErrorPhase, error: message });
 }
 
 /** Start-failure visibility: `notify` no-ops headless, so the transcript carries a
  * workflow-error entry instead (mirrors {@link rejectSecondRun}). */
 function reportStartFailure(pi: ExtensionAPI, ctx: ExtensionCommandContext, message: string): void {
 	notify(ctx, message, "error");
-	if (!ctx.hasUI) pi.appendEntry(WORKFLOW_ERROR_ENTRY_TYPE, { phase: "start", error: message });
+	if (!ctx.hasUI) pi.appendEntry(WORKFLOW_ERROR_ENTRY_TYPE, { phase: "start" satisfies WorkflowErrorPhase, error: message });
 }
 
 async function startWorkflow(pi: ExtensionAPI, state: SchematicState, deps: WorkflowCommandDeps, raw: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -217,6 +217,8 @@ const rebindHooks: RebindHooks<RunBundle> = {
 		ctl.unsubscribeInput = suppressInput(bundle);
 		ctl.unsubscribeCancel();
 		ctl.unsubscribeCancel = subscribeCancellation(bundle, ctl, next);
+		ctl.unsubscribeTurnEnd();
+		ctl.unsubscribeTurnEnd = subscribeTurnEnd(bundle, ctl);
 		applyWorkflowProgress(ctl, bundle);
 	},
 	get registry() {
@@ -289,12 +291,11 @@ function clearStaleRunState(bundle: RunBundle): void {
 /** Open one live run: bindings, shell activity channel, and the host wired to them. */
 function openRun(bundle: RunBundle, program: RunProgram): { ctl: RunCtl; host: WorkflowHost; activity: ShellActivity } {
 	clearStaleRunState(bundle);
-	const ctl: RunCtl = { ctx: program.ctx, host: null, name: program.name, progress: null, exitRecorded: false, outcome: null, unsubscribeInput: () => {}, unsubscribeCancel: () => {}, registry: null };
+	const ctl: RunCtl = { ctx: program.ctx, host: null, name: program.name, progress: null, exitRecorded: false, outcome: null, unsubscribeInput: () => {}, unsubscribeCancel: () => {}, unsubscribeTurnEnd: () => {} };
 	// Shell visibility is UI-only and never enters LLM context: a live widget plus CustomEntry audit rows.
 	const activity = createShellActivity({ getPi: () => bundle.pi, getCtx: () => ctl.ctx });
 	const host = buildHost(bundle, ctl, (event) => activity.onEffect(event));
 	ctl.host = host;
-	ctl.registry = host.registry;
 	runRegistrySlot().current = host.registry;
 	return { ctl, host, activity };
 }
@@ -330,6 +331,7 @@ async function executeWorkflow(bundle: RunBundle, program: RunProgram): Promise<
 function armRun(bundle: RunBundle, ctl: RunCtl, host: WorkflowHost, ctx: ExtensionCommandContext): () => void {
 	ctl.unsubscribeInput = suppressInput(bundle);
 	ctl.unsubscribeCancel = subscribeCancellation(bundle, ctl, ctx);
+	ctl.unsubscribeTurnEnd = subscribeTurnEnd(bundle, ctl);
 	publishProgress(ctl, bundle, host.progress());
 	return startTicker(bundle, ctl, host);
 }
@@ -374,10 +376,14 @@ function runCleanup(step: () => void): void {
 function releaseRun(bundle: RunBundle, ctl: RunCtl, host: WorkflowHost, activity: ShellActivity): void {
 	runCleanup(() => ctl.unsubscribeInput());
 	runCleanup(() => ctl.unsubscribeCancel());
+	runCleanup(() => ctl.unsubscribeTurnEnd());
 	runCleanup(() => activity.dispose());
 	runCleanup(() => host.dispose());
 	runCleanup(() => { runRegistrySlot().current = null; });
+	// Null the slot BEFORE restoring chrome: a late publishProgress from an orphaned effect
+	// then skips, instead of re-installing the footer the run just removed.
 	const ctx = ctl.ctx;
+	ctl.ctx = null;
 	if (ctx) {
 		runCleanup(() => uninstallWorkflowFooter(ctx));
 		runCleanup(() => updateIndicators(ctx, bundle.state));
@@ -388,7 +394,7 @@ async function runSandbox(bundle: RunBundle, program: RunProgram, host: Workflow
 	let sandbox: CodemodeSandbox | null = null;
 	try {
 		sandbox = createWorkflowSandbox(
-			{ globals: host.globals(), timeoutMs: hardDeadlineMs(bundle.limits.timeBudgetMs), memoryLimitBytes: MEMORY_LIMIT_BYTES },
+			{ globals: host.globals(), timeoutMs: hardDeadlineMs(bundle.limits), memoryLimitBytes: MEMORY_LIMIT_BYTES },
 			bundle.deps.sandboxFactory,
 		);
 		const result = await sandbox.execute(program.compiled, { store: { intent: program.args, args: program.args }, signal: host.signal });
@@ -487,7 +493,7 @@ function salvagedPartial(host: WorkflowHost, exit: ExitRecord | null, abortedRun
 function surfaceLostExitRecord(pi: ExtensionAPI, ctl: RunCtl, error: unknown): void {
 	const message = `workflow exit record could not be persisted: ${messageOf(error)}`;
 	try {
-		pi.appendEntry(WORKFLOW_ERROR_ENTRY_TYPE, { phase: "exit-record", error: message });
+		pi.appendEntry(WORKFLOW_ERROR_ENTRY_TYPE, { phase: "exit-record" satisfies WorkflowErrorPhase, error: message });
 	} catch {
 		if (!ctl.ctx) throw new Error(message, { cause: error });
 		notify(ctl.ctx, message, "error");
@@ -535,7 +541,7 @@ function finalizeRun(bundle: RunBundle, ctl: RunCtl, host: WorkflowHost): void {
 
 /** Falls back to a UI notice when the advisory append fails; never masks the outcome. */
 function reportSummaryFailure(pi: ExtensionAPI, ctl: RunCtl, error: unknown): void {
-	const appended = safeAppendEntry(pi, WORKFLOW_ERROR_ENTRY_TYPE, { phase: "summary", error: messageOf(error) });
+	const appended = safeAppendEntry(pi, WORKFLOW_ERROR_ENTRY_TYPE, { phase: "summary" satisfies WorkflowErrorPhase, error: messageOf(error) });
 	if (!appended && ctl.ctx) advisoryNotify(ctl.ctx, `workflow overview could not be persisted: ${messageOf(error)}`, "warning");
 }
 
@@ -559,7 +565,7 @@ async function closeSandbox(sandbox: CodemodeSandbox, pi: ExtensionAPI, ctx: Ext
 		await sandbox.close();
 	} catch (error) {
 		const message = `workflow sandbox close failed: ${messageOf(error)}`;
-		const recorded = safeAppendEntry(pi, WORKFLOW_ERROR_ENTRY_TYPE, { phase: "cleanup", error: message });
+		const recorded = safeAppendEntry(pi, WORKFLOW_ERROR_ENTRY_TYPE, { phase: "cleanup" satisfies WorkflowErrorPhase, error: message });
 		if (ctx) advisoryNotify(ctx, withRecordStatus(message, recorded), "warning");
 	}
 }
@@ -586,6 +592,15 @@ function suppressInput(bundle: RunBundle): () => void {
 	};
 }
 
+/** Bridge pi's per-turn outcome to the host: an aborted turn (RPC/print abort, provider abort)
+ * must cancel a live workflow even though only TUI keys reach the key funnel. Child sessions run
+ * their own extension runner, so a child's abort never fires this parent handler. */
+function subscribeTurnEnd(bundle: RunBundle, ctl: RunCtl): () => void {
+	return bundle.pi.on("turn_end", (event) => {
+		if (event.outcome === "aborted") ctl.host?.abort("cancelled");
+	});
+}
+
 /** Register cancellation for a live context. Arm state is per registration, so a
  * `workflow.new` rebind starts with no inherited armed press. */
 function subscribeCancellation(bundle: RunBundle, ctl: RunCtl, ctx: ExtensionCommandContext): () => void {
@@ -599,19 +614,28 @@ function registerCancellation(ctx: ExtensionCommandContext, confirmMs: number, o
 	if (ctx.mode !== "tui") return () => {};
 	const armedAt = new Map<CancelKey, number>();
 	return ctx.ui.onTerminalInput((data) => {
-		// pi enables Kitty flag 2 (press/repeat/release): one physical key emits a press then a
-		// release, and matchesKey ignores the event type, so both would arm then confirm. Reuse
-		// pi's event predicates so only a discrete press can arm or confirm; non-press events
-		// pass through untouched.
-		if (isKeyRelease(data) || isKeyRepeat(data)) return undefined;
-		// Only the funnel's cancel keys are consumed: every other keypress must still reach
-		// the editor while a run is active, instead of being swallowed wholesale.
-		const key = CANCEL_KEYS.find((candidate) => matchesKey(data, candidate));
-		if (!key) return undefined;
-		if (confirmCancel(armedAt, key, Date.now(), confirmMs)) onCancel();
-		else notify(ctx, `Press ${CANCEL_LABEL[key]} again within ${confirmMs}ms to cancel the workflow`, "warning");
+		const press = cancelPressOf(data);
+		if (!press) return undefined;
+		// A coalesced pair is two physical presses: it already satisfies the guard.
+		if (press.confirmed || confirmCancel(armedAt, press.key, Date.now(), confirmMs)) onCancel();
+		else notify(ctx, `Press ${CANCEL_LABEL[press.key]} again within ${confirmMs}ms to cancel the workflow`, "warning");
 		return { consume: true };
 	});
+}
+
+/** Map a terminal read to a cancel press, or null to pass it through untouched.
+ * pi-tui's StdinBuffer coalesces two Escape presses inside its 10ms escape window into
+ * `"\x1b\x1b"` (stdin-buffer.js), which its parser reports as `ctrl+alt+[` and matches
+ * against no cancel key (keys.js). Two physical presses must still cancel, so report that
+ * read as an already-confirmed Escape. Kitty flag 2 also emits a press then a release for one
+ * physical key; `isKeyRelease`/`isKeyRepeat` drop those non-press events. */
+export function cancelPressOf(data: string): { key: CancelKey; confirmed: boolean } | null {
+	if (data === "\x1b\x1b") return { key: "escape", confirmed: true };
+	if (isKeyRelease(data) || isKeyRepeat(data)) return null;
+	// Only the funnel's cancel keys are consumed: every other keypress must still reach the
+	// editor while a run is active, instead of being swallowed wholesale.
+	const key = CANCEL_KEYS.find((candidate) => matchesKey(data, candidate));
+	return key ? { key, confirmed: false } : null;
 }
 
 /** Arm or confirm per key: a press inside the window consumes the arm and returns true; a
