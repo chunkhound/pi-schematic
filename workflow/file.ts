@@ -75,16 +75,27 @@ export interface WorkflowFileEntry {
 
 /**
  * List discoverable bare-name workflows. The result matches {@link resolveWorkflowPath}
- * precedence via the shared {@link workflowRoots} (project before global), so completion
+ * precedence by iterating the same {@link workflowRoots} (project before global), so completion
  * and resolution cannot disagree. Sorted by name for a stable UI.
  */
 export async function listWorkflows(cwd: string, agentDir: string): Promise<WorkflowFileEntry[]> {
-	const [projectRoot, globalRoot] = workflowRoots(cwd, agentDir);
-	const project = await listWorkflowDir(projectRoot.dir, projectRoot.source);
-	const global = await listWorkflowDir(globalRoot.dir, globalRoot.source);
-	const projectNames = new Set(project.map((entry) => entry.name));
-	const merged = [...project, ...global.filter((entry) => !projectNames.has(entry.name))];
-	return merged.sort((a, b) => a.name.localeCompare(b.name));
+	const layers = await Promise.all(workflowRoots(cwd, agentDir).map((root) => listWorkflowDir(root.dir, root.source)));
+	return shadowByPrecedence(layers).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Flatten root layers in precedence order: the first layer seen for a name wins, so adding a root
+ * never lets a lower-precedence file shadow a higher one. */
+export function shadowByPrecedence(layers: ReadonlyArray<readonly WorkflowFileEntry[]>): WorkflowFileEntry[] {
+	const seen = new Set<string>();
+	const merged: WorkflowFileEntry[] = [];
+	for (const layer of layers) {
+		for (const entry of layer) {
+			if (seen.has(entry.name)) continue;
+			seen.add(entry.name);
+			merged.push(entry);
+		}
+	}
+	return merged;
 }
 
 async function listWorkflowDir(dir: string, source: WorkflowFileEntry["source"]): Promise<WorkflowFileEntry[]> {

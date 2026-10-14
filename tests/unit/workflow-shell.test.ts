@@ -3,6 +3,9 @@
 // workflow wire contract and never executes when the readonly guard blocks.
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { blockedShellResult, createShellRunner, isTimeoutMessage, type ShellRunnerDeps, type ShellToolResult } from "../../workflow/shell.js";
 
 function deps(overrides: Partial<ShellRunnerDeps> = {}): ShellRunnerDeps {
@@ -118,6 +121,21 @@ test("a timed-out run that produced partial output still reports killed", async 
 	assert.equal(result.killed, true, "partial output must not hide the timeout classification");
 	assert.equal(result.exitCode, null);
 	assert.match(result.output, /Command timed out after 200 seconds/);
+});
+
+test("pi's real bash tool classifies a timeout as killed", { timeout: 15_000 }, async () => {
+	// Drives the real bash tool (no `run` seam, no stubbed matcher): the production
+	// `timeout:n` rethrow produces the message `isTimeoutMessage` must recognise.
+	const cwd = await mkdtemp(join(tmpdir(), "pi-workflow-shell-"));
+	try {
+		const result = await createShellRunner(deps({ cwd }))("sleep 10", { timeout: 1 });
+		assert.equal(result.ok, false);
+		assert.equal(result.exitCode, null);
+		assert.equal(result.killed, true, "killed is the shell timeout classification the host maps to time-limit");
+		assert.equal(isTimeoutMessage(result.output), true, "the real pi message matches the real matcher");
+	} finally {
+		await rm(cwd, { recursive: true, force: true });
+	}
 });
 
 test("createShellRunner forwards streaming display snapshots", async () => {

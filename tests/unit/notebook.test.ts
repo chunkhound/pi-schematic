@@ -9,7 +9,7 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import { createState, resetState, invalidateHandoffState } from "../../state.js";
 import { registerNotebookRehydration, reconstructNotebook } from "../../notebook/rehydration.js";
-import { CLIPPED_PAGE_NOTICE, commitNotebookDiscard, formatByteCap, formatPagePreview, prepareNotebookDiscard, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
+import { commitNotebookDiscard, formatByteCap, formatPagePreview, prepareNotebookDiscard, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
 import { openInPager, resolvePager, spawnPager, __setPagerRuntimeForTests } from "../../notebook/pager.js";
 import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
@@ -49,7 +49,8 @@ const Tlines = { truncatedBy: "lines", totalLines: 2001, totalBytes: 4001, outpu
 const Tbytes = { truncatedBy: "bytes", totalLines: 2, totalBytes: 51201, outputLines: 1, outputBytes: 25600 } as const;
 const ReportLines = "TRUNCATED by lines: kept 2000 of 2001 lines (3999 of 4001 bytes); tail dropped. Split this page into smaller pages.";
 const ReportBytes = "TRUNCATED by bytes: kept 1 of 2 lines (25600 of 51201 bytes); tail dropped. Split this page into smaller pages.";
-const Notice = CLIPPED_PAGE_NOTICE;
+// Pinned literal: a wording change in store.ts must fail these assertions, not pass through.
+const Notice = "Notice: This page was clipped at write time; its stored body is incomplete.";
 const rejectMessage = (name: string) => `Notebook page "${name}" rejected: first line exceeds ${formatByteCap(DEFAULT_MAX_BYTES)}. Split it into shorter lines or smaller pages.`;
 const emptyHeadRejectMessage = (name: string) => `Notebook page "${name}" rejected: the first non-empty line exceeds ${formatByteCap(DEFAULT_MAX_BYTES)}, so truncation would retain no content. Split it into shorter lines or smaller pages.`;
 const DescriptionSuffix =

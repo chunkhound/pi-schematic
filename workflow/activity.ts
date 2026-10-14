@@ -51,6 +51,7 @@ export function createShellActivity(deps: ShellActivityDeps): ShellActivity {
 	let component: BashExecutionComponent | null = null;
 	let tui: TUI | null = null;
 	let mountedCtx: ExtensionCommandContext | null = null;
+	let disposed = false;
 	/** Complete-line prefix already fed to the component, so the next snapshot can be diffed. */
 	let fed = "";
 
@@ -118,6 +119,8 @@ export function createShellActivity(deps: ShellActivityDeps): ShellActivity {
 	};
 
 	const onEffect = (event: WorkflowEffectEvent): void => {
+		// A shell that outlives the run must not paint or persist after release: the run closed.
+		if (disposed) return;
 		if (event.effect.name !== "shell") return;
 		if (event.phase === "start") {
 			mount(event.effect.detail, "");
@@ -144,6 +147,7 @@ export function createShellActivity(deps: ShellActivityDeps): ShellActivity {
 	};
 
 	const dispose = (): void => {
+		disposed = true;
 		component = null;
 		tui = null;
 		try {

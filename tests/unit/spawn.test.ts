@@ -180,7 +180,7 @@ test("spawn forwards requested thinking and reports the session effective thinki
 	assert.equal(seenConfig.thinkingLevel, "max", "requested thinking is forwarded unchanged");
 	assert.equal(updates[0].details.thinking, "off", "running details report Pi's effective thinking");
 	assert.equal(result.details.thinking, "off", "final details report Pi's effective thinking");
-	assert.deepEqual(result.details.route, { status: "inherited" });
+	assert.deepEqual(result.details.route, { status: "inherited", provider: "", modelId: "non-reasoning-model" });
 });
 
 test("spawn execute composes Model Group routing with readonly child guards", async () => {
@@ -597,7 +597,7 @@ test("spawn execute returns result and stats", async () => {
 
 	assert.deepEqual(updates, [{
 		content: [],
-		details: { model: "mock-model", thinking: "high", truncated: false, outcome: "running", route: { status: "inherited" } },
+		details: { model: "mock-model", thinking: "high", truncated: false, outcome: "running", route: { status: "inherited", provider: "", modelId: "mock-model" } },
 	}]);
 	assert.equal(result.content[0].text, "child result");
 	assert.equal(result.details.outcome, "success");
@@ -802,8 +802,8 @@ test("UI spawn swallows a throwing notify and aggregates without mutating a froz
 		() => execution,
 		(error: unknown) => assertAggregateFailure(
 			error,
-			"Spawn failed and cleanup failed.",
-			[primaryFailure, cleanupFailure],
+			"Spawn, cleanup, and notification failed.",
+			[primaryFailure, cleanupFailure, notifyError],
 		),
 	);
 	assert.equal(primaryFailure.cause, originalCause);
@@ -824,8 +824,8 @@ test("UI spawn swallows a throwing notify and aggregates primitive primary and c
 		() => execution,
 		(error: unknown) => assertAggregateFailure(
 			error,
-			"Spawn failed and cleanup failed.",
-			[primaryFailure, cleanupFailure],
+			"Spawn, cleanup, and notification failed.",
+			[primaryFailure, cleanupFailure, notifyError],
 		),
 	);
 	assert.equal(notifications.length, 1, "notification is attempted exactly once, then its failure is swallowed");
@@ -1056,7 +1056,7 @@ test("executeSpawn forwards inherited constraints to routing and succeeds when s
 		modelRegistry: { find: (_p: string, id: string) => ({ provider: "openai", id, input: ["text", "image"], reasoning: false }), hasConfiguredAuth: () => true },
 	} as any, state, { prompt: "Do the task", constraints: { modalities: { required: ["text", "image"] } } }, undefined, undefined, "medium", async () => { factoryCalls++; return { session: session as any, extensionsResult: undefined as any }; });
 	assert.equal(result.details.outcome, "success");
-	assert.deepEqual(result.details.route, { status: "inherited" });
+	assert.deepEqual(result.details.route, { status: "inherited", provider: "openai", modelId: "parent" });
 	assert.equal(factoryCalls, 1, "inherited route with satisfied requirements creates one child");
 });
 

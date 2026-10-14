@@ -3,7 +3,7 @@ import test from "node:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpDir } from "./helpers.js";
-import { parseWorkflowArgs, listWorkflows, readWorkflow, resolveWorkflowPath } from "../../workflow/file.js";
+import { parseWorkflowArgs, listWorkflows, readWorkflow, resolveWorkflowPath, shadowByPrecedence, type WorkflowFileEntry } from "../../workflow/file.js";
 
 test("parseWorkflowArgs takes the first token as the workflow and keeps the rest verbatim", () => {
 	assert.deepEqual(parseWorkflowArgs("review.js"), { name: "review.js", args: "" });
@@ -102,6 +102,23 @@ test("listWorkflows tolerates missing directories", async () => {
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
+});
+
+// WHY: workflowRoots is the single precedence source; if it ever gains a root, a lower-precedence
+// file must not shadow a higher one. Three layers exercise that generalized shadowing directly.
+test("shadowByPrecedence keeps the first root's entry for a repeated name", () => {
+	const entry = (name: string, source: WorkflowFileEntry["source"]): WorkflowFileEntry => ({ name, path: `/${source}/${name}.js`, source });
+	const merged = shadowByPrecedence([
+		[entry("alpha", "project"), entry("shared", "project")],
+		[entry("shared", "global"), entry("beta", "global")],
+		[entry("beta", "global"), entry("gamma", "global")],
+	]);
+	assert.deepEqual(merged, [
+		{ name: "alpha", path: "/project/alpha.js", source: "project" },
+		{ name: "shared", path: "/project/shared.js", source: "project" },
+		{ name: "beta", path: "/global/beta.js", source: "global" },
+		{ name: "gamma", path: "/global/gamma.js", source: "global" },
+	]);
 });
 
 // WHY: one precedence source (workflowRoots) feeds both resolution and listing, so a

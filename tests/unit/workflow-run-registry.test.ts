@@ -20,6 +20,20 @@ test("resolveRunTarget rejects extension commands", () => {
 	assert.throws(() => resolveRunTarget(commands, "/danger"), /extension command/);
 });
 
+// WHY: a slashless name followed by arguments is prose (`run("review the diff")`), not a command;
+// only an explicit `/name` or a bare name selects the command/skill target.
+test("resolveRunTarget treats a slashless prompt with arguments as prose", () => {
+	assert.deepEqual(resolveRunTarget(commands, "review the diff"), { text: "review the diff", source: "plain" });
+	assert.deepEqual(resolveRunTarget(commands, "execute the plan"), { text: "execute the plan", source: "plain" });
+	assert.deepEqual(resolveRunTarget(commands, "execute"), { text: "/skill:execute", source: "skill" });
+	assert.deepEqual(resolveRunTarget(commands, "/execute"), { text: "/skill:execute", source: "skill" });
+});
+
+test("resolveRunTarget preserves embedded newlines in prose", () => {
+	assert.deepEqual(resolveRunTarget(commands, "execute\nthe plan"), { text: "execute\nthe plan", source: "plain" });
+	assert.deepEqual(resolveRunTarget(commands, "step one\nstep two"), { text: "step one\nstep two", source: "plain" });
+});
+
 test("resolveRunTarget leaves unknown prompts as plain text and preserves inline arguments", () => {
 	assert.deepEqual(resolveRunTarget(commands, "just a prompt"), { text: "just a prompt", source: "plain" });
 	assert.deepEqual(resolveRunTarget(commands, "/review foo bar"), { text: "/review foo bar", source: "prompt" });
