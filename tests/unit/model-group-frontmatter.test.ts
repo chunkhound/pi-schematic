@@ -13,7 +13,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { __setModelGroupsFsForTests, modelGroupsPath } from "../../model-groups/store.js";
 import { makeReadonlyUICtx, tmpDir, theme } from "./helpers.js";
-import { createTestHost } from "./test-host.js";
+import { createBeforeAgentStartEvent, createTestHost } from "./test-host.js";
 import { withTemp } from "./model-groups-helpers.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -880,7 +880,7 @@ test("model-group toggle does not affect readonly state", async () => withTemp(a
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
+		await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 		assert.equal(setModelCalls.length, 1, "model should be switched");
 		const readonlyEntries = pi.appendedEntries.filter((e: any) => e.customType === "pi-schematic-readonly");

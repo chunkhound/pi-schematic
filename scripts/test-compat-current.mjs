@@ -41,6 +41,13 @@ async function main() {
       "tests/unit/spawn.test.ts",
       "tests/unit/readonly-spawn.test.ts",
       "tests/unit/compat-process.test.ts",
+      "tests/unit/model-group-frontmatter.test.ts",
+      "tests/unit/model-groups-integration.test.ts",
+      "tests/unit/notebook.test.ts",
+      "tests/unit/prompt-sections.test.ts",
+      "tests/unit/readonly-frontmatter.test.ts",
+      "tests/unit/readonly-mode.test.ts",
+      "tests/unit/system-prompt.test.ts",
     ], { cwd: copy });
     runChecked(process.execPath, ["./scripts/run-node-test.mjs", "tests/e2e/basic.test.ts"], { cwd: copy });
     runChecked(process.execPath, ["./scripts/run-node-test.mjs", "tests/e2e/real-host.test.ts"], { cwd: copy });

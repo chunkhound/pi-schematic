@@ -8,7 +8,7 @@
  *
  * Also registers:
  *   - watchdog (advisory primacy-zone reminder after each turn)
- *   - system prompt injection (CONTEXT_PRIMER, nudge, notebook listing)
+ *   - prompt sections (context primer, current date, topic, model groups, notebook listing)
  *   - state reset on /new
  */
 
@@ -22,8 +22,10 @@ import {
 	type TUI,
 } from "@earendil-works/pi-tui";
 import { createState, invalidateHandoffState, resetState, type SchematicState } from "./state.js";
-import { CONTEXT_PRIMER } from "./system-prompt.js";
-import { formatCurrentDatePrompt } from "./time/format.js";
+import { contextPrimerSection, currentDateSection } from "./system-prompt.js";
+import { createPromptSectionRegistry, applyPromptSections } from "./prompt-sections.js";
+import { notebookPagesSection, notebookTopicSection } from "./notebook/prompt.js";
+import { modelGroupsSection } from "./model-groups/prompt.js";
 import { buildNudge, registerWatchdog } from "./watchdog.js";
 import { registerNotebookTools } from "./notebook/tools.js";
 import { ensureNotebookToolsActive, registerNotebookRehydration, reconstructNotebook } from "./notebook/rehydration.js";
@@ -76,11 +78,10 @@ import { registerSpawnTool } from "./spawn/index.js";
 import { registerModelGroupsCommand } from "./model-groups/command.js";
 import { resolveSpawnModelRoute, SpawnRouteError } from "./model-groups/router.js";
 import { registerModelGroupAutocomplete } from "./model-groups/autocomplete.js";
-import { getEffectiveModelGroups, getEffectiveModelGroupNames } from "./model-groups/router.js";
-import { MODEL_GROUP_MODALITY_PROSE, type ResolvedModelGroup, type ModelGroupsAccess } from "./model-groups/types.js";
+import { getEffectiveModelGroupNames } from "./model-groups/router.js";
+import type { ModelGroupsAccess } from "./model-groups/types.js";
 import { loadModelGroups, summarizeBootValidation, validateModelGroups } from "./model-groups/store.js";
 import { escapeDisplayLabel } from "./model-groups/display.js";
-import { presentConstraintPrompt } from "./model-groups/constraints/presentation.js";
 import { productionConstraintRegistry } from "./model-groups/constraints/registry.js";
 import { isUsableModel } from "./model-groups/availability.js";
 import {
@@ -456,16 +457,6 @@ function refreshModelGroupsState(state: SchematicState, ctx: ExtensionContext) {
 	return state.modelGroups.validation;
 }
 
-function modelGroupsPromptSection(groups: ResolvedModelGroup[]): string | undefined {
-	if (groups.length === 0) return undefined;
-	const labels = groups.map((group) => `${escapeDisplayLabel(group.name)} (${(group.evaluations ? presentConstraintPrompt(group.evaluations, productionConstraintRegistry).filter(Boolean).join(", ") : group.modalities?.effective.join(", ")) || "no common modalities"})`);
-	return `\n## Model Groups for spawn\n` +
-		`Available Model Groups: ${labels.join(", ")}\n` +
-		`When the operator asks to spawn with one of these groups, or mentions #group-name, call spawn with group set to the exact group name only when the mapping is known and confident. If a delegated task requires ${MODEL_GROUP_MODALITY_PROSE} capability, pass those requirements as constraints. If no known/confident group is requested, omit group and inherit the parent model/thinking. ` +
-		`An explicitly-named group is binding: if the operator requests a specific group and the task also needs a capability that group lacks, do NOT fall back to a different group, inherit, or work around the missing capability. Stop and report to the operator that the named group cannot do the task; ask whether to pick a different group or drop the capability. ` +
-		`The group list exposes only names and effective modalities; do not assume provider/model membership, thinking levels, auth status, validation details, or storage paths from it.`;
-}
-
 export default function (pi: ExtensionAPI): void {
 	const state: SchematicState = createState();
 
@@ -483,6 +474,14 @@ export default function (pi: ExtensionAPI): void {
 	// ── Register commands ───────────────────────────────────────────
 	registerHandoffCommand(pi, state);
 	registerModelGroupsCommand(pi, state);
+
+	// ── Register prompt sections (render order = registration order) ──
+	const promptSections = createPromptSectionRegistry();
+	promptSections.register(contextPrimerSection());
+	promptSections.register(currentDateSection());
+	promptSections.register(notebookTopicSection(state));
+	promptSections.register(modelGroupsSection(state, productionConstraintRegistry));
+	promptSections.register(notebookPagesSection(state));
 
 	// ── Readonly mode ───────────────────────────────────────────────
 
@@ -792,8 +791,7 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 
-	// ── before_agent_start: resolve deferred readonly, then inject context
-	//    primer + notebook ─────────────────────────────────────────────
+	// ── before_agent_start: resolve deferred readonly, then write prompt sections ──
 	pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
 		if (state.pendingReadonlyCommands.length > 0) {
 			populateFrontmatterCache(state, ctx, pi, event.systemPromptOptions.skills);
@@ -804,50 +802,8 @@ export default function (pi: ExtensionAPI): void {
 		updateIndicators(ctx, state);
 		refreshModelGroupsState(state, ctx);
 
-		const parts: string[] = [event.systemPrompt];
-
-		// Inject context management primer at the end of the system prompt
-		parts.push("\n" + CONTEXT_PRIMER);
-
-		// Date anchor. Caching/DST semantics: docs/architecture.md "Date anchor".
-		parts.push("\n" + formatCurrentDatePrompt(new Date()));
-
-		if (state.activeNotebookTopic) {
-			parts.push(
-				`\n## Active Notebook Topic\n` +
-				`Current topic: \`${state.activeNotebookTopic}\` (${state.activeNotebookTopicSource ?? "unknown"}-set).\n` +
-				`Treat this as the current semantic frame. If new work fits it, prefer spawn for isolated noisy subtasks. If it does not fit it, prefer handoff.`,
-			);
-		} else {
-			parts.push(
-				`\n## Active Notebook Topic\n` +
-				`No active notebook topic is set. Early in the next substantive task, assign a short stable topic with \`notebook_topic_set\`. Human-set topics are authoritative.`,
-			);
-		}
-
-		const modelGroupSection = modelGroupsPromptSection(getEffectiveModelGroups(state.modelGroups.groups));
-		if (modelGroupSection) {
-			parts.push(modelGroupSection);
-		}
-
-		// Inject notebook listing so the LLM always knows what's available
-		const entryNames = Array.from(state.notebookPages.keys()).sort();
-		if (entryNames.length > 0) {
-			const listing = entryNames
-				.map((name) => {
-					const content = state.notebookPages.get(name)!;
-					const firstLine = (content.split("\n")[0] ?? "").slice(0, 80);
-					return `  ${name}: ${firstLine}`;
-				})
-				.join("\n");
-			parts.push(
-				`\n## Active Notebook Pages\n` +
-					`The following pages are available via notebook_read by name:\n${listing}\n` +
-					`Reference pages by name — never paste bodies into prompts.`,
-			);
-		}
-
-		return { systemPrompt: parts.join("\n\n") };
+		// After refreshModelGroupsState: schematic_model_groups renders from that snapshot.
+		return applyPromptSections(event, promptSections.render());
 	});
 
 	// ── context: inject toggle-on/toggle-off readonly state + watchdog nudge ──
