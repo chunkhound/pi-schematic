@@ -150,6 +150,7 @@ When you delegate a task with `spawn`, you can declare which capabilities it nee
 | **Context and cache** | Spawn creates a separate child context; handoff starts a new input prefix. A model/provider switch starts a different cache—the extension creates cache-aware boundaries, not cache preservation or provider cache configuration. |
 | **Delegation** | Children return condensed results and cannot spawn or handoff. There is no worktree isolation or per-child granular tool policy. |
 | **Memory** | Notebook pages are branch- and work-stream-scoped, survive handoff, and clear with `/new`; they are not forever memory. Handoff can transactionally discard stale pages. |
+| **Notebook pager** | `/notebook` opens a page in `$PI_PAGER`, else `$PAGER`, else `less` if installed (never auto-detected on Windows); a blank value counts as unset. Args are split on whitespace, with no quoting or shell syntax except on Windows, where `cmd.exe` runs the line. A `cat` or `more` pager, or no pager, shows a 500-character inline preview. `bat` still honors an exported `LESS=-F`, which closes short pages at once. |
 
 ## Readonly and security
 

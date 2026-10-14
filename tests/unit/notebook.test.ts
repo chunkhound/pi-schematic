@@ -1,17 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Text } from "@earendil-works/pi-tui";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import { createState, resetState, invalidateHandoffState } from "../../state.js";
 import { registerNotebookRehydration, reconstructNotebook } from "../../notebook/rehydration.js";
 import { commitNotebookDiscard, formatByteCap, formatPagePreview, prepareNotebookDiscard, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
+import { openInPager, resolvePager, spawnPager, __setPagerRuntimeForTests } from "../../notebook/pager.js";
 import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
 import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
 import { makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
-import { createTestHost } from "./test-host.js";
+import { createBeforeAgentStartEvent, createTestHost } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
 
 function persistedBranch(pi: TestPI): object[] {
@@ -507,7 +511,10 @@ test("/notebook empty overlay renders empty state and closes on input", async ()
 	assert.equal(doneCalls, 1);
 });
 
-test("/notebook selection previews the chosen entry", async () => {
+test("/notebook selection previews the chosen entry when no pager is available", async (t) => {
+	__setPagerRuntimeForTests({ resolvePager: () => undefined });
+	t.after(() => __setPagerRuntimeForTests(null));
+
 	const pi = await createTestHost();
 	const notebookWrite = pi.tools.get("notebook_write");
 	await notebookWrite.execute("1", { name: "alpha", content: "body line\nsecond line" }, undefined, undefined, makeTUICtx());
@@ -530,9 +537,35 @@ test("/notebook selection previews the chosen entry", async () => {
 	const bodyLines = stripAnsi(overlay.render(120).join("\n"));
 	assert.match(bodyLines, /body line/);
 	assert.match(bodyLines, /alpha/);
-	// Second keypress closes the overlay
+	assert.doesNotMatch(bodyLines, /PI_PAGER/, "an uncut page shows no truncation hint");
+	// Second keypress leaves the inline preview
 	overlay.handleInput("\r");
 	assert.equal(doneCalls, 1);
+});
+
+test("/notebook inline preview hints at $PI_PAGER when it cuts a long page", async (t) => {
+	__setPagerRuntimeForTests({ resolvePager: () => undefined });
+	t.after(() => __setPagerRuntimeForTests(null));
+
+	const pi = await createTestHost();
+	const notebookWrite = pi.tools.get("notebook_write");
+	await notebookWrite.execute("1", { name: "alpha", content: "x".repeat(500) + "TAIL" }, undefined, undefined, makeTUICtx());
+	let overlay: any;
+
+	await pi.commands.get("notebook")!.handler("", {
+		hasUI: true,
+		ui: {
+			theme,
+			custom: async (build: any) => {
+				overlay = build({ requestRender: () => {} }, theme, {}, () => {});
+			},
+		},
+	});
+
+	overlay.handleInput("\r");
+	const preview = stripAnsi(overlay.render(120).join("\n"));
+	assert.doesNotMatch(preview, /TAIL/);
+	assert.match(preview, /set \$PI_PAGER to a full-screen pager \(e\.g\. less\) to view the full page/);
 });
 
 test("/notebook overlay sorts entries consistently", async () => {
@@ -554,6 +587,439 @@ test("/notebook overlay sorts entries consistently", async () => {
 
 	const lines = stripAnsi(overlay.render(120).join("\n"));
 	assert.ok(lines.indexOf("alpha") < lines.indexOf("zeta"), lines);
+	assert.match(lines, /enter view/);
+});
+
+test("resolvePager keeps fallback less interactive without changing LESS", () => {
+	for (const PAGER of [undefined, "", "   "]) {
+		const env = { PI_PAGER: PAGER, PAGER, LESS: "-FRX" };
+		assert.deepEqual(
+			resolvePager(env, "linux", () => true),
+			{ cmd: "less", args: ["-R", "-+F", "-+X"] },
+		);
+		assert.deepEqual(env, { PI_PAGER: PAGER, PAGER, LESS: "-FRX" });
+	}
+	assert.deepEqual(
+		resolvePager({}, "darwin", () => true),
+		{ cmd: "less", args: ["-R", "-+F", "-+X"] },
+	);
+	assert.equal(resolvePager({}, "linux", () => false), undefined);
+	// Windows never probes less — $PI_PAGER/$PAGER are the only way to get a pager.
+	assert.equal(resolvePager({}, "win32", () => assert.fail("must not probe on Windows")), undefined);
+});
+
+test("resolvePager prefers PI_PAGER over PAGER and falls back when it is blank", () => {
+	const noProbe = () => assert.fail("configured pagers must not probe less");
+	assert.deepEqual(
+		resolvePager({ PI_PAGER: "batcat --plain", PAGER: "more" }, "linux", noProbe),
+		{ cmd: "batcat", args: ["--plain", "--paging=always"] },
+	);
+	assert.deepEqual(
+		resolvePager({ PI_PAGER: "less -R" }, "linux", noProbe),
+		{ cmd: "less", args: ["-R", "-+F", "-+X"] },
+	);
+	for (const PI_PAGER of [undefined, "", "   "]) {
+		assert.deepEqual(
+			resolvePager({ PI_PAGER, PAGER: "most -s" }, "linux", noProbe),
+			{ cmd: "most", args: ["-s"] },
+			`PI_PAGER=${JSON.stringify(PI_PAGER)}`,
+		);
+	}
+});
+
+test("resolvePager treats cat and more pagers as no pager so the inline preview is used", () => {
+	const noProbe = () => assert.fail("cat and more must not fall back to less");
+	const cases: Array<{ env: NodeJS.ProcessEnv; platform: NodeJS.Platform }> = [
+		{ env: { PI_PAGER: "cat" }, platform: "linux" },
+		{ env: { PAGER: "cat" }, platform: "linux" },
+		{ env: { PI_PAGER: "cat", PAGER: "less" }, platform: "linux" },
+		{ env: { PAGER: "/bin/cat -v" }, platform: "darwin" },
+		{ env: { PAGER: "C:\\tools\\CAT.EXE" }, platform: "win32" },
+		{ env: { PAGER: "more" }, platform: "linux" },
+		{ env: { PI_PAGER: "/usr/bin/more -d", PAGER: "less" }, platform: "linux" },
+		{ env: { PAGER: "C:\\Windows\\System32\\more.com" }, platform: "win32" },
+	];
+	for (const { env, platform } of cases) {
+		assert.equal(resolvePager(env, platform, noProbe), undefined, `${platform}: ${JSON.stringify(env)}`);
+	}
+	// Only the effective pager matters: PI_PAGER still wins over PAGER=cat.
+	assert.deepEqual(
+		resolvePager({ PI_PAGER: "less", PAGER: "cat" }, "linux", noProbe),
+		{ cmd: "less", args: ["-+F", "-+X"] },
+	);
+});
+
+test("resolvePager overrides quit-if-one-screen and no-init for configured less executables", () => {
+	const cases: Array<{ pager: string; platform: NodeJS.Platform; cmd: string; args: string[] }> = [
+		{ pager: "less", platform: "linux", cmd: "less", args: ["-+F", "-+X"] },
+		{ pager: "  less\t-R  ", platform: "linux", cmd: "less", args: ["-R", "-+F", "-+X"] },
+		{ pager: "less -F", platform: "linux", cmd: "less", args: ["-F", "-+F", "-+X"] },
+		{ pager: "less -FRX", platform: "linux", cmd: "less", args: ["-FRX", "-+F", "-+X"] },
+		{ pager: "less --quit-if-one-screen -S", platform: "linux", cmd: "less", args: ["--quit-if-one-screen", "-S", "-+F", "-+X"] },
+		{ pager: "less --no-init -R", platform: "linux", cmd: "less", args: ["--no-init", "-R", "-+F", "-+X"] },
+		{ pager: "less -+F -F", platform: "linux", cmd: "less", args: ["-+F", "-F", "-+F", "-+X"] },
+		{ pager: "/usr/bin/less -R", platform: "linux", cmd: "/usr/bin/less", args: ["-R", "-+F", "-+X"] },
+		{ pager: "./less -F", platform: "darwin", cmd: "./less", args: ["-F", "-+F", "-+X"] },
+		{ pager: "less -FRX --", platform: "linux", cmd: "less", args: ["-FRX", "-+F", "-+X", "--"] },
+		{ pager: "less -- -F", platform: "linux", cmd: "less", args: ["-+F", "-+X", "--", "-F"] },
+		{ pager: "less", platform: "win32", cmd: "less", args: ["-+F", "-+X"] },
+		{ pager: "LESS -R", platform: "win32", cmd: "LESS", args: ["-R", "-+F", "-+X"] },
+		{ pager: "less.exe -FRX", platform: "win32", cmd: "less.exe", args: ["-FRX", "-+F", "-+X"] },
+		{ pager: "C:\\tools\\LESS.EXE -F", platform: "win32", cmd: "C:\\tools\\LESS.EXE", args: ["-F", "-+F", "-+X"] },
+		{ pager: "C:/tools/less.exe -R", platform: "win32", cmd: "C:/tools/less.exe", args: ["-R", "-+F", "-+X"] },
+	];
+	for (const { pager, platform, cmd, args } of cases) {
+		const env = { PAGER: pager, LESS: "-FRX" };
+		assert.deepEqual(
+			resolvePager(env, platform, () => assert.fail("configured pagers must not probe less")),
+			{ cmd, args },
+			`${platform}: ${pager}`,
+		);
+		assert.deepEqual(env, { PAGER: pager, LESS: "-FRX" });
+	}
+});
+
+test("resolvePager forces paging for configured bat executables", () => {
+	const cases: Array<{ pager: string; platform: NodeJS.Platform; cmd: string; args: string[] }> = [
+		{ pager: "bat", platform: "linux", cmd: "bat", args: ["--paging=always"] },
+		{ pager: "batcat --plain", platform: "linux", cmd: "batcat", args: ["--plain", "--paging=always"] },
+		{ pager: "bat --paging=never", platform: "linux", cmd: "bat", args: ["--paging=never", "--paging=always"] },
+		{ pager: "/opt/less/bat --plain", platform: "linux", cmd: "/opt/less/bat", args: ["--plain", "--paging=always"] },
+		{ pager: "/usr/bin/batcat -p --", platform: "linux", cmd: "/usr/bin/batcat", args: ["-p", "--paging=always", "--"] },
+		{ pager: "bat.exe --plain", platform: "win32", cmd: "bat.exe", args: ["--plain", "--paging=always"] },
+		{ pager: "C:\\tools\\BATCAT.EXE", platform: "win32", cmd: "C:\\tools\\BATCAT.EXE", args: ["--paging=always"] },
+	];
+	for (const { pager, platform, cmd, args } of cases) {
+		assert.deepEqual(
+			resolvePager({ PAGER: pager }, platform, () => assert.fail("configured pagers must not probe less")),
+			{ cmd, args },
+			`${platform}: ${pager}`,
+		);
+	}
+});
+
+test("resolvePager leaves other pagers and wrappers unchanged", () => {
+	const cases: Array<{ pager: string; platform: NodeJS.Platform; cmd: string; args: string[] }> = [
+		{ pager: "less-wrapper -F", platform: "linux", cmd: "less-wrapper", args: ["-F"] },
+		{ pager: "env less -FRX", platform: "linux", cmd: "env", args: ["less", "-FRX"] },
+		{ pager: "LESS -F", platform: "linux", cmd: "LESS", args: ["-F"] },
+		{ pager: "less.exe -F", platform: "linux", cmd: "less.exe", args: ["-F"] },
+		{ pager: "less.cmd -F", platform: "win32", cmd: "less.cmd", args: ["-F"] },
+		{ pager: "env bat --plain", platform: "linux", cmd: "env", args: ["bat", "--plain"] },
+		{ pager: "bat-wrapper", platform: "linux", cmd: "bat-wrapper", args: [] },
+		{ pager: "bat.exe --plain", platform: "linux", cmd: "bat.exe", args: ["--plain"] },
+		{ pager: "bat.cmd --plain", platform: "win32", cmd: "bat.cmd", args: ["--plain"] },
+	];
+	for (const { pager, platform, cmd, args } of cases) {
+		assert.deepEqual(
+			resolvePager({ PAGER: pager }, platform, () => assert.fail("configured pagers must not probe less")),
+			{ cmd, args },
+			`${platform}: ${pager}`,
+		);
+	}
+});
+
+test("spawnPager rejects with a readable error when the pager binary is missing", async (t) => {
+	if (process.platform === "win32") {
+		t.skip("shell: true reports a missing binary only as a cmd.exe exit code");
+		return;
+	}
+	await assert.rejects(
+		spawnPager("body", { cmd: "pi-schematic-definitely-missing-xyz", args: [] }),
+		/pi-schematic-definitely-missing-xyz not found/,
+	);
+});
+
+test("spawnPager pipes the full body to the child's stdin", async () => {
+	const tmpDir = await mkdtemp(join(tmpdir(), "pager-stdin-test-"));
+	const scriptPath = join(tmpDir, "pager.cjs");
+	const outPath = join(tmpDir, "out.txt");
+	try {
+		// Writes only to a file — produces no stdout, so the child's
+		// inherited stdout doesn't pollute the test runner's own output.
+		// A script file, not `-e`: shell: true on Windows joins args unquoted,
+		// which would split a multi-word -e script apart.
+		const script = [
+			'const fs = require("node:fs");',
+			"const chunks = [];",
+			'process.stdin.on("data", (c) => chunks.push(c));',
+			'process.stdin.on("end", () => { fs.writeFileSync(process.argv[2], Buffer.concat(chunks)); });',
+		].join("\n");
+		await writeFile(scriptPath, script);
+		const body = "line one\nline two\n";
+
+		await spawnPager(body, { cmd: process.execPath, args: [scriptPath, outPath] });
+
+		assert.equal(await readFile(outPath, "utf8"), body);
+	} finally {
+		await rm(tmpDir, { recursive: true, force: true });
+	}
+});
+
+test("spawnPager resolves when the pager exits without reading stdin (EPIPE/EOF is swallowed)", async () => {
+	// Several MB comfortably exceeds the OS pipe buffer (64KB on Linux), so
+	// the write is still in flight — and hits EPIPE (EOF on Windows) — when
+	// the child's immediate exit closes the read end, instead of completing
+	// before the child even starts.
+	const body = "x".repeat(5 * 1024 * 1024);
+
+	await assert.doesNotReject(
+		spawnPager(body, { cmd: process.execPath, args: ["-e", "process.exit(0)"] }),
+	);
+});
+
+test("spawnPager resolves when the pager exits nonzero", async () => {
+	await assert.doesNotReject(
+		spawnPager("body", { cmd: process.execPath, args: ["-e", "process.exit(1)"] }),
+	);
+});
+
+test("/notebook enter suspends the TUI, awaits the pager, then restores the TUI and reopens the list", async (t) => {
+	const events: string[] = [];
+	const spawned = createDeferred();
+	const pagerExit = createDeferred();
+	__setPagerRuntimeForTests({
+		resolvePager: () => ({ cmd: "pager", args: [] }),
+		spawnPager: async (body, pager) => {
+			events.push(`spawn:${pager.cmd}:${body}`);
+			spawned.resolve();
+			await pagerExit.promise;
+		},
+	});
+	t.after(() => __setPagerRuntimeForTests(null));
+
+	const pi = await createTestHost();
+	const notebookWrite = pi.tools.get("notebook_write");
+	await notebookWrite.execute("1", { name: "zeta", content: "old body" }, undefined, undefined, makeTUICtx());
+	await notebookWrite.execute("2", { name: "alpha", content: "other" }, undefined, undefined, makeTUICtx());
+
+	const tui = {
+		stop: () => events.push("stop"),
+		start: () => events.push("start"),
+		requestRender: (force?: boolean) => events.push(`render:${force ? "force" : "soft"}`),
+	};
+
+	let customCalls = 0;
+	const renders: string[] = [];
+	const handlerPromise = pi.commands.get("notebook")!.handler("", makeTUICtx({
+		percent: 20,
+		custom: async (build: any) => {
+			customCalls++;
+			if (customCalls > 2) return undefined;
+			let result: unknown;
+			const overlay = build(tui, theme, {}, (value: unknown) => { result = value; });
+			if (customCalls === 1) {
+				// Move off the default index 0 so the reopen assertion proves cursor restore.
+				overlay.handleInput("\x1b[B");
+				overlay.handleInput("\r");
+			} else {
+				renders.push(stripAnsi(overlay.render(120).join("\n")));
+				return undefined;
+			}
+			return result;
+		},
+	}));
+
+	// Wait until the pager is running before letting it exit.
+	await spawned.promise;
+	// Ignore any overlay-side renders queued by handleInput before done() resolved.
+	const lifecycle = () => events.filter((e) => e === "stop" || e === "start" || e.startsWith("spawn:") || e === "render:force");
+	assert.deepEqual(lifecycle(), ["stop", "spawn:pager:old body"], "TUI must be stopped before spawn");
+	pagerExit.resolve();
+	await handlerPromise;
+
+	assert.deepEqual(lifecycle(), ["stop", "spawn:pager:old body", "start", "render:force"]);
+	assert.equal(customCalls, 2, "list must reopen after pager exits");
+	const arrowLine = renders[0]!.split("\n").find((l) => l.includes("→"));
+	assert.ok(arrowLine, `expected a cursor row, got:\n${renders[0]}`);
+	assert.match(arrowLine!, /zeta/);
+	assert.doesNotMatch(arrowLine!, /alpha/);
+});
+
+/**
+ * ctx.ui.custom stub: runs beforeEnter, then presses Enter on the first open.
+ * Every later open is rendered into `reopens` and closed.
+ */
+function enterOnFirstOpen(beforeEnter: () => void = () => {}) {
+	const reopens: string[] = [];
+	let opened = false;
+	const custom = async (build: any) => {
+		let result: unknown;
+		const overlay = build({ stop: () => {}, start: () => {}, requestRender: () => {} }, theme, {}, (value: unknown) => { result = value; });
+		if (opened) {
+			reopens.push(stripAnsi(overlay.render(120).join("\n")));
+			return undefined;
+		}
+		opened = true;
+		beforeEnter();
+		overlay.handleInput("\r");
+		return result;
+	};
+	return { custom, reopens };
+}
+
+test("/notebook pager interaction installs and removes a SIGINT guard", async (t) => {
+	const baselineSigint = process.listeners("SIGINT").length;
+	let duringSpawnListenerCount = -1;
+	__setPagerRuntimeForTests({
+		resolvePager: () => ({ cmd: "pager", args: [] }),
+		spawnPager: async () => {
+			duringSpawnListenerCount = process.listeners("SIGINT").length;
+		},
+	});
+	t.after(() => __setPagerRuntimeForTests(null));
+
+	const pi = await createTestHost();
+	const notebookWrite = pi.tools.get("notebook_write");
+	await notebookWrite.execute("1", { name: "alpha", content: "body" }, undefined, undefined, makeTUICtx());
+
+	await pi.commands.get("notebook")!.handler("", makeTUICtx({ percent: 20, custom: enterOnFirstOpen().custom }));
+
+	assert.equal(duringSpawnListenerCount, baselineSigint + 1, "SIGINT guard must be installed during pager");
+	assert.equal(process.listeners("SIGINT").length, baselineSigint, "SIGINT guard must be removed after pager");
+});
+
+test("openInPager removes the SIGINT guard even if tui.start throws", async (t) => {
+	const baselineSigint = process.listeners("SIGINT").length;
+	__setPagerRuntimeForTests({ spawnPager: async () => {} });
+	t.after(() => __setPagerRuntimeForTests(null));
+
+	const tui = {
+		stop: () => {},
+		start: () => { throw new Error("start boom"); },
+		requestRender: () => {},
+	};
+
+	await assert.rejects(
+		openInPager(tui as any, "body", { cmd: "pager", args: [] }),
+		/start boom/,
+	);
+	assert.equal(process.listeners("SIGINT").length, baselineSigint, "SIGINT guard must not leak when tui.start throws");
+});
+
+test("openInPager propagates a tui.stop failure without spawning, guarding SIGINT, or restarting", async (t) => {
+	const baselineSigint = process.listeners("SIGINT").length;
+	let spawned = false;
+	__setPagerRuntimeForTests({ spawnPager: async () => { spawned = true; } });
+	t.after(() => __setPagerRuntimeForTests(null));
+
+	let started = false;
+	const tui = {
+		stop: () => { throw new Error("stop boom"); },
+		start: () => { started = true; },
+		requestRender: () => {},
+	};
+
+	await assert.rejects(openInPager(tui as any, "body", { cmd: "pager", args: [] }), /stop boom/);
+	assert.equal(spawned, false, "pager must not spawn when tui.stop throws");
+	assert.equal(process.listeners("SIGINT").length, baselineSigint, "SIGINT guard must not leak when tui.stop throws");
+	assert.equal(started, false, "TUI must not restart after a failed stop");
+});
+
+test("/notebook surfaces pager spawn errors as a warning notification", async (t) => {
+	__setPagerRuntimeForTests({
+		resolvePager: () => ({ cmd: "pager", args: [] }),
+		spawnPager: async () => { throw new Error("boom"); },
+	});
+	t.after(() => __setPagerRuntimeForTests(null));
+
+	const pi = await createTestHost();
+	const notebookWrite = pi.tools.get("notebook_write");
+	await notebookWrite.execute("1", { name: "alpha", content: "body" }, undefined, undefined, makeTUICtx());
+
+	const notifications: Array<{ message: string; level: string }> = [];
+	await pi.commands.get("notebook")!.handler("", makeTUICtx({
+		percent: 20,
+		notify: (message: string, level: string) => { notifications.push({ message, level }); },
+		custom: enterOnFirstOpen().custom,
+	}));
+
+	assert.deepEqual(notifications, [{ message: "pager failed: boom", level: "warning" }]);
+});
+
+test("/notebook reopens the list when the selected page vanished while it was open", async (t) => {
+	let spawned = false;
+	__setPagerRuntimeForTests({
+		resolvePager: () => ({ cmd: "pager", args: [] }),
+		spawnPager: async () => { spawned = true; },
+	});
+	t.after(() => __setPagerRuntimeForTests(null));
+
+	const pi = await createTestHost();
+	await pi.tools.get("notebook_write").execute("1", { name: "alpha", content: "body" }, undefined, undefined, makeTUICtx());
+	let compaction: any;
+	await pi.tools.get("handoff").execute("2", { nextInstruction: "continue", discardPages: ["alpha"] }, undefined, undefined, {
+		...makeTUICtx(),
+		getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
+		compact: (options: any) => { compaction = options; },
+	});
+
+	// The handoff's compaction finishes in the background and commits the discard while the list is open.
+	const { custom, reopens } = enterOnFirstOpen(() => compaction.onComplete());
+	await pi.commands.get("notebook")!.handler("", makeTUICtx({ percent: 20, custom }));
+
+	assert.equal(reopens.length, 1, "list must reopen instead of closing");
+	assert.match(reopens[0]!, /Notebook \(0 pages\)/);
+	assert.equal(spawned, false, "a vanished page must not open the pager");
+});
+
+test("/notebook inline preview returns to the list on any key when no pager is available", async (t) => {
+	__setPagerRuntimeForTests({ resolvePager: () => undefined });
+	t.after(() => __setPagerRuntimeForTests(null));
+
+	const pi = await createTestHost();
+	const notebookWrite = pi.tools.get("notebook_write");
+	await notebookWrite.execute("1", { name: "zeta", content: "body line" }, undefined, undefined, makeTUICtx());
+	await notebookWrite.execute("2", { name: "alpha", content: "other" }, undefined, undefined, makeTUICtx());
+
+	let customCalls = 0;
+	const renders: string[] = [];
+	await pi.commands.get("notebook")!.handler("", makeTUICtx({
+		percent: 20,
+		custom: async (build: any) => {
+			customCalls++;
+			let result: unknown;
+			const overlay = build({ requestRender: () => {} }, theme, {}, (value: unknown) => { result = value; });
+			if (customCalls === 1) {
+				// Move off the default index 0 so the reopen assertion proves cursor restore.
+				overlay.handleInput("\x1b[B");
+				overlay.handleInput("\r"); // opens the inline preview
+				overlay.handleInput(" ");  // any key returns to the list
+				return result;
+			}
+			renders.push(stripAnsi(overlay.render(120).join("\n")));
+			return undefined;
+		},
+	}));
+
+	assert.equal(customCalls, 2, "list must reopen after the inline preview");
+	const arrowLine = renders[0]!.split("\n").find((l) => l.includes("→"));
+	assert.ok(arrowLine, `expected a cursor row, got:\n${renders[0]}`);
+	assert.match(arrowLine!, /zeta/);
+	assert.doesNotMatch(arrowLine!, /alpha/);
+});
+
+test("/notebook selecting an empty-content page opens the preview instead of closing the picker", async (t) => {
+	__setPagerRuntimeForTests({ resolvePager: () => undefined });
+	t.after(() => __setPagerRuntimeForTests(null));
+
+	const pi = await createTestHost();
+	const notebookWrite = pi.tools.get("notebook_write");
+	await notebookWrite.execute("1", { name: "alpha", content: "" }, undefined, undefined, makeTUICtx());
+
+	let doneCalls = 0;
+	await pi.commands.get("notebook")!.handler("", makeTUICtx({
+		percent: 20,
+		custom: async (build: any) => {
+			const overlay = build({ requestRender: () => {} }, theme, {}, () => { doneCalls++; });
+			overlay.handleInput("\r"); // Enter on the empty-content page
+			assert.equal(doneCalls, 0, "an empty page body must not close the picker early");
+			const preview = stripAnsi(overlay.render(120).join("\n"));
+			assert.match(preview, /alpha/, "inline preview header must show the page name");
+			overlay.handleInput(" "); // any key leaves the inline preview
+			assert.equal(doneCalls, 1);
+		},
+	}));
 });
 
 // ── saveNotebookPage tests ────────────────────────────────────────────
@@ -1499,15 +1965,22 @@ test("model listing surfaces remain free of clipping decorations", async () => {
 		assert.doesNotMatch(text, /Notice:/, `notice must not leak into non-read surfaces: ${text}`);
 	}
 
-	// System prompt listing through the real before_agent_start hook.
+	// Notebook section through the real before_agent_start hook.
 	const [beforeAgentStart] = pi.handlers.get("before_agent_start")!;
-	const promptResult = await beforeAgentStart(
-		{ systemPrompt: "Base system prompt." },
+	const event = createBeforeAgentStartEvent({ systemPrompt: "Base system prompt." });
+	await beforeAgentStart(
+		event,
 		{ ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false },
 	);
-	assert.doesNotMatch(promptResult.systemPrompt, /\[truncated\]/);
-	assert.doesNotMatch(promptResult.systemPrompt, /Notice:/);
-	assert.match(promptResult.systemPrompt, /  page: x/);
+	const listing = event.systemPromptOptions.sections.schematic_notebook;
+	assert.ok(listing !== undefined);
+	assert.doesNotMatch(listing, /\[truncated\]/);
+	assert.doesNotMatch(listing, /Notice:/);
+	assert.match(listing, /  page: x/);
+	const assembled = event.systemPrompt;
+	assert.match(assembled, /  page: x/);
+	assert.doesNotMatch(assembled, /\[truncated\]/);
+	assert.doesNotMatch(assembled, /Notice:/);
 
 	// Spawn prompt through the real child-session seam.
 	const proof = await runRealChildInvocation({ prompt: "Do the task.", notebookPages: { page: L(2001) } });
