@@ -79,7 +79,8 @@ test("/workflow runs the real sandbox against a real model turn and attributes i
 		prepareRunFrontmatter: async (text) => { frontmatterPrepared.push(text); },
 	};
 	const pi = await createTestHost((api) => registerWorkflowCommand(api, state, deps));
-	// A project prompt template in the catalogue: `workflow.run` must route the invocation, not prose.
+	// A project prompt template named `review` exists, but a slashless prompt with arguments is
+	// prose (never a command), so the run must send it verbatim.
 	pi.setCommands([{ name: "review", source: "prompt", sourceInfo: { path: join(dir, ".pi", "prompts", "review.md"), source: "prompt", scope: "project", origin: "top-level" } }]);
 	const branch: SessionEntry[] = [];
 	const ctx = headlessCtx(dir, branch);
@@ -91,7 +92,7 @@ test("/workflow runs the real sandbox against a real model turn and attributes i
 		const running = pi.commands.get("workflow").handler("review-step", ctx).catch((error: unknown) => { failure = error; });
 		await waitFor(() => pi.sentUserMessages.length > 0, "the workflow's run turn to dispatch");
 		const dispatched = String(pi.sentUserMessages[0].content);
-		assert.equal(dispatched, "/review the diff", "the template invocation reaches the model, not the bare step text");
+		assert.equal(dispatched, "review the diff", "a slashless prose prompt dispatches verbatim, not as a command");
 		assert.deepEqual(frontmatterPrepared, [dispatched], "the turn's frontmatter resolved before the send");
 
 		// A real child session answers the turn. It shares this `state`, so its usage flushes into
@@ -107,7 +108,7 @@ test("/workflow runs the real sandbox against a real model turn and attributes i
 		assert.equal(failure, undefined, `the run must settle without rejecting: ${String(failure)}`);
 
 		const exits = pi.appendedEntries.filter((record) => record.customType === "workflow-exit");
-		assert.deepEqual(exits.map((record) => record.data), [{ reason: "done", text: child.expectedText }], "exactly one exit record, carrying the workflow's own reason and the model's reply");
+		assert.deepEqual(exits.map((record) => record.data), [{ reason: "done", metadata: { reason: "done", text: child.expectedText } }], "exactly one exit record, carrying the workflow's own reason and the model's reply");
 		assert.ok(pi.appendedEntries.some((record) => record.customType === "workflow-limits"), "the headless no-target start is recorded, never silently unbounded");
 
 		const summaries = pi.appendedEntries.filter((record) => record.customType === "workflow-summary");
@@ -163,7 +164,7 @@ test("a poisoned prior run never blocks the next run", { timeout: 60_000 }, asyn
 
 		assert.ok(staleDisposed, "the stale registry is disposed before the new run owns the slot");
 		const exits = pi.appendedEntries.filter((record) => record.customType === "workflow-exit");
-		assert.deepEqual(exits.map((record) => record.data), [{ reason: "done", text: "ok" }], "the run completes despite the poisoned state");
+		assert.deepEqual(exits.map((record) => record.data), [{ reason: "done", metadata: { reason: "done", text: "ok" } }], "the run completes despite the poisoned state");
 		assert.equal(state.inputSuppressed, false, "input ends usable");
 		assert.equal(state.childUsageSink, null, "no sink survives the run");
 	} finally {
