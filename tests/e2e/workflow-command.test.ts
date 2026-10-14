@@ -542,8 +542,11 @@ describe("workflow command E2E — cancellation", () => {
 
 	it("a Kitty key release does not confirm an armed cancel", () => withWorkflowChild(async (h) => {
 		await startHeldRun(h, SHELLS, '{"count":1}');
-		await sendOk(h, 'key-raw "\\u001b[27u"');
-		await sendOk(h, 'key-raw "\\u001b[27;1:3u"');
+		// Both reads in one write: a >500ms round-trip gap would let the arm expire, so a
+		// released key misread as a press would re-arm instead of confirming — assertion blind.
+		h.write('key-raw "\\u001b[27u"\nkey-raw "\\u001b[27;1:3u"');
+		await h.waitForText('OK:{"consume":true}'); // the press arms
+		await h.waitForText("OK:null"); // the release is ignored
 		assert.equal(exits(await readAppended(h)).length, 0, "a key release is not a second press");
 		await cancelWith(h, "escape");
 		await finishHeldRun(h);
@@ -551,8 +554,11 @@ describe("workflow command E2E — cancellation", () => {
 
 	it("a Kitty auto-repeat does not confirm an armed cancel", () => withWorkflowChild(async (h) => {
 		await startHeldRun(h, SHELLS, '{"count":1}');
-		await sendOk(h, 'key-raw "\\u001b[27u"');
-		await sendOk(h, 'key-raw "\\u001b[27;1:2u"');
+		// Both reads in one write: a >500ms round-trip gap would let the arm expire, so an
+		// auto-repeat misread as a press would re-arm instead of confirming — assertion blind.
+		h.write('key-raw "\\u001b[27u"\nkey-raw "\\u001b[27;1:2u"');
+		await h.waitForText('OK:{"consume":true}'); // the press arms
+		await h.waitForText("OK:null"); // the auto-repeat is ignored
 		assert.equal(exits(await readAppended(h)).length, 0, "an auto-repeat is not a second press");
 		await cancelWith(h, "escape");
 		await finishHeldRun(h);
@@ -569,8 +575,11 @@ describe("workflow command E2E — cancellation", () => {
 
 	it("a Kitty Ctrl+C release does not confirm an armed cancel", () => withWorkflowChild(async (h) => {
 		await startHeldRun(h, SHELLS, '{"count":1}');
-		await sendOk(h, 'key-raw "\\u001b[99;5u"');
-		await sendOk(h, 'key-raw "\\u001b[99;5:3u"');
+		// Both reads in one write: a >500ms round-trip gap would let the arm expire, so a
+		// Ctrl+C release misread as a press would re-arm instead of confirming — assertion blind.
+		h.write('key-raw "\\u001b[99;5u"\nkey-raw "\\u001b[99;5:3u"');
+		await h.waitForText('OK:{"consume":true}'); // the press arms
+		await h.waitForText("OK:null"); // the release is ignored
 		assert.equal(exits(await readAppended(h)).length, 0, "a Ctrl+C release is not a second press");
 		await cancelWith(h, "ctrl+c");
 		await finishHeldRun(h);

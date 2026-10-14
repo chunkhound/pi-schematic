@@ -6,6 +6,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { ProcessHarness } from "./pty-harness.js";
+import { CANCEL_CONFIRM_MS } from "../../workflow/command.js";
 import {
 	type AppendedEntry,
 	readAppended,
@@ -37,14 +38,25 @@ async function finishHeldRun(h: ProcessHarness): Promise<void> {
 describe("workflow.new cancellation carry", () => {
 	it("an armed press never confirms across workflow.new; a fresh pair still cancels", () => withWorkflowChild(async (h) => {
 		await startHeldRun(h);
-		// Send the arm with the release/hold burst in one write: a >500ms round-trip gap before
-		// the post-switch probe would let the arm expire, making the carry assertion blind. The
-		// burst re-arms the gate so the post-rebind shell parks (release-exec clears the gate;
-		// the fresh hold-exec outlives it).
+		// The burst arms the funnel, clears the pre-shell gate, and re-arms it so the
+		// post-rebind shell parks (release-exec clears the gate; the fresh hold-exec outlives it).
+		const armAt = Date.now();
 		h.write("key escape\nrelease-exec\nhold-exec");
-		await h.waitForText('OK:{"consume":true}'); // the pre-switch arm
+		await h.waitForText('OK:{"consume":true}'); // child acks the pre-switch arm
+		const armAckAt = Date.now(); // child's observed arm-eval time: the ack is written only after confirmCancel reads Date.now()
 		await h.waitForText("EXEC-HELD");
-		await sendOk(h, "key escape"); // a single fresh press after the switch
+		const pressAt = Date.now();
+		// Keep the parent write-clock check as a fast-fail: bail before the press if the arm is already stale here.
+		assert.ok(pressAt - armAt < CANCEL_CONFIRM_MS, `parent write interval exceeds the ${CANCEL_CONFIRM_MS}ms window (gap ${pressAt - armAt}ms)`);
+		h.write("key escape"); // a single fresh press after the switch
+		await h.waitForText('OK:{"consume":true}'); // child acks the press (re-arm, not confirm)
+		const pressAckAt = Date.now(); // child's observed press-eval time
+		// Why ack-aligned: the parent write interval can pass while a slow IPC round-trip after the
+		// second write lets the child's arm expire (false green). The child echoes each key only after
+		// confirmCancel reads Date.now(), so the ack gap is the child's own arm->press interval. A
+		// stale arm would re-arm whether or not workflow.new carried it, so assert the child-side
+		// precondition and fail loud instead of passing blind.
+		assert.ok(pressAckAt - armAckAt < CANCEL_CONFIRM_MS, `the child's arm expired before the press was evaluated (gap ${pressAckAt - armAckAt}ms)`);
 		const events = await readUiEvents(h);
 		// Two "Escape again" warnings: the pre-switch arm plus the fresh post-switch press.
 		// A carried arm would confirm silently on the fresh press (only one warning).
