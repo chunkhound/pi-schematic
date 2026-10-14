@@ -336,10 +336,28 @@ test("a host error notice names a transcript record that could not be persisted"
 	assert.equal(notices[0], "workflow progress failed: ui down");
 });
 
-// WHY: docs/workflows.md states the handle count in prose; the contract table must stay in
-// lockstep so a new handle cannot silently stale the docs number.
-test("the handle count stated in docs/workflows.md stays in sync", () => {
-	assert.equal(HANDLE_CONTRACT.length, 15, "docs/workflows.md states 15 handles; update both together");
+// WHY: docs/workflows.md states the handle count and partitions the surface into guarded,
+// inspector, and terminal categories; the contract table must stay in lockstep so a new
+// handle cannot silently stale the docs or land in the wrong category.
+test("the handle count and partition stated in docs/workflows.md stay in sync", () => {
+	const doc = readFileSync(new URL("../../docs/workflows.md", import.meta.url), "utf8");
+	assert.match(doc, /The surface is 15 handles/, "docs/workflows.md states the handle count; update both together");
+	const names = (line: string) => [...line.matchAll(/`([A-Za-z]+)`/g)].map((match) => match[1]).sort();
+	const bullet = (label: string): string[] => {
+		const match = doc.match(new RegExp(`^- \\*\\*${label}:\\*\\* ?(.+)$`, "m"));
+		assert.ok(match, `docs/workflows.md lost the ${label} bullet`);
+		return names(match[1]);
+	};
+	const terminalMatch = doc.match(/^- `([A-Za-z]+)` and `([A-Za-z]+)` stay reachable too;/m);
+	assert.ok(terminalMatch, "docs/workflows.md lost the terminal-handle bullet");
+	const terminal = [terminalMatch[1], terminalMatch[2]].sort();
+	const contractGuarded = HANDLE_CONTRACT.filter((row) => row.guarded).map((row) => row.name).sort();
+	const contractUnguarded = HANDLE_CONTRACT.filter((row) => !row.guarded).map((row) => row.name).sort();
+	const guarded = bullet("Guarded");
+	const inspectors = bullet("Inspectors");
+	assert.deepEqual(guarded, contractGuarded, "the docs Guarded list must match the guarded handles");
+	assert.deepEqual(inspectors, contractUnguarded.filter((name) => !terminal.includes(name)), "the docs Inspectors list must match the non-terminal unguarded handles");
+	assert.deepEqual([...guarded, ...inspectors, ...terminal].sort(), HANDLE_CONTRACT.map((row) => row.name).sort(), "the docs partition must cover every handle exactly once");
 });
 
 // WHY: notebookWrite returns null, so the clipping notice must ride the buffered preview;

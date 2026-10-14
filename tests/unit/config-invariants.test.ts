@@ -15,6 +15,7 @@ import { CANCEL_CONFIRM_MS } from "../../workflow/command.js";
 import { MAX_DEFERRED_EFFECTS, MAX_EFFECTS } from "../../workflow/host.js";
 import { HANDOFF_COMPACTION_TIMEOUT_MS } from "../../workflow/rebind.js";
 import { HARD_DEADLINE_FACTOR, MAX_TIMEOUT_MS } from "../../workflow/sandbox.js";
+import { TIME_PRESET_MS, TIME_PRESETS } from "../../workflow/limits-dialog.js";
 import { MAX_EFFECT_ROWS, MAX_MODELS_COLLAPSED } from "../../workflow/summary-renderer.js";
 import { STRUCTURED_OUTPUT_TOOL } from "../../workflow/output.js";
 import { RESERVED_REASONS } from "../../workflow/types.js";
@@ -260,6 +261,13 @@ test("workflow engine constants stay pinned to the code and the docs name them",
 	// The handoff deadline is per wait, not one shared budget (workflow/rebind.ts).
 	assert.match(workflowsDoc, /each handoff wait carries its own full 15-minute deadline/i);
 	assert.doesNotMatch(workflowsDoc, /one absolute 15-minute deadline/i);
+	// The dialog duration presets are stated once in the docs; pin the prose to the code so a
+	// preset change forces a docs edit (TIME_PRESET_MS keys are the labels with a duration).
+	const timePresetSentence = workflowsDoc.match(/the time presets are ([^;]+);/i);
+	assert.ok(timePresetSentence, "docs/workflows.md lost the time-preset sentence");
+	const documentedPresets = [...timePresetSentence[1].matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+	assert.deepEqual(documentedPresets, Object.keys(TIME_PRESET_MS));
+	assert.ok(documentedPresets.every((label) => TIME_PRESETS.includes(label)), "every documented time preset must be a real UI preset");
 });
 
 test("the /workflow completion list is capped at the engine suggestion limit", async () => {
