@@ -11,6 +11,7 @@ import {
 	registerSpawnTool,
 } from "../../spawn/index.js";
 import { createTestHost } from "./test-host.js";
+import { createRenderContext, stripAnsi, theme } from "./helpers.js";
 
 const usage = (total: number): Usage => ({
 	input: 1,
@@ -83,7 +84,7 @@ test("partial event usage merges with the backfill record instead of dropping it
 	const pi = await createTestHost((api) => registerSpawnTool(api, state, undefined as never), {
 		activeTools: ["read", "bash", "spawn"],
 	});
-	recordChildUsage(childUsageByCall(), "spawn-merge", { usage: usage(0.25), provider: null, model: "child-model" });
+	recordChildUsage(childUsageByCall(), "spawn-merge", { usage: usage(0.25), model: "child-model", thinking: "medium", route: { status: "inherited" } });
 	const [onToolResult] = pi.handlers.get("tool_result")!;
 	const partial: Usage = { ...usage(0.1), input: 5, output: 6, totalTokens: 11 };
 	const patch = await onToolResult({
@@ -106,7 +107,7 @@ test("partial event usage merges with the backfill record instead of dropping it
 test("the backfill map evicts oldest entries at the cap", () => {
 	const map = childUsageByCall();
 	let lastEvicted: string | null = null;
-	for (let i = 0; i < MAX_CHILD_USAGE_ENTRIES + 5; i++) lastEvicted = recordChildUsage(map, `call-${i}`, { usage: usage(i), provider: null, model: "child-model" }) ?? lastEvicted;
+	for (let i = 0; i < MAX_CHILD_USAGE_ENTRIES + 5; i++) lastEvicted = recordChildUsage(map, `call-${i}`, { usage: usage(i), model: "child-model", thinking: "medium", route: { status: "inherited" } }) ?? lastEvicted;
 	assert.equal(map.size, MAX_CHILD_USAGE_ENTRIES, "the map stays bounded");
 	assert.equal(map.get("call-0"), undefined, "the oldest entries are evicted first");
 	assert.equal(map.get("call-4"), undefined, "every entry past the cap is evicted");
@@ -115,14 +116,14 @@ test("the backfill map evicts oldest entries at the cap", () => {
 
 test("recordChildUsage returns the evicted key so callers can report the loss", () => {
 	const map = new Map();
-	for (let i = 0; i < MAX_CHILD_USAGE_ENTRIES; i++) assert.equal(recordChildUsage(map, `k-${i}`, { usage: usage(i), provider: null, model: "m" }), null);
-	assert.equal(recordChildUsage(map, "k-new", { usage: usage(99), provider: null, model: "m" }), "k-0");
-	assert.equal(recordChildUsage(map, "k-new", { usage: usage(100), provider: null, model: "m" }), null, "an update evicts nothing");
+	for (let i = 0; i < MAX_CHILD_USAGE_ENTRIES; i++) assert.equal(recordChildUsage(map, `k-${i}`, { usage: usage(i), model: "m", thinking: "medium", route: { status: "inherited" } }), null);
+	assert.equal(recordChildUsage(map, "k-new", { usage: usage(99), model: "m", thinking: "medium", route: { status: "inherited" } }), "k-0");
+	assert.equal(recordChildUsage(map, "k-new", { usage: usage(100), model: "m", thinking: "medium", route: { status: "inherited" } }), null, "an update evicts nothing");
 });
 
 test("session reset clears pending backfill entries", () => {
 	const map = childUsageByCall();
-	const record = { usage: usage(1), provider: null, model: "child-model" };
+	const record = { usage: usage(1), model: "child-model", thinking: "medium" as const, route: { status: "inherited" as const } };
 	recordChildUsage(map, "stale-1", record);
 	recordChildUsage(map, "stale-2", record);
 	abortAndClearChildSessions(createState());
@@ -130,7 +131,7 @@ test("session reset clears pending backfill entries", () => {
 });
 
 test("resetState clears pending backfill entries", () => {
-	recordChildUsage(childUsageByCall(), "stale-reset", { usage: usage(1), provider: null, model: "child-model" });
+	recordChildUsage(childUsageByCall(), "stale-reset", { usage: usage(1), model: "child-model", thinking: "medium", route: { status: "inherited" } });
 	resetState(createState());
 	assert.equal(childUsageByCall().size, 0, "a fresh session starts with an empty backfill map");
 });
@@ -218,16 +219,86 @@ test("an inherited child's backfilled error details carry provider/modelId and o
 		{ model: { provider: "openai", id: "parent-model" }, cwd: "/tmp" },
 	));
 	assert.equal(
-		childUsageByCall().get("spawn-inherited")?.provider,
+		childUsageByCall().get("spawn-inherited")?.route.provider,
 		"openai",
 		"the inherited route's provider reaches the backfill record",
 	);
 
 	const [onToolResult] = pi.handlers.get("tool_result")!;
 	const patch = await onToolResult({ type: "tool_result", toolName: "spawn", toolCallId: "spawn-inherited", input: {}, content: [], isError: true });
-	assert.deepEqual(patch.details.route, { provider: "openai", modelId: "parent-model" }, "the backfilled route carries both identity fields");
+	assert.deepEqual(patch.details.route, { status: "inherited", provider: "openai", modelId: "parent-model" }, "the backfilled route carries both identity fields");
 	const spend = usageByModel([toolResultEntry("tr-inherited-err", "spawn-inherited", patch.usage, patch.details)]);
 	assert.deepEqual([...spend.keys()], ["openai/parent-model"], "one provider/model row, no bare-model split");
+});
+
+// WHY: the renderer re-validates the persisted details, so a routed error backfill must keep
+// `status` (and a valid `thinking`) to render its routed line instead of falling back to the
+// bare model line. This drives the real failing execution so the hook's unmodified output is
+// what gets rendered — no manual detail augmentation.
+test("a routed child's backfilled error route renders the routed identity line", async () => {
+	const state = createState();
+	state.modelGroups.groups = [{
+		name: "review",
+		scope: "project",
+		sourcePath: "<project>",
+		models: [{ provider: "openai", modelId: "gpt-routed", thinkingLevel: "low" }],
+		validation: { unavailableRefs: [], shadowedByProject: false, degraded: false },
+	} as any];
+	const routedModel = { provider: "openai", id: "gpt-routed", reasoning: true };
+	const parentRegistry = {
+		find: (provider: string, modelId: string) => provider === "openai" && modelId === "gpt-routed" ? routedModel : undefined,
+		hasConfiguredAuth: (model: any) => model === routedModel,
+	};
+	const factory = async () => ({
+		session: {
+			messages: [] as unknown[],
+			prompt: async () => { throw new Error("prompt failed"); },
+			abort: async () => {},
+			dispose: () => {},
+			getSessionStats: () => ({
+				tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2 },
+				cost: 0.1,
+				assistantMessages: 1,
+			}),
+		},
+		extensionsResult: undefined as never,
+	});
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, factory as never), {
+		activeTools: ["read", "bash", "spawn"],
+	});
+
+	await assert.rejects(() => pi.tools.get("spawn").execute(
+		"spawn-routed",
+		{ prompt: "Do the task", group: "review" },
+		undefined,
+		undefined,
+		{ model: { provider: "openai", id: "parent-model" }, cwd: "/tmp", modelRegistry: parentRegistry },
+	));
+
+	const [onToolResult] = pi.handlers.get("tool_result")!;
+	const patch = await onToolResult({
+		type: "tool_result",
+		toolName: "spawn",
+		toolCallId: "spawn-routed",
+		input: {},
+		content: [],
+		isError: true,
+	});
+	assert.deepEqual(patch.details.route, { status: "routed", group: "review", provider: "openai", modelId: "gpt-routed" });
+
+	const rendered = pi.tools.get("spawn").renderResult(
+		{
+			content: [{ type: "text", text: "prompt failed" }],
+			details: patch.details,
+		},
+		{ expanded: false },
+		theme,
+		createRenderContext({ toolCallId: "spawn-routed", isError: true }),
+	) as any;
+	assert.ok(
+		rendered.render(120).some((line: string) => stripAnsi(line).includes("review → openai/gpt-routed • low")),
+		"the backfilled route drives the routed identity line",
+	);
 });
 
 // WHY: the live success path persists its route details; an inherited route that omits the

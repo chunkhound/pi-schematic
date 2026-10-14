@@ -58,6 +58,7 @@ import {
 	SPAWN_NOTICE_ENTRY_TYPE,
 	type SpawnOutcome,
 	type SpawnResultDetails,
+	type SpawnRouteDetails,
 	type ThinkingValue,
 } from "./shared.js";
 
@@ -452,7 +453,7 @@ export function executeSpawn(
 		});
 		const childModel = route.model;
 		const requestedChildThinking: ThinkingValue = route.thinking;
-		const routeDetails: SpawnResultDetails["route"] = route.status === "routed"
+		const routeDetails: SpawnRouteDetails = route.status === "routed"
 			? {
 					status: "routed",
 					group: route.groupName ?? route.requestedGroup ?? params.group?.trim() ?? "",
@@ -696,7 +697,7 @@ export function executeSpawn(
 			// Child identity rides with the usage so the hook can attribute the row to
 			// the child model; a bare usage would surface as "unattributed" spend.
 			if (usage) {
-				const evicted = recordChildUsage(childUsageByCall(), toolCallId, { usage, provider: childProvider, model: childModel.id });
+				const evicted = recordChildUsage(childUsageByCall(), toolCallId, { usage, model: childModel.id, thinking: effectiveChildThinking(), route: routeDetails });
 				// Advisory only: fan-out past MAX_CHILD_USAGE_ENTRIES drops the oldest
 				// error-path record. Never breaks spawn teardown.
 				if (evicted !== null) {
@@ -761,7 +762,7 @@ export function registerSpawnTool(
 		const record = childUsageByCall().get(event.toolCallId);
 		childUsageByCall().delete(event.toolCallId);
 		if (!record) return undefined;
-		const details = { model: record.model, route: record.provider ? { provider: record.provider, modelId: record.model } : undefined };
+		const details = { model: record.model, thinking: record.thinking, route: record.route };
 		if (!event.usage) return { usage: record.usage, details };
 		return { usage: addUsage(record.usage, event.usage), details };
 	});

@@ -34,8 +34,9 @@ test("child usage: a map written by one lookup is read at another", () => {
 			totalTokens: 5,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		} as Usage,
-		provider: null,
 		model: "mock-model",
+		thinking: "medium" as const,
+		route: { status: "inherited" as const },
 	};
 	writer.set("call-registry", record);
 	assert.equal(reader.get("call-registry"), record, "write by one lookup visible at another");

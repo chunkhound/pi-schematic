@@ -56,8 +56,10 @@ export function getLastAssistantText(messages: AssistantMessageLike[]): string {
 	return "";
 }
 
-/** One error-path backfill record: the usage plus the child identity for spend attribution. */
-export type ChildUsageRecord = { usage: Usage; provider: string | null; model: string };
+/** One error-path backfill record: the usage plus the child identity for spend attribution.
+ * `route` carries the full union member (status included) so the backfilled result renders
+ * and attributes exactly like the success path; `provider` stays as the sink's child identity. */
+export type ChildUsageRecord = { usage: Usage; model: string; thinking: ThinkingValue; route: SpawnRouteDetails };
 
 // Child usage keyed by tool-call id. Success results carry usage directly; Pi
 // builds error results itself, so the tool_result hook backfills from here.
