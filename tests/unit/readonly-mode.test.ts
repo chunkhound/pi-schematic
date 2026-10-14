@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import { registerReadonlyPI, makeReadonlyUICtx } from "./helpers.js";
+import { createBeforeAgentStartEvent } from "./test-host.js";
 
 test("readonly toggle on blocks write, edit, handoff, and bash mutations", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
@@ -46,10 +47,7 @@ test("readonly toggle is a no-op in headless mode", async () => {
 		hasUI: false,
 		getContextUsage: () => null,
 	} as any);
-	await beforeStartHandler({
-		systemPrompt: "",
-		systemPromptOptions: { skills: [] },
-	}, {
+	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), {
 		hasUI: false,
 		cwd: process.cwd(),
 		isProjectTrusted: () => false,

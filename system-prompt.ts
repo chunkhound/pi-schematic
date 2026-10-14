@@ -1,11 +1,12 @@
 /**
- * Context management system prompt primer.
- *
- * Injected via before_agent_start into the system prompt.
- * Teaches the LLM about spawn, notebook, and handoff primitives.
+ * Static context-management primer and the per-run date anchor, contributed as
+ * the `schematic` and `schematic_date` prompt sections (see prompt-sections.ts).
  */
 
-export const CONTEXT_PRIMER = `
+import type { PromptSection } from "./prompt-sections.js";
+import { formatCurrentDatePrompt } from "./time/format.js";
+
+const CONTEXT_PRIMER = `
 ## Context management
 
 One context, one topic. When the ask no longer matches the topic, call the handoff tool.
@@ -95,3 +96,12 @@ re-deriving what you already learned.
 - Before handoff, list notebook pages to identify the relevant pages, then read relevant pages to verify all important findings are persisted
 - While calling handoff, discard pages holding only recoverable code facts; keep user guidance, decisions, design, and task scope
 `.trim();
+
+export function contextPrimerSection(): PromptSection {
+	return { name: "schematic", render: () => CONTEXT_PRIMER };
+}
+
+/** Date anchor, rendered once per user prompt; placement and update semantics: docs/architecture.md "Date anchor". */
+export function currentDateSection(): PromptSection {
+	return { name: "schematic_date", render: () => formatCurrentDatePrompt(new Date()) };
+}

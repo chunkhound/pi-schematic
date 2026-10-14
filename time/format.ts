@@ -1,11 +1,12 @@
 /**
  * Date anchor — the single source of truth for the ambient temporal
- * fact injected into the system prompt. Full design rationale lives in
+ * fact in the `schematic_date` prompt section. Full design rationale lives in
  * docs/architecture.md ("Date anchor"); this header carries only the code-level
  * WHY notes that orient a reader of this file.
  *
  * WHY date-only (no clock): a full timestamp in the prompt invites wall-clock
- * hallucination and churns the cached prefix every request. The model needs to
+ * hallucination and would change the section on every prompt, so Pi would append
+ * a section-update message each time. The model needs to
  * know which day it is to resolve relative references.
  *
  * WHY ISO 8601 + weekday + IANA zone: ISO is unambiguous and parseable; the
