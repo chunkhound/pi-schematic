@@ -5,6 +5,7 @@ import { productionConstraintRegistry, type ConstraintRegistry } from "./constra
 import { resolveConstraintMembers } from "./constraints/resolution.js";
 import type { AnyConstraintDescriptor, ConstraintViolation } from "./constraints/types.js";
 import { type ModelGroupModality, type ResolvedModelGroup } from "./types.js";
+import { isUsableModel } from "./availability.js";
 
 export type SpawnRouteStatus = "inherited" | "routed" | "unknown-fallback";
 export interface SpawnModelRoute {
@@ -121,7 +122,7 @@ function usableMembers(group: ResolvedModelGroup, modelRegistry: SpawnRouteOptio
 	return group.models
 		.map((entry) => {
 			const model = modelRegistry.find(entry.provider, entry.modelId) as Model<Api> | undefined;
-			return model && modelRegistry.hasConfiguredAuth(model) ? { entry, model } : undefined;
+			return isUsableModel(modelRegistry, model) ? { entry, model } : undefined;
 		})
 		.filter((entry): entry is RoutedMember => Boolean(entry));
 }

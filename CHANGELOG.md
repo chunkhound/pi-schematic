@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Date anchor** — `before_agent_start` injects a `## Current date` block (ISO date, weekday, IANA zone, UTC offset, plus a resolve-relative-references directive) into the system prompt. It is rebuilt once per run and is byte-stable within a calendar day, so while the host zone stays fixed it changes the system prompt at most once per day; on a DST transition day the offset adds one more change. A zone Intl cannot render falls back to `UTC` rather than throwing.
+- **Date anchor** — the `schematic_date` prompt section holds a `## Current date` block (ISO date, weekday, IANA zone, UTC offset, plus a resolve-relative-references directive). `before_agent_start` renders it once per user prompt, and it is byte-stable within a calendar day, so while the host zone stays fixed it changes at most once per day; on a DST transition day the offset adds one more change. When it changes, Pi appends a section-update message and the leading system message stays unchanged. A zone Intl cannot render falls back to `UTC` rather than throwing.
+- **Notebook pages open in a pager** — Enter in the interactive `/notebook` picker opens the selected page in `$PI_PAGER`, else `$PAGER`, else `less` if installed (not on Windows); with no pager or a `cat` or `more` pager it shows the inline preview instead. Quitting either returns to the list on the same page. See [Compatibility and limits](README.md#compatibility-and-limits).
 
 ### Changed
 
@@ -35,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **False-block and messaging fixes** — `((…))` arithmetic, `/dev/stdout|stderr|tty|fd/N` targets, `unzip -p`/`-c` reads, and `tar --directory` handling; Git block reasons name the offending option; `mktemp` honors ambient `TMPDIR` (bare form and value-less `--tmpdir`/`-t`) and positional templates; glob expansion capped (issue #41); `os-sandbox.ts` excluded from the coverage gate owned by the `sandbox-enforcement` lane; dead types and stale Known-L2 entries removed.
 - **Split-string and `--` operand handling closed** — `env -S` appends the trailing argv to the wrapped command instead of dropping it, and options stop parsing at `--` for `env` and file-mutation commands, so `env -S"touch" -- -r /etc/hosts /tmp/x` no longer reads a write operand as an option value. Archive bundle forms that attribute `-f`'s value ambiguously (`tar -czf/etc/x`) fail closed; old-style `tar fc x.tar dir` is parsed by obsolescent rules.
 - **Archiver and `sed -i` write targets closed** — `tar -f` creation targets and `tar`/`unzip` extraction into the current directory are classified like any other write (cwd tracking only covers writes reached through a tracked `cd`), so `tar -cf /outside/x.tar .` and `unzip a.zip` from an outside cwd block; `tar -t` stays a read. A dot-less first operand after bare `sed -i` is read as a GNU script rather than a dropped backup suffix, so `sed -i 5d /etc/hosts` blocks; a BSD-style plain suffix (`sed -i bak s/a/b/ f`) over-blocks as the safe direction.
+
+- **Sections from other extensions reach the model** — schematic now adds its prompt content as named Pi prompt sections instead of replacing the system prompt, so sections written by extensions that run after it are no longer dropped (#45). A topic, Model Groups, or notebook change no longer re-sends the context-management primer.
+- **Empty notebook pages** — selecting a page with an empty body in `/notebook` now opens it like any other page instead of closing the picker.
+- **Discarded notebook pages** — selecting a page removed by a handoff discard while the `/notebook` list was open now reopens the refreshed list instead of closing the picker.
+- **Model edit opens on the current thinking level** — opening a model in the Model Groups TUI now puts the cursor on the model's configured thinking level and marks it `✓ current`, instead of always landing on `inherit`, where Enter silently reset the value. A configured level the model no longer supports (or whose model is not in the registry) is still shown as `⚠ current, unavailable` and preserved unless another option is deliberately chosen (#29).
 
 ### Known limitations
 

@@ -5,7 +5,7 @@ import path from "node:path";
 import { escapeDisplayLabel } from "../../model-groups/display.js";
 import { __setModelGroupsFsForTests, modelGroupsPath } from "../../model-groups/store.js";
 import { theme } from "./helpers.js";
-import { createTestHost } from "./test-host.js";
+import { createBeforeAgentStartEvent, createTestHost } from "./test-host.js";
 import { withTemp } from "./model-groups-helpers.js";
 
 function registry(available = new Set(["openai:gpt-5"])): any {
@@ -169,49 +169,54 @@ test("index session_start includes backup-failure detail in load issue notificat
 	assert.ok(notifications.some((m) => /corrupt-json/.test(m) && /backup failed.*original file left untouched/.test(m) && m.includes(escapeDisplayLabel(modelGroupsPath("project", cwd)))));
 }));
 
-test("before_agent_start injects fresh names-and-effective-modalities guidance", async () => withTemp(async ({ cwd }) => {
+test("before_agent_start writes fresh names-and-effective-modalities guidance", async () => withTemp(async ({ cwd }) => {
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 1, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }), "utf8");
 	const pi = await createTestHost();
-	const handler = pi.handlers.get("before_agent_start")!.at(-1)!;
-	const result = await handler({ systemPrompt: "Base." }, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
-	assert.match(result.systemPrompt, /## Model Groups for spawn/);
-	assert.match(result.systemPrompt, /Available Model Groups: review \(text, image, reasoning\)/);
-	assert.match(result.systemPrompt, /constraints/);
-	assert.match(result.systemPrompt, /exact group name/);
-	assert.match(result.systemPrompt, /known and confident/);
-	assert.match(result.systemPrompt, /omit group and inherit/);
-	assert.doesNotMatch(result.systemPrompt, /gpt-5/);
-	assert.doesNotMatch(result.systemPrompt, /model-groups\.json/);
+	const handler = pi.handlers.get("before_agent_start")![0];
+	const event = createBeforeAgentStartEvent();
+	await handler(event, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
+	const section = event.systemPromptOptions.sections.schematic_model_groups;
+	assert.match(section, /## Model Groups for spawn/);
+	assert.match(section, /Available Model Groups: review \(text, image, reasoning\)/);
+	assert.match(section, /constraints/);
+	assert.match(section, /exact group name/);
+	assert.match(section, /known and confident/);
+	assert.match(section, /omit group and inherit/);
+	assert.doesNotMatch(section, /gpt-5/);
+	assert.doesNotMatch(section, /model-groups\.json/);
 }));
 
 test("before_agent_start exposes union-effective modalities for automatic mixed groups", async () => withTemp(async ({ cwd }) => {
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { mixed: { models: [{ provider: "openai", modelId: "gpt-5" }, { provider: "google", modelId: "gemini-text" }] } } }), "utf8");
 	const pi = await createTestHost();
-	const handler = pi.handlers.get("before_agent_start")!.at(-1)!;
+	const handler = pi.handlers.get("before_agent_start")![0];
 	const models = [
 		{ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } },
 		{ provider: "google", id: "gemini-text", input: ["text"], reasoning: false },
 	];
 	const reg = { getAll: () => models, getAvailable: () => models, find: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id), hasConfiguredAuth: () => true };
 	// Automatic mixed group: guidance lists the union — image/reasoning present via the capable member.
-	const result = await handler({ systemPrompt: "Base." }, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: reg, getContextUsage: () => null });
-	assert.match(result.systemPrompt, /Available Model Groups: mixed \(text, image, reasoning\)/);
+	const event = createBeforeAgentStartEvent();
+	await handler(event, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: reg, getContextUsage: () => null });
+	assert.match(event.systemPromptOptions.sections.schematic_model_groups, /Available Model Groups: mixed \(text, image, reasoning\)/);
 }));
 
 test("before_agent_start labels empty effective modalities unambiguously", async () => withTemp(async ({ cwd }) => {
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { foo: { models: [] }, "foo (none)": { models: [] } } }), "utf8");
 	const pi = await createTestHost();
-	const handler = pi.handlers.get("before_agent_start")!.at(-1)!;
-	const result = await handler({ systemPrompt: "Base." }, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
-	assert.match(result.systemPrompt, /foo \(no common modalities\)/);
-	assert.match(result.systemPrompt, /foo \(none\) \(no common modalities\)/);
-	assert.doesNotMatch(result.systemPrompt, /foo \(none\),/);
+	const handler = pi.handlers.get("before_agent_start")![0];
+	const event = createBeforeAgentStartEvent();
+	await handler(event, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
+	const section = event.systemPromptOptions.sections.schematic_model_groups;
+	assert.match(section, /foo \(no common modalities\)/);
+	assert.match(section, /foo \(none\) \(no common modalities\)/);
+	assert.doesNotMatch(section, /foo \(none\),/);
 }));
 
-test("before_agent_start reinjects updated effective modalities after registry changes", async () => withTemp(async ({ cwd }) => {
+test("before_agent_start rewrites updated effective modalities after registry changes", async () => withTemp(async ({ cwd }) => {
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }), "utf8");
 	let model = { provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: false, thinkingLevelMap: { xhigh: "x" } };
@@ -222,27 +227,32 @@ test("before_agent_start reinjects updated effective modalities after registry c
 		hasConfiguredAuth: () => true,
 	};
 	const pi = await createTestHost();
-	const handler = pi.handlers.get("before_agent_start")!.at(-1)!;
+	const handler = pi.handlers.get("before_agent_start")![0];
 	const ctx = { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: changingRegistry, getContextUsage: () => null };
-	const initial = await handler({ systemPrompt: "Base." }, ctx);
-	assert.match(initial.systemPrompt, /review \(text, image\)/);
+	const initial = createBeforeAgentStartEvent();
+	await handler(initial, ctx);
+	assert.match(initial.systemPromptOptions.sections.schematic_model_groups, /review \(text, image\)/);
 
 	model = { ...model, input: ["text"], reasoning: true };
-	const refreshed = await handler({ systemPrompt: "Base." }, ctx);
-	assert.match(refreshed.systemPrompt, /review \(text, reasoning\)/);
-	assert.doesNotMatch(refreshed.systemPrompt, /review \(text, image\)/);
+	const refreshed = createBeforeAgentStartEvent();
+	await handler(refreshed, ctx);
+	const refreshedSection = refreshed.systemPromptOptions.sections.schematic_model_groups;
+	assert.match(refreshedSection, /review \(text, reasoning\)/);
+	assert.doesNotMatch(refreshedSection, /review \(text, image\)/);
 }));
 
 test("before_agent_start clears stale Model Groups guidance when registry becomes unavailable", async () => withTemp(async ({ cwd }) => {
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 1, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }), "utf8");
 	const pi = await createTestHost();
-	const handler = pi.handlers.get("before_agent_start")!.at(-1)!;
-	const loaded = await handler({ systemPrompt: "Base." }, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
-	assert.match(loaded.systemPrompt, /Available Model Groups: review/);
+	const handler = pi.handlers.get("before_agent_start")![0];
+	const loaded = createBeforeAgentStartEvent();
+	await handler(loaded, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
+	assert.match(loaded.systemPromptOptions.sections.schematic_model_groups, /Available Model Groups: review/);
 
-	const unavailable = await handler({ systemPrompt: "Base." }, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: undefined, getContextUsage: () => null });
-	assert.doesNotMatch(unavailable.systemPrompt, /## Model Groups for spawn|Available Model Groups: review/);
+	const unavailable = createBeforeAgentStartEvent();
+	await handler(unavailable, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: undefined, getContextUsage: () => null });
+	assert.equal(unavailable.systemPromptOptions.sections.schematic_model_groups, undefined);
 }));
 
 test("session_start registers Model Groups autocomplete provider when UI supports it", async () => withTemp(async ({ cwd }) => {
