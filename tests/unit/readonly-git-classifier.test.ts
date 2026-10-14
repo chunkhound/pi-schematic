@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { TEMP_WRITE_ROOTS_CANONICAL } from "../../temp-dir.js";
 import { classifyBashCommand } from "../../readonly-bash.js";
+import { deriveCloneDirectoryName } from "../../readonly-bash-git.js";
 import { FAIL_CLOSED_HINT } from "../../notifications.js";
 import { capabilityGate, check, fixture, git, hasGit, installGitIsolation, localEnvironment, outside, outsideWritable, outsideWritesRequired, posixHost, quote, repository } from "./readonly-git-helpers.js";
 import { shellPath } from "./helpers.js";
@@ -15,6 +16,22 @@ import { shellPath } from "./helpers.js";
 // differentials, literal POSIX temp paths, symlinks, or shebang execution. Those live in
 // readonly-git-regressions.test.ts behind a POSIX gate, so this suite stays runnable on
 // every host with git installed.
+// CONTRACT: the derived clone name mirrors git's `git_url_basename`. The platform is a
+// parameter, so the Windows rules run on a POSIX host instead of only on Windows CI.
+test("clone default name strips C whitespace and splits on platform separators", () => {
+	// C isspace (space, \t\n\v\f\r) is stripped before the `/.git` tail test on every platform.
+	assert.equal(deriveCloneDirectoryName("/x/repo.git ", false, false, "win32"), "repo");
+	assert.equal(deriveCloneDirectoryName("/x/repo.git ", false, false, "darwin"), "repo");
+	assert.equal(deriveCloneDirectoryName("/x/src.git\t", false, false, "win32"), "src");
+	// is_dir_sep: Windows splits on `\`; POSIX keeps it literal in the file name.
+	assert.equal(deriveCloneDirectoryName("remote\\x.git", false, false, "darwin"), "remote\\x");
+	assert.equal(deriveCloneDirectoryName("remote\\x.git", false, false, "win32"), "x");
+	// Bare appends `.git`; the `.bundle` suffix strip follows the bundle probe result.
+	assert.equal(deriveCloneDirectoryName("/x/remote", false, true, "win32"), "remote.git");
+	assert.equal(deriveCloneDirectoryName("/x/a.bundle", true, false, "darwin"), "a");
+	assert.equal(deriveCloneDirectoryName("/x/a.git", false, false, "darwin"), "a");
+});
+
 if (!hasGit()) capabilityGate("readonly git classifier requires git", "git unavailable");
 else {
 	installGitIsolation();

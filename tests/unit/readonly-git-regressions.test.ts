@@ -15,6 +15,14 @@ function shell(command: string, cwd: string): string {
 	return execFileSync("bash", ["--noprofile", "--norc", "-c", command], { cwd, encoding: "utf8", timeout: 30000, stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
+/** An empty dir under a home-anchored fixture: git's destination must look cloneable-into
+ * (the fixture root itself carries the sweep marker, so the direct premise clones need this). */
+function emptyEscapeDir(t: test.TestContext): string {
+	const dir = path.join(fixture(t, os.homedir()), "escape");
+	mkdirSync(dir);
+	return dir;
+}
+
 // Every regression below takes gitSuiteOptions, so each stays individually visible and
 // skippable. Only the fail-loud guard runs unconditionally: a silent skip of the whole
 // suite must fail CI, never report green. It mirrors the old POSIX condition: Windows
@@ -597,3 +605,325 @@ test("Git submodule update and recursive checkout check .gitmodules paths", gitS
 	mkdirSync(modules);
 	check("git submodule update --init", repo, false);
 });
+test("Git clone default destination follows a symlink outside temp", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	const remote = path.join(root, "remote.git");
+	git(root, "init", "--quiet", "--bare", remote);
+	const outsideDir = emptyEscapeDir(t);
+	// Premise: git really writes the derived name — a direct clone lands in the linked
+	// directory, so the block verdicts below guard a real escape, not a guard-internal guess.
+	symlinkSync(outsideDir, path.join(cwd, "remote"));
+	git(cwd, "clone", remote);
+	assert.ok(existsSync(path.join(outsideDir, ".git", "HEAD")), "git must write through the symlink");
+	// Premise for the bare variant: git appends `.git` to the derived name.
+	const bareOutside = emptyEscapeDir(t);
+	symlinkSync(bareOutside, path.join(cwd, "remote.git"));
+	git(cwd, "clone", "--bare", remote);
+	assert.ok(existsSync(path.join(bareOutside, "HEAD")), "bare git must append .git and write through the symlink");
+	// A plain clone derives `remote`; `--bare`/`--mirror` append `.git`. A value-flag value that
+	// looks like `--bare` (`git clone -o --bare`) is NOT the flag, so the name stays bare. A
+	// symlink at that exact derived name redirects git's write outside temp, so the guard must
+	// resolve and block it. Every candidate link is cleared per case: a stale link must never
+	// block for the wrong name.
+	for (const [flags, derived] of [["", "remote"], ["--bare", "remote.git"], ["--mirror", "remote.git"], ["-o --bare", "remote"]]) {
+		for (const name of ["remote", "remote.git"]) rmSync(path.join(cwd, name), { force: true });
+		symlinkSync(outsideDir, path.join(cwd, derived!));
+		check(`git clone ${flags ? `${flags} ` : ""}${shellPath(remote)}`, cwd, false);
+	}
+});
+
+test("Git clone strips trailing spaces from the source operand", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	const remote = path.join(root, "repo.git ");
+	git(root, "init", "--quiet", "--bare", remote);
+	const outsideDir = emptyEscapeDir(t);
+	// Git derives `repo` (space stripped, `.git` stripped). A symlink at `<cwd>/repo` redirects
+	// the write outside temp, so the guard must derive the same name git writes and block it.
+	symlinkSync(outsideDir, path.join(cwd, "repo"));
+	// Premise: a direct clone proves git really writes the stripped name through the symlink.
+	git(cwd, "clone", remote);
+	assert.ok(existsSync(path.join(outsideDir, ".git", "HEAD")), "git must write through the symlink");
+	check(`git clone ${quote(shellPath(remote))}`, cwd, false);
+});
+
+test("Git clone finds a repository through the appended .git/.git suffix", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	// git's get_repo_path_1 APPENDS each probe suffix to the source, so `dir/a.git` probes
+	// `dir/a.git.git/.git`. The source is a plain file, so only that appended probe anchors a
+	// repository; git keeps is_bundle=0 and derives the `.git`-stripped name `a`. Checking the
+	// wrong probe (`dir/a.git/.git`) mis-reads the source as a bundle and checks `a.git` instead.
+	mkdirSync(path.join(root, "dir"));
+	writeFileSync(path.join(root, "dir", "a.git"), "not a gitfile\n");
+	git(root, "init", "--quiet", path.join(root, "dir", "a.git.git"));
+	const outsideDir = emptyEscapeDir(t);
+	// Premise: a direct clone proves git derives `a` and writes it through the symlink.
+	const probe = path.join(root, "probe");
+	mkdirSync(probe);
+	symlinkSync(outsideDir, path.join(probe, "a"));
+	git(probe, "clone", path.join(root, "dir", "a.git"));
+	assert.ok(existsSync(path.join(outsideDir, ".git", "HEAD")), "git must derive `a` and write through the symlink");
+	assert.equal(existsSync(path.join(probe, "a.git")), false, "git must not derive `a.git`");
+	symlinkSync(outsideDir, path.join(cwd, "a"));
+	check(`git clone ${quote(shellPath(path.join(root, "dir", "a.git")))}`, cwd, false);
+});
+
+test("Git clone default destination inside temp stays allowed", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	const remote = path.join(root, "remote.git");
+	git(root, "init", "--quiet", "--bare", remote);
+	for (const flags of ["", "--bare", "--mirror"]) check(`git clone ${flags ? `${flags} ` : ""}${shellPath(remote)}`, cwd, true);
+	// A source whose name git's own stripping cannot prove must fail closed.
+	check("git clone", cwd, false);
+	check("git clone /", cwd, false);
+	check("git clone https://example.invalid/repo.git?ref=main", cwd, false);
+	check("git clone https://example.invalid/repo.git#frag", cwd, false);
+});
+
+test("Git clone derived name keeps a POSIX backslash literal", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	// POSIX keeps `\` literal in filenames: git derives `remote\x`, not `x`. A symlink at the
+	// real derived name must be found — splitting on `\` would check `<cwd>/x` and miss it.
+	const source = path.join(root, "remote\\x.git");
+	git(root, "init", "--quiet", "--bare", source);
+	const outsideDir = emptyEscapeDir(t);
+	symlinkSync(outsideDir, path.join(cwd, "remote\\x"));
+	// Premise: a direct clone proves git really writes the backslash name through the symlink.
+	git(cwd, "clone", source);
+	assert.ok(existsSync(path.join(outsideDir, ".git", "HEAD")), "git must write through the symlink");
+	check(`git clone ${quote(shellPath(source))}`, cwd, false);
+});
+
+test("Git clone strips only separators after a `/.git` tail", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	// A source whose pre-strip tail ends in whitespace: git removes the trailing `/.git` and
+	// then strips separators only, so the whitespace survives into the component and blocks
+	// the `.git` suffix strip. git derives `b.git`, not `b` (reusing the whitespace-stripping
+	// first rule here would derive `b` and check a path git never writes).
+	const repo = path.join(root, "b.git ");
+	mkdirSync(repo);
+	git(repo, "init", "--quiet");
+	const outsideDir = emptyEscapeDir(t);
+	symlinkSync(outsideDir, path.join(cwd, "b.git"));
+	// Premise: a direct clone proves git derives the whitespace-then-`.git` name through the link.
+	git(cwd, "clone", path.join(repo, ".git"));
+	assert.ok(existsSync(path.join(outsideDir, ".git", "HEAD")), "git must derive `b.git` through the symlink");
+	check(`git clone ${quote(shellPath(path.join(repo, ".git")))}`, cwd, false);
+});
+
+test("Git clone skips the scheme, auth, and port when deriving the name", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	const outsideDir = emptyEscapeDir(t);
+	// A symlink at the DERIVED name is the premise: a wrong derivation misses the link and
+	// allows the command. Remote URLs cannot be cloned, so the assertion itself proves the name.
+	for (const [source, derived] of [["https://host:8080/", "host"], ["https://user:pw@host/", "host"], ["ssh://git@host:2222/x.git", "x"], ["git@host:2222/x.git", "x"]] as const) {
+		symlinkSync(outsideDir, path.join(cwd, derived));
+		check(`git clone ${quote(source)}`, cwd, false);
+		rmSync(path.join(cwd, derived), { force: true });
+	}
+});
+
+test("Git clone treats a HEAD-only directory as not a repository", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	// git's is_bundle probe needs a real git directory. A directory holding only HEAD is not
+	// one, so the sibling `a.git.bundle` regular file wins and git derives `a.git`, not `a`.
+	const fake = path.join(root, "src", "a.git");
+	mkdirSync(fake, { recursive: true });
+	writeFileSync(path.join(fake, "HEAD"), "ref: refs/heads/main\n");
+	git(repository(root), "bundle", "create", path.join(root, "src", "a.git.bundle"), "--all");
+	const outsideDir = emptyEscapeDir(t);
+	symlinkSync(outsideDir, path.join(cwd, "a.git"));
+	// Premise: a direct clone proves git derives `a.git` from the bundle probe through the link.
+	git(cwd, "clone", path.join(root, "src", "a.git"));
+	assert.ok(existsSync(path.join(outsideDir, ".git", "HEAD")), "git must derive `a.git` through the symlink");
+	check(`git clone ${quote(shellPath(path.join(root, "src", "a.git")))}`, cwd, false);
+});
+
+test("Git clone treats an invalid-HEAD directory with objects as a bundle", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	// is_git_directory also needs a valid HEAD ref (validate_headref) and a refs/ dir. A
+	// directory with a garbage HEAD and objects/ but no refs/ is not a repository, so its
+	// sibling bundle wins and git derives `x.git`. A looser probe derived `x` and missed the
+	// symlink at the real name.
+	const source = path.join(root, "src", "x.git");
+	mkdirSync(path.join(source, "objects"), { recursive: true });
+	writeFileSync(path.join(source, "HEAD"), "not a ref\n");
+	git(repository(root), "bundle", "create", path.join(root, "src", "x.git.bundle"), "--all");
+	const outsideDir = emptyEscapeDir(t);
+	// Premise: a direct clone proves git treats the crafted directory as a bundle and writes `x.git`.
+	const probe = path.join(root, "probe");
+	mkdirSync(probe);
+	symlinkSync(outsideDir, path.join(probe, "x.git"));
+	git(probe, "clone", source);
+	assert.ok(existsSync(path.join(outsideDir, ".git", "HEAD")), "git must derive x.git through the symlink");
+	assert.equal(existsSync(path.join(probe, "x")), false, "git must not derive x");
+	// A symlink at the derived `x.git` redirects git's write outside temp, so the guard must
+	// resolve that exact name and block.
+	symlinkSync(outsideDir, path.join(cwd, "x.git"));
+	check(`git clone ${quote(shellPath(source))}`, cwd, false);
+});
+
+test("Git clone rejects a HEAD that only JS whitespace accepts", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	// git's validate_headref skips byte-wise C isspace, which rejects NBSP after `ref:`. A
+	// directory that only a looser (JS `\s`) match accepts is not a repository, so the sibling
+	// bundle wins and git derives `x.git`, not `x`. A looser HEAD check missed the real name.
+	const source = path.join(root, "src", "x.git");
+	mkdirSync(path.join(source, "objects"), { recursive: true });
+	mkdirSync(path.join(source, "refs"), { recursive: true });
+	writeFileSync(path.join(source, "HEAD"), "ref:\u00a0refs/heads/main\n");
+	git(repository(root), "bundle", "create", path.join(root, "src", "x.git.bundle"), "--all");
+	const outsideDir = emptyEscapeDir(t);
+	// Premise: a direct clone proves git treats the crafted directory as a bundle and writes `x.git`.
+	const probe = path.join(root, "probe");
+	mkdirSync(probe);
+	symlinkSync(outsideDir, path.join(probe, "x.git"));
+	git(probe, "clone", source);
+	assert.ok(existsSync(path.join(outsideDir, ".git", "HEAD")), "git must derive x.git through the symlink");
+	assert.equal(existsSync(path.join(probe, "x")), false, "git must not derive x");
+	// A symlink at the derived `x.git` redirects git's write outside temp, so the guard must
+	// resolve that exact name and block.
+	symlinkSync(outsideDir, path.join(cwd, "x.git"));
+	check(`git clone ${quote(shellPath(source))}`, cwd, false);
+});
+
+test("Git clone drops a trailing scp-style port from the derived name", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	// A local repository named `x:2222`: the source has no `/`, so git's port rule treats the
+	// digits as a legacy port and clones into `x` (`x.git` when bare). A symlink at the derived
+	// name redirects that write outside temp, so the guard must derive the same name.
+	const source = path.join(cwd, "x:2222");
+	mkdirSync(source);
+	git(source, "init", "--quiet", "--bare");
+	const outsideDir = emptyEscapeDir(t);
+	const outsideBare = emptyEscapeDir(t);
+	symlinkSync(outsideDir, path.join(cwd, "x"));
+	symlinkSync(outsideBare, path.join(cwd, "x.git"));
+	// Premise: direct clones prove git really writes the port-stripped names.
+	git(cwd, "clone", "x:2222");
+	git(cwd, "clone", "--bare", "x:2222");
+	assert.ok(existsSync(path.join(outsideDir, ".git", "HEAD")), "git must write through the symlink");
+	assert.ok(existsSync(path.join(outsideBare, "HEAD")), "bare git must write through the symlink");
+	// One link at a time: a stale link must never block for the wrong name.
+	for (const [command, derived, target] of [["git clone x:2222", "x", outsideDir], ["git clone --bare x:2222", "x.git", outsideBare]] as const) {
+		rmSync(path.join(cwd, "x"), { force: true });
+		rmSync(path.join(cwd, "x.git"), { force: true });
+		symlinkSync(target, path.join(cwd, derived));
+		check(command, cwd, false);
+	}
+});
+
+test("Git clone of a bundle derives the bundle stem", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	const repo = repository(root);
+	const bundle = path.join(root, "s.bundle");
+	git(repo, "bundle", "create", bundle, "--all");
+	const outsideDir = emptyEscapeDir(t);
+	// A bundle source makes git strip `.bundle` (is_bundle), so the clone writes into `s`.
+	symlinkSync(outsideDir, path.join(cwd, "s"));
+	// Premise: a direct clone proves git really writes the stem through the symlink.
+	git(cwd, "clone", bundle);
+	assert.ok(existsSync(path.join(outsideDir, ".git", "HEAD")), "git must write through the symlink");
+	check(`git clone ${quote(bundle)}`, cwd, false);
+});
+
+test("Git clone strips full whitespace tails, not just spaces", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	// C `isspace` covers tabs too: git derives `src` from a source named `src.git<TAB>`.
+	const source = `${path.join(root, "src.git")}\t`;
+	mkdirSync(source);
+	git(source, "init", "--quiet", "--bare");
+	const outsideDir = emptyEscapeDir(t);
+	symlinkSync(outsideDir, path.join(cwd, "src"));
+	// Premise: a direct clone proves git really writes the tab-stripped name. Single quotes
+	// keep the tab verbatim through bash, matching what the classifier must decode.
+	git(cwd, "clone", source);
+	assert.ok(existsSync(path.join(outsideDir, ".git", "HEAD")), "git must write through the symlink");
+	check(`git clone '${source}'`, cwd, false);
+});
+
+test("Git clone collapses embedded control characters to one space", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	// git collapses control/whitespace runs in the derived name to one space and trims the
+	// ends: a source named `src<TAB>x.git` clones into `src x`. A symlink at that exact name
+	// redirects the write outside temp, so the guard must collapse the same way.
+	const source = path.join(root, "src\tx.git");
+	mkdirSync(source);
+	git(source, "init", "--quiet", "--bare");
+	const outsideDir = emptyEscapeDir(t);
+	symlinkSync(outsideDir, path.join(cwd, "src x"));
+	// Premise: a direct clone proves git really writes the collapsed name. Single quotes
+	// keep the tab verbatim through bash, matching what the classifier must decode.
+	git(cwd, "clone", source);
+	assert.ok(existsSync(path.join(outsideDir, ".git", "HEAD")), "git must write through the symlink");
+	check(`git clone '${source}'`, cwd, false);
+});
+
+test("Git clone keeps DEL literal in the derived name", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	// git's collapse maps only bytes below 0x20 (plus space) to a space: DEL (0x7f) stays
+	// literal in the derived name, so the guard must check that exact name.
+	const source = `${path.join(root, "src\x7f.git")}`;
+	mkdirSync(source);
+	git(source, "init", "--quiet", "--bare");
+	const outsideDir = emptyEscapeDir(t);
+	symlinkSync(outsideDir, path.join(cwd, "src\x7f"));
+	// Premise: a direct clone proves git really writes the DEL-bearing name.
+	git(cwd, "clone", source);
+	assert.ok(existsSync(path.join(outsideDir, ".git", "HEAD")), "git must write through the symlink");
+	check(`git clone '${source}'`, cwd, false);
+});
+
+test("Git clone bare abbreviations derive the .git name", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const cwd = path.join(root, "cwd");
+	mkdirSync(cwd);
+	const remote = path.join(root, "remote.git");
+	git(root, "init", "--quiet", "--bare", remote);
+	// Premise: git treats `--ba`/`--mir` as `--bare`/`--mirror` and appends `.git`.
+	const probe = path.join(root, "probe");
+	mkdirSync(probe);
+	const outsideDir = emptyEscapeDir(t);
+	symlinkSync(outsideDir, path.join(probe, "remote.git"));
+	git(probe, "clone", "--ba", remote);
+	assert.ok(existsSync(path.join(outsideDir, "HEAD")), "git must treat --ba as --bare");
+	// A symlink at the derived `.git` name redirects the abbreviated bare clone outside
+	// temp, so the guard must derive the same name. A value-flag value that merely looks
+	// like `--bare` is not the flag, and `--bare=x` is rejected by git, not a flag.
+	for (const flags of ["--ba", "--mir", "--bare", "--mirror"]) {
+		rmSync(path.join(cwd, "remote"), { force: true });
+		rmSync(path.join(cwd, "remote.git"), { force: true });
+		symlinkSync(outsideDir, path.join(cwd, "remote.git"));
+		check(`git clone ${flags} ${shellPath(remote)}`, cwd, false);
+	}
+});
+

@@ -1,7 +1,7 @@
 import path from "node:path";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
-import { lstatSync, readFileSync, statSync } from "node:fs";
+import { accessSync, closeSync, constants, lstatSync, openSync, readFileSync, readlinkSync, readSync, statSync, type Stats } from "node:fs";
 import { resolveRealPath } from "./resolve-path.js";
 import {
 	stripMatchingQuotes,
@@ -791,15 +791,199 @@ function gitCreationRoots(invocation: GitInvocation, vars: ReadonlyMap<string, s
 }
 
 /**
- * Destination of `git init [<directory>]` / `git clone <repo> [<directory>]`: `undefined`
- * for the default (cwd), or null when the parse cannot be trusted. More positionals than
- * the subcommand accepts means an unmodeled valued flag shifted the operands, so the real
- * destination may differ — never guess, fail closed.
+ * Destination of `git init [<directory>]` / `git clone <repo> [<directory>]`: for init,
+ * `undefined` means the cwd; for clone, a missing destination derives git's default name
+ * (see `gitDefaultCloneDirectory`). null when the parse cannot be trusted. More positionals
+ * than the subcommand accepts means an unmodeled valued flag shifted the operands, so the
+ * real destination may differ — never guess, fail closed.
  */
 function gitCreationTarget(invocation: GitInvocation): string | null | undefined {
 	const operands = gitPositionalArgs(invocation.subcommand, invocation.args);
 	if (invocation.subcommand === "init") return operands.length <= 1 ? operands[0] : null;
-	return operands.length <= 2 ? operands[1] : null;
+	if (operands.length > 2) return null;
+	// `clone` without a destination writes into `<cwd>/<derived-name>`: the guard must check the
+	// derived path, not the cwd, or a symlink there redirects the write outside temp.
+	return operands.length === 2 ? operands[1] : gitDefaultCloneDirectory(invocation, operands[0]);
+}
+
+/** Platform-dependent clone-name parse rules. Git's `is_dir_sep` is `/` on POSIX and `/` or
+ * `\` on Windows; C `isspace` (space, `\t\n\v\f\r`) is stripped on every platform. The platform
+ * is an argument, not a module constant, so every branch is testable on one host. */
+function cloneNameRules(platform: NodeJS.Platform) {
+	const windows = platform === "win32";
+	return {
+		trailing: windows ? /[\t\n\v\f\r\\/ ]+$/ : /[\t\n\v\f\r /]+$/,
+		// git's second strip runs AFTER the `/.git` tail removal and removes separators only.
+		trailingSeparators: windows ? /[\\/]+$/ : /\/+$/,
+		dotGitTail: windows ? /[\\/]\.git$/ : /\/\.git$/,
+		nameSeparators: windows ? /[\\/:]/ : /[:/]/,
+		scanSeparator: windows ? /[\\/]/ : /\//,
+	};
+}
+
+/**
+ * Git's default clone destination name, mirroring `git_url_basename` (dir.c): skip the scheme
+ * and auth data, strip trailing separators/whitespace, drop one trailing `<sep>.git` (then
+ * strip separators again, not whitespace), drop a trailing `:port` when no `/` remains, take
+ * the last component (separators and `:` split), then strip one `.git` or `.bundle` suffix —
+ * `.bundle` when the source probes as a local file/bundle, like `get_repo_path_1`. Bare/mirror
+ * clones append `.git`. Finally collapse control/whitespace runs the way git does before mkdir.
+ * Returns null when the derivation cannot be proven — `?`/`#` or an empty/`.`/`..` name —
+ * failing closed.
+ */
+export function deriveCloneDirectoryName(source: string, isBundle: boolean, isBare: boolean, platform: NodeJS.Platform = process.platform): string | null {
+	if (source.includes("?") || source.includes("#")) return null;
+	const rules = cloneNameRules(platform);
+	let window = gitCloneScanWindow(source, rules.scanSeparator).replace(rules.trailing, "");
+	if (window.length > 5 && rules.dotGitTail.test(window)) window = window.slice(0, -5).replace(rules.trailingSeparators, "");
+	// A colon with no remaining `/` is legacy scp syntax: git drops a trailing numeric port.
+	if (!window.includes("/") && window.includes(":")) window = window.replace(/:\d+$/, "");
+	const component = window.split(rules.nameSeparators).pop() ?? "";
+	const suffix = isBundle ? ".bundle" : ".git";
+	const stem = component.endsWith(suffix) ? component.slice(0, -suffix.length) : component;
+	if (!stem || stem === "." || stem === "..") return null;
+	const dir = isBare ? `${stem}.git` : stem;
+	// git collapses control/whitespace runs to one space and trims the ends before mkdir;
+	// mirroring that keeps the checked path equal to the one git actually writes. DEL is not
+	// C `isspace`, so it stays literal here exactly as git keeps it.
+	const collapsed = dir.replace(/[\t\n\v\f\r\x00-\x1f ]+/g, " ").replace(/^ +| +$/g, "");
+	return collapsed || null;
+}
+
+/** Destination of a clone with no operand: git's derived name, or null when it cannot be proven. */
+function gitDefaultCloneDirectory(invocation: GitInvocation, source: string | undefined): string | null {
+	return source === undefined ? null : deriveCloneDirectoryName(source, gitCloneIsBundle(invocation.base, source), gitBareClone(invocation.args));
+}
+
+/** The part of a clone source `git_url_basename` scans: after `://` and after auth data (up
+ * to the last `@` before the first separator). The port rule needs this tail because scheme
+ * and auth separators must not read as path separators. */
+function gitCloneScanWindow(source: string, separator: RegExp): string {
+	const scheme = source.indexOf("://");
+	const rest = scheme === -1 ? source : source.slice(scheme + 3);
+	const firstSeparator = rest.search(separator);
+	const authEnd = rest.lastIndexOf("@", firstSeparator === -1 ? rest.length - 1 : firstSeparator - 1);
+	return authEnd === -1 ? rest : rest.slice(authEnd + 1);
+}
+
+/** Whether git picks the `.bundle` suffix (`get_repo_path_1`): a `.git`-directory or gitfile
+ * probe wins first; otherwise a regular file — the source itself or `<source>.bundle` —
+ * makes the source a bundle. Probes resolve against the command cwd, like git's own stat.
+ * Each suffix APPENDS to the source path (git's `strbuf_addstr`), so `.git/.git` probes
+ * `<source>.git/.git`, not `<source>/.git/.git`. */
+function gitCloneIsBundle(base: string, source: string): boolean {
+	const root = path.resolve(base, source);
+	for (const probe of [`${root}/.git`, root, `${root}.git/.git`, `${root}.git`]) {
+		if (gitProbeAnchorsRepository(probe)) return false;
+	}
+	return regularFileProbe(`${root}.bundle`) || regularFileProbe(root);
+}
+
+function regularFileProbe(probe: string): boolean {
+	return statProbe(probe)?.isFile() ?? false;
+}
+
+/** Stat a probe path, or null when it only misses: ENOENT (absent) and ENOTDIR (a file where
+ * a path component sits). Any other error stays visible. */
+function statProbe(probe: string): Stats | null {
+	try { return statSync(probe); }
+	catch (error) { if (absentProbePath(error)) return null; throw error; }
+}
+
+/** A directory holding git's repository signatures (is_git_directory: a valid HEAD ref plus
+ * `objects` and `refs`, in the common dir when `commondir` redirects them) or a regular
+ * gitfile. A crafted HEAD-only directory must not read as a repository: that flips git's
+ * `.git`/`.bundle` suffix choice, so the guard would check a name git never writes. */
+function gitProbeAnchorsRepository(probe: string): boolean {
+	const stats = statProbe(probe);
+	if (stats === null) return false;
+	if (stats.isDirectory()) return gitDirectorySignatures(probe);
+	// git accepts a gitfile only when it is larger than 8 bytes and its first 8 raw
+	// bytes are the signature (get_repo_path_1). Trimming would accept a malformed
+	// file and flip the repo/bundle suffix, so read the bytes exactly.
+	return stats.isFile() && stats.size > 8 && readGitfileSignature(probe);
+}
+
+/** `objects` and `refs` sit in the common dir when `commondir` redirects them (get_common_dir,
+ * which realpath-resolves that path so a symlinked prefix cannot change the answer). */
+function gitDirectorySignatures(probe: string): boolean {
+	const common = gitCommonDirectory(probe);
+	return headRefIsValid(probe)
+		&& gitAccessProbe(path.join(common, "objects"))
+		&& gitAccessProbe(path.join(common, "refs"));
+}
+
+function gitCommonDirectory(probe: string): string {
+	const common = readCommonDir(path.join(probe, "commondir"));
+	if (common === null || common === "") return probe;
+	// Join with a separator, never path.join/path.resolve: a lexical collapse would erase the
+	// `..` before realpath can resolve a symlinked probe, unlike git's strbuf_add_real_path.
+	return resolveRealPath(path.isAbsolute(common) ? common : `${probe}${path.sep}${common}`);
+}
+
+/** commondir content with only git's trailing `\r`/`\n` strip (get_common_dir_noenv). A trim
+ * would drop spaces git keeps, resolving a different common dir. */
+function readCommonDir(file: string): string | null {
+	try { return readFileSync(file, "utf8").replace(/[\r\n]+$/, ""); }
+	catch (error) { if (absentProbePath(error)) return null; throw error; }
+}
+
+/** git uses access(X_OK), not stat: an unreadable directory is not a repository, and an
+ * executable file passes exactly as it does for git. */
+function gitAccessProbe(probe: string): boolean {
+	try { accessSync(probe, constants.X_OK); return true; }
+	catch { return false; }
+}
+
+/** validate_headref: a `refs/` symlink, a raw `ref: refs/…` prefix, or a 40-hex prefix.
+ * Read raw (no trim): git rejects leading whitespace and accepts trailing bytes after the oid. */
+function headRefIsValid(probe: string): boolean {
+	const head = path.join(probe, "HEAD");
+	try {
+		if (lstatSync(head).isSymbolicLink()) return readlinkSync(head).startsWith("refs/");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		return false;
+	}
+	let content: string;
+	try { content = readFileSync(head, "utf8"); }
+	catch (error) { if (absentProbePath(error)) return false; throw error; }
+	// git's skip_prefix/starts_with are case-sensitive; hex value chars are not. C `isspace`
+	// only: JS `\s` also matches NBSP/U+2028, which git rejects, flipping is_bundle.
+	return /^(?:ref:[ \t\n\v\f\r]*refs\/|[0-9a-fA-F]{40})/.test(content);
+}
+
+/** The 8 raw bytes git compares for a gitfile signature (`gitdir: `). */
+function readGitfileSignature(file: string): boolean {
+	const descriptor = openSync(file, "r");
+	try {
+		const signature = Buffer.alloc(8);
+		return readSync(descriptor, signature, 0, 8, 0) === 8 && signature.toString("utf8") === "gitdir: ";
+	} finally { closeSync(descriptor); }
+}
+
+/** A probe may only miss: ENOENT (absent) and ENOTDIR (a file where a path component sits). */
+function absentProbePath(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException).code;
+	return code === "ENOENT" || code === "ENOTDIR";
+}
+
+/** Whether a clone is `--bare`/`--mirror`, including unambiguous abbreviations (`--ba`,
+ * `--mir`). Walks args value-skipping like `gitPositionalArgs`:
+ * a dash-token consumed as a value-flag value (`git clone -o --bare <url>`) must not read as
+ * the flag, or the derived name gains a `.git` git never writes and the wrong path is checked.
+ * A `=value` form (`--bare=x`) is not a flag: git rejects it, so it must not count. An
+ * ambiguous abbreviation (`--b`) errors in git; treating it as bare over-blocks, never under-blocks. */
+function gitBareClone(args: readonly string[]): boolean {
+	const valueFlags = GIT_VALUE_FLAGS.clone;
+	for (let i = 0; i < args.length; i++) {
+		const token = args[i]!;
+		if (token === "--") return false; // operands only after `--`; boolean flags cannot follow
+		if (valueFlags.has(token)) { i++; continue; }
+		if (token === "--bare" || token === "--mirror") return true;
+		if (token.startsWith("--") && !token.includes("=") && ("--bare".startsWith(token) || "--mirror".startsWith(token))) return true;
+	}
+	return false;
 }
 
 function gitEnvironmentRoots(invocation: GitInvocation, vars: ReadonlyMap<string, string>): string[] | null {
