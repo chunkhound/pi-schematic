@@ -93,6 +93,11 @@ const INTERPRETERS = new Set(Object.keys(INTERPRETER_EXEC_FLAGS));
 // installs to site-packages, etc.). Temp-dir path checking is not meaningful.
 const PACKAGE_MANAGERS = new Set(["npm", "yarn", "pnpm", "pip", "pip3", "pipx", "apt", "apt-get", "brew", "cargo", "gem", "yum", "dnf", "pacman", "choco"]);
 
+// Shells whose command strings this classifier cannot parse are blocked
+// unconditionally. Matched on the basename so Windows paths such as
+// C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe are caught.
+const UNPARSABLE_SHELLS = new Set(["pwsh", "pwsh.exe", "powershell", "powershell.exe", "cmd", "cmd.exe"]);
+
 
 /**
  * Classify a bash command string for readonly mode.
@@ -188,6 +193,13 @@ function classifyEnv(command: string, segment: string, tokens: string[], cwd: st
 	return nested.ok ? null : nested.reason;
 }
 
+/** PowerShell and cmd: block unconditionally — their syntax is not parsed. */
+function classifyUnparsableShell(command: string): string | null {
+	const shell = stripMatchingQuotes(command).split(/[\\/]/).pop()!;
+	if (!UNPARSABLE_SHELLS.has(shell)) return null;
+	return `${shell} blocked: readonly cannot inspect commands run through ${shell}`;
+}
+
 /** git: classify subcommand via three-tier allowlist (immutable/mutable/mixed). */
 function classifyGit(command: string, tokens: string[]): string | null {
 	if (command !== "git") return null;
@@ -276,6 +288,7 @@ function getFilesystemMutationReason(segment: string, cwd: string, depth: number
 		?? classifyEvalExec(command, tokens, cwd, depth, shellVars)
 		?? classifySudo(command, tokens, cwd, depth, shellVars)
 		?? classifyEnv(command, segment, tokens, cwd, depth, shellVars)
+		?? classifyUnparsableShell(command)
 		?? classifyGit(command, tokens)
 		?? classifyInterpreter(command, tokens, cwd, depth, shellVars)
 		?? classifyDdOutput(segment, cwd, shellVars)

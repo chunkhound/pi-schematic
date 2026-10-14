@@ -16,18 +16,19 @@ import { runRealChildInvocation } from "./helpers.js";
 
 // ── Tool filtering ───────────────────────────────────────────────────
 
-test("filterReadonlyToolNames removes write and edit in readonly mode", () => {
-	const tools = ["read", "bash", "write", "edit", "notebook_read"];
+test("filterReadonlyToolNames removes write, edit, and powershell in readonly mode", () => {
+	const tools = ["read", "bash", "write", "edit", "powershell", "notebook_read"];
 	const filtered = filterReadonlyToolNames(tools, true);
 	assert.equal(filtered.includes("write"), false);
 	assert.equal(filtered.includes("edit"), false);
+	assert.equal(filtered.includes("powershell"), false);
 	assert.equal(filtered.includes("read"), true);
 	assert.equal(filtered.includes("bash"), true);
 	assert.equal(filtered.includes("notebook_read"), true);
 });
 
 test("filterReadonlyToolNames preserves all tools when readonly is off", () => {
-	const tools = ["read", "bash", "write", "edit"];
+	const tools = ["read", "bash", "write", "edit", "powershell"];
 	assert.deepEqual(filterReadonlyToolNames(tools, false), tools);
 });
 
@@ -50,7 +51,7 @@ test("readonly child authority note communicates readonly inheritance", () => {
 });
 
 test("readonly write/edit summary communicates blocked mutations", () => {
-	assert.match(READONLY_WRITE_EDIT_SUMMARY, /\[readonly\] write\/edit blocked/i);
+	assert.match(READONLY_WRITE_EDIT_SUMMARY, /\[readonly\] write\/edit\/powershell blocked/i);
 	assert.match(READONLY_WRITE_EDIT_SUMMARY, /bash writes\/deletions outside temp blocked/i);
 });
 
@@ -80,13 +81,13 @@ test("readonly bash guard blocks non-temp writes and allows temp writes", () => 
 
 // ── Integration ──────────────────────────────────────────────────────
 
-test("real readonly child omits write/edit and blocks a non-temp bash write", async () => {
+test("real readonly child omits write/edit/powershell and blocks a non-temp bash write", async () => {
 	const proof = await runRealChildInvocation({
 		prompt: "Attempt the requested bash command and report its result.",
 		readonly: true,
 		invokeReadonlyBash: true,
 		cwdOutsideTemp: true,
-		activeTools: ["read", "bash", "write", "edit", "agentic_e2e_probe", "spawn", "handoff"],
+		activeTools: ["read", "bash", "write", "edit", "powershell", "agentic_e2e_probe", "spawn", "handoff"],
 	});
 
 	assert.equal(proof.result.details.model, proof.modelId);
@@ -96,6 +97,7 @@ test("real readonly child omits write/edit and blocks a non-temp bash write", as
 	for (const toolNames of proof.observedToolSets) {
 		assert.equal(toolNames.includes("write"), false);
 		assert.equal(toolNames.includes("edit"), false);
+		assert.equal(toolNames.includes("powershell"), false);
 		assert.equal(toolNames.includes("spawn"), false);
 		assert.equal(toolNames.includes("handoff"), false);
 		assert.equal(toolNames.includes("bash"), true);

@@ -122,7 +122,7 @@ export interface SchematicState {
 	/** One abort promise per child session, shared by signal and reset cleanup. WeakMap entries are GC'd with the session; no manual clear needed. */
 	childAbortPromises: WeakMap<AgentSession, Promise<void>>;
 
-	/** Whether readonly mode is active — write/edit blocked; handoff needs explicit /handoff or a human topic boundary; bash writes limited to temp. */
+	/** Whether readonly mode is active — write/edit/powershell blocked; handoff needs explicit /handoff or a human topic boundary; bash writes limited to temp. */
 	readonlyEnabled: boolean;
 
 	/** One-shot flag: deliver a readonly ON or OFF nudge via context hook, then clear. */

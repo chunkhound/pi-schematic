@@ -100,6 +100,52 @@ test("blocks package managers unconditionally", async () => {
 	await assertBlocked(toolCall, "yarn add lodash");
 });
 
+test("blocks PowerShell and cmd launched through bash unconditionally", async () => {
+	const { pi, toolCall } = await registerReadonlyPI();
+	await enableReadonly(pi);
+
+	// CONTRACT: shells the classifier cannot parse are blocked by basename,
+	// case-insensitively, including full Windows paths.
+	await assertBlocked(toolCall, 'pwsh -c "rm /workspace/x"');
+	await assertBlocked(toolCall, 'powershell.exe -Command "Set-Content -Path notes.txt -Value x"');
+	await assertBlocked(toolCall, "cmd /c del x");
+	await assertBlocked(toolCall, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -Command Get-ChildItem");
+	await assertBlocked(toolCall, "PWSH -c x");
+	await assertBlocked(toolCall, "pwsh.exe -c x");
+	await assertBlocked(toolCall, "powershell -Command x");
+	await assertBlocked(toolCall, "/usr/bin/pwsh -c x");
+	await assertBlocked(toolCall, "env pwsh -c x");
+	await assertBlocked(toolCall, "exec pwsh -c x");
+	await assertBlocked(toolCall, "command pwsh -c x");
+	await assertBlocked(toolCall, "FOO=1 pwsh -c x");
+	await assertBlocked(toolCall, "echo x | pwsh -c -");
+});
+
+test("blocks PowerShell nested in bash -c or chained after a read", async () => {
+	const { pi, toolCall } = await registerReadonlyPI();
+	await enableReadonly(pi);
+
+	await assertBlocked(toolCall, 'bash -c "pwsh -c Remove-Item x"');
+	await assertBlocked(toolCall, "ls && pwsh -c x");
+});
+
+test("names the blocked shell in the block reason", async () => {
+	const { pi, toolCall } = await registerReadonlyPI();
+	await enableReadonly(pi);
+
+	const result = await toolCall({ toolName: "bash", input: { command: "cmd.exe /c dir" } }, { cwd: "/workspace" });
+	assert.equal(result.block, true);
+	assert.match(result.reason, /cmd\.exe blocked/);
+});
+
+test("allows read commands that mention pwsh only as an argument", async () => {
+	const { pi, toolCall } = await registerReadonlyPI();
+	await enableReadonly(pi);
+
+	await assertAllowed(toolCall, "echo pwsh");
+	await assertAllowed(toolCall, "which pwsh");
+});
+
 test("classifies git commands correctly", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);

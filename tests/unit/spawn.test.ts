@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createState, resetState } from "../../state.js";
+import { READONLY_BASH_SCOPE, READONLY_NO_SHELL_SUMMARY, READONLY_WRITE_EDIT_SUMMARY } from "../../notifications.js";
 import {
 	buildChildToolNames,
 	createChildTools,
@@ -203,7 +204,7 @@ test("spawn execute composes Model Group routing with readonly child guards", as
 		return { session: mockSessionFactory({
 			prompt: async (p?: string) => { seenPrompt = p ?? ""; },
 		}), extensionsResult: undefined as any };
-	}), { activeTools: ["read", "bash", "write", "edit", "spawn", "handoff"], allTools: ["read", "bash", "write", "edit", "spawn", "handoff"] });
+	}), { activeTools: ["read", "bash", "write", "edit", "powershell", "spawn", "handoff"], allTools: ["read", "bash", "write", "edit", "powershell", "spawn", "handoff"] });
 
 	const result = await pi.tools.get("spawn").execute(
 		"spawn-routed",
@@ -224,11 +225,33 @@ test("spawn execute composes Model Group routing with readonly child guards", as
 	assert.ok(seenConfig.customTools.some((tool: any) => tool.name === "bash"));
 	assert.ok(!seenConfig.tools.includes("write"));
 	assert.ok(!seenConfig.tools.includes("edit"));
+	assert.ok(!seenConfig.tools.includes("powershell"));
 	assert.ok(!seenConfig.tools.includes("spawn"));
 	assert.ok(!seenConfig.tools.includes("handoff"));
 	assert.match(seenPrompt, /inherit readonly authority/i);
-	assert.match(seenPrompt, /\[readonly\] write\/edit blocked/i);
+	assert.ok(seenPrompt.includes(READONLY_WRITE_EDIT_SUMMARY));
 	assert.deepEqual(result.details.route, { status: "routed", group: "review", provider: "openai", modelId: "gpt-routed" });
+});
+
+test("readonly child without a bash tool gets the no-shell summary and no bash rules", async () => {
+	const state = createState();
+	state.readonlyEnabled = true;
+	let seenPrompt = "";
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, async () => ({
+		session: mockSessionFactory({ prompt: async (p?: string) => { seenPrompt = p ?? ""; } }),
+		extensionsResult: undefined as any,
+	})), { activeTools: ["read", "powershell", "edit", "write"], allTools: ["read", "powershell", "edit", "write"] });
+
+	await pi.tools.get("spawn").execute(
+		"spawn-no-shell",
+		{ prompt: "Do the task" },
+		undefined,
+		undefined,
+		{ model: { provider: "openai", id: "parent" }, cwd: "/tmp" },
+	);
+
+	assert.ok(seenPrompt.includes(READONLY_NO_SHELL_SUMMARY));
+	assert.ok(!seenPrompt.includes(READONLY_BASH_SCOPE));
 });
 
 test("spawn routes capability requirements to capable members via random selection on the filtered pool", async () => {

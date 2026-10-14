@@ -391,7 +391,7 @@ test("context injects a readonly-mode nudge after toggle", async () => {
 	assert.equal(result.messages.length, 2);
 	assert.equal(result.messages[1].customType, "pi-schematic-readonly-nudge");
 	assert.match(result.messages[1].content, /readonly/i);
-	assert.match(result.messages[1].content, /write\/edit blocked/i);
+	assert.match(result.messages[1].content, /write\/edit\/powershell blocked/i);
 	assert.match(result.messages[1].content, /bash writes/i);
 	assert.match(result.messages[1].content, /handoff/i);
 });
@@ -416,7 +416,7 @@ test("context injects readonly handoff guidance after explicit user /handoff", a
 	assert.match(watchdogMessage.content, /handoff/i);
 	assert.match(watchdogMessage.content, /readonly/i);
 	assert.match(watchdogMessage.content, /temporary handoff exception active/i);
-	assert.match(watchdogMessage.content, /write\/edit remain blocked/i);
+	assert.match(watchdogMessage.content, /write\/edit\/powershell remain blocked/i);
 	assert.match(watchdogMessage.content, /fresh context resumes in readonly mode|resumes readonly mode/i);
 	assert.doesNotMatch(watchdogMessage.content, /User explicitly requested|this request only/i);
 });
@@ -440,7 +440,7 @@ test("readonly toggle nudge aligns with handoff exception in the same turn", asy
 	assert.ok(readonlyMessage, "readonly toggle should still emit its one-shot nudge");
 	assert.ok(watchdogMessage, "handoff guidance should still be injected");
 	assert.match(readonlyMessage.content, /temporary handoff exception active/i);
-	assert.match(readonlyMessage.content, /write\/edit remain blocked/i);
+	assert.match(readonlyMessage.content, /write\/edit\/powershell remain blocked/i);
 	assert.doesNotMatch(readonlyMessage.content, /handoff blocked/i);
 	assert.match(watchdogMessage.content, /temporary handoff exception active/i);
 });

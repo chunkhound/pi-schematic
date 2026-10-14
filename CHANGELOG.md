@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Readonly blocks the powershell tool** — readonly mode now blocks pi's built-in `powershell` tool in the parent and removes it from readonly children, and readonly bash blocks launching PowerShell or cmd. Previously a Windows setup with `powershell` in `defaultTools` had an unguarded shell.
 - **Sections from other extensions reach the model** — schematic now adds its prompt content as named Pi prompt sections instead of replacing the system prompt, so sections written by extensions that run after it are no longer dropped (#45). A topic, Model Groups, or notebook change no longer re-sends the context-management primer.
 - **Empty notebook pages** — selecting a page with an empty body in `/notebook` now opens it like any other page instead of closing the picker.
 - **Discarded notebook pages** — selecting a page removed by a handoff discard while the `/notebook` list was open now reopens the refreshed list instead of closing the picker.

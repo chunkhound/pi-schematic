@@ -9,7 +9,7 @@ pi-schematic is a Pi extension. It registers tools and hooks into the agent life
 | `before_agent_start` | Resolves deferred readonly frontmatter, refreshes Model Groups, then writes schematic's prompt sections, including a per-run current-date anchor (see **Prompt sections** and **Date anchor** under Behavioral notes) |
 | `context` | Advisory watchdog reminders when context is elevated; readonly toggle nudges |
 | `input` | Resolves model-selection frontmatter during idle input; blocks it during streaming; queues readonly resolution |
-| `tool_call` | Readonly blocks write/edit/unguarded bash; blocks handoff unless a requested bypass is active |
+| `tool_call` | Readonly blocks write/edit/powershell/unguarded bash; blocks handoff unless a requested bypass is active |
 | `session_start` | Reconstructs notebook pages/epoch/watermark from the active branch, rehydrates readonly state, and recovers an absent successor handoff message; loads and validates Model Groups, registers group autocomplete, reports config issues, and resets session state on `/new` |
 | `session_tree` | Invalidates branch-local handoff work, reconstructs notebook pages/epoch/watermark from the newly active branch, rehydrates readonly state, recovers a successor only when no newer user turn exists and no session-tree descendant owned by that cut proves delivery, refreshes indicators |
 | `turn_end` | Updates TUI indicators (context %, notebook count, topic, readonly) |
@@ -65,7 +65,7 @@ interface SchematicState {
 
 A failed model change visibly blocks command expansion and records no success entry. During streaming steer/follow-up, commands with model-selection frontmatter are visibly blocked without model or thinking mutation; commands without it continue. Invalid frontmatter is ignored with a TUI warning.
 
-**Readonly** — Session-persisted research posture. Toggle via `/readonly`, Ctrl+Shift+R, or `--readonly`. Write/edit always blocked at the tool boundary. Bash uses a two-layer guard:
+**Readonly** — Session-persisted research posture. Toggle via `/readonly`, Ctrl+Shift+R, or `--readonly`. Write/edit and powershell always blocked at the tool boundary (powershell is blocked outright; there is no PowerShell command classifier). Bash uses a two-layer guard, and its classifier blocks launching PowerShell or cmd through bash:
 
 | Platform | Enforcement |
 |---|---|

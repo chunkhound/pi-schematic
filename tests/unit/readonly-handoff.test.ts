@@ -12,6 +12,7 @@ import { createTestHost } from "./test-host.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
 import { buildContinuationFrame } from "../../handoff/format.js";
+import { READONLY_POWERSHELL_BLOCK_REASON } from "../../notifications.js";
 
 async function createHandoffPI() {
 	const pi = await createTestHost();
@@ -121,6 +122,9 @@ test("/handoff command creates temporary bypass for handoff tool only", async ()
 		"handoff should be unblocked after explicit /handoff");
 	assert.equal((await toolCall({ toolName: "write", input: { path: "/tmp/test", content: "x" } }, {})).block, true,
 		"write should stay blocked");
+	const powershell = await toolCall({ toolName: "powershell", input: { command: "Get-ChildItem" } }, {});
+	assert.equal(powershell.block, true, "powershell should stay blocked");
+	assert.equal(powershell.reason, READONLY_POWERSHELL_BLOCK_REASON);
 	await assertNonTempBashBlocked(toolCall);
 });
 
@@ -323,7 +327,7 @@ test("the handoff summary stays readonly-free and the fresh context relearns rea
 	assert.doesNotMatch(resumed.summary, /readonly/i, "constraints must never be frozen into the summary");
 	assert.doesNotMatch(resumed.summary, /ignored in favor of the direction/,
 		"the model-supplied instruction must not leak into the summary");
-	assert.match(resumed.nudgeContent ?? "", /\[readonly\] enabled — write\/edit blocked/,
+	assert.match(resumed.nudgeContent ?? "", /\[readonly\] enabled — write\/edit\/powershell blocked/,
 		"the post-handoff turn must relearn readonly from the context hook");
 
 	// Readonly dropped before the cut: same constant summary, and the fresh context
