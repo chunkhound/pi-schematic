@@ -122,6 +122,23 @@ test("a mid-token accept drops the overlapped tail", () => {
 	});
 });
 
+// WHY: accepting the command name while the cursor sits inside a longer line must replace the
+// whole typed command and args. The matched prefix reaches before the line start, so a naive
+// splice re-appends the tail (`/workflow review` @col5 -> `/workflow review review`).
+test("a command-name accept inside a longer line replaces the whole command and args", () => {
+	const { provide } = harness();
+	assert.deepEqual(provide.applyCompletion(["/workflow review"], 0, 5, { value: "/workflow review ", label: "review" }, "/workf"), {
+		lines: ["/workflow review "],
+		cursorLine: 0,
+		cursorCol: 17,
+	});
+	assert.deepEqual(provide.applyCompletion(["/workflow kflow review arg"], 0, 5, { value: "/workflow review ", label: "review" }, "/workf"), {
+		lines: ["/workflow review "],
+		cursorLine: 0,
+		cursorCol: 17,
+	});
+});
+
 test("a discovery failure delegates to the built-in provider", async () => {
 	const sentinel = { prefix: "SENTINEL", items: [{ value: "sentinel", label: "sentinel" }] };
 	const current = {

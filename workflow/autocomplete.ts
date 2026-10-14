@@ -73,13 +73,23 @@ export function createWorkflowAutocompleteProvider(
 			// so replace the token ourselves. Delegated items keep the built-in behavior.
 			if (!item.value.startsWith(WORKFLOW_VALUE_PREFIX)) return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
 			const line = lines[cursorLine] ?? "";
-			const start = cursorCol - prefix.length;
-			// Replace from the token start and drop the overlapped tail up to the token end (next
-			// whitespace), then the whitespace run itself: item.value already ends with a space, so a
-			// mid-token accept cannot duplicate the suffix (`/workflow rev|iew` -> `/workflow review `).
-			const nextWs = line.slice(cursorCol).search(/\s/);
-			let end = nextWs === -1 ? line.length : cursorCol + nextWs;
-			while (end < line.length && /\s/.test(line[end]!)) end++;
+			// WHY: re-derive the context from the actual text. The provider matched a prefix that may
+			// reach before the cursor (`/workflow review` @col5 matched `/workf`), so the caller's
+			// prefix cannot be trusted for the splice start.
+			const context = workflowContext(line.slice(0, cursorCol));
+			const start = Math.max(0, cursorCol - (context?.prefix.length ?? prefix.length));
+			// The command name with no name typed yet: replace the whole typed command and args, since
+			// item.value already ends with a space and a leftover tail would run as spurious args.
+			let end = line.length;
+			if (!context?.commandNameOnly) {
+				// A name accept replaces from the token start and drops the overlapped tail up to the
+				// token end (next whitespace), then the whitespace run itself: item.value already ends
+				// with a space, so a mid-token accept cannot duplicate the suffix
+				// (`/workflow rev|iew` -> `/workflow review `).
+				const nextWs = line.slice(cursorCol).search(/\s/);
+				end = nextWs === -1 ? line.length : cursorCol + nextWs;
+				while (end < line.length && /\s/.test(line[end]!)) end++;
+			}
 			const next = [...lines];
 			next[cursorLine] = `${line.slice(0, start)}${item.value}${line.slice(end)}`;
 			return { lines: next, cursorLine, cursorCol: start + item.value.length };
