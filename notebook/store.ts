@@ -4,7 +4,7 @@
  * Keeps parent and spawned-child notebook writes on the same persistence path.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { CustomEntryDraft, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -174,59 +174,35 @@ export async function saveNotebookPage(
 }
 
 /**
- * Stage a discard without making it visible to rehydration. The active epoch
- * marker is durable before survivor entries are staged; only commit appends the
- * next marker. An interrupted handoff therefore keeps the active branch on the
- * prior generation.
+ * Build the boundary drafts that discard `names` from the notebook. Pure: it
+ * appends nothing and leaves state untouched; the handoff boundary writes the
+ * drafts and rehydration applies them once they are on the branch.
  *
- * The agent is idle during compaction, so no notebook writes occur between
- * prepare and commit; the next context starts only after commit advances the
- * epoch. A write in that window would be staged at the stale epoch and dropped
- * on rehydration.
+ * The active epoch marker comes first so a pass cut short after some survivors
+ * keeps the branch on the prior generation; the next-epoch marker comes last.
+ * The next epoch lies above the watermark, so it never reuses an epoch an
+ * interrupted pass left behind.
  */
-export async function prepareNotebookDiscard(
-	pi: ExtensionAPI,
+export function buildNotebookDiscardDrafts(
 	state: SchematicState,
-	generation: number,
-	names: string[],
-): Promise<string[]> {
-	return withWriteLock(async () => {
-		const deleted = [...new Set(names)].filter((name) => state.notebookPages.has(name));
-		if (deleted.length === 0) return deleted;
+	names: readonly string[],
+): { drafts: CustomEntryDraft[]; discarded: number } {
+	const deleted = new Set([...new Set(names)].filter((name) => state.notebookPages.has(name)));
+	if (deleted.size === 0) return { drafts: [], discarded: 0 };
 
-		const nextEpoch = Math.max(state.epoch, state.discardEpochWatermark) + 1;
-		state.discardEpochWatermark = nextEpoch;
-		pi.appendEntry("notebook-generation", { version: 1, epoch: state.epoch });
-		const deletedSet = new Set(deleted);
-		for (const [name, content] of state.notebookPages) {
-			if (!deletedSet.has(name)) {
-				pi.appendEntry("notebook-entry", {
-					version: 1,
-					epoch: nextEpoch,
-					name,
-					content,
-					clipped: state.clippedPages.has(name),
-				});
-			}
-		}
-		state.pendingNotebookDiscard = { generation, nextEpoch, deleted };
-		return deleted;
-	});
-}
-
-/** Commit a prepared discard after Pi reports compaction success. */export function commitNotebookDiscard(
-	pi: ExtensionAPI,
-	state: SchematicState,
-	generation: number,
-): void {
-	const pending = state.pendingNotebookDiscard;
-	if (!pending || pending.generation !== generation) return;
-	pi.appendEntry("notebook-generation", { version: 1, epoch: pending.nextEpoch });
-	state.epoch = pending.nextEpoch;
-	for (const name of pending.deleted) {
-		state.notebookPages.delete(name);
-		state.clippedPages.delete(name);
+	const nextEpoch = Math.max(state.epoch, state.discardEpochWatermark) + 1;
+	const drafts: CustomEntryDraft[] = [
+		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: state.epoch } },
+	];
+	for (const [name, content] of state.notebookPages) {
+		if (deleted.has(name)) continue;
+		drafts.push({
+			type: "custom",
+			customType: "notebook-entry",
+			data: { version: 1, epoch: nextEpoch, name, content, clipped: state.clippedPages.has(name) },
+		});
 	}
-	state.pendingNotebookDiscard = null;
-	state.discardEpochWatermark = 0;
+	drafts.push({ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: nextEpoch } });
+	return { drafts, discarded: deleted.size };
 }
+

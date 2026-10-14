@@ -9,7 +9,22 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ModelGroupsBootValidation, ResolvedModelGroup } from "./model-groups/types.js";
 import type { FrontmatterEntry, FrontmatterIssue } from "./frontmatter-cache.js";
 import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
-import type { HandoffPayload } from "./handoff/format.js";
+
+/** A handoff accepted by the tool, kept until its turn_end boundary is confirmed or failed. */
+export interface StagedHandoff {
+	/** Written to the cut's and the successor's details; identifies the cut on the branch. */
+	handoffId: string;
+	toolCallId: string;
+	nextInstruction: string;
+	context: string;
+	/** Deduplicated discard request, not yet filtered against the notebook. */
+	discardPages: string[];
+	phase: "staged" | "submitted" | "declined";
+	/** Non-null exactly when phase is "declined". */
+	declineReason: string | null;
+	/** Pages the submitted drafts remove; 0 until submitted. */
+	discarded: number;
+}
 
 export interface SchematicState {
 	/** Compact notebook pages keyed by kebab-case name */
@@ -37,21 +52,11 @@ export interface SchematicState {
 	/** Last context usage percent from getContextUsage() */
 	lastContextPercent: number | null;
 
-	/**
-	 * Generation marker queued by the tool until the matching compaction hook consumes
-	 * it. The successor message is built at tool-call time and carried by the
-	 * completion callback, so no request payload belongs here.
-	 */
-	pendingHandoff: { generation: number } | null;
+	/** The handoff the tool accepted in the current turn, until its boundary is confirmed or failed. */
+	stagedHandoff: StagedHandoff | null;
 
-	/** Monotonically increasing identity used to ignore stale compaction callbacks. */
-	handoffGeneration: number;
-
-	/** Generation of the compaction currently in flight, if any. */
-	handoffCompactionGeneration: number | null;
-
-	/** Exact successor payload and its durable per-cut recovery key retained until direct completion finalizes. */
-	pendingHandoffDelivery: { generation: number; payload: HandoffPayload; recoveryKey: string } | null;
+	/** Tool calls in the current assistant message that must not run because they share it with handoff; value = refusal reason. */
+	handoffRefusals: Map<string, string>;
 
 	/**
 	 * Successor delivery already requested by recovery in this process.
@@ -65,20 +70,17 @@ export interface SchematicState {
 	 */
 	recoveryRequestedMessage: { handoffEntryId: string | null; recoveryKey: string | null; message: string } | null;
 
-	/** Prepared notebook discard awaiting the matching successful handoff callback. */
-	pendingNotebookDiscard: { generation: number; nextEpoch: number; deleted: string[] } | null;
-
 	/**
-	 * High-water mark for discard epochs. Advanced in-memory by prepare;
-	 * derived from the branch by reconstruction (max valid observed page/
-	 * generation epoch). Survives failed attempts and restarts so retries
-	 * cannot reuse a staged epoch and resurrect orphaned survivor entries.
+	 * High-water mark for discard epochs, derived from the branch by
+	 * reconstruction (max valid observed page/generation epoch). Survives restarts
+	 * so a discard cannot reuse an epoch whose survivor entries an interrupted
+	 * write left on the branch.
 	 */
 	discardEpochWatermark: number;
 
 	/**
-	 * Required handoff request that stays alive until a real tool-driven compaction
-	 * succeeds, is explicitly reset, or ages out via watchdog enforcement.
+	 * Required handoff request that stays alive until a handoff cut is confirmed on
+	 * the branch, is explicitly reset, or ages out via watchdog enforcement.
 	 */
 	pendingRequestedHandoff: {
 		/** True only after the current session has actually called the handoff tool. */
@@ -179,12 +181,9 @@ export function createState(): SchematicState {
 		activeNotebookTopicSource: null,
 		pendingTopicBoundaryHint: null,
 		lastContextPercent: null,
-		pendingHandoff: null,
-		handoffGeneration: 0,
-		handoffCompactionGeneration: null,
-		pendingHandoffDelivery: null,
+		stagedHandoff: null,
+		handoffRefusals: new Map(),
 		recoveryRequestedMessage: null,
-		pendingNotebookDiscard: null,
 		discardEpochWatermark: 0,
 		pendingRequestedHandoff: null,
 		modelGroups: { groups: [], validation: null },
@@ -232,9 +231,6 @@ export function resetState(state: SchematicState): void {
 	state.activeNotebookTopicSource = null;
 	state.lastContextPercent = null;
 	invalidateHandoffState(state);
-	// /new abandons the previous session completely; do not carry its in-flight
-	// reservation into the fresh session.
-	state.handoffCompactionGeneration = null;
 	state.recoveryRequestedMessage = null;
 	state.modelGroups.groups = [];
 	state.modelGroups.validation = null;
@@ -250,25 +246,15 @@ export function resetState(state: SchematicState): void {
 
 /** Invalidate handoff work that belongs to a previous session-tree branch. */
 export function invalidateHandoffState(state: SchematicState): void {
-	state.handoffGeneration++;
-	state.pendingHandoff = null;
-	state.handoffCompactionGeneration = null;
-	state.pendingHandoffDelivery = null;
-	state.pendingNotebookDiscard = null;
+	state.stagedHandoff = null;
+	state.handoffRefusals.clear();
 	// The discard watermark is deliberately NOT reset here. A branch change is
 	// immediately followed by reconstruction, which derives the watermark from
 	// the newly active branch (staged survivor epochs included). Resetting early
-	// would let a retry reuse a staged epoch and resurrect orphaned entries.
-	//
-	// An interrupted discard left staged survivors + a stray generation marker in
-	// the branch; reconstruction ignores them (currentEpoch never advances), so
-	// the orphaned entries are harmless.
+	// would let a discard reuse a staged epoch and resurrect orphaned entries.
 	state.pendingRequestedHandoff = null;
 	state.pendingTopicBoundaryHint = null;
 	state.lastWatchdogBand = null;
-	// A branch switch abandons the old compaction path completely. Release the
-	// overlap guard now so the new branch cannot get stuck waiting on callbacks
-	// from work that no longer belongs to the active session tree.
 	// recoveryRequestedMessage is deliberately NOT reset here — see its state doc.
 }
 

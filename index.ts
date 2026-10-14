@@ -44,7 +44,7 @@ import { isHandoffEligible, normalizeContextPercent } from "./handoff/eligibilit
 import { getReadonlyFromBranch } from "./readonly-rehydration.js";
 import { HANDOFF_REQUIRED_STATUS } from "./handoff/copy.js";
 import { registerHandoffCommand } from "./handoff/command.js";
-import { registerHandoffCompaction } from "./handoff/compact.js";
+import { registerHandoffBoundary } from "./handoff/boundary.js";
 import { getUndeliveredHandoffMessage } from "./handoff/recovery.js";
 import { sendFollowUp } from "./follow-up.js";
 import {
@@ -468,9 +468,11 @@ export default function (pi: ExtensionAPI): void {
 	registerSpawnTool(pi, state);
 
 	// ── Register event handlers ─────────────────────────────────────
+	// Handoff boundary first: its agent_settled resets a failed attempt before the
+	// watchdog counts it, and its sibling refusal precedes the readonly tool_call block.
+	registerHandoffBoundary(pi, state);
 	registerWatchdog(pi, state);
 	registerNotebookRehydration(pi, state);
-	registerHandoffCompaction(pi, state);
 
 	// ── Register commands ───────────────────────────────────────────
 	registerHandoffCommand(pi, state);
@@ -528,9 +530,8 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	function recoverHandoffMessage(ctx: ExtensionContext): void {
-		// Never fight an in-flight cut: the compaction hook owns the reservation and
-		// will deliver its own payload on completion.
-		if (state.handoffCompactionGeneration !== null) return;
+		// Never fight a staged cut.
+		if (state.stagedHandoff !== null) return;
 		// A queued follow-up may be the successor message itself, not yet persisted;
 		// resending now would double-deliver once the queue drains.
 		if (ctx.hasPendingMessages?.()) return;
@@ -728,7 +729,7 @@ export default function (pi: ExtensionAPI): void {
 						}
 						selectList.onSelect = ({ value }) => {
 							const body = state.notebookPages.get(value);
-							// A handoff discard can commit while the list is open (its compaction finishes in the background).
+							// A handoff discard can apply while the list is open (the cut completes during the agent run).
 							if (body === undefined) {
 								finished = true;
 								done({ action: "reopen", name: value });

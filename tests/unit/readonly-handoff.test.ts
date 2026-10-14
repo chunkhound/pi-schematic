@@ -7,28 +7,20 @@ import path from "node:path";
 import { createState } from "../../state.js";
 import { canPromoteBoundary, discardNonHumanBoundary } from "../../readonly-boundary.js";
 import { setActiveNotebookTopic } from "../../notebook/topic.js";
-import { emitAll, makeReadonlyUICtx } from "./helpers.js";
-import { createTestHost } from "./test-host.js";
+import { callHandlers, emitAll, handoffToolResult, makeReadonlyUICtx, registerReadonlyPI, turnEndEvent } from "./helpers.js";
+import type { TestPI } from "./test-host.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
 import { buildContinuationFrame } from "../../handoff/format.js";
 import { READONLY_POWERSHELL_BLOCK_REASON } from "../../notifications.js";
+import { HANDOFF_SIBLING_REFUSAL } from "../../handoff/copy.js";
 
 async function createHandoffPI() {
-	const pi = await createTestHost();
-	const [toolCall] = pi.handlers.get("tool_call")!;
+	const { pi, toolCall } = await registerReadonlyPI();
 	const agentSettled = (ctx: unknown) => emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
-	const [beforeCompact] = pi.handlers.get("session_before_compact")!;
 	const [sessionTree] = pi.handlers.get("session_tree")!;
 	const sessionStart = (event: unknown, ctx: unknown) => emitAll(pi, "session_start", event, ctx);
-	return { pi, toolCall, agentSettled, beforeCompact, sessionTree, sessionStart };
-}
-
-async function dispatchTool(pi: any, toolName: string, input: Record<string, unknown>, ctx: any): Promise<any> {
-	const [toolCall] = pi.handlers.get("tool_call")!;
-	const block = await toolCall({ toolName, input }, ctx);
-	if (block?.block) return block;
-	return pi.tools.get(toolName).execute("dispatch-test", input, undefined, undefined, ctx);
+	return { pi, toolCall, agentSettled, sessionTree, sessionStart };
 }
 
 function makeReadonlyResumeCtx(branch: unknown[]) {
@@ -41,36 +33,79 @@ function makeReadonlyResumeCtx(branch: unknown[]) {
 	};
 }
 
+/** Run the composed tool_call handlers with pi's `toolCallId`, which the helper's event type omits. */
+function callTool(toolCall: (event: any, ctx: any) => Promise<any>, event: Record<string, unknown>, ctx: unknown): Promise<any> {
+	return toolCall(event, ctx);
+}
+
+const ELIGIBLE_USAGE = { tokens: 50000, percent: 25, contextWindow: 200000 };
+
+/** Execute the handoff tool with an eligible context, leaving the handoff staged. */
+async function stageHandoff(pi: TestPI, toolCallId: string, params: Record<string, unknown>): Promise<void> {
+	await pi.tools.get("handoff").execute(toolCallId, params, undefined, undefined, {
+		hasUI: false,
+		getContextUsage: () => ELIGIBLE_USAGE,
+	});
+}
+
+/** End the staging turn and return the entries the boundary handler asked pi to commit. */
+async function endStagingTurn(pi: TestPI, toolCallId: string): Promise<any[]> {
+	const results = await callHandlers(
+		pi,
+		"turn_end",
+		turnEndEvent({ toolResults: [handoffToolResult(toolCallId)] }),
+		{ hasUI: false, signal: { aborted: false }, getContextUsage: () => null },
+	);
+	const boundary = results.find((result: any) => result?.entries) as { entries: any[]; continue: boolean } | undefined;
+	assert.ok(boundary, "the staging turn_end must return boundary entries");
+	assert.equal(boundary.continue, true);
+	return boundary.entries;
+}
+
+/** The branch pi would hold after committing `drafts` as session entries. */
+function committedBranch(drafts: any[]): any[] {
+	return drafts.map((draft, index) => ({ ...draft, id: `entry-${index}`, parentId: index === 0 ? null : `entry-${index - 1}`, timestamp: "2026-01-01T00:00:00.000Z" }));
+}
+
+async function turnStartWith(pi: TestPI, branch: any[]): Promise<void> {
+	await emitAll(pi, "turn_start", { type: "turn_start" }, { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => branch } });
+}
+
+/** Stage → turn_end → turn_start with the committed cut on the branch. Returns the committed drafts. */
+async function completeHandoffCut(pi: TestPI, toolCallId: string, params: Record<string, unknown>): Promise<any[]> {
+	await stageHandoff(pi, toolCallId, params);
+	const drafts = await endStagingTurn(pi, toolCallId);
+	await turnStartWith(pi, committedBranch(drafts));
+	return drafts;
+}
+
 /**
- * Drive a real handoff through the compaction cut, optionally flipping readonly
+ * Drive a real handoff through the boundary cut, optionally flipping readonly
  * between the tool call and the cut, then read the next model turn's readonly nudge.
  */
 async function handoffCutAcrossReadonlyToggle(readonlyAfterCut: boolean) {
-	const { pi, beforeCompact } = await createHandoffPI();
+	const { pi } = await createHandoffPI();
 	const [contextHandler] = pi.handlers.get("context")!;
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 	// Consume the toggle-on nudge so any later nudge can only come from the handoff.
 	await contextHandler({ messages: [{ role: "user", content: "drain", timestamp: 1 }] }, { getContextUsage: () => null } as any);
 	await pi.commands.get("handoff").handler("continue work", { ...makeReadonlyUICtx(), isIdle: () => true } as any);
-	let compactOptions: any;
-	await pi.tools.get("handoff").execute("handoff-1", { nextInstruction: "ignored in favor of the direction" }, undefined, undefined, {
-		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
-		compact: (options: any) => { compactOptions = options; },
-	});
+	await stageHandoff(pi, "handoff-1", { nextInstruction: "ignored in favor of the direction" });
 	if (!readonlyAfterCut) {
 		await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 		// Consume the pre-cut toggle nudge so the probe below sees only the fresh
 		// handoff-side announcement of the final live state.
 		await contextHandler({ messages: [{ role: "user", content: "toggle", timestamp: 2 }] }, { getContextUsage: () => null } as any);
 	}
-	const cut = await beforeCompact({ preparation: { tokensBefore: 1 }, branchEntries: [{ id: "leaf-1" }] }, {});
-	compactOptions.onComplete();
+	const drafts = await endStagingTurn(pi, "handoff-1");
+	await turnStartWith(pi, committedBranch(drafts));
 	const next = await contextHandler(
 		{ messages: [{ role: "user", content: "post-handoff", timestamp: 3 }] },
 		{ getContextUsage: () => null } as any,
 	);
 	const nudge = (next?.messages ?? []).filter((message: any) => message.customType === "pi-schematic-readonly-nudge").at(-1);
-	return { summary: cut.compaction.summary as string, nudgeContent: nudge?.content as string | undefined };
+	const compaction = drafts.find((draft) => draft.type === "compaction");
+	return { summary: compaction.summary as string, nudgeContent: nudge?.content as string | undefined };
 }
 
 async function assertNonTempBashBlocked(toolCall: (event: any, ctx: any) => Promise<any>): Promise<void> {
@@ -123,23 +158,55 @@ test("/handoff command creates temporary bypass for handoff tool only", async ()
 	await assertNonTempBashBlocked(toolCall);
 });
 
-test("blocked readonly handoff never invokes compaction", async () => {
-	const { pi } = await createHandoffPI();
+test("blocked readonly handoff never stages a cut", async () => {
+	const { pi, toolCall } = await createHandoffPI();
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
-	let compactCalled = false;
-	const result = await dispatchTool(
+	const ctx = {
+		...makeReadonlyUICtx(),
+		cwd: process.cwd(),
+		getContextUsage: () => ({ tokens: 50_000, percent: 80, contextWindow: 64_000 }),
+	};
+	const input = { nextInstruction: "must remain in current context" };
+	const blocked = await callTool(toolCall, { toolName: "handoff", toolCallId: "blocked-1", input }, ctx);
+	// Pi runs the executor only for an unblocked call.
+	if (!blocked?.block) await pi.tools.get("handoff")!.execute("blocked-1", input, undefined, undefined, ctx as any);
+	assert.equal(blocked?.block, true);
+
+	const results = await callHandlers(
 		pi,
-		"handoff",
-		{ nextInstruction: "must remain in current context" },
-		{
-			...makeReadonlyUICtx(),
-			cwd: process.cwd(),
-			getContextUsage: () => ({ tokens: 50_000, percent: 80, contextWindow: 64_000 }),
-			compact: () => { compactCalled = true; },
-		},
+		"turn_end",
+		turnEndEvent({ toolResults: [handoffToolResult("blocked-1")] }),
+		{ hasUI: false, signal: { aborted: false }, getContextUsage: () => null },
 	);
-	assert.equal(result?.block, true);
-	assert.equal(compactCalled, false, "blocked handoff must not reach the tool executor");
+	assert.deepEqual(results.filter((result: any) => result?.entries), [], "a blocked handoff leaves no boundary to write");
+});
+
+test("sibling refusal precedes readonly blocking", async () => {
+	const { pi, toolCall } = await createHandoffPI();
+	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
+	await pi.commands.get("handoff").handler("continue readonly work", {
+		...makeReadonlyUICtx(),
+		isIdle: () => true,
+	} as any);
+	await callHandlers(pi, "message_end", {
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [
+				{ type: "toolCall", id: "call-handoff", name: "handoff", arguments: {} },
+				{ type: "toolCall", id: "call-write", name: "write", arguments: { path: "/tmp/test", content: "x" } },
+			],
+		},
+	}, {});
+
+	const sibling = await callTool(toolCall, { toolName: "write", toolCallId: "call-write", input: { path: "/tmp/test", content: "x" } }, {});
+	assert.deepEqual(sibling, { block: true, reason: HANDOFF_SIBLING_REFUSAL, terminate: true });
+
+	assert.equal(await callTool(toolCall, { toolName: "handoff", toolCallId: "call-handoff", input: { nextInstruction: "continue readonly work" } }, {}), undefined,
+		"the handoff call itself stays unblocked under the bypass");
+	const standalone = await callTool(toolCall, { toolName: "write", toolCallId: "unrelated-write", input: { path: "/tmp/test", content: "x" } }, {});
+	assert.equal(standalone.block, true);
+	assert.notEqual(standalone.reason, HANDOFF_SIBLING_REFUSAL, "a call outside the handoff message keeps the readonly reason");
 });
 
 test("watchdog cancellation clears the readonly handoff bypass", async () => {
@@ -171,7 +238,7 @@ test("watchdog cancellation clears the readonly handoff bypass", async () => {
 		"readonly handoff should be blocked after watchdog cancellation");
 });
 
-test("after handoff compaction, bypass is cleared and readonly persists", async () => {
+test("after the handoff cut, bypass is cleared and readonly persists", async () => {
 	const { pi, toolCall } = await createHandoffPI();
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 	await pi.commands.get("handoff").handler("continue readonly work", {
@@ -179,29 +246,27 @@ test("after handoff compaction, bypass is cleared and readonly persists", async 
 		isIdle: () => true,
 	} as any);
 
-	// Execute handoff tool and capture the compact callback
-	let compactOptions: any;
-	await pi.tools.get("handoff").execute(
-		"handoff-1",
-		{ nextInstruction: "Continue readonly work" },
-		undefined,
-		undefined,
-		{
-			getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
-			hasUI: true,
-			ui: { setStatus: () => {}, notify: () => {} },
-			compact: (options: any) => { compactOptions = options; },
-		},
-	);
+	await completeHandoffCut(pi, "handoff-1", { nextInstruction: "Continue readonly work" });
 
-	// Trigger onComplete (simulates successful compaction)
-	compactOptions.onComplete({});
-
-	// Observable contract: bypass cleared, readonly still active
 	assert.equal((await toolCall({ toolName: "handoff", input: { nextInstruction: "direct call" } }, {})).block, true,
 		"bypass cleared: direct handoff should be blocked");
 	assert.equal((await toolCall({ toolName: "write", input: { path: "/tmp/test", content: "x" } }, {})).block, true,
-		"readonly persists: write should still be blocked after compaction");
+		"readonly persists: write should still be blocked after the cut");
+});
+
+test("the readonly bypass stays until the cut is confirmed on the branch", async () => {
+	const { pi, toolCall } = await createHandoffPI();
+	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
+	await pi.commands.get("handoff").handler("continue readonly work", {
+		...makeReadonlyUICtx(),
+		isIdle: () => true,
+	} as any);
+
+	await stageHandoff(pi, "handoff-1", { nextInstruction: "Continue readonly work" });
+	await endStagingTurn(pi, "handoff-1");
+
+	assert.equal(await toolCall({ toolName: "handoff", input: {} }, {}), undefined,
+		"a submitted boundary is not a confirmed cut: the bypass must stay");
 });
 
 test("synchronous handoff rejection preserves the readonly bypass contract", async () => {
@@ -232,7 +297,7 @@ test("synchronous handoff rejection preserves the readonly bypass contract", asy
 		"write should stay blocked while the bypass remains active");
 });
 
-test("retry succeeds after a failed compaction attempt", async () => {
+test("retry succeeds after a handoff cut that pi did not persist", async () => {
 	const { pi, toolCall } = await createHandoffPI();
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 	await pi.commands.get("handoff").handler("continue readonly work", {
@@ -240,76 +305,64 @@ test("retry succeeds after a failed compaction attempt", async () => {
 		isIdle: () => true,
 	} as any);
 
-	// Execute handoff tool and capture the compact callback
-	let compactOptions: any;
-	await pi.tools.get("handoff").execute(
-		"handoff-1",
-		{ nextInstruction: "Continue readonly work" },
-		undefined,
-		undefined,
-		{
-			getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
-			hasUI: true,
-			ui: { setStatus: () => {}, notify: () => {} },
-			compact: (options: any) => { compactOptions = options; },
-		},
-	);
-
-	// Trigger onError — simulates failed compaction
+	await stageHandoff(pi, "handoff-1", { nextInstruction: "Continue readonly work" });
+	await endStagingTurn(pi, "handoff-1");
+	// Pi dropped the boundary: the next turn starts on a branch without the cut.
 	const userMessagesBefore = pi.sentUserMessages.length;
-	compactOptions.onError(new Error("Nothing to compact (session too small)"));
+	await turnStartWith(pi, []);
 
-	// onError re-engages the LLM
-	assert.ok(pi.sentUserMessages.length > userMessagesBefore);
-	assert.match(pi.sentUserMessages[pi.sentUserMessages.length - 1].content, /Handoff failed/);
+	// The failure re-engages the model with a follow-up and keeps the bypass for the retry.
+	assert.equal(pi.sentUserMessages.length, userMessagesBefore + 1);
+	assert.match(pi.sentUserMessages.at(-1)!.content, /Handoff failed/);
+	assert.equal(pi.sentUserMessages.at(-1)!.options?.deliverAs, "followUp");
+	assert.equal(await toolCall({ toolName: "handoff", input: { nextInstruction: "retry handoff" } }, {}), undefined,
+		"the readonly bypass must remain for the retry");
 
-	// Observable contract: a retry handoff call succeeds after failed compaction
 	await assert.doesNotReject(
-		() => pi.tools.get("handoff").execute(
-			"handoff-retry",
-			{ nextInstruction: "retry handoff" },
-			undefined,
-			undefined,
-			{
-				getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
-				hasUI: true,
-				ui: { setStatus: () => {}, notify: () => {} },
-				compact: () => {},
-			},
-		),
-		"retry handoff should succeed after failed compaction",
+		() => stageHandoff(pi, "handoff-retry", { nextInstruction: "retry handoff" }),
+		"retry handoff should stage after the failed cut",
 	);
 
-	// Readonly still active
 	assert.equal((await toolCall({ toolName: "write", input: { path: "/tmp/test", content: "x" } }, {})).block, true,
-		"readonly persists: write should still be blocked after failed compaction");
+		"readonly persists: write should still be blocked after the failed cut");
 });
 
-test("/handoff re-enables bypass after compaction", async () => {
+test("an aborted handoff keeps the bypass and persists the failure without starting a run", async () => {
+	const { pi, toolCall } = await createHandoffPI();
+	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
+	await pi.commands.get("handoff").handler("continue readonly work", {
+		...makeReadonlyUICtx(),
+		isIdle: () => true,
+	} as any);
+
+	await stageHandoff(pi, "handoff-1", { nextInstruction: "Continue readonly work" });
+	const results = await callHandlers(
+		pi,
+		"turn_end",
+		turnEndEvent({ toolResults: [handoffToolResult("handoff-1")] }),
+		{ hasUI: false, signal: { aborted: true }, getContextUsage: () => null },
+	);
+	assert.deepEqual(results.filter((result: any) => result?.entries), []);
+	const userMessagesBefore = pi.sentUserMessages.length;
+	await emitAll(pi, "agent_settled", { type: "agent_settled" }, { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => [] } });
+
+	assert.equal(pi.sentMessages.at(-1)?.message.customType, "pi-schematic-handoff-failed");
+	assert.equal(pi.sentMessages.at(-1)?.options?.triggerTurn, false);
+	assert.equal(pi.sentUserMessages.length, userMessagesBefore, "an abort must not start another run");
+	assert.equal(await toolCall({ toolName: "handoff", input: {} }, {}), undefined,
+		"the readonly bypass must remain for the retry");
+});
+
+test("/handoff re-enables bypass after the cut", async () => {
 	const { pi, toolCall } = await createHandoffPI();
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 
-	// Create bypass, then complete the handoff to clear it
 	await pi.commands.get("handoff").handler("first handoff", {
 		...makeReadonlyUICtx(),
 		isIdle: () => true,
 	} as any);
-	let compactOptions: any;
-	await pi.tools.get("handoff").execute(
-		"handoff-1",
-		{ nextInstruction: "first handoff" },
-		undefined,
-		undefined,
-		{
-			getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
-			hasUI: true,
-			ui: { setStatus: () => {}, notify: () => {} },
-			compact: (options: any) => { compactOptions = options; },
-		},
-	);
-	compactOptions.onComplete({});
+	await completeHandoffCut(pi, "handoff-1", { nextInstruction: "first handoff" });
 
-	// Second /handoff re-enables the bypass
 	await pi.commands.get("handoff").handler("second readonly handoff", {
 		...makeReadonlyUICtx(),
 		isIdle: () => true,
@@ -321,8 +374,7 @@ test("/handoff re-enables bypass after compaction", async () => {
 test("the handoff summary stays readonly-free and the fresh context relearns readonly live", async () => {
 	// Readonly still active at the cut: the fresh context is told again, from live state.
 	const resumed = await handoffCutAcrossReadonlyToggle(true);
-	assert.ok(resumed.summary.startsWith(buildContinuationFrame()));
-	assert.match(resumed.summary, /<!-- handoff-cut:[0-9a-f-]{36} -->$/i);
+	assert.equal(resumed.summary, buildContinuationFrame());
 	assert.doesNotMatch(resumed.summary, /readonly/i, "constraints must never be frozen into the summary");
 	assert.doesNotMatch(resumed.summary, /ignored in favor of the direction/,
 		"the model-supplied instruction must not leak into the summary");
@@ -333,8 +385,7 @@ test("the handoff summary stays readonly-free and the fresh context relearns rea
 	// stays silent — OFF-at-cut needs no announcement, while toggles and tree
 	// navigation re-announce via rehydration.
 	const dropped = await handoffCutAcrossReadonlyToggle(false);
-	assert.ok(dropped.summary.startsWith(buildContinuationFrame()));
-	assert.match(dropped.summary, /<!-- handoff-cut:[0-9a-f-]{36} -->$/i);
+	assert.equal(dropped.summary, buildContinuationFrame());
 	assert.doesNotMatch(dropped.summary, /readonly/i);
 	assert.equal(dropped.nudgeContent, undefined,
 		"an OFF-at-cut handoff stays silent; ON-to-OFF across start/tree is covered by rehydration");
@@ -408,12 +459,7 @@ test("promoted readonly boundary preserves bypass across execute-time eligibilit
 			"execute-time rejection must preserve the promoted readonly bypass");
 	}
 
-	let compactOptions: any;
-	await pi.tools.get("handoff").execute("boundary-success", { nextInstruction: "continue billing" }, undefined, undefined, {
-		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
-		compact: (options: any) => { compactOptions = options; },
-	});
-	compactOptions.onComplete();
+	await completeHandoffCut(pi, "boundary-success", { nextInstruction: "continue billing" });
 	assert.equal((await toolCall({ toolName: "handoff", input: {} }, {})).block, true);
 });
 
@@ -497,8 +543,8 @@ test("readonly human topic boundary promotes exactly at the token threshold with
 	assert.equal(await toolCall({ toolName: "handoff", input: {} }, {}), undefined);
 });
 
-test("readonly topic boundary handoff clears its bypass after successful compaction", async () => {
-	const { pi, toolCall, beforeCompact } = await createHandoffPI();
+test("readonly topic boundary handoff clears its bypass after the cut", async () => {
+	const { pi, toolCall } = await createHandoffPI();
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 	const [contextHandler] = pi.handlers.get("context")!;
 	await contextHandler(
@@ -512,27 +558,12 @@ test("readonly topic boundary handoff clears its bypass after successful compact
 		{ getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }) } as any,
 	);
 
-	let compactOptions: any;
-	await pi.tools.get("handoff").execute(
-		"boundary-handoff",
-		{ nextInstruction: "Continue billing work" },
-		undefined,
-		undefined,
-		{
-			getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
-			compact: (options: any) => { compactOptions = options; },
-		},
-	);
-	const result = await beforeCompact(
-		{ preparation: { tokensBefore: 1 }, branchEntries: [{ id: "leaf-1" }] },
-		{},
-	);
-	compactOptions.onComplete({});
+	const drafts = await completeHandoffCut(pi, "boundary-handoff", { nextInstruction: "Continue billing work" });
 
-	assert.ok(result.compaction.summary.startsWith(buildContinuationFrame()),
-		"readonly must not be frozen into the summary");
-	assert.match(result.compaction.summary, /<!-- handoff-cut:[0-9a-f-]{36} -->$/i);
-	assert.ok(pi.sentUserMessages.at(-1)?.content.startsWith("## Next instruction\n\nContinue billing work"),
+	const compaction = drafts.find((draft) => draft.type === "compaction");
+	const successor = drafts.find((draft) => draft.customType === "pi-schematic-handoff");
+	assert.equal(compaction.summary, buildContinuationFrame(), "readonly must not be frozen into the summary");
+	assert.ok(successor.content.startsWith("## Next instruction\n\nContinue billing work"),
 		"the successor turn carries the stored direction verbatim");
 	assert.equal((await toolCall({ toolName: "handoff", input: {} }, {})).block, true);
 	assert.equal((await toolCall({ toolName: "write", input: {} }, {})).block, true);
@@ -609,16 +640,11 @@ test("advisoryDelivered flag prevents repeated advisory nudges for ineligible bo
 	assert.equal((await toolCall({ toolName: "handoff", input: {} }, {})).block, true);
 });
 
-test("session tree invalidates pending handoff work, releases the overlap guard, and ignores stale callbacks", async () => {
+test("session tree drops a staged handoff, releases the overlap guard, and a stale turn_end writes no cut", async () => {
 	const { pi, toolCall, sessionTree } = await createHandoffPI();
-	let staleCompactOptions: any;
-	let freshCompactOptions: any;
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "stale"]]);
 
-	await pi.tools.get("handoff").execute("branch-handoff", { nextInstruction: "continue branch work" }, undefined, undefined, {
-		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
-		compact: (options: any) => { staleCompactOptions = options; },
-	});
+	await stageHandoff(pi, "branch-handoff", { nextInstruction: "continue branch work" });
 	await sessionTree({}, {
 		hasUI: true,
 		ui: {
@@ -632,19 +658,19 @@ test("session tree invalidates pending handoff work, releases the overlap guard,
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), undefined);
 	assert.equal(await toolCall({ toolName: "handoff", input: {} }, {}), undefined,
 		"non-readonly branch should not retain a stale readonly handoff block");
-	await assert.doesNotReject(
-		() => pi.tools.get("handoff").execute("fresh-branch-handoff", { nextInstruction: "continue fresh branch work" }, undefined, undefined, {
-			getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
-			compact: (options: any) => { freshCompactOptions = options; },
-		}),
-		"session_tree must release the overlap guard for a fresh branch handoff",
-	);
 
-	staleCompactOptions.onComplete();
-	assert.equal(pi.sentUserMessages.length, 0, "stale callback must not touch the fresh branch state");
-	freshCompactOptions.onComplete();
-	assert.equal(pi.sentUserMessages.length, 1, "only the fresh branch handoff reports completion");
-	assert.match(pi.sentUserMessages.at(-1)?.content ?? "", /^## Next instruction\n\ncontinue fresh branch work/,
+	const staleResults = await callHandlers(
+		pi,
+		"turn_end",
+		turnEndEvent({ toolResults: [handoffToolResult("branch-handoff")] }),
+		{ hasUI: false, signal: { aborted: false }, getContextUsage: () => null },
+	);
+	assert.deepEqual(staleResults.filter((result: any) => result?.entries), [], "the dropped handoff must not write a cut");
+
+	const drafts = await completeHandoffCut(pi, "fresh-branch-handoff", { nextInstruction: "continue fresh branch work" });
+	assert.equal(pi.sentUserMessages.length, 0, "the dropped handoff reports no failure and the fresh one completes");
+	const successor = drafts.find((draft) => draft.customType === "pi-schematic-handoff");
+	assert.match(successor.content, /^## Next instruction\n\ncontinue fresh branch work/,
 		"the fresh branch must receive its own instruction");
 });
 

@@ -1,9 +1,16 @@
-/** Handoff copy: the constant continuation frame and the successor's user message. */
+/** Handoff copy: the constant continuation frame, the successor message, and handoff reports. */
 
-/** Delimits extension-owned operational reporting after a successor payload. */
+/** Custom type of the successor message written in the handoff boundary. */
+export const HANDOFF_SUCCESSOR_CUSTOM_TYPE = "pi-schematic-handoff";
+/** Custom type of the hidden system-prompt note written after the successor. */
+export const HANDOFF_NOTE_CUSTOM_TYPE = "pi-schematic-handoff-note";
+/** Custom type of the failure message persisted when an aborted run leaves no cut. */
+export const HANDOFF_FAILED_CUSTOM_TYPE = "pi-schematic-handoff-failed";
+
+/** Delimits extension-owned operational reporting after a legacy successor payload. */
 export const HANDOFF_REPORT_DELIMITER = "\n\n## Handoff report\n\n";
 
-/** Versioned durable handoff data stored on its compaction entry. */
+/** Versioned durable handoff data stored on a legacy handoff compaction entry. */
 export interface HandoffPayload {
 	version: 1;
 	nextInstruction: string;
@@ -14,7 +21,7 @@ export interface HandoffPayload {
  * The compaction summary shown to the fresh context.
  *
  * Constant on purpose. The instruction and situational context arrive verbatim in
- * the next real user message (see `buildNextUserMessage`), and readonly state is
+ * the next message (see `buildNextUserMessage`), and readonly state is
  * re-emitted live by the context hook — so nothing session-specific, and no
  * constraints, belong in an immutable summary that a `/tree` rollback cannot fix.
  */
@@ -24,7 +31,7 @@ export function buildContinuationFrame(): string {
 		"",
 		"You are continuing a previous agent's work in a clean context. Use the available knowledge correctly:",
 		"- Notebook pages are a cache for this stream: code facts are re-derivable, while user guidance, decisions, and design live in pages — fetch them with `notebook_read`",
-		"- The next user message carries your instruction verbatim, plus the previous agent's remaining situational context",
+		"- The next message carries your instruction verbatim, plus the previous agent's remaining situational context",
 		"- Use `notebook_index` to scan available pages when needed",
 		"- Use `spawn` to delegate isolated subtasks to child agents",
 		"- Build on notebook memory and the instruction rather than reconstructing old context",
@@ -32,17 +39,7 @@ export function buildContinuationFrame(): string {
 }
 
 /**
- * Add the cut identity Pi needs to report the just-created compaction entry.
- *
- * This comment has no successor instruction or mutable execution posture; the
- * visible continuation frame stays fixed while each persisted summary is unique.
- */
-export function buildHandoffCompactionSummary(recoveryKey: string): string {
-	return `${buildContinuationFrame()}\n\n<!-- handoff-cut:${recoveryKey} -->`;
-}
-
-/**
- * Build the single user message that starts the post-handoff context.
+ * Build the successor message that starts the post-handoff context.
  *
  * The instruction is copied, never summarized, so it cannot be paraphrased away.
  */
@@ -53,7 +50,25 @@ export function buildNextUserMessage(input: Pick<HandoffPayload, "nextInstructio
 	return parts.join("\n");
 }
 
-/** Add an extension-owned operational report without changing the successor payload prefix. */
-export function appendHandoffReport(successorMessage: string, report: string): string {
-	return successorMessage + HANDOFF_REPORT_DELIMITER + report;
+/**
+ * Hidden note after the successor. The successor turn continues the calling run,
+ * so its system prompt still carries the pre-handoff topic and page list.
+ */
+export function buildHandoffSystemPromptNote(): string {
+	return "The system prompt above was written before this handoff and is refreshed at the next user message. Until then, ignore its notebook topic (the topic is cleared) and its notebook page list (use `notebook_index` for the current pages).";
+}
+
+/** Model-facing failure guidance for a handoff that did not cut. */
+export function formatHandoffFailure(reason: string, pendingRequest: boolean): string {
+	const nextStep = pendingRequest
+		? "The required handoff remains pending; retry when context usage is eligible."
+		: "No required handoff remains pending; retry when ready.";
+	return `Handoff failed — ${reason}. ${nextStep}`;
+}
+
+/** Completion report; with a discard request it states the notebook outcome. */
+export function formatHandoffComplete(discardRequested: boolean, kept: number, discarded: number): string {
+	if (!discardRequested) return "Handoff complete.";
+	return `Handoff complete. Notebook: ${kept} page${kept === 1 ? "" : "s"} kept` +
+		(discarded > 0 ? `, ${discarded} discarded.` : ".");
 }

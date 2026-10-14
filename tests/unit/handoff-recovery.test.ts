@@ -1,13 +1,30 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { appendHandoffReport, buildNextUserMessage, HANDOFF_REPORT_DELIMITER } from "../../handoff/format.js";
+import { buildNextUserMessage, HANDOFF_REPORT_DELIMITER } from "../../handoff/format.js";
 import { getUndeliveredHandoffMessage } from "../../handoff/recovery.js";
 import { emitAll } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
 
 const payload = { version: 1 as const, nextInstruction: "resume\nexactly", context: "blocked on CI" };
 const message = buildNextUserMessage(payload);
+
+// A legacy session persisted its successor with the operational report appended
+// after this delimiter.
+function legacyReportText(successorMessage: string, report: string): string {
+	return successorMessage + HANDOFF_REPORT_DELIMITER + report;
+}
+
+let boundaryCutId = 0;
+
+// A cut written by the turn_end boundary: no payload, identified by its handoffId.
+function boundaryCut(details: Record<string, unknown> = { handoff: true, handoffId: `boundary-${++boundaryCutId}` }): any {
+	return { id: `boundary-cut-${boundaryCutId}`, type: "compaction", details };
+}
+
+function boundarySuccessor(): any {
+	return { type: "custom_message", customType: "pi-schematic-handoff", content: "## Next instruction\n\nboundary work", display: true };
+}
 
 let handoffId = 0;
 let messageId = 0;
@@ -138,7 +155,7 @@ test("an intermediate entry between cut and successor preserves ownership", () =
 test("a successor carrying an appended operational report is owned delivery", () => {
 	const cut = handoff();
 	assert.equal(
-		getUndeliveredHandoffMessage([cut], [cut, delivered(appendHandoffReport(message, "Notebook: 1 page kept."), cut)]),
+		getUndeliveredHandoffMessage([cut], [cut, delivered(legacyReportText(message, "Notebook: 1 page kept."), cut)]),
 		null,
 		"the report-delimited successor prefix is still delivery evidence",
 	);
@@ -162,7 +179,7 @@ test("malformed user content shapes do not throw recovery", () => {
 });
 
 test("a recovered resend is the bare payload without the operational report", () => {
-	const lostWithReport = appendHandoffReport(message, "Notebook: 1 page kept.");
+	const lostWithReport = legacyReportText(message, "Notebook: 1 page kept.");
 	assert.ok(lostWithReport.includes(HANDOFF_REPORT_DELIMITER));
 	const recovered = recoveredMessage([handoff()]);
 	assert.equal(recovered, message);
@@ -261,6 +278,21 @@ test("an unreadable newest handoff supersedes an older recoverable one", () => {
 	]), null);
 });
 
+test("a boundary cut after an undelivered legacy cut ends recovery", () => {
+	// R1: the newest cut owns recovery, and a boundary cut writes its own successor.
+	assert.equal(recoveredMessage([handoff(), boundaryCut(), boundarySuccessor()]), null);
+});
+
+test("a boundary cut identified only by handoffId still ends recovery", () => {
+	// R2: the stop does not depend on the `handoff: true` marker.
+	assert.equal(recoveredMessage([handoff(), boundaryCut({ handoffId: "marker-free" }), boundarySuccessor()]), null);
+});
+
+test("a boundary cut is never resent even when its details carry a readable payload", () => {
+	// The stop rests on handoffId, not on the payload being absent.
+	assert.equal(recoveredMessage([boundaryCut({ handoff: true, handoffId: "with-payload", payload })]), null);
+});
+
 test("a non-handoff compaction does not supersede the last handoff cut", () => {
 	assert.equal(recoveredMessage([
 		handoff(),
@@ -301,28 +333,27 @@ test("a session start re-opens the delivery scope after an in-process session lo
 	assert.equal(pi.sentUserMessages.length, 2, "a new session scope evaluates recovery freshly");
 });
 
-test("a settled run during an in-flight cut does not recover an older payload", async () => {
+test("recovery does not run while a handoff is staged", async () => {
 	const pi = await createTestHost();
 	const branch: any[] = [handoff()];
-	// Start a handoff but never settle its callbacks: the compaction reservation stays set.
 	await pi.tools.get("handoff")!.execute(
-		"in-flight",
+		"staged",
 		{ nextInstruction: "new phase" },
 		undefined,
 		undefined,
 		{
+			hasUI: false,
 			getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
-			compact: () => {},
 		},
 	);
 
-	await emitAll(pi, "agent_settled", {}, {
+	await emitAll(pi, "session_start", { reason: "resume" }, {
 		hasUI: false,
 		hasPendingMessages: () => false,
 		getContextUsage: () => null,
 		sessionManager: { getBranch: () => branch },
 	});
-	assert.deepEqual(pi.sentUserMessages, [], "the in-flight cut owns delivery of the newest payload");
+	assert.deepEqual(pi.sentUserMessages, [], "the staged cut owns the next delivery; an older payload must not be resent");
 });
 
 test("tree navigation and resume queue a missing successor in a fresh process", async () => {
@@ -338,37 +369,18 @@ test("tree navigation and resume queue a missing successor in a fresh process", 
 	assert.deepEqual(resumedPi.sentUserMessages, [{ content: message, options: { deliverAs: "followUp" } }]);
 });
 
-test("a direct delivery is latched against duplicate tree recovery until settle", async () => {
+test("a session whose newest cut is a boundary cut never resends after tree, start, or settle", async () => {
 	const pi = await createTestHost();
-	const branch: any[] = [];
-	let callbacks: any;
-	await pi.tools.get("handoff")!.execute(
-		"direct",
-		{ nextInstruction: "do it" },
-		undefined,
-		undefined,
-		{
-			getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
-			compact: (options: any) => { callbacks = options; },
-		},
-	);
-
-	// Model the cut landing in the branch, then complete the direct delivery.
-	const [beforeCompact] = pi.handlers.get("session_before_compact")!;
-	const result = await beforeCompact({ preparation: { tokensBefore: 1 }, branchEntries: [{ id: "leaf-1" }] }, {});
-	branch.push({ type: "compaction", id: "compaction-1", summary: result.compaction.summary, details: result.compaction.details });
-	callbacks.onComplete();
-
-	const ctx = { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => branch } };
-	const successorCount = () => pi.sentUserMessages.filter((message) => message.content.startsWith("## Next instruction")).length;
-
+	// An undelivered legacy cut precedes the boundary cut that superseded it.
+	const branch: any[] = [handoff(), boundaryCut(), boundarySuccessor()];
+	const ctx = { hasUI: false, hasPendingMessages: () => false, getContextUsage: () => null, sessionManager: { getBranch: () => branch } };
 	const [sessionTree] = pi.handlers.get("session_tree")!;
-	await sessionTree({}, ctx);
-	assert.equal(successorCount(), 1, "tree recovery must not duplicate an outstanding direct delivery");
 
-	// A settled run proves the delivery is still absent, so recovery retries once.
-	await emitAll(pi, "agent_settled", {}, { ...ctx, hasPendingMessages: () => false });
-	assert.equal(successorCount(), 2, "a settle must retry a delivery that never persisted");
+	await sessionTree({}, ctx);
+	await emitAll(pi, "session_start", { reason: "resume" }, ctx);
+	await emitAll(pi, "agent_settled", {}, ctx);
+
+	assert.deepEqual(pi.sentUserMessages, [], "a boundary cut delivers its own successor; recovery must stay silent");
 });
 
 test("identical payloads on separate branches each recover once", async () => {

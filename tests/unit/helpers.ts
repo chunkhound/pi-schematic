@@ -2,7 +2,8 @@
 // Imported by other test files via `./helpers.js`
 // Includes the real-API test host (see ./test-host.js), test utilities, theme constants, readonly helpers, etc.
 
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Theme, TurnEndEvent } from "@earendil-works/pi-coding-agent";
+import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -119,16 +120,84 @@ export async function emitAll(pi: TestPI, event: string, payload: unknown, ctx: 
 	}
 }
 
+/**
+ * Like `emitAll`, but returns each handler's result in registration order. Each
+ * handler sees the same payload: pi's chaining of boundary results between
+ * handlers is not emulated.
+ */
+export async function callHandlers(pi: TestPI, event: string, payload: unknown, ctx: unknown): Promise<unknown[]> {
+	const handlers = pi.handlers.get(event);
+	if (!handlers?.length) throw new Error(`No handlers registered for "${event}"`);
+	const results: unknown[] = [];
+	for (const handler of handlers) {
+		results.push(await handler(payload, ctx));
+	}
+	return results;
+}
+
+/** A tool result message for `toolCallId`, as pi passes it in `TurnEndEvent.toolResults`. */
+export function handoffToolResult(toolCallId: string, isError = false): ToolResultMessage {
+	return {
+		role: "toolResult",
+		toolCallId,
+		toolName: "handoff",
+		content: [{ type: "text", text: isError ? "Handoff rejected." : "Handoff staged." }],
+		isError,
+		timestamp: 0,
+	};
+}
+
+/** A completed `turn_end` event with an empty boundary chain; override any field. */
+export function turnEndEvent(overrides: Partial<TurnEndEvent> = {}): TurnEndEvent {
+	return {
+		type: "turn_end",
+		turnIndex: 0,
+		message: {
+			role: "assistant",
+			content: [],
+			api: "faux",
+			provider: "faux",
+			model: "faux",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: 0,
+		},
+		toolResults: [],
+		messageEntryId: "assistant-entry",
+		toolResultEntryIds: [],
+		entries: [],
+		continue: false,
+		context: { contextEntries: [], contextMessages: [], llmMessages: [], pendingMessages: [], canContinue: true },
+		outcome: "completed",
+		...overrides,
+	};
+}
+
 // ── Readonly test helpers ────────────────────────────────────────────
 
 export type ToolCall = (event: { toolName: string; input?: Record<string, unknown> }, ctx: { cwd?: string }) => Promise<any>;
 
 /**
- * Create a test PI instance with pi-schematic registered and the tool_call handler extracted.
+ * Create a test PI instance with pi-schematic registered and its tool_call handlers composed as pi runs them.
  */
 export async function registerReadonlyPI(): Promise<{ pi: TestPI; toolCall: ToolCall }> {
 	const pi = await createTestHost();
-	const [toolCall] = pi.handlers.get("tool_call") as ToolCall[];
+	const handlers = pi.handlers.get("tool_call") as ToolCall[];
+	// Pi runs tool_call handlers in registration order and the first block wins.
+	const toolCall: ToolCall = async (event, ctx) => {
+		for (const handler of handlers) {
+			const result = await handler(event, ctx);
+			if (result?.block) return result;
+		}
+		return undefined;
+	};
 	return { pi, toolCall };
 }
 

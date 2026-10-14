@@ -3,11 +3,11 @@
  *
  * Stores the human direction as the successor's instruction, then asks the LLM to
  * prepare this context for the cut: curate the notebook and supply the remaining
- * situational context. The handoff tool performs the actual compaction.
+ * situational context. The handoff tool performs the actual cut.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { HANDOFF_REQUESTED_STATUS, HANDOFF_REQUIRED_STATUS } from "./copy.js";
+import { HANDOFF_COMMAND_BUSY, HANDOFF_REQUESTED_STATUS, HANDOFF_REQUIRED_STATUS } from "./copy.js";
 import { isHandoffEligible } from "./eligibility.js";
 import {
 	READONLY_HANDOFF_EXCEPTION_NOTIFICATION,
@@ -29,13 +29,7 @@ export function registerHandoffCommand(pi: ExtensionAPI, state: SchematicState):
 				return;
 			}
 
-			if (state.handoffCompactionGeneration !== null) {
-				throw new Error("Handoff compaction already in progress; wait for it to complete before requesting another handoff.");
-			}
-			// Invalidate queued work from an earlier request before replacing its intent.
-			state.handoffGeneration++;
-			state.pendingHandoff = null;
-			state.pendingHandoffDelivery = null;
+			if (state.stagedHandoff) throw new Error(HANDOFF_COMMAND_BUSY);
 			state.pendingRequestedHandoff = {
 				toolCalled: false,
 				enforcementAttempts: 0,

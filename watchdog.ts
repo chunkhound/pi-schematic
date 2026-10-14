@@ -20,9 +20,9 @@ import { STATUS_KEY_HANDOFF } from "./tui.js";
 
 /** Max settled runs in which the eligible handoff nudge was sent before a
  * required handoff auto-clears. 5 gives the model several response
- * cycles to supply the instruction and context, including the async compaction
- * failure path where handoff/tool.ts resets toolCalled=false so enforcement
- * resumes. */
+ * cycles to supply the instruction and context, including a failed cut, where
+ * handoff/boundary.ts resets toolCalled=false before this handler counts the
+ * run. */
 export const MAX_HANDOFF_ATTEMPTS = 5;
 
 type NudgeState = Pick<SchematicState, "activeNotebookTopic" | "pendingTopicBoundaryHint" | "readonlyEnabled" | "pendingRequestedHandoff">;
@@ -133,8 +133,8 @@ export function registerWatchdog(pi: ExtensionAPI, state: SchematicState): void 
 	pi.on("agent_settled", async (_event: unknown, ctx: ExtensionContext) => {
 		// ── Enforcement counter: cap nudged runs of an unanswered handoff ──
 		// pendingRequestedHandoff is the sticky "user still expects a real
-		// handoff" contract. It survives normal turns and even compaction-prep
-		// failure recovery; only a successful handoff completion, reset, or
+		// handoff" contract. It survives normal turns and even a failed handoff
+		// cut; only a successful handoff completion, reset, or
 		// exhausted enforcement attempts should clear it. A run counts only when
 		// the context hook sent the hand-off-now nudge; the flag is per run.
 		const requestedHandoff = state.pendingRequestedHandoff;
