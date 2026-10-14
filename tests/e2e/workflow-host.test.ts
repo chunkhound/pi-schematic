@@ -52,7 +52,7 @@ describe("workflow host E2E — run correlation", () => {
 	it("resolves only after a settled assistant lands past the marker", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, 'turn {"text":"final answer","cost":0.5,"prematureSettles":3}');
 		const entries = await runWorkflowArgs(h, RUNS, '{"count":1,"prompt":"hello"}');
-		const results = exitOf(entries).results as any[];
+		const results = exitOf(entries).metadata.results as any[];
 		assert.equal(results[0].ok, true, "a premature settle never resolves the run");
 		assert.equal(results[0].text, "final answer");
 		assert.ok(results[0].from, "the run is bounded by its sent entry");
@@ -70,7 +70,7 @@ describe("workflow host E2E — run correlation", () => {
 	it("aggregates full usage across a multi-assistant tool loop", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, 'turn {"assistants":[{"text":"thinking","cost":0.2},{"text":"using tool","cost":0.3},{"text":"final answer","cost":0.5}]}');
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"run","prompt":"hello"}');
-		const result = exitOf(entries).result;
+		const result = exitOf(entries).metadata.result;
 		assert.equal(result.text, "final answer", "the last assistant is the run text");
 		assert.equal(result.usage.cost.total, 1.0, "usage sums every assistant past the marker");
 		assert.equal(summaryOf(entries).turns, 3, "each assistant is one model turn");
@@ -107,7 +107,7 @@ describe("workflow host E2E — run correlation", () => {
 		await sendOk(h, 'turn {"stopReason":"error"}');
 		await sendOk(h, 'turn {"text":"success"}');
 		const entries = await runWorkflowArgs(h, RUNS, '{"count":2,"prompt":"hello"}');
-		const results = exitOf(entries).results as any[];
+		const results = exitOf(entries).metadata.results as any[];
 		assert.equal(results[0].ok, false);
 		assert.match(results[0].error, /run failed: error/);
 		assert.equal(results[1].ok, true);
@@ -119,23 +119,23 @@ describe("workflow host E2E — run correlation", () => {
 		await sendOk(h, 'mock-model {"current":{"provider":"base","id":"base"},"resolve":{"provider":"p","id":"m"}}');
 		await sendOk(h, 'turn {"text":"final answer"}');
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"run","prompt":"hello","options":{"model":{"provider":"p","id":"m"}}}');
-		const result = exitOf(entries).result;
+		const result = exitOf(entries).metadata.result;
 		assert.ok(result.fromEntryId, "fromEntryId is the first run entry, not an override append");
 		assert.equal(result.text, "final answer");
 	}));
 	it("reports the model that answered the run, so a routed run is attributable", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, 'turn {"text":"final answer","provider":"deepseek","model":"deepseek-flash"}');
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"run","prompt":"hello"}');
-		assert.deepEqual(exitOf(entries).result.model, { provider: "deepseek", model: "deepseek-flash" });
+		assert.deepEqual(exitOf(entries).metadata.result.model, { provider: "deepseek", model: "deepseek-flash" });
 	}));
 	it("reports a null model when the settled branch names none", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, 'turn {"text":"final answer"}');
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"run","prompt":"hello"}');
-		assert.equal(exitOf(entries).result.model, null);
+		assert.equal(exitOf(entries).metadata.result.model, null);
 	}));
 	it("records an explicit exit reason and metadata", async () => withWorkflowChild(async (h) => {
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"exit","metadata":{"reason":"approved","note":1}}');
-		assert.deepEqual(exitOf(entries), { reason: "approved", note: 1 });
+		assert.deepEqual(exitOf(entries), { reason: "approved", metadata: { reason: "approved", note: 1 } });
 		assert.equal(summaryOf(entries).reason, "approved");
 	}));
 
@@ -157,6 +157,16 @@ describe("workflow host E2E — model/thinking overrides", () => {
 		assert.deepEqual(calls?.model, [{ provider: "p", id: "m" }, { provider: "base", id: "base" }]);
 		assert.deepEqual(calls?.thinking, ["high", "medium"]);
 		assert.deepEqual(calls?.current, { provider: "base", id: "base" }, "the previous model is live again");
+	}));
+
+	it("rejects a model override when the session has no current model and leaves the model unchanged", async () => withWorkflowChild(async (h) => {
+		// Only the resolve result exists; the session has no current model to restore to.
+		await sendOk(h, 'mock-model {"resolve":{"provider":"p","id":"m"}}');
+		const entries = await runWorkflowArgs(h, ECHO, `{"handle":"run","prompt":"hello","options":${OVERRIDES}}`);
+		assert.match(String(summaryOf(entries).error), /cannot override the model: the session has no current model to restore/);
+		const calls = await readModelCalls(h);
+		assert.deepEqual(calls?.model, [], "setModel is never reached");
+		assert.equal(calls?.current, null, "the session model is unchanged");
 	}));
 
 	it("rejects with the restore error when setModel restore fails", async () => withWorkflowChild(async (h) => {
@@ -196,11 +206,13 @@ describe("workflow host E2E — model/thinking overrides", () => {
 	}));
 
 	it("keeps a buffered notebook preview when an override fails before dispatch", async () => withWorkflowChild(async (h) => {
+		// A live model exists, so the failure is the resolve step, not the no-current-model guard.
+		await sendOk(h, 'mock-model {"current":{"provider":"base","id":"base"}}');
 		await sendOk(h, 'turn {"text":"ok"}');
 		const options = '{"model":{"provider":"none","id":"missing"}}';
 		const entries = await runWorkflowArgs(h, PREVIEW, `{"first":"hello","firstOptions":${options},"second":"hello"}`);
 		const exit = exitOf(entries);
-		assert.match(String(exit.firstError), /model not found/);
+		assert.match(String(exit.metadata.firstError), /model not found/);
 		const sent = await readSentMessages(h);
 		assert.equal(sent.length, 1, "only the retry dispatches");
 		assert.match(sent[0].content, /Notebook page "findings" written/, "the failed run kept the preview buffered");
@@ -233,7 +245,7 @@ describe("workflow host E2E — budget and limits", () => {
 	it("reports null remainders without targets and the live cost", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, 'turn {"cost":0.5}');
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"budget","spend":true}');
-		const budget = exitOf(entries).result;
+		const budget = exitOf(entries).metadata.result;
 		assert.equal(budget.cost, 0.5);
 		assert.equal(budget.costRemaining, null);
 		assert.equal(budget.timeRemainingMs, null);
@@ -244,7 +256,7 @@ describe("workflow host E2E — budget and limits", () => {
 		await sendOk(h, "flag workflow-time 60000");
 		await sendOk(h, 'turn {"cost":0.5}');
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"budget","spend":true}');
-		const budget = exitOf(entries).result;
+		const budget = exitOf(entries).metadata.result;
 		assert.equal(budget.costRemaining, 0.5);
 		assert.ok(typeof budget.timeRemainingMs === "number" && budget.timeRemainingMs > 0 && budget.timeRemainingMs <= 60000);
 	}));
@@ -252,7 +264,7 @@ describe("workflow host E2E — budget and limits", () => {
 	it("counts spawned-agent usage carried by a tool result", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, 'turn {"toolResults":[{"toolName":"spawn","cost":0.5}]}');
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"budget","spend":true}');
-		assert.equal(exitOf(entries).result.cost, 0.5);
+		assert.equal(exitOf(entries).metadata.result.cost, 0.5);
 	}));
 
 	it("a cost limit crossed at workflow.run defers the stop to the checkpoint", async () => withWorkflowChild(async (h) => {
@@ -307,7 +319,7 @@ describe("workflow host E2E — budget and limits", () => {
 		const usage = '{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0.25}}';
 		await sendOk(h, `mock-classify {"models":[{"provider":"typesafe","id":"jev"}],"result":{"api":"system-one","provider":"typesafe","model":"jev","answers":{"verdict":{"choice":"Approve"}},"usage":${usage},"stopReason":"stop","timestamp":0}}`);
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"classify","classify":{"model":{"provider":"typesafe","id":"jev"},"state":{},"questions":{}}}');
-		assert.equal(exitOf(entries).result.stopReason, "stop");
+		assert.equal(exitOf(entries).metadata.result.stopReason, "stop");
 		const summary = summaryOf(entries);
 		assert.equal(summary.classifySteps, 1);
 		assert.equal(summary.costUsd, 0.25, "classifier usage is charged to the run budget");
@@ -316,7 +328,7 @@ describe("workflow host E2E — budget and limits", () => {
 	it("state digest carries the live cost", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, 'turn {"cost":0.5}');
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"state","spend":true}');
-		assert.equal(exitOf(entries).result.cost, 0.5);
+		assert.equal(exitOf(entries).metadata.result.cost, 0.5);
 	}));
 });
 
@@ -342,7 +354,7 @@ describe("workflow host E2E — readonly, entries, session folding", () => {
 		await sendOk(h, 'seed-entry {"role":"user","id":"u0","text":"start"}');
 		await sendOk(h, 'seed-entry {"role":"assistant","id":"a1","text":"found it"}');
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"entries","options":{"after":"u0"}}');
-		const digests = exitOf(entries).result as any[];
+		const digests = exitOf(entries).metadata.result as any[];
 		assert.equal(digests.length, 1);
 		assert.equal(digests[0].role, "assistant");
 		assert.equal(digests[0].text, "found it");
@@ -363,7 +375,9 @@ describe("workflow host E2E — readonly, entries, session folding", () => {
 		const entries = await runWorkflowArgs(h, NEW, '{"spend":true}');
 		const summary = summaryOf(entries);
 		assert.match(String(summary.error), /e2e new session failed/);
-		assert.equal(summary.costUsd, 0.5, "the unchanged branch is not double-counted");
+		// The failed replacement nulls the live ctx (workflow/rebind.ts), so the run folds its
+		// settled spend into the baseline on the way out: the in-run 0.5 is reported exactly once.
+		assert.equal(summary.costUsd, 0.5, "a failed new still reports the run's spend once");
 	}));
 
 	it("a cancelled new does not double the branch cost", async () => withWorkflowChild(async (h) => {
@@ -391,14 +405,14 @@ describe("workflow host E2E — structured output", () => {
 		await sendOk(h, 'turn {"output":{"command":"npm test"}}');
 		const options = '{"output":{"schema":{"type":"object","required":["command"],"properties":{"command":{"type":"string"}}}}}';
 		const entries = await runWorkflowArgs(h, ECHO, `{"handle":"run","prompt":"hello","options":${options}}`);
-		assert.deepEqual(exitOf(entries).result.output, { command: "npm test" });
+		assert.deepEqual(exitOf(entries).metadata.result.output, { command: "npm test" });
 		assert.ok(!(await readActiveTools(h)).includes("workflow_output"), "the tool is disarmed after the run");
 	}));
 
 	it("accepts any JSON object when no schema is given", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, 'turn {"output":{"anything":true}}');
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"run","prompt":"hello","options":{"output":{}}}');
-		assert.deepEqual(exitOf(entries).result.output, { anything: true });
+		assert.deepEqual(exitOf(entries).metadata.result.output, { anything: true });
 	}));
 
 	it("never registers the output tool without an output request", async () => withWorkflowChild(async (h) => {

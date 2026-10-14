@@ -1,7 +1,9 @@
 import test, { afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import type { Usage } from "@earendil-works/pi-ai";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { abortAndClearChildSessions, createState, resetState } from "../../state.js";
+import { usageByModel } from "../../usage.js";
 import {
 	MAX_CHILD_USAGE_ENTRIES,
 	childUsageByCall,
@@ -18,6 +20,17 @@ const usage = (total: number): Usage => ({
 	totalTokens: 2,
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total },
 });
+
+/** A settled spawn tool-result message: the branch copy `usageByModel` attributes. */
+function toolResultEntry(id: string, toolCallId: string, usage: Usage | undefined, details: unknown): SessionEntry {
+	return {
+		type: "message",
+		id,
+		parentId: null,
+		timestamp: "2026-10-07T00:00:00.000Z",
+		message: { role: "toolResult", toolName: "spawn", toolCallId, content: "done", timestamp: 0, usage, details },
+	} as unknown as SessionEntry;
+}
 
 beforeEach(() => childUsageByCall().clear());
 afterEach(() => childUsageByCall().clear());
@@ -177,7 +190,7 @@ test("a headless run keeps the subscription failure visible in the transcript", 
 
 // WHY: every route carries a provider, so the ledger keys on `provider/model`. Dropping it for
 // the inherited route split one model's spend across a bare-model row and a provider/model row.
-test("an inherited child's backfilled usage carries the parent provider", async () => {
+test("an inherited child's backfilled error details carry provider/modelId and one spend row", async () => {
 	const state = createState();
 	const factory = async () => ({
 		session: {
@@ -209,4 +222,37 @@ test("an inherited child's backfilled usage carries the parent provider", async 
 		"openai",
 		"the inherited route's provider reaches the backfill record",
 	);
+
+	const [onToolResult] = pi.handlers.get("tool_result")!;
+	const patch = await onToolResult({ type: "tool_result", toolName: "spawn", toolCallId: "spawn-inherited", input: {}, content: [], isError: true });
+	assert.deepEqual(patch.details.route, { provider: "openai", modelId: "parent-model" }, "the backfilled route carries both identity fields");
+	const spend = usageByModel([toolResultEntry("tr-inherited-err", "spawn-inherited", patch.usage, patch.details)]);
+	assert.deepEqual([...spend.keys()], ["openai/parent-model"], "one provider/model row, no bare-model split");
+});
+
+// WHY: the live success path persists its route details; an inherited route that omits the
+// provider would make a second source (a re-scan of the branch) split the same model's spend.
+test("an inherited child's success details carry provider/modelId and one spend row", async () => {
+	const state = createState();
+	const session: { messages: unknown[]; prompt: () => Promise<void>; abort: () => Promise<void>; dispose: () => void; getSessionStats: () => unknown } = {
+		messages: [],
+		prompt: async () => { session.messages = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }]; },
+		abort: async () => {},
+		dispose: () => {},
+		getSessionStats: () => ({ tokens: { input: 5, output: 6, cacheRead: 0, cacheWrite: 0, total: 11 }, cost: 0.25, assistantMessages: 1 }),
+	};
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, (async () => ({ session, extensionsResult: undefined as never })) as never), {
+		activeTools: ["read", "bash", "spawn"],
+	});
+
+	const result = await pi.tools.get("spawn").execute(
+		"spawn-inherited-ok",
+		{ prompt: "Do the task" },
+		undefined,
+		undefined,
+		{ model: { provider: "openai", id: "parent-model" }, cwd: "/tmp" },
+	);
+	assert.deepEqual(result.details.route, { status: "inherited", provider: "openai", modelId: "parent-model" });
+	const spend = usageByModel([toolResultEntry("tr-inherited-ok", "spawn-inherited-ok", result.usage, result.details)]);
+	assert.deepEqual([...spend.keys()], ["openai/parent-model"], "one provider/model row, no bare-model split");
 });

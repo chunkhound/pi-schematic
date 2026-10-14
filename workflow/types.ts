@@ -23,6 +23,11 @@ export interface WorkflowLimits {
 	costLimit: number | null;
 	/** Soft wall-clock target for the whole workflow in ms, or null for none. */
 	timeBudgetMs: number | null;
+	/** Explicit hard sandbox deadline in ms, set for a checkpoint-less run that passes
+	 * `--workflow-time`; the sandbox kills the run at this deadline (recorded as `time-limit`).
+	 * Null/absent means no explicit deadline: the sandbox derives its backstop from
+	 * {@link timeBudgetMs}. */
+	hardDeadlineMs?: number | null;
 }
 
 /** Host-reserved abort reasons. Workflow exit reasons must never reuse these. */
@@ -49,6 +54,42 @@ export function deriveExitReason(metadata: unknown): string {
 export const WORKFLOW_EXIT_ENTRY_TYPE = "workflow-exit";
 /** Transcript entry type of advisory engine-failure visibility; never carries the run outcome. */
 export const WORKFLOW_ERROR_ENTRY_TYPE = "workflow-error";
+
+/**
+ * Wire shape of the single `workflow-exit` transcript entry. Every writer uses this shape:
+ * `reason` is always derived first, and the path-specific payload rides in exactly one field.
+ * A compatibility/version envelope is a deliberate follow-up; the type is the contract until then.
+ */
+export interface WorkflowExitEntry {
+	/** Derived from the exit metadata before the write; the record's single reason source. */
+	reason: string | null;
+	/** `workflow.exit` metadata exactly as the workflow supplied it. */
+	metadata?: unknown;
+	/** Last checkpoint metadata salvaged by a checkpoint stop or a hard abort. */
+	partial?: unknown;
+	/** Host abort message for a hard abort (e.g. the deferred-stop escalation). */
+	error?: string;
+}
+
+/** Structured diagnostic phase of a `workflow-error` entry; the single source for every
+ * `phase` literal written into that entry. Run-scoped phases come from the command and the
+ * limits dialog; `abort`/`effect`/`progress` come from the host's advisory reporters. */
+export type WorkflowErrorPhase =
+	| "start"
+	| "reserve"
+	| "exit-record"
+	| "summary"
+	| "cleanup"
+	| "abort"
+	| "effect"
+	| "progress";
+/** Ordered runtime form of the union. Nothing reads it yet; it exists so the compile guard
+ * below fails when a member is added without updating this list. */
+export const WORKFLOW_ERROR_PHASES = ["start", "reserve", "exit-record", "summary", "cleanup", "abort", "effect", "progress"] as const satisfies readonly WorkflowErrorPhase[];
+// Compile guard: adding a WorkflowErrorPhase member without updating WORKFLOW_ERROR_PHASES fails here.
+type WorkflowErrorPhasesExhaustive = Exclude<WorkflowErrorPhase, (typeof WORKFLOW_ERROR_PHASES)[number]> extends never ? true : never;
+const WORKFLOW_ERROR_PHASES_EXHAUSTIVE: WorkflowErrorPhasesExhaustive = true;
+void WORKFLOW_ERROR_PHASES_EXHAUSTIVE;
 
 /**
  * Final exit outcome of one workflow run.

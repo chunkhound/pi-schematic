@@ -12,7 +12,9 @@ export const MAX_CHILD_USAGE_ENTRIES = 100;
 export type SpawnOutcome = "running" | "success" | "aborted" | "error";
 
 export type SpawnRouteDetails =
-	| { status: "inherited" }
+	// provider/modelId are optional only to read sessions persisted before they were added;
+	// every new write sets them so the ledger never splits one model across two rows.
+	| { status: "inherited"; provider?: string; modelId?: string }
 	| { status: "routed"; group: string; provider: string; modelId: string }
 	| { status: "unknown-fallback"; requestedGroup: string; provider: string; modelId: string };
 

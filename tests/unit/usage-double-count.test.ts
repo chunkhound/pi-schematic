@@ -165,3 +165,16 @@ test("run spend starts at the run: pre-run conversation spend is excluded and ca
 	assert.ok(Math.abs((budget.costRemaining ?? 0) - 0.55) < 1e-9, "the target measures from run start");
 	assert.equal(host.metrics().crossedAt, null, "prior conversation spend arms no soft stop");
 });
+
+test("an entry retained across a replacement is counted by one source only", async () => {
+	const env = createEnv();
+	// A replacement that keeps its history: the baseline and the live branch would both see
+	// the same entry unless the committed entry is claimed by identity.
+	env.deps.newSession = async () => {};
+	const host = createWorkflowHost(env.deps);
+	env.branch.push(assistant("a0", "anthropic", "opus", 0.5));
+	await call(host, "new", undefined);
+	const metrics = host.metrics();
+	assert.ok(Math.abs(metrics.costUsd - 0.5) < 1e-9, "baseline and branch cannot both count the same entry");
+	assert.ok(Math.abs(spendSum(host) - metrics.costUsd) < 1e-9, "the spend rows still sum to the total once");
+});

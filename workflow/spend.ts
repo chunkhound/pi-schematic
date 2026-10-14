@@ -8,11 +8,33 @@ export interface SpendState {
 	baselineSpend: Map<string, ModelSpend>;
 	childSpend: Map<string, ChildSpend>;
 	classifierSpend: Map<string, ModelSpend>;
-	/** Branch entry ids that predate the run; the run-scoped scan drops them. */
+	/** Branch entry identities the run scan must not count: the pre-run conversation and
+	 * entries already folded into the baseline (see `branchSpend`). */
 	excludedEntryIds: ReadonlySet<string>;
+	/** Monotonic revision of the four spend sources. The projection cache keys on it, so a
+	 * write that skips `bumpSpendRevision` can serve stale rows and miss a cost limit. */
+	spendRevision: number;
+	/** Last projection, keyed on session + leaf + revision; null until the first read. */
+	spendCache: SpendCache | null;
 	startedAt: number;
 	pendingStop: ReservedReason | null;
 	crossedAt: { costUsd: number; elapsedMs: number } | null;
+}
+
+/** Projection cache key. The branch is append-only, so a session or leaf move is the only
+ * structural change; `revision` covers ledger/source writes that leave the branch untouched. */
+interface SpendCache {
+	sessionId: string | null;
+	leafId: string | null;
+	revision: number;
+	rows: Map<string, ModelSpend>;
+}
+
+/** Advance the source revision. Call after ANY write to baselineSpend, childSpend,
+ * classifierSpend, or excludedEntryIds; the revision guard in `runSpendRows` is the
+ * correctness backstop, so a missed bump would let a cost limit read a stale projection. */
+export function bumpSpendRevision(state: Pick<SpendState, "spendRevision">): void {
+	state.spendRevision += 1;
 }
 
 // WHY: getCtx() is null only during a session replacement gap. The gap is expected and
@@ -27,10 +49,13 @@ export function liveBranch(deps: WorkflowHostDeps): readonly SessionEntry[] {
 
 /** Live-branch spend via a direct usageByModel scan per call; no cache. */
 export function branchSpend(deps: WorkflowHostDeps, state: Pick<SpendState, "childSpend" | "excludedEntryIds">): Map<string, ModelSpend> {
-	return usageByModel(liveBranch(deps), {
-		skipToolCalls: new Set(state.childSpend.keys()),
-		skipEntries: state.excludedEntryIds,
-	});
+	return usageByModel(liveBranch(deps), { skip: spendClaims(state) });
+}
+
+/** Identity set the run-scoped branch scan must skip: entries already committed to the
+ * baseline, plus the tool-call ids the child ledger owns. */
+function spendClaims(state: Pick<SpendState, "childSpend" | "excludedEntryIds">): ReadonlySet<string> {
+	return new Set([...state.excludedEntryIds, ...state.childSpend.keys()]);
 }
 
 /**
@@ -38,14 +63,26 @@ export function branchSpend(deps: WorkflowHostDeps, state: Pick<SpendState, "chi
  * plus the current branch (pre-run conversation dropped, child-owned tool results excluded)
  * plus the child ledger that owns them plus classifier calls. One projection feeds both the
  * cost limit and the run overview, so they cannot diverge.
+ *
+ * Cached on session + leaf + source revision: repeat cost checks skip the O(entries) branch
+ * scan, and any real spend move (new entry, ledger write, classifier call, baseline commit)
+ * misses the cache. `limitReason` therefore never reads a stale projection.
  */
 export function runSpendRows(deps: WorkflowHostDeps, state: SpendState): Map<string, ModelSpend> {
-	return mergeModelSpend(
-		state.baselineSpend,
-		branchSpend(deps, state),
-		childSpendRows(state.childSpend),
-		state.classifierSpend,
-	);
+	const ctx = deps.getCtx();
+	const sessionId = ctx?.sessionManager.getSessionId() ?? null;
+	const leafId = ctx?.sessionManager.getLeafId() ?? null;
+	const cached = state.spendCache;
+	if (cached && cached.sessionId === sessionId && cached.leafId === leafId && cached.revision === state.spendRevision)
+		return cached.rows;
+	const rows = projectRunSpend(deps, state);
+	state.spendCache = { sessionId, leafId, revision: state.spendRevision, rows };
+	return rows;
+}
+
+/** Full rescan of the four spend sources; the single reader is `runSpendRows`. */
+function projectRunSpend(deps: WorkflowHostDeps, state: SpendState): Map<string, ModelSpend> {
+	return mergeModelSpend(state.baselineSpend, branchSpend(deps, state), childSpendRows(state.childSpend), state.classifierSpend);
 }
 
 export function computeCurrentCost(deps: WorkflowHostDeps, state: SpendState): number {

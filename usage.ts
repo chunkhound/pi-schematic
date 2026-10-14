@@ -10,7 +10,7 @@ type AnyMessage = {
 	role?: string;
 	provider?: string;
 	model?: string;
-	/** Identifies a tool result so child-owned spend can be skipped (see `usageByModel`). */
+	/** Identifies a tool result so child-owned spend can be skipped (see `spendIdentity`). */
 	toolCallId?: string;
 	/** Tool-result details; the spawn tool records the child model and its route here. */
 	details?: { model?: string; route?: { provider?: string } };
@@ -75,32 +75,47 @@ export function addModelSpend(map: Map<string, ModelSpend>, provider: string | n
 	map.set(key, { key, provider, model, ...usageDelta(usage) });
 }
 
+/** Single de-dup identity for a usage-bearing entry: the entry id when pi assigned one, else
+ * the tool-call id a tool result carries. Sources that do not hold the entry (the child
+ * ledger) key by tool-call id, so both sides address the same spend. */
+export function spendIdentity(entry: SessionEntry): string | null {
+	if (entry.id) return entry.id;
+	return entry.type === "message" ? (entry.message as AnyMessage).toolCallId ?? null : null;
+}
+
+/** Whether `skip` already owns this entry. Also check the tool-call id: the child ledger is
+ * keyed by it, and a tool result may carry a distinct pi entry id. */
+function isClaimed(entry: SessionEntry, skip: ReadonlySet<string>): boolean {
+	const identity = spendIdentity(entry);
+	if (identity !== null && skip.has(identity)) return true;
+	const toolCallId = entry.type === "message" ? (entry.message as AnyMessage).toolCallId : undefined;
+	return toolCallId !== undefined && skip.has(toolCallId);
+}
+
 /**
  * Attribute a branch's usage to models. The run's spend rows are this map plus the child
  * ledger and classifier calls. Assistant turns carry provider/model, `usage` entries carry
  * provider/model, and model-less usage (compaction and branch summaries) falls into
  * {@link UNATTRIBUTED_MODEL} with its tokens. Child-owned tool results are skipped so the
  * child ledger (`childSpendRows`) is their single owner and a settled child is counted once.
- * Entries whose `id` is in `skipEntries` are omitted entirely; the run-scoped spend scan uses
- * this to drop the conversation that predates the run.
+ * Entries whose spend identity (the entry id when pi assigned one, else the tool-call id) is
+ * in `skip` are omitted entirely. The run-scoped scan drops pre-run and already-committed
+ * entries, and the child ledger claims its tool results, so no entry is counted twice.
  */
 export function usageByModel(
 	entries: readonly SessionEntry[],
-	options?: { skipToolCalls?: ReadonlySet<string>; skipEntries?: ReadonlySet<string> },
+	options?: { skip?: ReadonlySet<string> },
 ): Map<string, ModelSpend> {
 	const map = new Map<string, ModelSpend>();
-	const skip = options?.skipToolCalls;
-	const skipEntries = options?.skipEntries;
+	const skip = options?.skip;
 	for (const entry of entries) {
-		if (skipEntries?.has(entry.id)) continue;
+		if (skip && isClaimed(entry, skip)) continue;
 		if (entry.type === "message") {
 			const message = entry.message as AnyMessage;
 			const usage = message.usage;
 			if (!usage) continue;
 			if (message.role === "assistant") {
 				addModelSpend(map, message.provider ?? null, message.model ?? UNATTRIBUTED_MODEL, usage);
-			} else if (message.role === "toolResult" && skip?.has(message.toolCallId ?? "")) {
-				continue;
 			} else {
 				const child = message.role === "toolResult" ? message.details?.model : undefined;
 				addModelSpend(map, message.details?.route?.provider ?? null, child ?? UNATTRIBUTED_MODEL, usage);

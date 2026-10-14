@@ -138,7 +138,7 @@ test("usageByModel attributes assistant, usage-entry, spawned-child, and model-l
 // `usageByModel` must skip exactly the tool calls the ledger already folds.
 test("usageByModel skips a child-owned tool result when claimed, and counts it otherwise", () => {
 	const entries: SessionEntry[] = [childToolResult("t1", "c1", 0.2)];
-	const claimed = usageByModel(entries, { skipToolCalls: new Set(["c1"]) });
+	const claimed = usageByModel(entries, { skip: new Set(["c1"]) });
 	assert.equal(claimed.size, 0, "claimed child tool result is excluded");
 
 	const unclaimed = usageByModel(entries);
@@ -152,7 +152,7 @@ test("usageByModel omits every entry whose id is excluded", () => {
 		modelAssistant("a1", "anthropic", "opus", 0.5),
 		modelAssistant("a2", "anthropic", "opus", 0.25),
 	];
-	const kept = usageByModel(entries, { skipEntries: new Set(["a1"]) });
+	const kept = usageByModel(entries, { skip: new Set(["a1"]) });
 	assert.equal(kept.get("anthropic/opus")?.costUsd, 0.25, "excluded entry is omitted");
 	assert.equal(kept.get("anthropic/opus")?.calls, 1);
 	assert.equal(usageByModel(entries).get("anthropic/opus")?.costUsd, 0.75, "omitting the option keeps every entry");

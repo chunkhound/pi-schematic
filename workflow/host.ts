@@ -3,7 +3,7 @@
 // includes completed sessions, the live branch, host-charged classifier usage, and
 // spawned child agents (the spawn tool reports child usage on its tool result).
 import type { CodemodeTool } from "@earendil-works/pi-codemode";
-import type { ClassifierResult, ThinkingLevel } from "@earendil-works/pi-ai";
+import type { ClassifierResult, ThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { classifierAbortedResult, classifyRequest } from "./classify.js";
 import { messageOf, safeAppendEntry, withRecordStatus } from "./errors.js";
@@ -11,8 +11,8 @@ import { notebookIndex, notebookRead, notebookTopic, notebookWrite } from "./not
 import { createRunRegistry, resolveRunTarget, type RunCorrelation, type RunMatch } from "./run-registry.js";
 import { createShellRunner } from "./shell.js";
 import { armStructuredOutput, disarmStructuredOutput, type OutputCapture } from "./output.js";
-import { addModelSpend, assistantCount, collectUsage, mergeModelSpend, spendRowsTotal } from "../usage.js";
-import { armPendingStop, branchSpend, computeCurrentCost, liveBranch, limitReason, runSpendRows, type SpendState } from "./spend.js";
+import { addModelSpend, assistantCount, collectUsage, mergeModelSpend, spendIdentity, spendRowsTotal, type ModelSpend } from "../usage.js";
+import { armPendingStop, branchSpend, bumpSpendRevision, computeCurrentCost, liveBranch, limitReason, runSpendRows, type SpendState } from "./spend.js";
 import type { ChildUsageSink } from "../state.js";
 import { buildEntryDigests, buildStateDigest, contextPercentOf, lastAssistantModel, lastAssistantText } from "./state-digest.js";
 import type {
@@ -35,6 +35,8 @@ import type {
 	StateDigest,
 	WorkflowEffect,
 	WorkflowEffectEvent,
+	WorkflowErrorPhase,
+	WorkflowExitEntry,
 } from "./types.js";
 import { RESERVED_REASONS, WORKFLOW_ERROR_ENTRY_TYPE, WORKFLOW_EXIT_ENTRY_TYPE, deriveExitReason } from "./types.js";
 
@@ -139,7 +141,7 @@ function requireCtx(deps: WorkflowHostDeps): ExtensionCommandContext {
  * and leaves `exit` null, so the infra path still records the single exit entry.
  * `messagePrefix` labels the abort message of the failed append.
  */
-function commitExit(deps: WorkflowHostDeps, state: HostState, record: { entry: unknown; exit: ExitRecord; abortReason: ReservedReason; messagePrefix?: string }): void {
+function commitExit(deps: WorkflowHostDeps, state: HostState, record: { entry: WorkflowExitEntry; exit: ExitRecord; abortReason: ReservedReason; messagePrefix?: string }): void {
 	try {
 		deps.pi.appendEntry(WORKFLOW_EXIT_ENTRY_TYPE, record.entry);
 	} catch (error) {
@@ -264,8 +266,15 @@ async function classifyViaRegistry(deps: WorkflowHostDeps, state: HostState, arg
 		args as ClassifierRequest,
 		signal,
 	);
-	if (result.usage) addModelSpend(state.classifierSpend, result.provider, result.model, result.usage);
+	if (result.usage) recordClassifierSpend(state, result.provider, result.model, result.usage);
 	return result;
+}
+
+/** Classifier usage lands only in the ledger (a classify call appends no branch entry), so the
+ * revision bump is the only signal that invalidates the projection cache. */
+function recordClassifierSpend(state: HostState, provider: string, model: string, usage: Usage): void {
+	addModelSpend(state.classifierSpend, provider, model, usage);
+	bumpSpendRevision(state);
 }
 
 /** pi's configured shell path; the bash tool falls back to its own resolution order when absent. */
@@ -274,7 +283,7 @@ function shellPathOf(deps: WorkflowHostDeps): string | undefined {
 }
 
 /** Transcript visibility is best-effort: reporting must never break the run it describes. Interactive runs also surface the failure as a UI notice, which names a failed record. */
-function reportHostError(deps: WorkflowHostDeps, phase: string, error: unknown): void {
+function reportHostError(deps: WorkflowHostDeps, phase: WorkflowErrorPhase, error: unknown): void {
 	const message = `workflow ${phase} failed: ${messageOf(error)}`;
 	// Advisory: the exit record and summary carry the outcome.
 	const recorded = safeAppendEntry(deps.pi, WORKFLOW_ERROR_ENTRY_TYPE, { phase, error: messageOf(error) });
@@ -388,9 +397,26 @@ async function handleNew(deps: WorkflowHostDeps, state: HostState): Promise<null
 	// (child-owned tool results skipped) commit after the replacement succeeds. A
 	// cancelled `workflow.new` therefore cannot double-count the unchanged branch.
 	const spend = branchSpend(deps, state);
-	await deps.newSession();
-	state.baselineSpend = mergeModelSpend(state.baselineSpend, spend);
+	// Claim the committed entries by identity so a replacement that keeps history cannot let
+	// the baseline source and the live-branch source count the same entry twice.
+	const committed = liveBranch(deps).map(spendIdentity).filter((id): id is string => id !== null);
+	// Commit on EVERY outcome, including a failed or cancelled replacement: the run must still
+	// report the spend it already produced, and claiming the same ids keeps a replacement that
+	// retains history from counting those rows twice.
+	try {
+		await deps.newSession();
+	} finally {
+		commitBaselineSpend(state, spend, committed);
+	}
 	return null;
+}
+
+/** Fold a settled run into the baseline and claim its entries. Both are spend sources, and a
+ * cancelled replacement moves them without moving the leaf, so the revision must bump. */
+function commitBaselineSpend(state: HostState, spend: Map<string, ModelSpend>, committed: readonly string[]): void {
+	state.baselineSpend = mergeModelSpend(state.baselineSpend, spend);
+	state.excludedEntryIds = new Set([...state.excludedEntryIds, ...committed]);
+	bumpSpendRevision(state);
 }
 
 /**
@@ -428,7 +454,8 @@ function handleExit(deps: WorkflowHostDeps, state: HostState, args: unknown): un
 	const metadata = (args ?? null) as Record<string, unknown> | null;
 	const reason = deriveExitReason(metadata);
 	validateExitReason(reason);
-	commitExit(deps, state, { entry: metadata, exit: { reason, metadata }, abortReason: "error" });
+	// Single wire shape across every exit path: reason first, path payload in a named field.
+	commitExit(deps, state, { entry: { reason, metadata }, exit: { reason, metadata }, abortReason: "error" });
 	// `workflow.exit` is terminal: stop the script at this call, unlike a checkpoint's deferral.
 	stopSandbox(state, "workflow exit");
 	return metadata;
@@ -579,6 +606,9 @@ function buildHandleSpecs(deps: WorkflowHostDeps, state: HostState, notebookDeps
 /** Apply the explicit `workflow.run` model for this turn; an unknown or unauthenticated model fails the run. */
 async function applyModelOverride(deps: WorkflowHostDeps, ctx: ExtensionCommandContext, options: RunOptions): Promise<void> {
 	if (!options.model) return;
+	// Without a current model there is nothing to restore, so the override would leak into
+	// the rest of the session; reject before any registry lookup or setModel.
+	if (!ctx.model) throw new Error("workflow.run cannot override the model: the session has no current model to restore");
 	const model = ctx.modelRegistry.getModelOfType("chat", options.model.provider, options.model.id);
 	if (!model) throw new Error(`model not found: ${options.model.provider}/${options.model.id}`);
 	if (!(await deps.pi.setModel(model)))
@@ -816,8 +846,8 @@ async function releaseStructuredRun(deps: WorkflowHostDeps, previousActive: read
 }
 
 /** Spend ledgers start empty; startedAt and pendingStop are set by the host/stop state. */
-function initialSpendState(): Pick<SpendState, "baselineSpend" | "childSpend" | "classifierSpend" | "excludedEntryIds"> {
-	return { baselineSpend: new Map(), childSpend: new Map(), classifierSpend: new Map(), excludedEntryIds: new Set() };
+function initialSpendState(): Pick<SpendState, "baselineSpend" | "childSpend" | "classifierSpend" | "excludedEntryIds" | "spendRevision" | "spendCache"> {
+	return { baselineSpend: new Map(), childSpend: new Map(), classifierSpend: new Map(), excludedEntryIds: new Set(), spendRevision: 0, spendCache: null };
 }
 
 /** Stop/exit bookkeeping starts empty: nothing armed, nothing recorded. */
@@ -860,6 +890,7 @@ function createHostState(deps: WorkflowHostDeps): HostState {
 	// disposed host never uninstalls the sink a newer host installed.
 	state.installedSink = (toolCallId, provider, model, usage) => {
 		state.childSpend.set(toolCallId, { provider, model, usage });
+		bumpSpendRevision(state);
 	};
 	return state;
 }

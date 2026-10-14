@@ -118,17 +118,12 @@ export function truncateText(text: string, maxLines: number, maxBytes: number): 
 	return truncated;
 }
 
-/**
- * Truncates child agent output to CHILD_MAX_LINES lines / CHILD_MAX_BYTES bytes.
- * Appends a "[Result truncated...]" advisory when truncation occurs.
- * Returns { text, truncated }.
- */
-/** Best-effort UI report; returns whether the notification was delivered. Never throws. */
 /** One-line issue text, shared by the UI notice and the transcript notice. */
 function spawnIssueMessage(summary: string, error: unknown): string {
 	return `${summary}: ${messageOf(error)}`;
 }
 
+/** Best-effort advisory UI report; returns whether the notice was delivered. Never throws. */
 function notifySpawnIssue(ctx: ExtensionContext, message: string): boolean {
 	if (!ctx.hasUI) return false;
 	try {
@@ -140,10 +135,23 @@ function notifySpawnIssue(ctx: ExtensionContext, message: string): boolean {
 	}
 }
 
-function notifyCleanupFailure(ctx: ExtensionContext, error: unknown): boolean {
-	return notifySpawnIssue(ctx, spawnIssueMessage("Spawn cleanup failed", error));
+/** Deliver the cleanup notice. A headless ctx cannot notify; a throwing UI is captured so the
+ * cleanup catch can fold it into the aggregate instead of losing it (see executeSpawn). */
+function notifyCleanupFailure(ctx: ExtensionContext, error: unknown): { notified: boolean; failure: unknown } {
+	if (!ctx.hasUI) return { notified: false, failure: null };
+	try {
+		ctx.ui.notify(spawnIssueMessage("Spawn cleanup failed", error), "error");
+		return { notified: true, failure: null };
+	} catch (failure) {
+		return { notified: false, failure };
+	}
 }
 
+/**
+ * Truncates child agent output to CHILD_MAX_LINES lines / CHILD_MAX_BYTES bytes.
+ * Appends a "[Result truncated...]" advisory when truncation occurs.
+ * Returns { text, truncated }.
+ */
 function truncateResult(text: string): { text: string; truncated: boolean } {
 	const lines = text.split("\n");
 	const bytes = new TextEncoder().encode(text).length;
@@ -458,7 +466,7 @@ export function executeSpawn(
 						provider: route.provider,
 						modelId: route.modelId,
 					}
-				: { status: "inherited" };
+				: { status: "inherited", provider: route.provider, modelId: route.modelId };
 
 	const listing = formatPageList(state);
 	const notebookListing = listing
@@ -709,10 +717,18 @@ export function executeSpawn(
 			if (!hasPrimaryError) {
 				throw cleanupError;
 			}
-			// A delivered UI notification carries the cleanup failure, so the primary
-			// propagates unchanged; otherwise both failures stay visible in the aggregate.
+			// A delivered UI notification carries the cleanup failure, so the primary propagates
+			// unchanged; otherwise the failures stay visible in the aggregate. A throwing notify
+			// must not be swallowed, so it becomes the aggregate's third error.
 			// Do not mutate the primary error: its own cause may carry the root failure.
-			if (!ctx.hasUI || !notifyCleanupFailure(ctx, cleanupError)) {
+			const { notified, failure } = notifyCleanupFailure(ctx, cleanupError);
+			if (failure !== null) {
+				throw new AggregateError(
+					[primaryError, cleanupError, failure],
+					"Spawn, cleanup, and notification failed.",
+				);
+			}
+			if (!notified) {
 				throw new AggregateError([primaryError, cleanupError], "Spawn failed and cleanup failed.");
 			}
 		}
@@ -745,7 +761,7 @@ export function registerSpawnTool(
 		const record = childUsageByCall().get(event.toolCallId);
 		childUsageByCall().delete(event.toolCallId);
 		if (!record) return undefined;
-		const details = { model: record.model, route: record.provider ? { provider: record.provider } : undefined };
+		const details = { model: record.model, route: record.provider ? { provider: record.provider, modelId: record.model } : undefined };
 		if (!event.usage) return { usage: record.usage, details };
 		return { usage: addUsage(record.usage, event.usage), details };
 	});

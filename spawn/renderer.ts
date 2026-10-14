@@ -114,7 +114,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeRoute(value: unknown): SpawnRouteDetails | undefined {
 	if (!isRecord(value)) return undefined;
-	if (value.status === "inherited") return { status: "inherited" };
+	// Accept both the persisted `{status:"inherited"}` and the current shape with
+	// provider/modelId; the extra identity is preserved when present.
+	if (value.status === "inherited") {
+		return {
+			status: "inherited",
+			...(typeof value.provider === "string" ? { provider: value.provider } : {}),
+			...(typeof value.modelId === "string" ? { modelId: value.modelId } : {}),
+		};
+	}
 	if (
 		value.status === "routed"
 		&& typeof value.group === "string"

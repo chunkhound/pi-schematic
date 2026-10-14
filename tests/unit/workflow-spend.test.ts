@@ -22,7 +22,7 @@ function branchEntry(model: string, costUsd: number, id = model): SessionEntry {
 
 function stubDeps(branch: readonly SessionEntry[], costLimit: number | null = null, timeBudgetMs: number | null = null): WorkflowHostDeps {
 	return {
-		getCtx: () => ({ sessionManager: { getBranch: () => branch } }),
+		getCtx: () => ({ sessionManager: { getSessionId: () => "s", getLeafId: () => branch.at(-1)?.id ?? null, getBranch: () => branch } }),
 		limits: { costLimit, timeBudgetMs },
 	} as unknown as WorkflowHostDeps;
 }
@@ -39,6 +39,8 @@ function stateWith(
 		childSpend: new Map<string, ChildSpend>([["c1", { provider: null, model: "child", usage: usage(3) }]]),
 		classifierSpend: new Map([["clf", row("clf", 4)]]),
 		excludedEntryIds,
+		spendRevision: 0,
+		spendCache: null,
 		startedAt: Date.now(),
 		pendingStop: null,
 		crossedAt: null,
@@ -78,7 +80,7 @@ test("a pre-run spend does not trip the run cost limit", () => {
 
 test("limitReason fires exactly at the time threshold, not below", () => {
 	const now = Date.now();
-	const at: SpendState = { baselineSpend: new Map(), childSpend: new Map(), classifierSpend: new Map(), excludedEntryIds: new Set(), startedAt: now - 1_000, pendingStop: null, crossedAt: null };
+	const at: SpendState = { baselineSpend: new Map(), childSpend: new Map(), classifierSpend: new Map(), excludedEntryIds: new Set(), spendRevision: 0, spendCache: null, startedAt: now - 1_000, pendingStop: null, crossedAt: null };
 	assert.equal(limitReason(stubDeps([], null, 1_000), at), "time-limit");
 	const fresh: SpendState = { ...at, startedAt: now };
 	assert.equal(limitReason(stubDeps([], null, 60_000), fresh), null);
