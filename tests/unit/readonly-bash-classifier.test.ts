@@ -194,6 +194,107 @@ test("blocks archivers that extract outside temp", async () => {
 	await assertAllowed(toolCall, `unzip -l /outside/a.zip`);
 });
 
+test("allows tar stdout-only modes from outside temp", async () => {
+	const { pi, toolCall } = await registerReadonlyPI();
+	await enableReadonly(pi);
+	const tmp = shellPath(os.tmpdir());
+
+	// CONTRACT: -O/--to-stdout and the `-f -` archive operand route output to stdout,
+	// so no filesystem target escapes temp even when the cwd (/workspace) is outside it.
+	await assertAllowed(toolCall, `tar -xzOf ${tmp}/pkg.tgz README.md`);
+	await assertAllowed(toolCall, `tar --to-stdout -xf ${tmp}/a.tar`);
+	await assertAllowed(toolCall, `tar -czf - src/`);
+	await assertAllowed(toolCall, `tar -c --file=- src/`);
+	await assertAllowed(toolCall, `tar --file - -c src/`);
+	// Real filesystem writes still block: relative extract targets the cwd, and archive
+	// creation outside temp is an outside write. Extracting from stdin (`-xf -`) still
+	// writes member files into the cwd, so the dash archive operand never allows it.
+	await assertBlocked(toolCall, `tar -xf a.tar`);
+	await assertBlocked(toolCall, `tar -xf -`);
+	await assertBlocked(toolCall, `tar -cf /outside/a.tar`);
+	await assertBlocked(toolCall, `tar -czf /outside/a.tar`);
+	await assertBlocked(toolCall, `tar -xf a.tar -C /outside`);
+	await assertAllowed(toolCall, `tar -czf ${tmp}/a.tar ${tmp}/a`);
+	// Lowercase `o` is a GNU extract flag, never stdout: the extraction still targets the cwd.
+	await assertBlocked(toolCall, `tar -xof a.tar`);
+	// A quoted `-` archive still streams to stdout, like `-f -`. An attached tail (`-cf-`)
+	// stays fail-closed: the bundle rule cannot attribute a non-letter tail to a value letter.
+	await assertAllowed(toolCall, `tar -cf '-' src/`);
+	await assertBlocked(toolCall, `tar -cf- src/`);
+	// The stdout carve-out does not depend on `-C`: extraction with -O writes no member files.
+	await assertAllowed(toolCall, `tar -xO -C /outside -f a.tar`);
+	// Conflicting action modes fail closed: creation targets the archive while extraction
+	// writes member files, so neither guess is safe even when the archive is stdout.
+	await assertBlocked(toolCall, `tar -xc -f - src/`);
+	await assertBlocked(toolCall, `tar -xczf - src/`);
+	// `-O` without `-x` still streams to stdout: no member files land in `-C` or the cwd.
+	await assertAllowed(toolCall, `tar -O -f ${tmp}/a.tar`);
+	await assertAllowed(toolCall, `tar -cO -f - src/`);
+	// CONTRACT: a value-taking option consumes its operand, so a value that spells `-O` or
+	// `--to-stdout` never reads as the stdout flag. Real tar extracts (`--exclude -O` excludes
+	// the member named `-O`), so the extraction must still be classified by its cwd.
+	await assertBlocked(toolCall, `tar -xf a.tar --exclude -O`);
+	await assertBlocked(toolCall, `tar -xf a.tar --exclude --to-stdout`);
+	await assertBlocked(toolCall, `tar -xf a.tar --exclude=-O`);
+	await assertBlocked(toolCall, `tar -xf a.tar -X -O`);
+	await assertBlocked(toolCall, `tar -xf a.tar --owner -O`);
+	// The same command inside temp stays allowed: the value is consumed, not misread as stdout.
+	await assertAllowed(toolCall, `tar -xf a.tar --exclude -O -C ${tmp}`);
+	// Optional-argument options bind with `=`, so a following `-C` is a real option: consuming
+	// it as the option value would hide the extraction directory.
+	await assertBlocked(toolCall, `tar -xf a.tar --backup -C /outside`);
+	await assertAllowed(toolCall, `tar -xf a.tar --backup -C ${tmp}`);
+	// And the optional-argument form leaves `-O` in flag position, where it really streams.
+	await assertAllowed(toolCall, `tar --backup -O -x -f a.tar`);
+	// A dash-less bundle takes values from the NEXT token, so more than one value letter cannot
+	// be attributed to its operand — fail closed rather than lose the archive destination.
+	await assertBlocked(toolCall, `tar bcf 20 /outside/a.tar src/`);
+	// Modeled value options consume `-O` as their value, so the extraction keeps its real
+	// (outside) cwd target and blocks. `--quote-chars`/`--exclude-tag`/`--xattrs-include`
+	// are in TAR_LONG_VALUE_OPTIONS; only the unknown option below exercises the
+	// unmodeled-option guard: its unprovable value may be `-O`, so it fails closed.
+	await assertBlocked(toolCall, `tar -xf a.tar --quote-chars -O`);
+	await assertBlocked(toolCall, `tar -xf a.tar --exclude-tag -O`);
+	await assertBlocked(toolCall, `tar -xf a.tar --xattrs-include -O`);
+	await assertBlocked(toolCall, `tar -xf a.tar --future-unknown-option -O`);
+	// A known no-argument option leaves `-O` in flag position.
+	await assertAllowed(toolCall, `tar -xf a.tar --verbose -O`);
+	// `-H`/`-L` take a value in GNU tar but are flags in bsdtar (the default tar on macOS and
+	// Windows). Consuming their "value" would swallow `-f` and hide an outside archive write.
+	await assertBlocked(toolCall, `tar -cH -f /outside/a.tar src`);
+	await assertBlocked(toolCall, `tar -cL -f /outside/a.tar src`);
+	await assertAllowed(toolCall, `tar -cH -f ${tmp}/a.tar src`);
+	// `-s` is a preserve-order flag in GNU tar but takes a substitution pattern in bsdtar. An
+	// attached pattern can contain `O` delimiters (`-sOqOqO`); scanning them as the stdout flag
+	// would allow a real extraction into the cwd.
+	await assertBlocked(toolCall, `tar -xf a.tar -sOqOqO`);
+	await assertAllowed(toolCall, `tar -xf a.tar -s /a/b/ -O`);
+	// CONTRACT: on GNU tar the attached tail is more flags, so it can carry a write mode and
+	// the archive/directory operand. Trusting the bsdtar reading hides the real target
+	// (`-csf` = `-c -s -f`), so every attached form fails closed.
+	await assertBlocked(toolCall, `tar -csf /outside/a.tar src`);
+	await assertBlocked(toolCall, `tar -cszf /outside/a.tar src`);
+	await assertBlocked(toolCall, `tar -xsCdirlink -f a.tar`);
+	// The separated `-s` stays a plain flag, so the archive operand is still read.
+	await assertAllowed(toolCall, `tar -c -s -f ${tmp}/a.tar src`);
+	// CONTRACT: exec/side-write options fail closed even with stdout: -O streams members
+	// but --to-command still runs per member and -I/-F/--index-file/--use-compress-program
+	// run programs or write side files outside the stdout stream.
+	await assertBlocked(toolCall, `tar -xOf a.tar --to-command 'touch /outside/x'`);
+	await assertBlocked(toolCall, `tar -xOf a.tar --to-command=touch`);
+	await assertBlocked(toolCall, `tar -xOf a.tar -I 'touch /outside/x'`);
+	await assertBlocked(toolCall, `tar -xOf a.tar --index-file /outside/x`);
+	await assertBlocked(toolCall, `tar -xOf a.tar --use-compress-program prog`);
+	await assertBlocked(toolCall, `tar -xOf a.tar -F prog`);
+	// `--one-top-level=<dir>` redirects extraction under <dir>: the dir is the write target.
+	await assertBlocked(toolCall, `tar -xf a.tar --one-top-level=/outside/x`);
+	await assertAllowed(toolCall, `tar -xf a.tar --one-top-level=${tmp}`);
+	// The bare form derives the directory from the archive name, which cannot be proven.
+	await assertBlocked(toolCall, `tar -xf a.tar --one-top-level`);
+	// Control: plain stdout extraction without exec still streams and stays allowed.
+	await assertAllowed(toolCall, `tar -xOf a.tar`);
+});
+
 test("blocks tar bundles whose attached value cannot be attributed", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);

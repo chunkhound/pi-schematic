@@ -487,11 +487,78 @@ const TAR_LONG_MODES: Record<string, "write" | "extract" | "list"> = {
 	"--extract": "extract", "--get": "extract", "--list": "list",
 };
 
-/** One option scan result: action modes, the `-f` archive operand, and `-C` directories. */
-type TarScan = { write: boolean; extract: boolean; list: boolean; archive: string | null; dirs: string[]; unparseable: boolean };
+/** tar option letters that consume a value. `f`/`C` also take values but record a
+ * destination, so `scanTarBundle` handles them explicitly. Without this consume an option
+ * value leaks into the flag scan (`tar -X -O` read `-O` as the stdout flag).
+ *
+ * Include a letter only when consuming cannot swallow a real flag on either implementation:
+ * `-H` (GNU `--format`, bsdtar `--dereference`) and `-L` (GNU `--tape-length`, bsdtar
+ * `--dereference`) take a value on GNU but are flags on bsdtar, so consuming would swallow a
+ * real `-f`/`-C` on a bsdtar host and hide a write (`tar -cH -f /etc/a.tar src`). Their only
+ * GNU values are a format/number, never `-O`, so leaving them unconsumed cannot read `-O` as a
+ * value. `-g`/`-K`/`-N`/`-V` are GNU-only value options that bsdtar rejects, so consuming them
+ * is harmless. `-s` conflicts the other way and is handled in `scanTarBundle`. */
+const TAR_VALUE_LETTERS = new Set(["b", "g", "K", "N", "T", "V", "X"]);
 
-/** Consume one short-bundle word (`-czf`, dash-less `tar cf`) into the scan; bare `f`/`C` take
- * the next token, so the returned count tells the caller how many tokens were consumed. */
+/** Long options that consume a separate value. Same reason as `TAR_VALUE_LETTERS`: a value
+ * such as `-O` must not read as a flag. Only REQUIRED-argument options belong here: an
+ * optional-argument option (`--backup`, `--atime-preserve`, `--checkpoint`, `--totals`,
+ * `--occurrence`) binds its value with `=`, so consuming the next token
+ * would swallow a real option and hide a write target. `--file`/`--directory` record a
+ * destination and stay explicit in `scanTarOptions`; the `=value` form needs no consume.
+ * Completeness here only avoids over-blocking: a missing option is caught by the
+ * unmodeled-option guard in `scanTarOptions`. */
+const TAR_LONG_VALUE_OPTIONS = new Set([
+	"--exclude", "--exclude-from", "--exclude-ignore", "--exclude-ignore-recursive",
+	"--exclude-tag", "--exclude-tag-all", "--exclude-tag-under", "--xattrs-include",
+	"--xattrs-exclude", "--files-from", "--transform", "--xform", "--owner", "--group",
+	"--owner-map", "--group-map", "--mode", "--mtime", "--newer", "--newer-mtime",
+	"--after-date", "--blocking-factor", "--record-size", "--format", "--level",
+	"--use-compress-program", "--tape-length", "--label", "--info-script",
+	"--new-volume-script", "--listed-incremental", "--starting-file", "--volno-file",
+	"--suffix", "--sparse-version", "--quoting-style", "--quote-chars", "--no-quote-chars",
+	"--rmt-command", "--rsh-command", "--to-command", "--strip-components", "--pax-option",
+	"--checkpoint-action", "--warning", "--index-file", "--sort", "--hole-detection",
+	"--set-mtime-command", "--set-mtime-format", "--passphrase", "--uname", "--gname",
+	"--newer-than", "--newer-mtime-than",
+]);
+
+/** Long options that never consume the next token: booleans plus the optional-argument options
+ * (`--backup`, `--checkpoint`, ... bind with `=`, so they leave a following `-O` in flag
+ * position). Only needed to avoid over-blocking; a missing entry only makes the unmodeled-option
+ * guard fail closed. */
+const TAR_LONG_FLAGS = new Set([
+	"--occurrence", "--atime-preserve", "--backup", "--checkpoint", "--totals",
+	"--verbose", "--absolute-names", "--dereference", "--no-same-owner", "--same-owner",
+	"--no-same-permissions", "--same-permissions", "--preserve-permissions", "--numeric-owner",
+	"--overwrite", "--keep-old-files", "--skip-old-files", "--keep-newer-files", "--unlink-first",
+	"--recursive", "--no-recursion", "--one-file-system", "--ignore-zeros", "--ignore-failed-read",
+	"--remove-files", "--wildcards", "--no-wildcards", "--anchored", "--ignore-case",
+	"--wildcards-match-slash", "--no-wildcards-match-slash", "--exclude-caches",
+	"--exclude-caches-all", "--exclude-caches-under", "--exclude-vcs", "--exclude-vcs-ignores",
+	"--exclude-backups", "--show-transformed-names", "--show-omitted-dirs", "--show-defaults",
+	"--full-time", "--utc", "--delay-directory-restore", "--no-delay-directory-restore",
+	"--no-overwrite-dir", "--force-local", "--no-unquote", "--unquote", "--verbatim-files-from",
+	"--no-verbatim-files-from", "--gzip", "--gunzip", "--bzip2", "--xz", "--lzma", "--lzip",
+	"--lzop", "--zstd", "--compress", "--uncompress", "--auto-compress", "--sparse",
+	"--no-sparse", "--block-number", "--check-device", "--no-check-device", "--seek",
+	"--no-seek", "--read-full-records", "--null", "--no-null", "--help", "--version",
+	"--usage", "--license",
+]);
+
+/** Long options (and short letters) that run a command or write a side file: never allow via the stdout carve-out. Both `--opt value` and `--opt=value` forms count. */
+const TAR_EXEC_OPTIONS = new Set([
+	"--to-command", "--use-compress-program", "--info-script",
+	"--new-volume-script", "--checkpoint-action", "--rmt-command", "--rsh-command",
+	"--set-mtime-command", "--index-file",
+]);
+
+/** One option scan result: action modes, the `-f` archive operand, `-C` directories, stdout, exec. */
+type TarScan = { write: boolean; extract: boolean; list: boolean; stdout: boolean; exec: boolean; archive: string | null; dirs: string[]; unparseable: boolean };
+
+/** Consume one short-bundle word (`-czf`, dash-less `tar cf`) into the scan; bare `f`/`C`
+ * and value letters take the next token, so the returned count tells the caller how many
+ * tokens were consumed. */
 function scanTarBundle(word: string, next: string | undefined, scan: TarScan, dashless: boolean): number {
 	let consumed = 0;
 	const letters = word.replace(/^-/, "");
@@ -500,6 +567,11 @@ function scanTarBundle(word: string, next: string | undefined, scan: TarScan, da
 		if (TAR_WRITE_LETTERS.has(ch)) scan.write = true;
 		else if (ch === "x") scan.extract = true;
 		else if (ch === "t") scan.list = true;
+		// Uppercase `O` streams members to stdout. Lowercase `o` is GNU `--no-same-owner`
+		// (an extract flag), so it must never set stdout.
+		else if (ch === "O") scan.stdout = true;
+		// `-I`/`-F` run a program or script per member: fail closed even with stdout.
+		else if (ch === "I" || ch === "F") { scan.exec = true; break; }
 		else if (ch === "f") {
 			// Obsolescent dash-less bundles take the archive from the NEXT token
 			// (`tar fc x.tar dir`), not from the attached letters — treating the
@@ -510,26 +582,66 @@ function scanTarBundle(word: string, next: string | undefined, scan: TarScan, da
 			scan.archive = next ?? null; consumed = 1;
 		}
 		else if (ch === "C") { if (attached) { scan.dirs.push(attached); break; } if (next) { scan.dirs.push(next); consumed = 1; } }
+		// `-s` is a preserve-order flag in GNU tar but takes a substitution pattern in bsdtar.
+		// The tail is more flags on GNU (it can carry `f`/`C`/a mode), so trusting the bsdtar
+		// reading under-blocks (`tar -csf /etc/a.tar src`); the separated form stays a plain
+		// flag for GNU, so only the attached form fails closed.
+		else if (ch === "s") { if (attached) scan.unparseable = true; break; }
+		// Any other value letter consumes its value, so the value can never read as a flag.
+		// A dash-less bundle takes each value from the NEXT token (`tar bcf 20 a.tar`), so a
+		// second value letter cannot be attributed to its token — fail closed, do not guess.
+		else if (TAR_VALUE_LETTERS.has(ch)) {
+			if (dashless) { scan.unparseable = true; break; }
+			if (attached) break;
+			consumed = 1;
+		}
 	}
 	return consumed;
 }
 
 /** Scan leading options (operands are skipped, tar permutes flags) for modes, archive, dirs. */
 function scanTarOptions(tokens: string[]): TarScan {
-	const scan: TarScan = { write: false, extract: false, list: false, archive: null, dirs: [], unparseable: false };
+	const scan: TarScan = { write: false, extract: false, list: false, stdout: false, exec: false, archive: null, dirs: [], unparseable: false };
+	// A long option we do not model may still consume the next token as its value. If that token
+	// spells `-O`/`--to-stdout`, trusting it would let a real extraction read as stdout
+	// (`tar -xf a.tar --quote-chars -O`), so fail closed instead of guessing.
+	let pendingValue = false;
 	for (let i = 1; i < tokens.length; i++) {
 		const word = unescapeCommandWord(tokens[i]!);
+		const precededByUnmodeled = pendingValue;
+		pendingValue = false;
 		if (word === "--") break;
 		if (word.startsWith("--")) {
 			const mode = TAR_LONG_MODES[word];
 			if (mode) scan[mode] = true;
+			else if (word === "--to-stdout") { if (precededByUnmodeled) { scan.unparseable = true; break; } scan.stdout = true; }
 			else if (word === "--file") { const v = tokens[i + 1]; if (v) { scan.archive = v; i++; } }
 			else if (word.startsWith("--file=")) scan.archive = word.slice("--file=".length);
 			else if (word === "--directory") { const v = tokens[i + 1]; if (v) { scan.dirs.push(v); i++; } }
 			else if (word.startsWith("--directory=")) scan.dirs.push(word.slice("--directory=".length));
+			// `--one-top-level=<dir>` redirects extraction under <dir>, so it is an extraction
+			// destination like `-C`. The bare form derives the directory from the archive name,
+			// which cannot be proven — fail closed.
+			else if (word.startsWith("--one-top-level=")) scan.dirs.push(word.slice("--one-top-level=".length));
+			else if (word === "--one-top-level") scan.unparseable = true;
+			// Exec/side-write options fail closed even with stdout (`-O` streams members but
+			// `--to-command` still runs per member). Check before the stdout carve-out.
+			else if (TAR_EXEC_OPTIONS.has(word)) { scan.exec = true; if (tokens[i + 1] !== undefined) i++; }
+			else if (word.includes("=") && TAR_EXEC_OPTIONS.has(word.slice(0, word.indexOf("=")))) { scan.exec = true; }
+			// Other value options only need their value skipped: without this, an operand
+			// like `-O` reads as the stdout flag (`tar -xf a.tar --exclude -O`).
+			else if (TAR_LONG_VALUE_OPTIONS.has(word)) { if (tokens[i + 1] !== undefined) i++; }
+			else if (!TAR_LONG_FLAGS.has(word) && !word.includes("=")) pendingValue = true;
 			continue;
 		}
-		if (/^-[a-zA-Z]+$/.test(word) || (i === 1 && /^[a-zA-Z]+$/.test(word))) { i += scanTarBundle(word, tokens[i + 1], scan, !word.startsWith("-")); continue; }
+		if (/^-[a-zA-Z]+$/.test(word) || (i === 1 && /^[a-zA-Z]+$/.test(word))) {
+			const stdoutBefore = scan.stdout;
+			i += scanTarBundle(word, tokens[i + 1], scan, !word.startsWith("-"));
+			// The bundle is the previous long option's value when it sets stdout: trusting it
+			// would allow a real extraction (`tar -xf a.tar --quote-chars -O`).
+			if (precededByUnmodeled && scan.stdout && !stdoutBefore) { scan.unparseable = true; break; }
+			continue;
+		}
 		if (word.startsWith("-C") && word.length > 2) { scan.dirs.push(rawAttachedFlagValue(word, "-C")); continue; }
 		if (word.startsWith("-f") && word.length > 2) { scan.archive = word.slice(2); continue; }
 		// A bundle with a non-letter tail means some option letter consumed the rest of
@@ -549,8 +661,21 @@ const TAR_UNPARSEABLE_TARGET = "/";
 function getTarTargets(tokens: string[]): string[] | null {
 	const scan = scanTarOptions(tokens);
 	if (scan.unparseable) return [TAR_UNPARSEABLE_TARGET];
+	// Exec/side-write options run code or write files regardless of stdout routing.
+	if (scan.exec) return [TAR_UNPARSEABLE_TARGET];
 	if (scan.list && !scan.write && !scan.extract) return null; // `tar -t` reads the archive only
-	if (scan.write) return [scan.archive ?? "."];               // creation writes the archive operand
+	// Conflicting action modes cannot be proven safe: creation targets the archive while
+	// extraction writes member files, so check neither guess and fail closed.
+	if (scan.write && scan.extract) return [TAR_UNPARSEABLE_TARGET];
+	if (scan.write) {
+		// Creation writes the archive operand. `-f -`/`--file=-` streams the archive to
+		// stdout, so `-` is not a filesystem path.
+		const archive = scan.archive ?? ".";
+		return [stripMatchingQuotes(archive) === "-" ? "/dev/null" : archive];
+	}
+	// `-O`/`--to-stdout` streams extracted members to stdout: no filesystem target.
+	// `-C` only selects where member files land, so it never re-adds a target here.
+	if (scan.stdout && !scan.write) return null;
 	// Extraction (or an unmodeled action) writes member files into each -C dir, else the cwd —
 	// tracking the cwd only classifies writes reached through a tracked cd, so the cwd itself
 	// must be the target here.
