@@ -336,11 +336,10 @@ test("blocks nested wrapper sudo+env+xargs", async () => {
 	await assertBlocked(toolCall, "sudo env xargs rm /etc/passwd");
 });
 
-// WHY: `=>` is an arrow function in non-shell payloads, not an assignment redirect.
-test("arrow one-liners are allowed as non-redirects", () => {
+// WHY: only node's payload treats `=>` as an arrow function, not an assignment redirect.
+test("node arrows are allowed as non-redirects", () => {
 	assert.deepEqual(classifyBashCommand("node -e 'const f = () => 1; console.log(f())'", "/"), { ok: true });
 	assert.deepEqual(classifyBashCommand('node -e "const f = () => 1; console.log(f())"', "/"), { ok: true });
-	assert.deepEqual(classifyBashCommand('python3 -c "print(list(map(lambda x: x, [1])))"', "/"), { ok: true });
 });
 
 // WHY: shell payloads are real shell syntax, so `=>` there is a write redirect.
@@ -354,14 +353,21 @@ test("a real write redirect outside temp stays blocked", () => {
 	assert.equal(applyReadonlyBashGuard("echo hi > /Users/ofri/blocked-out.txt", "/").action, "block");
 });
 
-test("spaced arrows in interpreter payloads are allowed", () => {
-	// `=>` with whitespace before `>` is a JS/Python arrow function, not a write redirect.
+// WHY: only node gets arrow leniency; every other interpreter keeps real redirect semantics.
+test("spaced arrows are allowed only in node payloads", () => {
 	assert.deepEqual(classifyBashCommand("node -e 'const f = (x) => x + 1'", "/"), { ok: true });
 	assert.deepEqual(classifyBashCommand("node -e 'const f = x => x + 1'", "/"), { ok: true });
-	assert.deepEqual(classifyBashCommand('python3 -c "print([x for x in range(10) if x => 0])"', "/"), { ok: true });
+});
+
+// WHY: perl qx() and ruby %x() produce command output, so a following `=>` is a hash-rocket
+// write redirect, not an arrow; the old shell-interpreter set wrongly exempted them (C5).
+test("hash-rocket in non-node interpreter payloads stays blocked", () => {
+	assert.equal(classifyBashCommand('perl -e "print qx(echo hi)=> /etc/pwned"', "/").ok, false);
+	assert.equal(classifyBashCommand('ruby -e "print %x(echo hi)=> /etc/pwned"', "/").ok, false);
+	assert.equal(classifyBashCommand('python3 -c "y = 1 => /etc/pwned"', "/").ok, false);
 });
 
 test("arrow leniency is interpreter-scoped: a top-level assignment redirect stays blocked", () => {
-	// `a=>/etc/x` is `a=` plus a real redirect; only interpreter payloads treat `=>` as an arrow.
+	// `a=>/etc/x` is `a=` plus a real redirect; only a node payload treats `=>` as an arrow.
 	assert.equal(applyReadonlyBashGuard("a=>/etc/pi-guard-probe", "/").action, "block");
 });

@@ -88,10 +88,6 @@ const INTERPRETER_EXEC_FLAGS: Record<string, string[]> = {
 
 const INTERPRETERS = new Set(Object.keys(INTERPRETER_EXEC_FLAGS));
 
-// WHY: shell payloads are real shell syntax, so `a=>file` there is a write redirect.
-// Only non-shell payloads may use `=>` as an arrow function.
-const SHELL_INTERPRETERS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
-
 // Package managers are blocked unconditionally — they mutate system state
 // outside any single directory (npm install writes to node_modules, pip
 // installs to site-packages, etc.). Temp-dir path checking is not meaningful.
@@ -205,9 +201,9 @@ function classifyInterpreter(command: string, tokens: string[], cwd: string, dep
 	for (const flag of INTERPRETER_EXEC_FLAGS[command]) {
 		const idx = args.indexOf(flag);
 		if (idx === -1 || idx + 1 >= args.length) continue;
-		// WHY: non-shell payloads (node -e, python -c) use `=>` as an arrow, which quote-stripping
-		// would otherwise expose to the redirect scanner. Shell payloads keep real redirect semantics.
-		const arrowPayload = !SHELL_INTERPRETERS.has(command);
+		// WHY: only node's payload may treat `=>` as an arrow. Any other interpreter (python -c,
+		// perl -e, ruby -e, shell -c) keeps real redirect semantics, so `a=>file` stays blocked.
+		const arrowPayload = command === "node";
 		const nested = classifyBashCommand(stripMatchingQuotes(args[idx + 1]), cwd, depth + 1, shellVars, arrowPayload);
 		if (!nested.ok) return `${command} ${flag} blocked: ${nested.reason}`;
 	}
@@ -957,9 +953,8 @@ function getUnsafeWriteRedirectTarget(cmd: string, cwd: string, shellVars: Reado
 		if (next === "&" && /^[\d-]$/.test(cmd[i + 2] ?? "")) continue;
 		// >= is the comparison operator (e.g., in [[ or node -e), not a write redirect
 		if (next === "=") continue;
-		// => is an arrow function inside non-shell interpreter code (node -e/python -c/perl/ruby),
-		// not an assignment redirect. Only lenient for a classified interpreter payload:
-		// a top-level `a=>file` is still a real redirect and stays blocked.
+		// => is an arrow function inside node -e code, not an assignment redirect. Only lenient
+		// for a node payload: a top-level `a=>file` is still a real redirect and stays blocked.
 		if (interpreterPayload) {
 			let j = i - 1;
 			while (j >= 0 && /\s/.test(cmd[j])) j--;
