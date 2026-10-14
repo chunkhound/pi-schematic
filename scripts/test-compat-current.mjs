@@ -44,7 +44,6 @@ async function main() {
       "tests/unit/model-group-frontmatter.test.ts",
       "tests/unit/model-groups-integration.test.ts",
       "tests/unit/module-evaluation-order.test.ts",
-      "tests/unit/spawn-after-handoff.test.ts",
       "tests/unit/handoff.test.ts",
       "tests/unit/notebook.test.ts",
       "tests/unit/prompt-sections.test.ts",

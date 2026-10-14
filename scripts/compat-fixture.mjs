@@ -33,8 +33,24 @@ export function prepareCompatCopy(copy) {
 // npm 12 wraps a single value in a one-element array.
 export function parseNpmViewValue(stdout) {
   if (!stdout.trim()) return undefined;
-  const value = JSON.parse(stdout);
+  let value;
+  try {
+    value = JSON.parse(stdout);
+  } catch (cause) {
+    throw new Error(`Unexpected npm view --json output: ${JSON.stringify(stdout)}`, { cause });
+  }
   return Array.isArray(value) && value.length === 1 ? value[0] : value;
+}
+
+// npm before 12 returns `npm pack --json` as an array; npm 12 as an object keyed by package name.
+export function packEntry(packJson) {
+  let entry;
+  if (Array.isArray(packJson) && packJson.length === 1) entry = packJson[0];
+  else if (packJson && typeof packJson === "object" && Object.keys(packJson).length === 1) entry = Object.values(packJson)[0];
+  if (typeof entry?.filename !== "string" || !entry.filename) {
+    throw new Error(`Unexpected npm pack --json output: ${JSON.stringify(packJson)}`);
+  }
+  return entry;
 }
 
 /** Resolve one current Pi release and the exact TypeBox version it requires. */
