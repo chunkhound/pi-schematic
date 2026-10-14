@@ -85,7 +85,7 @@ const packEntryAccepted: Array<[string, unknown]> = [
 
 for (const [shape, packJson] of packEntryAccepted) {
 	test(`packEntry accepts ${shape}`, () => {
-		assert.equal(packEntry(packJson), packEntryFixture);
+		assert.deepEqual(packEntry(JSON.stringify(packJson)), packEntryFixture);
 	});
 }
 
@@ -99,15 +99,28 @@ const packEntryRejected: Array<[string, unknown]> = [
 
 for (const [shape, packJson] of packEntryRejected) {
 	test(`packEntry rejects ${shape}`, () => {
-		assert.throws(() => packEntry(packJson), /Unexpected npm pack --json output/);
+		assert.throws(() => packEntry(JSON.stringify(packJson)), /Unexpected npm pack --json output/);
 	});
 }
+
+test("packEntry rejects non-JSON output, quoting it and keeping the parse error as cause", () => {
+	const stdout = "npm WARN not json";
+	assert.throws(
+		() => packEntry(stdout),
+		(error: Error) => {
+			assert.match(error.message, /Unexpected npm pack --json output/);
+			assert.ok(error.message.includes(JSON.stringify(stdout)));
+			assert.ok(error.cause instanceof SyntaxError);
+			return true;
+		},
+	);
+});
 
 // resolveLatestPi reaches npm through the npm_execpath seam: a stub npm-cli.js answers each lookup.
 async function withStubNpm(
 	versionStdout: string,
 	typeboxStdout: string,
-	run: (temp: string, calls: () => string[][]) => Promise<void>,
+	run: (temp: string, calls: () => string[][], options: { env: NodeJS.ProcessEnv }) => Promise<void>,
 ): Promise<void> {
 	const temp = mkdtempSync(join(tmpdir(), "compat-resolve-latest-pi-"));
 	const callLog = join(temp, "calls.jsonl");
@@ -118,29 +131,47 @@ const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(callLog)}, JSON.stringify(args) + "\\n");
 if (args.includes("version")) process.stdout.write(${JSON.stringify(versionStdout)});
 else if (args.includes("dependencies.typebox")) process.stdout.write(${JSON.stringify(typeboxStdout)});
-else process.exit(1);
+else process.stdout.write("unexpected npm args: " + args.join(" "));
 `);
-	const previous = process.env.npm_execpath;
-	process.env.npm_execpath = stub;
 	try {
-		await run(temp, () => readFileSync(callLog, "utf8").trim().split("\n").map((line) => JSON.parse(line)));
+		await run(temp, () => readFileSync(callLog, "utf8").trim().split("\n").map((line) => JSON.parse(line)), {
+			env: { ...process.env, npm_execpath: stub },
+		});
 	} finally {
-		if (previous === undefined) delete process.env.npm_execpath;
-		else process.env.npm_execpath = previous;
 		rmSync(temp, { recursive: true, force: true });
 	}
 }
 
 test("resolveLatestPi rejects when npm prints no latest version, without a TypeBox lookup", async () => {
-	await withStubNpm("", "", async (temp, calls) => {
-		await assert.rejects(resolveLatestPi(temp), /did not declare a usable version/);
+	await withStubNpm("", "", async (temp, calls, options) => {
+		await assert.rejects(resolveLatestPi(temp, options), (error: Error) => {
+			assert.match(error.message, /did not declare a usable version/);
+			assert.ok(error.message.includes(JSON.stringify("")));
+			return true;
+		});
+		assert.equal(calls().length, 1);
+	});
+});
+
+test("resolveLatestPi rejects when npm resolves several latest versions, quoting its output", async () => {
+	const stdout = '["1.0.0","1.1.0"]';
+	await withStubNpm(stdout, "", async (temp, calls, options) => {
+		await assert.rejects(resolveLatestPi(temp, options), (error: Error) => {
+			assert.match(error.message, /did not declare a usable version/);
+			assert.ok(error.message.includes(JSON.stringify(stdout)));
+			return true;
+		});
 		assert.equal(calls().length, 1);
 	});
 });
 
 test("resolveLatestPi rejects when the resolved Pi version declares no TypeBox dependency", async () => {
-	await withStubNpm('["1.2.0"]', "", async (temp, calls) => {
-		await assert.rejects(resolveLatestPi(temp), /Pi coding-agent 1\.2\.0 did not declare a usable TypeBox version/);
+	await withStubNpm('["1.2.0"]', "", async (temp, calls, options) => {
+		await assert.rejects(resolveLatestPi(temp, options), (error: Error) => {
+			assert.match(error.message, /Pi coding-agent 1\.2\.0 did not declare a usable TypeBox version/);
+			assert.ok(error.message.includes(JSON.stringify("")));
+			return true;
+		});
 		assert.deepEqual(calls().map((args) => args[1]), [
 			"@earendil-works/pi-coding-agent@latest",
 			"@earendil-works/pi-coding-agent@1.2.0",
@@ -149,7 +180,7 @@ test("resolveLatestPi rejects when the resolved Pi version declares no TypeBox d
 });
 
 test("resolveLatestPi resolves the Pi version and the TypeBox version it requires", async () => {
-	await withStubNpm('["1.2.0"]', '["1.3.27"]', async (temp) => {
-		assert.deepEqual(await resolveLatestPi(temp), { piVersion: "1.2.0", typeboxVersion: "1.3.27" });
+	await withStubNpm('["1.2.0"]', '["1.3.27"]', async (temp, _calls, options) => {
+		assert.deepEqual(await resolveLatestPi(temp, options), { piVersion: "1.2.0", typeboxVersion: "1.3.27" });
 	});
 });

@@ -16,8 +16,8 @@ async function main() {
   try {
     prepareCompatCopy(copy);
 
-    const packJson = JSON.parse((await runNpmWithRetry(copy, ["pack", "--json", "--ignore-scripts"], { capture: true })).stdout);
-    tarball = join(copy, packEntry(packJson).filename);
+    const packStdout = (await runNpmWithRetry(copy, ["pack", "--json", "--ignore-scripts"], { capture: true })).stdout;
+    tarball = join(copy, packEntry(packStdout).filename);
     const latestPi = await resolveLatestPi(copy);
     mkdirSync(host, { recursive: true });
     writeFileSync(join(host, "package.json"), `${JSON.stringify({

@@ -43,28 +43,34 @@ export function parseNpmViewValue(stdout) {
 }
 
 // npm before 12 returns `npm pack --json` as an array; npm 12 as an object keyed by package name.
-export function packEntry(packJson) {
+export function packEntry(stdout) {
+  let packJson;
+  try {
+    packJson = JSON.parse(stdout);
+  } catch (cause) {
+    throw new Error(`Unexpected npm pack --json output: ${JSON.stringify(stdout)}`, { cause });
+  }
   let entry;
   if (Array.isArray(packJson) && packJson.length === 1) entry = packJson[0];
   else if (packJson && typeof packJson === "object" && Object.keys(packJson).length === 1) entry = Object.values(packJson)[0];
   if (typeof entry?.filename !== "string" || !entry.filename) {
-    throw new Error(`Unexpected npm pack --json output: ${JSON.stringify(packJson)}`);
+    throw new Error(`Unexpected npm pack --json output: ${JSON.stringify(stdout)}`);
   }
   return entry;
 }
 
 /** Resolve one current Pi release and the exact TypeBox version it requires. */
-export async function resolveLatestPi(copy) {
+export async function resolveLatestPi(copy, options = {}) {
   const piStdout = (await runNpmWithRetry(copy, [
     "view", "@earendil-works/pi-coding-agent@latest", "version", "--json",
-  ], { capture: true })).stdout;
+  ], { ...options, capture: true })).stdout;
   const piVersion = parseNpmViewValue(piStdout);
   if (typeof piVersion !== "string" || !piVersion) {
     throw new Error(`Latest Pi coding-agent did not declare a usable version: ${JSON.stringify(piStdout)}`);
   }
   const typeboxStdout = (await runNpmWithRetry(copy, [
     "view", `@earendil-works/pi-coding-agent@${piVersion}`, "dependencies.typebox", "--json",
-  ], { capture: true })).stdout;
+  ], { ...options, capture: true })).stdout;
   const typeboxVersion = parseNpmViewValue(typeboxStdout);
   if (typeof typeboxVersion !== "string" || !typeboxVersion) {
     throw new Error(`Pi coding-agent ${piVersion} did not declare a usable TypeBox version: ${JSON.stringify(typeboxStdout)}`);
