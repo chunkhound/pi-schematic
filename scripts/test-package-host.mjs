@@ -7,9 +7,9 @@ import { repoRootFromScript, runChecked, runNpmWithRetry } from "./compat-proces
 const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
 
 // npm before 12 returns `npm pack --json` as an array; npm 12 as an object keyed by package name.
-function packEntry(packJson) {
+export function packEntry(packJson) {
   let entry;
-  if (Array.isArray(packJson)) entry = packJson[0];
+  if (Array.isArray(packJson) && packJson.length === 1) entry = packJson[0];
   else if (packJson && typeof packJson === "object" && Object.keys(packJson).length === 1) entry = Object.values(packJson)[0];
   if (typeof entry?.filename !== "string" || !entry.filename) {
     throw new Error(`Unexpected npm pack --json output: ${JSON.stringify(packJson)}`);

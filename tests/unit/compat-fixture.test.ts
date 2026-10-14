@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-const { writeCompatArtifacts } = await import(new URL("../../scripts/compat-fixture.mjs", import.meta.url).href);
+const { parseNpmViewValue, writeCompatArtifacts } = await import(new URL("../../scripts/compat-fixture.mjs", import.meta.url).href);
+const { packEntry } = await import(new URL("../../scripts/test-package-host.mjs", import.meta.url).href);
 
 function withTempDir(prefix: string, run: (temp: string) => void): void {
 	const temp = mkdtempSync(join(tmpdir(), prefix));
@@ -47,4 +48,24 @@ test("writeCompatArtifacts rejects a successful artifact without its package loc
 			/Expected compatibility package lock/,
 		);
 	});
+});
+
+test("parseNpmViewValue unwraps one-element arrays and treats empty output as undeclared", () => {
+	assert.equal(parseNpmViewValue('"1.2.0"'), "1.2.0");
+	assert.equal(parseNpmViewValue('["1.2.0"]'), "1.2.0");
+	assert.equal(parseNpmViewValue(""), undefined);
+	assert.equal(parseNpmViewValue("  \n"), undefined);
+	assert.deepEqual(parseNpmViewValue("[]"), []);
+	assert.throws(() => parseNpmViewValue("{not json"), SyntaxError);
+});
+
+test("packEntry accepts exactly one pack entry and rejects every other shape", () => {
+	const entry = { filename: "pi-schematic-1.0.0.tgz" };
+	assert.equal(packEntry([entry]), entry);
+	assert.equal(packEntry({ "pi-schematic": entry }), entry);
+	assert.throws(() => packEntry([entry, entry]), /Unexpected npm pack --json output/);
+	assert.throws(() => packEntry({ a: entry, b: entry }), /Unexpected npm pack --json output/);
+	assert.throws(() => packEntry([{ filename: "" }]), /Unexpected npm pack --json output/);
+	assert.throws(() => packEntry([{ name: "no-filename" }]), /Unexpected npm pack --json output/);
+	assert.throws(() => packEntry("x"), /Unexpected npm pack --json output/);
 });

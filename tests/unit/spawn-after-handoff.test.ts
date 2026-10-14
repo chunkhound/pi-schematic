@@ -4,7 +4,10 @@
  *
  * Spawn operations work after the handoff tool module is loaded: the SDK
  * classes createAgentSession needs are defined, and executeSpawn reaches its
- * own model check instead of failing on an undefined SDK value.
+ * own model check instead of failing on an undefined SDK value. This file
+ * imports the SDK statically before it loads handoff/tool.js, so it cannot
+ * detect an evaluation-order regression; module-evaluation-order.test.ts checks
+ * that in a fresh process.
  *
  * Tests use a sandboxed agent directory to avoid reading real ~/.pi/agent/
  * config. Real createAgentSession reads extensions, models, auth, and skills
