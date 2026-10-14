@@ -63,12 +63,16 @@ test("clampTimeoutMs clamps finite values to the timer max; only explicit no-lim
 	assert.equal(clampTimeoutMs(Number.NaN), Number.POSITIVE_INFINITY);
 });
 
-test("hardDeadlineMs doubles the budget as a sanity deadline; unlimited disables it", () => {
-	assert.equal(hardDeadlineMs(1_000), 2_000);
-	assert.equal(hardDeadlineMs(Number.MAX_SAFE_INTEGER), MAX_TIMEOUT_MS, "overflow clamps to the timer max");
-	assert.equal(hardDeadlineMs(null), Number.POSITIVE_INFINITY);
-	assert.equal(hardDeadlineMs(0), Number.POSITIVE_INFINITY);
-	assert.equal(hardDeadlineMs(-1), Number.POSITIVE_INFINITY);
+test("hardDeadlineMs prefers an explicit deadline, else doubles the budget; unlimited disables it", () => {
+	assert.equal(hardDeadlineMs({ timeBudgetMs: 1_000 }), 2_000, "the soft budget derives a doubled deadline");
+	assert.equal(hardDeadlineMs({ timeBudgetMs: 1_000, hardDeadlineMs: 5_000 }), 5_000, "an explicit hard deadline wins over the derived one");
+	assert.equal(hardDeadlineMs({ timeBudgetMs: 1_000, hardDeadlineMs: MAX_TIMEOUT_MS + 1 }), MAX_TIMEOUT_MS, "overflow clamps to the timer max");
+	assert.equal(hardDeadlineMs({ timeBudgetMs: Number.MAX_SAFE_INTEGER }), MAX_TIMEOUT_MS, "overflow clamps to the timer max");
+	assert.equal(hardDeadlineMs({ timeBudgetMs: null }), Number.POSITIVE_INFINITY);
+	assert.equal(hardDeadlineMs({ timeBudgetMs: null, hardDeadlineMs: null }), Number.POSITIVE_INFINITY);
+	assert.equal(hardDeadlineMs({ timeBudgetMs: 0 }), Number.POSITIVE_INFINITY);
+	assert.equal(hardDeadlineMs({ timeBudgetMs: -1 }), Number.POSITIVE_INFINITY);
+	assert.equal(hardDeadlineMs({ timeBudgetMs: 1_000, hardDeadlineMs: -1 }), 2_000, "an invalid explicit deadline falls back to the derived one");
 });
 
 test("a memory-limit OOM maps to error and surfaces its message", async () => {

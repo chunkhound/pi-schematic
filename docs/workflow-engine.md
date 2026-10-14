@@ -14,10 +14,10 @@ One `/workflow <file> [args]` run. Each step names its owner module.
 | 4 | Read | `workflow/file.ts` | `readWorkflow` reads the source; `workflow/command.ts` (`readAndCompile`) wraps the failure. |
 | 5 | Compile | `workflow/compile.ts` | `compileWorkflow` parses, validates the synchronous contract, and rewrites calls. |
 | 6 | Compose driver | `workflow/driver.ts` | `composeWorkflow` prepends `WORKFLOW_DRIVER`, which defines `defineWorkflow`. |
-| 7 | Resolve limits | `workflow/limits-dialog.ts` | `resolveLimits` receives `hasCheckpoint`; without a checkpoint it skips the dialog and flags and marks the run unbounded. |
+| 7 | Resolve limits | `workflow/limits-dialog.ts` | `resolveLimits` receives `hasCheckpoint`; without one it skips the dialog, ignores `--workflow-cost`, and turns a valid `--workflow-time` into the sandbox hard deadline. |
 | 8 | Build host | `workflow/host.ts` | `createWorkflowHost` via `command.ts` (`buildHost`): run registry, child-usage sink, exit state, and metrics. `host.globals()` supplies the handle list. |
 | 9 | Suppress input, arm cancel | `workflow/command.ts` | Installs the `input` handler and the arm-then-confirm cancellation funnel. |
-| 10 | Build sandbox | `workflow/sandbox.ts` | `createWorkflowSandbox` clamps the deadline; `command.ts` (`runSandbox`) supplies `MEMORY_LIMIT_BYTES` and `hardDeadlineMs(timeBudgetMs)`. |
+| 10 | Build sandbox | `workflow/sandbox.ts` | `createWorkflowSandbox` clamps the deadline; `command.ts` (`runSandbox`) supplies `MEMORY_LIMIT_BYTES` and `hardDeadlineMs(limits)`. |
 | 11 | Seed store | `workflow/command.ts` | `sandbox.execute(compiled, { store: { intent, args }, signal })`; the script reads it with `load`. |
 | 12 | Execute | `@earendil-works/pi-codemode` | The QuickJS worker runs the composed script body. |
 | 13 | Dispatch handles | `workflow/host.ts` | `executeGuarded` gates, counts, and runs each `workflow.<member>` effect. |
@@ -73,7 +73,7 @@ One `/workflow <file> [args]` run. Each step names its owner module.
 
 **Memory cap.** `MEMORY_LIMIT_BYTES` in `workflow/command.ts` caps the script heap. Exceeding it fails inside the script as `InternalError: out of memory`.
 
-**Deadline clamp.** `workflow/sandbox.ts` `hardDeadlineMs(timeBudgetMs)` returns `clampTimeoutMs(timeBudgetMs * HARD_DEADLINE_FACTOR)` with `HARD_DEADLINE_FACTOR`, the backstop factor (rule in [workflows.md](workflows.md)). `clampTimeoutMs` clamps a finite positive value to `MAX_TIMEOUT_MS`; a non-finite or non-positive input becomes `Infinity` (no limit). A null time target disables the sandbox deadline. `createWorkflowSandbox` clamps any explicit `timeoutMs` the same way.
+**Deadline clamp.** `workflow/sandbox.ts` `hardDeadlineMs({ timeBudgetMs, hardDeadlineMs })` returns the explicit hard deadline when one is set (a checkpoint-less `--workflow-time`), else `timeBudgetMs * HARD_DEADLINE_FACTOR` with `HARD_DEADLINE_FACTOR`, the backstop factor (rule in [workflows.md](workflows.md)). `clampTimeoutMs` clamps a finite positive value to `MAX_TIMEOUT_MS`; a non-finite or non-positive input becomes `Infinity` (no limit). A null time target disables the sandbox deadline. Limit resolution rejects a soft target above `MAX_TIME_BUDGET_MS` (`MAX_TIMEOUT_MS / HARD_DEADLINE_FACTOR`) so the derived backstop never clamps; `command.ts` (`runSandbox`) passes `hardDeadlineMs(limits)`. `createWorkflowSandbox` clamps any explicit `timeoutMs` the same way.
 
 **Boundary.** The VM has no timers and no I/O. The compile checks add no network, file, or dynamic-code path. The security posture is stated in [workflows.md](workflows.md) (Constraints).
 
@@ -85,16 +85,7 @@ One `/workflow <file> [args]` run. Each step names its owner module.
 
 **Non-overlap.** Compiled workflows are async, so `Promise.all` could interleave two effects. `executeGuarded` sets `state.executing` for the duration of one effect and throws `workflow calls must not overlap` if a second starts. This keeps previews, run markers, and counters consistent.
 
-**Guarded vs inspector split.** Every handle carries a `HandleSpec`.
-
-| Kind | Handles | Behavior |
-|---|---|---|
-| Guarded | `run`, `handoff`, `classify`, `shell`, `entries`, `notebookWrite`, `readonly`, `new` | `guardDeferredStop` runs first, so a crossed target arms a pending stop. Counted. |
-| Inspector | `state`, `budget`, `notebookIndex`, `notebookRead`, `notebookTopic` | Never gated. Stay reachable past a target so the workflow can observe the crossing. Not counted. |
-| `checkpoint` | — | Not guarded; counted so progress is visible. |
-| `exit` | — | Not guarded; not counted. Terminal. |
-
-`classify` sets `softLifecycle`: lifecycle and escalation failures become a normal aborted `ClassifierResult` instead of a rejection. `counted` defaults to `guarded`; only `checkpoint` overrides it.
+**Guarded vs inspector split.** Every handle carries a `HandleSpec`. The guarded, inspector, and terminal sets are the author rule in [workflows.md](workflows.md) (Targets). `guardDeferredStop` runs first on a guarded handle, so a crossed target arms a pending stop. `classify` sets `softLifecycle`: lifecycle and escalation failures become a normal aborted `ClassifierResult` instead of a rejection. `counted` defaults to `guarded`; only `checkpoint` overrides it.
 
 ## Targets, exit, salvage
 
@@ -113,12 +104,12 @@ All surfaces are CustomEntry or UI only. None enter the LLM context.
 
 | Surface | Owner | Content |
 |---|---|---|
-| `workflow-exit` entry | `workflow/host.ts`, `workflow/command.ts` | One exit record: exit metadata, `{ reason, partial }`, or `returned`. No registered renderer. |
+| `workflow-exit` entry | `workflow/host.ts`, `workflow/command.ts` | One exit record, always `{ reason, ... }`: workflow metadata as `metadata`, a checkpoint stop or hard abort adds `partial` (and `error`), and a script that ends without `workflow.exit` records `returned`. No registered renderer. |
 | `workflow-summary` entry | `workflow/summary.ts`, rendered by `workflow/summary-renderer.ts` | Run overview: reason, elapsed, counts, spend rows, effect log. |
 | `workflow-shell` entry | `workflow/activity.ts` | One shell call: exit status, duration, bounded output tail. |
 | `workflow-log` entry | `workflow/command.ts` | The script's `console`/`text()` output. |
 | `workflow-error` entry | `workflow/command.ts`, `workflow/limits-dialog.ts`, `workflow/host.ts` | Diagnostic `{ phase, error }`. |
-| `workflow-limits` entry | `workflow/limits-dialog.ts` | Headless no-target or unbounded start; unbounded runs include `unbounded: true` (and `ignoredFlags` when the operator supplied target flags, which also raises one warning notice). UI/transcript-only; never enters LLM context. |
+| `workflow-limits` entry | `workflow/limits-dialog.ts` | Headless no-target, unbounded, or checkpoint-less hard-deadline start. Unbounded runs include `unbounded: true` and `ignoredFlags` when the operator supplied an ignored flag; a checkpoint-less `--workflow-time` records `hardDeadlineMs`. UI/transcript-only; never enters LLM context. |
 | `workflow-activity` widget | `workflow/activity.ts` | Live shell progress above the editor. TUI only. |
 
 `workflow-error` phases: `command.ts` writes `reserve`, `start`, `exit-record`, `summary`, `cleanup`; `limits-dialog.ts` writes `start`; `host.ts` writes `abort`, `effect`, `progress`.
@@ -168,6 +159,7 @@ Entry-type strings are named exports: `WORKFLOW_SUMMARY_ENTRY_TYPE` (`summary.ts
 - An invalid `--workflow-cost` or `--workflow-time` flag cancels the run (`workflow/limits-dialog.ts`).
 - The partial summary row reads `stopped at checkpoint` (`workflow/summary-renderer.ts`).
 - The collapsed summary card caps its model rows (`workflow/summary-renderer.ts`).
+- Every `RunResult` carries the settled run's concrete `model`; a group-routed run reports the chosen member (`workflow/host.ts`).
 - The footer has two zones (`tui.ts`).
 - `workflow.exit` returns its metadata argument (`workflow/host.ts`).
 

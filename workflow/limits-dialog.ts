@@ -1,10 +1,12 @@
-// WHY: budget dialog is the run's first user decision (flags bypass, headless skips,
-// checkpoint-less workflows skip it entirely: no soft target can stop them).
+// WHY: budget dialog is the run's first user decision (flags bypass, headless skips).
+// Checkpoint-less workflows skip the dialog: no soft target can stop them. They still honor
+// --workflow-time as the sandbox's hard deadline.
 // Isolated so command.ts keeps orchestration only; notify lives here as the shared
 // UI-notice helper (leaf module, no cycle back into command).
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { safeAppendEntry } from "./errors.js";
-import { WORKFLOW_ERROR_ENTRY_TYPE, type WorkflowLimits } from "./types.js";
+import { MAX_TIME_BUDGET_MS, MAX_TIMEOUT_MS } from "./sandbox.js";
+import { WORKFLOW_ERROR_ENTRY_TYPE, type WorkflowErrorPhase, type WorkflowLimits } from "./types.js";
 
 /** UI notice when present, silent headless; transcript entries cover the silent path. */
 export function notify(ctx: ExtensionCommandContext, message: string, level: "info" | "warning" | "error"): void {
@@ -32,25 +34,51 @@ export type LimitsOutcome = { kind: "ok"; limits: WorkflowLimits } | { kind: "ca
 
 /** Flags bypass the dialog when they parse to a finite positive number; a present but
  * unparsable flag visibly cancels the run instead of silently falling back to unlimited.
- * A workflow with no checkpoint is unbounded: no soft target can stop it, so the dialog,
- * the flags, and the sandbox deadline are all skipped and the decision is recorded. */
+ * A workflow with no checkpoint skips the dialog: only --workflow-time applies, as the
+ * sandbox's hard deadline; cost flags are ignored and the decision is recorded. */
 export async function resolveLimits(pi: ExtensionAPI, ctx: ExtensionCommandContext, hasCheckpoint: boolean): Promise<LimitsOutcome> {
 	const rawCost = pi.getFlag("workflow-cost");
 	const rawTime = pi.getFlag("workflow-time");
-	if (!hasCheckpoint) return unboundedLimits(pi, ctx, rawCost, rawTime);
+	if (!hasCheckpoint) return checkpointlessLimits(pi, ctx, rawCost, rawTime);
 	const cost = parseLimitFlag(rawCost);
 	const time = parseLimitFlag(rawTime);
 	const invalid = invalidFlagsNotice(rawCost, cost, rawTime, time);
-	if (invalid) {
-		notify(ctx, invalid, "error");
-		// WHY: `notify` no-ops headless, so the transcript carries the failure instead.
-		if (!ctx.hasUI) pi.appendEntry(WORKFLOW_ERROR_ENTRY_TYPE, { phase: "start", error: invalid });
-		return { kind: "cancelled", notified: true };
-	}
+	if (invalid) return rejectInvalidFlags(pi, ctx, invalid);
 	if (cost !== undefined || time !== undefined) return { kind: "ok", limits: { costLimit: cost ?? null, timeBudgetMs: time ?? null } };
 	if (!ctx.hasUI) return headlessNoTarget(pi);
 	const limits = await promptLimits(ctx);
 	return limits ? { kind: "ok", limits } : { kind: "cancelled", notified: false };
+}
+
+/** Checkpoint-less run: no soft target can act, so only `--workflow-time` is honored, as
+ * the sandbox's hard deadline. An absent flag keeps the run unbounded; cost flags stay ignored. */
+function checkpointlessLimits(
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+	rawCost: boolean | string | undefined,
+	rawTime: boolean | string | undefined,
+): LimitsOutcome {
+	const time = parseLimitFlag(rawTime);
+	const invalid = invalidLimitFlag("--workflow-time", rawTime, time, "ms") ?? overMaxTimeNotice(rawTime, time, MAX_TIMEOUT_MS);
+	if (invalid) return rejectInvalidFlags(pi, ctx, invalid);
+	return time === undefined ? unboundedLimits(pi, ctx, rawCost, rawTime) : hardDeadlineLimits(pi, ctx, rawCost, time);
+}
+
+/** Checkpoint-less run with a valid `--workflow-time`: the value is the sandbox's hard
+ * deadline (a kill recorded as `time-limit`), not a soft target, so no checkpoint is needed. */
+function hardDeadlineLimits(
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+	rawCost: boolean | string | undefined,
+	ms: number,
+): LimitsOutcome {
+	const ignored = presentFlagNames([["--workflow-cost", rawCost]]);
+	const notice =
+		"This workflow declares no checkpoint: --workflow-time is enforced as the sandbox hard deadline. Exceeding it stops the run with a time-limit exit." +
+		(ignored.length > 0 ? ` Ignoring ${ignored.join(" and ")}: a cost target stops the run only at a checkpoint.` : "");
+	notify(ctx, notice, ignored.length > 0 ? "warning" : "info");
+	safeAppendEntry(pi, "workflow-limits", { costLimit: null, timeBudgetMs: null, hardDeadlineMs: ms, notice });
+	return { kind: "ok", limits: { costLimit: null, timeBudgetMs: null, hardDeadlineMs: ms } };
 }
 
 /** Unbounded run: no checkpoint means no soft target can act, so none is offered and any
@@ -73,6 +101,14 @@ function unboundedLimits(
 	if (flags.length > 0) notify(ctx, notice, "warning");
 	safeAppendEntry(pi, "workflow-limits", { costLimit: null, timeBudgetMs: null, unbounded: true, ...(flags.length > 0 ? { ignoredFlags: flags } : {}), notice });
 	return { kind: "ok", limits: { costLimit: null, timeBudgetMs: null } };
+}
+
+/** Surface an invalid-flag failure: UI toast when present, transcript error entry headless, always cancel. */
+function rejectInvalidFlags(pi: ExtensionAPI, ctx: ExtensionCommandContext, message: string): LimitsOutcome {
+	notify(ctx, message, "error");
+	// WHY: `notify` no-ops headless, so the transcript carries the failure instead.
+	if (!ctx.hasUI) pi.appendEntry(WORKFLOW_ERROR_ENTRY_TYPE, { phase: "start" satisfies WorkflowErrorPhase, error: message });
+	return { kind: "cancelled", notified: true };
 }
 
 /** Names of flags the operator actually supplied; an absent flag or an empty-string value does not count. */
@@ -107,6 +143,12 @@ function invalidLimitFlag(name: string, raw: boolean | string | undefined, parse
 	return `Invalid ${name}: "${raw}" (expected a positive number in ${unit})`;
 }
 
+/** A time budget is invalid when its derived hard deadline (`2 × budget`) overflows the timer. */
+function overMaxTimeNotice(raw: boolean | string | undefined, time: number | undefined, max: number): string | null {
+	if (time === undefined || time <= max) return null;
+	return `Invalid --workflow-time: "${raw}" (max ${max} ms; a longer budget would overrun the sandbox timer)`;
+}
+
 /** One notice naming EVERY invalid flag, so a bad cost flag does not hide a bad time flag. Null when all present flags parse. */
 function invalidFlagsNotice(
 	rawCost: boolean | string | undefined,
@@ -117,6 +159,7 @@ function invalidFlagsNotice(
 	const messages = [
 		invalidLimitFlag("--workflow-cost", rawCost, cost, "USD"),
 		invalidLimitFlag("--workflow-time", rawTime, time, "ms"),
+		overMaxTimeNotice(rawTime, time, MAX_TIME_BUDGET_MS),
 	].filter((message): message is string => message !== null);
 	return messages.length > 0 ? messages.join("\n") : null;
 }
@@ -151,7 +194,7 @@ async function pickTime(ctx: ExtensionCommandContext): Promise<LimitChoice> {
 	const choice = await ctx.ui.select("Time target — soft: stops at next checkpoint", TIME_PRESETS);
 	if (choice === undefined) return { ok: false, value: null };
 	if (choice === NO_TARGET) return { ok: true, value: null };
-	if (choice === CUSTOM) return customNumber(ctx, "Time target (minutes)", "minutes", 60_000);
+	if (choice === CUSTOM) return customNumber(ctx, "Time target (minutes)", "minutes", 60_000, MAX_TIME_BUDGET_MS);
 	// Fail loud: an unknown label here is a preset-list/map drift bug, not a user choice.
 	const ms = TIME_PRESET_MS[choice as keyof typeof TIME_PRESET_MS];
 	if (ms === undefined) throw new Error(`Unknown time preset: ${choice}`);
@@ -159,13 +202,15 @@ async function pickTime(ctx: ExtensionCommandContext): Promise<LimitChoice> {
 }
 
 // A bad custom value re-prompts the input; only an explicit escape (undefined) cancels the run.
-async function customNumber(ctx: ExtensionCommandContext, title: string, placeholder: string, scale: number): Promise<LimitChoice> {
+// `max` bounds the derived value (the time budget's hard-deadline ceiling).
+async function customNumber(ctx: ExtensionCommandContext, title: string, placeholder: string, scale: number, max?: number): Promise<LimitChoice> {
 	for (;;) {
 		const raw = await ctx.ui.input(title, placeholder);
 		if (raw === undefined) return { ok: false, value: null };
 		const parsed = Number(raw);
 		// Match the flag parsers: a non-positive limit would abort or time out instantly.
-		if (Number.isFinite(parsed) && parsed > 0) return { ok: true, value: parsed * scale };
-		notify(ctx, `Invalid value: ${raw}`, "error");
+		const positive = Number.isFinite(parsed) && parsed > 0;
+		if (positive && (max === undefined || parsed * scale <= max)) return { ok: true, value: parsed * scale };
+		notify(ctx, positive ? `Invalid value: ${raw} (the derived deadline would overrun the sandbox timer)` : `Invalid value: ${raw}`, "error");
 	}
 }

@@ -2,7 +2,7 @@
 // deadline clamps to the timer max instead of becoming an instant timeout. Only an
 // explicit no-limit (non-finite or non-positive input) disables the deadline.
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
-import type { CodemodeSandbox as Sandbox, CodemodeSandboxOptions } from "./types.js";
+import type { CodemodeSandbox as Sandbox, CodemodeSandboxOptions, WorkflowLimits } from "./types.js";
 import type { WorkflowSandboxFactory } from "./types.js";
 import { registeredState } from "../process-state.js";
 
@@ -14,16 +14,23 @@ export const MAX_TIMEOUT_MS = 2147483647;
 // Contract-visible factor; the rule is in docs/workflows.md (Targets, exit, cancellation, salvage).
 export const HARD_DEADLINE_FACTOR = 2;
 
+/** Largest time budget whose derived hard deadline still fits the sandbox timer range. */
+export const MAX_TIME_BUDGET_MS = Math.floor(MAX_TIMEOUT_MS / HARD_DEADLINE_FACTOR);
+
 /** Finite positive values clamp to Node's timer range; anything else is an explicit no-limit. */
 export function clampTimeoutMs(ms: number): number {
 	if (!Number.isFinite(ms) || ms <= 0) return Number.POSITIVE_INFINITY;
 	return Math.min(ms, MAX_TIMEOUT_MS);
 }
 
-/** Sanity deadline for the sandbox: twice the budget, clamped to the timer range. Unlimited budget disables it. */
-export function hardDeadlineMs(timeBudgetMs: number | null): number {
-	if (timeBudgetMs === null || !Number.isFinite(timeBudgetMs) || timeBudgetMs <= 0) return Number.POSITIVE_INFINITY;
-	return clampTimeoutMs(timeBudgetMs * HARD_DEADLINE_FACTOR);
+/** Sanity deadline for the sandbox. An explicit `hardDeadlineMs` (checkpoint-less runs) wins;
+ * otherwise the deadline derives from twice the soft budget. No valid input disables it. */
+export function hardDeadlineMs(limits: Pick<WorkflowLimits, "timeBudgetMs" | "hardDeadlineMs">): number {
+	const explicit = limits.hardDeadlineMs;
+	if (explicit !== null && explicit !== undefined && Number.isFinite(explicit) && explicit > 0) return clampTimeoutMs(explicit);
+	const budget = limits.timeBudgetMs;
+	if (budget === null || !Number.isFinite(budget) || budget <= 0) return Number.POSITIVE_INFINITY;
+	return clampTimeoutMs(budget * HARD_DEADLINE_FACTOR);
 }
 
 /** Clamp only an explicit deadline; `undefined` keeps pi-codemode's default. */

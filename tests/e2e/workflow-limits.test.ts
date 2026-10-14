@@ -7,6 +7,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { withWorkflowChild, sendOk, runWorkflow, readUiEvents, readFooter, readAppended, latestSummary } from "./workflow-harness.js";
+import { TIME_PRESETS, TIME_PRESET_MS } from "../../workflow/limits-dialog.js";
 import type { ProcessHarness } from "./pty-harness.js";
 
 const WORKFLOW = "tests/e2e/fixtures/exit-workflow.js";
@@ -87,6 +88,13 @@ describe("workflow limits E2E", () => {
 			"Custom…": 2 * 60_000,
 			"No target": null,
 		};
+		// Pin the shipped preset vocabulary so a new preset cannot ship without a literal above.
+		assert.deepEqual(Object.keys(expected).sort(), [...TIME_PRESETS].sort(), "a new or removed time preset must be added to this pinned list");
+		assert.deepEqual(
+			Object.keys(TIME_PRESET_MS).sort(),
+			TIME_PRESETS.filter((preset) => preset !== "No target" && preset !== "Custom…").sort(),
+			"every value-bearing preset must map to an ms budget",
+		);
 		for (const [label, ms] of Object.entries(expected)) {
 			await sendOk(h, "mock-select No target"); // cost picker
 			await sendOk(h, `mock-select ${label}`); // time picker
@@ -136,12 +144,16 @@ describe("workflow limits E2E", () => {
 		assert.ok(events.notifications.some((n) => n.message.includes("Invalid value: 0")));
 	}));
 
-	it("a huge custom time target keeps its budget (the deadline clamp is a unit concern)", async () => withWorkflowChild(async (h) => {
-		// 40000 minutes = 2.4e9 ms, above MAX_TIMEOUT_MS; the dialog hands it through unclamped.
+	it("a custom time target above the sandbox timer max is rejected and re-prompts", async () => withWorkflowChild(async (h) => {
+		// 40000 minutes = 2.4e9 ms, whose doubled hard deadline overruns the sandbox timer.
 		await sendOk(h, "mock-select No target");
 		await sendOk(h, "mock-select Custom…");
 		await sendOk(h, "mock-input 40000");
-		assert.equal(summaryOf(await runWorkflow(h, WORKFLOW)).limits.timeBudgetMs, 2_400_000_000);
+		await sendOk(h, "mock-input 60");
+		const summary = summaryOf(await runWorkflow(h, WORKFLOW));
+		assert.equal(summary.limits.timeBudgetMs, 3_600_000, "the corrected value wins");
+		const events = await readUiEvents(h);
+		assert.ok(events.notifications.some((n) => n.message.includes("Invalid value: 40000")), "the over-max value shows a visible error");
 	}));
 
 	it("a checkpoint-less workflow runs unbounded: no dialog, no notice, unbounded footer, summary", async () => withWorkflowChild(async (h) => {
@@ -173,5 +185,19 @@ describe("workflow limits E2E", () => {
 		);
 		// The unbounded decision is UI/transcript-only: no model-facing workflow-log entry is added.
 		assert.equal(entries.some((entry) => entry.customType === "workflow-log"), false, "unbounded decision never reaches the LLM");
+	}));
+
+	it("--workflow-time kills a checkpoint-less shell loop with exactly one time-limit exit", async () => withWorkflowChild(async (h) => {
+		await sendOk(h, "flag workflow-time 1000");
+		await sendOk(h, "hold-exec");
+		// Park the run inside its shell: only the sandbox hard deadline can end it.
+		h.write(`cmd-bg workflow ${NO_CHECKPOINT}`);
+		await h.waitForText("OK:started");
+		await h.waitForText("EXEC-HELD");
+		await sendOk(h, "cmd-wait");
+		const entries = await readAppended(h);
+		const exits = entries.filter((entry) => entry.customType === "workflow-exit");
+		assert.equal(exits.length, 1, "a killed run records exactly one exit");
+		assert.equal((exits[0]!.data as { reason: string }).reason, "time-limit");
 	}));
 });
