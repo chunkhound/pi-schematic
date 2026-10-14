@@ -18,10 +18,8 @@ import { messageOf, safeAppendEntry, withRecordStatus } from "./errors.js";
 import { createWorkflowHost, mapSandboxError } from "./host.js";
 import { notify, resolveLimits } from "./limits-dialog.js";
 import { performHandoff, performNewSession, type RebindableDeps, type RebindBundle, type RebindHooks, type RunCtl, type RunOutcome } from "./rebind.js";
-import type { RunRegistry } from "./run-registry.js";
 import { createShellActivity, WORKFLOW_LOG_ENTRY_TYPE, type ShellActivity } from "./activity.js";
 import { READONLY_DISABLED_NOTIFICATION, READONLY_ENABLED_STATUS } from "../notifications.js";
-import { registeredState } from "../process-state.js";
 import type { ShellRun } from "./shell.js";
 import { createWorkflowSandbox, hardDeadlineMs } from "./sandbox.js";
 import { WORKFLOW_SUMMARY_ENTRY_TYPE, buildWorkflowSummary } from "./summary.js";
@@ -198,36 +196,29 @@ function applyWorkflowProgress(ctl: RunCtl, bundle: RunBundle): void {
 	installWorkflowFooter(ctl.ctx, () => ({ state: bundle.state, progress: ctl.progress as WorkflowProgressView }));
 }
 
-/** The current run's registry, shared across jiti module copies (see process-state.ts):
- * a module-global would fork per copy and a rebind could reset the wrong copy's registry. */
-interface RegistrySlot {
-	current: RunRegistry | null;
+/** Command-owned resubscription applied after every session replacement. The live host owns
+ * the run registry (single ownership: no cross-run slot to keep in sync), so the hooks read it
+ * straight from the run control; the factory binds one run's ctl, whose host is set before any
+ * `workflow.new` can run. */
+function rebindHooksFor(ctl: RunCtl): RebindHooks<RunBundle> {
+	return {
+		onRebound(bundle, ctl, next) {
+			ctl.unsubscribeInput();
+			ctl.unsubscribeInput = suppressInput(bundle);
+			ctl.unsubscribeCancel();
+			ctl.unsubscribeCancel = subscribeCancellation(bundle, ctl, next);
+			ctl.unsubscribeTurnEnd();
+			ctl.unsubscribeTurnEnd = subscribeTurnEnd(bundle, ctl);
+			applyWorkflowProgress(ctl, bundle);
+		},
+		get registry() {
+			// rebindRun only runs inside a live run, whose host is already built.
+			const registry = ctl.host?.registry;
+			if (!registry) throw new Error("workflow run registry is not set");
+			return registry;
+		},
+	};
 }
-/** Shared with the cleanup tests, which observe the same slot to assert release. */
-export const REGISTRY_SLOT_KEY = "pi-schematic.workflow-run-registry";
-
-function runRegistrySlot(): RegistrySlot {
-	return registeredState<RegistrySlot>(REGISTRY_SLOT_KEY, () => ({ current: null }));
-}
-
-/** Command-owned resubscription applied after every session replacement. */
-const rebindHooks: RebindHooks<RunBundle> = {
-	onRebound(bundle, ctl, next) {
-		ctl.unsubscribeInput();
-		ctl.unsubscribeInput = suppressInput(bundle);
-		ctl.unsubscribeCancel();
-		ctl.unsubscribeCancel = subscribeCancellation(bundle, ctl, next);
-		ctl.unsubscribeTurnEnd();
-		ctl.unsubscribeTurnEnd = subscribeTurnEnd(bundle, ctl);
-		applyWorkflowProgress(ctl, bundle);
-	},
-	get registry() {
-		// rebindRun only runs inside a live run, which always owns a registry.
-		const registry = runRegistrySlot().current;
-		if (!registry) throw new Error("workflow run registry is not set");
-		return registry;
-	},
-};
 
 /** Host deps for one run: pi/state are read live through the bundle getters so the host
  * survives replacements (rebindRun swaps bundle.pi/state/deps without rebuilding it).
@@ -245,7 +236,7 @@ function hostDeps(bundle: RunBundle, ctl: RunCtl, onEffect: WorkflowHostDeps["on
 		setReadonly: (enabled) => bundle.deps.setReadonly(enabled),
 		prepareRunFrontmatter: (text, ctx) => bundle.deps.prepareRunFrontmatter(text, ctx),
 		handoff: (direction) => performHandoff(bundle, ctl, direction),
-		newSession: () => performNewSession(bundle, ctl, rebindHooks),
+		newSession: () => performNewSession(bundle, ctl, rebindHooksFor(ctl)),
 		onProgress: (progress) => publishProgress(ctl, bundle, progress),
 		onEffect,
 		shellRun: bundle.deps.shellRun,
@@ -273,19 +264,14 @@ function announceReadonlyToggle(ctl: RunCtl, bundle: RunBundle, enabled: boolean
 	}
 }
 
-/** Backstop: `reserveWorkflow` guarantees no live run, so a set flag/sink/registry here is
- * stale. `executeWorkflow`'s try/finally now owns cleanup for every throw, including a
- * throwing binding seam, so this only covers state a prior run could not reach cleanup for
- * (for example a process killed between reserve and teardown). Happy path is already
- * false/null/null, so this is a noop there. */
+/** Backstop: `reserveWorkflow` guarantees no live run, so a set flag/sink here is stale.
+ * `executeWorkflow`'s try/finally owns cleanup for every throw, so this only covers state a
+ * prior run could not reach cleanup for (for example a process killed between reserve and
+ * teardown). Happy path is already false/null, so this is a noop there. The run registry is
+ * owned by the live host and disposed with it, so no cross-run slot needs clearing here. */
 function clearStaleRunState(bundle: RunBundle): void {
 	bundle.state.inputSuppressed = false;
 	bundle.state.childUsageSink = null;
-	const stale = runRegistrySlot().current;
-	if (stale) {
-		runRegistrySlot().current = null;
-		stale.dispose();
-	}
 }
 
 /** Open one live run: bindings, shell activity channel, and the host wired to them. */
@@ -296,7 +282,6 @@ function openRun(bundle: RunBundle, program: RunProgram): { ctl: RunCtl; host: W
 	const activity = createShellActivity({ getPi: () => bundle.pi, getCtx: () => ctl.ctx });
 	const host = buildHost(bundle, ctl, (event) => activity.onEffect(event));
 	ctl.host = host;
-	runRegistrySlot().current = host.registry;
 	return { ctl, host, activity };
 }
 
@@ -370,16 +355,15 @@ function runCleanup(step: () => void): void {
 }
 
 /** Release every run-owned resource. Each step is independent, so a throw in one must not
- * leave input suppressed, the cancel funnel armed, the host undisposed, the registry stale,
- * or the footer/indicators unrestored. Order matters: the host (child-usage sink) is disposed
- * before the registry slot is cleared, and chrome is restored last. */
+ * leave input suppressed, the cancel funnel armed, the host undisposed, or the footer/indicators
+ * unrestored. Order matters: the host (owner of the run registry and the child-usage sink) is
+ * disposed first, and chrome is restored last. */
 function releaseRun(bundle: RunBundle, ctl: RunCtl, host: WorkflowHost, activity: ShellActivity): void {
 	runCleanup(() => ctl.unsubscribeInput());
 	runCleanup(() => ctl.unsubscribeCancel());
 	runCleanup(() => ctl.unsubscribeTurnEnd());
 	runCleanup(() => activity.dispose());
 	runCleanup(() => host.dispose());
-	runCleanup(() => { runRegistrySlot().current = null; });
 	// Null the slot BEFORE restoring chrome: a late publishProgress from an orphaned effect
 	// then skips, instead of re-installing the footer the run just removed.
 	const ctx = ctl.ctx;

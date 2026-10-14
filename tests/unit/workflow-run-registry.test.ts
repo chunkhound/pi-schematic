@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SessionEntry, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext, SessionEntry, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
+import { createState, type SchematicState } from "../../state.js";
+import { createWorkflowHost } from "../../workflow/host.js";
 import { createRunRegistry, matchRun, resolveRunTarget } from "../../workflow/run-registry.js";
+import type { WorkflowHostDeps } from "../../workflow/types.js";
+import { createTestHost, type TestPI } from "./test-host.js";
 
 const commands = [
 	{ name: "review", source: "prompt", sourceInfo: {} },
@@ -90,4 +94,82 @@ test("matchRun returns null until an assistant entry appears after the marker", 
 	const branch = [message("u0", "user"), message("t1", "toolResult")];
 	assert.equal(matchRun(branch, "u0"), null);
 	assert.equal(matchRun(branch, "missing"), null);
+});
+
+// ── Host lifecycle: the registry is disposed with its host ──────────────
+// WHY: `disposeHost` (workflow/host.ts) clears the child-usage sink and disposes the registry
+// as two independent steps, so a null sink is not evidence about the registry. These tests pin
+// the registry step through the real host lifecycle on pi's real event bus.
+
+/** Host deps over a shared state and branch; only the registry seams matter here. */
+function lifecycleDeps(pi: TestPI, state: SchematicState, branch: SessionEntry[]): WorkflowHostDeps {
+	const ctx = { sessionManager: { getSessionId: () => "lifecycle", getLeafId: () => null, getBranch: () => branch } } as unknown as ExtensionCommandContext;
+	return {
+		pi,
+		state,
+		limits: { costLimit: null, timeBudgetMs: null },
+		unbounded: false,
+		getCtx: () => ctx,
+		isReadonly: () => false,
+		setReadonly: () => false,
+		prepareRunFrontmatter: async () => {},
+		handoff: async () => {},
+		newSession: async () => {},
+	};
+}
+
+/** Live `agent_settled` subscribers on pi's real bus, and the way to drive one. */
+function settleListeners(pi: TestPI): Array<() => void> {
+	return pi.handlers.get("agent_settled") ?? [];
+}
+
+function settle(pi: TestPI): void {
+	for (const handler of [...settleListeners(pi)]) handler();
+}
+
+// WHY: a missing `state.registry.dispose()` leaves the pending correlation promise
+// unrejected, so the assertion below would hang forever without a timeout. 5 s is
+// far above the normal ~1 ms dispose path and short enough to fail fast in CI.
+function rejectsWithin(promise: Promise<unknown>, pattern: RegExp, message?: string): Promise<void> {
+	return assert.rejects(Promise.race([
+		promise,
+		new Promise((_, reject) => setTimeout(() => reject(new Error("timed out waiting for rejection")), 5000)),
+	]), pattern, message);
+}
+
+test("host disposal disposes its registry and the next host correlates on a fresh one", async () => {
+	const pi = await createTestHost(() => {});
+	const branch: SessionEntry[] = [];
+	const first = createWorkflowHost(lifecycleDeps(pi, createState(), branch));
+	const pending = first.registry.correlate(null);
+	assert.equal(settleListeners(pi).length, 1, "the first correlate subscribes on pi's real event bus");
+
+	first.dispose();
+	await rejectsWithin(pending.promise, /disposed/, "host disposal must release the pending correlation");
+	assert.equal(settleListeners(pi).length, 0, "host disposal must unsubscribe the registry's settle listener");
+
+	const second = createWorkflowHost(lifecycleDeps(pi, createState(), branch));
+	assert.notEqual(second.registry, first.registry, "a new run owns a fresh registry, never the disposed one");
+	branch.push(message("a1", "assistant"));
+	const resolved = second.registry.correlate(null);
+	settle(pi);
+	assert.equal((await resolved.promise).toEntryId, "a1", "the fresh registry resolves like any other");
+	second.dispose();
+});
+
+// WHY: the sink identity guard lets a newer host keep its sink while an older host is disposed,
+// yet the older host's registry disposal is unconditional. A bug that cleared the sink and
+// skipped `registry.dispose()` would pass every sink-based check and fail this one.
+test("host disposal releases the registry even when a newer host owns the sink", async () => {
+	const pi = await createTestHost(() => {});
+	const state = createState();
+	const branch: SessionEntry[] = [];
+	const first = createWorkflowHost(lifecycleDeps(pi, state, branch));
+	const pending = first.registry.correlate(null);
+	const second = createWorkflowHost(lifecycleDeps(pi, state, branch));
+
+	first.dispose();
+	assert.notEqual(state.childUsageSink, null, "the newer host keeps its sink: a cleared sink is not the disposal signal");
+	await rejectsWithin(pending.promise, /disposed/, "the older host still disposes its own registry");
+	second.dispose();
 });

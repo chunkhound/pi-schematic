@@ -3,11 +3,10 @@ import test from "node:test";
 import { CodemodeSandbox, type CodemodeResult, type CodemodeTool } from "@earendil-works/pi-codemode";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
-import { registeredState } from "../../process-state.js";
 import { READONLY_ENABLED_STATUS } from "../../notifications.js";
 import { releaseWorkflow, reserveWorkflow } from "../../workflow/coordinator.js";
 import { WORKFLOW_SHELL_ENTRY_TYPE } from "../../workflow/activity.js";
-import { REGISTRY_SLOT_KEY, registerWorkflowCommand, type WorkflowCommandDeps } from "../../workflow/command.js";
+import { registerWorkflowCommand, type WorkflowCommandDeps } from "../../workflow/command.js";
 import { WORKFLOW_SUMMARY_ENTRY_TYPE } from "../../workflow/summary.js";
 import { WORKFLOW_ERROR_ENTRY_TYPE, WORKFLOW_EXIT_ENTRY_TYPE } from "../../workflow/types.js";
 import { createTestHost } from "./test-host.js";
@@ -15,9 +14,10 @@ import { createTestHost } from "./test-host.js";
 // ── Run lifecycle: guarded cleanup paths under fault injection ──────────
 // WHY: every end-of-run step is advisory and independent, so a throwing paint, binding,
 // record, or notice must still release the run: input usable, cancel unarmed, host disposed
-// (child-usage sink gone), registry slot cleared, chrome restored. These drive the real
-// `/workflow` command through its own test seams and force one real throw per test, then
-// assert the observable release rather than the implementation.
+// (child-usage sink gone; the registry disposal it also owns is pinned in
+// workflow-run-registry.test.ts), chrome restored. These drive the real `/workflow` command through
+// its own test seams and force one real throw per test, then assert the observable release
+// rather than the implementation.
 
 /** Progress tick short enough that a held sandbox window reaches several timer paints. */
 const TICK_MS = 5;
@@ -37,6 +37,8 @@ interface CleanupFaults {
 	notify?: (message: string) => boolean;
 	/** Transcript append for this custom type throws. */
 	append?: (customType: string) => boolean;
+	/** Session-branch read throws: host construction (`createHostState`) fails in openRun. */
+	branch?: () => boolean;
 }
 
 /** The live run as the sandbox seam sees it: its handles, its signal, and its fault switches. */
@@ -49,8 +51,6 @@ interface RunWindow {
 interface CleanupHarness {
 	state: ReturnType<typeof createState>;
 	faults: CleanupFaults;
-	/** The run registry slot the command's own cleanup owns (same key: process-state.ts). */
-	slot: { current: { dispose?: () => void } | null };
 	notes: string[];
 	/** Every UI write and append in call order, faults included: teardown order is observable. */
 	log: string[];
@@ -73,7 +73,6 @@ async function createCleanupHarness(spec: {
 	const notes: string[] = [];
 	const thrown = { paint: 0, footer: 0, notify: 0, append: 0 };
 	const tools = new Map<string, CodemodeTool>();
-	const slot = registeredState<{ current: { dispose?: () => void } | null }>(REGISTRY_SLOT_KEY, () => ({ current: null }));
 	let currentSignal = new AbortController().signal;
 	let closed = false;
 
@@ -99,7 +98,10 @@ async function createCleanupHarness(spec: {
 		sessionManager: {
 			getSessionId: () => "cleanup-test",
 			getLeafId: () => null,
-			getBranch: () => [],
+			getBranch: () => {
+				if (faults.branch?.()) throw new Error("branch read down");
+				return [];
+			},
 			getEntries: () => [],
 			getSessionName: () => undefined,
 		},
@@ -172,7 +174,6 @@ async function createCleanupHarness(spec: {
 	return {
 		state,
 		faults,
-		slot,
 		notes,
 		log,
 		thrown,
@@ -186,8 +187,10 @@ async function createCleanupHarness(spec: {
 		},
 		assertReleased: () => {
 			assert.equal(state.inputSuppressed, false, "input is usable again");
+			// Secondary check only: the host clears the sink it installed, so a null sink proves the
+			// sink step ran. Registry disposal is an independent step in `disposeHost` and is proved
+			// directly in tests/unit/workflow-run-registry.test.ts, not here.
 			assert.equal(state.childUsageSink, null, "the run's child-usage sink is uninstalled");
-			assert.equal(slot.current, null, "the run registry slot is cleared");
 			assert.equal(pi.handlers.get("input")?.length ?? 0, 0, "the input subscription is removed");
 			assert.equal(closed, true, "the sandbox closed");
 		},
@@ -233,49 +236,48 @@ test("a throwing ticker paint stays inside the timer and the run still releases"
 });
 
 // WHY: `openRun` binds the run inside the try so a throwing seam there cannot bypass the
-// finally. The fault is the stale-registry dispose a killed run leaves behind: it fails the
-// first binding step, before the run owns anything. A failed start must be reported, never
-// thrown at pi, and must never poison the next run.
+// finally. The fault is a throwing session-branch read during host construction, which fails
+// the first binding step before the run owns anything. A failed start must be reported, never
+// thrown at pi, and the backstop must clear the poisoned prior-run state so the next run works.
 test("a throwing openRun binding reports a failed start and never poisons the next run", async () => {
 	const h = await createCleanupHarness({ headless: true });
 	h.state.inputSuppressed = true;
 	h.state.childUsageSink = () => {};
-	h.slot.current = { dispose: () => { throw new Error("stale registry dispose down"); } };
+	h.faults.branch = () => true;
 	await h.run();
 
-	assert.deepEqual(h.entries(WORKFLOW_ERROR_ENTRY_TYPE), [{ phase: "start", error: "workflow failed to start: stale registry dispose down" }], "the failed start is visible in the transcript");
+	assert.deepEqual(h.entries(WORKFLOW_ERROR_ENTRY_TYPE), [{ phase: "start", error: "workflow failed to start: branch read down" }], "the failed start is visible in the transcript");
 	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [], "a run that never started records no exit");
 	assert.equal(h.log.filter((entry) => entry.startsWith("footer")).length, 0, "a failed start paints no chrome");
 	assert.equal(h.state.inputSuppressed, false, "the poisoned suppression flag is cleared");
 	assert.equal(h.state.childUsageSink, null, "the poisoned sink is cleared");
-	assert.equal(h.slot.current, null, "the stale registry slot is cleared");
 	assert.equal(reserveWorkflow(), true, "the failed start released the process reservation");
 	releaseWorkflow();
 
+	delete h.faults.branch;
 	await h.run();
 	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ reason: "returned" }], "the next run completes");
 	h.assertReleased();
 });
 
-// WHY: teardown order is a contract: the host (and with it the child-usage sink) and the
-// registry slot go before chrome, and each step stands alone. The footer restore is the first
-// chrome step after disposal, so snapshotting there proves the order, and failing it proves
-// the indicator refresh after it is not skipped.
+// WHY: teardown order is a contract: the host (and with it the child-usage sink and the run
+// registry it owns) goes before chrome, and each step stands alone. The footer restore is the
+// first chrome step after disposal, so snapshotting there proves the order, and failing it
+// proves the indicator refresh after it is not skipped.
 test("release disposes the host before chrome and keeps going when a chrome restore throws", async () => {
 	const h = await createCleanupHarness();
-	const releasedAtChrome: Array<{ sink: boolean; registry: boolean; input: boolean }> = [];
+	const releasedAtChrome: Array<{ sink: boolean; input: boolean }> = [];
 	h.faults.footer = (factory) => {
 		if (factory !== undefined) return false;
 		releasedAtChrome.push({
 			sink: h.state.childUsageSink === null,
-			registry: h.slot.current === null,
 			input: h.state.inputSuppressed === false,
 		});
 		// Only a paint attempted after the throw can follow it in the log.
 		return true;
 	};
 	await h.run();
-	assert.deepEqual(releasedAtChrome, [{ sink: true, registry: true, input: true }], "host, registry slot and input are released before chrome is restored");
+	assert.deepEqual(releasedAtChrome, [{ sink: true, input: true }], "host-owned resources and input are released before chrome is restored");
 	assert.ok(h.log.slice(h.log.indexOf("footer:throw")).some((entry) => entry.startsWith("paint:")), "the indicator refresh still ran after the throwing footer restore");
 	h.assertReleased();
 	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ reason: "returned" }]);
