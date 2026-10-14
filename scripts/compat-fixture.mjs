@@ -29,15 +29,23 @@ export function prepareCompatCopy(copy) {
   writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
 }
 
+// npm 12 wraps a single `npm view --json` value in a one-element array.
+function unwrapNpmViewValue(value) {
+  return Array.isArray(value) && value.length === 1 ? value[0] : value;
+}
+
 /** Resolve one current Pi release and the exact TypeBox version it requires. */
 export async function resolveLatestPi(copy) {
-  const piVersion = JSON.parse((await runNpmWithRetry(copy, [
+  const piVersion = unwrapNpmViewValue(JSON.parse((await runNpmWithRetry(copy, [
     "view", "@earendil-works/pi-coding-agent@latest", "version", "--json",
-  ], { capture: true })).stdout);
-  const typeboxVersion = JSON.parse((await runNpmWithRetry(copy, [
+  ], { capture: true })).stdout));
+  if (typeof piVersion !== "string" || !piVersion) {
+    throw new Error("Latest Pi coding-agent did not declare usable Pi and TypeBox versions");
+  }
+  const typeboxVersion = unwrapNpmViewValue(JSON.parse((await runNpmWithRetry(copy, [
     "view", `@earendil-works/pi-coding-agent@${piVersion}`, "dependencies.typebox", "--json",
-  ], { capture: true })).stdout);
-  if (typeof piVersion !== "string" || !piVersion || typeof typeboxVersion !== "string" || !typeboxVersion) {
+  ], { capture: true })).stdout));
+  if (typeof typeboxVersion !== "string" || !typeboxVersion) {
     throw new Error("Latest Pi coding-agent did not declare usable Pi and TypeBox versions");
   }
   return { piVersion, typeboxVersion };

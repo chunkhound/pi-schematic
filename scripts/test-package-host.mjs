@@ -6,6 +6,17 @@ import { repoRootFromScript, runChecked, runNpmWithRetry } from "./compat-proces
 
 const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
 
+// npm before 12 returns `npm pack --json` as an array; npm 12 as an object keyed by package name.
+function packEntry(packJson) {
+  let entry;
+  if (Array.isArray(packJson)) entry = packJson[0];
+  else if (packJson && typeof packJson === "object" && Object.keys(packJson).length === 1) entry = Object.values(packJson)[0];
+  if (typeof entry?.filename !== "string" || !entry.filename) {
+    throw new Error(`Unexpected npm pack --json output: ${JSON.stringify(packJson)}`);
+  }
+  return entry;
+}
+
 async function main() {
   const root = repoRootFromScript(import.meta.url);
   const artifactDir = process.env.COMPAT_ARTIFACT_DIR;
@@ -17,7 +28,7 @@ async function main() {
     prepareCompatCopy(copy);
 
     const packJson = JSON.parse((await runNpmWithRetry(copy, ["pack", "--json", "--ignore-scripts"], { capture: true })).stdout);
-    tarball = join(copy, packJson[0].filename);
+    tarball = join(copy, packEntry(packJson).filename);
     const latestPi = await resolveLatestPi(copy);
     mkdirSync(host, { recursive: true });
     writeFileSync(join(host, "package.json"), `${JSON.stringify({

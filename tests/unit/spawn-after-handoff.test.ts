@@ -1,11 +1,10 @@
 /**
  * End-to-end test: spawn tool works correctly after handoff tool has been
- * loaded and initialized. This validates that the lazy import fix in handoff
- * doesn't prevent subsequent spawn operations.
+ * loaded and initialized.
  *
- * The root cause: handoff/tool.ts had a top-level static import from
- * notebook/store.ts, which altered pi's module evaluation ordering and
- * caused SDK classes to be undefined when createAgentSession ran.
+ * Spawn operations work after the handoff tool module is loaded: the SDK
+ * classes createAgentSession needs are defined, and executeSpawn reaches its
+ * own model check instead of failing on an undefined SDK value.
  *
  * Tests use a sandboxed agent directory to avoid reading real ~/.pi/agent/
  * config. Real createAgentSession reads extensions, models, auth, and skills
@@ -47,7 +46,7 @@ after(async () => {
 
 describe("spawn after handoff initialization", () => {
 	it("creates a child session after loading handoff tool module", async () => {
-		// Step 1: Load the handoff module first (this triggered the bug)
+		// Step 1: Load the handoff module first
 		await import("../../handoff/tool.js");
 
 		// Step 2: Now call createAgentSession as the spawn tool does, but
