@@ -3,7 +3,7 @@ import test from "node:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpDir } from "./helpers.js";
-import { parseWorkflowArgs, listWorkflows, readWorkflow, resolveWorkflowPath, shadowByPrecedence, type WorkflowFileEntry } from "../../workflow/file.js";
+import { parseWorkflowArgs, listWorkflows, readWorkflow, resolveWorkflowPath, shadowByPrecedence, workflowRoots, type WorkflowFileEntry } from "../../workflow/file.js";
 
 test("parseWorkflowArgs takes the first token as the workflow and keeps the rest verbatim", () => {
 	assert.deepEqual(parseWorkflowArgs("review.js"), { name: "review.js", args: "" });
@@ -102,6 +102,13 @@ test("listWorkflows tolerates missing directories", async () => {
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
+});
+
+test("workflowRoots resolves to expected directories", () => {
+	const roots = workflowRoots("/project", "/agent");
+	assert.deepEqual(roots[0].dir, "/project/.pi/workflows");
+	assert.deepEqual(roots[1].dir, "/agent/workflows");
+	assert.deepEqual(roots.map((root) => root.source), ["project", "global"]);
 });
 
 // WHY: workflowRoots is the single precedence source; if it ever gains a root, a lower-precedence

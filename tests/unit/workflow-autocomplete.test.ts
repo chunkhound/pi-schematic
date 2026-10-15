@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createWorkflowAutocompleteProvider, registerWorkflowAutocomplete } from "../../workflow/autocomplete.js";
+import { createWorkflowAutocompleteProvider, registerWorkflowAutocomplete, ROOT_DESCRIPTIONS } from "../../workflow/autocomplete.js";
 import { registerModelGroupAutocomplete } from "../../model-groups/autocomplete.js";
 import { createState } from "../../state.js";
-import type { WorkflowFileEntry } from "../../workflow/file.js";
+import { WORKFLOW_ROOTS, type WorkflowFileEntry, type WorkflowRootSource } from "../../workflow/file.js";
 import { tmpDir } from "./helpers.js";
 
 const ENTRIES: WorkflowFileEntry[] = [
@@ -59,6 +59,18 @@ test("/workflow completion works from a partial command and every full prefix fo
 	assert.ok(ranked.items.some((item: any) => item.label === "/workflow precommit-review"));
 
 	assert.equal(delegated(), 0);
+});
+
+// WHY: the completion menu labels each root; every discovery root must carry a label, and a
+// new root fails compile until its Record entry exists.
+test("completion labels every discovery root", async () => {
+	const sources = WORKFLOW_ROOTS.map((root) => root.source);
+	assert.deepEqual(Object.keys(ROOT_DESCRIPTIONS).sort(), [...new Set(sources)].sort(), "the label map covers exactly the root labels");
+	for (const source of Object.keys(ROOT_DESCRIPTIONS) as WorkflowRootSource[]) {
+		const { provide } = harness([{ name: "wf", path: `/root/${source}/wf.js`, source }]);
+		const suggestions = await suggest(provide, "/workflow");
+		assert.equal(suggestions.items[0].description, ROOT_DESCRIPTIONS[source], source);
+	}
 });
 
 test("/workflow completion delegates the lone slash, other commands, paths, and args", async () => {

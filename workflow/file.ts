@@ -34,12 +34,19 @@ function isFile(path: string): boolean {
 }
 
 /** Single precedence source: the project workflows dir shadows the global one.
- * Both {@link resolveWorkflowPath} and {@link listWorkflows} read these roots. */
-export function workflowRoots(cwd: string, agentDir: string): Array<{ dir: string; source: "project" | "global" }> {
-	return [
-		{ dir: join(cwd, ".pi", "workflows"), source: "project" },
-		{ dir: join(agentDir, "workflows"), source: "global" },
-	];
+ * Both {@link resolveWorkflowPath} and {@link listWorkflows} read these roots, and completion
+ * derives its per-root label from {@link WorkflowRootSource}. */
+export const WORKFLOW_ROOTS = [
+	{ dir: (cwd: string, _agentDir: string) => join(cwd, ".pi", "workflows"), source: "project" },
+	{ dir: (_cwd: string, agentDir: string) => join(agentDir, "workflows"), source: "global" },
+] as const;
+
+/** Every discovery root's label. A new root widens this union and breaks the completion map. */
+export type WorkflowRootSource = (typeof WORKFLOW_ROOTS)[number]["source"];
+
+/** Resolve {@link WORKFLOW_ROOTS} for one cwd/agent-dir pair, in precedence order. */
+export function workflowRoots(cwd: string, agentDir: string): Array<{ dir: string; source: WorkflowRootSource }> {
+	return WORKFLOW_ROOTS.map((root) => ({ dir: root.dir(cwd, agentDir), source: root.source }));
 }
 
 /**
@@ -70,7 +77,7 @@ export interface WorkflowFileEntry {
 	/** Absolute path to the workflow file. */
 	path: string;
 	/** Discovery root; a project entry shadows a global entry with the same name. */
-	source: "project" | "global";
+	source: WorkflowRootSource;
 }
 
 /**
