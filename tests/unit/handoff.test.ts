@@ -703,7 +703,7 @@ test("in a message holding only handoff calls, the first runs and the others are
 	assert.deepEqual(await toolCall(pi, "h2", "handoff"), { block: true, reason: HANDOFF_EXTRA_CALL_REFUSAL, terminate: true });
 });
 
-test("every handoff sharing a message with other calls is refused and the other calls run", async () => {
+test("every handoff sharing a message with other calls is refused and the other calls are not refused", async () => {
 	const { pi } = await boundaryHost();
 	await callHandlers(pi, "message_end", assistantMessage(
 		{ id: "w1", name: "write" },
@@ -1008,7 +1008,7 @@ test("handoff tool metadata and schema describe the prompt contract", async () =
 	assert.match(tool.description, /past ~30%/i);
 	assert.match(tool.description, /call handoff/i);
 	assert.match(tool.description, /current notebook/i);
-	assert.match(tool.description, /Call handoff alone in its message: a handoff that shares a message with other tool calls is refused, and the other calls run\./);
+	assert.match(tool.description, /Call handoff alone in its message: a handoff that shares a message with other tool calls is refused, and the other calls are handled on their own\./);
 	assert.match(tool.promptGuidelines.join(" "), /preparation only/i);
 	assert.doesNotMatch(`${tool.description} ${tool.promptGuidelines.join(" ")} ${JSON.stringify(tool.parameters)}`, /\bbrief\b/i);
 	assert.doesNotMatch(`${tool.description} ${tool.promptGuidelines.join(" ")} ${JSON.stringify(tool.parameters)}`, /long-term/i,

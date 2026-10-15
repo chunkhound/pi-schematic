@@ -283,11 +283,6 @@ test("a boundary cut after an undelivered legacy cut ends recovery", () => {
 	assert.equal(recoveredMessage([handoff(), boundaryCut(), boundarySuccessor()]), null);
 });
 
-test("a boundary cut identified only by handoffId still ends recovery", () => {
-	// R2: the stop does not depend on the `handoff: true` marker.
-	assert.equal(recoveredMessage([handoff(), boundaryCut({ handoffId: "marker-free" }), boundarySuccessor()]), null);
-});
-
 test("a boundary cut is never resent even when its details carry a readable payload", () => {
 	// The stop rests on handoffId, not on the payload being absent.
 	assert.equal(recoveredMessage([boundaryCut({ handoff: true, handoffId: "with-payload", payload })]), null);

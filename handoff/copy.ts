@@ -10,7 +10,7 @@ export const HANDOFF_IN_PROGRESS_STATUS = "🤝 Handoff in progress";
 /** Tool result of an accepted handoff call. */
 export const HANDOFF_STAGED_RESULT = "Handoff staged. This context is cut when the turn ends, and the successor continues in the same run.";
 /** Refusal for every handoff call in an assistant message that also holds other tool calls. */
-export const HANDOFF_NOT_ALONE_REFUSAL = "Not run: handoff must be the only tool call in its message. The other calls in this message ran; call handoff alone in your next message.";
+export const HANDOFF_NOT_ALONE_REFUSAL = "Not run: handoff must be the only tool call in its message. The other calls in this message were handled on their own; call handoff alone in your next message.";
 /** Refusal for every handoff call after the first in one assistant message. */
 export const HANDOFF_EXTRA_CALL_REFUSAL = "Not run: only the first handoff call in an assistant message runs.";
 /** Refusal for a handoff call after a handoff failed earlier in the same run. */

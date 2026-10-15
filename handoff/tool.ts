@@ -98,7 +98,7 @@ export function registerHandoffTool(
 			"AFTER HANDOFF the agent sees: the continuation frame, then one message holding the next " +
 			"instruction verbatim plus the remaining context, then a short note about the system prompt, " +
 			"and the current notebook with optional pages discarded.\n" +
-			"Call handoff alone in its message: a handoff that shares a message with other tool calls is refused, and the other calls run.\n",
+			"Call handoff alone in its message: a handoff that shares a message with other tool calls is refused, and the other calls are handled on their own.\n",
 		promptSnippet: "Pivot to a new topic via deliberate handoff compaction",
 		promptGuidelines: [
 			"Handoff is preparation only: the successor executes the instruction, never this context. " +

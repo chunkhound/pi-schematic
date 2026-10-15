@@ -35,12 +35,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isHandoffCompaction(entry: SessionEntry): entry is Extract<SessionEntry, { type: "compaction" }> {
-	return entry.type === "compaction" && isRecord(entry.details) &&
-		(entry.details.handoff === true || typeof entry.details.handoffId === "string");
+	return entry.type === "compaction" && isRecord(entry.details) && entry.details.handoff === true;
 }
 
 function getDetails(entry: SessionEntry): Record<string, unknown> | null {
 	return isHandoffCompaction(entry) && isRecord(entry.details) ? entry.details : null;
+}
+
+/** The `handoffId` of a boundary cut, or undefined for any other entry. */
+export function getHandoffId(entry: SessionEntry): string | undefined {
+	const handoffId = getDetails(entry)?.handoffId;
+	return typeof handoffId === "string" ? handoffId : undefined;
 }
 
 function getPayload(entry: SessionEntry): HandoffPayload | null {
@@ -127,7 +132,7 @@ export function getUndeliveredHandoffMessage(
 		if (!isHandoffCompaction(entry)) continue;
 		// A boundary cut writes its successor in the same pass, so it has nothing to
 		// recover and, as the newest cut, stops recovery of older legacy cuts.
-		if (typeof getDetails(entry)?.handoffId === "string") return null;
+		if (getHandoffId(entry) !== undefined) return null;
 		// The newest handoff cut owns recovery. An unreadable payload means there is
 		// nothing to recover — never fall through to an older, superseded instruction.
 		const payload = getPayload(entry);

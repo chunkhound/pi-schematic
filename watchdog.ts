@@ -25,6 +25,18 @@ import { STATUS_KEY_HANDOFF } from "./tui.js";
  * run. */
 export const MAX_HANDOFF_ATTEMPTS = 5;
 
+type RequestedHandoff = NonNullable<SchematicState["pendingRequestedHandoff"]>;
+
+/** Whether the settle of the current run counts it against the enforcement budget. */
+function settleCountsAttempt(request: RequestedHandoff): boolean {
+	return !request.toolCalled && request.eligibleNudgeDelivered;
+}
+
+/** Whether the settle of the current run counts the attempt that exhausts the budget. */
+export function settleExhaustsHandoffBudget(request: RequestedHandoff): boolean {
+	return settleCountsAttempt(request) && request.enforcementAttempts + 1 >= MAX_HANDOFF_ATTEMPTS;
+}
+
 type NudgeState = Pick<SchematicState, "activeNotebookTopic" | "pendingTopicBoundaryHint" | "readonlyEnabled" | "pendingRequestedHandoff">;
 
 function buildRequestedHandoffNudge(state: NudgeState, eligible: boolean): string {
@@ -139,17 +151,16 @@ export function registerWatchdog(pi: ExtensionAPI, state: SchematicState): void 
 		// the context hook sent the hand-off-now nudge; the flag is per run.
 		const requestedHandoff = state.pendingRequestedHandoff;
 		if (!requestedHandoff) return;
-		const nudged = requestedHandoff.eligibleNudgeDelivered;
+		const counts = settleCountsAttempt(requestedHandoff);
+		const exhausted = settleExhaustsHandoffBudget(requestedHandoff);
 		requestedHandoff.eligibleNudgeDelivered = false;
-		if (!requestedHandoff.toolCalled && nudged) {
-			requestedHandoff.enforcementAttempts += 1;
-			if (requestedHandoff.enforcementAttempts >= MAX_HANDOFF_ATTEMPTS) {
-				const notice = buildHandoffCancellationNotice(state.readonlyEnabled);
-				state.pendingRequestedHandoff = null;
-				if (ctx.hasUI) {
-					ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
-					ctx.ui.notify(notice, "warning");
-				}
+		if (counts) requestedHandoff.enforcementAttempts += 1;
+		if (exhausted) {
+			const notice = buildHandoffCancellationNotice(state.readonlyEnabled);
+			state.pendingRequestedHandoff = null;
+			if (ctx.hasUI) {
+				ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
+				ctx.ui.notify(notice, "warning");
 			}
 		}
 	});

@@ -9,8 +9,8 @@
  * so the handoff completes only once its cut is found on the branch, at the
  * next turn_start or when the run settles. A missing cut never starts a run,
  * and further handoff calls in that run are refused. A handoff that shares its
- * assistant message with other tool calls is refused and the other calls run,
- * so nothing runs between staging and the cut.
+ * assistant message with other tool calls is refused and stages nothing, so
+ * nothing runs between staging and the cut.
  */
 
 import type {
@@ -38,6 +38,7 @@ import {
 	REASON_RESULT_MISSING,
 } from "./copy.js";
 import { isHandoffEligible } from "./eligibility.js";
+import { getHandoffId } from "./recovery.js";
 import {
 	HANDOFF_FAILED_CUSTOM_TYPE,
 	HANDOFF_NOTE_CUSTOM_TYPE,
@@ -49,7 +50,7 @@ import {
 	formatHandoffFailure,
 } from "./format.js";
 import { HANDOFF_TOOL_NAME } from "./tool.js";
-import { MAX_HANDOFF_ATTEMPTS } from "../watchdog.js";
+import { settleExhaustsHandoffBudget } from "../watchdog.js";
 
 /**
  * Drafts that write `staged` as one boundary: notebook discard, cut, successor,
@@ -96,12 +97,7 @@ function buildHandoffBoundaryDrafts(
 function findHandoffCut(branch: readonly SessionEntry[], handoffId: string): SessionEntry | undefined {
 	// The cut sits at or near the leaf; scan from there.
 	for (let index = branch.length - 1; index >= 0; index--) {
-		const entry = branch[index];
-		if (
-			entry.type === "compaction" &&
-			typeof entry.details === "object" && entry.details !== null &&
-			(entry.details as Record<string, unknown>).handoffId === handoffId
-		) return entry;
+		if (getHandoffId(branch[index]) === handoffId) return branch[index];
 	}
 	return undefined;
 }
@@ -169,8 +165,7 @@ function failStagedHandoff(
 	// budget it cancels the request in this run's settle, so the failure must not
 	// call it pending.
 	if (request) request.toolCalled = false;
-	const exhausted = request !== null &&
-		request.eligibleNudgeDelivered && request.enforcementAttempts + 1 >= MAX_HANDOFF_ATTEMPTS;
+	const exhausted = request !== null && settleExhaustsHandoffBudget(request);
 	const pendingRequest = exhausted ? null : request;
 	// Never start a run from here: a cause that drops every cut (another
 	// extension's turn_end handler) would otherwise retry without bound. The
@@ -237,8 +232,9 @@ export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState)
 		const calls = event.message.content.filter((block) => block.type === "toolCall");
 		const handoffCalls = calls.filter((call) => call.name === HANDOFF_TOOL_NAME);
 		if (handoffCalls.length === 0) return;
-		// Nothing is staged when another call shares the message, so those calls run
-		// and their results, lacking terminate, keep the batch from ending the run.
+		// Nothing is staged when another call shares the message, so those calls go
+		// to their own handlers and their results, lacking terminate, keep the batch
+		// from ending the run.
 		const alone = handoffCalls.length === calls.length;
 		for (const call of alone ? handoffCalls.slice(1) : handoffCalls) {
 			state.handoffRefusals.set(call.id, alone ? HANDOFF_EXTRA_CALL_REFUSAL : HANDOFF_NOT_ALONE_REFUSAL);
