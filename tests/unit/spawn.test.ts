@@ -1,4 +1,5 @@
 import test, { afterEach, beforeEach } from "node:test";
+import type { SessionStats } from "@earendil-works/pi-coding-agent";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -25,13 +26,28 @@ let h: TestHarness;
 
 // ── Test helpers ─────────────────────────────────────────────────────
 // Hoisted so all tests can reference them (used from line ~79 onward).
+function sessionStatsFixture(overrides: Partial<SessionStats> = {}): SessionStats {
+	return {
+		sessionFile: undefined,
+		sessionId: "child-session",
+		userMessages: 1,
+		assistantMessages: 1,
+		toolCalls: 0,
+		toolResults: 0,
+		totalMessages: 2,
+		tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		cost: 0,
+		...overrides,
+	};
+}
+
 function mockSessionFactory(opts: {
 	prompt?: (prompt?: string) => Promise<any>;
 	abort?: () => Promise<any>;
 	dispose?: () => void;
 	result?: any[];
 	thinkingLevel?: string;
-	getSessionStats?: () => any;
+	getSessionStats?: () => SessionStats;
 } = {}) {
 	const defaultResult = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
 	const session: any = {
@@ -43,7 +59,7 @@ function mockSessionFactory(opts: {
 		},
 		abort: opts.abort ?? (async () => {}),
 		dispose: opts.dispose ?? (() => {}),
-		getSessionStats: opts.getSessionStats ?? (() => undefined),
+		getSessionStats: opts.getSessionStats ?? (() => sessionStatsFixture()),
 	};
 	return session;
 }
@@ -72,7 +88,7 @@ function createFailingCleanupSession(primaryFailure: unknown, cleanupFailure: un
 		prompt: async () => { throw primaryFailure; },
 		abort: async () => {},
 		dispose: () => { throw cleanupFailure; },
-		getSessionStats: () => undefined,
+		getSessionStats: () => sessionStatsFixture(),
 	};
 }
 
@@ -598,7 +614,7 @@ test("spawn execute returns result and stats", async () => {
 	const updates: any[] = [];
 	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactoryWith({
 		prompt: async () => {},
-		getSessionStats: () => ({
+		getSessionStats: () => sessionStatsFixture({
 			tokens: { input: 11, output: 22, cacheRead: 3, cacheWrite: 4, total: 40 },
 			cost: 0.5,
 			assistantMessages: 2,
@@ -976,7 +992,7 @@ test("executeSpawn forwards inherited constraints to routing and succeeds when s
 			session.messages = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
 		},
 		abort: async () => {},
-		getSessionStats: () => undefined,
+		getSessionStats: () => sessionStatsFixture(),
 	};
 	const pi = await createTestHost((api) => registerSpawnTool(api, state, (async () => { factoryCalls++; return { session: session as any }; }) as any), { activeTools: ["read", "spawn"] });
 	const result = await executeSpawn("spawn-inherited-rm", pi as any, {
@@ -1080,7 +1096,7 @@ test("spawn execute aborts child session when signal fires during execution", as
 				resolvePrompt();
 			},
 			dispose: () => { disposeCalls++; },
-			getSessionStats: () => undefined,
+			getSessionStats: () => sessionStatsFixture(),
 		};
 		return { session: session as any };
 	};
@@ -1273,7 +1289,7 @@ test("reset before registration reports AggregateError when shared abort rejects
 				prompt: async () => {},
 				abort: async () => { abortCalls++; throw abortError; },
 				dispose: () => { disposeCalls++; },
-				getSessionStats: () => undefined,
+				getSessionStats: () => sessionStatsFixture(),
 			} as any,
 		};
 	};
@@ -1637,7 +1653,7 @@ test("concurrent spawn executions produce independent results", async () => {
 				session.messages = [{ role: "assistant", content: [{ type: "text", text: outputs.get(task) ?? task }] }];
 			},
 			abort: async () => {},
-			getSessionStats: () => undefined,
+			getSessionStats: () => sessionStatsFixture(),
 		};
 		return { session: session as any };
 	};
@@ -1695,7 +1711,7 @@ test("executeSpawn detects stale session before session creation", async () => {
 					messages: [] as any[],
 					prompt: async () => {},
 					abort: async () => { abortCalls++; },
-					getSessionStats: () => undefined,
+					getSessionStats: () => sessionStatsFixture(),
 				} as any,
 				extensionsResult: undefined as any,
 			};
@@ -1815,7 +1831,7 @@ test("executeSpawn aborts stale child when resetState fires during prompt", asyn
 					rejectPrompt?.(new Error("aborted"));
 				},
 				dispose: () => { disposeCalls++; },
-				getSessionStats: () => undefined,
+				getSessionStats: () => sessionStatsFixture(),
 			} as any,
 		}),
 	);
@@ -1853,7 +1869,7 @@ test("executeSpawn suppresses a successful stale prompt that ignores reset abort
 		},
 		abort: async () => { abortCalls++; },
 		dispose: () => { disposeCalls++; },
-		getSessionStats: () => undefined,
+		getSessionStats: () => sessionStatsFixture(),
 	};
 
 	const execution = executeSpawn(
@@ -2058,7 +2074,7 @@ test("spawn abort cleanup notifies UI when abort rejects", async () => {
 		prompt: async () => {},
 		abort: async () => { throw abortError; },
 		dispose: () => {},
-		getSessionStats: () => undefined,
+		getSessionStats: () => sessionStatsFixture(),
 	};
 	const controller = new AbortController();
 	controller.abort(new Error("parent aborted"));
