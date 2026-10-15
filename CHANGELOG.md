@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`/workflow` no longer starts mid-turn** — a busy session rejects the start with a visible notice instead of dispatching its first `workflow.run` into the streaming turn, where `sendUserMessage` throws and the fire-and-forget wrapper leaves the run hanging. The `workflow.run` dispatch is also `deliverAs: "followUp"`-safe under pi ≥ 1.2.0.
 - **Bash classifier arrow false-positive** — the `=>` exemption now covers `node -e` only. Other interpreter payloads (`python -c`, `perl`, `ruby`) no longer receive it, closing the readonly bypass their `qx()`/`%x()` forms allowed. Kept with the workflow change because `workflow.shell` routes through the same classifier and workflow scripts commonly run `node -e` with arrow functions.
 - **Readonly blocks the powershell tool** — readonly mode now blocks pi's built-in `powershell` tool in the parent and removes it from readonly children, and readonly bash blocks launching PowerShell or cmd. Previously a Windows setup with `powershell` in `defaultTools` had an unguarded shell.
 - **Sections from other extensions reach the model** — schematic now adds its prompt content as named Pi prompt sections instead of replacing the system prompt, so sections written by extensions that run after it are no longer dropped (#45). A topic, Model Groups, or notebook change no longer re-sends the context-management primer.
