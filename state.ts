@@ -75,9 +75,8 @@ export interface SchematicState {
 
 	/**
 	 * High-water mark for discard epochs, derived from the branch by
-	 * reconstruction (max valid observed page/generation epoch). Survives restarts
-	 * so a discard cannot reuse an epoch whose survivor entries an interrupted
-	 * write left on the branch.
+	 * reconstruction (max valid observed page/generation epoch); see
+	 * `reconstructNotebook` in notebook/rehydration.ts.
 	 */
 	discardEpochWatermark: number;
 

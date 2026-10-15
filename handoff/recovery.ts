@@ -1,9 +1,7 @@
 /**
  * Successor-message recovery for legacy handoff cuts.
  *
- * Only cuts written before the turn_end boundary carry a v1 payload and are
- * recovered here. A boundary cut (`details.handoffId`) writes its successor in
- * the same pass and is never recovered; as the newest cut it ends recovery.
+ * Only legacy cuts (no `handoffId`) are recovered.
  *
  * Legacy delivery was fire-and-forget (`pi.sendUserMessage` has no acknowledgement), so a
  * failed send is discovered from the active branch and durable session history:
@@ -130,8 +128,7 @@ export function getUndeliveredHandoffMessage(
 	for (let index = entries.length - 1; index >= 0; index--) {
 		const entry = entries[index];
 		if (!isHandoffCompaction(entry)) continue;
-		// A boundary cut writes its successor in the same pass, so it has nothing to
-		// recover and, as the newest cut, stops recovery of older legacy cuts.
+		// A boundary cut has nothing to recover and, as the newest, ends recovery.
 		if (getHandoffId(entry) !== undefined) return null;
 		// The newest handoff cut owns recovery. An unreadable payload means there is
 		// nothing to recover — never fall through to an older, superseded instruction.

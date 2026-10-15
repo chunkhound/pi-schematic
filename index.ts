@@ -468,9 +468,10 @@ export default function (pi: ExtensionAPI): void {
 	registerSpawnTool(pi, state);
 
 	// ── Register event handlers ─────────────────────────────────────
-	// Handoff boundary first: its agent_settled resets a failed attempt before the
-	// watchdog counts it, and its tool_call refusal of a handoff that shares a
-	// message with other calls precedes the readonly block.
+	// Handoff boundary first. Its failure path resets toolCalled before the
+	// watchdog's agent_settled handler counts the attempt, and the watchdog counts
+	// only once toolCalled is reset. Its tool_call refusal of a handoff that
+	// shares a message with other calls precedes the readonly block.
 	registerHandoffBoundary(pi, state);
 	registerWatchdog(pi, state);
 	registerNotebookRehydration(pi, state);
@@ -538,8 +539,8 @@ export default function (pi: ExtensionAPI): void {
 		if (ctx.hasPendingMessages?.()) return;
 		const branch = ctx.sessionManager?.getBranch?.() ?? [];
 		const candidate = getUndeliveredHandoffMessage(branch, ctx.sessionManager?.getEntries?.() ?? branch);
-		// The latch coalesces repeated triggers for one persisted cut. Previous-release
-		// cuts carry a recovery key; older ones fall back to their persisted entry identity.
+		// The latch coalesces repeated triggers for one persisted cut; see the
+		// recoveryRequestedMessage doc in state.ts for the key.
 		if (!candidate) return;
 		const requested = state.recoveryRequestedMessage;
 		if (requested?.message === candidate.message &&

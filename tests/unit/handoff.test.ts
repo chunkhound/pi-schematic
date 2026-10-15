@@ -236,7 +236,7 @@ test("handoff with no pending direction requires nextInstruction but not context
 
 	await executeHandoff(pi, ctx, { nextInstruction: "  Ship the fix  " });
 
-	// Surrounding whitespace is normalized at the resolver; inner bytes preserved.
+	// Surrounding whitespace is trimmed.
 	assert.equal((state.stagedHandoff as SchematicState["stagedHandoff"])?.nextInstruction, "Ship the fix");
 	assert.equal((state.stagedHandoff as SchematicState["stagedHandoff"])?.context, "");
 });
@@ -1077,11 +1077,11 @@ test("handoff tool metadata and schema describe the prompt contract", async () =
 });
 
 test("the continuation frame is pinned byte-for-byte", () => {
+	// The frame is the only summary text a successor sees, so every byte is a contract.
 	// Golden string, hand-written on purpose: comparing against buildContinuationFrame()
-	// or loose regexes would pass vacuously if the frame copy regressed. This frame is
-	// the only summary text a successor sees, so every byte is a contract. It carries no
-	// task or constraints: a frozen task invites paraphrase; frozen constraints lie after
-	// a /tree rollback.
+	// or loose regexes would pass vacuously if the frame copy regressed.
+	// The frame carries no task or constraints: a frozen task invites paraphrase, and frozen
+	// constraints lie after a /tree rollback.
 	assert.equal(buildContinuationFrame(), [
 		"## Handoff — Continue Previous Work",
 		"",

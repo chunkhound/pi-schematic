@@ -4,10 +4,9 @@
  * what the provider receives. Handler-level behaviour is covered by
  * handoff.test.ts; this file pins the pi semantics that design relies on.
  *
- * Isolation as in prompt-sections-session.test.ts: one mkdtemp directory holds
- * HOME and every pi path, PI_OFFLINE=1 keeps ModelRuntime off the network, and
- * the faux provider needs no credentials. The faux provider reports usage as
- * chars / 4 of the request, so a large first prompt makes the handoff eligible.
+ * Isolation as in prompt-sections-session.test.ts. The faux provider reports
+ * usage as chars / 4 of the request, so a large first prompt makes the handoff
+ * eligible.
  */
 
 import { describe, it, before, after } from "node:test";
@@ -387,9 +386,8 @@ describe("handoff boundary in a real agent session", () => {
 		assert.ok(typeof tokens === "number" && tokens >= MIN_HANDOFF_TOKENS, `usage at the handoff call: ${String(tokens)}`);
 	});
 
-	// With no handoff request and no topic boundary pending, the context hook in index.ts
-	// skips the watchdog nudge only while the usage percent is null or below 30, so the
-	// successor of a model-called handoff carries no nudge because pi reports null here.
+	// With no enforced request or pending topic hint, the context hook skips the watchdog
+	// nudge when pi reports null usage, so the successor of a model-called handoff carries no nudge.
 	it("reports no usage percent at the successor request right after the cut", async () => {
 		const { session, observed } = await startSession([call(handoffCall()), reply("successor answer")]);
 		try {
@@ -664,10 +662,8 @@ describe("handoff boundary in a real agent session", () => {
 });
 
 describe("failed handoff cut in a real agent session", () => {
-	// A dropped cut never starts a run: the guidance is a displayed message that
-	// waits on the branch. `requests` is the provider requests the handoff run made
-	// after "ready": the handoff call itself, plus the follow-on turn only when the
-	// dropper left the continuation alone.
+	// `requests` is the provider requests of the handoff run after "ready"; the
+	// follow-on turn adds one only when the dropper keeps the continuation.
 	const dropVariants: { name: string; result: { entries: []; continue?: false }; requests: number }[] = [
 		{ name: "the dropper keeps the continuation", result: { entries: [] }, requests: 2 },
 		{ name: "the dropper stops the continuation", result: { entries: [], continue: false }, requests: 1 },
@@ -756,12 +752,10 @@ describe("failed handoff cut in a real agent session", () => {
 	});
 
 	/**
-	 * Runs a large prompt, a /handoff request, one retry prompt per remaining
-	 * enforcement attempt and a final "after the budget" prompt. A later extension
-	 * drops every boundary with `dropResult`, and the model calls handoff whenever
-	 * its request carries the required nudge. `nudgedCalls` counts those calls.
-	 * With `ui`, a recording UI is attached and `uiBeforeLastPrompt` is the length
-	 * of `ui` before the final prompt.
+	 * Exhausts the handoff budget while a later extension drops every boundary with
+	 * `dropResult`; the model calls handoff whenever its request carries the required
+	 * nudge, and `nudgedCalls` counts those calls. With `ui`, `uiBeforeLastPrompt` is
+	 * the length of `ui` before the final prompt.
 	 */
 	async function exhaustHandoffBudget(dropResult: { entries: []; continue?: false }, ui?: string[]) {
 		const dropBoundary: ExtensionFactory = (pi) => {
@@ -785,9 +779,7 @@ describe("failed handoff cut in a real agent session", () => {
 			await session.prompt(LARGE_PROMPT);
 			await session.prompt("/handoff finish the report");
 			await settleRuns(session, observed, 2);
-			// Nothing starts a run on its own, so each retry is a user prompt. Each
-			// nudged run counts one attempt; the last retry runs at
-			// enforcementAttempts = MAX_HANDOFF_ATTEMPTS - 1 and exhausts the budget.
+			// Nothing starts a run on its own, so each retry is a user prompt.
 			for (let attempt = 1; attempt < MAX_HANDOFF_ATTEMPTS; attempt++) {
 				await session.prompt("retry");
 				await settleRuns(session, observed, 2 + attempt);

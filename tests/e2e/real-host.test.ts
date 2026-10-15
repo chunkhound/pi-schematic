@@ -50,6 +50,7 @@ import {
 	PROBE_CONTEXT_WINDOW,
 	PROBE_MODEL_ID,
 	PROBE_PROVIDER,
+	cutHandoffId,
 	type ProbeRecord,
 	type ScriptedCall,
 } from "./real-host-protocol.js";
@@ -76,13 +77,6 @@ async function handoffCommand(host: RealHost, direction: string, args: ScriptedC
 function userText(entry: SessionEntry): string | null {
 	if (entry.type !== "message" || entry.message.role !== "user") return null;
 	return messageText(entry.message.content);
-}
-
-/** `handoffId` of a handoff cut written in a turn_end boundary, or null for any other entry. */
-function cutHandoffId(entry: SessionEntry): string | null {
-	if (entry.type !== "compaction" || typeof entry.details !== "object" || entry.details === null) return null;
-	const handoffId = (entry.details as Record<string, unknown>).handoffId;
-	return typeof handoffId === "string" ? handoffId : null;
 }
 
 function handoffCuts(entries: SessionEntry[]): CompactionEntry[] {
@@ -207,9 +201,8 @@ function seedAssistant(session: SessionManager, text: string): string {
 }
 
 /**
- * A handoff cut as releases before the turn_end boundary wrote it: a compaction whose kept id
- * names no entry, whose summary ends in the recovery-key marker, and whose details carry the v1
- * payload. Those releases sent the successor as a user message after the cut; the seed omits it.
+ * A handoff cut as releases before the turn_end boundary wrote it. Those releases sent the
+ * successor as a user message after the cut; the seed omits it.
  */
 function seedLegacyCut(session: SessionManager): string {
 	seedUser(session, "earlier work");
@@ -223,7 +216,6 @@ function seedLegacyCut(session: SessionManager): string {
 	);
 }
 
-/** A legacy cut whose successor was lost, followed by newer user work: two turns, each answered. */
 function seedLegacyCutThenNewerWork(session: SessionManager): void {
 	seedLegacyCut(session);
 	seedUser(session, "newer user work");
@@ -314,7 +306,6 @@ describe("pi-schematic real-host E2E", () => {
 	}));
 
 	it("handoff tool rejects a missing instruction", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
-		// A validation failure queues nothing: the tool's error result is the only report.
 		await handoff(host, { context: "situational only" }, 1);
 		const { entries } = await host.entries();
 		const result = onlyResult(toolResults(entries, "handoff"), "handoff");
@@ -352,8 +343,6 @@ describe("pi-schematic real-host E2E", () => {
 		assert.deepEqual(await host.client.clearQueue(), { steering: [], followUp: [] });
 	}));
 
-	// The probe records only the text blocks of each request, so the handoff tool call
-	// (a toolCall block without text) is not observable here; its tool result is.
 	it("the successor turn continues the handoff run without the pre-cut user turn or handoff result", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
 		const payload = { nextInstruction: "do the resumed work", context: "remaining state" };
 		const mark = host.events.length;
@@ -371,6 +360,7 @@ describe("pi-schematic real-host E2E", () => {
 			"the successor request carries the successor once",
 		);
 		assert.equal(successorRequest.texts.includes("go"), false, "the pre-cut user turn is gone from the successor request");
+		// The probe records only text blocks, so the handoff toolCall block is not in `texts`.
 		assert.equal(successorRequest.texts.includes(HANDOFF_STAGED_RESULT), false, "the pre-cut handoff result is gone from the successor request");
 	}));
 
@@ -438,7 +428,6 @@ describe("pi-schematic real-host E2E", () => {
 	it("legacy recovery resends the lost successor of an old-format cut once", TEST_OPTIONS, async (t) => {
 		let cutId = "";
 		await withRealHost(t, async (host) => {
-			// session_start resends the successor, which starts one run.
 			await host.settleStartup(1);
 			const { entries } = await host.entries();
 			const recovered = userEntriesWithText(entries, LEGACY_SUCCESSOR_TEXT);
@@ -474,7 +463,7 @@ describe("pi-schematic real-host E2E", () => {
 
 	it("a dropped handoff cut fails in one run without a follow-up and stays retryable", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
 		await host.command("/" + PROBE_COMMAND.dropNextCut);
-		// The failure persists as a message and starts no run, so the handoff command's run is the only one.
+		// No run starts for the failure.
 		await handoffCommand(host, "retry after failure", { nextInstruction: "retry after failure" }, 1);
 
 		const failed = await host.entries();

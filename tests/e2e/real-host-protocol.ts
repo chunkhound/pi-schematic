@@ -103,7 +103,6 @@ function requireStringArray(record: Record<string, unknown>, field: string, line
 	return value;
 }
 
-/** One scripted call, parsed strictly: an object with a non-empty `name` and an `arguments` object only. */
 function parseScriptedCall(value: unknown, fail: (reason: string) => never): ScriptedCall {
 	if (!isJsonObject(value)) fail(`not an object: ${JSON.stringify(value)}`);
 	const { name, arguments: callArguments, ...rest } = value;
@@ -203,4 +202,11 @@ export function parseBarrierReport(text: string): BarrierReport {
 		throw new Error(`Barrier report failure is neither a string nor null: ${text}`);
 	}
 	return { id, failure };
+}
+
+/** `handoffId` of a handoff cut written in a turn_end boundary, or null for any other entry or draft. */
+export function cutHandoffId(entry: { type: string; details?: unknown }): string | null {
+	if (entry.type !== "compaction" || typeof entry.details !== "object" || entry.details === null) return null;
+	const handoffId = (entry.details as Record<string, unknown>).handoffId;
+	return typeof handoffId === "string" ? handoffId : null;
 }

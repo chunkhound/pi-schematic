@@ -22,7 +22,7 @@ export const HANDOFF_COMMAND_BUSY = "A handoff is in progress; wait for it to co
 /** Warning when the cut persisted but its continuation turn did not run. */
 export const HANDOFF_SUCCESSOR_NOT_RUN = "Handoff complete, but the successor turn did not run. Send a message to continue.";
 
-/** Failure reasons, completing the failure notification and guidance. */
+/** Why a handoff left no cut; inserted into the failure notification and guidance. */
 export const REASON_ABORTED = "the run was aborted before the cut";
 export const REASON_NO_BOUNDARY = "the turn ended without writing the cut";
 export const REASON_RESULT_MISSING = "the handoff result was missing from its turn";

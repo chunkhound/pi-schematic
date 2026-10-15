@@ -321,22 +321,19 @@ test("retry succeeds after a handoff cut that pi did not persist", async () => {
 
 	await stageHandoff(pi, "handoff-1", { nextInstruction: "Continue readonly work" });
 	await endStagingTurn(pi, "handoff-1");
-	// Pi dropped the boundary: the next turn starts on a branch without the cut.
 	const userMessagesBefore = pi.sentUserMessages.length;
 	await turnStartWith(pi, []);
 
-	// The failure is persisted as guidance and starts no run.
 	assert.equal(pi.sentUserMessages.length, userMessagesBefore, "the failed cut must send no user message");
 	assert.equal(pi.sentMessages.at(-1)?.message.customType, "pi-schematic-handoff-failed",
 		"the failed cut must persist the failure guidance");
 	assert.equal(pi.sentMessages.at(-1)?.options?.triggerTurn, false, "the failure guidance must not start a run");
 
-	// A retry inside the same run is refused by the boundary before readonly is consulted.
 	const sameRun = await toolCall({ toolName: "handoff", input: { nextInstruction: "retry handoff" } }, {});
 	assert.equal(sameRun?.block, true, "a handoff in the run that lost its cut must be blocked");
 	assert.equal(sameRun?.reason, HANDOFF_FAILED_IN_RUN_REFUSAL, "the block must be the boundary's failed-in-run refusal");
 
-	// The next run retries: the readonly bypass is still active and the cut stages.
+	// readonly bypass still active
 	await agentSettled({ hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => [] } });
 	assert.equal(await toolCall({ toolName: "handoff", input: { nextInstruction: "retry handoff" } }, {}), undefined,
 		"the readonly bypass must remain for the retry in the next run");

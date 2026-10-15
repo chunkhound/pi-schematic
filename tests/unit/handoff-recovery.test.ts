@@ -280,12 +280,10 @@ test("an unreadable newest handoff supersedes an older recoverable one", () => {
 });
 
 test("a boundary cut after an undelivered legacy cut ends recovery", () => {
-	// R1: the newest cut owns recovery, and a boundary cut writes its own successor.
 	assert.equal(recoveredMessage([handoff(), boundaryCut(), boundarySuccessor()]), null);
 });
 
 test("a boundary cut is never resent even when its details carry a readable payload", () => {
-	// The stop rests on handoffId, not on the payload being absent.
 	assert.equal(recoveredMessage([boundaryCut({ handoff: true, handoffId: "with-payload", payload })]), null);
 });
 
@@ -367,7 +365,6 @@ test("tree navigation and resume queue a missing successor in a fresh process", 
 
 test("a session whose newest cut is a boundary cut never resends after tree, start, or settle", async () => {
 	const pi = await createTestHost();
-	// An undelivered legacy cut precedes the boundary cut that superseded it.
 	const branch: any[] = [handoff(), boundaryCut(), boundarySuccessor()];
 	const ctx = { hasUI: false, hasPendingMessages: () => false, getContextUsage: () => null, sessionManager: { getBranch: () => branch } };
 	const [sessionTree] = pi.handlers.get("session_tree")!;

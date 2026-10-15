@@ -1,16 +1,8 @@
 /**
- * Handoff lifecycle: writes a staged handoff as one turn_end boundary.
- *
- * The handoff tool only stages its request. At the end of that turn the cut
- * (retain-none compaction), the successor message and a hidden system-prompt
- * note are returned as boundary drafts together with any notebook discard, and
- * the same run continues with the successor turn. Pi does not acknowledge a
- * boundary result — a later turn_end handler or draft validation can drop it —
- * so the handoff completes only once its cut is found on the branch, at the
- * next turn_start or when the run settles. A missing cut never starts a run,
- * and further handoff calls in that run are refused. A handoff that shares its
- * assistant message with other tool calls is refused and stages nothing, so
- * nothing runs between staging and the cut.
+ * Handoff lifecycle: stages the request in the handoff tool, writes it as one
+ * turn_end boundary, and completes only once the cut is found on the branch.
+ * Pi does not acknowledge a boundary result: a later turn_end handler or draft
+ * validation can drop it.
  */
 
 import type {
@@ -106,9 +98,7 @@ function findHandoffCut(branch: readonly SessionEntry[], handoffId: string): Ses
 function finalizeHandoffState(state: SchematicState): void {
 	state.pendingRequestedHandoff = null;
 	clearActiveNotebookTopic(state);
-	// Readonly is live, not frozen into the summary: announce the ON posture on the
-	// first post-handoff request. OFF-to-OFF stays silent; ON-to-OFF and OFF-to-ON are
-	// covered by rehydration on session start and tree navigation.
+	// Announce ON readonly on the first post-handoff request; rehydration covers other transitions.
 	if (state.readonlyEnabled) state.readonlyNudgePending = true;
 }
 
@@ -159,17 +149,13 @@ function failStagedHandoff(
 	state.stagedHandoff = null;
 	state.handoffFailedInRun = true;
 	const request = state.pendingRequestedHandoff;
-	// The watchdog's agent_settled handler runs after this one and counts the
-	// attempt against the enforcement budget; it cannot run first, because it
-	// counts only once toolCalled is reset here. On the attempt that exhausts the
-	// budget it cancels the request in this run's settle, so the failure must not
-	// call it pending.
+	// On the attempt that exhausts the enforcement budget the watchdog cancels the
+	// request in this run's settle, so the failure must not call it pending.
 	if (request) request.toolCalled = false;
 	const exhausted = request !== null && settleExhaustsHandoffBudget(request);
 	const pendingRequest = exhausted ? null : request;
 	// Never start a run from here: a cause that drops every cut (another
-	// extension's turn_end handler) would otherwise retry without bound. The
-	// guidance waits for the next run.
+	// extension's turn_end handler) would otherwise retry without bound.
 	pi.sendMessage(
 		{ customType: HANDOFF_FAILED_CUSTOM_TYPE, content: formatHandoffFailure(reason, pendingRequest !== null), display: true },
 		{ triggerTurn: false },
@@ -187,8 +173,8 @@ function resolveStagedHandoff(
 	if (!staged) return;
 	switch (staged.phase) {
 		case "staged":
-			// turn_end moves a staged handoff on unless pi skipped the boundary; only a
-			// settle fails it.
+			// Still staged means no boundary was submitted (pi skipped turn_end, or building
+			// the drafts threw); only a settle fails it.
 			if (at === "agent_settled") {
 				failStagedHandoff(pi, state, ctx, REASON_NO_BOUNDARY);
 			}

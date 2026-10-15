@@ -1,10 +1,8 @@
 /**
  * Handoff tool for the pi-schematic extension.
  *
- * The tool validates and stages the handoff, then ends the tool batch. The cut
- * itself — a compaction that keeps no earlier context, followed by the successor
- * message — is written at the end of the same turn (handoff/boundary.ts), and
- * the run continues with the successor.
+ * The tool validates and stages the handoff, then ends the tool batch; the
+ * cut is written at turn end (handoff/boundary.ts, docs/architecture.md §Handoff).
  *
  * Two roles are kept strictly separate: the successor's `nextInstruction` is
  * carried by the extension (a human `/handoff` direction wins) and delivered

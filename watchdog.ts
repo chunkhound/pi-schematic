@@ -20,9 +20,7 @@ import { STATUS_KEY_HANDOFF } from "./tui.js";
 
 /** Max settled runs in which the eligible handoff nudge was sent before a
  * required handoff auto-clears. 5 gives the model several response
- * cycles to supply the instruction and context, including a failed cut, where
- * handoff/boundary.ts resets toolCalled=false before this handler counts the
- * run. */
+ * cycles to supply the instruction and context. */
 export const MAX_HANDOFF_ATTEMPTS = 5;
 
 type RequestedHandoff = NonNullable<SchematicState["pendingRequestedHandoff"]>;

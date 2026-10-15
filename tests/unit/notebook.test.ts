@@ -958,8 +958,7 @@ test("/notebook reopens the list when the selected page vanished while it was op
 	const boundary = results.find((result) => result !== undefined) as { entries: Array<Record<string, unknown>> };
 	branch = boundary.entries.map((entry, index) => ({ ...entry, id: `entry-${index}` }));
 
-	// The handoff's cut is confirmed at turn_start and applies the discard while the list is
-	// open: the discard completes after the list was built with alpha and before Enter selects it.
+	// turn_start applies the discard after the list was built with alpha and before Enter selects it.
 	const { custom, reopens } = enterOnFirstOpen(async () => {
 		await callHandlers(pi, "turn_start", { type: "turn_start", turnIndex: 1, timestamp: 0 }, handoffCtx);
 	});
@@ -1383,7 +1382,6 @@ test("a discard after orphaned staged survivors uses a fresh epoch and does not 
 	// An earlier pass discarding page-b staged survivors at epoch 2 and never closed that generation.
 	const orphanDrafts = buildNotebookDiscardDrafts(state, ["page-b"]).drafts.slice(0, -1);
 
-	// A restarted process derives its state from that branch alone.
 	const restarted = restoredFrom(branchWith(pi, orphanDrafts));
 	const retry = buildNotebookDiscardDrafts(restarted, ["page-a"]);
 	const restored = restoredFrom(branchWith(pi, [...orphanDrafts, ...retry.drafts]));

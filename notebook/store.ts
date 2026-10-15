@@ -180,8 +180,7 @@ export async function saveNotebookPage(
  *
  * The active epoch marker comes first so a pass cut short after some survivors
  * keeps the branch on the prior generation; the next-epoch marker comes last.
- * The next epoch lies above the watermark, so it never reuses an epoch an
- * interrupted pass left behind.
+ * The next epoch lies above `state.discardEpochWatermark` (see rehydration.ts).
  */
 export function buildNotebookDiscardDrafts(
 	state: SchematicState,

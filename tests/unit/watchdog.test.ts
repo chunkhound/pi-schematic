@@ -404,7 +404,6 @@ test("a nudged run whose staged handoff cut was not persisted counts one attempt
 	assert.equal(state.pendingRequestedHandoff?.toolCalled, true, "staging marks the handoff called");
 	await endStagingTurn(pi, "dropped-cut");
 
-	// Pi dropped the boundary: the run settles on a branch without the cut.
 	const userMessagesBeforeSettle = pi.sentUserMessages.length;
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage, sessionManager: { getBranch: () => [] } });
 

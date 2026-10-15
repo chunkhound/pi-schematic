@@ -4,13 +4,13 @@
  * `real-host-probe.ts`.
  *
  * Every helper that starts a run or navigates the tree is a step: it returns only
- * once `/e2e-barrier` reports no outstanding work, so tests never issue a
- * non-command prompt while a run, a chained turn, a handoff call awaiting its boundary or an undelivered
- * input is outstanding, and it fails unless the
- * step started exactly the runs its caller expected. A step that has counted fewer
- * runs than it expects barriers again — a run a command, session_tree or agent_settled
- * handler starts is first visible to the probe at its "input" event — within one
- * barrier's budget. `close()` fails on any run that started outside every step.
+ * once `/e2e-barrier` reports no outstanding work (CONTRIBUTING.md `## Tests` names
+ * the work it waits for), so tests never issue a non-command prompt while work is
+ * outstanding. A step fails unless it started exactly the runs its caller expected.
+ * A step that has counted fewer runs than it expects barriers again — a run a
+ * command, session_tree or agent_settled handler starts is first visible to the
+ * probe at its "input" event — within one barrier's budget. `close()` fails on any
+ * run that started outside every step.
  */
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -334,9 +334,8 @@ export class RealHost {
 	}
 
 	/**
-	 * Wait for the work session_start began, before any other step: a step that counts the runs
-	 * started since the CLI came up, `runs` of them. A session_start handler can start a run
-	 * before any step marks the event list, so `settle` would not count it.
+	 * Wait for the work session_start began, before any other step. A session_start handler can
+	 * start a run before any step marks the event list, so `settle` would not count it.
 	 */
 	async settleStartup(runs: number): Promise<void> {
 		if (this.barrierPhases > 0) throw new Error("settleStartup() must be the first step of a host");

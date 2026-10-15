@@ -2,12 +2,9 @@
  * real-host-probe.ts — Probe extension loaded into the real pi CLI by the
  * real-host E2E harness (`real-host.ts`).
  *
- * Registers a scripted provider whose responses — tool calls, batches of tool calls
- * in one message, provider errors and replies with a given usage — the test arms
- * through `/e2e-script`, plus commands that wait for outstanding work, navigate the
- * tree, start runs without a user turn, drop the next handoff cut and abort the run
- * after a handoff call. Every observation is appended as one JSON line to the file
- * `PROBE_LOG_ENV_VAR` names.
+ * Registers a scripted provider whose responses the test arms through
+ * `/e2e-script`, plus the `PROBE_COMMAND` commands. Every observation is appended
+ * as one JSON line to the file `PROBE_LOG_ENV_VAR` names.
  *
  * The harness loads this file after schematic, so its "input" handler runs last and
  * its "continue" means pi accepted the input, and its turn_end handler sees the
@@ -18,7 +15,7 @@
 
 import { appendFileSync } from "node:fs";
 import { createAssistantMessageEventStream, type AssistantMessage, type ToolCall } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionCommandContext, SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
 import {
@@ -29,6 +26,7 @@ import {
 	PROBE_LOG_ENV_VAR,
 	PROBE_MODEL_ID,
 	PROBE_PROVIDER,
+	cutHandoffId,
 	parseScriptedStep,
 	type BarrierReport,
 	type ProbeRecord,
@@ -93,13 +91,6 @@ function contextTexts(messages: ReadonlyArray<{ content?: unknown }>): string[] 
 		}
 		return typeof content === "string" ? [content] : [];
 	});
-}
-
-/** The `handoffId` of a boundary draft that is a handoff cut, or null for any other draft. */
-function cutHandoffId(draft: SessionBoundaryDraft): string | null {
-	if (draft.type !== "compaction" || typeof draft.details !== "object" || draft.details === null) return null;
-	const handoffId = (draft.details as Record<string, unknown>).handoffId;
-	return typeof handoffId === "string" ? handoffId : null;
 }
 
 export default function realHostProbe(pi: ExtensionAPI): void {
