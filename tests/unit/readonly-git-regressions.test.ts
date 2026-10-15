@@ -598,9 +598,14 @@ test("Git submodule update and recursive checkout check .gitmodules paths", gitS
 	writeFileSync(modules, `[submodule "broken"]\n\tpath\n`);
 	check("git submodule update --init", repo, false);
 	check(`git checkout --recurse-submodules ${branch}`, repo, false);
-	// A quoted value would need Git's config unescaping, so it cannot be resolved reliably.
+	// Git's own parser resolves quoting, so a quoted path that stays inside temp is allowed.
 	writeFileSync(modules, `[submodule "quoted"]\n\tpath = "../quoted"\n\turl = ./q\n`);
+	check("git submodule update --init", repo, true);
+	check(`git checkout --recurse-submodules ${branch}`, repo, true);
+	// A quoted path that climbs outside temp still fails closed: the parser resolves it, the guard blocks it.
+	writeFileSync(modules, `[submodule "quoted-outside"]\n\tpath = "${outsidePath}"\n\turl = ./q\n`);
 	check("git submodule update --init", repo, false);
+	check(`git checkout --recurse-submodules ${branch}`, repo, false);
 	rmSync(modules);
 	mkdirSync(modules);
 	check("git submodule update --init", repo, false);
@@ -1086,4 +1091,19 @@ test("Git restore --recurse-submodules checks submodule metadata", gitSuiteOptio
 	// The relocation mechanism is proven real by the sibling update/checkout test; here the
 	// contract is that restore now discovers the relocated metadata and fails closed.
 	check("git restore --recurse-submodules --worktree .", repo, false);
+});
+
+test("Git parses .gitmodules with Git's config semantics", gitSuiteOptions, (t) => {
+	const repo = repository(fixture(t));
+	git(repo, "-c", "protocol.file.allow=always", "submodule", "add", repository(fixture(t)), "outer");
+	const modules = path.join(repo, ".gitmodules");
+	const original = readFileSync(modules, "utf8");
+	const outsidePath = path.relative(repo, fixture(t, os.homedir()));
+	// Git keys are case-insensitive and Git strips inline comments; the hand parser missed both,
+	// so an outside path in either form slipped past the submodule metadata check.
+	for (const entry of [`PATH = ${outsidePath}`, `path = ${outsidePath} # comment`, `path = ${quote(outsidePath)}`]) {
+		writeFileSync(modules, `[submodule "escape"]\n\t${entry}\n\turl = ./e\n`);
+		check("git submodule update --force", repo, false);
+	}
+	writeFileSync(modules, original);
 });

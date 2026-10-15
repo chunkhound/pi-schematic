@@ -1066,6 +1066,11 @@ function probeGitConfiguration(directory: string, args: string[], base: string, 
 	return runGitConfig(["--git-dir", directory, "config", "-z", ...args], base, vars);
 }
 
+/** NUL-safe probe for a config file (`git config -z --file <file> …`), e.g. `.gitmodules`. */
+function probeGitConfigFile(file: string, args: string[], base: string, vars: ReadonlyMap<string, string>): string[] {
+	return runGitConfig(["config", "-z", "--file", file, ...args], base, vars);
+}
+
 /** Run `git config` and split records on NUL. `-z` keeps value bytes exact, so a path ending in a
  * space (or holding a newline) stays the path Git opens; a newline trim would check a different
  * file. `--get-regexp`/`--list` records are `key\nvalue`, plain `--get` records are the value. */
@@ -1316,7 +1321,7 @@ function recursesSubmodules(subcommand: string, args: readonly string[]): boolea
  * `.gitmodules` cycle finite and skips a repeated shared gitdir without re-probing it. */
 function collectSubmoduleWriteRoots(workTree: string, vars: ReadonlyMap<string, string>, recursive: boolean, visited: Set<string>): string[] {
 	const roots: string[] = [];
-	for (const declared of gitSubmodulePaths(workTree)) {
+	for (const declared of gitSubmodulePaths(workTree, vars)) {
 		const repo = discoverGitRepository(declared);
 		const key = [resolveRealPath(repo.worktree), ...repo.metadata.map((directory) => resolveRealPath(directory))].join("\0");
 		if (visited.has(key)) continue;
@@ -1327,29 +1332,24 @@ function collectSubmoduleWriteRoots(workTree: string, vars: ReadonlyMap<string, 
 	return roots;
 }
 
-/** `submodule.<name>.path` values from `.gitmodules`. A missing file means no submodules; an
- * unreadable or malformed file cannot be trusted, so this throws and the command fails closed. */
-function gitSubmodulePaths(workTree: string): string[] {
-	const content = readGitMetadata(path.join(workTree, ".gitmodules"));
-	if (content === null) return [];
-	const paths: string[] = [];
-	for (const raw of content.split("\n")) {
-		const line = raw.trim();
-		if (!line || line.startsWith("#") || line.startsWith(";") || /^\[.*\]$/.test(line)) continue;
-		const { key, value } = parseGitmodulesLine(line);
-		if (key !== "path") continue;
-		// Git's config quoting/escaping would change the path, so an escaped value cannot be
-		// resolved reliably; fail closed rather than check the wrong location.
-		if (/["'\\]/.test(value)) throw new Error("unsupported .gitmodules path escaping");
-		paths.push(path.resolve(workTree, value));
-	}
-	return paths;
-}
-
-function parseGitmodulesLine(line: string): { key: string; value: string } {
-	const match = line.match(/^([A-Za-z][A-Za-z0-9.-]*)\s*=\s*(.+)$/);
-	if (!match) throw new Error("malformed .gitmodules");
-	return { key: match[1]!, value: match[2]! };
+/** `submodule.<name>.path` values from `.gitmodules`, parsed by Git itself. Git's config parser
+ * handles case-insensitive keys, inline `#`/`;` comments, quoting, and escapes exactly as
+ * submodule materialization does; the probe fails closed on an unreadable/malformed file (a
+ * missing file is status 1 and means no submodules). */
+function gitSubmodulePaths(workTree: string, vars: ReadonlyMap<string, string>): string[] {
+	const file = path.join(workTree, ".gitmodules");
+	// A non-file `.gitmodules` (e.g. a directory) is unreadable, not empty: fail closed like the
+	// hand parser's read did, rather than let Git's config probe report it as no submodules.
+	try { if (!statSync(file).isFile()) throw new Error("unreadable .gitmodules"); }
+	catch (error) { if (absentProbePath(error)) return []; throw error; }
+	const records = probeGitConfigFile(file, ["--get-regexp", "^submodule\\..*\\.path$"], workTree, vars);
+	return records.map((record) => {
+		const separator = record.indexOf("\n");
+		if (separator < 0) throw new Error("malformed .gitmodules path record");
+		const resolved = resolveGitPath(record.slice(separator + 1), workTree);
+		if (resolved === null) throw new Error("unresolved .gitmodules path");
+		return resolved;
+	});
 }
 
 /** Explicit `.git` metadata anchors a command pins git to: `--git-dir` and the matching
