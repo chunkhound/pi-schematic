@@ -1401,3 +1401,22 @@ test("a heredoc body reaches a downstream shell only through byte-preserving sta
 	// With no shell stage, the transformed body is inert data.
 	assert.equal(classifyBashCommand(`cat <<'EOF' | sed 's@a@b@' | cat\n${body}\nEOF`, outside).ok, true);
 });
+
+test("shell state expansion stays bounded and fails closed", () => {
+	// Each alternation keeps a success and an aborting-redirect failure branch, so directory
+	// histories multiply without a budget. Classification runs synchronously in the host: an
+	// unbounded set would hang or OOM it. The command must fail closed promptly and cheaply.
+	const root = mkdtempSync(path.join(os.tmpdir(), "readonly-shell-budget-"));
+	const first = path.join(root, "first"), second = path.join(root, "second");
+	mkdirSync(first);
+	mkdirSync(second);
+	try {
+		const command = Array.from({ length: 18 }, (_, index) => `pushd ${quote(index % 2 ? second : first)} <&0`).join("; ");
+		const before = process.memoryUsage().heapUsed;
+		const result = classifyBashCommand(command, root);
+		const grown = process.memoryUsage().heapUsed - before;
+		assert.equal(result.ok, false, "an unbounded state set must fail closed");
+		assert.match(result.reason ?? "", /state expansion/);
+		assert.ok(grown < 64 * 1024 * 1024, `budget must bound heap growth, grew ${grown} bytes`);
+	} finally { rmSync(root, { recursive: true, force: true }); }
+});

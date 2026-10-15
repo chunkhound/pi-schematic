@@ -187,8 +187,13 @@ export function classifyBashWithHeredocs(
 		const prepared = stripHeredocBodies(cmd, inheritedHeredocs);
 		if (prepared === null) return { ok: false, reason: `unsupported stdin code, group heredoc, or unterminated heredoc (e.g. avoid { cat; bash; } <<EOF)${FAIL_CLOSED_HINT}` };
 		const initial: ShellState = { cwd, stack: [], vars: new Map(shellVars), directories: new Set(), heredocs: prepared.heredocs };
-		const result = classifyShellSequence(prepared.command, [initial], depth);
-		return result.ok ? { ok: true } : result;
+		try {
+			const result = classifyShellSequence(prepared.command, [initial], depth);
+			return result.ok ? { ok: true } : result;
+		} catch (error) {
+			if (error instanceof ShellStateBudgetError) return { ok: false, reason: `unsupported shell state expansion blocked${FAIL_CLOSED_HINT}` };
+			throw error;
+		}
 	});
 }
 
@@ -215,7 +220,17 @@ export type ShellState = {
 export type ShellOutcome = { success: ShellState[]; failure: ShellState[] };
 type ShellGroupResult = { ok: true; states: ShellState[] } | { ok: false; reason: string };
 
+/** Cap on shell states carried between branch points. Each `;`/`&&`/`||` can keep a success and
+ * a failure branch (a `pushd` with an aborting redirect forks both), and states that differ only
+ * in directory history never merge, so the count can double per command. Classification runs
+ * synchronously in the extension host, so an unbounded set hangs or OOMs it; exceeding the
+ * budget fails closed instead of allocating further. */
+const MAX_SHELL_STATES = 256;
+
+class ShellStateBudgetError extends Error {}
+
 function uniqueShellStates(states: ShellState[]): ShellState[] {
+	if (states.length > MAX_SHELL_STATES) throw new ShellStateBudgetError(`shell state expansion exceeded ${MAX_SHELL_STATES} states`);
 	// Map does not survive JSON.stringify — serialize vars explicitly so states
 	// that differ only by their var maps stay distinct.
 	const key = (state: ShellState) => JSON.stringify([state.cwd, state.stack, [...state.vars], [...state.directories]]);
