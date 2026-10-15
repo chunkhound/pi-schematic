@@ -18,7 +18,7 @@ import { modelGroupsPath } from "../../model-groups/store.js";
 import { prepareWorkflowRunFrontmatter } from "../../index.js";
 import { releaseWorkflow, reserveWorkflow } from "../../workflow/coordinator.js";
 import { createState } from "../../state.js";
-import { createTestHost } from "./test-host.js";
+import { createBeforeAgentStartEvent, createTestHost } from "./test-host.js";
 import { makeReadonlyUICtx, tmpDir } from "./helpers.js";
 import { withTemp } from "./model-groups-helpers.js";
 
@@ -49,6 +49,19 @@ function makeSkillCommand(name: string, filePath: string) {
 		source: "skill",
 		description: "Test skill",
 		sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+	};
+}
+
+// Skill metadata shape pi passes in `systemPromptOptions.skills`; the deferred
+// readonly resolution reads this list, not the registered commands.
+function makeSkill(name: string, filePath: string) {
+	return {
+		name,
+		description: "Test skill",
+		filePath,
+		baseDir: "",
+		sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+		disableModelInvocation: false,
 	};
 }
 
@@ -185,7 +198,7 @@ test("interactive skill input preflights the model and defers readonly with no w
 		// The readonly decision stays deferred: before_agent_start owns it, as in the
 		// workflow bridge (prepareWorkflowRunFrontmatter queues the same entry).
 		ctx.ui.theme = { fg: (_name: string, text: string) => text };
-		await beforeAgentStart({ systemPrompt: "", systemPromptOptions: {} }, ctx);
+		await beforeAgentStart(createBeforeAgentStartEvent({ skills: [makeSkill("review", filePath)] }), ctx);
 		const toggles = pi.appendedEntries.filter((entry: { customType: string }) => entry.customType === "pi-schematic-readonly");
 		assert.deepEqual(toggles.map((entry: { data: unknown }) => entry.data), [{ enabled: true }], "the deferred queue resolves at before_agent_start");
 		assert.equal(reserveWorkflow(), true, "the idle path never reserves a workflow");

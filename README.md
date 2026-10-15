@@ -157,7 +157,7 @@ When you delegate a task with `spawn`, you can declare which capabilities it nee
 
 ## Readonly and security
 
-Readonly blocks write/edit and guards bash while researching; children inherit the posture. macOS uses `sandbox-exec`; Linux uses `bwrap` when available, otherwise only the command classifier remains. Windows is classifier-only. Interpreters and indirection can bypass classification. **Readonly is a coding guardrail, not a hardened security boundary.**
+Readonly blocks write/edit and the Windows `powershell` tool, and guards bash while researching; children inherit the posture. macOS uses `sandbox-exec`; Linux uses `bwrap` when available, otherwise only the command classifier remains. Windows is classifier-only. Readonly bash also blocks launching PowerShell or cmd. Interpreters and indirection can bypass classification. **Readonly is a coding guardrail, not a hardened security boundary.**
 
 Toggle it with `/readonly`, `Ctrl+Shift+R`, `--readonly`, or workflow frontmatter. Skills and prompts can instruct models to run code and use tools, so review workflow files before trusting them.
 

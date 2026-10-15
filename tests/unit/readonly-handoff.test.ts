@@ -7,25 +7,21 @@ import path from "node:path";
 import { createState } from "../../state.js";
 import { canPromoteBoundary, discardNonHumanBoundary } from "../../readonly-boundary.js";
 import { setActiveNotebookTopic } from "../../notebook/topic.js";
-import { makeReadonlyUICtx } from "./helpers.js";
+import { emitAll, makeReadonlyUICtx } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
 import { buildContinuationFrame } from "../../handoff/format.js";
+import { READONLY_POWERSHELL_BLOCK_REASON } from "../../notifications.js";
 
 async function createHandoffPI() {
 	const pi = await createTestHost();
 	const [toolCall] = pi.handlers.get("tool_call")!;
-	const [agentEnd] = pi.handlers.get("agent_end")!;
+	const agentSettled = (ctx: unknown) => emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 	const [beforeCompact] = pi.handlers.get("session_before_compact")!;
 	const [sessionTree] = pi.handlers.get("session_tree")!;
-	const sessionStartHandlers = pi.handlers.get("session_start") ?? [];
-	const sessionStart = async (event: unknown, ctx: unknown) => {
-		for (const handler of sessionStartHandlers) {
-			await handler(event, ctx);
-		}
-	};
-	return { pi, toolCall, agentEnd, beforeCompact, sessionTree, sessionStart };
+	const sessionStart = (event: unknown, ctx: unknown) => emitAll(pi, "session_start", event, ctx);
+	return { pi, toolCall, agentSettled, beforeCompact, sessionTree, sessionStart };
 }
 
 async function dispatchTool(pi: any, toolName: string, input: Record<string, unknown>, ctx: any): Promise<any> {
@@ -121,6 +117,9 @@ test("/handoff command creates temporary bypass for handoff tool only", async ()
 		"handoff should be unblocked after explicit /handoff");
 	assert.equal((await toolCall({ toolName: "write", input: { path: "/tmp/test", content: "x" } }, {})).block, true,
 		"write should stay blocked");
+	const powershell = await toolCall({ toolName: "powershell", input: { command: "Get-ChildItem" } }, {});
+	assert.equal(powershell.block, true, "powershell should stay blocked");
+	assert.equal(powershell.reason, READONLY_POWERSHELL_BLOCK_REASON);
 	await assertNonTempBashBlocked(toolCall);
 });
 
@@ -144,8 +143,8 @@ test("blocked readonly handoff never invokes compaction", async () => {
 });
 
 test("watchdog cancellation clears the readonly handoff bypass", async () => {
-	const { pi, toolCall, agentEnd } = await createHandoffPI();
-	const statuses = new Map<string, string | undefined>();
+	const { pi, toolCall, agentSettled } = await createHandoffPI();
+	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "handoff pending"]]);
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 	await pi.commands.get("handoff").handler("continue readonly work", {
 		...makeReadonlyUICtx(),
@@ -161,7 +160,11 @@ test("watchdog cancellation clears the readonly handoff bypass", async () => {
 		},
 		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
 	};
-	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS; i++) await agentEnd({}, ctx as any);
+	const [contextHook] = pi.handlers.get("context")!;
+	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS; i++) {
+		await contextHook({ messages: [{ role: "user", content: "work", timestamp: i }] }, ctx as any);
+		await agentSettled(ctx);
+	}
 
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), undefined);
 	assert.equal((await toolCall({ toolName: "handoff", input: {} }, {})).block, true,
@@ -323,7 +326,7 @@ test("the handoff summary stays readonly-free and the fresh context relearns rea
 	assert.doesNotMatch(resumed.summary, /readonly/i, "constraints must never be frozen into the summary");
 	assert.doesNotMatch(resumed.summary, /ignored in favor of the direction/,
 		"the model-supplied instruction must not leak into the summary");
-	assert.match(resumed.nudgeContent ?? "", /\[readonly\] enabled — write\/edit blocked/,
+	assert.match(resumed.nudgeContent ?? "", /\[readonly\] enabled — write\/edit\/powershell blocked/,
 		"the post-handoff turn must relearn readonly from the context hook");
 
 	// Readonly dropped before the cut: same constant summary, and the fresh context

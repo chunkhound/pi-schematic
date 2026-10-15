@@ -93,8 +93,10 @@ export interface SchematicState {
 	pendingRequestedHandoff: {
 		/** True only after the current session has actually called the handoff tool. */
 		toolCalled: boolean;
-		/** Turn counter for repeated "you still owe the user a handoff" nudges. */
+		/** Settled agent runs counted while the handoff is still owed. */
 		enforcementAttempts: number;
+		/** True once the context hook injected the eligible required-handoff nudge in the current run. */
+		eligibleNudgeDelivered: boolean;
 		/** Human `/handoff <direction>` instruction, or null when the model must supply one. */
 		nextInstruction: string | null;
 	} | null;
@@ -146,7 +148,7 @@ export interface SchematicState {
 	/** One abort promise per child session, shared by signal and reset cleanup. WeakMap entries are GC'd with the session; no manual clear needed. */
 	childAbortPromises: WeakMap<AgentSession, Promise<void>>;
 
-	/** Whether readonly mode is active — write/edit blocked; handoff needs explicit /handoff or a human topic boundary; bash writes limited to temp. */
+	/** Whether readonly mode is active — write/edit/powershell blocked; handoff needs explicit /handoff or a human topic boundary; bash writes limited to temp. */
 	readonlyEnabled: boolean;
 
 	/** One-shot flag: deliver a readonly ON or OFF nudge via context hook, then clear. */

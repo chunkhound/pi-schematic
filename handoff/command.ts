@@ -50,6 +50,7 @@ function resetHandoffRequest(state: SchematicState, direction: string): void {
 	state.pendingRequestedHandoff = {
 		toolCalled: false,
 		enforcementAttempts: 0,
+		eligibleNudgeDelivered: false,
 		nextInstruction: direction,
 	};
 }

@@ -10,7 +10,7 @@ import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 /** Scope of bash filesystem mutations blocked by readonly mode. */
 export const READONLY_BASH_SCOPE = "bash writes/deletions outside temp blocked";
 /** Scope of non-temporary mutations blocked while readonly is active. */
-export const READONLY_NON_TEMP_MUTATION_SCOPE = "write, edit, and non-temp bash filesystem mutations remain blocked";
+export const READONLY_NON_TEMP_MUTATION_SCOPE = "write, edit, powershell, and non-temp bash filesystem mutations remain blocked";
 /** Message emitted when the OS sandbox rejects a readonly mutation. */
 export const READONLY_SANDBOX_BLOCK_NOTICE = "[readonly mode] The OS sandbox blocked a filesystem write outside the OS temp dir.\nUse /readonly to disable, or write within the OS temp dir.";
 /** User-visible shorthand for an explicit handoff request. */
@@ -20,7 +20,7 @@ export const READONLY_HANDOFF_TRIGGER = "explicit /handoff or an eligible human 
 /** Post-handoff readonly outcome announced while this context prepares the handoff. */
 export const READONLY_NEXT_CONTEXT_RESUMES = "Fresh context resumes in readonly mode.";
 /** Child-agent summary of the readonly mutation policy. */
-export const READONLY_WRITE_EDIT_BASH = `write/edit blocked; ${READONLY_BASH_SCOPE}`;
+export const READONLY_WRITE_EDIT_BASH = `write/edit/powershell blocked; ${READONLY_BASH_SCOPE}`;
 
 /** Reason for malformed bash tool input at the readonly boundary. */
 export const READONLY_INVALID_BASH_COMMAND_REASON = "bash command input must be a string";
@@ -54,22 +54,28 @@ export const READONLY_CHILD_AUTHORITY_NOTE = "You inherit readonly authority in 
 export const READONLY_WRITE_EDIT_BLOCK_REASON =
 	"Readonly mode: write/edit blocked until the user disables readonly. Do not attempt alternative write strategies.";
 
+export const READONLY_POWERSHELL_BLOCK_REASON =
+	"Readonly mode: powershell blocked until the user disables readonly. Do not run PowerShell or other shells through another tool.";
+
 export const READONLY_HANDOFF_BLOCK_REASON =
 	`Readonly mode: handoff blocked until an ${READONLY_HANDOFF_TRIGGER} enables the temporary exception. Use spawn for same-topic delegation.`;
 
 export const READONLY_WRITE_EDIT_SUMMARY = `[readonly] ${READONLY_WRITE_EDIT_BASH}`;
 
-export const READONLY_ACTIVE_SUMMARY = `[readonly] enabled — write/edit blocked; ${READONLY_BASH_SCOPE}; handoff needs ${READONLY_HANDOFF_TRIGGER}.`;
+/** Readonly summary for a child whose effective tool list has no bash tool. */
+export const READONLY_NO_SHELL_SUMMARY = "[readonly] write/edit/powershell blocked; this readonly child has no shell tool.";
 
-export const READONLY_HANDOFF_EXCEPTION_SUMMARY = `[readonly] temporary handoff exception active; write/edit remain blocked; ${READONLY_BASH_SCOPE}.`;
+export const READONLY_ACTIVE_SUMMARY = `[readonly] enabled — write/edit/powershell blocked; ${READONLY_BASH_SCOPE}; handoff needs ${READONLY_HANDOFF_TRIGGER}.`;
+
+export const READONLY_HANDOFF_EXCEPTION_SUMMARY = `[readonly] temporary handoff exception active; write/edit/powershell remain blocked; ${READONLY_BASH_SCOPE}.`;
 
 /** TUI notification shown when readonly mode is enabled. */
-export const READONLY_ENABLED_STATUS = `[readonly] enabled — write/edit blocked; handoff needs ${READONLY_HANDOFF_TRIGGER}; ${READONLY_BASH_SCOPE}`;
+export const READONLY_ENABLED_STATUS = `[readonly] enabled — write/edit/powershell blocked; handoff needs ${READONLY_HANDOFF_TRIGGER}; ${READONLY_BASH_SCOPE}`;
 
 export const READONLY_COMMAND_DESCRIPTION =
 	`Toggle readonly mode (${READONLY_WRITE_EDIT_BASH}; handoff needs ${READONLY_HANDOFF_TRIGGER})`;
 
-export const READONLY_DISABLED_SUMMARY = "[readonly] disabled — write, edit, handoff, and bash writes are now fully available.";
+export const READONLY_DISABLED_SUMMARY = "[readonly] disabled — write, edit, handoff, and bash writes are now fully available, as is powershell where it is active.";
 
 /** Notification on readonly toggle-off for TUI user. */
 export const READONLY_DISABLED_NOTIFICATION = READONLY_DISABLED_SUMMARY;
@@ -82,7 +88,7 @@ export const READONLY_PENDING_HANDOFF_READONLY_OFF_NOTIFICATION =
 
 /** Notification in /handoff command when readonly is active. */
 export const READONLY_HANDOFF_EXCEPTION_NOTIFICATION =
-	`Readonly is active. An ${READONLY_EXPLICIT_HANDOFF} exception is reserved for this request; the handoff will start a fresh context once feasible. Write/edit remain blocked, and ${READONLY_BASH_SCOPE} stays in effect. After a successful handoff, ${READONLY_NEXT_CONTEXT_RESUMES.toLowerCase()}`;
+	`Readonly is active. An ${READONLY_EXPLICIT_HANDOFF} exception is reserved for this request; the handoff will start a fresh context once feasible. Write/edit/powershell remain blocked, and ${READONLY_BASH_SCOPE} stays in effect. After a successful handoff, ${READONLY_NEXT_CONTEXT_RESUMES.toLowerCase()}`;
 
 /** Add context usage to the one-shot readonly-disabled message. */
 export function buildReadonlyDisabledContextSuffix(percent: number): string {
