@@ -79,13 +79,13 @@ describe("workflow limits E2E", () => {
 		assert.deepEqual(summaryOf(entries).limits, { costLimit: null, timeBudgetMs: null });
 	}));
 
-	it("maps every time preset and the custom minutes to its exact budget", async () => withWorkflowChild(async (h) => {
+	it("maps every time preset and the custom hours to its exact budget", async () => withWorkflowChild(async (h) => {
 		// Literal expectations: reading TIME_PRESET_MS would test the map against itself.
 		const expected: Record<string, number | null> = {
 			"1 hour": 3_600_000,
 			"4 hours": 14_400_000,
 			"8 hours": 28_800_000,
-			"Custom…": 2 * 60_000,
+			"Custom…": 2 * 3_600_000,
 			"No target": null,
 		};
 		// Pin the shipped preset vocabulary so a new preset cannot ship without a literal above.
@@ -145,11 +145,11 @@ describe("workflow limits E2E", () => {
 	}));
 
 	it("a custom time target above the sandbox timer max is rejected and re-prompts", async () => withWorkflowChild(async (h) => {
-		// 40000 minutes = 2.4e9 ms, whose doubled hard deadline overruns the sandbox timer.
+		// 40000 hours = 1.44e11 ms, whose doubled hard deadline overruns the sandbox timer.
 		await sendOk(h, "mock-select No target");
 		await sendOk(h, "mock-select Custom…");
 		await sendOk(h, "mock-input 40000");
-		await sendOk(h, "mock-input 60");
+		await sendOk(h, "mock-input 1");
 		const summary = summaryOf(await runWorkflow(h, WORKFLOW));
 		assert.equal(summary.limits.timeBudgetMs, 3_600_000, "the corrected value wins");
 		const events = await readUiEvents(h);

@@ -22,10 +22,12 @@ const CUSTOM = "Custom…";
 // non-special label to an entry, so a label added without a value fails compile.
 const COST_PRESETS = ["$1", "$5", "$10", NO_TARGET, CUSTOM];
 const TIME_PRESETS_BASE = ["1 hour", "4 hours", "8 hours", NO_TARGET, CUSTOM] as const;
+// The time dialog speaks hours: presets and the custom input share this ms-per-hour.
+const MS_PER_HOUR = 3_600_000;
 export const TIME_PRESET_MS: Record<Exclude<(typeof TIME_PRESETS_BASE)[number], typeof NO_TARGET | typeof CUSTOM>, number> = {
-	"1 hour": 3_600_000,
-	"4 hours": 14_400_000,
-	"8 hours": 28_800_000,
+	"1 hour": MS_PER_HOUR,
+	"4 hours": 4 * MS_PER_HOUR,
+	"8 hours": 8 * MS_PER_HOUR,
 };
 export const TIME_PRESETS: string[] = [...TIME_PRESETS_BASE];
 
@@ -194,7 +196,7 @@ async function pickTime(ctx: ExtensionCommandContext): Promise<LimitChoice> {
 	const choice = await ctx.ui.select("Time target — soft: stops at next checkpoint", TIME_PRESETS);
 	if (choice === undefined) return { ok: false, value: null };
 	if (choice === NO_TARGET) return { ok: true, value: null };
-	if (choice === CUSTOM) return customNumber(ctx, "Time target (minutes)", "minutes", 60_000, MAX_TIME_BUDGET_MS);
+	if (choice === CUSTOM) return customNumber(ctx, "Time target (hours)", "hours", MS_PER_HOUR, MAX_TIME_BUDGET_MS);
 	// Fail loud: an unknown label here is a preset-list/map drift bug, not a user choice.
 	const ms = TIME_PRESET_MS[choice as keyof typeof TIME_PRESET_MS];
 	if (ms === undefined) throw new Error(`Unknown time preset: ${choice}`);
