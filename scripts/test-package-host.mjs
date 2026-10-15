@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createCompatCopy, latestPiDependencies, prepareCompatCopy, resolveLatestPi, writeCompatArtifacts, writeCompatDiagnostics } from "./compat-fixture.mjs";
+import { createCompatCopy, latestPiDependencies, packEntry, prepareCompatCopy, resolveLatestPi, writeCompatArtifacts, writeCompatDiagnostics } from "./compat-fixture.mjs";
 import { repoRootFromScript, runChecked, runNpmWithRetry } from "./compat-process.mjs";
 
 const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
@@ -16,8 +16,8 @@ async function main() {
   try {
     prepareCompatCopy(copy);
 
-    const packJson = JSON.parse((await runNpmWithRetry(copy, ["pack", "--json", "--ignore-scripts"], { capture: true })).stdout);
-    tarball = join(copy, packJson[0].filename);
+    const packStdout = (await runNpmWithRetry(copy, ["pack", "--json", "--ignore-scripts"], { capture: true })).stdout;
+    tarball = join(copy, packEntry(packStdout).filename);
     const latestPi = await resolveLatestPi(copy);
     mkdirSync(host, { recursive: true });
     writeFileSync(join(host, "package.json"), `${JSON.stringify({

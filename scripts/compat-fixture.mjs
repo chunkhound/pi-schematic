@@ -29,16 +29,51 @@ export function prepareCompatCopy(copy) {
   writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
 }
 
+// `npm view --json` prints empty stdout and exits 0 for an undeclared field, and
+// npm 12 wraps a single value in a one-element array.
+export function parseNpmViewValue(stdout) {
+  if (!stdout.trim()) return undefined;
+  let value;
+  try {
+    value = JSON.parse(stdout);
+  } catch (cause) {
+    throw new Error(`Unexpected npm view --json output: ${JSON.stringify(stdout)}`, { cause });
+  }
+  return Array.isArray(value) && value.length === 1 ? value[0] : value;
+}
+
+// npm before 12 returns `npm pack --json` as an array; npm 12 as an object keyed by package name.
+export function packEntry(stdout) {
+  let packJson;
+  try {
+    packJson = JSON.parse(stdout);
+  } catch (cause) {
+    throw new Error(`Unexpected npm pack --json output: ${JSON.stringify(stdout)}`, { cause });
+  }
+  let entry;
+  if (Array.isArray(packJson) && packJson.length === 1) entry = packJson[0];
+  else if (packJson && typeof packJson === "object" && Object.keys(packJson).length === 1) entry = Object.values(packJson)[0];
+  if (typeof entry?.filename !== "string" || !entry.filename) {
+    throw new Error(`Unexpected npm pack --json output: ${JSON.stringify(stdout)}`);
+  }
+  return entry;
+}
+
 /** Resolve one current Pi release and the exact TypeBox version it requires. */
-export async function resolveLatestPi(copy) {
-  const piVersion = JSON.parse((await runNpmWithRetry(copy, [
+export async function resolveLatestPi(copy, options = {}) {
+  const piStdout = (await runNpmWithRetry(copy, [
     "view", "@earendil-works/pi-coding-agent@latest", "version", "--json",
-  ], { capture: true })).stdout);
-  const typeboxVersion = JSON.parse((await runNpmWithRetry(copy, [
+  ], { ...options, capture: true })).stdout;
+  const piVersion = parseNpmViewValue(piStdout);
+  if (typeof piVersion !== "string" || !piVersion) {
+    throw new Error(`Latest Pi coding-agent did not declare a usable version: ${JSON.stringify(piStdout)}`);
+  }
+  const typeboxStdout = (await runNpmWithRetry(copy, [
     "view", `@earendil-works/pi-coding-agent@${piVersion}`, "dependencies.typebox", "--json",
-  ], { capture: true })).stdout);
-  if (typeof piVersion !== "string" || !piVersion || typeof typeboxVersion !== "string" || !typeboxVersion) {
-    throw new Error("Latest Pi coding-agent did not declare usable Pi and TypeBox versions");
+  ], { ...options, capture: true })).stdout;
+  const typeboxVersion = parseNpmViewValue(typeboxStdout);
+  if (typeof typeboxVersion !== "string" || !typeboxVersion) {
+    throw new Error(`Pi coding-agent ${piVersion} did not declare a usable TypeBox version: ${JSON.stringify(typeboxStdout)}`);
   }
   return { piVersion, typeboxVersion };
 }
