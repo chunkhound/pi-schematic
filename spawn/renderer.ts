@@ -30,7 +30,7 @@ import {
 
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
-import { Container, Spacer, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, Spacer, stripTerminalSequences, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
 import { escapeDisplayLabel } from "../model-groups/display.js";
 import { abortChildSession, type SchematicState } from "../state.js";
@@ -291,7 +291,7 @@ function wrapSpawnShell(lines: string[], width: number, theme: Theme | undefined
 function truncatePlainText(text: string, width: number): string {
 	// truncateToWidth() may inject ANSI resets even when truncating plain
 	// unicode text. Strip them here so outer shell/background styling stays intact.
-	return truncateToWidth(text, width).replace(/\u001b\[[0-9;]*m/g, "");
+	return stripTerminalSequences(truncateToWidth(text, width));
 }
 
 function truncateAndColor(text: string, width: number, color: (name: ThemeColor, text: string) => string, colorName: ThemeColor): string {
