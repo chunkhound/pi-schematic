@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -77,6 +77,48 @@ test("only workflow.run and workflow.shell spread their arguments", () => {
 test("a real CodemodeSandbox accepts the handle names", async () => {
 	const sandbox = new CodemodeSandbox({ globals: createWorkflowHost(fakeDeps()).globals() });
 	await sandbox.close();
+});
+
+test("recordExit aborts on append failure and leaves the exit unset", () => {
+	const deps = fakeDeps();
+	let exitAppends = 0;
+	deps.pi.appendEntry = (type: string) => { if (type === "workflow-exit") exitAppends++; throw new Error("disk full"); };
+	const host = createWorkflowHost(deps);
+	assert.throws(() => host.recordExit({ reason: "error" }, "error"), /disk full/);
+	assert.equal(host.abortedReason(), "error");
+	assert.equal(host.exitRecord(), null);
+	assert.equal(exitAppends, 1);
+});
+
+test("recordExit appends once and ignores later outcomes", () => {
+	const deps = fakeDeps();
+	let appended = 0;
+	deps.pi.appendEntry = () => { appended++; };
+	const host = createWorkflowHost(deps);
+	host.recordExit({ reason: "done", metadata: { ok: true } }, "error");
+	host.recordExit({ reason: "changed" }, "error");
+	assert.equal(appended, 1);
+	assert.deepEqual(host.exitRecord(), { reason: "done", metadata: { ok: true } });
+});
+
+test("recordExit maps metadata, partial salvage, and checkpoint flags", () => {
+	const makeHost = () => createWorkflowHost(fakeDeps());
+	const workflowExit = makeHost();
+	workflowExit.recordExit({ reason: "done", metadata: { result: 1 } }, "error");
+	assert.deepEqual(workflowExit.exitRecord(), { reason: "done", metadata: { result: 1 } });
+	const checkpoint = makeHost();
+	checkpoint.recordExit({ reason: "cost-limit", partial: { phase: 2 }, checkpoint: true }, "cost-limit");
+	assert.equal(checkpoint.exitRecord()?.reason, "cost-limit");
+	assert.equal(checkpoint.exitRecord()?.checkpoint, true);
+	assert.deepEqual(checkpoint.exitRecord()?.partial, { phase: 2 });
+	const hardAbort = makeHost();
+	hardAbort.recordExit({ reason: "error", partial: null, error: "stopped" }, "error");
+	assert.equal(hardAbort.exitRecord()?.reason, "error");
+	assert.equal(hardAbort.exitRecord()?.error, "stopped");
+	assert.equal(hardAbort.exitRecord()?.partial, null);
+	const commandExit = makeHost();
+	commandExit.recordExit({ reason: "error", partial: { phase: 3 } }, "error");
+	assert.equal(commandExit.exitRecord()?.checkpoint, undefined, "partial data alone does not mark a checkpoint stop");
 });
 
 test("a guarded call past the cost limit defers the stop to the next checkpoint", async () => {
@@ -322,6 +364,16 @@ test("a host error notice names a transcript record that could not be persisted"
 	notices.length = 0;
 	await shell.execute(["echo hi"], context);
 	assert.equal(notices[0], "workflow progress failed: ui down");
+});
+
+// WHY: the exit record has exactly one writer (host.recordExit); a second append site would
+// reintroduce the split-writer bug (F3). This static guard keeps the append single-sourced.
+test("the workflow-exit record has exactly one writer file", () => {
+	const dir = new URL("../../workflow/", import.meta.url);
+	const writers = readdirSync(dir)
+		.filter((name) => name.endsWith(".ts"))
+		.filter((name) => readFileSync(new URL(name, dir), "utf8").includes("appendEntry(WORKFLOW_EXIT_ENTRY_TYPE"));
+	assert.deepEqual(writers, ["host.ts"], "only the host may append the run's exit record");
 });
 
 // WHY: docs/workflows.md states the handle count and partitions the surface into guarded,

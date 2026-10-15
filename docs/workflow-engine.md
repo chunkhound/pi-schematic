@@ -22,7 +22,7 @@ One `/workflow <file> [args]` run. Each step names its owner module.
 | 12 | Execute | `@earendil-works/pi-codemode` | The QuickJS worker runs the composed script body. |
 | 13 | Dispatch handles | `workflow/host.ts` | `executeGuarded` gates, counts, and runs each `workflow.<member>` effect. |
 | 14 | Deferred stop / checkpoint | `workflow/host.ts` | `guardDeferredStop` arms a pending stop; `handleCheckpoint` stops there and salvages. |
-| 15 | Exit record | `workflow/host.ts` + `workflow/command.ts` | `handleExit`, `handleCheckpoint`, and `recordHardAbortExit` write it; `command.ts` (`recordExitOnce`) enforces exactly one. |
+| 15 | Exit record | `workflow/host.ts` | The single writer is `WorkflowHost.recordExit`: `handleExit`, `handleCheckpoint`, and `recordHardAbortExit` call it directly; `command.ts` calls it once for a returned or infra-failed run. |
 | 16 | Summary | `workflow/summary.ts` | `buildWorkflowSummary`; `command.ts` (`finalizeRun`) appends it. |
 
 ## Module map
@@ -95,7 +95,7 @@ Soft targets and author semantics live in [workflows.md](workflows.md). Engine m
 - `MAX_DEFERRED_EFFECTS` in `workflow/host.ts` bounds guarded effects after a pending stop (rule in [workflows.md](workflows.md)); beyond it `recordHardAbortExit` writes the exit and `abortHost` hard-aborts.
 - `HARD_DEADLINE_FACTOR` in `workflow/sandbox.ts` sets the sandbox backstop past the soft time target.
 - Reserved abort reasons: the list and the no-reuse rule live in [workflows.md](workflows.md) (`ReservedReason` in `workflow/types.ts` pins the tokens). `handleExit` rejects a workflow reason that reuses one.
-- Exactly one `workflow-exit` entry per finished run. `command.ts` (`recordExitOnce`) guards it; `workflow.exit`, a checkpoint stop, a hard abort, or `returned` all converge on it.
+- Exactly one `workflow-exit` entry per finished run. `WorkflowHost.recordExit` (`workflow/host.ts`) is the single writer; `workflow.exit`, a checkpoint stop, a hard abort, `returned`, and an infra failure all converge on it.
 - `salvagedPartial` (`command.ts`) attaches the last checkpoint metadata only for a checkpoint stop or an abort after a checkpoint.
 
 ## Observable surfaces
@@ -104,7 +104,7 @@ All surfaces are CustomEntry or UI only. None enter the LLM context.
 
 | Surface | Owner | Content |
 |---|---|---|
-| `workflow-exit` entry | `workflow/host.ts`, `workflow/command.ts` | One exit record, always `{ reason, ... }`: workflow metadata as `metadata`, a checkpoint stop or hard abort adds `partial` (and `error`), and a script that ends without `workflow.exit` records `returned`. No registered renderer. |
+| `workflow-exit` entry | `workflow/host.ts` | One exit record, always `{ reason, ... }`: workflow metadata as `metadata`, a checkpoint stop or hard abort adds `partial` (and `error`), and a script that ends without `workflow.exit` records `returned`. No registered renderer. |
 | `workflow-summary` entry | `workflow/summary.ts`, rendered by `workflow/summary-renderer.ts` | Run overview: reason, elapsed, counts, spend rows, effect log. |
 | `workflow-shell` entry | `workflow/activity.ts` | One shell call: exit status, duration, bounded output tail. |
 | `workflow-log` entry | `workflow/command.ts` | The script's `console`/`text()` output. |

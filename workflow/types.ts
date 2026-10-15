@@ -98,11 +98,29 @@ void WORKFLOW_ERROR_PHASES_EXHAUSTIVE;
 export interface ExitRecord {
 	/** Derived from the exit metadata by {@link deriveExitReason}; a checkpoint stop records the reserved stop reason instead. */
 	reason: string | undefined;
+	/** `workflow.exit` metadata exactly as the workflow supplied it. */
 	metadata: unknown;
+	/** Last checkpoint metadata salvaged by a checkpoint stop or a hard abort. */
+	partial?: unknown;
 	/** True when the exit was triggered at a checkpoint by a deferred stop, not by `workflow.exit`. */
 	checkpoint?: boolean;
 	/** Host abort message (e.g. the deferred-stop escalation); reaches the exit entry and the summary. docs/workflows.md (Exit). */
 	error?: string;
+}
+
+/** One stop outcome, the single input the host turns into both the `workflow-exit` entry and
+ * the {@link ExitRecord}. `reason` is fully derived before the call: a workflow reason, a
+ * reserved token, or `returned`. */
+export interface ExitOutcome {
+	reason: string;
+	/** `workflow.exit` metadata exactly as the workflow supplied it. */
+	metadata?: unknown;
+	/** Last checkpoint metadata salvaged by a checkpoint stop or a hard abort. */
+	partial?: unknown;
+	/** Host abort message for a hard abort or an infrastructure failure. */
+	error?: string;
+	/** True when the run stopped at a checkpoint due to a deferred target stop. */
+	checkpoint?: boolean;
 }
 
 /**
@@ -362,6 +380,10 @@ export interface WorkflowHost {
 	/** Host-owned cancellation signal, wired to the sandbox and the active model turn. */
 	readonly signal: AbortSignal;
 	abort(reason: ReservedReason, message?: string): void;
+	/** The single writer of the `workflow-exit` entry and {@link ExitRecord}. Append-first: a
+	 * failed append aborts with `abortReason` and leaves the exit unset, so the infra path can
+	 * still record the run's single exit. A call after a recorded exit is a no-op. */
+	recordExit(outcome: ExitOutcome, abortReason: ReservedReason, messagePrefix?: string): void;
 	/** The `workflow.<member>` handles exposed to the sandbox. */
 	globals(): CodemodeTool[];
 	exitRecord(): ExitRecord | null;

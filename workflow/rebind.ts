@@ -34,14 +34,8 @@ export interface RebindBundle {
 	unbounded: boolean;
 }
 
-/** Final exit outcome: set once per run, consumed by the overview. */
-export interface RunOutcome {
-	reason: string;
-	error?: string;
-	partial?: unknown;
-}
-
-/** Per-run handles that must follow the current context across replacements. */
+/** Final exit outcome is owned by the host (`WorkflowHost.exitRecord`); the run control
+ * holds only the live bindings that follow a session replacement. */
 export interface RunCtl {
 	/** Null from `newSession` teardown until `withSession` rebinds: pi invalidates the old
 	 * command ctx before the replacement is live, so no reader may touch it in that window. */
@@ -51,10 +45,6 @@ export interface RunCtl {
 	name: string;
 	/** Latest progress snapshot; survives replacement so the fresh UI restores the indicator. */
 	progress: WorkflowProgressView | null;
-	/** Guards the single-exit invariant even when reporting itself fails mid-way. */
-	exitRecorded: boolean;
-	/** Final exit outcome, set by the end path and consumed by the overview. */
-	outcome: RunOutcome | null;
 	unsubscribeInput: () => void;
 	unsubscribeCancel: () => void;
 	/** Bridges pi's per-turn outcome to the host, so an RPC/print abort (no TUI key funnel) still

@@ -34,7 +34,7 @@ function ctxWith(branch: unknown[] = []): ExtensionCommandContext {
 
 function ctlWith(ctx: ExtensionCommandContext | null, signal: AbortSignal, aborts: Array<[string, string | undefined]> = []): RunCtl {
 	return {
-		ctx, host: { signal, abort: (reason: string, message?: string) => aborts.push([reason, message]) }, name: "w", progress: null, exitRecorded: false, outcome: null,
+		ctx, host: { signal, abort: (reason: string, message?: string) => aborts.push([reason, message]) }, name: "w", progress: null,
 		unsubscribeInput: () => {}, unsubscribeCancel: () => {}, unsubscribeTurnEnd: () => {},
 	} as unknown as RunCtl;
 }

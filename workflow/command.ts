@@ -17,14 +17,14 @@ import { composeWorkflow } from "./driver.js";
 import { messageOf, safeAppendEntry, withRecordStatus } from "./errors.js";
 import { createWorkflowHost, mapSandboxError } from "./host.js";
 import { notify, resolveLimits } from "./limits-dialog.js";
-import { performHandoff, performNewSession, type RebindableDeps, type RebindBundle, type RebindHooks, type RunCtl, type RunOutcome } from "./rebind.js";
+import { performHandoff, performNewSession, type RebindableDeps, type RebindBundle, type RebindHooks, type RunCtl } from "./rebind.js";
 import { createShellActivity, WORKFLOW_LOG_ENTRY_TYPE, type ShellActivity } from "./activity.js";
 import { READONLY_DISABLED_NOTIFICATION, READONLY_ENABLED_STATUS } from "../notifications.js";
 import type { ShellRun } from "./shell.js";
 import { createWorkflowSandbox, hardDeadlineMs } from "./sandbox.js";
 import { WORKFLOW_SUMMARY_ENTRY_TYPE, buildWorkflowSummary } from "./summary.js";
-import type { WorkflowHost, WorkflowHostDeps, WorkflowProgress, WorkflowSandboxFactory, ReservedReason, ExitRecord, WorkflowErrorPhase } from "./types.js";
-import { WORKFLOW_ERROR_ENTRY_TYPE, WORKFLOW_EXIT_ENTRY_TYPE } from "./types.js";
+import type { WorkflowHost, WorkflowHostDeps, WorkflowProgress, WorkflowSandboxFactory, ReservedReason, ExitOutcome, ExitRecord, WorkflowErrorPhase } from "./types.js";
+import { WORKFLOW_ERROR_ENTRY_TYPE } from "./types.js";
 import { parseWorkflowArgs, listWorkflows, readWorkflow, resolveWorkflowPath } from "./file.js";
 
 type CancelKey = "escape" | "ctrl+c";
@@ -284,7 +284,7 @@ function clearStaleRunState(bundle: RunBundle): void {
 /** Open one live run: bindings, shell activity channel, and the host wired to them. */
 function openRun(bundle: RunBundle, program: RunProgram): { ctl: RunCtl; host: WorkflowHost; activity: ShellActivity } {
 	clearStaleRunState(bundle);
-	const ctl: RunCtl = { ctx: program.ctx, host: null, name: program.name, progress: null, exitRecorded: false, outcome: null, unsubscribeInput: () => {}, unsubscribeCancel: () => {}, unsubscribeTurnEnd: () => {} };
+	const ctl: RunCtl = { ctx: program.ctx, host: null, name: program.name, progress: null, unsubscribeInput: () => {}, unsubscribeCancel: () => {}, unsubscribeTurnEnd: () => {} };
 	// Shell visibility is UI-only and never enters LLM context: a live widget plus CustomEntry audit rows.
 	const activity = createShellActivity({ getPi: () => bundle.pi, getCtx: () => ctl.ctx });
 	const host = buildHost(bundle, ctl, (event) => activity.onEffect(event));
@@ -389,7 +389,7 @@ async function runSandbox(bundle: RunBundle, program: RunProgram, host: Workflow
 			bundle.deps.sandboxFactory,
 		);
 		const result = await sandbox.execute(program.compiled, { store: { intent: program.args, args: program.args }, signal: host.signal });
-		reportResult(bundle.pi, host, result, ctl);
+		reportResult(host, result, ctl);
 		surfaceConsoleOutput(bundle.pi, result, ctl.ctx);
 	} catch (error) {
 		recordInfraExit(bundle.pi, host, ctl, error);
@@ -411,7 +411,7 @@ function surfaceConsoleOutput(pi: ExtensionAPI, result: CodemodeResult, ctx: Ext
 	if (!safeAppendEntry(pi, WORKFLOW_LOG_ENTRY_TYPE, { text }) && ctx) advisoryNotify(ctx, "workflow output could not be persisted", "warning");
 }
 
-function reportResult(pi: ExtensionAPI, host: WorkflowHost, result: CodemodeResult, ctl: RunCtl): void {
+function reportResult(host: WorkflowHost, result: CodemodeResult, ctl: RunCtl): void {
 	// Read the exit BEFORE aborting: a controlled checkpoint/exit stop must not be
 	// re-labelled as a cancelled/error sandbox abort.
 	const exit = host.exitRecord();
@@ -420,11 +420,13 @@ function reportResult(pi: ExtensionAPI, host: WorkflowHost, result: CodemodeResu
 	// A controlled checkpoint/exit stop is not an error: only a real sandbox failure or the
 	// exit record's own escalation message (docs/workflows.md, Targets, exit, cancellation, salvage) carries one.
 	const error = exit ? exit.error : result.ok === false ? result.error.message : undefined;
-	recordExitOnce(pi, ctl, {
-		reason: exit ? exitRecordReason(exit) : aborted ?? "returned",
-		error,
-		partial: salvagedPartial(host, exit, result.ok === false || aborted !== null),
-	}, !exit);
+	// A controlled stop already recorded its exit; otherwise this is the run's single write.
+	if (!exit) {
+		host.recordExit(
+			{ reason: aborted ?? "returned", error, partial: salvagedPartial(host, null, result.ok === false || aborted !== null) },
+			"error",
+		);
+	}
 	notifyRunOutcome(ctl, exit, aborted, result, error);
 }
 
@@ -449,7 +451,8 @@ function recordInfraExit(pi: ExtensionAPI, host: WorkflowHost, ctl: RunCtl, erro
 	const exit = host.exitRecord();
 	host.abort("error", messageOf(error));
 	try {
-		recordExitOnce(pi, ctl, infraOutcome(host, exit, error), !exit);
+		// An exit that already recorded itself stays the run's single record.
+		if (!exit) host.recordExit(infraOutcome(host, error), "error");
 	} catch (recordError) {
 		// Both append attempts failed: the run would end with zero persisted records.
 		// Surface the loss on whatever surface is left instead of staying silent.
@@ -458,12 +461,12 @@ function recordInfraExit(pi: ExtensionAPI, host: WorkflowHost, ctl: RunCtl, erro
 	notifyInfraFailure(ctl, error);
 }
 
-/** Outcome fields for an infra failure; a prior controlled exit keeps its reason and error. */
-function infraOutcome(host: WorkflowHost, exit: ExitRecord | null, error: unknown): RunOutcome {
+/** Outcome fields for an infra failure, read after `host.abort`: a prior reserved reason wins. */
+function infraOutcome(host: WorkflowHost, error: unknown): ExitOutcome {
 	return {
-		reason: exit ? exitRecordReason(exit) : host.abortedReason() ?? "error",
-		error: exit ? exit.error : messageOf(error),
-		partial: salvagedPartial(host, exit, true),
+		reason: host.abortedReason() ?? "error",
+		error: messageOf(error),
+		partial: salvagedPartial(host, null, true),
 	};
 }
 
@@ -475,7 +478,7 @@ function notifyInfraFailure(ctl: RunCtl, error: unknown): void {
 /** Salvage (docs/workflows.md, Targets, exit, cancellation, salvage): only a checkpoint stop or an abort after a checkpoint carries the last
  * checkpoint's metadata; a plain `workflow.exit` or a normal return carries none. */
 function salvagedPartial(host: WorkflowHost, exit: ExitRecord | null, abortedRun: boolean): unknown {
-	if (exit) return exit.checkpoint ? host.checkpointRecord()?.metadata : undefined;
+	if (exit) return exit.partial;
 	return abortedRun ? host.checkpointRecord()?.metadata : undefined;
 }
 
@@ -491,40 +494,22 @@ function surfaceLostExitRecord(pi: ExtensionAPI, ctl: RunCtl, error: unknown): v
 	}
 }
 
-/** Exactly one exit record per finished run — workflow exit (appended by workflow.exit),
- * a reserved abort reason, or "returned" — so headless runs never end silently. The guard
- * owns append + outcome together; a throwing append resets the guard so the sibling
- * infra-failure path can still record the run's single exit. `entryPending` is false when
- * `workflow.exit` already wrote the record itself. */
-function recordExitOnce(pi: ExtensionAPI, ctl: RunCtl, fields: RunOutcome, entryPending: boolean): void {
-	ctl.outcome = {
-		reason: fields.reason,
-		...(fields.error !== undefined ? { error: fields.error } : {}),
-		...(fields.partial !== undefined ? { partial: fields.partial } : {}),
-	};
-	if (!entryPending || ctl.exitRecorded) return;
-	// Guard before append: a throwing append resets it so the infra path can still record.
-	ctl.exitRecorded = true;
-	try {
-		pi.appendEntry(WORKFLOW_EXIT_ENTRY_TYPE, ctl.outcome);
-	} catch (error) {
-		ctl.exitRecorded = false;
-		throw error;
-	}
-}
-
 /**
  * End-of-run overview: append the persisted summary card exactly once from the cleanup
- * path, so both the sandbox-success and the sandbox-failure exits show it. Advisory:
- * a failed append must never mask the run outcome or escape as a throw from cleanup.
+ * path, so both the sandbox-success and the sandbox-failure exits show it. The single
+ * writer is `host.recordExit`; this only reads the recorded outcome. Advisory: a failed
+ * append must never mask the run outcome or escape as a throw from cleanup.
  */
 function finalizeRun(bundle: RunBundle, ctl: RunCtl, host: WorkflowHost): void {
 	// No live ctx after a replacement that never rebound: still attempt the overview via
 	// the last-known-good runtime pi. A rejecting append stays advisory — the exit record
 	// already stands, so the single-record invariant is intact either way.
-	const outcome = ctl.outcome ?? { reason: host.abortedReason() ?? "returned" };
+	const exit = host.exitRecord();
+	const aborted = host.abortedReason();
+	const reason = exit ? exitRecordReason(exit) : aborted ?? "returned";
+	const partial = salvagedPartial(host, exit, aborted !== null);
 	try {
-		bundle.pi.appendEntry(WORKFLOW_SUMMARY_ENTRY_TYPE, buildWorkflowSummary(ctl.name, outcome.reason, outcome.error, host.metrics(), outcome.partial));
+		bundle.pi.appendEntry(WORKFLOW_SUMMARY_ENTRY_TYPE, buildWorkflowSummary(ctl.name, reason, exit?.error, host.metrics(), partial));
 	} catch (error) {
 		reportSummaryFailure(bundle.pi, ctl, error);
 	}

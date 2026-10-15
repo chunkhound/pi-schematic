@@ -9,8 +9,8 @@ export function messageOf(error: unknown): string {
 
 /** Advisory transcript append: returns false on failure instead of throwing. Use ONLY
  * where the entry is visibility-only and another surface already carries the outcome;
- * append-first contracts (exit records, `recordExitOnce`) must call `pi.appendEntry`
- * directly so their rethrow/abort behavior stays explicit. */
+ * append-first contracts (the `workflow-exit` record via `host.recordExit`) must call
+ * `pi.appendEntry` directly so their rethrow/abort behavior stays explicit. */
 export function safeAppendEntry(pi: ExtensionAPI, customType: string, data?: unknown): boolean {
 	try {
 		pi.appendEntry(customType, data);

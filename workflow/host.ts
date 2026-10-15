@@ -20,6 +20,7 @@ import type {
 	CheckpointRecord,
 	ClassifierRequest,
 	EntriesOptions,
+	ExitOutcome,
 	ExitRecord,
 	WorkflowEntry,
 	WorkflowHandleName,
@@ -136,32 +137,57 @@ function requireCtx(deps: WorkflowHostDeps): ExtensionCommandContext {
 	return ctx;
 }
 
+/** Build the `workflow-exit` wire entry for one outcome: reason first, path payload in named fields. */
+function exitEntryOf(outcome: ExitOutcome): WorkflowExitEntry {
+	return {
+		reason: outcome.reason,
+		...(outcome.metadata !== undefined ? { metadata: outcome.metadata } : {}),
+		...(outcome.partial !== undefined ? { partial: outcome.partial } : {}),
+		...(outcome.error !== undefined ? { error: outcome.error } : {}),
+	};
+}
+
+/** Build the host-side exit outcome. `metadata` is the workflow.exit value; `partial` is the
+ * checkpoint salvage. The summary reads `partial` directly. */
+function exitRecordOf(outcome: ExitOutcome): ExitRecord {
+	return {
+		reason: outcome.reason,
+		metadata: outcome.metadata,
+		...(outcome.partial !== undefined ? { partial: outcome.partial } : {}),
+		...(outcome.checkpoint ? { checkpoint: true } : {}),
+		...(outcome.error !== undefined ? { error: outcome.error } : {}),
+	};
+}
+
 /**
- * The only writer of `state.exit`. Append first: a failed append aborts with `abortReason`
- * and leaves `exit` null, so the infra path still records the single exit entry.
- * `messagePrefix` labels the abort message of the failed append.
+ * The single writer of `state.exit` and the single `workflow-exit` append. Append first: a
+ * failed append aborts with `abortReason` and leaves `exit` null, so the infra path still
+ * records the single exit entry. `messagePrefix` labels the abort message of the failed append.
+ * A call after a recorded exit is a no-op, so every stop seam stays single-record.
  */
-function commitExit(deps: WorkflowHostDeps, state: HostState, record: { entry: WorkflowExitEntry; exit: ExitRecord; abortReason: ReservedReason; messagePrefix?: string }): void {
+function commitExit(deps: WorkflowHostDeps, state: HostState, outcome: ExitOutcome, abortReason: ReservedReason, messagePrefix?: string): void {
+	if (state.exit) return;
 	try {
-		deps.pi.appendEntry(WORKFLOW_EXIT_ENTRY_TYPE, record.entry);
+		deps.pi.appendEntry(WORKFLOW_EXIT_ENTRY_TYPE, exitEntryOf(outcome));
 	} catch (error) {
 		// A failed append must not prevent the host from aborting with the correct reason.
-		abortHost(deps, state, record.abortReason, `${record.messagePrefix ?? ""}${messageOf(error)}`);
+		abortHost(deps, state, abortReason, `${messagePrefix ?? ""}${messageOf(error)}`);
 		throw error;
 	}
-	state.exit = record.exit;
+	state.exit = exitRecordOf(outcome);
 }
 
 /** Hard-abort exit: salvage the last checkpoint (null when none) as the single exit record. The escalation message is part of the record (docs/workflows.md, Exit: reserved reason plus the error message). */
 function recordHardAbortExit(deps: WorkflowHostDeps, state: HostState, error: string): void {
 	if (state.exit) return;
 	const checkpoint = state.checkpoint;
-	const partial = checkpoint?.metadata ?? null;
+	const reason = state.pendingStop ?? "error";
 	commitExit(deps, state, {
-		entry: { reason: state.pendingStop, partial, error },
-		exit: { reason: state.pendingStop ?? undefined, metadata: partial, error, ...(checkpoint ? { checkpoint: true } : {}) },
-		abortReason: state.pendingStop ?? "error",
-	});
+		reason,
+		partial: checkpoint?.metadata ?? null,
+		error,
+		checkpoint: checkpoint !== null,
+	}, reason);
 }
 
 /**
@@ -455,7 +481,7 @@ function handleExit(deps: WorkflowHostDeps, state: HostState, args: unknown): un
 	const reason = deriveExitReason(metadata);
 	validateExitReason(reason);
 	// Single wire shape across every exit path: reason first, path payload in a named field.
-	commitExit(deps, state, { entry: { reason, metadata }, exit: { reason, metadata }, abortReason: "error" });
+	commitExit(deps, state, { reason, metadata }, "error");
 	// `workflow.exit` is terminal: stop the script at this call, unlike a checkpoint's deferral.
 	stopSandbox(state, "workflow exit");
 	return metadata;
@@ -476,11 +502,10 @@ function handleCheckpoint(deps: WorkflowHostDeps, state: HostState, args: unknow
 	// Aborting with the pending-stop reason (first-wins) keeps the infra retry from re-labelling
 	// the stop as a generic "error".
 	commitExit(deps, state, {
-		entry: { reason: state.pendingStop, partial: metadata },
-		exit: { reason: state.pendingStop, metadata, checkpoint: true },
-		abortReason: state.pendingStop,
-		messagePrefix: "checkpoint exit append failed: ",
-	});
+		reason: state.pendingStop,
+		partial: metadata,
+		checkpoint: true,
+	}, state.pendingStop, "checkpoint exit append failed: ");
 	stopSandbox(state, `workflow stopped at checkpoint: ${state.pendingStop}`);
 	return metadata;
 }
@@ -950,6 +975,7 @@ function buildHostInterface(deps: WorkflowHostDeps, state: HostState): WorkflowH
 	return {
 		signal: state.controller.signal,
 		abort: (reason, message) => abortHost(deps, state, reason, message),
+		recordExit: (outcome, abortReason, messagePrefix) => commitExit(deps, state, outcome, abortReason, messagePrefix),
 		globals: () => buildGlobals(deps, state),
 		exitRecord: () => state.exit,
 		checkpointRecord: () => state.checkpoint,
