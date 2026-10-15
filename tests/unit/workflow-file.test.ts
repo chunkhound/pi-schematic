@@ -105,9 +105,11 @@ test("listWorkflows tolerates missing directories", async () => {
 });
 
 test("workflowRoots resolves to expected directories", () => {
-	const roots = workflowRoots("/project", "/agent");
-	assert.deepEqual(roots[0].dir, "/project/.pi/workflows");
-	assert.deepEqual(roots[1].dir, "/agent/workflows");
+	const cwd = "/project";
+	const agentDir = "/agent";
+	const roots = workflowRoots(cwd, agentDir);
+	assert.deepEqual(roots[0].dir, join(cwd, ".pi", "workflows"));
+	assert.deepEqual(roots[1].dir, join(agentDir, "workflows"));
 	assert.deepEqual(roots.map((root) => root.source), ["project", "global"]);
 });
 
