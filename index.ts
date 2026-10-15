@@ -7,7 +7,7 @@
  *   handoff   — deliberate task pivot via compaction
  *
  * Also registers:
- *   - watchdog (advisory primacy-zone reminder after each turn)
+ *   - watchdog (primacy-zone reminder and required-handoff enforcement)
  *   - prompt sections (context primer, current date, topic, model groups, notebook listing)
  *   - state reset on /new
  */
@@ -26,7 +26,7 @@ import { contextPrimerSection, currentDateSection } from "./system-prompt.js";
 import { createPromptSectionRegistry, applyPromptSections } from "./prompt-sections.js";
 import { notebookPagesSection, notebookTopicSection } from "./notebook/prompt.js";
 import { modelGroupsSection } from "./model-groups/prompt.js";
-import { buildNudge, registerWatchdog } from "./watchdog.js";
+import { buildAndRecordNudge, registerWatchdog } from "./watchdog.js";
 import { registerNotebookTools } from "./notebook/tools.js";
 import { ensureNotebookToolsActive, registerNotebookRehydration, reconstructNotebook } from "./notebook/rehydration.js";
 import { registerNotebookTopicTool } from "./notebook/topic-tool.js";
@@ -913,7 +913,7 @@ export default function (pi: ExtensionAPI): void {
 			state.lastWatchdogBand = band;
 		}
 
-		const nudge = buildNudge(state, percent, isHandoffEligible(usage));
+		const nudge = buildAndRecordNudge(state, percent, isHandoffEligible(usage));
 		if (!retainIneligibleHumanBoundary) state.pendingTopicBoundaryHint = null;
 		return {
 			messages: [

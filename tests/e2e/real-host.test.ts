@@ -18,6 +18,7 @@ import {
 	READONLY_WRITE_EDIT_BLOCK_REASON,
 } from "../../notifications.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
+import { buildNudge, MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
 import {
 	messageText,
 	projectStatuses,
@@ -26,8 +27,9 @@ import {
 	toolResults,
 	withRealHost,
 	type RealHost,
+	type RpcEvent,
 } from "./real-host.js";
-import { PROBE_COMMAND, type ProbeRecord, type ScriptedCall } from "./real-host-protocol.js";
+import { PROBE_COMMAND, PROBE_CONTEXT_WINDOW, type ProbeRecord, type ScriptedCall } from "./real-host-protocol.js";
 
 const TEST_OPTIONS = { timeout: REAL_HOST_TEST_TIMEOUT_MS };
 
@@ -95,6 +97,42 @@ function scriptedRequest(log: ProbeRecord[], calls: ScriptedCall[], step: number
 
 function containsText(record: RequestRecord, text: string): boolean {
 	return record.texts.some((candidate) => candidate.includes(text));
+}
+
+/** First line of the watchdog nudge that tells the model to hand off now, read off the production builder. */
+const ELIGIBLE_HANDOFF_NUDGE = buildNudge({
+	activeNotebookTopic: null,
+	pendingTopicBoundaryHint: null,
+	readonlyEnabled: false,
+	pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: "x" },
+}, null, true).split("\n")[0];
+
+/** Threshold compaction reserve: pi compacts once a reply reports more than the window minus this. */
+const COMPACTION_RESERVE_TOKENS = PROBE_CONTEXT_WINDOW / 2;
+
+function eventsOfType(events: RpcEvent[], type: string): RpcEvent[] {
+	return events.filter((event) => event.type === type);
+}
+
+/** Notices of a required handoff the watchdog cancelled. */
+function handoffCancellations(host: RealHost): string[] {
+	return host.notifications
+		.filter((notification) => notification.message.startsWith("Required handoff cancelled"))
+		.map((notification) => notification.message);
+}
+
+/**
+ * After a `/handoff` run that counted one attempt: the next MAX_HANDOFF_ATTEMPTS - 2 runs, each
+ * nudged and counted once, leave the handoff required, and the run after them cancels it.
+ */
+async function expectCancellationAtLastAttempt(host: RealHost): Promise<void> {
+	const middleRuns = MAX_HANDOFF_ATTEMPTS - 2;
+	await host.turn(`/${PROBE_COMMAND.turn} ${middleRuns}`, middleRuns);
+	assert.deepEqual(handoffCancellations(host), [], `the handoff stays required after ${MAX_HANDOFF_ATTEMPTS - 1} settled runs`);
+	await host.turn("/" + PROBE_COMMAND.turn, 1);
+	assert.equal(handoffCancellations(host).length, 1, `settled run ${MAX_HANDOFF_ATTEMPTS} cancels the handoff`);
+	const handoffStatuses = host.statuses.filter((status) => status.statusKey === STATUS_KEY_HANDOFF);
+	assert.equal(handoffStatuses.at(-1)?.statusText, undefined, "the handoff status is cleared");
 }
 
 function onlyResult<T>(results: T[], label: string): T {
@@ -315,6 +353,51 @@ describe("pi-schematic real-host E2E", () => {
 		assert.ok(results[1].text.startsWith("Handoff started."), results[1].text);
 		onlyHandoffCompaction(retried.entries);
 	}));
+
+	it("a run pi retries counts one required-handoff attempt", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+		// A tool call reports usage that makes the handoff eligible, so the call after it is nudged. The
+		// first nudged call fails with a retryable error and pi retries in the same run. pi omits the
+		// failed attempt with a context edit, which leaves usage unknown until the retry pass's own
+		// tool call reports it again, so that pass is nudged at its second call.
+		await host.arm([
+			{ name: "e2e_noop", arguments: {} },
+			{ error: "503 Service Unavailable" },
+			{ name: "e2e_noop", arguments: {} },
+		]);
+		const mark = host.events.length;
+		await host.turn("/handoff finish the report", 1);
+
+		const handoffRun = host.events.slice(mark);
+		const ends = eventsOfType(handoffRun, "agent_end");
+		assert.equal(ends.length, 2, "the failed pass and its retry each end with agent_end");
+		assert.equal(ends[0].willRetry, true, "pi retries the failed pass");
+		assert.equal(eventsOfType(handoffRun, "agent_settled").length, 1, "the run settles once");
+		const nudged = host.probeLog().filter((record): record is RequestRecord => record.kind === "request" && containsText(record, ELIGIBLE_HANDOFF_NUDGE));
+		assert.deepEqual(nudged.map((record) => record.step), [1, 3], "the failed pass and the retry pass both carry the eligible nudge");
+		await expectCancellationAtLastAttempt(host);
+	}, { settings: { retry: { enabled: true, baseDelayMs: 0 } } }));
+
+	it("a run that ends in threshold compaction counts one required-handoff attempt", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+		// The nudged second call replies with usage above the threshold, so pi compacts after the run.
+		// The run has one pass, so this does not tell agent_end from agent_settled counting; it fails
+		// when counting reads context usage at settle, which the compaction has left unknown.
+		const overThreshold = PROBE_CONTEXT_WINDOW - COMPACTION_RESERVE_TOKENS + 1;
+		await host.arm([{ name: "e2e_noop", arguments: {} }, { text: "ack", inputTokens: overThreshold }]);
+		const mark = host.events.length;
+		await host.turn("/handoff finish the report", 1);
+
+		const handoffRun = host.events.slice(mark);
+		const compactions = eventsOfType(handoffRun, "compaction_end");
+		assert.equal(compactions.length, 1, "one compaction");
+		assert.equal(compactions[0].reason, "threshold", "the compaction is pi's threshold compaction");
+		assert.equal(eventsOfType(handoffRun, "agent_end").length, 1, "the run has one pass");
+		const nudged = host.probeLog().filter((record): record is RequestRecord => record.kind === "request" && containsText(record, ELIGIBLE_HANDOFF_NUDGE));
+		assert.deepEqual(nudged.map((record) => record.step), [1], "the second call carries the eligible nudge");
+		const { contextUsage } = await host.client.getSessionStats();
+		assert.ok(contextUsage, "pi reports context usage");
+		assert.equal(contextUsage.tokens, null, "usage is unknown once the run has settled");
+		await expectCancellationAtLastAttempt(host);
+	}, { settings: { compaction: { enabled: true, reserveTokens: COMPACTION_RESERVE_TOKENS } } }));
 
 	it("readonly lifecycle: handoff bypass clears after compaction while readonly persists", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
 		const blocked = join(host.projectDir, "blocked.txt");

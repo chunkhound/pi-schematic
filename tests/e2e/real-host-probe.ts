@@ -2,9 +2,10 @@
  * real-host-probe.ts — Probe extension loaded into the real pi CLI by the
  * real-host E2E harness (`real-host.ts`).
  *
- * Registers a scripted provider whose responses the test arms through
- * `/e2e-script`, plus commands that wait for outstanding work, navigate the tree,
- * start runs without a user turn, and inject delivery and compaction failures. Every
+ * Registers a scripted provider whose responses — tool calls, provider errors and
+ * replies with a given usage — the test arms through `/e2e-script`, plus commands
+ * that wait for outstanding work, navigate the tree, start runs without a user turn,
+ * and inject delivery and compaction failures. Every
  * observation is appended as one JSON line to the file `PROBE_LOG_ENV_VAR` names.
  *
  * The harness loads this file after schematic, so its "input" handler runs last and
@@ -23,12 +24,14 @@ import {
 	PROBE_API,
 	PROBE_BARRIER_STATUS_KEY,
 	PROBE_COMMAND,
+	PROBE_CONTEXT_WINDOW,
 	PROBE_LOG_ENV_VAR,
 	PROBE_MODEL_ID,
 	PROBE_PROVIDER,
+	parseScriptedStep,
 	type BarrierReport,
 	type ProbeRecord,
-	type ScriptedCall,
+	type ScriptedStep,
 } from "./real-host-protocol.js";
 
 const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
@@ -41,24 +44,27 @@ if (!(SCRIPTED_INPUT_TOKENS > MIN_HANDOFF_TOKENS)) {
 		`MIN_HANDOFF_TOKENS (${MIN_HANDOFF_TOKENS}); schematic would reject every scripted handoff.`,
 	);
 }
-const usage = {
-	input: SCRIPTED_INPUT_TOKENS, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: SCRIPTED_INPUT_TOKENS,
-	cost: zeroCost,
-};
+function usageOf(inputTokens: number): AssistantMessage["usage"] {
+	return { input: inputTokens, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: inputTokens, cost: zeroCost };
+}
 
-function parseScript(args: string): ScriptedCall[] {
+function parseScript(args: string): ScriptedStep[] {
 	const parsed: unknown = JSON.parse(args);
 	if (!Array.isArray(parsed)) throw new Error(`/e2e-script expects a JSON array, got: ${args}`);
-	return parsed.map((call: unknown, index) => {
-		if (typeof call !== "object" || call === null) throw new Error(`/e2e-script call ${index} is not an object`);
-		const { name, arguments: callArguments } = call as Record<string, unknown>;
-		if (typeof name !== "string" || !name) throw new Error(`/e2e-script call ${index} has no name`);
-		if (typeof callArguments !== "object" || callArguments === null || Array.isArray(callArguments)) {
-			throw new Error(`/e2e-script call ${index} has no arguments object`);
-		}
-		// JSON.parse output: every value is JSON.
-		return { name, arguments: callArguments as ToolCall["arguments"] };
-	});
+	return parsed.map((step: unknown, index) => parseScriptedStep(step, (reason) => {
+		throw new Error(`/e2e-script step ${index}: ${reason}`);
+	}));
+}
+
+/** The run count `/e2e-turn` takes: none means one, otherwise one positive integer. */
+function parseTurnCount(args: string): number {
+	const text = args.trim();
+	if (text === "") return 1;
+	const count = Number(text);
+	if (!/^[1-9][0-9]*$/.test(text) || !Number.isSafeInteger(count)) {
+		throw new Error(`/e2e-turn expects no argument or a positive decimal run count, got: ${args}`);
+	}
+	return count;
 }
 
 /** One positive integer argument of `/e2e-barrier`. */
@@ -93,12 +99,14 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	if (!logPath) throw new Error(`${PROBE_LOG_ENV_VAR} is not set`);
 	const log = (record: ProbeRecord) => appendFileSync(logPath, JSON.stringify(record) + "\n");
 
-	let armedScript: ScriptedCall[] | null = null;
-	let runScript: ScriptedCall[] | null = null;
+	let armedScript: ScriptedStep[] | null = null;
+	let runScript: ScriptedStep[] | null = null;
 	let step = 0;
 	let runEntryCount = 0;
 	let dropNextSuccessor = false;
 	let cancelNextCompaction = false;
+	// Runs `/e2e-turn <count>` still has to start, one per agent_settled.
+	let chainedTurns = 0;
 
 	// Outstanding work, kept from public extension events only; /e2e-barrier waits until
 	// none is left. A successful handoff tool call awaits its compaction's outcome; a handoff
@@ -118,12 +126,17 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		for (const resolve of waiting) resolve();
 	};
 
+	const startTurn = () => {
+		pi.sendMessage({ customType: "schematic-e2e-turn", content: "e2e tick", display: false }, { triggerTurn: true });
+	};
+
 	const outstanding = (ctx: ExtensionCommandContext): string[] => [
 		...handoffCallsAwaitingCompaction.map((id) => `handoff call ${id} has no compaction outcome`),
 		...compactionsAwaitingSuccessor.map((id) => `handoff compaction ${id} has no successor input`),
 		...(failedCompactionsAwaitingReport > 0 ? [`${failedCompactionsAwaitingReport} failed handoff compaction(s) have no failure-report input`] : []),
 		...inputsAwaitingDelivery.map((text) => `extension input ${JSON.stringify(text.slice(0, 80))} has no user message`),
 		...(runsAwaitingSettle > 0 ? [`${runsAwaitingSettle} run(s) have no agent_settled`] : []),
+		...(chainedTurns > 0 ? [`${chainedTurns} chained /e2e-turn run(s) have not started`] : []),
 		...(ctx.isIdle() ? [] : ["pi is not idle"]),
 		...(ctx.hasPendingMessages() ? ["pi has pending messages"] : []),
 	];
@@ -157,23 +170,35 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		api: PROBE_API, apiKey: "test-key", baseUrl: "http://localhost.invalid",
 		models: [{
 			id: PROBE_MODEL_ID, name: "Schematic E2E Model", reasoning: false,
-			input: ["text"], cost: zeroCost, contextWindow: 200000, maxTokens: 1024,
+			input: ["text"], cost: zeroCost, contextWindow: PROBE_CONTEXT_WINDOW, maxTokens: 1024,
 		}],
 		streamSimple(model, context) {
 			const i = step++;
 			log({ kind: "request", step: i, calls: runScript, texts: contextTexts(context.messages) });
 			const id = `e2e-${runEntryCount}-${i}`;
-			const toolCall: ToolCall | null = runScript
-				? i < runScript.length ? { type: "toolCall", id, ...runScript[i] } : null
-				: i === 0 ? { type: "toolCall", id, name: "e2e_noop", arguments: {} } : null;
+			const scripted: ScriptedStep | null = runScript
+				? i < runScript.length ? runScript[i] : null
+				: i === 0 ? { name: "e2e_noop", arguments: {} } : null;
+			const origin = { api: model.api, provider: model.provider, model: model.id, timestamp: Date.now() };
+			const stream = createAssistantMessageEventStream();
+			if (scripted !== null && "error" in scripted) {
+				const error: AssistantMessage = {
+					...origin, role: "assistant", content: [], usage: usageOf(0), stopReason: "error", errorMessage: scripted.error,
+				};
+				queueMicrotask(() => {
+					stream.push({ type: "error", reason: "error", error });
+					stream.end();
+				});
+				return stream;
+			}
+			const toolCall: ToolCall | null = scripted !== null && "name" in scripted ? { type: "toolCall", id, ...scripted } : null;
+			const reply = scripted !== null && "text" in scripted ? scripted : { text: "ack", inputTokens: SCRIPTED_INPUT_TOKENS };
 			const stopReason = toolCall ? "toolUse" : "stop";
 			const message: AssistantMessage = {
-				role: "assistant",
-				content: toolCall ? [toolCall] : [{ type: "text", text: "ack" }],
-				api: model.api, provider: model.provider, model: model.id,
-				usage, stopReason, timestamp: Date.now(),
+				...origin, role: "assistant",
+				content: toolCall ? [toolCall] : [{ type: "text", text: reply.text }],
+				usage: usageOf(toolCall ? SCRIPTED_INPUT_TOKENS : reply.inputTokens), stopReason,
 			};
-			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				stream.push({ type: "done", reason: stopReason, message });
 				stream.end();
@@ -193,6 +218,9 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_start", async (_event, ctx) => {
+		// pi starts a pass with agent_start for each automatic retry or continuation inside a
+		// run; only the run's first agent_start, with no run awaiting agent_settled, starts one.
+		if (runsAwaitingSettle > 0) return;
 		runScript = armedScript;
 		armedScript = null;
 		step = 0;
@@ -204,6 +232,12 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	pi.on("agent_settled", async () => {
 		if (runsAwaitingSettle === 0) accountingErrors.push("agent_settled without an agent_start");
 		else runsAwaitingSettle--;
+		// pi defers a send from an agent_settled handler until the handlers return, so the
+		// chained run starts after this one has settled.
+		if (chainedTurns > 0) {
+			chainedTurns--;
+			startTurn();
+		}
 		wake();
 	});
 
@@ -306,9 +340,10 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand(PROBE_COMMAND.turn, {
-		description: "Start a run without a user turn",
-		handler: async () => {
-			pi.sendMessage({ customType: "schematic-e2e-turn", content: "e2e tick", display: false }, { triggerTurn: true });
+		description: "Start a run without a user turn; with a count, start each further run once the previous one settles",
+		handler: async (args) => {
+			chainedTurns = parseTurnCount(args) - 1;
+			startTurn();
 		},
 	});
 

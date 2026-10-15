@@ -83,8 +83,10 @@ export interface SchematicState {
 	pendingRequestedHandoff: {
 		/** True only after the current session has actually called the handoff tool. */
 		toolCalled: boolean;
-		/** Turn counter for repeated "you still owe the user a handoff" nudges. */
+		/** Settled agent runs counted while the handoff is still owed. */
 		enforcementAttempts: number;
+		/** True once the context hook injected the eligible required-handoff nudge in the current run. */
+		eligibleNudgeDelivered: boolean;
 		/** Human `/handoff <direction>` instruction, or null when the model must supply one. */
 		nextInstruction: string | null;
 	} | null;
