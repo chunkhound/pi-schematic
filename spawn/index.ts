@@ -20,6 +20,7 @@ import type {
 import { StringEnum, type TextContent } from "@earendil-works/pi-ai";
 import {
 	READONLY_CHILD_AUTHORITY_NOTE,
+	READONLY_NO_SHELL_SUMMARY,
 	READONLY_WRITE_EDIT_SUMMARY,
 } from "../notifications.js";
 import {
@@ -242,12 +243,12 @@ export function buildChildToolNames(
 
 /**
  * Filter child tool names for readonly mode.
- * Removes write/edit from the tool list entirely — children start with
- * a fresh context, so there is no cache to preserve.
+ * Removes write/edit/powershell from the tool list entirely — children start
+ * with a fresh context, so there is no cache to preserve.
  */
 export function filterReadonlyToolNames(toolNames: string[], readonlyEnabled: boolean): string[] {
 	return readonlyEnabled
-		? toolNames.filter((name) => name !== "write" && name !== "edit")
+		? toolNames.filter((name) => name !== "write" && name !== "edit" && name !== "powershell")
 		: toolNames;
 }
 
@@ -430,12 +431,39 @@ export function executeSpawn(
 					}
 				: { status: "inherited" };
 
+	const childSessionEpoch = state.childSessionEpoch;
+	const isStale = () => state.childSessionEpoch !== childSessionEpoch;
+	const childTools = createChildTools(pi, state, { isStale });
+	const parentToolNames = pi.getActiveTools();
+	const childToolNames = buildChildToolNames(parentToolNames, childTools, pi.getAllTools());
+	// Children: readonly vs non-readonly tool strategy differs from the parent.
+	// Parent keeps write/edit/powershell in the tool list and blocks at call
+	// time to avoid context-cache misses (index.ts). Children start with a
+	// fresh context — no cache to preserve — so we remove write/edit/powershell
+	// from the tool list entirely (cleaner than advertising tools that always
+	// error). The readonly bash guard (sandbox-exec/bwrap or classifyBashCommand
+	// fallback) still propagates to children via createReadonlyChildBashTool
+	// below.
+	//
+	// This is a guardrail for a coding agent, not a security boundary.
+	const effectiveChildTools = [
+		...childTools,
+		...(state.readonlyEnabled && childToolNames.includes("bash")
+			? [createReadonlyChildBashTool(ctx.cwd)]
+			: []),
+	];
+
+	const effectiveToolNames = filterReadonlyToolNames(childToolNames, state.readonlyEnabled);
+
 	const listing = formatPageList(state);
 	const notebookListing = listing
 		? "Available notebook pages:\n" + listing
 		: "No notebook pages.";
+	const readonlySummary = effectiveToolNames.includes("bash")
+		? `${READONLY_WRITE_EDIT_SUMMARY}.`
+		: READONLY_NO_SHELL_SUMMARY;
 	const readonlyNotice = state.readonlyEnabled
-		? `\n\n${READONLY_WRITE_EDIT_SUMMARY}.`
+		? `\n\n${readonlySummary}`
 		: "";
 	const authorityNote = state.readonlyEnabled
 		? READONLY_CHILD_AUTHORITY_NOTE
@@ -458,29 +486,6 @@ export function executeSpawn(
 		`## Task\n\n${params.prompt}${readonlyNotice}\n\n` +
 		`When complete, provide a concise summary of findings. ` +
 		`Keep the result under ${CHILD_MAX_LINES} lines / ${(CHILD_MAX_BYTES / 1024).toFixed(0)}KB.`;
-
-	const childSessionEpoch = state.childSessionEpoch;
-	const isStale = () => state.childSessionEpoch !== childSessionEpoch;
-	const childTools = createChildTools(pi, state, { isStale });
-	const parentToolNames = pi.getActiveTools();
-	const childToolNames = buildChildToolNames(parentToolNames, childTools, pi.getAllTools());
-	// Children: readonly vs non-readonly tool strategy differs from the parent.
-	// Parent keeps write/edit in the tool list and blocks at call time to avoid
-	// context-cache misses (index.ts). Children start with a fresh context — no
-	// cache to preserve — so we remove write/edit from the tool list entirely
-	// (cleaner than advertising tools that always error).  The readonly bash guard
-	// (sandbox-exec/bwrap or classifyBashCommand fallback) still propagates to
-	// children via createReadonlyChildBashTool below.
-	//
-	// This is a guardrail for a coding agent, not a security boundary.
-	const effectiveChildTools = [
-		...childTools,
-		...(state.readonlyEnabled && childToolNames.includes("bash")
-			? [createReadonlyChildBashTool(ctx.cwd)]
-			: []),
-	];
-
-	const effectiveToolNames = filterReadonlyToolNames(childToolNames, state.readonlyEnabled);
 
 	const { session } = await sessionFactory({
 		sessionManager: SessionManager.inMemory(ctx.cwd),

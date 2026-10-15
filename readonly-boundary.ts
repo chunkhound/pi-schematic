@@ -37,6 +37,7 @@ export function promoteBoundary(state: SchematicState, ctx: ExtensionContext): v
 	state.pendingRequestedHandoff = {
 		toolCalled: false,
 		enforcementAttempts: 0,
+		eligibleNudgeDelivered: false,
 		// A topic boundary carries no human direction, so the model must supply the instruction.
 		nextInstruction: null,
 	};

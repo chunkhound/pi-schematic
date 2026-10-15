@@ -105,6 +105,20 @@ export function createDeferred() {
 	return { promise, resolve };
 }
 
+/**
+ * Run every handler registered for `event` in registration order. Unlike pi, which
+ * catches each handler's error and runs the rest, a throwing handler stops the run
+ * and fails the test. Throws when no handler is registered, so an unregistered
+ * event cannot pass vacuously.
+ */
+export async function emitAll(pi: TestPI, event: string, payload: unknown, ctx: unknown): Promise<void> {
+	const handlers = pi.handlers.get(event);
+	if (!handlers?.length) throw new Error(`No handlers registered for "${event}"`);
+	for (const handler of handlers) {
+		await handler(payload, ctx);
+	}
+}
+
 // ── Readonly test helpers ────────────────────────────────────────────
 
 export type ToolCall = (event: { toolName: string; input?: Record<string, unknown> }, ctx: { cwd?: string }) => Promise<any>;

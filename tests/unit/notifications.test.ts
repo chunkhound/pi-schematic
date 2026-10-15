@@ -19,8 +19,10 @@ import {
 	READONLY_NEXT_CONTEXT_RESUMES,
 	READONLY_WRITE_EDIT_BASH,
 	READONLY_WRITE_EDIT_BLOCK_REASON,
+	READONLY_POWERSHELL_BLOCK_REASON,
 	READONLY_HANDOFF_BLOCK_REASON,
 	READONLY_WRITE_EDIT_SUMMARY,
+	READONLY_NO_SHELL_SUMMARY,
 	READONLY_ACTIVE_SUMMARY,
 	READONLY_HANDOFF_EXCEPTION_SUMMARY,
 	READONLY_ENABLED_STATUS,
@@ -62,8 +64,10 @@ const allConstants = {
 	READONLY_NEXT_CONTEXT_RESUMES,
 	READONLY_WRITE_EDIT_BASH,
 	READONLY_WRITE_EDIT_BLOCK_REASON,
+	READONLY_POWERSHELL_BLOCK_REASON,
 	READONLY_HANDOFF_BLOCK_REASON,
 	READONLY_WRITE_EDIT_SUMMARY,
+	READONLY_NO_SHELL_SUMMARY,
 	READONLY_ACTIVE_SUMMARY,
 	READONLY_HANDOFF_EXCEPTION_SUMMARY,
 	READONLY_ENABLED_STATUS,
@@ -92,6 +96,7 @@ test("composition chain: READONLY_ENABLED_STATUS contains READONLY_BASH_SCOPE", 
 
 test("summary constants use [readonly] prefix", () => {
 	assert.ok(READONLY_WRITE_EDIT_SUMMARY.startsWith("[readonly]"));
+	assert.ok(READONLY_NO_SHELL_SUMMARY.startsWith("[readonly]"));
 	assert.ok(READONLY_ACTIVE_SUMMARY.startsWith("[readonly]"));
 	assert.ok(READONLY_HANDOFF_EXCEPTION_SUMMARY.startsWith("[readonly]"));
 	assert.ok(READONLY_ENABLED_STATUS.startsWith("[readonly]"));
@@ -100,6 +105,8 @@ test("summary constants use [readonly] prefix", () => {
 
 test("block reasons use 'Readonly mode:' prefix", () => {
 	assert.ok(READONLY_WRITE_EDIT_BLOCK_REASON.startsWith("Readonly mode:"));
+	assert.ok(READONLY_POWERSHELL_BLOCK_REASON.startsWith("Readonly mode:"));
+	assert.match(READONLY_POWERSHELL_BLOCK_REASON, /powershell/);
 	assert.ok(READONLY_HANDOFF_BLOCK_REASON.startsWith("Readonly mode:"));
 	assert.ok(buildReadonlyBashBlockReason("test", "cmd").startsWith("Readonly mode:"));
 });
@@ -142,9 +149,9 @@ test("LLM-facing handoff copy reflects both readonly bypass triggers", () => {
 	assert.match(READONLY_HANDOFF_BLOCK_REASON, /explicit \/handoff/i);
 	assert.match(READONLY_HANDOFF_BLOCK_REASON, /human topic boundary/i);
 	assert.match(READONLY_HANDOFF_EXCEPTION_SUMMARY, /temporary handoff exception active/i);
-	assert.match(READONLY_HANDOFF_EXCEPTION_SUMMARY, /write\/edit remain blocked/i);
+	assert.match(READONLY_HANDOFF_EXCEPTION_SUMMARY, /write\/edit\/powershell remain blocked/i);
 	assert.doesNotMatch(READONLY_HANDOFF_EXCEPTION_SUMMARY, /for this turn|this request only/i);
-	assert.match(READONLY_HANDOFF_EXCEPTION_NOTIFICATION, /write\/edit remain blocked/i);
+	assert.match(READONLY_HANDOFF_EXCEPTION_NOTIFICATION, /write\/edit\/powershell remain blocked/i);
 	assert.doesNotMatch(READONLY_HANDOFF_EXCEPTION_NOTIFICATION, /for this turn/i);
 });
 

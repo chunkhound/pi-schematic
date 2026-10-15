@@ -30,6 +30,11 @@ export const INTERPRETERS = new Set(Object.keys(INTERPRETER_EXEC_FLAGS));
 // installs to site-packages, etc.). Temp-dir path checking is not meaningful.
 export const PACKAGE_MANAGERS = new Set(["npm", "yarn", "pnpm", "pip", "pip3", "pipx", "apt", "apt-get", "brew", "cargo", "gem", "yum", "dnf", "pacman", "choco"]);
 
+// Shells whose command strings this classifier cannot parse are blocked
+// unconditionally. Matched on the basename so Windows paths such as
+// C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe are caught.
+const UNPARSABLE_SHELLS = new Set(["pwsh", "pwsh.exe", "powershell", "powershell.exe", "cmd", "cmd.exe"]);
+
 // ── Command-specific mutation classifiers (one per command, ≤15 lines each) ──
 
 /** Strip subshell parens and recurse; a trailing redirect is checked by the caller. */
@@ -90,6 +95,16 @@ export function classifyEnv(command: string, segment: string, tokens: string[], 
 	if (childCwd === null) return `env directory change blocked: unresolved working directory${FAIL_CLOSED_HINT}`;
 	const nested = classifyBashCommand(wrapped, childCwd, depth + 1, shellVars);
 	return nested.ok ? null : nested.reason;
+}
+
+/** PowerShell and cmd: block unconditionally — their syntax is not parsed.
+ * Takes the raw command word, not `normalizedCommand` output: `unescapeCommandWord`
+ * consumes `\` as an escape, so a Windows path would lose its separators before the
+ * basename is extracted and the check would silently miss it. */
+export function classifyUnparsableShell(rawCommandWord: string): string | null {
+	const shell = stripMatchingQuotes(rawCommandWord).toLowerCase().split(/[\\/]/).pop()!;
+	if (!UNPARSABLE_SHELLS.has(shell)) return null;
+	return `${shell} blocked: readonly cannot inspect commands run through ${shell}`;
 }
 
 /**
@@ -242,6 +257,7 @@ export function dispatchMutationReason(command: string, tokens: string[], segmen
 		?? classifyEvalExec(command, tokens, cwd, depth, shellVars)
 		?? classifySudo(command, tokens, cwd, depth, shellVars)
 		?? classifyEnv(command, segment, tokens, cwd, depth, shellVars)
+		?? classifyUnparsableShell(tokens[0] ?? "")
 		?? classifyGit(command, tokens, cwd, shellVars)
 		?? classifyInterpreter(command, tokens, cwd, depth, shellVars)
 		?? classifyScriptProcessSubstitution(command, segment, cwd, depth, shellVars)

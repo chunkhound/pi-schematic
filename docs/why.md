@@ -25,7 +25,7 @@ All three manage context **around** the model. The agent stays a passive recipie
 | **Isolate** | Spawn | Noisy subtasks polluting the parent |
 | **Remember** | Notebook | Losing reusable knowledge across deliberate cuts *in the same task* |
 | **Compact** | Handoff | Waiting on `/compact`, late auto-summarize, or one mixed summary blob |
-| **Guard** | Readonly | Accidental edits during research and planning (write/edit blocked everywhere; bash OS-sandboxed on macOS/Linux — **Windows is classifier-only, not syscall-level**) |
+| **Guard** | Readonly | Accidental edits during research and planning (write/edit and powershell blocked everywhere; bash OS-sandboxed on macOS/Linux — **Windows is classifier-only, not syscall-level**) |
 
 ### Notebook is task-scoped shared memory
 

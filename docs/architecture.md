@@ -7,14 +7,14 @@ pi-schematic is a Pi extension. It registers tools and hooks into the agent life
 | Hook | Role |
 |---|---|
 | `before_agent_start` | Resolves deferred readonly frontmatter, refreshes Model Groups, then writes schematic's prompt sections, including a per-run current-date anchor (see **Prompt sections** and **Date anchor** under Behavioral notes) |
-| `context` | Advisory watchdog reminders when context is elevated; readonly toggle nudges |
+| `context` | Advisory watchdog reminders when context is elevated; a handoff nudge before every LLM call while a requested handoff is pending; readonly toggle nudges |
 | `input` | Resolves model-selection frontmatter during idle input; blocks it during streaming; queues readonly resolution |
-| `tool_call` | Readonly blocks write/edit/unguarded bash; blocks handoff unless a requested bypass is active |
+| `tool_call` | Readonly blocks write/edit/powershell/unguarded bash; blocks handoff unless a requested bypass is active |
 | `session_start` | Reconstructs notebook pages/epoch/watermark from the active branch, rehydrates readonly state, and recovers an absent successor handoff message; loads and validates Model Groups, registers group autocomplete, reports config issues, and resets session state on `/new` |
 | `session_tree` | Invalidates branch-local handoff work, reconstructs notebook pages/epoch/watermark from the newly active branch, rehydrates readonly state, recovers a successor only when no newer user turn exists and no session-tree descendant owned by that cut proves delivery, refreshes indicators |
 | `turn_end` | Updates TUI indicators (context %, notebook count, topic, readonly) |
-| `agent_end` | Records last context usage percent; handoff enforcement cleanup |
-| `agent_settled` | Clears the recovery latch and, when no queued messages remain, resends an absent successor handoff message |
+| `agent_end` | Records last context usage percent |
+| `agent_settled` | Counts one handoff enforcement attempt per settled run in which the eligible handoff nudge was sent and cancels a required handoff after `MAX_HANDOFF_ATTEMPTS`. Recovery in index.ts clears the recovery latch and, when no queued messages remain, resends an absent successor handoff message. |
 | `session_before_compact` | Emits a fixed continuation frame plus a per-cut identity marker as the compaction summary; the successor's next instruction + context arrive as one real user message after compaction |
 
 ## State
@@ -36,7 +36,7 @@ interface SchematicState {
   pendingHandoff: { generation } | null
   pendingHandoffDelivery: { generation, payload, recoveryKey } | null
   recoveryRequestedMessage: { handoffEntryId, recoveryKey, message } | null
-  pendingRequestedHandoff: { nextInstruction, toolCalled, enforcementAttempts } | null
+  pendingRequestedHandoff: { toolCalled, enforcementAttempts, eligibleNudgeDelivered, nextInstruction } | null
   childSessions: Map<string, AgentSession>
   liveChildSessions: Map<string, AgentSession>
   childSessionEpoch: number
@@ -65,7 +65,7 @@ interface SchematicState {
 
 A failed model change visibly blocks command expansion and records no success entry. During streaming steer/follow-up, commands with model-selection frontmatter are visibly blocked without model or thinking mutation; commands without it continue. Invalid frontmatter is ignored with a TUI warning.
 
-**Readonly** — Session-persisted research posture. Toggle via `/readonly`, Ctrl+Shift+R, or `--readonly`. Write/edit always blocked at the tool boundary. Bash uses a two-layer guard:
+**Readonly** — Session-persisted research posture. Toggle via `/readonly`, Ctrl+Shift+R, or `--readonly`. Write/edit and powershell always blocked at the tool boundary (powershell is blocked outright; there is no PowerShell command classifier). Bash uses a two-layer guard, and its classifier blocks launching PowerShell or cmd through bash:
 
 | Platform | Enforcement |
 |---|---|
@@ -81,7 +81,7 @@ Coding-agent guardrail on every OS — not a hardened security boundary. Stronge
 
 **Fail-closed hint** — Fail-closed blocks end with `FAIL_CLOSED_HINT` (`— fail-closed; retry a simpler form`). The suffix marks a safe over-block on an unprovable input. A proven outside-temp write instead reports a specific reason. Retry a simpler, literal form. Common over-blocks carry a short example: physical `cd` (`cd -P` loses the tracked cwd — later relative writes say `cwd unknown after cd; use cd -L`), group heredocs (`{ cat; bash; } <<EOF` — restructure without the group), and single-quoted `$(...)` (literal text is still scanned — rephrase without it).
 
-**Watchdog** — Band-throttled advisory reminders as context crosses practical pressure bands; high-usage TUI widget reinforces spawn-vs-handoff guidance (topic- and readonly-aware).
+**Watchdog** — Band-throttled advisory reminders as context crosses practical pressure bands; high-usage TUI widget reinforces spawn-vs-handoff guidance (topic- and readonly-aware). A requested handoff is not advisory: while it is pending, every LLM call carries a handoff nudge, and the watchdog cancels it after `MAX_HANDOFF_ATTEMPTS` settled runs that sent the eligible handoff nudge without a completed handoff.
 
 ## Package layout (high level)
 
@@ -94,7 +94,7 @@ Coding-agent guardrail on every OS — not a hardened security boundary. Stronge
 | `notebook/` | Page store, tools, topic, rehydration, external pager, prompt sections |
 | `handoff/` | Verbatim next-instruction delivery, model-owned context prep, constant-frame compaction bridge, live readonly nudge |
 | `readonly-*.ts` / `os-sandbox.ts` | Readonly posture, bash policy, sandbox |
-| `watchdog.ts` / `tui.ts` / `state.ts` | Pressure advisories, status UI, shared state |
+| `watchdog.ts` / `tui.ts` / `state.ts` | Pressure advisories and required-handoff enforcement, status UI, shared state |
 
 ## See also
 

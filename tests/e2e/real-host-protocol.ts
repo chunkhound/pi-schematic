@@ -15,6 +15,8 @@ import { buildNextUserMessage } from "../../handoff/format.js";
 export const PROBE_PROVIDER = "schematic-e2e";
 export const PROBE_API = "schematic-e2e-api";
 export const PROBE_MODEL_ID = "schematic-e2e-model";
+/** Context window of the probe model, which pi's threshold compaction measures usage against. */
+export const PROBE_CONTEXT_WINDOW = 200000;
 
 /** File the probe appends its JSON records to; the harness reads and validates them. */
 export const PROBE_LOG_ENV_VAR = "PI_SCHEMATIC_E2E_PROBE_LOG";
@@ -39,12 +41,21 @@ export const PROBE_COMMAND = {
  */
 export const NEXT_INSTRUCTION_PREFIX = buildNextUserMessage({ nextInstruction: "x" }).split("\n")[0];
 
-/** One scripted tool call: what `/e2e-script` arms and what the log carries. */
+/** One scripted tool call. */
 export type ScriptedCall = { name: string; arguments: ToolCall["arguments"] };
+
+/** A provider error the model call ends with; pi retries it when retry is enabled and `error` matches a retryable pattern. */
+export type ScriptedError = { error: string };
+
+/** A text reply that reports `inputTokens` of context usage in place of the probe's default. */
+export type ScriptedReply = { text: string; inputTokens: number };
+
+/** One scripted model response: what `/e2e-script` arms, one per model call of the run, and what the log carries. */
+export type ScriptedStep = ScriptedCall | ScriptedError | ScriptedReply;
 
 /** One line of the probe log. */
 export type ProbeRecord =
-	| { kind: "request"; step: number; calls: ScriptedCall[] | null; texts: string[] }
+	| { kind: "request"; step: number; calls: ScriptedStep[] | null; texts: string[] }
 	| { kind: "compact"; entryId: string }
 	| { kind: "successor-send"; text: string; dropped: boolean }
 	| { kind: "tools"; names: string[] };
@@ -92,22 +103,40 @@ function requireStringArray(record: Record<string, unknown>, field: string, line
 	return value;
 }
 
+/**
+ * One scripted step, parsed strictly: an object with `error` is a `ScriptedError`, one with `text`
+ * a `ScriptedReply`, any other a `ScriptedCall`. `fail` throws with the reason.
+ */
+export function parseScriptedStep(value: unknown, fail: (reason: string) => never): ScriptedStep {
+	if (!isJsonObject(value)) fail(`not an object: ${JSON.stringify(value)}`);
+	if ("error" in value) {
+		const { error, ...rest } = value;
+		if (typeof error !== "string" || error === "") fail(`error is not a non-empty string: ${JSON.stringify(value)}`);
+		if (Object.keys(rest).length > 0) fail(`an error step takes no other field: ${JSON.stringify(value)}`);
+		return { error };
+	}
+	if ("text" in value) {
+		const { text, inputTokens, ...rest } = value;
+		if (typeof text !== "string") fail(`text is not a string: ${JSON.stringify(value)}`);
+		if (typeof inputTokens !== "number" || !Number.isInteger(inputTokens) || inputTokens <= 0) {
+			fail(`inputTokens is not a positive integer: ${JSON.stringify(value)}`);
+		}
+		if (Object.keys(rest).length > 0) fail(`a reply step takes only text and inputTokens: ${JSON.stringify(value)}`);
+		return { text, inputTokens };
+	}
+	const { name, arguments: callArguments, ...rest } = value;
+	if (typeof name !== "string" || name === "") fail(`no name: ${JSON.stringify(value)}`);
+	if (!isJsonObject(callArguments)) fail(`no arguments object: ${JSON.stringify(value)}`);
+	if (Object.keys(rest).length > 0) fail(`a call step takes only name and arguments: ${JSON.stringify(value)}`);
+	// The value came out of JSON.parse, so the arguments are JSON.
+	return { name, arguments: callArguments as ToolCall["arguments"] };
+}
+
 /** A request record's `calls`: the armed script, or null when no script was armed. */
-function requireScriptedCalls(value: unknown, line: string): ScriptedCall[] | null {
+function requireScriptedCalls(value: unknown, line: string): ScriptedStep[] | null {
 	if (value === null) return null;
 	if (!Array.isArray(value)) malformed(line, `calls is neither an array nor null: ${JSON.stringify(value)}`);
-	return value.map((call: unknown, index) => {
-		if (!isJsonObject(call)) malformed(line, `calls[${index}] is not an object: ${JSON.stringify(call)}`);
-		const { name, arguments: callArguments } = call;
-		if (typeof name !== "string" || name === "") {
-			malformed(line, `calls[${index}] has no name: ${JSON.stringify(call)}`);
-		}
-		if (!isJsonObject(callArguments)) {
-			malformed(line, `calls[${index}] has no arguments object: ${JSON.stringify(call)}`);
-		}
-		// The line came out of JSON.parse, so the arguments are JSON.
-		return { name, arguments: callArguments as ToolCall["arguments"] };
-	});
+	return value.map((step: unknown, index) => parseScriptedStep(step, (reason) => malformed(line, `calls[${index}]: ${reason}`)));
 }
 
 /** Parse one probe-log line; throws on an unknown kind or a record missing a required field. */
