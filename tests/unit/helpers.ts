@@ -182,7 +182,7 @@ export function turnEndEvent(overrides: Partial<TurnEndEvent> = {}): TurnEndEven
 
 // ── Readonly test helpers ────────────────────────────────────────────
 
-export type ToolCall = (event: { toolName: string; input?: Record<string, unknown> }, ctx: { cwd?: string }) => Promise<any>;
+export type ToolCall = (event: { toolName: string; toolCallId?: string; input?: Record<string, unknown> }, ctx: { cwd?: string }) => Promise<any>;
 
 /**
  * Create a test PI instance with pi-schematic registered and its tool_call handlers composed as pi runs them.

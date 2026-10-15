@@ -18,8 +18,9 @@ function legacyReportText(successorMessage: string, report: string): string {
 let boundaryCutId = 0;
 
 // A cut written by the turn_end boundary: no payload, identified by its handoffId.
-function boundaryCut(details: Record<string, unknown> = { handoff: true, handoffId: `boundary-${++boundaryCutId}` }): any {
-	return { id: `boundary-cut-${boundaryCutId}`, type: "compaction", details };
+function boundaryCut(details?: Record<string, unknown>): any {
+	const id = ++boundaryCutId;
+	return { id: `boundary-cut-${id}`, type: "compaction", details: details ?? { handoff: true, handoffId: `boundary-${id}` } };
 }
 
 function boundarySuccessor(): any {

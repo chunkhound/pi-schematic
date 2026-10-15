@@ -7,7 +7,7 @@ import path from "node:path";
 import { createState } from "../../state.js";
 import { canPromoteBoundary, discardNonHumanBoundary } from "../../readonly-boundary.js";
 import { setActiveNotebookTopic } from "../../notebook/topic.js";
-import { callHandlers, emitAll, handoffToolResult, makeReadonlyUICtx, registerReadonlyPI, turnEndEvent } from "./helpers.js";
+import { callHandlers, emitAll, handoffToolResult, makeReadonlyUICtx, registerReadonlyPI, turnEndEvent, type ToolCall } from "./helpers.js";
 import type { TestPI } from "./test-host.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
@@ -33,9 +33,16 @@ function makeReadonlyResumeCtx(branch: unknown[]) {
 	};
 }
 
-/** Run the composed tool_call handlers with pi's `toolCallId`, which the helper's event type omits. */
-function callTool(toolCall: (event: any, ctx: any) => Promise<any>, event: Record<string, unknown>, ctx: unknown): Promise<any> {
-	return toolCall(event, ctx);
+/** Dispatch a tool call as pi does: run the composed tool_call handlers and execute the tool only when none blocks. Returns the block or the tool's result. */
+async function dispatchTool(
+	pi: TestPI,
+	toolCall: ToolCall,
+	event: { toolName: string; toolCallId: string; input: Record<string, unknown> },
+	ctx: Record<string, unknown>,
+): Promise<any> {
+	const blocked = await toolCall(event, ctx);
+	if (blocked?.block) return blocked;
+	return pi.tools.get(event.toolName).execute(event.toolCallId, event.input, undefined, undefined, ctx);
 }
 
 const ELIGIBLE_USAGE = { tokens: 50000, percent: 25, contextWindow: 200000 };
@@ -167,9 +174,7 @@ test("readonly blocks a non-requested handoff", async () => {
 		getContextUsage: () => ({ tokens: 50_000, percent: 80, contextWindow: 64_000 }),
 	};
 	const input = { nextInstruction: "must remain in current context" };
-	const blocked = await callTool(toolCall, { toolName: "handoff", toolCallId: "blocked-1", input }, ctx);
-	// Pi runs the executor only for an unblocked call.
-	if (!blocked?.block) await pi.tools.get("handoff")!.execute("blocked-1", input, undefined, undefined, ctx as any);
+	const blocked = await dispatchTool(pi, toolCall, { toolName: "handoff", toolCallId: "blocked-1", input }, ctx);
 	assert.equal(blocked?.block, true);
 
 	const results = await callHandlers(
@@ -199,12 +204,14 @@ test("a write sharing a message with handoff keeps its readonly block while the 
 		},
 	}, {});
 
-	const sibling = await callTool(toolCall, { toolName: "write", toolCallId: "call-write", input: { path: "/tmp/test", content: "x" } }, {});
+	const sibling = await toolCall({ toolName: "write", toolCallId: "call-write", input: { path: "/tmp/test", content: "x" } }, {});
 	assert.deepEqual(sibling, { block: true, reason: READONLY_WRITE_EDIT_BLOCK_REASON });
-	const input = { nextInstruction: "continue readonly work" };
-	const handoff = await callTool(toolCall, { toolName: "handoff", toolCallId: "call-handoff", input }, {});
-	// Pi runs the executor only for an unblocked call.
-	if (!handoff?.block) await stageHandoff(pi, "call-handoff", input);
+	const handoff = await dispatchTool(
+		pi,
+		toolCall,
+		{ toolName: "handoff", toolCallId: "call-handoff", input: { nextInstruction: "continue readonly work" } },
+		{ hasUI: false, getContextUsage: () => ELIGIBLE_USAGE },
+	);
 	assert.deepEqual(handoff, { block: true, reason: HANDOFF_NOT_ALONE_REFUSAL, terminate: true });
 
 	const results = await callHandlers(
@@ -319,14 +326,15 @@ test("retry succeeds after a handoff cut that pi did not persist", async () => {
 	await turnStartWith(pi, []);
 
 	// The failure is persisted as guidance and starts no run.
-	assert.equal(pi.sentUserMessages.length, userMessagesBefore);
-	assert.equal(pi.sentMessages.at(-1)?.message.customType, "pi-schematic-handoff-failed");
-	assert.equal(pi.sentMessages.at(-1)?.options?.triggerTurn, false);
+	assert.equal(pi.sentUserMessages.length, userMessagesBefore, "the failed cut must send no user message");
+	assert.equal(pi.sentMessages.at(-1)?.message.customType, "pi-schematic-handoff-failed",
+		"the failed cut must persist the failure guidance");
+	assert.equal(pi.sentMessages.at(-1)?.options?.triggerTurn, false, "the failure guidance must not start a run");
 
 	// A retry inside the same run is refused by the boundary before readonly is consulted.
 	const sameRun = await toolCall({ toolName: "handoff", input: { nextInstruction: "retry handoff" } }, {});
-	assert.equal(sameRun?.block, true);
-	assert.equal(sameRun?.reason, HANDOFF_FAILED_IN_RUN_REFUSAL);
+	assert.equal(sameRun?.block, true, "a handoff in the run that lost its cut must be blocked");
+	assert.equal(sameRun?.reason, HANDOFF_FAILED_IN_RUN_REFUSAL, "the block must be the boundary's failed-in-run refusal");
 
 	// The next run retries: the readonly bypass is still active and the cut stages.
 	await agentSettled({ hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => [] } });

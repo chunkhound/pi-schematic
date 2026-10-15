@@ -840,7 +840,7 @@ test("/notebook enter suspends the TUI, awaits the pager, then restores the TUI 
  * ctx.ui.custom stub: runs beforeEnter, then presses Enter on the first open.
  * Every later open is rendered into `reopens` and closed.
  */
-function enterOnFirstOpen(beforeEnter: () => void = () => {}) {
+function enterOnFirstOpen(beforeEnter: () => void | Promise<void> = () => {}) {
 	const reopens: string[] = [];
 	let opened = false;
 	const custom = async (build: any) => {
@@ -851,7 +851,7 @@ function enterOnFirstOpen(beforeEnter: () => void = () => {}) {
 			return undefined;
 		}
 		opened = true;
-		beforeEnter();
+		await beforeEnter();
 		overlay.handleInput("\r");
 		return result;
 	};
@@ -958,9 +958,10 @@ test("/notebook reopens the list when the selected page vanished while it was op
 	const boundary = results.find((result) => result !== undefined) as { entries: Array<Record<string, unknown>> };
 	branch = boundary.entries.map((entry, index) => ({ ...entry, id: `entry-${index}` }));
 
-	// The handoff's cut is confirmed at turn_start and applies the discard while the list is open.
-	const { custom, reopens } = enterOnFirstOpen(() => {
-		void callHandlers(pi, "turn_start", { type: "turn_start", turnIndex: 1, timestamp: 0 }, handoffCtx);
+	// The handoff's cut is confirmed at turn_start and applies the discard while the list is
+	// open: the discard completes after the list was built with alpha and before Enter selects it.
+	const { custom, reopens } = enterOnFirstOpen(async () => {
+		await callHandlers(pi, "turn_start", { type: "turn_start", turnIndex: 1, timestamp: 0 }, handoffCtx);
 	});
 	await pi.commands.get("notebook")!.handler("", makeTUICtx({ percent: 20, custom }));
 

@@ -352,7 +352,9 @@ describe("pi-schematic real-host E2E", () => {
 		assert.deepEqual(await host.client.clearQueue(), { steering: [], followUp: [] });
 	}));
 
-	it("the successor turn continues the handoff run with only the cut's context", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+	// The probe records only the text blocks of each request, so the handoff tool call
+	// (a toolCall block without text) is not observable here; its tool result is.
+	it("the successor turn continues the handoff run without the pre-cut user turn or handoff result", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
 		const payload = { nextInstruction: "do the resumed work", context: "remaining state" };
 		const mark = host.events.length;
 		await handoff(host, payload, 1);
@@ -369,6 +371,7 @@ describe("pi-schematic real-host E2E", () => {
 			"the successor request carries the successor once",
 		);
 		assert.equal(successorRequest.texts.includes("go"), false, "the pre-cut user turn is gone from the successor request");
+		assert.equal(successorRequest.texts.includes(HANDOFF_STAGED_RESULT), false, "the pre-cut handoff result is gone from the successor request");
 	}));
 
 	it("a handoff sharing its message with another call is refused, the other call runs, and a lone handoff then lands the cut", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
@@ -387,10 +390,11 @@ describe("pi-schematic real-host E2E", () => {
 		const write = onlyResult(toolResults(entries, "notebook_write"), "notebook_write");
 		assert.equal(write.isError, false, "the sibling call ran");
 		assert.equal(entries.filter((entry) => entry.type === "custom" && entry.customType === "notebook-entry").length, 1, "the notebook entry persisted");
-		const [refused, landed] = toolResults(entries, "handoff");
-		assert.equal(toolResults(entries, "handoff").length, 2, "one refused and one landed handoff result");
-		assert.equal(refused.isError, true);
-		assert.equal(refused.text, HANDOFF_NOT_ALONE_REFUSAL);
+		const handoffResults = toolResults(entries, "handoff");
+		assert.equal(handoffResults.length, 2, "one refused and one landed handoff result");
+		const [refused, landed] = handoffResults;
+		assert.equal(refused.isError, true, "the handoff sharing its message is refused as an error");
+		assert.equal(refused.text, HANDOFF_NOT_ALONE_REFUSAL, "the refusal names the not-alone rule");
 		assert.equal(landed.text, HANDOFF_STAGED_RESULT, "the run continued to the lone handoff");
 		const cut = onlyHandoffCut(entries);
 		const handoffResultIndexes = entries.flatMap((entry, index) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "handoff" ? [index] : []);
@@ -398,7 +402,7 @@ describe("pi-schematic real-host E2E", () => {
 		onlyCustomMessage(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE);
 		assert.equal(customMessages(entries, HANDOFF_FAILED_CUSTOM_TYPE).length, 0, "the refusal stages nothing, so nothing fails");
 		const read = onlyResult(toolResults(entries, "notebook_read"), "notebook_read");
-		assert.equal(read.isError, false);
+		assert.equal(read.isError, false, "the page written before the cut can be read after it");
 		assert.ok(read.text.includes("survives the cut"), read.text);
 		const readIndex = entries.findIndex((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "notebook_read");
 		assert.ok(readIndex > entries.indexOf(cut), "the page is read after the cut");

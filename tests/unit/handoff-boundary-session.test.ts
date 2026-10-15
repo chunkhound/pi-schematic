@@ -373,7 +373,7 @@ describe("handoff boundary in a real agent session", () => {
 		]);
 	});
 
-	it("reports the faux usage of a large prompt as eligible and no usage percent right after the cut", async () => {
+	it("reports the faux usage of a large prompt as eligible at the handoff call", async () => {
 		const { session, observed } = await startSession([call(handoffCall()), reply("successor answer")]);
 		try {
 			await session.prompt(LARGE_PROMPT);
@@ -385,7 +385,21 @@ describe("handoff boundary in a real agent session", () => {
 		assert.equal(observed.usageAtHandoffCall.length, 1);
 		const tokens = observed.usageAtHandoffCall[0]?.tokens;
 		assert.ok(typeof tokens === "number" && tokens >= MIN_HANDOFF_TOKENS, `usage at the handoff call: ${String(tokens)}`);
-		assert.equal(observed.usageAtContext.length, 2);
+	});
+
+	// With no handoff request and no topic boundary pending, the context hook in index.ts
+	// skips the watchdog nudge only while the usage percent is null or below 30, so the
+	// successor of a model-called handoff carries no nudge because pi reports null here.
+	it("reports no usage percent at the successor request right after the cut", async () => {
+		const { session, observed } = await startSession([call(handoffCall()), reply("successor answer")]);
+		try {
+			await session.prompt(LARGE_PROMPT);
+			await session.waitForIdle();
+		} finally {
+			session.dispose();
+		}
+
+		assert.equal(observed.usageAtContext.length, 2, "the handoff request and the successor request");
 		assert.equal(observed.usageAtContext[1]?.percent, null, "usage at the successor request");
 	});
 
@@ -622,6 +636,14 @@ describe("handoff boundary in a real agent session", () => {
 			[call(fauxToolCall("nested_handoff", {}, { id: "call-nested" })), reply("after the nested call")],
 			{ after: [nestedCaller] },
 		);
+		const handoffTool = session.getToolDefinition("handoff");
+		assert.ok(handoffTool, "schematic registers the handoff tool");
+		let handoffExecutions = 0;
+		const execute = handoffTool.execute;
+		handoffTool.execute = (...args) => {
+			handoffExecutions += 1;
+			return execute(...args);
+		};
 		try {
 			await session.prompt(LARGE_PROMPT);
 			await session.waitForIdle();
@@ -630,6 +652,7 @@ describe("handoff boundary in a real agent session", () => {
 		}
 
 		assert.equal(outcomes.length, 1);
+		assert.equal(handoffExecutions, 0, "pi refuses the nested call before the handoff tool runs");
 		assert.equal(outcomes[0].isError, true, outcomes[0].text);
 		assert.equal(toolResultFor(sessionManager, "call-nested")?.isError, false);
 		assert.deepEqual(entriesOf(sessionManager, "compaction"), [], "no cut is written");
@@ -732,38 +755,56 @@ describe("failed handoff cut in a real agent session", () => {
 		assert.deepEqual(observed.extensionErrors, []);
 	});
 
-	it("counts each failed cut against the enforcement budget until the request is cancelled", async () => {
+	/**
+	 * Runs a large prompt, a /handoff request, one retry prompt per remaining
+	 * enforcement attempt and a final "after the budget" prompt. A later extension
+	 * drops every boundary with `dropResult`, and the model calls handoff whenever
+	 * its request carries the required nudge. `nudgedCalls` counts those calls.
+	 * With `ui`, a recording UI is attached and `uiBeforeLastPrompt` is the length
+	 * of `ui` before the final prompt.
+	 */
+	async function exhaustHandoffBudget(dropResult: { entries: []; continue?: false }, ui?: string[]) {
 		const dropBoundary: ExtensionFactory = (pi) => {
-			pi.on("turn_end", async (event) => (event.entries.length > 0 ? { entries: [], continue: false } : undefined));
+			pi.on("turn_end", async (event) => (event.entries.length > 0 ? dropResult : undefined));
 		};
-		let nudgedRuns = 0;
+		let nudgedCalls = 0;
 		const handoffWhenNudged: FauxResponseFactory = (context) => {
 			if (carriesRequiredNudge(context.messages)) {
-				nudgedRuns += 1;
-				return fauxAssistantMessage([fauxToolCall("handoff", { nextInstruction: "x", context: HANDOFF_CONTEXT }, { id: `call-handoff-${nudgedRuns}` })]);
+				nudgedCalls += 1;
+				return fauxAssistantMessage([fauxToolCall("handoff", { nextInstruction: "x", context: HANDOFF_CONTEXT }, { id: `call-handoff-${nudgedCalls}` })]);
 			}
 			return fauxAssistantMessage("plain answer");
 		};
-		const { session, observed } = await startSession(
-			Array.from({ length: MAX_HANDOFF_ATTEMPTS + 4 }, () => handoffWhenNudged),
-			{ after: [dropBoundary] },
+		// A kept continuation spends a second request per attempt; size the script for that case.
+		const { session, sessionManager, observed } = await startSession(
+			Array.from({ length: 2 * MAX_HANDOFF_ATTEMPTS + 4 }, () => handoffWhenNudged),
+			{ after: [dropBoundary], ...(ui === undefined ? {} : { ui: recordingUI(ui) }) },
 		);
+		let uiBeforeLastPrompt: number | undefined;
 		try {
 			await session.prompt(LARGE_PROMPT);
 			await session.prompt("/handoff finish the report");
 			await settleRuns(session, observed, 2);
-			// Nothing starts a run on its own, so each retry is a user prompt.
+			// Nothing starts a run on its own, so each retry is a user prompt. Each
+			// nudged run counts one attempt; the last retry runs at
+			// enforcementAttempts = MAX_HANDOFF_ATTEMPTS - 1 and exhausts the budget.
 			for (let attempt = 1; attempt < MAX_HANDOFF_ATTEMPTS; attempt++) {
 				await session.prompt("retry");
 				await settleRuns(session, observed, 2 + attempt);
 			}
+			uiBeforeLastPrompt = ui?.length;
 			await session.prompt("after the budget");
 			await settleRuns(session, observed, 2 + MAX_HANDOFF_ATTEMPTS);
 		} finally {
 			session.dispose();
 		}
+		return { sessionManager, observed, nudgedCalls, uiBeforeLastPrompt };
+	}
 
-		assert.equal(nudgedRuns, MAX_HANDOFF_ATTEMPTS);
+	it("counts each failed cut against the enforcement budget until the request is cancelled", async () => {
+		const { observed, nudgedCalls } = await exhaustHandoffBudget({ entries: [], continue: false });
+
+		assert.equal(nudgedCalls, MAX_HANDOFF_ATTEMPTS);
 		assert.equal(observed.requests.length, MAX_HANDOFF_ATTEMPTS + 2, "first prompt, one request per failed attempt, then the unenforced prompt");
 		assert.ok(!carriesRequiredNudge(observed.requests.at(-1) ?? []), "the cancelled request is no longer enforced");
 		assert.deepEqual(observed.extensionErrors, []);
@@ -806,39 +847,8 @@ describe("failed handoff cut in a real agent session", () => {
 	});
 
 	it("tells the user no request remains pending when a failed cut exhausts the budget, and cancels it at settle", async () => {
-		const dropKeepingContinuation: ExtensionFactory = (pi) => {
-			pi.on("turn_end", async (event) => (event.entries.length > 0 ? { entries: [] } : undefined));
-		};
-		let nudgedCalls = 0;
-		const handoffWhenNudged: FauxResponseFactory = (context) => {
-			if (carriesRequiredNudge(context.messages)) {
-				nudgedCalls += 1;
-				return fauxAssistantMessage([fauxToolCall("handoff", { nextInstruction: "x", context: HANDOFF_CONTEXT }, { id: `call-handoff-${nudgedCalls}` })]);
-			}
-			return fauxAssistantMessage("plain answer");
-		};
 		const ui: string[] = [];
-		const { session, sessionManager, observed } = await startSession(
-			Array.from({ length: 2 * MAX_HANDOFF_ATTEMPTS + 4 }, () => handoffWhenNudged),
-			{ after: [dropKeepingContinuation], ui: recordingUI(ui) },
-		);
-		let uiAtExhaustingSettle: number;
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.prompt("/handoff finish the report");
-			await settleRuns(session, observed, 2);
-			// Each nudged run counts one attempt; the last retry runs at
-			// enforcementAttempts = MAX_HANDOFF_ATTEMPTS - 1 and exhausts the budget.
-			for (let attempt = 1; attempt < MAX_HANDOFF_ATTEMPTS; attempt++) {
-				await session.prompt("retry");
-				await settleRuns(session, observed, 2 + attempt);
-			}
-			uiAtExhaustingSettle = ui.length;
-			await session.prompt("after the budget");
-			await settleRuns(session, observed, 2 + MAX_HANDOFF_ATTEMPTS);
-		} finally {
-			session.dispose();
-		}
+		const { sessionManager, observed, uiBeforeLastPrompt: uiAtExhaustingSettle } = await exhaustHandoffBudget({ entries: [] }, ui);
 
 		const failures = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE)
 			.map((entry) => (entry.type === "custom_message" ? entry.content : undefined));
@@ -857,7 +867,7 @@ describe("failed handoff cut in a real agent session", () => {
 		const cancelledAt = ui.flatMap((line, index) =>
 			(line.startsWith(`notify:warning:Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts`) ? [index] : []));
 		assert.equal(cancelledAt.length, 1, JSON.stringify(ui));
-		assert.ok(cancelledAt[0] > failureAt.at(-1)! && cancelledAt[0] < uiAtExhaustingSettle,
+		assert.ok(cancelledAt[0] > failureAt.at(-1)! && cancelledAt[0] < uiAtExhaustingSettle!,
 			"the watchdog cancels the request at the settle of the run whose cut failed last");
 		assert.ok(!carriesRequiredNudge(observed.requests.at(-1) ?? []), "the cancelled request is no longer enforced");
 		assert.deepEqual(observed.extensionErrors, []);

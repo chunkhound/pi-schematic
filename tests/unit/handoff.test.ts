@@ -103,6 +103,19 @@ function persist(drafts: any[]): any[] {
 	}));
 }
 
+/** A failed handoff stages nothing, starts no run and reports through one displayed message; returns its content. */
+function assertFailedWithoutRun(state: SchematicState, pi: TestPI): string {
+	assert.equal(state.stagedHandoff, null);
+	assert.deepEqual(pi.sentUserMessages, [], "a failed handoff must not start a new run");
+	const content = pi.sentMessages[0]?.message.content;
+	assert.equal(typeof content, "string");
+	assert.deepEqual(pi.sentMessages, [{
+		message: { customType: "pi-schematic-handoff-failed", content, display: true },
+		options: { triggerTurn: false },
+	}]);
+	return content;
+}
+
 test("/handoff sends the direction back through the LLM without opening the editor", async () => {
 	const state = createState();
 	const pi = await createTestHost((api) => {
@@ -399,12 +412,11 @@ test("turn_start with the cut on the branch completes the handoff", async () => 
 	assert.equal(state.readonlyNudgePending, true);
 	assert.deepEqual([...state.notebookPages], [["keep", "durable"]], "pages follow what the branch persisted");
 	assert.equal(state.epoch, 2);
-	assert.equal(statuses.has(STATUS_KEY_HANDOFF) && statuses.get(STATUS_KEY_HANDOFF), undefined);
+	assert.equal(statuses.get(STATUS_KEY_HANDOFF), undefined, "the in-progress status the tool set is cleared");
 	assert.deepEqual(notifications, [{ message: "Handoff complete. Notebook: 1 page kept, 1 discarded.", level: "info" }]);
 	assert.equal(statuses.get(STATUS_KEY_TOPIC), "🧭 -", "the topic indicator shows the cleared topic");
 	assert.equal(statuses.get(STATUS_KEY_NOTEBOOK), "📒 1", "the notebook indicator shows the kept pages");
-	assert.equal(widgets.has(WIDGET_KEY_WARNING) && widgets.get(WIDGET_KEY_WARNING), undefined,
-		"the high-context warning is cleared");
+	assert.equal(widgets.get(WIDGET_KEY_WARNING), undefined, "the high-context warning is cleared");
 	assert.deepEqual(pi.sentUserMessages, []);
 	assert.deepEqual(pi.sentMessages, []);
 });
@@ -528,7 +540,7 @@ test("a failed handoff without a pending request clears the status and says noth
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
 	assert.equal(state.pendingRequestedHandoff, null);
-	assert.equal(statuses.has(STATUS_KEY_HANDOFF) && statuses.get(STATUS_KEY_HANDOFF), undefined);
+	assert.equal(statuses.get(STATUS_KEY_HANDOFF), undefined, "the in-progress status the tool set is cleared");
 	assert.deepEqual(pi.sentUserMessages, []);
 	assert.equal(pi.sentMessages.length, 1);
 	assert.equal(pi.sentMessages[0].message.customType, "pi-schematic-handoff-failed");
@@ -588,14 +600,8 @@ test("agent_settled fails a declined handoff with its decline reason in a displa
 
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 
-	assert.equal(state.stagedHandoff, null);
 	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
-	assert.deepEqual(pi.sentUserMessages, []);
-	assert.equal(pi.sentMessages.length, 1);
-	assert.equal(pi.sentMessages[0].message.customType, "pi-schematic-handoff-failed");
-	assert.equal(pi.sentMessages[0].message.display, true);
-	assert.match(pi.sentMessages[0].message.content, new RegExp(`^Handoff failed — ${REASON_RESULT_MISSING}\\.`));
-	assert.deepEqual(pi.sentMessages[0].options, { triggerTurn: false });
+	assert.match(assertFailedWithoutRun(state, pi), new RegExp(`^Handoff failed — ${REASON_RESULT_MISSING}\\.`));
 	assert.equal(notifications[0].level, "error");
 });
 
@@ -606,14 +612,8 @@ test("agent_settled fails a handoff whose turn_end never ran", async () => {
 
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 
-	assert.equal(state.stagedHandoff, null);
 	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
-	assert.deepEqual(pi.sentUserMessages, []);
-	assert.equal(pi.sentMessages.length, 1);
-	assert.equal(pi.sentMessages[0].message.customType, "pi-schematic-handoff-failed");
-	assert.equal(pi.sentMessages[0].message.display, true);
-	assert.match(pi.sentMessages[0].message.content, new RegExp(`^Handoff failed — ${REASON_NO_BOUNDARY}\\.`));
-	assert.deepEqual(pi.sentMessages[0].options, { triggerTurn: false });
+	assert.match(assertFailedWithoutRun(state, pi), new RegExp(`^Handoff failed — ${REASON_NO_BOUNDARY}\\.`));
 	assert.deepEqual(notifications, [{ message: `Handoff failed: ${REASON_NO_BOUNDARY}. The handoff can be retried.`, level: "error" }]);
 });
 
@@ -625,17 +625,9 @@ test("a handoff declined for an abort fails at agent_settled with a displayed me
 
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 
-	assert.equal(state.stagedHandoff, null);
 	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
-	assert.deepEqual(pi.sentUserMessages, [], "an abort must not start a new run");
-	assert.deepEqual(pi.sentMessages, [{
-		message: {
-			customType: "pi-schematic-handoff-failed",
-			content: `Handoff failed — ${REASON_ABORTED}. The required handoff remains pending; retry when context usage is eligible.`,
-			display: true,
-		},
-		options: { triggerTurn: false },
-	}]);
+	assert.equal(assertFailedWithoutRun(state, pi),
+		`Handoff failed — ${REASON_ABORTED}. The required handoff remains pending; retry when context usage is eligible.`);
 	assert.deepEqual(notifications, [{ message: `Handoff failed: ${REASON_ABORTED}. The handoff can be retried.`, level: "error" }]);
 });
 
@@ -840,11 +832,7 @@ test("a declined handoff resolved at turn_start fails without starting a run and
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
-	assert.equal(state.stagedHandoff, null);
-	assert.deepEqual(pi.sentUserMessages, []);
-	assert.equal(pi.sentMessages.length, 1);
-	assert.equal(pi.sentMessages[0].message.customType, "pi-schematic-handoff-failed");
-	assert.deepEqual(pi.sentMessages[0].options, { triggerTurn: false });
+	assertFailedWithoutRun(state, pi);
 	assert.deepEqual(await toolCall(pi, "again", "handoff"), { block: true, reason: HANDOFF_FAILED_IN_RUN_REFUSAL, terminate: true });
 });
 
@@ -895,37 +883,46 @@ test("the boundary settles a failed handoff before the watchdog counts the run, 
 	assert.match(warnings()[0].message, new RegExp(`^Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts`));
 });
 
-test("unready runs do not consume the enforcement budget, and a completed handoff clears the nudge", async () => {
+/** The watchdog nudge the real context hook injects for `ctx`, or undefined when it injects none. */
+async function watchdogNudge(pi: TestPI, ctx: unknown): Promise<string | undefined> {
+	const [contextHook] = pi.handlers.get("context")!;
+	const result = await contextHook({ messages: [{ role: "user", content: "work", timestamp: 1 }] }, ctx);
+	return result?.messages.find((message: any) => message.customType === "pi-schematic-watchdog")?.content;
+}
+
+test("unready runs do not consume the enforcement budget", async () => {
 	// Full host: the real context hook sends the not-ready nudge. Runs that carried only
 	// that nudge must not count, so MAX_HANDOFF_ATTEMPTS of them leave the handoff pending.
 	const pi = await createTestHost();
-	const [contextHook] = pi.handlers.get("context")!;
-	const smallUsage = { tokens: 5000, percent: 2.5, contextWindow: 200000 };
 	const warnings: string[] = [];
-	const runContextHook = async (ctx: any): Promise<string | undefined> => {
-		const result = await contextHook({ messages: [{ role: "user", content: "work", timestamp: 1 }] }, ctx);
-		return result?.messages.find((message: any) => message.customType === "pi-schematic-watchdog")?.content;
-	};
-	const small = makeCtx({ usage: smallUsage });
+	const small = makeCtx({ usage: { tokens: 5000, percent: 2.5, contextWindow: 200000 } });
 	small.ctx.ui.notify = (message: string, level: string) => { if (level === "warning") warnings.push(message); };
-	const eligible = makeCtx();
-
 	await pi.commands.get("handoff")!.handler("continue work", { hasUI: false, isIdle: () => true } as any);
+
 	for (let run = 0; run < MAX_HANDOFF_ATTEMPTS; run++) {
-		assert.match(await runContextHook(small.ctx) ?? "", /not yet ready for compaction/);
+		assert.match(await watchdogNudge(pi, small.ctx) ?? "", /not yet ready for compaction/);
 		await assert.rejects(() => executeHandoff(pi, small.ctx, { nextInstruction: "continue work" }, "small"));
 		await emitAll(pi, "agent_settled", { type: "agent_settled" }, small.ctx);
 	}
-	assert.deepEqual(warnings, [], "runs nudged only to keep working must not cancel the handoff");
 
-	assert.match(await runContextHook(eligible.ctx) ?? "", /A real handoff is required/);
-	await executeHandoff(pi, eligible.ctx, { nextInstruction: "continue work" }, "eligible");
-	const result = await endTurn(pi, eligible.ctx, {}, "eligible");
+	assert.deepEqual(warnings, [], "runs nudged only to keep working must not cancel the handoff");
+	assert.match(await watchdogNudge(pi, makeCtx().ctx) ?? "", /A real handoff is required/,
+		"the handoff is still required once context is eligible");
+});
+
+test("a completed handoff clears the requested-handoff nudge", async () => {
+	const pi = await createTestHost();
+	const eligible = makeCtx();
+	await pi.commands.get("handoff")!.handler("continue work", { hasUI: false, isIdle: () => true } as any);
+	assert.match(await watchdogNudge(pi, eligible.ctx) ?? "", /A real handoff is required/);
+	await executeHandoff(pi, eligible.ctx, { nextInstruction: "continue work" });
+	const result = await endTurn(pi, eligible.ctx);
 	eligible.session.branch = persist(result.entries);
+
 	await emitAll(pi, "turn_start", { type: "turn_start" }, eligible.ctx);
 
 	assertSuccessorTurn(result.entries[1].content, { nextInstruction: "continue work" });
-	assert.equal(await runContextHook(eligible.ctx), undefined, "a completed handoff leaves no requested-handoff nudge");
+	assert.equal(await watchdogNudge(pi, eligible.ctx), undefined, "a completed handoff leaves no requested-handoff nudge");
 });
 
 test("/handoff sets the handoff status indicator", async () => {
@@ -1079,27 +1076,12 @@ test("handoff tool metadata and schema describe the prompt contract", async () =
 	assert.doesNotMatch(JSON.stringify(tool.parameters), /"task"/, "the fused task field must be gone");
 });
 
-test("the continuation frame is constant and carries no task or constraints", () => {
-	const summary = buildContinuationFrame();
-
-	assert.match(summary, /continuing a previous agent's work in a clean context/i);
-	assert.match(summary, /notebook_read/);
-	assert.match(summary, /notebook_index/);
-	assert.match(summary, /spawn/);
-	assert.match(summary, /cache/i);
-	assert.match(summary, /instruction verbatim/i);
-	assert.doesNotMatch(summary, /durable grounding/i);
-	assert.doesNotMatch(summary, /\bbrief\b/i);
-	// A frozen task invites paraphrase; frozen constraints lie after a /tree rollback.
-	assert.doesNotMatch(summary, /## Task/);
-	assert.doesNotMatch(summary, /Execution Constraints/i);
-	assert.doesNotMatch(summary, /readonly/i);
-});
-
 test("the continuation frame is pinned byte-for-byte", () => {
 	// Golden string, hand-written on purpose: comparing against buildContinuationFrame()
 	// or loose regexes would pass vacuously if the frame copy regressed. This frame is
-	// the only summary text a successor sees, so every byte is a contract.
+	// the only summary text a successor sees, so every byte is a contract. It carries no
+	// task or constraints: a frozen task invites paraphrase; frozen constraints lie after
+	// a /tree rollback.
 	assert.equal(buildContinuationFrame(), [
 		"## Handoff — Continue Previous Work",
 		"",
@@ -1236,6 +1218,7 @@ test("a small-session rejection keeps the pending request and states it in the e
 		nextInstruction: null,
 	});
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), "🤝 Handoff in progress");
+	assert.deepEqual(notifications, [], "the error result is the only report of the rejection");
 	assert.deepEqual(pi.sentUserMessages, []);
 });
 
@@ -1462,6 +1445,7 @@ test("an unavailable-usage rejection keeps the pending request and states it in 
 		nextInstruction: null,
 	});
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), "🤝 Handoff in progress");
+	assert.deepEqual(notifications, [], "the error result is the only report of the rejection");
 	assert.deepEqual(pi.sentUserMessages, []);
 });
 
