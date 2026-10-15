@@ -520,7 +520,7 @@ const GIT_VALUE_FLAGS: Record<string, ReadonlySet<string>> = {
 	clone: new Set([
 		"-b", "-B", "--branch", "-o", "--origin", "-u", "--upload-pack", "--depth",
 		"--shallow-since", "--shallow-exclude", "--reference", "--reference-if-able",
-		"--filter", "--template", "--separate-git-dir", "--config", "--object-format",
+		"--filter", "--template", "--separate-git-dir", "--config", "-c", "--object-format",
 		"--ref-format", "--revision", "--server-option", "--bundle-uri", "-j", "--jobs",
 	]),
 	config: GIT_CONFIG_VALUE_FLAGS,
@@ -677,12 +677,30 @@ function supportedMutableGitOptions(invocation: GitInvocation): string | null {
 		if (token === "--") break;
 		if (!token.startsWith("-") || token === "-") continue;
 		const [flag, inline] = splitGitDestinationFlag(token);
+		const config = cloneConfigOption(invocation.subcommand, invocation.args, i);
+		if (config !== null) {
+			if (!safeGitConfig(config.value)) return token;
+			if (config.separate) i++;
+			continue;
+		}
 		if (GIT_UNSUPPORTED_WRITE_FLAGS.has(flag) || GIT_SUBCOMMAND_INJECTION_FLAGS[invocation.subcommand]?.test(token)) return token;
 		if (values.has(flag)) { if (inline === undefined && invocation.args[++i] === undefined) return token; continue; }
 		if (["-q", "--quiet", "-v", "--verbose"].includes(flag) || booleans.has(flag) || GIT_HELP_FLAGS.has(flag)) continue;
 		return token;
 	}
 	return null;
+}
+
+/** Clone accepts its own `-c`/`--config` (not the global option) after the subcommand; only an
+ * inert `safeGitConfig` value may pass, or a bundled/attached value could smuggle an executable
+ * `-c` into the clone. Returns the value and whether it was a separate token. */
+function cloneConfigOption(subcommand: string, args: string[], index: number): { value: string | undefined; separate: boolean } | null {
+	if (subcommand !== "clone") return null;
+	const token = args[index]!;
+	if (token === "-c" || token === "--config") return { value: args[index + 1], separate: true };
+	if (token.startsWith("-c") && token.length > 2) return { value: token.slice(2), separate: false };
+	const [flag, inline] = splitFlagValue(token);
+	return flag === "--config" ? { value: inline, separate: false } : null;
 }
 
 function supportedGitOptions(invocation: GitInvocation, kind: "immutable" | "mutable"): string | null {
@@ -763,11 +781,11 @@ const GIT_DESTINATION_FLAGS = new Set(["--separate-git-dir", "--directory", "--f
 // These exact options inject executable code, configuration, or unchecked write paths.
 const GIT_UNSUPPORTED_WRITE_FLAGS = new Set(["--unsafe-paths", "--exec", "--upload-pack", "--receive-pack", "--config", "--config-env", "--template"]);
 // Short aliases that inject config or an executable for one subcommand. Matched as a prefix
-// so bundled values (`-cuser.name=x`, `-xcommand`) cannot slip through:
-// `clone` has `-c` (--config) and `-u` (--upload-pack); `rebase` has `-x` (--exec).
-// `fetch -u` is --update-head-ok and `push -u` is --set-upstream, so those stay allowed.
+// so bundled values (`-xcommand`) cannot slip through:
+// `clone` has `-u` (--upload-pack) and `-x`; `rebase` has `-x` (--exec). Clone's own `-c`/`--config`
+// is not an injection: `cloneConfigOption` vets its value with safeGitConfig before it is allowed.
 const GIT_SUBCOMMAND_INJECTION_FLAGS: Record<string, RegExp> = {
-	clone: /^-(?:c|u|x)/,
+	clone: /^-(?:u|x)/,
 	rebase: /^-(?:x)/,
 };
 

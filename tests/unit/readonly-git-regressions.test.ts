@@ -1026,6 +1026,25 @@ test("Git clone with recurse-submodules stays allowed inside temp", gitSuiteOpti
 	check(`git clone --recurse-submodules ${shellPath(source)}`, cwd, true);
 });
 
+test("Git clone accepts only a vetted post-subcommand -c override", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const source = path.join(root, "source.git");
+	git(root, "init", "--quiet", "--bare", source);
+	const target = path.join(root, "clone");
+	const command = `git clone -c ${quote("color.ui=always")} ${quote(source)} ${quote(target)}`;
+	check(command, root, true);
+	shell(command, root);
+	assert.ok(existsSync(path.join(target, ".git", "HEAD")), "the clone must run");
+	// Clone's own -c/--config is not an injection; the value is the vetting boundary.
+	check(`git clone --config ${quote("color.ui=always")} ${quote(source)} ${quote(path.join(root, "long"))}`, root, true);
+	for (const unsafe of ["user.name=x", "alias.x=!touch", `core.hooksPath=${path.join(root, "hooks")}`]) {
+		check(`git clone -c ${quote(unsafe)} ${quote(source)} ${quote(path.join(root, "bad"))}`, root, false);
+	}
+	// -u/--upload-pack stays an executable hook, as do the long injection flags.
+	check(`git clone -u ${quote(path.join(root, "evil"))} ${quote(source)} ${quote(path.join(root, "bad"))}`, root, false);
+	check(`git clone --config-env=${quote("A=B")} ${quote(source)} ${quote(path.join(root, "bad"))}`, root, false);
+});
+
 test("Git -C resolves link/.. with Git's traversal, not lexical collapse", gitSuiteOptions, (t) => {
 	const root = fixture(t);
 	const repo = repository(root);
