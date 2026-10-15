@@ -99,6 +99,8 @@ function classifyGitInvocation(tokens: string[], cwd: string, shellVars: Readonl
 	if (!parsed) return `unsupported git global option or configuration blocked${FAIL_CLOSED_HINT}`;
 	if (parsed.kind === "global-only") return null;
 	const invocation = parsed.invocation;
+	const transport = executableGitTransport(invocation);
+	if (transport) return `unsupported git transport blocked: ${transport}${FAIL_CLOSED_HINT}`;
 	const kind = gitSubcommandKind(invocation.subcommand, invocation.args);
 	// Unmodeled subcommands fail closed everywhere, not merely outside temp: their implicit
 	// write destinations (e.g. credential-store -> $HOME/.git-credentials) cannot be proven,
@@ -109,6 +111,14 @@ function classifyGitInvocation(tokens: string[], cwd: string, shellVars: Readonl
 	// Help prints and exits, so it writes nothing: skip the write-root analysis that the
 	// destination flags of mutable subcommands (clone/init default to cwd) would otherwise block.
 	return gitHelpInvocation(invocation) ? null : classifyGitRoots(invocation, kind, shellVars);
+}
+
+/** `ext::`/`fd::` make Git exec a helper program for the remote side; no write-root check can
+ * bound what that program does, so reject the source/remote operand before root analysis. */
+const GIT_EXECUTABLE_TRANSPORT = /(?:^|=)(?:ext|fd)::/;
+
+function executableGitTransport(invocation: GitInvocation): string | null {
+	return invocation.args.find((token) => GIT_EXECUTABLE_TRANSPORT.test(token)) ?? null;
 }
 
 /** Expand bundles before checking arity so their message and destination flags stay visible.
@@ -288,6 +298,14 @@ function gitExecutableHookEnvironment(vars: ReadonlyMap<string, string>): boolea
 	return [...GIT_EXECUTABLE_HOOK_ENV].some((name) => vars.has(name));
 }
 
+// A command-owned protocol allowlist/negotiation override can enable an executable transport
+// helper (`GIT_ALLOW_PROTOCOL=ext`), so it is distrusted like an executable hook.
+const GIT_TRANSPORT_OVERRIDE_ENV = new Set(["GIT_ALLOW_PROTOCOL", "GIT_PROTOCOL"]);
+
+function gitTransportOverrideEnvironment(vars: ReadonlyMap<string, string>): boolean {
+	return [...GIT_TRANSPORT_OVERRIDE_ENV].some((name) => vars.has(name));
+}
+
 // Path-valued tracing/redirect vars command-provided name a file git opens or appends during
 // any subcommand (including reads: fsck/status emit trace output and redirect stdout/stderr to
 // the path). The user's exported env stays trusted; only assignments in the command string block.
@@ -308,6 +326,7 @@ function blockedGitEnvironment(vars: ReadonlyMap<string, string>): string | null
 	if (unsupportedGitConfigEnvironment(vars)) return `unsupported git configuration environment blocked${FAIL_CLOSED_HINT}`;
 	if (commandSuppliedGitConfigEnvironment(vars)) return `command-provided git configuration environment blocked${FAIL_CLOSED_HINT}`;
 	if (gitExecutableHookEnvironment(vars)) return `git executable hook environment blocked${FAIL_CLOSED_HINT}`;
+	if (gitTransportOverrideEnvironment(vars)) return `command-provided git transport override blocked${FAIL_CLOSED_HINT}`;
 	if (commandSuppliedGitTraceEnvironment(vars)) return `command-provided git trace environment blocked${FAIL_CLOSED_HINT}`;
 	return null;
 }

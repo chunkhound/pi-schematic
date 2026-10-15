@@ -1037,6 +1037,26 @@ test("Git -C resolves link/.. with Git's traversal, not lexical collapse", gitSu
 	assert.notDeepEqual(readFileSync(config), before, "git must write the outside repo config");
 });
 
+test("Git rejects executable clone transports and command protocol overrides", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const marker = path.join(fixture(t, os.homedir()), "marker");
+	const target = (name: string) => quote(path.join(root, name));
+	const source = path.join(root, "source.git");
+	git(root, "init", "--quiet", "--bare", source);
+	for (const command of [
+		`GIT_ALLOW_PROTOCOL=ext git clone ${quote(`ext::touch ${marker}`)} ${target("c1")}`,
+		`env GIT_ALLOW_PROTOCOL=ext git clone ${quote(`ext::touch ${marker}`)} ${target("c2")}`,
+		`git clone ${quote(`ext::touch ${marker}`)} ${target("c3")}`,
+		`git clone ${quote("fd::3")} ${target("c4")}`,
+		`GIT_PROTOCOL=version=2 git clone ${quote(source)} ${target("c5")}`,
+	]) check(command, root, false);
+	assert.equal(existsSync(marker), false, "no blocked command may run the helper");
+	// Premise: with the override the ext helper really runs, so the block guards a real effect.
+	// `|| true` tolerates git's expected failure after the helper already ran.
+	shell(`GIT_ALLOW_PROTOCOL=ext git clone ${quote(`ext::touch ${marker}`)} ${target("c6")} || true`, root);
+	assert.ok(existsSync(marker), "git must run the ext helper when the override is present");
+});
+
 test("Git preserves a trailing space in a probed core.worktree", gitSuiteOptions, (t) => {
 	const repo = repository(fixture(t));
 	const outsideDir = fixture(t, os.homedir());
