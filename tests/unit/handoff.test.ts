@@ -558,35 +558,6 @@ test("a handoff declined for an abort fails at agent_settled with a displayed me
 	assert.deepEqual(notifications, [{ message: `Handoff failed: ${REASON_ABORTED}. The handoff can be retried.`, level: "error" }]);
 });
 
-test("a run that settles aborted before its turn_end fails the handoff as aborted and starts no run", async () => {
-	const { state, pi } = await boundaryHost((s) => requestHandoff(s));
-	const { ctx } = makeCtx();
-	await executeHandoff(pi, ctx);
-
-	await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: true }, ctx);
-
-	assert.equal(state.stagedHandoff, null);
-	assert.deepEqual(pi.sentUserMessages, [], "an abort must not start a new run");
-	assert.equal(pi.sentMessages.length, 1);
-	assert.equal(pi.sentMessages[0].message.content,
-		`Handoff failed — ${REASON_ABORTED}. The required handoff remains pending; retry when context usage is eligible.`);
-	assert.deepEqual(pi.sentMessages[0].options, { triggerTurn: false });
-});
-
-test("a run that settles aborted without the submitted cut reports the missing cut and starts no run", async () => {
-	const { pi } = await boundaryHost((s) => requestHandoff(s));
-	const { ctx } = makeCtx();
-	await executeHandoff(pi, ctx);
-	await endTurn(pi, ctx);
-
-	await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: true }, ctx);
-
-	assert.deepEqual(pi.sentUserMessages, [], "an abort must not start a new run");
-	assert.equal(pi.sentMessages.length, 1);
-	assert.match(pi.sentMessages[0].message.content, new RegExp(`^Handoff failed — ${REASON_NOT_PERSISTED.replace(/[()]/g, "\\$&")}\\.`));
-	assert.deepEqual(pi.sentMessages[0].options, { triggerTurn: false });
-});
-
 test("a submitted handoff whose cut is missing but whose notebook drafts persisted follows the branch's notebook", async () => {
 	const { state, pi } = await boundaryHost((s) => {
 		s.epoch = 1;
@@ -769,6 +740,22 @@ test("after a failed cut the run refuses further handoff calls until the agent s
 	assert.equal(await toolCall(pi, "again", "handoff"), undefined);
 });
 
+test("a declined handoff resolved at turn_start fails without starting a run and refuses a repeat call", async () => {
+	const { state, pi } = await boundaryHost((s) => requestHandoff(s));
+	const { ctx } = makeCtx();
+	await executeHandoff(pi, ctx);
+	await endTurn(pi, ctx, { toolResults: [handoffToolResult("call-1", true)] });
+
+	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+
+	assert.equal(state.stagedHandoff, null);
+	assert.deepEqual(pi.sentUserMessages, []);
+	assert.equal(pi.sentMessages.length, 1);
+	assert.equal(pi.sentMessages[0].message.customType, "pi-schematic-handoff-failed");
+	assert.deepEqual(pi.sentMessages[0].options, { triggerTurn: false });
+	assert.deepEqual(await toolCall(pi, "again", "handoff"), { block: true, reason: HANDOFF_FAILED_IN_RUN_REFUSAL, terminate: true });
+});
+
 test("session_tree clears the failed-in-run refusal", async () => {
 	const pi = await createTestHost();
 	const { ctx } = makeCtx();
@@ -782,7 +769,7 @@ test("session_tree clears the failed-in-run refusal", async () => {
 	assert.equal(await toolCall(pi, "again", "handoff"), undefined);
 });
 
-test("handoff is model-only so ctx.executeTool cannot call it", async () => {
+test("the handoff tool definition declares model-only exposure", async () => {
 	const { pi } = await boundaryHost();
 
 	// The host does not model Pi's nested-call runner; the field is what Pi reads.

@@ -14,7 +14,7 @@ export const HANDOFF_SIBLING_REFUSAL = "Not run: this call shares an assistant m
 /** Refusal for every handoff call after the first in one assistant message. */
 export const HANDOFF_EXTRA_CALL_REFUSAL = "Not run: only the first handoff call in an assistant message runs.";
 /** Refusal for a handoff call after a handoff failed earlier in the same run. */
-export const HANDOFF_FAILED_IN_RUN_REFUSAL = "Not run: a handoff failed earlier in this run. Wait for the next user message before calling handoff again.";
+export const HANDOFF_FAILED_IN_RUN_REFUSAL = "Not run: a handoff already failed in this run. Do not call handoff again in this run.";
 /** Tool rejection while another handoff is staged. */
 export const HANDOFF_ALREADY_STAGED = "A handoff is already staged in this turn; wait for it to complete.";
 /** `/handoff` rejection while a handoff is staged. */

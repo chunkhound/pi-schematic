@@ -5,7 +5,8 @@
  *
  * Every helper that starts a run or navigates the tree is a step: it returns only
  * once `/e2e-barrier` reports no outstanding work, so tests never issue a
- * non-command prompt while a run or compaction is active, and it fails unless the
+ * non-command prompt while a run, a chained turn, a handoff call awaiting its boundary or an undelivered
+ * input is outstanding, and it fails unless the
  * step started exactly the runs its caller expected. A step that has counted fewer
  * runs than it expects barriers again — a run a command, session_tree or agent_settled
  * handler starts is first visible to the probe at its "input" event — within one

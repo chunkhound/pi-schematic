@@ -388,8 +388,10 @@ test("reset clears a staged handoff and the refusals, keeping the refusal map id
 	const refusals = state.handoffRefusals;
 	state.stagedHandoff = { ...STAGED_HANDOFF };
 	refusals.set("call-2", "refused");
+	state.handoffFailedInRun = true;
 	resetState(state);
 	assert.equal(state.stagedHandoff, null);
+	assert.equal(state.handoffFailedInRun, false);
 	assert.equal(state.handoffRefusals.size, 0);
 	assert.equal(state.handoffRefusals, refusals);
 });
@@ -401,8 +403,10 @@ test("invalidateHandoffState clears the staged handoff, the refusals and the pen
 	refusals.set("call-2", "refused");
 	setActiveNotebookTopic(state, "topic", "agent");
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 1, eligibleNudgeDelivered: false, nextInstruction: null };
+	state.handoffFailedInRun = true;
 	invalidateHandoffState(state);
 	assert.equal(state.stagedHandoff, null);
+	assert.equal(state.handoffFailedInRun, false);
 	assert.equal(state.handoffRefusals.size, 0);
 	assert.equal(state.handoffRefusals, refusals);
 	assert.equal(state.pendingRequestedHandoff, null);

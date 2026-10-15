@@ -3,7 +3,8 @@
  *
  * Stores the human direction as the successor's instruction, then asks the LLM to
  * prepare this context for the cut: curate the notebook and supply the remaining
- * situational context. The handoff tool performs the actual cut.
+ * situational context. The handoff tool stages the cut; handoff/boundary.ts writes it
+ * at the end of the turn.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

@@ -4,7 +4,7 @@
 export const HANDOFF_SUCCESSOR_CUSTOM_TYPE = "pi-schematic-handoff";
 /** Custom type of the hidden system-prompt note written after the successor. */
 export const HANDOFF_NOTE_CUSTOM_TYPE = "pi-schematic-handoff-note";
-/** Custom type of the failure message persisted when an aborted run leaves no cut. */
+/** Custom type of the failure message sent when a handoff leaves no cut. */
 export const HANDOFF_FAILED_CUSTOM_TYPE = "pi-schematic-handoff-failed";
 
 /** Delimits extension-owned operational reporting after a legacy successor payload. */

@@ -175,7 +175,6 @@ function resolveStagedHandoff(
 	state: SchematicState,
 	ctx: ExtensionContext,
 	at: "turn_start" | "agent_settled",
-	settledAborted: boolean,
 ): void {
 	const staged = state.stagedHandoff;
 	if (!staged) return;
@@ -184,7 +183,7 @@ function resolveStagedHandoff(
 			// turn_end moves a staged handoff on unless pi skipped the boundary; only a
 			// settle fails it.
 			if (at === "agent_settled") {
-				failStagedHandoff(pi, state, ctx, settledAborted ? REASON_ABORTED : REASON_NO_BOUNDARY);
+				failStagedHandoff(pi, state, ctx, REASON_NO_BOUNDARY);
 			}
 			return;
 		case "declined":
@@ -263,14 +262,11 @@ export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState)
 	// First handler point after the commit and before the successor's context
 	// event, so request, topic and readonly nudge are settled for its first request.
 	pi.on("turn_start", async (_event, ctx) => {
-		resolveStagedHandoff(pi, state, ctx, "turn_start", false);
+		resolveStagedHandoff(pi, state, ctx, "turn_start");
 	});
 
-	pi.on("agent_settled", async (event, ctx) => {
-		// Pi 1.1 reports an aborted run here; 0.99.2 does not, and there an abort is
-		// seen only by turn_end through ctx.signal (the run's signal is gone by now).
-		const aborted = "aborted" in event && event.aborted === true;
-		resolveStagedHandoff(pi, state, ctx, "agent_settled", aborted);
+	pi.on("agent_settled", async (_event, ctx) => {
+		resolveStagedHandoff(pi, state, ctx, "agent_settled");
 		state.handoffFailedInRun = false;
 	});
 }

@@ -58,7 +58,7 @@ export interface SchematicState {
 	/** Tool calls in the current assistant message that must not run because they share it with handoff; value = refusal reason. */
 	handoffRefusals: Map<string, string>;
 
-	/** A handoff failed in the current run; further handoff calls are refused until it settles. */
+	/** A handoff failed in the current run; further handoff calls are refused until the run settles or handoff state is invalidated. */
 	handoffFailedInRun: boolean;
 
 	/**
