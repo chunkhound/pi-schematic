@@ -485,18 +485,51 @@ function handleCheckpoint(deps: WorkflowHostDeps, state: HostState, args: unknow
 	return metadata;
 }
 
-/** Accounting/gating contract for one `workflow.<member>` handle. */
-interface HandleSpec {
-	/** Cost/time limit gate: the host checks limits before the effect runs. */
-	guarded: boolean;
+/** Author-visible gate posture of one handle; the three categories in docs/workflows.md
+ * (Targets): `guarded` (limit-gated), `inspector` (always reachable, never stops the run),
+ * and `control` (the safe stop points `checkpoint`/`exit`, always reachable). */
+export type WorkflowHandleKind = "guarded" | "inspector" | "control";
+
+/** Accounting/gating contract for one `workflow.<member>` handle. {@link HANDLE_POLICY} is the
+ * single code source for this policy; the doc-contract test derives the Guarded/Inspectors/
+ * terminal partition from it. */
+export interface HandlePolicy {
+	/** Cost/time gate: the host checks limits before a `guarded` effect runs. */
+	kind: WorkflowHandleKind;
 	/** Lifecycle self-gated: the handler converts disposed/aborted/exited/no-ctx failures to a normal result; the deferred-stop escalation throw is converted in executeGuarded. */
 	softLifecycle?: boolean;
-	/** Accounting: counted handles feed the run's technical metrics. Defaults to `guarded`. */
+	/** Accounting: counted handles feed the run's technical metrics. Defaults to `kind === "guarded"`. */
 	counted?: boolean;
 	spread: boolean;
 }
 
-function buildHandle(name: WorkflowHandleName, spec: HandleSpec, run: AnyRun, state: HostState, deps: WorkflowHostDeps): CodemodeTool {
+/** The one policy table for every `workflow.<member>` handle. A new WorkflowHandleName
+ * member in types.ts fails here (missing key) until its policy is declared; an unknown key
+ * fails the excess-property check. */
+export const HANDLE_POLICY: Record<WorkflowHandleName, HandlePolicy> = {
+	run: { kind: "guarded", spread: true },
+	handoff: { kind: "guarded", spread: false },
+	classify: { kind: "guarded", softLifecycle: true, spread: false },
+	shell: { kind: "guarded", spread: true },
+	state: { kind: "inspector", spread: false },
+	entries: { kind: "guarded", spread: false },
+	notebookIndex: { kind: "inspector", spread: false },
+	notebookRead: { kind: "inspector", spread: false },
+	notebookWrite: { kind: "guarded", spread: false },
+	notebookTopic: { kind: "inspector", spread: false },
+	budget: { kind: "inspector", spread: false },
+	readonly: { kind: "guarded", spread: false },
+	new: { kind: "guarded", spread: false },
+	checkpoint: { kind: "control", counted: true, spread: false },
+	exit: { kind: "control", spread: false },
+};
+
+/** True when a handle feeds the run's technical metrics. Single rule, read by the host and pinned by test. */
+export function isCountedHandle(policy: HandlePolicy): boolean {
+	return policy.counted ?? policy.kind === "guarded";
+}
+
+function buildHandle(name: WorkflowHandleName, spec: HandlePolicy, run: AnyRun, state: HostState, deps: WorkflowHostDeps): CodemodeTool {
 	return {
 		name: `workflow.${name}`,
 		spread: spec.spread,
@@ -509,7 +542,7 @@ const OVERLAP_ERROR = "workflow calls must not overlap: workflow effects are ser
 
 /** Deferred-stop gate for one guarded call. Returns a normal aborted result when a
  * soft-lifecycle handle is blocked by escalation (classify never rejects); rethrows otherwise. */
-function gateRun(deps: WorkflowHostDeps, state: HostState, spec: HandleSpec): unknown {
+function gateRun(deps: WorkflowHostDeps, state: HostState, spec: HandlePolicy): unknown {
 	try {
 		guardDeferredStop(deps, state, spec.softLifecycle);
 	} catch (error) {
@@ -521,12 +554,12 @@ function gateRun(deps: WorkflowHostDeps, state: HostState, spec: HandleSpec): un
 	return undefined;
 }
 
-async function executeGuarded(name: WorkflowHandleName, spec: HandleSpec, run: () => unknown, state: HostState, deps: WorkflowHostDeps): Promise<unknown> {
+async function executeGuarded(name: WorkflowHandleName, spec: HandlePolicy, run: () => unknown, state: HostState, deps: WorkflowHostDeps): Promise<unknown> {
 	// Classify never rejects: it self-gates lifecycle failures (see handleClassify) so a
 	// run ended before classify gets a normal aborted result, not a workflow error.
 	if (!spec.softLifecycle) ensureActive(state);
 	if (state.executing) throw new Error(OVERLAP_ERROR);
-	if (spec.guarded) {
+	if (spec.kind === "guarded") {
 		const blocked = gateRun(deps, state, spec);
 		if (blocked !== undefined) return blocked;
 	}
@@ -537,7 +570,7 @@ async function executeGuarded(name: WorkflowHandleName, spec: HandleSpec, run: (
 		state.executing = false;
 		// Count only accounted handles: inspectors must not inflate the metrics a human reads
 		// as real progress. Blocked effects (rejected gate or overlap) never reach this finally.
-		if (spec.counted ?? spec.guarded) state.counts.set(name, (state.counts.get(name) ?? 0) + 1);
+		if (isCountedHandle(spec)) state.counts.set(name, (state.counts.get(name) ?? 0) + 1);
 		safeEmitProgress(deps, state);
 	}
 }
@@ -577,30 +610,31 @@ function buildGlobals(deps: WorkflowHostDeps, state: HostState): CodemodeTool[] 
 	});
 }
 
-type HandleSpecEntry = HandleSpec & { run: AnyRun };
+type HandleSpecEntry = HandlePolicy & { run: AnyRun };
 
-/** Spec+handler for every `workflow.<member>` handle. The Record annotation is the
- * compile-time exhaustiveness guard: a new WorkflowHandleName member in types.ts fails
- * here (missing key) until its entry is declared; an unknown key fails excess-property
- * check, so the map cannot drift from the union in either direction. */
+/** Spec+handler for every `workflow.<member>` handle: the policy table plus one run handler
+ * per name. Both Records are exhaustive over `WorkflowHandleName`, so a new member fails
+ * compile until its policy and handler are declared. */
 function buildHandleSpecs(deps: WorkflowHostDeps, state: HostState, notebookDeps: ReturnType<typeof buildNotebookDeps>): Record<WorkflowHandleName, HandleSpecEntry> {
-	return {
-		run: { guarded: true, spread: true, run: (args) => handleRun(deps, state, args as unknown[]) },
-		handoff: { guarded: true, spread: false, run: (args) => handleHandoff(deps, state, args) },
-		classify: { guarded: true, softLifecycle: true, spread: false, run: (args, signal) => handleClassify(deps, state, args, signal) },
-		shell: { guarded: true, spread: true, run: (args, signal) => handleShell(deps, state, args as unknown[], signal) },
-		state: { guarded: false, spread: false, run: () => buildDigest(deps, state) },
-		entries: { guarded: true, spread: false, run: (args) => buildEntries(deps, args) },
-		notebookIndex: { guarded: false, spread: false, run: () => notebookIndex(deps.state) },
-		notebookRead: { guarded: false, spread: false, run: (args) => notebookRead(deps.state, args) },
-		notebookWrite: { guarded: true, spread: false, run: (args) => notebookWrite(notebookDeps, args) },
-		notebookTopic: { guarded: false, spread: false, run: () => notebookTopic(deps.state) },
-		budget: { guarded: false, spread: false, run: () => buildBudget(deps, state) },
-		readonly: { guarded: true, spread: false, run: (args) => handleReadonly(deps, state, args) },
-		new: { guarded: true, spread: false, run: () => handleNew(deps, state) },
-		checkpoint: { guarded: false, counted: true, spread: false, run: (args) => handleCheckpoint(deps, state, args) },
-		exit: { guarded: false, spread: false, run: (args) => handleExit(deps, state, args) },
+	const runs: Record<WorkflowHandleName, AnyRun> = {
+		run: (args) => handleRun(deps, state, args as unknown[]),
+		handoff: (args) => handleHandoff(deps, state, args),
+		classify: (args, signal) => handleClassify(deps, state, args, signal),
+		shell: (args, signal) => handleShell(deps, state, args as unknown[], signal),
+		state: () => buildDigest(deps, state),
+		entries: (args) => buildEntries(deps, args),
+		notebookIndex: () => notebookIndex(deps.state),
+		notebookRead: (args) => notebookRead(deps.state, args),
+		notebookWrite: (args) => notebookWrite(notebookDeps, args),
+		notebookTopic: () => notebookTopic(deps.state),
+		budget: () => buildBudget(deps, state),
+		readonly: (args) => handleReadonly(deps, state, args),
+		new: () => handleNew(deps, state),
+		checkpoint: (args) => handleCheckpoint(deps, state, args),
+		exit: (args) => handleExit(deps, state, args),
 	};
+	const entries = (Object.keys(HANDLE_POLICY) as WorkflowHandleName[]).map((name) => [name, { ...HANDLE_POLICY[name], run: runs[name] }] as const);
+	return Object.fromEntries(entries) as Record<WorkflowHandleName, HandleSpecEntry>;
 }
 
 /** Apply the explicit `workflow.run` model for this turn; an unknown or unauthenticated model fails the run. */

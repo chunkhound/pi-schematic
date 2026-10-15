@@ -85,7 +85,7 @@ One `/workflow <file> [args]` run. Each step names its owner module.
 
 **Non-overlap.** Compiled workflows are async, so `Promise.all` could interleave two effects. `executeGuarded` sets `state.executing` for the duration of one effect and throws `workflow calls must not overlap` if a second starts. This keeps previews, run markers, and counters consistent.
 
-**Guarded vs inspector split.** Every handle carries a `HandleSpec`. The guarded, inspector, and terminal sets are the author rule in [workflows.md](workflows.md) (Targets). `guardDeferredStop` runs first on a guarded handle, so a crossed target arms a pending stop. `classify` sets `softLifecycle`: lifecycle and escalation failures become a normal aborted `ClassifierResult` instead of a rejection. `counted` defaults to `guarded`; only `checkpoint` overrides it.
+**Guarded vs inspector split.** Every handle carries a `HandlePolicy`; `HANDLE_POLICY` in `workflow/host.ts` is the single code source, and the doc-contract test in `tests/unit/workflow-handles.test.ts` derives the Guarded/Inspectors/terminal partition from it. `kind` is `guarded`, `inspector`, or `control`. `guardDeferredStop` runs first on a guarded handle, so a crossed target arms a pending stop. `classify` sets `softLifecycle`: lifecycle and escalation failures become a normal aborted `ClassifierResult` instead of a rejection. `counted` defaults to `guarded`; only `checkpoint` overrides it.
 
 ## Targets, exit, salvage
 

@@ -4,7 +4,7 @@ import test from "node:test";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
-import { createWorkflowHost } from "../../workflow/host.js";
+import { createWorkflowHost, HANDLE_POLICY, isCountedHandle, type WorkflowHandleKind } from "../../workflow/host.js";
 import type { WorkflowHandleName, WorkflowHost, WorkflowHostDeps } from "../../workflow/types.js";
 
 const EXPECTED = [
@@ -97,28 +97,15 @@ test("a guarded call past the cost limit defers the stop to the next checkpoint"
 });
 
 /**
- * Per-handle accounting contract (see buildGlobals in workflow/host.ts): guarded
- * handles arm the deferred cost/time stop, counted handles feed the run metrics.
- * Inspectors (state/budget/notebookRead/notebookIndex/notebookTopic/checkpoint/exit)
- * stay reachable past the limit by design; checkpoint still counts, exit counts nothing.
+ * Per-handle accounting contract derived from the code policy (`HANDLE_POLICY`): guarded
+ * handles arm the deferred cost/time stop, counted handles feed the run metrics. Deriving it
+ * keeps the test from drifting from the shipped Guarded/Inspectors/terminal partition.
  */
-const HANDLE_CONTRACT: Array<{ name: WorkflowHandleName; guarded: boolean; counted: boolean }> = [
-	{ name: "run", guarded: true, counted: true },
-	{ name: "handoff", guarded: true, counted: true },
-	{ name: "classify", guarded: true, counted: true },
-	{ name: "shell", guarded: true, counted: true },
-	{ name: "state", guarded: false, counted: false },
-	{ name: "entries", guarded: true, counted: true },
-	{ name: "notebookIndex", guarded: false, counted: false },
-	{ name: "notebookRead", guarded: false, counted: false },
-	{ name: "notebookWrite", guarded: true, counted: true },
-	{ name: "notebookTopic", guarded: false, counted: false },
-	{ name: "budget", guarded: false, counted: false },
-	{ name: "readonly", guarded: true, counted: true },
-	{ name: "new", guarded: true, counted: true },
-	{ name: "checkpoint", guarded: false, counted: true },
-	{ name: "exit", guarded: false, counted: false },
-];
+const HANDLE_CONTRACT = (Object.keys(HANDLE_POLICY) as WorkflowHandleName[]).map((name) => ({
+	name,
+	guarded: HANDLE_POLICY[name].kind === "guarded",
+	counted: isCountedHandle(HANDLE_POLICY[name]),
+}));
 
 type TableEntry = { type: string; id: string; parentId: null; message: { role: string } };
 
@@ -353,12 +340,15 @@ test("the handle count and partition stated in docs/workflows.md stay in sync", 
 	assert.ok(terminalMatch, "docs/workflows.md lost the terminal-handle bullet");
 	const terminal = [terminalMatch[1], terminalMatch[2]].sort();
 	const contractGuarded = HANDLE_CONTRACT.filter((row) => row.guarded).map((row) => row.name).sort();
-	const contractUnguarded = HANDLE_CONTRACT.filter((row) => !row.guarded).map((row) => row.name).sort();
+	const handleNames = Object.keys(HANDLE_POLICY) as WorkflowHandleName[];
+	const byKind = (kind: WorkflowHandleKind) => handleNames.filter((name) => HANDLE_POLICY[name].kind === kind).sort();
 	const guarded = bullet("Guarded");
 	const inspectors = bullet("Inspectors");
 	assert.deepEqual(guarded, contractGuarded, "the docs Guarded list must match the guarded handles");
-	assert.deepEqual(inspectors, contractUnguarded.filter((name) => !terminal.includes(name)), "the docs Inspectors list must match the non-terminal unguarded handles");
-	assert.deepEqual([...guarded, ...inspectors, ...terminal].sort(), HANDLE_CONTRACT.map((row) => row.name).sort(), "the docs partition must cover every handle exactly once");
+	assert.deepEqual(guarded, byKind("guarded"), "the docs Guarded list must match HANDLE_POLICY");
+	assert.deepEqual(inspectors, byKind("inspector"), "the docs Inspectors list must match HANDLE_POLICY");
+	assert.deepEqual(terminal, byKind("control"), "the docs terminal handles must match HANDLE_POLICY control handles");
+	assert.deepEqual([...guarded, ...inspectors, ...terminal].sort(), [...handleNames].sort(), "the docs partition must cover every handle exactly once");
 });
 
 // WHY: notebookWrite returns null, so the clipping notice must ride the buffered preview;
