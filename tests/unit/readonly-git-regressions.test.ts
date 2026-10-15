@@ -1020,3 +1020,19 @@ test("Git clone with recurse-submodules stays allowed inside temp", gitSuiteOpti
 	const source = repository(root);
 	check(`git clone --recurse-submodules ${shellPath(source)}`, cwd, true);
 });
+
+test("Git -C resolves link/.. with Git's traversal, not lexical collapse", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const repo = repository(root);
+	const outsideRepo = repository(fixture(t, os.homedir()));
+	const child = path.join(outsideRepo, "child");
+	mkdirSync(child);
+	symlinkSync(child, path.join(repo, "link"));
+	const anchor = `${repo}${path.sep}link${path.sep}..`;
+	const config = path.join(outsideRepo, ".git", "config");
+	const before = readFileSync(config);
+	check(`git -C ${quote(anchor)} config demo.proof written`, repo, false);
+	// Premise: git chdirs through the symlink, so the write lands in the outside repo.
+	shell(`git -C ${quote(anchor)} config demo.proof written`, repo);
+	assert.notDeepEqual(readFileSync(config), before, "git must write the outside repo config");
+});

@@ -1,7 +1,7 @@
 import path from "node:path";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
-import { accessSync, closeSync, constants, lstatSync, openSync, readFileSync, readlinkSync, readSync, statSync, type Stats } from "node:fs";
+import { accessSync, closeSync, constants, lstatSync, openSync, readFileSync, readlinkSync, readSync, realpathSync, statSync, type Stats } from "node:fs";
 import { resolveRealPath } from "./resolve-path.js";
 import {
 	stripMatchingQuotes,
@@ -9,6 +9,7 @@ import {
 	decodeShellOperand,
 	splitFlagValue,
 	isTempLiteralPath,
+	isCrossDriveRelative,
 	hasUnprovableValueChars,
 } from "./readonly-shell-utils.js";
 import { FAIL_CLOSED_HINT } from "./notifications.js";
@@ -165,14 +166,30 @@ function resolveGitEnvironmentValue(name: string, value: string, base: string): 
 	return GIT_POINTER_ENV.has(name) ? resolveGitDir(value, base) : resolveGitPath(value, base);
 }
 
-/** Shell operands are decoded at entry. Metadata/config values are data, never shell source.
- * NOTE: bare path.resolve inherits the cross-drive-relative ambient-cwd caveat on win32
- * (see isCrossDriveRelative); benign here because callers re-check containment, do not widen. */
+/** Shell operands are decoded at entry. Metadata/config values are data, never shell source. */
 function resolveGitPath(value: string, base: string): string | null {
 	// The dynamic-operand sentinel (and any NUL) cannot name a path: fail closed here so it
 	// never reaches the filesystem, while the surrounding flag still parses as data.
 	if (value.includes(UNPROVEN_GIT_OPERAND)) return null;
-	return value ? path.resolve(base, value) : null;
+	if (!value) return null;
+	// Drive-relative (`C:rel`) resolves against that drive's ambient cwd, which the classifier
+	// cannot see (same rule as classifyTempPath); fail closed instead of checking the wrong file.
+	if (isCrossDriveRelative(value, base)) return null;
+	return resolveGitTraversalPath(value, base);
+}
+
+/** Resolve a path the way Git's own open/chdir does: the kernel follows each symlink before it
+ * applies a later `..`. `path.resolve` collapses `..` lexically, so `link/..` names the link's
+ * parent while Git lands in the link target's parent — a different containment verdict. Concatenate
+ * without lexical collapse (the gitCommonDirectory approach), then realpath. A not-yet-existing
+ * target keeps the nearest-existing-ancestor fallback so new destinations still resolve. */
+function resolveGitTraversalPath(value: string, base: string): string {
+	const raw = path.isAbsolute(value) ? value : `${base}${path.sep}${value}`;
+	try { return realpathSync.native(raw); }
+	catch (error) {
+		if (absentProbePath(error)) return resolveRealPath(raw);
+		throw error;
+	}
 }
 
 /** Decode option names as Bash does, retaining flags when dynamic values become sentinels.
