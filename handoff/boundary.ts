@@ -7,8 +7,10 @@
  * the same run continues with the successor turn. Pi does not acknowledge a
  * boundary result — a later turn_end handler or draft validation can drop it —
  * so the handoff completes only once its cut is found on the branch, at the
- * next turn_start or when the run settles. Tool calls sharing the assistant
- * message with handoff are refused so nothing runs between staging and the cut.
+ * next turn_start or when the run settles. A missing cut never starts a run,
+ * and further handoff calls in that run are refused. Tool calls sharing the
+ * assistant message with handoff are refused so nothing runs between staging
+ * and the cut.
  */
 
 import type {
@@ -22,10 +24,10 @@ import { buildNotebookDiscardDrafts } from "../notebook/store.js";
 import { reconstructNotebook } from "../notebook/rehydration.js";
 import { clearActiveNotebookTopic } from "../notebook/topic.js";
 import type { SchematicState, StagedHandoff } from "../state.js";
-import { sendFollowUp } from "../follow-up.js";
 import { STATUS_KEY_HANDOFF, updateIndicators } from "../tui.js";
 import {
 	HANDOFF_EXTRA_CALL_REFUSAL,
+	HANDOFF_FAILED_IN_RUN_REFUSAL,
 	HANDOFF_REQUESTED_STATUS,
 	HANDOFF_REQUIRED_STATUS,
 	HANDOFF_SIBLING_REFUSAL,
@@ -53,7 +55,7 @@ const HANDOFF_TOOL_NAME = "handoff";
  * Drafts that write `staged` as one boundary: notebook discard, cut, successor,
  * note. Pure — reads state and mutates nothing.
  */
-export function buildHandoffBoundaryDrafts(
+function buildHandoffBoundaryDrafts(
 	state: SchematicState,
 	staged: StagedHandoff,
 ): { drafts: SessionBoundaryDraft[]; discarded: number } {
@@ -91,7 +93,7 @@ export function buildHandoffBoundaryDrafts(
 }
 
 /** The compaction entry on `branch` written for `handoffId`, if pi persisted it. */
-export function findHandoffCut(branch: readonly SessionEntry[], handoffId: string): SessionEntry | undefined {
+function findHandoffCut(branch: readonly SessionEntry[], handoffId: string): SessionEntry | undefined {
 	return branch.find((entry) =>
 		entry.type === "compaction" &&
 		typeof entry.details === "object" && entry.details !== null &&
@@ -99,7 +101,7 @@ export function findHandoffCut(branch: readonly SessionEntry[], handoffId: strin
 }
 
 /** Settle the durable handoff state once the cut is confirmed on the branch. */
-export function finalizeHandoffState(state: SchematicState): void {
+function finalizeHandoffState(state: SchematicState): void {
 	state.pendingRequestedHandoff = null;
 	clearActiveNotebookTopic(state);
 	// Readonly is live, not frozen into the summary: announce the ON posture on the
@@ -151,21 +153,20 @@ function failStagedHandoff(
 	state: SchematicState,
 	ctx: ExtensionContext,
 	reason: string,
-	aborted: boolean,
 ): void {
 	state.stagedHandoff = null;
+	state.handoffFailedInRun = true;
 	const pendingRequest = state.pendingRequestedHandoff;
 	// The watchdog's agent_settled handler runs after this one and counts the
 	// attempt against the enforcement budget.
 	if (pendingRequest) pendingRequest.toolCalled = false;
-	const guidance = formatHandoffFailure(reason, pendingRequest !== null);
-	if (aborted) {
-		// An abort is the user's stop: persist the guidance for the next run without
-		// starting one.
-		pi.sendMessage({ customType: HANDOFF_FAILED_CUSTOM_TYPE, content: guidance, display: true }, { triggerTurn: false });
-	} else {
-		sendFollowUp(pi, guidance);
-	}
+	// Never start a run from here: a cause that drops every cut (another
+	// extension's turn_end handler) would otherwise retry without bound. The
+	// guidance waits for the next run.
+	pi.sendMessage(
+		{ customType: HANDOFF_FAILED_CUSTOM_TYPE, content: formatHandoffFailure(reason, pendingRequest !== null), display: true },
+		{ triggerTurn: false },
+	);
 	notifyHandoffFailure(ctx, reason, pendingRequest);
 }
 
@@ -180,21 +181,24 @@ function resolveStagedHandoff(
 	if (!staged) return;
 	switch (staged.phase) {
 		case "staged":
-			// turn_end always moves a staged handoff on, so only a settle can see it.
+			// turn_end moves a staged handoff on unless pi skipped the boundary; only a
+			// settle fails it.
 			if (at === "agent_settled") {
-				failStagedHandoff(pi, state, ctx, settledAborted ? REASON_ABORTED : REASON_NO_BOUNDARY, settledAborted);
+				failStagedHandoff(pi, state, ctx, settledAborted ? REASON_ABORTED : REASON_NO_BOUNDARY);
 			}
 			return;
 		case "declined":
 			if (staged.declineReason === null) throw new Error("Declined handoff has no decline reason.");
-			failStagedHandoff(pi, state, ctx, staged.declineReason, staged.declineReason === REASON_ABORTED || settledAborted);
+			failStagedHandoff(pi, state, ctx, staged.declineReason);
 			return;
 		case "submitted": {
 			const branch = ctx.sessionManager.getBranch();
 			if (findHandoffCut(branch, staged.handoffId)) {
 				completeHandoff(state, ctx, staged, branch, at === "turn_start");
 			} else {
-				failStagedHandoff(pi, state, ctx, REASON_NOT_PERSISTED, settledAborted);
+				// A later turn_end handler can drop the cut but keep the notebook drafts.
+				reconstructNotebook(state, branch);
+				failStagedHandoff(pi, state, ctx, REASON_NOT_PERSISTED);
 			}
 			return;
 		}
@@ -232,7 +236,8 @@ export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState)
 	});
 
 	pi.on("tool_call", async (event) => {
-		const reason = state.handoffRefusals.get(event.toolCallId);
+		const reason = state.handoffRefusals.get(event.toolCallId) ??
+			(event.toolName === HANDOFF_TOOL_NAME && state.handoffFailedInRun ? HANDOFF_FAILED_IN_RUN_REFUSAL : undefined);
 		if (reason) return { block: true, reason, terminate: true };
 		return undefined;
 	});
@@ -266,5 +271,6 @@ export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState)
 		// seen only by turn_end through ctx.signal (the run's signal is gone by now).
 		const aborted = "aborted" in event && event.aborted === true;
 		resolveStagedHandoff(pi, state, ctx, "agent_settled", aborted);
+		state.handoffFailedInRun = false;
 	});
 }

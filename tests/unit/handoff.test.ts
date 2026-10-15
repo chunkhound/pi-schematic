@@ -4,12 +4,14 @@ import * as fc from "fast-check";
 import { Value } from "typebox/value";
 import { createState } from "../../state.js";
 import type { SchematicState } from "../../state.js";
+import { reconstructNotebook } from "../../notebook/rehydration.js";
 import { registerHandoffBoundary } from "../../handoff/boundary.js";
 import { registerHandoffCommand } from "../../handoff/command.js";
 import {
 	HANDOFF_ALREADY_STAGED,
 	HANDOFF_COMMAND_BUSY,
 	HANDOFF_EXTRA_CALL_REFUSAL,
+	HANDOFF_FAILED_IN_RUN_REFUSAL,
 	HANDOFF_SIBLING_REFUSAL,
 	HANDOFF_STAGED_RESULT,
 	HANDOFF_SUCCESSOR_NOT_RUN,
@@ -440,11 +442,15 @@ test("turn_start without the cut on the branch fails the handoff and keeps the r
 		eligibleNudgeDelivered: false,
 		nextInstruction: "implement auth",
 	});
-	assert.deepEqual(pi.sentMessages, []);
-	assert.equal(pi.sentUserMessages.length, 1);
-	assert.equal(pi.sentUserMessages[0].content,
-		`Handoff failed — ${REASON_NOT_PERSISTED}. The required handoff remains pending; retry when context usage is eligible.`);
-	assert.deepEqual(pi.sentUserMessages[0].options, { deliverAs: "followUp" });
+	assert.deepEqual(pi.sentUserMessages, [], "a missing cut never starts a run");
+	assert.deepEqual(pi.sentMessages, [{
+		message: {
+			customType: "pi-schematic-handoff-failed",
+			content: `Handoff failed — ${REASON_NOT_PERSISTED}. The required handoff remains pending; retry when context usage is eligible.`,
+			display: true,
+		},
+		options: { triggerTurn: false },
+	}]);
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), "🤝 Handoff required — ready to compact");
 	assert.deepEqual(notifications, [{ message: `Handoff failed: ${REASON_NOT_PERSISTED}. The handoff can be retried.`, level: "error" }]);
 });
@@ -471,7 +477,12 @@ test("a failed handoff without a pending request clears the status and says noth
 
 	assert.equal(state.pendingRequestedHandoff, null);
 	assert.equal(statuses.has(STATUS_KEY_HANDOFF) && statuses.get(STATUS_KEY_HANDOFF), undefined);
-	assert.match(pi.sentUserMessages[0].content, /No required handoff remains pending; retry when ready\.$/);
+	assert.deepEqual(pi.sentUserMessages, []);
+	assert.equal(pi.sentMessages.length, 1);
+	assert.equal(pi.sentMessages[0].message.customType, "pi-schematic-handoff-failed");
+	assert.equal(pi.sentMessages[0].message.display, true);
+	assert.match(pi.sentMessages[0].message.content, /No required handoff remains pending; retry when ready\.$/);
+	assert.deepEqual(pi.sentMessages[0].options, { triggerTurn: false });
 });
 
 test("agent_settled with the cut on the branch completes with the successor-did-not-run warning", async () => {
@@ -488,7 +499,7 @@ test("agent_settled with the cut on the branch completes with the successor-did-
 	assert.deepEqual(pi.sentUserMessages, []);
 });
 
-test("agent_settled fails a declined handoff with its decline reason as a follow-up", async () => {
+test("agent_settled fails a declined handoff with its decline reason in a displayed message and starts no run", async () => {
 	const { state, pi } = await boundaryHost((s) => requestHandoff(s));
 	const { ctx, notifications } = makeCtx();
 	await executeHandoff(pi, ctx);
@@ -498,9 +509,12 @@ test("agent_settled fails a declined handoff with its decline reason as a follow
 
 	assert.equal(state.stagedHandoff, null);
 	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
-	assert.deepEqual(pi.sentMessages, []);
-	assert.match(pi.sentUserMessages[0].content, new RegExp(`^Handoff failed — ${REASON_RESULT_MISSING}\\.`));
-	assert.deepEqual(pi.sentUserMessages[0].options, { deliverAs: "followUp" });
+	assert.deepEqual(pi.sentUserMessages, []);
+	assert.equal(pi.sentMessages.length, 1);
+	assert.equal(pi.sentMessages[0].message.customType, "pi-schematic-handoff-failed");
+	assert.equal(pi.sentMessages[0].message.display, true);
+	assert.match(pi.sentMessages[0].message.content, new RegExp(`^Handoff failed — ${REASON_RESULT_MISSING}\\.`));
+	assert.deepEqual(pi.sentMessages[0].options, { triggerTurn: false });
 	assert.equal(notifications[0].level, "error");
 });
 
@@ -513,7 +527,12 @@ test("agent_settled fails a handoff whose turn_end never ran", async () => {
 
 	assert.equal(state.stagedHandoff, null);
 	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
-	assert.match(pi.sentUserMessages[0].content, new RegExp(`^Handoff failed — ${REASON_NO_BOUNDARY}\\.`));
+	assert.deepEqual(pi.sentUserMessages, []);
+	assert.equal(pi.sentMessages.length, 1);
+	assert.equal(pi.sentMessages[0].message.customType, "pi-schematic-handoff-failed");
+	assert.equal(pi.sentMessages[0].message.display, true);
+	assert.match(pi.sentMessages[0].message.content, new RegExp(`^Handoff failed — ${REASON_NO_BOUNDARY}\\.`));
+	assert.deepEqual(pi.sentMessages[0].options, { triggerTurn: false });
 	assert.deepEqual(notifications, [{ message: `Handoff failed: ${REASON_NO_BOUNDARY}. The handoff can be retried.`, level: "error" }]);
 });
 
@@ -566,6 +585,94 @@ test("a run that settles aborted without the submitted cut reports the missing c
 	assert.equal(pi.sentMessages.length, 1);
 	assert.match(pi.sentMessages[0].message.content, new RegExp(`^Handoff failed — ${REASON_NOT_PERSISTED.replace(/[()]/g, "\\$&")}\\.`));
 	assert.deepEqual(pi.sentMessages[0].options, { triggerTurn: false });
+});
+
+test("a submitted handoff whose cut is missing but whose notebook drafts persisted follows the branch's notebook", async () => {
+	const { state, pi } = await boundaryHost((s) => {
+		s.epoch = 1;
+		s.notebookPages.set("stale", "obsolete");
+		s.notebookPages.set("keep", "durable");
+	});
+	const { ctx, session } = makeCtx();
+	await executeHandoff(pi, ctx, { nextInstruction: "go", discardPages: ["stale"] });
+	const result = await endTurn(pi, ctx);
+	session.branch = persist(result.entries.filter((entry: any) => entry.type !== "compaction"));
+	const expected = createState();
+	reconstructNotebook(expected, session.branch);
+
+	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+
+	assert.equal(state.stagedHandoff, null);
+	assert.equal(pi.sentMessages[0].message.customType, "pi-schematic-handoff-failed");
+	assert.deepEqual([...state.notebookPages], [["keep", "durable"]], "the discard drafts persisted, so the discard applies");
+	assert.equal(state.epoch, 2);
+	assert.deepEqual([...state.notebookPages], [...expected.notebookPages]);
+	assert.equal(state.epoch, expected.epoch);
+	assert.equal(state.discardEpochWatermark, expected.discardEpochWatermark);
+});
+
+test("a failed handoff, a retry and the second cut deliver the human direction and the retry's discard", async () => {
+	const { state, pi } = await boundaryHost((s) => {
+		requestHandoff(s, "human direction");
+		s.epoch = 1;
+		s.notebookPages.set("stale", "obsolete");
+		s.notebookPages.set("keep", "durable");
+		s.notebookPages.set("other", "also durable");
+	});
+	const { ctx, session } = makeCtx();
+	const persistedNotebook = [
+		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
+		...["stale", "keep", "other"].map((name) => ({
+			type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name, content: state.notebookPages.get(name), clipped: false },
+		})),
+	];
+	session.branch = persist(persistedNotebook);
+	await executeHandoff(pi, ctx, { nextInstruction: "first model instruction", discardPages: ["other"] }, "first");
+	await endTurn(pi, ctx, {}, "first");
+	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
+	assert.equal(state.stagedHandoff, null);
+	assert.equal(state.pendingRequestedHandoff?.nextInstruction, "human direction", "the failed cut keeps the request pending");
+
+	await executeHandoff(pi, ctx, { nextInstruction: "second model instruction", discardPages: ["stale"] }, "second");
+	const result = await endTurn(pi, ctx, {}, "second");
+	session.branch = persist([...persistedNotebook, ...result.entries]);
+	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+
+	const successor = result.entries.find((entry: any) => entry.customType === "pi-schematic-handoff");
+	assert.equal(successor.content, "## Next instruction\n\nhuman direction");
+	assert.equal(state.stagedHandoff, null);
+	assert.equal(state.pendingRequestedHandoff, null);
+	assert.deepEqual([...state.notebookPages].sort(), [["keep", "durable"], ["other", "also durable"]]);
+});
+
+test("a handoff whose branch holds only an earlier handoff's cut fails as not persisted", async () => {
+	const { state, pi } = await boundaryHost();
+	const { ctx, session } = makeCtx();
+	session.branch = [{ type: "compaction", id: "old-cut", parentId: null, details: { handoff: true, handoffId: "handoff-a" } }];
+	await executeHandoff(pi, ctx);
+	await endTurn(pi, ctx);
+
+	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+
+	assert.equal(state.stagedHandoff, null);
+	assert.match(pi.sentMessages[0].message.content, new RegExp(`^Handoff failed — ${REASON_NOT_PERSISTED.replace(/[()]/g, "\\$&")}\\.`));
+});
+
+test("agent_settled after a handoff completed at turn_start sends and notifies nothing", async () => {
+	const { pi } = await boundaryHost((s) => requestHandoff(s));
+	const { ctx, notifications, session } = makeCtx({ hasUI: true });
+	await executeHandoff(pi, ctx);
+	session.branch = persist((await endTurn(pi, ctx)).entries);
+	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	const notificationsAtCompletion = notifications.length;
+
+	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
+
+	assert.equal(notificationsAtCompletion, 1);
+	assert.equal(notifications.length, 1, "no second notification at settle");
+	assert.deepEqual(pi.sentMessages, []);
+	assert.deepEqual(pi.sentUserMessages, []);
 });
 
 // ── Sibling refusal ──────────────────────────────────────────────────
@@ -645,6 +752,41 @@ test("session_tree invalidates a staged handoff and the sibling refusals", async
 
 	await executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second");
 	assert.equal(await toolCall(pi, "w1", "write"), undefined);
+});
+
+test("after a failed cut the run refuses further handoff calls until the agent settles", async () => {
+	const { pi } = await boundaryHost();
+	const { ctx } = makeCtx();
+	await executeHandoff(pi, ctx);
+	await endTurn(pi, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+
+	assert.deepEqual(await toolCall(pi, "again", "handoff"), { block: true, reason: HANDOFF_FAILED_IN_RUN_REFUSAL, terminate: true });
+	assert.equal(await toolCall(pi, "w1", "write"), undefined, "other tools are not refused for the failed cut");
+
+	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
+
+	assert.equal(await toolCall(pi, "again", "handoff"), undefined);
+});
+
+test("session_tree clears the failed-in-run refusal", async () => {
+	const pi = await createTestHost();
+	const { ctx } = makeCtx();
+	await executeHandoff(pi, ctx);
+	await endTurn(pi, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	assert.equal((await toolCall(pi, "again", "handoff")).block, true);
+
+	await emitAll(pi, "session_tree", { type: "session_tree" }, ctx);
+
+	assert.equal(await toolCall(pi, "again", "handoff"), undefined);
+});
+
+test("handoff is model-only so ctx.executeTool cannot call it", async () => {
+	const { pi } = await boundaryHost();
+
+	// The host does not model Pi's nested-call runner; the field is what Pi reads.
+	assert.equal(pi.tools.get("handoff").exposure, "model-only");
 });
 
 // ── Registration order ───────────────────────────────────────────────

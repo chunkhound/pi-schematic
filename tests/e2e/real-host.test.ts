@@ -450,10 +450,10 @@ describe("pi-schematic real-host E2E", () => {
 		assert.equal(userEntriesWithText(entries, LEGACY_SUCCESSOR_TEXT).length, 0, "no successor user entry");
 	}, { seedSession: seedLegacyCutThenNewerWork }));
 
-	it("a dropped handoff cut fails, reports to the model in a new run and stays retryable", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+	it("a dropped handoff cut fails in one run without a follow-up and stays retryable", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
 		await host.command("/" + PROBE_COMMAND.dropNextCut);
-		// The handoff run, then the run of the failure guidance sent when it settles without the cut.
-		await handoffCommand(host, "retry after failure", { nextInstruction: "retry after failure" }, 2);
+		// The failure persists as a message and starts no run, so the handoff command's run is the only one.
+		await handoffCommand(host, "retry after failure", { nextInstruction: "retry after failure" }, 1);
 
 		const failed = await host.entries();
 		assert.deepEqual(host.cuts().map((cut) => cut.dropped), [true], "the probe dropped the one cut");
@@ -463,7 +463,10 @@ describe("pi-schematic real-host E2E", () => {
 			host.notifications.some((notification) => notification.message.startsWith(`Handoff failed: ${REASON_NOT_PERSISTED}.`)),
 			"failure notified",
 		);
-		assert.equal(userEntriesWithText(failed.entries, formatHandoffFailure(REASON_NOT_PERSISTED, true)).length, 1, "failure reported to the model");
+		const failure = onlyCustomMessage(failed.entries, HANDOFF_FAILED_CUSTOM_TYPE);
+		assert.equal(failure.content, formatHandoffFailure(REASON_NOT_PERSISTED, true));
+		assert.equal(failure.display, true, "the failure is shown");
+		assert.equal(userEntriesWithText(failed.entries, formatHandoffFailure(REASON_NOT_PERSISTED, true)).length, 0, "no follow-up user message");
 		const handoffStatuses = host.statuses.filter((status) => status.statusKey === STATUS_KEY_HANDOFF);
 		assert.equal(handoffStatuses.at(-1)?.statusText, HANDOFF_REQUIRED_STATUS, "the handoff stays required");
 

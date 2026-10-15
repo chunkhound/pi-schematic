@@ -187,7 +187,7 @@ export function buildNotebookDiscardDrafts(
 	state: SchematicState,
 	names: readonly string[],
 ): { drafts: CustomEntryDraft[]; discarded: number } {
-	const deleted = new Set([...new Set(names)].filter((name) => state.notebookPages.has(name)));
+	const deleted = new Set(names.filter((name) => state.notebookPages.has(name)));
 	if (deleted.size === 0) return { drafts: [], discarded: 0 };
 
 	const nextEpoch = Math.max(state.epoch, state.discardEpochWatermark) + 1;
@@ -205,4 +205,3 @@ export function buildNotebookDiscardDrafts(
 	drafts.push({ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: nextEpoch } });
 	return { drafts, discarded: deleted.size };
 }
-

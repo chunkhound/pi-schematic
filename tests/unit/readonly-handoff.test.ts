@@ -13,7 +13,7 @@ import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
 import { buildContinuationFrame } from "../../handoff/format.js";
 import { READONLY_POWERSHELL_BLOCK_REASON } from "../../notifications.js";
-import { HANDOFF_SIBLING_REFUSAL } from "../../handoff/copy.js";
+import { HANDOFF_FAILED_IN_RUN_REFUSAL, HANDOFF_SIBLING_REFUSAL } from "../../handoff/copy.js";
 
 async function createHandoffPI() {
 	const { pi, toolCall } = await registerReadonlyPI();
@@ -158,7 +158,7 @@ test("/handoff command creates temporary bypass for handoff tool only", async ()
 	await assertNonTempBashBlocked(toolCall);
 });
 
-test("blocked readonly handoff never stages a cut", async () => {
+test("readonly blocks a non-requested handoff", async () => {
 	const { pi, toolCall } = await createHandoffPI();
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 	const ctx = {
@@ -298,7 +298,7 @@ test("synchronous handoff rejection preserves the readonly bypass contract", asy
 });
 
 test("retry succeeds after a handoff cut that pi did not persist", async () => {
-	const { pi, toolCall } = await createHandoffPI();
+	const { pi, toolCall, agentSettled } = await createHandoffPI();
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 	await pi.commands.get("handoff").handler("continue readonly work", {
 		...makeReadonlyUICtx(),
@@ -311,12 +311,20 @@ test("retry succeeds after a handoff cut that pi did not persist", async () => {
 	const userMessagesBefore = pi.sentUserMessages.length;
 	await turnStartWith(pi, []);
 
-	// The failure re-engages the model with a follow-up and keeps the bypass for the retry.
-	assert.equal(pi.sentUserMessages.length, userMessagesBefore + 1);
-	assert.match(pi.sentUserMessages.at(-1)!.content, /Handoff failed/);
-	assert.equal(pi.sentUserMessages.at(-1)!.options?.deliverAs, "followUp");
+	// The failure is persisted as guidance and starts no run.
+	assert.equal(pi.sentUserMessages.length, userMessagesBefore);
+	assert.equal(pi.sentMessages.at(-1)?.message.customType, "pi-schematic-handoff-failed");
+	assert.equal(pi.sentMessages.at(-1)?.options?.triggerTurn, false);
+
+	// A retry inside the same run is refused by the boundary before readonly is consulted.
+	const sameRun = await toolCall({ toolName: "handoff", input: { nextInstruction: "retry handoff" } }, {});
+	assert.equal(sameRun?.block, true);
+	assert.equal(sameRun?.reason, HANDOFF_FAILED_IN_RUN_REFUSAL);
+
+	// The next run retries: the readonly bypass is still active and the cut stages.
+	await agentSettled({ hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => [] } });
 	assert.equal(await toolCall({ toolName: "handoff", input: { nextInstruction: "retry handoff" } }, {}), undefined,
-		"the readonly bypass must remain for the retry");
+		"the readonly bypass must remain for the retry in the next run");
 
 	await assert.doesNotReject(
 		() => stageHandoff(pi, "handoff-retry", { nextInstruction: "retry handoff" }),

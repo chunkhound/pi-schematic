@@ -43,7 +43,7 @@ import {
 	buildNextUserMessage,
 	formatHandoffFailure,
 } from "../../handoff/format.js";
-import { HANDOFF_SIBLING_REFUSAL, HANDOFF_STAGED_RESULT, REASON_ABORTED, REASON_NOT_PERSISTED } from "../../handoff/copy.js";
+import { HANDOFF_FAILED_IN_RUN_REFUSAL, HANDOFF_SIBLING_REFUSAL, HANDOFF_STAGED_RESULT, REASON_ABORTED, REASON_NOT_PERSISTED } from "../../handoff/copy.js";
 import { MAX_HANDOFF_ATTEMPTS, buildNudge } from "../../watchdog.js";
 import { createDeferred, setTempHome } from "./helpers.js";
 
@@ -217,6 +217,16 @@ async function settle(session: AgentSession, done: Promise<void>, what: string):
 		done,
 		new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`timed out waiting for ${what}`)), 10_000).unref()),
 	]);
+	await session.waitForIdle();
+}
+
+/** Wait until `runs` runs have settled; a /handoff command's run starts after prompt() returns, so waitForIdle alone can return before it. */
+async function settleRuns(session: AgentSession, observed: Observed, runs: number): Promise<void> {
+	const deadline = Date.now() + 10_000;
+	while (observed.events.filter((name) => name === "agent_settled").length < runs) {
+		if (Date.now() > deadline) throw new Error(`timed out waiting for ${runs} settled runs`);
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	}
 	await session.waitForIdle();
 }
 
@@ -444,43 +454,51 @@ describe("handoff boundary in a real agent session", () => {
 });
 
 describe("failed handoff cut in a real agent session", () => {
-	// `runs` counts agent starts: the first prompt's run, the /handoff run, and a
-	// guidance run only when the handoff run had already ended.
-	const dropVariants: { name: string; result: { entries: []; continue?: false }; runs: number }[] = [
-		{ name: "the guidance follows up inside the handoff run", result: { entries: [] }, runs: 2 },
-		{ name: "the guidance starts a new run", result: { entries: [], continue: false }, runs: 3 },
+	// A dropped cut never starts a run: the guidance is a displayed message that
+	// waits on the branch. `requests` is the provider requests the handoff run made
+	// after "ready": the handoff call itself, plus the follow-on turn only when the
+	// dropper left the continuation alone.
+	const dropVariants: { name: string; result: { entries: []; continue?: false }; requests: number }[] = [
+		{ name: "the dropper keeps the continuation", result: { entries: [] }, requests: 2 },
+		{ name: "the dropper stops the continuation", result: { entries: [], continue: false }, requests: 1 },
 	];
 	for (const variant of dropVariants) {
-		it(`sends failure guidance and keeps the request pending when a later extension drops the boundary (${variant.name})`, async () => {
+		it(`persists the failure guidance without starting a run and keeps the request pending when a later extension drops the boundary (${variant.name})`, async () => {
 			const dropBoundary: ExtensionFactory = (pi) => {
 				pi.on("turn_end", async (event) => (event.entries.length > 0 ? variant.result : undefined));
 			};
 			const guidance = formatHandoffFailure(REASON_NOT_PERSISTED, true);
-			const carriesGuidance = (request: Message[]) =>
-				request.some((message) => message.role === "user" && messageText(message) === guidance);
-			const guidanceAnswered = createDeferred();
-			const answer: FauxResponseFactory = (context) => {
-				if (carriesGuidance(context.messages)) guidanceAnswered.resolve();
-				return fauxAssistantMessage("plain answer");
-			};
 			const { session, sessionManager, observed } = await startSession(
-				[reply("ready"), call(handoffCall()), answer, answer],
+				[reply("ready"), call(handoffCall()), reply("plain answer"), reply("next prompt answer")],
 				{ after: [dropBoundary] },
 			);
+			let runsAfterHandoffRun: number;
+			let requestsAfterHandoffRun: number;
 			try {
 				await session.prompt(LARGE_PROMPT);
 				await session.prompt("/handoff finish the report");
-				await settle(session, guidanceAnswered.promise, "a request carrying the failure guidance");
+				await settleRuns(session, observed, 2);
+				runsAfterHandoffRun = observed.events.filter((name) => name === "agent_start").length;
+				requestsAfterHandoffRun = observed.requests.length;
+				await session.prompt("continue");
+				await settleRuns(session, observed, 3);
 			} finally {
 				session.dispose();
 			}
 
+			assert.equal(runsAfterHandoffRun, 2, "the first prompt's run and the /handoff run; the failure starts no run");
+			assert.equal(requestsAfterHandoffRun, 1 + variant.requests);
 			assert.deepEqual(entriesOf(sessionManager, "compaction"), [], "no cut on the branch");
-			const guidanceRequest = observed.requests.find(carriesGuidance);
-			assert.ok(guidanceRequest, "the failure guidance reached the model as a user message");
-			assert.ok(carriesRequiredNudge(guidanceRequest), "the request stays pending and is enforced again");
-			assert.deepEqual(entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE), [], "the guidance is a user follow-up, not the abort message");
-			assert.equal(observed.events.filter((name) => name === "agent_start").length, variant.runs);
+			const failures = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE);
+			assert.equal(failures.length, 1);
+			const [failure] = failures;
+			assert.ok(failure.type === "custom_message");
+			assert.equal(failure.content, guidance);
+			assert.equal(failure.display, true);
+			const userTexts = sessionManager.getBranch().flatMap((entry) =>
+				entry.type === "message" && entry.message.role === "user" ? [messageText(entry.message as Message)] : []);
+			assert.deepEqual(userTexts.filter((text) => text.includes("Handoff failed")), [], "no user message announces the failure");
+			assert.ok(carriesRequiredNudge(observed.requests.at(-1) ?? []), "the request stays pending and is enforced on the next prompt");
 			assert.deepEqual(observed.extensionErrors, []);
 		});
 	}
@@ -531,14 +549,12 @@ describe("failed handoff cut in a real agent session", () => {
 		const dropBoundary: ExtensionFactory = (pi) => {
 			pi.on("turn_end", async (event) => (event.entries.length > 0 ? { entries: [], continue: false } : undefined));
 		};
-		const unnudgedAnswer = createDeferred();
 		let nudgedRuns = 0;
 		const handoffWhenNudged: FauxResponseFactory = (context) => {
 			if (carriesRequiredNudge(context.messages)) {
 				nudgedRuns += 1;
 				return fauxAssistantMessage([fauxToolCall("handoff", { nextInstruction: "x", context: HANDOFF_CONTEXT }, { id: `call-handoff-${nudgedRuns}` })]);
 			}
-			if (nudgedRuns > 0) unnudgedAnswer.resolve();
 			return fauxAssistantMessage("plain answer");
 		};
 		const { session, observed } = await startSession(
@@ -548,13 +564,57 @@ describe("failed handoff cut in a real agent session", () => {
 		try {
 			await session.prompt(LARGE_PROMPT);
 			await session.prompt("/handoff finish the report");
-			await settle(session, unnudgedAnswer.promise, "a request without the required-handoff nudge");
+			await settleRuns(session, observed, 2);
+			// Nothing starts a run on its own, so each retry is a user prompt.
+			for (let attempt = 1; attempt < MAX_HANDOFF_ATTEMPTS; attempt++) {
+				await session.prompt("retry");
+				await settleRuns(session, observed, 2 + attempt);
+			}
+			await session.prompt("after the budget");
+			await settleRuns(session, observed, 2 + MAX_HANDOFF_ATTEMPTS);
 		} finally {
 			session.dispose();
 		}
 
 		assert.equal(nudgedRuns, MAX_HANDOFF_ATTEMPTS);
-		assert.equal(observed.requests.length, MAX_HANDOFF_ATTEMPTS + 2, "first prompt, one request per failed attempt, then the unenforced follow-up");
+		assert.equal(observed.requests.length, MAX_HANDOFF_ATTEMPTS + 2, "first prompt, one request per failed attempt, then the unenforced prompt");
+		assert.ok(!carriesRequiredNudge(observed.requests.at(-1) ?? []), "the cancelled request is no longer enforced");
+		assert.deepEqual(observed.extensionErrors, []);
+	});
+
+	it("refuses a second handoff in the run that already lost a cut and accepts one in the next run", async () => {
+		const dropKeepingContinuation: ExtensionFactory = (pi) => {
+			pi.on("turn_end", async (event) => (event.entries.length > 0 ? { entries: [] } : undefined));
+		};
+		const handoffAs = (id: string) => call(fauxToolCall("handoff", { nextInstruction: NEXT_INSTRUCTION, context: HANDOFF_CONTEXT }, { id }));
+		const { session, sessionManager, observed } = await startSession(
+			[reply("ready"), handoffAs("call-first"), handoffAs("call-second"), handoffAs("call-third"), reply("settled")],
+			{ after: [dropKeepingContinuation] },
+		);
+		let requestsAfterHandoffRun: number;
+		let failuresAfterHandoffRun: number;
+		try {
+			await session.prompt(LARGE_PROMPT);
+			await session.prompt("/handoff finish the report");
+			await settleRuns(session, observed, 2);
+			requestsAfterHandoffRun = observed.requests.length;
+			failuresAfterHandoffRun = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE).length;
+			await session.prompt("try again");
+			await settleRuns(session, observed, 3);
+		} finally {
+			session.dispose();
+		}
+
+		const second = toolResultFor(sessionManager, "call-second");
+		assert.ok(second, "the second handoff has a tool result");
+		assert.equal(second.isError, true);
+		assert.equal(messageText(second as Message), HANDOFF_FAILED_IN_RUN_REFUSAL);
+		assert.equal(requestsAfterHandoffRun, 3, "ready, the first handoff, and the follow-on turn whose handoff was refused; the batch terminated");
+		assert.equal(failuresAfterHandoffRun, 1, "one failed cut in the run");
+		const third = toolResultFor(sessionManager, "call-third");
+		assert.ok(third, "the next run's handoff has a tool result");
+		assert.equal(third.isError, false);
+		assert.equal(messageText(third as Message), HANDOFF_STAGED_RESULT);
 		assert.deepEqual(observed.extensionErrors, []);
 	});
 });

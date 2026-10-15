@@ -56,9 +56,9 @@ function isKnownNotebookVersion(value: unknown): boolean {
  * `state.epoch` stays the latest **committed** generation (the newest
  * `notebook-generation` marker). `state.discardEpochWatermark` is derived from
  * the maximum valid observed page/generation epoch — which includes survivor
- * entries staged by an interrupted discard that never committed. A restart (or
- * a retry on a restarted process) therefore cannot reuse that staged epoch and
- * resurrect orphaned survivors; the next prepare moves past it.
+ * entries staged by an interrupted discard whose marker never landed. A restart
+ * (or a retry on a restarted process) therefore cannot reuse that staged epoch
+ * and resurrect orphaned survivors; the next discard pass moves past it.
  */
 export function reconstructNotebook(state: SchematicState, branch: readonly SessionEntry[]): void {
 	// A generation is visible only after its marker is appended. Staged

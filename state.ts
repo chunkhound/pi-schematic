@@ -58,6 +58,9 @@ export interface SchematicState {
 	/** Tool calls in the current assistant message that must not run because they share it with handoff; value = refusal reason. */
 	handoffRefusals: Map<string, string>;
 
+	/** A handoff failed in the current run; further handoff calls are refused until it settles. */
+	handoffFailedInRun: boolean;
+
 	/**
 	 * Successor delivery already requested by recovery in this process.
 	 * Coalesces repeated recovery triggers for one persisted handoff cut while the
@@ -183,6 +186,7 @@ export function createState(): SchematicState {
 		lastContextPercent: null,
 		stagedHandoff: null,
 		handoffRefusals: new Map(),
+		handoffFailedInRun: false,
 		recoveryRequestedMessage: null,
 		discardEpochWatermark: 0,
 		pendingRequestedHandoff: null,
@@ -248,6 +252,7 @@ export function resetState(state: SchematicState): void {
 export function invalidateHandoffState(state: SchematicState): void {
 	state.stagedHandoff = null;
 	state.handoffRefusals.clear();
+	state.handoffFailedInRun = false;
 	// The discard watermark is deliberately NOT reset here. A branch change is
 	// immediately followed by reconstruction, which derives the watermark from
 	// the newly active branch (staged survivor epochs included). Resetting early

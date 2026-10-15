@@ -13,6 +13,8 @@ export const HANDOFF_STAGED_RESULT = "Handoff staged. This context is cut when t
 export const HANDOFF_SIBLING_REFUSAL = "Not run: this call shares an assistant message with handoff, which ends this context. Call it again after the handoff if the successor needs it.";
 /** Refusal for every handoff call after the first in one assistant message. */
 export const HANDOFF_EXTRA_CALL_REFUSAL = "Not run: only the first handoff call in an assistant message runs.";
+/** Refusal for a handoff call after a handoff failed earlier in the same run. */
+export const HANDOFF_FAILED_IN_RUN_REFUSAL = "Not run: a handoff failed earlier in this run. Wait for the next user message before calling handoff again.";
 /** Tool rejection while another handoff is staged. */
 export const HANDOFF_ALREADY_STAGED = "A handoff is already staged in this turn; wait for it to complete.";
 /** `/handoff` rejection while a handoff is staged. */
@@ -20,7 +22,7 @@ export const HANDOFF_COMMAND_BUSY = "A handoff is in progress; wait for it to co
 /** Warning when the cut persisted but its continuation turn did not run. */
 export const HANDOFF_SUCCESSOR_NOT_RUN = "Handoff complete, but the successor turn did not run. Send a message to continue.";
 
-/** Failure reasons, completing "Handoff failed: <reason>". */
+/** Failure reasons, completing the failure notification and guidance. */
 export const REASON_ABORTED = "the run was aborted before the cut";
 export const REASON_NO_BOUNDARY = "the turn ended without writing the cut";
 export const REASON_RESULT_MISSING = "the handoff result was missing from its turn";

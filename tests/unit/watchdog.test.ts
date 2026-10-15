@@ -7,7 +7,7 @@ import { buildNudge } from "../../watchdog.js";
 import { registerHandoffCommand } from "../../handoff/command.js";
 import { registerHandoffTool } from "../../handoff/tool.js";
 import { registerHandoffBoundary } from "../../handoff/boundary.js";
-import { callHandlers, emitAll, handoffToolResult, makeReadonlyUICtx, turnEndEvent } from "./helpers.js";
+import { callHandlers, emitAll, handoffToolResult, makeReadonlyUICtx, registerReadonlyPI, turnEndEvent } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
@@ -410,9 +410,9 @@ test("a nudged run whose staged handoff cut was not persisted counts one attempt
 
 	assert.equal(state.pendingRequestedHandoff?.toolCalled, false, "the failure resets toolCalled before the watchdog counts");
 	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 1);
-	assert.equal(pi.sentUserMessages.length, userMessagesBeforeSettle + 1, "a dropped cut re-engages the model once");
-	assert.match(pi.sentUserMessages.at(-1)!.content, /Handoff failed/);
-	assert.equal(pi.sentUserMessages.at(-1)!.options?.deliverAs, "followUp");
+	assert.equal(pi.sentUserMessages.length, userMessagesBeforeSettle, "a dropped cut starts no run");
+	assert.equal(pi.sentMessages.at(-1)?.message.customType, "pi-schematic-handoff-failed");
+	assert.equal(pi.sentMessages.at(-1)?.options?.triggerTurn, false);
 });
 
 test("a nudged run whose handoff was aborted counts one attempt and starts no run", async () => {
@@ -687,7 +687,7 @@ test("readonly toggle nudge aligns with handoff exception in the same turn", asy
 });
 
 test("eligible readonly human topic boundary auto-creates handoff bypass equivalent to /handoff", async () => {
-	const pi = await createTestHost();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const [handler] = pi.handlers.get("context")!;
 
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
@@ -714,11 +714,7 @@ test("eligible readonly human topic boundary auto-creates handoff bypass equival
 	assert.match(watchdogMessage.content, /handoff/i);
 	assert.match(watchdogMessage.content, /temporary handoff exception active/i);
 
-	const [toolCallHandler] = pi.handlers.get("tool_call")!;
-	const blockResult = await toolCallHandler(
-		{ toolName: "handoff", input: {} },
-		{ cwd: "/tmp" } as any,
-	);
+	const blockResult = await toolCall({ toolName: "handoff", input: {} }, { cwd: "/tmp" });
 	assert.equal(blockResult, undefined, "handoff tool should be unblocked after topic boundary creates bypass");
 });
 

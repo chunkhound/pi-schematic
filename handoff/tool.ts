@@ -88,6 +88,9 @@ export function registerHandoffTool(
 	pi.registerTool({
 		name: "handoff",
 		label: "Handoff",
+		// Never callable through ctx.executeTool(): a nested call carries an id that never reaches
+		// the turn's tool results, so the boundary would always decline it.
+		exposure: "model-only",
 		description:
 			"Clears the current context while keeping the notebook and clearing its topic.\n\n" +
 			"WHEN TO USE:\n" +
@@ -97,7 +100,8 @@ export function registerHandoffTool(
 			"  3. The current topic is complete and a new distinct task starts.\n\n" +
 			"Rule: one context, one topic. When the topic changes, call handoff.\n\n" +
 			"AFTER HANDOFF the agent sees: the continuation frame, then one message holding the next " +
-			"instruction verbatim plus the remaining context, and the current notebook with optional pages discarded.\n" +
+			"instruction verbatim plus the remaining context, then a short note about the system prompt, " +
+			"and the current notebook with optional pages discarded.\n" +
 			"Call handoff alone: other tool calls in the same message are not run.\n",
 		promptSnippet: "Pivot to a new topic via deliberate handoff compaction",
 		promptGuidelines: [

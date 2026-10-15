@@ -537,8 +537,8 @@ export default function (pi: ExtensionAPI): void {
 		if (ctx.hasPendingMessages?.()) return;
 		const branch = ctx.sessionManager?.getBranch?.() ?? [];
 		const candidate = getUndeliveredHandoffMessage(branch, ctx.sessionManager?.getEntries?.() ?? branch);
-		// The latch coalesces repeated triggers for one persisted cut. New cuts carry a
-		// durable recovery key; legacy cuts fall back to their persisted entry identity.
+		// The latch coalesces repeated triggers for one persisted cut. Previous-release
+		// cuts carry a recovery key; older ones fall back to their persisted entry identity.
 		if (!candidate) return;
 		const requested = state.recoveryRequestedMessage;
 		if (requested?.message === candidate.message &&
