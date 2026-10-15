@@ -332,6 +332,16 @@ export class RealHost {
 		await this.step(this.events.length, "settle", runs);
 	}
 
+	/**
+	 * Wait for the work session_start began, before any other step: a step that counts the runs
+	 * started since the CLI came up, `runs` of them. A session_start handler can start a run
+	 * before any step marks the event list, so `settle` would not count it.
+	 */
+	async settleStartup(runs: number): Promise<void> {
+		if (this.barrierPhases > 0) throw new Error("settleStartup() must be the first step of a host");
+		await this.step(0, "startup", runs);
+	}
+
 	async entries(): Promise<{ entries: SessionEntry[]; leafId: string | null }> {
 		return this.client.getEntries();
 	}
@@ -343,8 +353,9 @@ export class RealHost {
 			.map((line) => parseProbeRecord(line));
 	}
 
-	successorSends(): Array<Extract<ProbeRecord, { kind: "successor-send" }>> {
-		return this.probeLog().filter((record): record is Extract<ProbeRecord, { kind: "successor-send" }> => record.kind === "successor-send");
+	/** Handoff cuts the probe saw in turn_end boundaries, in order, with whether it dropped each one. */
+	cuts(): Array<Extract<ProbeRecord, { kind: "cut" }>> {
+		return this.probeLog().filter((record): record is Extract<ProbeRecord, { kind: "cut" }> => record.kind === "cut");
 	}
 
 	/** Navigate the tree to `entryId`; a step that starts `runs` runs. */

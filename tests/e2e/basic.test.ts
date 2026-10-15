@@ -36,23 +36,6 @@ describe("pi-schematic E2E", () => {
 		await h.waitForText("ERR:Context usage unavailable");
 	}));
 
-	it("stale handoff compaction is ignored after session-tree navigation", async () => withHarness(async (h) => {
-		h.write("cmd handoff stale branch");
-		await h.waitForText("OK");
-		h.write('usage {"tokens":50000,"percent":25,"contextWindow":200000}');
-		await h.waitForText("OK");
-		h.write('tool handoff {"nextInstruction":"stale branch work"}');
-		await h.waitForText("OK:Handoff started.");
-		h.write("session-tree");
-		await h.waitForText("OK");
-		h.write("compact-success");
-		await h.waitForText("OK:null");
-		h.clear();
-		h.write("ui-events");
-		await h.waitForText("OK:");
-		assert.doesNotMatch(h.snapshot(), /pi-schematic-handoff/);
-	}));
-
 	it("spawn tool errors gracefully without model infrastructure", async () => withHarness(async (h) => {
 		// Without a real model/session manager, spawn should throw immediately.
 		h.write('tool spawn {"prompt":"any task"}');
