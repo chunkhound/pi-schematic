@@ -1286,7 +1286,7 @@ function gitRepositoryWriteRoots(invocation: GitInvocation, vars: ReadonlyMap<st
 function gitSubmoduleWriteRoots(invocation: GitInvocation, workTree: string, vars: ReadonlyMap<string, string>): string[] {
 	const action = invocation.subcommand === "submodule" ? gitActionWord("submodule", invocation.args) : undefined;
 	const recursive = (invocation.subcommand === "submodule" && invocation.args.includes("--recursive"))
-		|| (invocation.subcommand === "checkout" && recursesSubmodules(invocation.subcommand, invocation.args));
+		|| (["checkout", "restore"].includes(invocation.subcommand) && recursesSubmodules(invocation.subcommand, invocation.args));
 	return action === "update" || recursive ? collectSubmoduleWriteRoots(workTree, vars, recursive, new Set()) : [];
 }
 

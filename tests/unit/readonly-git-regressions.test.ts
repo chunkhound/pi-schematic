@@ -1070,3 +1070,20 @@ test("Git preserves a trailing space in a probed core.worktree", gitSuiteOptions
 	shell("git clean -fd", repo);
 	assert.equal(existsSync(stray), false, "git must operate through the untrimmed worktree");
 });
+
+test("Git restore --recurse-submodules checks submodule metadata", gitSuiteOptions, (t) => {
+	const repo = repository(fixture(t));
+	git(repo, "-c", "protocol.file.allow=always", "submodule", "add", repository(fixture(t)), "outer");
+	check("git restore --recurse-submodules --worktree .", repo, true);
+	// Relocating the submodule metadata outside temp makes git write its index there; restore
+	// must join the recursion analysis like update/checkout already do.
+	const outsideMetadata = path.join(fixture(t, os.homedir()), "modules", "outer");
+	cpSync(path.join(repo, ".git", "modules", "outer"), outsideMetadata, { recursive: true });
+	rmSync(path.join(repo, ".git", "modules", "outer"), { recursive: true, force: true });
+	const metadataConfig = path.join(outsideMetadata, "config");
+	writeFileSync(metadataConfig, readFileSync(metadataConfig, "utf8").replace(/worktree = .*/, `worktree = ${path.join(repo, "outer")}`));
+	writeFileSync(path.join(repo, "outer", ".git"), `gitdir: ${outsideMetadata}\n`);
+	// The relocation mechanism is proven real by the sibling update/checkout test; here the
+	// contract is that restore now discovers the relocated metadata and fails closed.
+	check("git restore --recurse-submodules --worktree .", repo, false);
+});
