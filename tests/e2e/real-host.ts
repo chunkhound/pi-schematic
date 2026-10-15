@@ -18,6 +18,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { TestContext } from "node:test";
 import { RpcClient, SessionManager, type RpcClientOptions, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import {
 	parseBarrierReport,
 	parseProbeRecord,
@@ -88,9 +89,8 @@ export const REAL_HOST_TEST_TIMEOUT_MS = testTimeoutFor(REAL_HOST_TIMEOUT_MS);
  */
 const STEP_BUDGET_MS = REAL_HOST_TIMEOUT_MS + BARRIER_REPORT_MARGIN_MS;
 
-/** Same expressions as tests/unit/helpers.ts; this harness imports nothing from tests/unit/. */
 export function stripAnsi(text: string): string {
-	return text.replace(/\u001b\[[0-9;]*m/g, "").replace(/\u001b\][^\u0007]*\u0007/g, "");
+	return stripTerminalSequences(text);
 }
 
 export type RpcEvent = { type: string; [key: string]: unknown };
