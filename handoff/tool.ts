@@ -14,6 +14,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
+import { commitNotebookDiscard, prepareNotebookDiscard } from "../notebook/store.js";
 import { clearActiveNotebookTopic } from "../notebook/topic.js";
 import {
 	HANDOFF_IN_PROGRESS_STATUS,
@@ -335,9 +336,8 @@ export function registerHandoffTool(
 			let commitDiscard: (() => void) | undefined;
 			try {
 				if (discardPages.length) {
-					const store = await import("../notebook/store.js");
-					await store.prepareNotebookDiscard(pi, state, generation, discardPages);
-					commitDiscard = () => store.commitNotebookDiscard(pi, state, generation);
+					await prepareNotebookDiscard(pi, state, generation, discardPages);
+					commitDiscard = () => commitNotebookDiscard(pi, state, generation);
 				}
 				if (ctx.hasUI && ctx.ui.theme) {
 					ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_IN_PROGRESS_STATUS));
