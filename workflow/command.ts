@@ -85,6 +85,13 @@ function publishRuntimeOnSessionStart(pi: ExtensionAPI, state: SchematicState, d
 }
 
 async function runWorkflow(pi: ExtensionAPI, state: SchematicState, deps: WorkflowCommandDeps, raw: string, ctx: ExtensionCommandContext): Promise<void> {
+	// A workflow owns serial turns. pi runs an extension command even while streaming, so a
+	// mid-turn `/workflow` would dispatch its first `workflow.run` into a busy session, where
+	// `sendUserMessage` throws and the fire-and-forget wrapper swallows it, hanging the run.
+	if (!ctx.isIdle()) {
+		reportStartFailure(pi, ctx, "Cannot start a workflow while the agent is busy. Wait for the current turn to finish, then run /workflow again.");
+		return;
+	}
 	// Claimed before any await: one workflow per process, and the reservation survives
 	// session replacements so a replacement cannot admit a second workflow.
 	if (!reserveWorkflow()) {

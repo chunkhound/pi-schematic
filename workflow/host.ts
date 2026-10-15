@@ -681,7 +681,12 @@ function buildRunMessage(invocation: string, options: RunOptions, previewsForRun
 
 function dispatchMessage(deps: WorkflowHostDeps, ctx: ExtensionCommandContext, text: string): void | Promise<void> {
 	const replaced = ctx as ExtensionCommandContext & Partial<ReplacementContext>;
-	const options = { expandPromptTemplates: true };
+	// The command rejects a busy start, so idle is the normal dispatch point. pi >= 1.2.0 rejects
+	// a send while busy without `deliverAs`; request the safe option only across platform busy
+	// windows we do not own. `followUp` never interrupts, and pi ignores it while idle.
+	const options = ctx.isIdle()
+		? { expandPromptTemplates: true }
+		: { expandPromptTemplates: true, deliverAs: "followUp" as const };
 	return replaced.sendUserMessage ? replaced.sendUserMessage(text, options) : deps.pi.sendUserMessage(text, options);
 }
 

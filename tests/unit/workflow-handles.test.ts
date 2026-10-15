@@ -42,6 +42,7 @@ function fakeDeps(): WorkflowHostDeps {
 		sessionManager: { getSessionId: () => "s", getLeafId: () => null, getBranch: () => [] },
 		getContextUsage: () => undefined,
 		modelRegistry: { getModelsOfType: () => [], classify: async () => ({}) },
+		isIdle: () => true,
 	} as unknown as ExtensionCommandContext;
 	return {
 		pi,
