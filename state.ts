@@ -55,7 +55,7 @@ export interface SchematicState {
 	/** The handoff the tool accepted in the current turn, until its boundary is confirmed or failed. */
 	stagedHandoff: StagedHandoff | null;
 
-	/** Tool calls in the current assistant message that must not run because they share it with handoff; value = refusal reason. */
+	/** Handoff calls in the current assistant message that must not run; value = refusal reason. */
 	handoffRefusals: Map<string, string>;
 
 	/** A handoff failed in the current run; further handoff calls are refused until the run settles or handoff state is invalidated. */

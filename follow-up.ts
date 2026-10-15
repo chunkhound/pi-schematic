@@ -2,8 +2,8 @@
  * Queue-safe user-message delivery.
  *
  * Pi rejects plain sends while a run is active; follow-up delivery queues the
- * message and drains it as the next turn, so handoff failure guidance and legacy
- * successor recovery never throw "already processing".
+ * message and drains it as the next turn, so legacy successor recovery never
+ * throws "already processing".
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

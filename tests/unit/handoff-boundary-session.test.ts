@@ -43,7 +43,7 @@ import {
 	buildNextUserMessage,
 	formatHandoffFailure,
 } from "../../handoff/format.js";
-import { HANDOFF_FAILED_IN_RUN_REFUSAL, HANDOFF_SIBLING_REFUSAL, HANDOFF_STAGED_RESULT, REASON_ABORTED, REASON_NOT_PERSISTED } from "../../handoff/copy.js";
+import { HANDOFF_FAILED_IN_RUN_REFUSAL, HANDOFF_NOT_ALONE_REFUSAL, HANDOFF_STAGED_RESULT, REASON_ABORTED, REASON_NOT_PERSISTED } from "../../handoff/copy.js";
 import { MAX_HANDOFF_ATTEMPTS, buildNudge } from "../../watchdog.js";
 import { createDeferred, setTempHome } from "./helpers.js";
 
@@ -360,10 +360,10 @@ describe("handoff boundary in a real agent session", () => {
 	});
 
 	for (const order of ["handoff first", "handoff second"] as const) {
-		it(`refuses a tool call that shares the message with handoff (${order})`, async () => {
-			const sibling = fauxToolCall("notebook_write", { name: "sibling-page", content: "should never be written" }, { id: "call-sibling" });
+		it(`refuses a handoff that shares its message with notebook_write, which still runs (${order})`, async () => {
+			const sibling = fauxToolCall("notebook_write", { name: "sibling-page", content: "findings saved before the handoff" }, { id: "call-sibling" });
 			const calls = order === "handoff first" ? [handoffCall(), sibling] : [sibling, handoffCall()];
-			const { session, sessionManager, observed } = await startSession([call(...calls), reply("successor answer")]);
+			const { session, sessionManager, observed } = await startSession([call(...calls), reply("continued after the refusal")]);
 			try {
 				await session.prompt(LARGE_PROMPT);
 				await session.waitForIdle();
@@ -371,13 +371,18 @@ describe("handoff boundary in a real agent session", () => {
 				session.dispose();
 			}
 
-			const siblingResult = toolResultFor(sessionManager, "call-sibling");
-			assert.ok(siblingResult, "the sibling has a tool result");
-			assert.equal(siblingResult.isError, true);
-			assert.equal(messageText(siblingResult as Message), HANDOFF_SIBLING_REFUSAL);
-			assert.deepEqual(entriesOf(sessionManager, "custom", "notebook-entry"), [], "no notebook page was written");
-			assert.equal(entriesOf(sessionManager, "compaction").length, 1, "the cut is persisted");
-			assert.equal(observed.requests.length, 2, "the batch ended; only the successor turn followed it");
+			const handoffResult = toolResultFor(sessionManager, "call-handoff");
+			assert.ok(handoffResult, "the handoff has a tool result");
+			assert.equal(handoffResult.isError, true);
+			assert.equal(messageText(handoffResult as Message), HANDOFF_NOT_ALONE_REFUSAL);
+			assert.equal(toolResultFor(sessionManager, "call-sibling")?.isError, false, "the notebook_write ran");
+			assert.equal(entriesOf(sessionManager, "custom", "notebook-entry").length, 1, "the notebook entry is persisted");
+			assert.deepEqual(entriesOf(sessionManager, "compaction"), [], "no cut is written");
+			assert.deepEqual(entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE), [], "nothing was staged, so nothing fails");
+			assert.equal(observed.requests.length, 2, "the batch did not end the run; the model was asked again");
+			assert.equal(nonSystem(observed.requests[1]).some((message) =>
+				message.role === "toolResult" && messageText(message) === HANDOFF_NOT_ALONE_REFUSAL), true,
+				"the next request carries the refusal");
 			assert.deepEqual(observed.extensionErrors, []);
 		});
 	}

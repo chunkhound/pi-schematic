@@ -33,7 +33,7 @@ import { registerNotebookTopicTool } from "./notebook/topic-tool.js";
 import { setActiveNotebookTopic } from "./notebook/topic.js";
 import { formatPageTuiPreview } from "./notebook/store.js";
 import { openInPager, pagerRuntime, type ResolvedPager } from "./notebook/pager.js";
-import { registerHandoffTool } from "./handoff/tool.js";
+import { HANDOFF_TOOL_NAME, registerHandoffTool } from "./handoff/tool.js";
 import {
 	canPromoteBoundary,
 	discardNonHumanBoundary,
@@ -469,7 +469,8 @@ export default function (pi: ExtensionAPI): void {
 
 	// ── Register event handlers ─────────────────────────────────────
 	// Handoff boundary first: its agent_settled resets a failed attempt before the
-	// watchdog counts it, and its sibling refusal precedes the readonly tool_call block.
+	// watchdog counts it, and its tool_call refusal of a handoff that shares a
+	// message with other calls (those calls run) precedes the readonly block.
 	registerHandoffBoundary(pi, state);
 	registerWatchdog(pi, state);
 	registerNotebookRehydration(pi, state);
@@ -600,7 +601,7 @@ export default function (pi: ExtensionAPI): void {
 			};
 		}
 
-		if (event.toolName === "handoff" && !state.pendingRequestedHandoff) {
+		if (event.toolName === HANDOFF_TOOL_NAME && !state.pendingRequestedHandoff) {
 			return {
 				block: true as const,
 				reason: READONLY_HANDOFF_BLOCK_REASON,

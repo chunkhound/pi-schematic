@@ -12,8 +12,8 @@ import type { TestPI } from "./test-host.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
 import { buildContinuationFrame } from "../../handoff/format.js";
-import { READONLY_POWERSHELL_BLOCK_REASON } from "../../notifications.js";
-import { HANDOFF_FAILED_IN_RUN_REFUSAL, HANDOFF_SIBLING_REFUSAL } from "../../handoff/copy.js";
+import { HANDOFF_FAILED_IN_RUN_REFUSAL, HANDOFF_NOT_ALONE_REFUSAL } from "../../handoff/copy.js";
+import { READONLY_POWERSHELL_BLOCK_REASON, READONLY_WRITE_EDIT_BLOCK_REASON } from "../../notifications.js";
 
 async function createHandoffPI() {
 	const { pi, toolCall } = await registerReadonlyPI();
@@ -181,7 +181,7 @@ test("readonly blocks a non-requested handoff", async () => {
 	assert.deepEqual(results.filter((result: any) => result?.entries), [], "a blocked handoff leaves no boundary to write");
 });
 
-test("sibling refusal precedes readonly blocking", async () => {
+test("a write sharing a message with handoff keeps its readonly block while the handoff is refused", async () => {
 	const { pi, toolCall } = await createHandoffPI();
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 	await pi.commands.get("handoff").handler("continue readonly work", {
@@ -200,13 +200,9 @@ test("sibling refusal precedes readonly blocking", async () => {
 	}, {});
 
 	const sibling = await callTool(toolCall, { toolName: "write", toolCallId: "call-write", input: { path: "/tmp/test", content: "x" } }, {});
-	assert.deepEqual(sibling, { block: true, reason: HANDOFF_SIBLING_REFUSAL, terminate: true });
-
-	assert.equal(await callTool(toolCall, { toolName: "handoff", toolCallId: "call-handoff", input: { nextInstruction: "continue readonly work" } }, {}), undefined,
-		"the handoff call itself stays unblocked under the bypass");
-	const standalone = await callTool(toolCall, { toolName: "write", toolCallId: "unrelated-write", input: { path: "/tmp/test", content: "x" } }, {});
-	assert.equal(standalone.block, true);
-	assert.notEqual(standalone.reason, HANDOFF_SIBLING_REFUSAL, "a call outside the handoff message keeps the readonly reason");
+	assert.deepEqual(sibling, { block: true, reason: READONLY_WRITE_EDIT_BLOCK_REASON });
+	const handoff = await callTool(toolCall, { toolName: "handoff", toolCallId: "call-handoff", input: { nextInstruction: "continue readonly work" } }, {});
+	assert.deepEqual(handoff, { block: true, reason: HANDOFF_NOT_ALONE_REFUSAL, terminate: true });
 });
 
 test("watchdog cancellation clears the readonly handoff bypass", async () => {

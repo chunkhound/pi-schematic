@@ -29,8 +29,10 @@ import {
 	normalizeContextPercent,
 } from "./eligibility.js";
 import type { SchematicState } from "../state.js";
-import { sendFollowUp } from "../follow-up.js";
 import { STATUS_KEY_HANDOFF } from "../tui.js";
+
+/** Name the handoff tool is registered and called under. */
+export const HANDOFF_TOOL_NAME = "handoff";
 
 function validateHandoffRequest(nextInstruction: string, ctx: ExtensionContext): void {
 	const usage = ctx.getContextUsage();
@@ -75,18 +77,12 @@ function resolveHandoffRequest(
 	};
 }
 
-function sendHandoffFailure(pi: ExtensionAPI, error: Error, pendingRequest: SchematicState["pendingRequestedHandoff"]): void {
-	// The agent run is active during tool execution, so this guidance must queue as
-	// a follow-up turn instead of being rejected as "already processing".
-	sendFollowUp(pi, formatHandoffFailure(error.message, !!pendingRequest));
-}
-
 export function registerHandoffTool(
 	pi: ExtensionAPI,
 	state: SchematicState,
 ): void {
 	pi.registerTool({
-		name: "handoff",
+		name: HANDOFF_TOOL_NAME,
 		label: "Handoff",
 		// Never callable through ctx.executeTool(): a nested call carries an id that never reaches
 		// the turn's tool results, so the boundary would always decline it.
@@ -102,7 +98,7 @@ export function registerHandoffTool(
 			"AFTER HANDOFF the agent sees: the continuation frame, then one message holding the next " +
 			"instruction verbatim plus the remaining context, then a short note about the system prompt, " +
 			"and the current notebook with optional pages discarded.\n" +
-			"Call handoff alone: other tool calls in the same message are not run.\n",
+			"Call handoff alone in its message: a handoff that shares a message with other tool calls is refused, and the other calls run.\n",
 		promptSnippet: "Pivot to a new topic via deliberate handoff compaction",
 		promptGuidelines: [
 			"Handoff is preparation only: the successor executes the instruction, never this context. " +
@@ -141,15 +137,13 @@ export function registerHandoffTool(
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			if (state.stagedHandoff) throw new Error(HANDOFF_ALREADY_STAGED);
 			const { nextInstruction, context } = resolveHandoffRequest(state, params);
-			// validateHandoffRequest throws with a user-facing reason. Before the throw
-			// reaches Pi (which will render a generic tool-error), send the richer
-			// sendHandoffFailure message so the LLM gets actionable guidance. The
-			// throw after this ensures Pi's tool-call lifecycle sees the rejection.
+			// The error result is the only report of a rejected call: a queued follow-up
+			// would outlive this run and reach a later successor.
 			try {
 				validateHandoffRequest(nextInstruction, ctx);
 			} catch (error) {
-				sendHandoffFailure(pi, error instanceof Error ? error : new Error(String(error)), state.pendingRequestedHandoff);
-				throw error;
+				if (!state.pendingRequestedHandoff || !(error instanceof Error)) throw error;
+				throw new Error(formatHandoffFailure(error.message, true));
 			}
 			// Status first: a throwing UI call must leave no staged handoff behind.
 			if (ctx.hasUI && ctx.ui.theme) {

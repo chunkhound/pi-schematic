@@ -12,7 +12,7 @@ import type { CompactionEntry, CustomMessageEntry, SessionEntry, SessionManager 
 import {
 	HANDOFF_IN_PROGRESS_STATUS,
 	HANDOFF_REQUIRED_STATUS,
-	HANDOFF_SIBLING_REFUSAL,
+	HANDOFF_NOT_ALONE_REFUSAL,
 	HANDOFF_STAGED_RESULT,
 	REASON_ABORTED,
 	REASON_NOT_PERSISTED,
@@ -314,12 +314,14 @@ describe("pi-schematic real-host E2E", () => {
 	}));
 
 	it("handoff tool rejects a missing instruction", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
-		// The rejection's failure report queues into the same run.
+		// A validation failure queues nothing: the tool's error result is the only report.
 		await handoff(host, { context: "situational only" }, 1);
 		const { entries } = await host.entries();
 		const result = onlyResult(toolResults(entries, "handoff"), "handoff");
 		assert.equal(result.isError, true);
 		assert.ok(result.text.includes("Empty handoff nextInstruction rejected"), result.text);
+		assert.equal(entries.filter((entry) => userText(entry)?.includes("Handoff failed")).length, 0, "no failure follow-up user message");
+		assert.equal(customMessages(entries, HANDOFF_FAILED_CUSTOM_TYPE).length, 0, "no failure message");
 	}));
 
 	it("handoff writes the cut, the successor and the note as one boundary and re-announces readonly in the successor turn", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
@@ -369,21 +371,37 @@ describe("pi-schematic real-host E2E", () => {
 		assert.equal(successorRequest.texts.includes("go"), false, "the pre-cut user turn is gone from the successor request");
 	}));
 
-	it("a tool call sharing the message with handoff is refused while the cut lands", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
-		await host.script([{
-			calls: [
-				{ name: "handoff", arguments: { nextInstruction: "continue alone" } },
-				{ name: "e2e_noop", arguments: {} },
-			],
-		}], 1);
+	it("a handoff sharing its message with another call is refused, the other call runs, and a lone handoff then lands the cut", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+		await host.script([
+			{
+				calls: [
+					{ name: "notebook_write", arguments: { name: "kept-page", content: "survives the cut" } },
+					{ name: "handoff", arguments: { nextInstruction: "continue alone" } },
+				],
+			},
+			{ name: "handoff", arguments: { nextInstruction: "continue alone" } },
+			{ name: "notebook_read", arguments: { name: "kept-page" } },
+		], 1);
 
 		const { entries } = await host.entries();
-		const sibling = onlyResult(toolResults(entries, "e2e_noop"), "e2e_noop");
-		assert.equal(sibling.isError, true, "the sibling call is not run");
-		assert.equal(sibling.text, HANDOFF_SIBLING_REFUSAL);
-		assert.equal(onlyResult(toolResults(entries, "handoff"), "handoff").text, HANDOFF_STAGED_RESULT);
-		onlyHandoffCut(entries);
+		const write = onlyResult(toolResults(entries, "notebook_write"), "notebook_write");
+		assert.equal(write.isError, false, "the sibling call ran");
+		assert.equal(entries.filter((entry) => entry.type === "custom" && entry.customType === "notebook-entry").length, 1, "the notebook entry persisted");
+		const [refused, landed] = toolResults(entries, "handoff");
+		assert.equal(toolResults(entries, "handoff").length, 2, "one refused and one landed handoff result");
+		assert.equal(refused.isError, true);
+		assert.equal(refused.text, HANDOFF_NOT_ALONE_REFUSAL);
+		assert.equal(landed.text, HANDOFF_STAGED_RESULT, "the run continued to the lone handoff");
+		const cut = onlyHandoffCut(entries);
+		const handoffResultIndexes = entries.flatMap((entry, index) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "handoff" ? [index] : []);
+		assert.ok(entries.indexOf(cut) > handoffResultIndexes[1], "the cut follows the lone handoff, not the refused one");
 		onlyCustomMessage(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE);
+		assert.equal(customMessages(entries, HANDOFF_FAILED_CUSTOM_TYPE).length, 0, "the refusal stages nothing, so nothing fails");
+		const read = onlyResult(toolResults(entries, "notebook_read"), "notebook_read");
+		assert.equal(read.isError, false);
+		assert.ok(read.text.includes("survives the cut"), read.text);
+		const readIndex = entries.findIndex((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "notebook_read");
+		assert.ok(readIndex > entries.indexOf(cut), "the page is read after the cut");
 	}));
 
 	it("a boundary successor is not re-sent by settle or tree navigation", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {

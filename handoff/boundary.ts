@@ -8,9 +8,9 @@
  * boundary result — a later turn_end handler or draft validation can drop it —
  * so the handoff completes only once its cut is found on the branch, at the
  * next turn_start or when the run settles. A missing cut never starts a run,
- * and further handoff calls in that run are refused. Tool calls sharing the
- * assistant message with handoff are refused so nothing runs between staging
- * and the cut.
+ * and further handoff calls in that run are refused. A handoff that shares its
+ * assistant message with other tool calls is refused and the other calls run,
+ * so nothing runs between staging and the cut.
  */
 
 import type {
@@ -30,7 +30,7 @@ import {
 	HANDOFF_FAILED_IN_RUN_REFUSAL,
 	HANDOFF_REQUESTED_STATUS,
 	HANDOFF_REQUIRED_STATUS,
-	HANDOFF_SIBLING_REFUSAL,
+	HANDOFF_NOT_ALONE_REFUSAL,
 	HANDOFF_SUCCESSOR_NOT_RUN,
 	REASON_ABORTED,
 	REASON_NOT_PERSISTED,
@@ -48,8 +48,8 @@ import {
 	formatHandoffComplete,
 	formatHandoffFailure,
 } from "./format.js";
-
-const HANDOFF_TOOL_NAME = "handoff";
+import { HANDOFF_TOOL_NAME } from "./tool.js";
+import { MAX_HANDOFF_ATTEMPTS } from "../watchdog.js";
 
 /**
  * Drafts that write `staged` as one boundary: notebook discard, cut, successor,
@@ -94,10 +94,16 @@ function buildHandoffBoundaryDrafts(
 
 /** The compaction entry on `branch` written for `handoffId`, if pi persisted it. */
 function findHandoffCut(branch: readonly SessionEntry[], handoffId: string): SessionEntry | undefined {
-	return branch.find((entry) =>
-		entry.type === "compaction" &&
-		typeof entry.details === "object" && entry.details !== null &&
-		(entry.details as Record<string, unknown>).handoffId === handoffId);
+	// The cut sits at or near the leaf; scan from there.
+	for (let index = branch.length - 1; index >= 0; index--) {
+		const entry = branch[index];
+		if (
+			entry.type === "compaction" &&
+			typeof entry.details === "object" && entry.details !== null &&
+			(entry.details as Record<string, unknown>).handoffId === handoffId
+		) return entry;
+	}
+	return undefined;
 }
 
 /** Settle the durable handoff state once the cut is confirmed on the branch. */
@@ -156,10 +162,16 @@ function failStagedHandoff(
 ): void {
 	state.stagedHandoff = null;
 	state.handoffFailedInRun = true;
-	const pendingRequest = state.pendingRequestedHandoff;
+	const request = state.pendingRequestedHandoff;
 	// The watchdog's agent_settled handler runs after this one and counts the
-	// attempt against the enforcement budget.
-	if (pendingRequest) pendingRequest.toolCalled = false;
+	// attempt against the enforcement budget; it cannot run first, because it
+	// counts only once toolCalled is reset here. On the attempt that exhausts the
+	// budget it cancels the request in this run's settle, so the failure must not
+	// call it pending.
+	if (request) request.toolCalled = false;
+	const exhausted = request !== null &&
+		request.eligibleNudgeDelivered && request.enforcementAttempts + 1 >= MAX_HANDOFF_ATTEMPTS;
+	const pendingRequest = exhausted ? null : request;
 	// Never start a run from here: a cause that drops every cut (another
 	// extension's turn_end handler) would otherwise retry without bound. The
 	// guidance waits for the next run.
@@ -215,7 +227,7 @@ function declineReason(event: TurnEndEvent, ctx: ExtensionContext, staged: Stage
 /**
  * Register every handoff lifecycle handler. Call before `registerWatchdog` (its
  * agent_settled handler counts a failed attempt only after this one reset
- * `toolCalled`) and before index.ts's readonly tool_call handler (sibling
+ * `toolCalled`) and before index.ts's readonly tool_call handler (a handoff
  * refusal wins over a readonly block).
  */
 export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState): void {
@@ -223,14 +235,13 @@ export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState)
 		if (event.message.role !== "assistant") return;
 		state.handoffRefusals.clear();
 		const calls = event.message.content.filter((block) => block.type === "toolCall");
-		const first = calls.find((call) => call.name === HANDOFF_TOOL_NAME);
-		if (!first) return;
-		for (const call of calls) {
-			if (call.id === first.id) continue;
-			state.handoffRefusals.set(
-				call.id,
-				call.name === HANDOFF_TOOL_NAME ? HANDOFF_EXTRA_CALL_REFUSAL : HANDOFF_SIBLING_REFUSAL,
-			);
+		const handoffCalls = calls.filter((call) => call.name === HANDOFF_TOOL_NAME);
+		if (handoffCalls.length === 0) return;
+		// Nothing is staged when another call shares the message, so those calls run
+		// and their results, lacking terminate, keep the batch from ending the run.
+		const alone = handoffCalls.length === calls.length;
+		for (const call of alone ? handoffCalls.slice(1) : handoffCalls) {
+			state.handoffRefusals.set(call.id, alone ? HANDOFF_EXTRA_CALL_REFUSAL : HANDOFF_NOT_ALONE_REFUSAL);
 		}
 	});
 

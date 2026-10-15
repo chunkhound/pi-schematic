@@ -37,6 +37,7 @@ import { resolveSpawnModelRoute } from "../model-groups/router.js";
 import { productionConstraintRegistry, type ConstraintRegistry } from "../model-groups/constraints/registry.js";
 import { MODEL_GROUP_MODALITY_PROSE } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
+import { HANDOFF_TOOL_NAME } from "../handoff/tool.js";
 import {
 	renderSpawnCall,
 	renderSpawnResult,
@@ -237,7 +238,7 @@ export function buildChildToolNames(
 	const inheritableParentToolNames = availableTools
 		? getInheritableParentToolNames(parentToolNames, availableTools)
 		: parentToolNames;
-	const inheritedTools = inheritableParentToolNames.filter((name) => name !== "spawn" && name !== "handoff");
+	const inheritedTools = inheritableParentToolNames.filter((name) => name !== "spawn" && name !== HANDOFF_TOOL_NAME);
 	return [...new Set([...inheritedTools, ...childTools.map((tool) => tool.name)])];
 }
 

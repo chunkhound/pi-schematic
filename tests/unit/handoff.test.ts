@@ -12,7 +12,7 @@ import {
 	HANDOFF_COMMAND_BUSY,
 	HANDOFF_EXTRA_CALL_REFUSAL,
 	HANDOFF_FAILED_IN_RUN_REFUSAL,
-	HANDOFF_SIBLING_REFUSAL,
+	HANDOFF_NOT_ALONE_REFUSAL,
 	HANDOFF_STAGED_RESULT,
 	HANDOFF_SUCCESSOR_NOT_RUN,
 	REASON_ABORTED,
@@ -23,7 +23,7 @@ import {
 import { registerHandoffTool } from "../../handoff/tool.js";
 import { buildContinuationFrame, buildNextUserMessage } from "../../handoff/format.js";
 import { STATUS_KEY_HANDOFF, WIDGET_KEY_WARNING } from "../../tui.js";
-import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
+import { MAX_HANDOFF_ATTEMPTS, registerWatchdog } from "../../watchdog.js";
 import { callHandlers, emitAll, handoffToolResult, turnEndEvent } from "./helpers.js";
 import { createTestHost, type TestPI } from "./test-host.js";
 
@@ -485,6 +485,35 @@ test("a failed handoff without a pending request clears the status and says noth
 	assert.deepEqual(pi.sentMessages[0].options, { triggerTurn: false });
 });
 
+for (const { attemptsBefore, nudged, requestSurvives } of [
+	{ attemptsBefore: MAX_HANDOFF_ATTEMPTS - 1, nudged: true, requestSurvives: false },
+	{ attemptsBefore: MAX_HANDOFF_ATTEMPTS - 2, nudged: true, requestSurvives: true },
+	{ attemptsBefore: MAX_HANDOFF_ATTEMPTS - 1, nudged: false, requestSurvives: true },
+]) {
+	test(`a failed cut on ${nudged ? "a nudged" : "an un-nudged"} run after ${attemptsBefore} counted attempts ${requestSurvives ? "keeps" : "does not call"} the request pending`, async () => {
+		const state = createState();
+		state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: attemptsBefore, eligibleNudgeDelivered: nudged, nextInstruction: null };
+		const pi = await createTestHost((api) => {
+			registerHandoffTool(api, state);
+			registerHandoffBoundary(api, state);
+			registerWatchdog(api, state);
+		});
+		const { ctx, statuses, notifications } = makeCtx();
+		await executeHandoff(pi, ctx);
+		await endTurn(pi, ctx);
+
+		await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
+
+		assert.equal(state.pendingRequestedHandoff !== null, requestSurvives);
+		assert.equal(pi.sentMessages.length, 1);
+		assert.match(pi.sentMessages[0].message.content, requestSurvives
+			? /The required handoff remains pending; retry when context usage is eligible\.$/
+			: /No required handoff remains pending; retry when ready\.$/);
+		assert.equal(statuses.get(STATUS_KEY_HANDOFF), requestSurvives ? "🤝 Handoff required — ready to compact" : undefined);
+		assert.equal(notifications[0]?.message, `Handoff failed: ${REASON_NOT_PERSISTED}. The handoff can be retried.`);
+	});
+}
+
 test("agent_settled with the cut on the branch completes with the successor-did-not-run warning", async () => {
 	const { state, pi } = await boundaryHost((s) => requestHandoff(s));
 	const { ctx, notifications, session } = makeCtx();
@@ -663,7 +692,18 @@ async function toolCall(pi: TestPI, toolCallId: string, toolName: string): Promi
 	return results.find((result) => result !== undefined);
 }
 
-test("calls sharing an assistant message with handoff are refused and the first handoff runs", async () => {
+test("in a message holding only handoff calls, the first runs and the others are refused", async () => {
+	const { pi } = await boundaryHost();
+	await callHandlers(pi, "message_end", assistantMessage(
+		{ id: "h1", name: "handoff" },
+		{ id: "h2", name: "handoff" },
+	), makeCtx().ctx);
+
+	assert.equal(await toolCall(pi, "h1", "handoff"), undefined);
+	assert.deepEqual(await toolCall(pi, "h2", "handoff"), { block: true, reason: HANDOFF_EXTRA_CALL_REFUSAL, terminate: true });
+});
+
+test("every handoff sharing a message with other calls is refused and the other calls run", async () => {
 	const { pi } = await boundaryHost();
 	await callHandlers(pi, "message_end", assistantMessage(
 		{ id: "w1", name: "write" },
@@ -672,10 +712,10 @@ test("calls sharing an assistant message with handoff are refused and the first 
 		{ id: "h2", name: "handoff" },
 	), makeCtx().ctx);
 
-	assert.equal(await toolCall(pi, "h1", "handoff"), undefined);
-	assert.deepEqual(await toolCall(pi, "w1", "write"), { block: true, reason: HANDOFF_SIBLING_REFUSAL, terminate: true });
-	assert.deepEqual(await toolCall(pi, "n1", "notebook_write"), { block: true, reason: HANDOFF_SIBLING_REFUSAL, terminate: true });
-	assert.deepEqual(await toolCall(pi, "h2", "handoff"), { block: true, reason: HANDOFF_EXTRA_CALL_REFUSAL, terminate: true });
+	assert.deepEqual(await toolCall(pi, "h1", "handoff"), { block: true, reason: HANDOFF_NOT_ALONE_REFUSAL, terminate: true });
+	assert.deepEqual(await toolCall(pi, "h2", "handoff"), { block: true, reason: HANDOFF_NOT_ALONE_REFUSAL, terminate: true });
+	assert.equal(await toolCall(pi, "w1", "write"), undefined);
+	assert.equal(await toolCall(pi, "n1", "notebook_write"), undefined);
 });
 
 test("calls in an assistant message without handoff are not refused", async () => {
@@ -692,10 +732,10 @@ test("refusals last until the next assistant message and are not cleared by othe
 	await callHandlers(pi, "message_end", assistantMessage({ id: "h1", name: "handoff" }, { id: "w1", name: "write" }), ctx);
 
 	await callHandlers(pi, "message_end", { type: "message_end", message: { role: "toolResult", content: [] } }, ctx);
-	assert.equal((await toolCall(pi, "w1", "write")).block, true, "a tool result message must not clear refusals");
+	assert.equal((await toolCall(pi, "h1", "handoff")).block, true, "a tool result message must not clear refusals");
 
 	await callHandlers(pi, "message_end", assistantMessage({ id: "w2", name: "write" }), ctx);
-	assert.equal(await toolCall(pi, "w1", "write"), undefined, "the next assistant message clears the previous refusals");
+	assert.equal(await toolCall(pi, "h1", "handoff"), undefined, "the next assistant message clears the previous refusals");
 });
 
 test("turn_end clears the refusals", async () => {
@@ -705,24 +745,24 @@ test("turn_end clears the refusals", async () => {
 
 	await callHandlers(pi, "turn_end", turnEndEvent(), ctx);
 
-	assert.equal(await toolCall(pi, "w1", "write"), undefined);
+	assert.equal(await toolCall(pi, "h1", "handoff"), undefined);
 });
 
 // ── session_tree ─────────────────────────────────────────────────────
 
-test("session_tree invalidates a staged handoff and the sibling refusals", async () => {
+test("session_tree invalidates a staged handoff and the handoff refusals", async () => {
 	const pi = await createTestHost();
 	const { ctx } = makeCtx();
 	await executeHandoff(pi, ctx, { nextInstruction: "first task" }, "first");
 	await callHandlers(pi, "message_end", assistantMessage({ id: "h1", name: "handoff" }, { id: "w1", name: "write" }), ctx);
 	await assert.rejects(() => executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second"), (error: unknown) =>
 		error instanceof Error && error.message === HANDOFF_ALREADY_STAGED);
-	assert.equal((await toolCall(pi, "w1", "write")).block, true);
+	assert.equal((await toolCall(pi, "h1", "handoff")).block, true);
 
 	await emitAll(pi, "session_tree", { type: "session_tree" }, ctx);
 
 	await executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second");
-	assert.equal(await toolCall(pi, "w1", "write"), undefined);
+	assert.equal(await toolCall(pi, "h1", "handoff"), undefined);
 });
 
 test("after a failed cut the run refuses further handoff calls until the agent settles", async () => {
@@ -968,7 +1008,7 @@ test("handoff tool metadata and schema describe the prompt contract", async () =
 	assert.match(tool.description, /past ~30%/i);
 	assert.match(tool.description, /call handoff/i);
 	assert.match(tool.description, /current notebook/i);
-	assert.match(tool.description, /Call handoff alone: other tool calls in the same message are not run\./);
+	assert.match(tool.description, /Call handoff alone in its message: a handoff that shares a message with other tool calls is refused, and the other calls run\./);
 	assert.match(tool.promptGuidelines.join(" "), /preparation only/i);
 	assert.doesNotMatch(`${tool.description} ${tool.promptGuidelines.join(" ")} ${JSON.stringify(tool.parameters)}`, /\bbrief\b/i);
 	assert.doesNotMatch(`${tool.description} ${tool.promptGuidelines.join(" ")} ${JSON.stringify(tool.parameters)}`, /long-term/i,
@@ -1081,6 +1121,7 @@ test("handoff tool rejects an empty nextInstruction with context usage", async (
 	);
 
 	assert.equal(state.stagedHandoff, null, "an empty instruction must not stage");
+	assert.deepEqual(pi.sentUserMessages, [], "the error result is the only report; nothing queues for a later turn");
 });
 
 test("handoff tool rejects small session with clear error", async () => {
@@ -1107,7 +1148,7 @@ test("handoff tool rejects small session with clear error", async () => {
 	assert.equal(state.stagedHandoff, null, "small-session rejection must not stage");
 });
 
-test("handoff tool preserves pending requested handoff and re-engages LLM after synchronous small-session rejection", async () => {
+test("a small-session rejection keeps the pending request and states it in the error without queuing a follow-up", async () => {
 	const state = createState();
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: null };
 	const pi = await createTestHost((api) => {
@@ -1131,6 +1172,9 @@ test("handoff tool preserves pending requested handoff and re-engages LLM after 
 				getContextUsage: () => ({ tokens: 5000, percent: 2.5, contextWindow: 200000 }),
 			},
 		),
+		(error: unknown) => error instanceof Error &&
+			error.message.includes("handoff unavailable yet") &&
+			error.message.includes("The required handoff remains pending"),
 	);
 
 	assert.deepEqual(state.pendingRequestedHandoff, {
@@ -1140,12 +1184,7 @@ test("handoff tool preserves pending requested handoff and re-engages LLM after 
 		nextInstruction: null,
 	});
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), "🤝 Handoff in progress");
-	// sendHandoffFailure re-engages the LLM
-	assert.ok(pi.sentUserMessages.length > 0);
-	assert.match(pi.sentUserMessages[pi.sentUserMessages.length - 1].content, /Handoff failed/);
-	assert.equal(pi.sentUserMessages.at(-1)?.options?.deliverAs, "followUp",
-		"failure guidance must queue while the agent run is active");
-	assert.match(pi.sentUserMessages[pi.sentUserMessages.length - 1].content, /required handoff remains pending/);
+	assert.deepEqual(pi.sentUserMessages, []);
 });
 
 test("handoff tool rejects small session with null percent without crashing", async () => {
@@ -1335,7 +1374,7 @@ test("handoff tool rejects when context usage is unavailable", async () => {
 	assert.equal(state.stagedHandoff, null, "unavailable usage must not stage");
 });
 
-test("handoff tool preserves pending requested handoff and re-engages LLM after synchronous unavailable-usage rejection", async () => {
+test("an unavailable-usage rejection keeps the pending request and states it in the error without queuing a follow-up", async () => {
 	const state = createState();
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: null };
 	const pi = await createTestHost((api) => {
@@ -1359,6 +1398,9 @@ test("handoff tool preserves pending requested handoff and re-engages LLM after 
 				getContextUsage: () => null,
 			},
 		),
+		(error: unknown) => error instanceof Error &&
+			error.message.includes("Context usage unavailable") &&
+			error.message.includes("The required handoff remains pending"),
 	);
 
 	assert.deepEqual(state.pendingRequestedHandoff, {
@@ -1368,10 +1410,7 @@ test("handoff tool preserves pending requested handoff and re-engages LLM after 
 		nextInstruction: null,
 	});
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), "🤝 Handoff in progress");
-	// sendHandoffFailure re-engages the LLM
-	assert.ok(pi.sentUserMessages.length > 0);
-	assert.match(pi.sentUserMessages[pi.sentUserMessages.length - 1].content, /Handoff failed/);
-	assert.match(pi.sentUserMessages[pi.sentUserMessages.length - 1].content, /required handoff remains pending/);
+	assert.deepEqual(pi.sentUserMessages, []);
 });
 
 test("handoff tool rejects when context usage cannot be estimated", async () => {
