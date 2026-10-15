@@ -201,8 +201,19 @@ test("a write sharing a message with handoff keeps its readonly block while the 
 
 	const sibling = await callTool(toolCall, { toolName: "write", toolCallId: "call-write", input: { path: "/tmp/test", content: "x" } }, {});
 	assert.deepEqual(sibling, { block: true, reason: READONLY_WRITE_EDIT_BLOCK_REASON });
-	const handoff = await callTool(toolCall, { toolName: "handoff", toolCallId: "call-handoff", input: { nextInstruction: "continue readonly work" } }, {});
+	const input = { nextInstruction: "continue readonly work" };
+	const handoff = await callTool(toolCall, { toolName: "handoff", toolCallId: "call-handoff", input }, {});
+	// Pi runs the executor only for an unblocked call.
+	if (!handoff?.block) await stageHandoff(pi, "call-handoff", input);
 	assert.deepEqual(handoff, { block: true, reason: HANDOFF_NOT_ALONE_REFUSAL, terminate: true });
+
+	const results = await callHandlers(
+		pi,
+		"turn_end",
+		turnEndEvent({ toolResults: [handoffToolResult("call-handoff")] }),
+		{ hasUI: false, signal: { aborted: false }, getContextUsage: () => null },
+	);
+	assert.deepEqual(results.filter((result: any) => result?.entries), [], "a refused handoff stages nothing");
 });
 
 test("watchdog cancellation clears the readonly handoff bypass", async () => {

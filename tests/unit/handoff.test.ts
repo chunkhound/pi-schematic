@@ -22,7 +22,7 @@ import {
 } from "../../handoff/copy.js";
 import { registerHandoffTool } from "../../handoff/tool.js";
 import { buildContinuationFrame, buildNextUserMessage } from "../../handoff/format.js";
-import { STATUS_KEY_HANDOFF, WIDGET_KEY_WARNING } from "../../tui.js";
+import { STATUS_KEY_HANDOFF, STATUS_KEY_NOTEBOOK, STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS, registerWatchdog } from "../../watchdog.js";
 import { callHandlers, emitAll, handoffToolResult, turnEndEvent } from "./helpers.js";
 import { createTestHost, type TestPI } from "./test-host.js";
@@ -50,6 +50,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 /** Recording UI context; `session.branch` is what `sessionManager.getBranch()` returns. */
 function makeCtx(options: { usage?: Usage; aborted?: boolean; hasUI?: boolean } = {}) {
 	const statuses = new Map<string, string | undefined>();
+	const widgets = new Map<string, string[] | undefined>();
 	const notifications: Array<{ message: string; level: string }> = [];
 	const session = { branch: [] as any[], usage: options.usage === undefined ? ELIGIBLE_USAGE : options.usage };
 	const ctx: any = {
@@ -58,13 +59,13 @@ function makeCtx(options: { usage?: Usage; aborted?: boolean; hasUI?: boolean } 
 		ui: {
 			theme: { fg: (_name: string, text: string) => text },
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-			setWidget: () => {},
+			setWidget: (key: string, value: string[] | undefined) => { widgets.set(key, value); },
 			notify: (message: string, level: string) => { notifications.push({ message, level }); },
 		},
 		getContextUsage: () => session.usage,
 		sessionManager: { getBranch: () => session.branch },
 	};
-	return { ctx, statuses, notifications, session };
+	return { ctx, statuses, widgets, notifications, session };
 }
 
 async function boundaryHost(seed: (state: SchematicState) => void = () => {}) {
@@ -384,10 +385,11 @@ test("turn_start with the cut on the branch completes the handoff", async () => 
 		s.activeNotebookTopicSource = "human";
 		s.readonlyEnabled = true;
 	});
-	const { ctx, statuses, notifications, session } = makeCtx();
+	const { ctx, statuses, widgets, notifications, session } = makeCtx();
 	await executeHandoff(pi, ctx, { discardPages: ["stale"] });
 	const result = await endTurn(pi, ctx);
 	session.branch = persist(result.entries);
+	widgets.set(WIDGET_KEY_WARNING, ["⚠ Context at 85% — readonly"]);
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
@@ -399,8 +401,58 @@ test("turn_start with the cut on the branch completes the handoff", async () => 
 	assert.equal(state.epoch, 2);
 	assert.equal(statuses.has(STATUS_KEY_HANDOFF) && statuses.get(STATUS_KEY_HANDOFF), undefined);
 	assert.deepEqual(notifications, [{ message: "Handoff complete. Notebook: 1 page kept, 1 discarded.", level: "info" }]);
+	assert.equal(statuses.get(STATUS_KEY_TOPIC), "🧭 -", "the topic indicator shows the cleared topic");
+	assert.equal(statuses.get(STATUS_KEY_NOTEBOOK), "📒 1", "the notebook indicator shows the kept pages");
+	assert.equal(widgets.has(WIDGET_KEY_WARNING) && widgets.get(WIDGET_KEY_WARNING), undefined,
+		"the high-context warning is cleared");
 	assert.deepEqual(pi.sentUserMessages, []);
 	assert.deepEqual(pi.sentMessages, []);
+});
+
+test("a completed handoff without discardPages notifies a plain completion", async () => {
+	const { state, pi } = await boundaryHost((s) => {
+		s.epoch = 1;
+		s.notebookPages.set("a", "one");
+		s.notebookPages.set("b", "two");
+	});
+	const { ctx, notifications, session } = makeCtx();
+	await executeHandoff(pi, ctx, { nextInstruction: "go" });
+	const result = await endTurn(pi, ctx);
+	session.branch = persist([
+		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
+		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "a", content: "one", clipped: false } },
+		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "b", content: "two", clipped: false } },
+		...result.entries,
+	]);
+
+	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+
+	assert.equal(state.notebookPages.size, 2, "the pages survive, so the plain form does not depend on an empty notebook");
+	assert.equal("report" in result.entries[1].details, false);
+	assert.deepEqual(notifications, [{ message: "Handoff complete.", level: "info" }]);
+});
+
+test("a discard naming no page reports the kept pages without a discarded count", async () => {
+	const { state, pi } = await boundaryHost((s) => {
+		s.epoch = 1;
+		s.notebookPages.set("a", "one");
+		s.notebookPages.set("b", "two");
+	});
+	const { ctx, notifications, session } = makeCtx();
+	await executeHandoff(pi, ctx, { nextInstruction: "go", discardPages: ["ghost"] });
+	const handoffId = state.stagedHandoff!.handoffId;
+	const result = await endTurn(pi, ctx);
+	session.branch = persist([
+		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
+		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "a", content: "one", clipped: false } },
+		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "b", content: "two", clipped: false } },
+		...result.entries,
+	]);
+
+	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+
+	assert.deepEqual(result.entries[1].details, { handoffId, report: "Handoff complete. Notebook: 2 pages kept." });
+	assert.deepEqual(notifications, [{ message: "Handoff complete. Notebook: 2 pages kept.", level: "info" }]);
 });
 
 test("a completed handoff leaves the readonly nudge off when readonly is off", async () => {

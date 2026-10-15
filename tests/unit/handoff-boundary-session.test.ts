@@ -23,15 +23,18 @@ import {
 	SessionManager,
 	type AgentSession,
 	type ExtensionAPI,
+	type ExtensionUIContext,
 	type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import {
 	fauxAssistantMessage,
 	fauxProvider,
 	fauxToolCall,
+	getCurrentSystemPrompt,
 	type FauxResponseFactory,
 	type Message,
 } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import registerSchematic from "../../index.js";
 import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
 import {
@@ -41,9 +44,19 @@ import {
 	buildContinuationFrame,
 	buildHandoffSystemPromptNote,
 	buildNextUserMessage,
+	formatHandoffComplete,
 	formatHandoffFailure,
 } from "../../handoff/format.js";
-import { HANDOFF_FAILED_IN_RUN_REFUSAL, HANDOFF_NOT_ALONE_REFUSAL, HANDOFF_STAGED_RESULT, REASON_ABORTED, REASON_NOT_PERSISTED } from "../../handoff/copy.js";
+import {
+	HANDOFF_FAILED_IN_RUN_REFUSAL,
+	HANDOFF_NOT_ALONE_REFUSAL,
+	HANDOFF_REQUIRED_STATUS,
+	HANDOFF_STAGED_RESULT,
+	HANDOFF_SUCCESSOR_NOT_RUN,
+	REASON_ABORTED,
+	REASON_NOT_PERSISTED,
+} from "../../handoff/copy.js";
+import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS, buildNudge } from "../../watchdog.js";
 import { createDeferred, setTempHome } from "./helpers.js";
 
@@ -120,13 +133,52 @@ function observer(observed: Observed): ExtensionFactory {
 }
 
 /**
+ * A UI context that records each notify as `notify:<level>:<message>` and each
+ * setStatus as `status:<key>:<text>` in `log`, in call order. Attaching it makes
+ * `ctx.hasUI` true. The theme returns text unstyled.
+ */
+function recordingUI(log: string[]): ExtensionUIContext {
+	const ui = {
+		select: async () => undefined,
+		confirm: async () => false,
+		input: async () => undefined,
+		notify: (message: string, type?: string) => { log.push(`notify:${type ?? "info"}:${message}`); },
+		onTerminalInput: () => () => {},
+		setStatus: (key: string, text: string | undefined) => { log.push(`status:${key}:${String(text)}`); },
+		setWorkingMessage: () => {},
+		setWorkingVisible: () => {},
+		setWorkingIndicator: () => {},
+		setHiddenThinkingLabel: () => {},
+		setWidget: () => {},
+		setFooter: () => {},
+		setHeader: () => {},
+		setTitle: () => {},
+		custom: async () => undefined,
+		pasteToEditor: () => {},
+		setEditorText: () => {},
+		getEditorText: () => "",
+		editor: async () => undefined,
+		addAutocompleteProvider: () => {},
+		setEditorComponent: () => {},
+		getEditorComponent: () => undefined,
+		theme: { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+		getAllThemes: () => [],
+		getTheme: () => undefined,
+		setTheme: () => ({ success: false, error: "UI not available" }),
+		getToolsExpanded: () => false,
+		setToolsExpanded: () => {},
+	};
+	return ui as unknown as ExtensionUIContext;
+}
+
+/**
  * Start a real session with schematic. `before` factories load ahead of
  * schematic, `after` factories behind it (and ahead of the observer). Every
- * response factory records the request it answers.
+ * response factory records the request it answers. `ui` attaches a UI context.
  */
 async function startSession(
 	responses: FauxResponseFactory[],
-	extensions: { before?: ExtensionFactory[]; after?: ExtensionFactory[] } = {},
+	extensions: { before?: ExtensionFactory[]; after?: ExtensionFactory[]; ui?: ExtensionUIContext } = {},
 ): Promise<Harness> {
 	const observed: Observed = {
 		requests: [],
@@ -166,7 +218,10 @@ async function startSession(
 		sessionManager,
 		resourceLoader,
 	});
-	await session.bindExtensions({ onError: (error) => observed.extensionErrors.push(`${error.event}: ${error.error}`) });
+	await session.bindExtensions({
+		...(extensions.ui === undefined ? {} : { uiContext: extensions.ui }),
+		onError: (error) => observed.extensionErrors.push(`${error.event}: ${error.error}`),
+	});
 	return { session, sessionManager, observed };
 }
 
@@ -456,6 +511,133 @@ describe("handoff boundary in a real agent session", () => {
 		assert.ok(nonSystem(observed.requests[2]).some((message) => messageText(message) === buildNextUserMessage({ nextInstruction: "finish the report", context: HANDOFF_CONTEXT })),
 			"the next run's request carries the persisted successor");
 	});
+
+	it("completes the handoff and keeps the successor for the next prompt when the run is aborted after the cut", async () => {
+		// pi starts the continuation turn without checking the signal, so an abort
+		// after the boundary commit still reaches turn_start; that turn's request ends aborted.
+		let abortSent = false;
+		const abortedAtTurnStart: boolean[] = [];
+		const abortAfterCut: ExtensionFactory = (pi) => {
+			pi.on("turn_end", async (event, ctx) => {
+				if (!abortSent && event.entries.length > 0) {
+					abortSent = true;
+					ctx.abort();
+				}
+			});
+			pi.on("turn_start", async (_event, ctx) => {
+				abortedAtTurnStart.push(ctx.signal?.aborted === true);
+			});
+		};
+		const ui: string[] = [];
+		const { session, sessionManager, observed } = await startSession(
+			[reply("ready"), call(handoffCall()), reply("next prompt answer")],
+			{ after: [abortAfterCut], ui: recordingUI(ui) },
+		);
+		let requestsAfterHandoffRun: number;
+		try {
+			await session.prompt(LARGE_PROMPT);
+			await session.prompt("/handoff finish the report");
+			await settleRuns(session, observed, 2);
+			requestsAfterHandoffRun = observed.requests.length;
+			await session.prompt("continue");
+			await settleRuns(session, observed, 3);
+		} finally {
+			session.dispose();
+		}
+
+		assert.deepEqual(abortedAtTurnStart, [false, false, true, false], "the successor turn starts with the signal already aborted");
+		assert.equal(requestsAfterHandoffRun, 2, "the aborted successor turn made no provider request");
+		const cuts = entriesOf(sessionManager, "compaction");
+		assert.equal(cuts.length, 1, "the cut is persisted");
+		const [cut] = cuts;
+		assert.ok(cut.type === "compaction");
+		const handoffId = (cut.details as { handoffId?: unknown }).handoffId;
+		assert.equal(typeof handoffId, "string");
+		const successors = entriesOf(sessionManager, "custom_message", HANDOFF_SUCCESSOR_CUSTOM_TYPE);
+		assert.equal(successors.length, 1, "the successor is persisted");
+		assert.ok(successors[0].type === "custom_message");
+		assert.deepEqual(successors[0].details, { handoffId });
+		assert.deepEqual(entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE), []);
+		assert.ok(ui.includes(`notify:info:${formatHandoffComplete(false, 0, 0)}`), JSON.stringify(ui));
+		assert.ok(!ui.includes(`notify:warning:${HANDOFF_SUCCESSOR_NOT_RUN}`), JSON.stringify(ui));
+		assert.ok(!carriesRequiredNudge(observed.requests[2]), "the request was finalized, so the next prompt is not enforced");
+		assert.ok(nonSystem(observed.requests[2]).some((message) =>
+			messageText(message) === buildNextUserMessage({ nextInstruction: "finish the report", context: HANDOFF_CONTEXT })),
+			"the next prompt's request carries the successor");
+		assert.deepEqual(observed.extensionErrors, []);
+	});
+
+	it("renders the next prompt's system prompt without the topic or the discarded page after an in-run handoff", async () => {
+		const { session, observed } = await startSession([
+			call(
+				fauxToolCall("notebook_topic_set", { topic: "oauth" }, { id: "call-topic" }),
+				fauxToolCall("notebook_write", { name: "keep", content: "durable decision" }, { id: "call-write-keep" }),
+				fauxToolCall("notebook_write", { name: "stale", content: "obsolete finding" }, { id: "call-write-stale" }),
+			),
+			reply("pages written"),
+			call(handoffCall({ discardPages: ["stale"] })),
+			reply("successor answer"),
+			reply("next prompt answer"),
+		]);
+		try {
+			await session.prompt(LARGE_PROMPT);
+			await session.prompt("hand off now");
+			await session.prompt("next task");
+			await session.waitForIdle();
+		} finally {
+			session.dispose();
+		}
+
+		assert.equal(observed.requests.length, 5);
+		const beforeHandoff = getCurrentSystemPrompt(observed.requests[2]);
+		assert.ok(beforeHandoff.includes("Current topic: `oauth`"), beforeHandoff);
+		assert.ok(beforeHandoff.includes("  stale: obsolete finding"), beforeHandoff);
+		const afterHandoff = getCurrentSystemPrompt(observed.requests[4]);
+		assert.ok(afterHandoff.includes("No active notebook topic is set."), afterHandoff);
+		assert.ok(!afterHandoff.includes("Current topic:"), afterHandoff);
+		assert.ok(afterHandoff.includes("  keep: durable decision"), afterHandoff);
+		assert.ok(!afterHandoff.includes("stale: obsolete finding"), afterHandoff);
+		assert.deepEqual(observed.extensionErrors, []);
+	});
+
+	it("returns an error to a handoff called through ctx.executeTool and stages nothing", async () => {
+		const outcomes: { isError: boolean; text: string }[] = [];
+		const nestedCaller: ExtensionFactory = (pi) => {
+			pi.registerTool({
+				name: "nested_handoff",
+				label: "Nested handoff",
+				description: "Calls handoff through ctx.executeTool.",
+				parameters: Type.Object({}),
+				async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+					const outcome = await ctx.executeTool("handoff", { nextInstruction: NEXT_INSTRUCTION, context: HANDOFF_CONTEXT });
+					outcomes.push({
+						isError: outcome.isError,
+						text: outcome.result.content.map((block: { type: string; text?: string }) => block.text ?? "").join(""),
+					});
+					return { content: [{ type: "text", text: "nested call made" }], details: undefined };
+				},
+			});
+		};
+		const { session, sessionManager, observed } = await startSession(
+			[call(fauxToolCall("nested_handoff", {}, { id: "call-nested" })), reply("after the nested call")],
+			{ after: [nestedCaller] },
+		);
+		try {
+			await session.prompt(LARGE_PROMPT);
+			await session.waitForIdle();
+		} finally {
+			session.dispose();
+		}
+
+		assert.equal(outcomes.length, 1);
+		assert.equal(outcomes[0].isError, true, outcomes[0].text);
+		assert.equal(toolResultFor(sessionManager, "call-nested")?.isError, false);
+		assert.deepEqual(entriesOf(sessionManager, "compaction"), [], "no cut is written");
+		assert.deepEqual(entriesOf(sessionManager, "custom_message", HANDOFF_SUCCESSOR_CUSTOM_TYPE), []);
+		assert.deepEqual(entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE), [], "nothing was staged, so nothing fails at settle");
+		assert.equal(observed.requests.length, 2);
+		assert.deepEqual(observed.extensionErrors, []);
+	});
 });
 
 describe("failed handoff cut in a real agent session", () => {
@@ -620,6 +802,64 @@ describe("failed handoff cut in a real agent session", () => {
 		assert.ok(third, "the next run's handoff has a tool result");
 		assert.equal(third.isError, false);
 		assert.equal(messageText(third as Message), HANDOFF_STAGED_RESULT);
+		assert.deepEqual(observed.extensionErrors, []);
+	});
+
+	it("tells the user no request remains pending when a failed cut exhausts the budget, and cancels it at settle", async () => {
+		const dropKeepingContinuation: ExtensionFactory = (pi) => {
+			pi.on("turn_end", async (event) => (event.entries.length > 0 ? { entries: [] } : undefined));
+		};
+		let nudgedCalls = 0;
+		const handoffWhenNudged: FauxResponseFactory = (context) => {
+			if (carriesRequiredNudge(context.messages)) {
+				nudgedCalls += 1;
+				return fauxAssistantMessage([fauxToolCall("handoff", { nextInstruction: "x", context: HANDOFF_CONTEXT }, { id: `call-handoff-${nudgedCalls}` })]);
+			}
+			return fauxAssistantMessage("plain answer");
+		};
+		const ui: string[] = [];
+		const { session, sessionManager, observed } = await startSession(
+			Array.from({ length: 2 * MAX_HANDOFF_ATTEMPTS + 4 }, () => handoffWhenNudged),
+			{ after: [dropKeepingContinuation], ui: recordingUI(ui) },
+		);
+		let uiAtExhaustingSettle: number;
+		try {
+			await session.prompt(LARGE_PROMPT);
+			await session.prompt("/handoff finish the report");
+			await settleRuns(session, observed, 2);
+			// Each nudged run counts one attempt; the last retry runs at
+			// enforcementAttempts = MAX_HANDOFF_ATTEMPTS - 1 and exhausts the budget.
+			for (let attempt = 1; attempt < MAX_HANDOFF_ATTEMPTS; attempt++) {
+				await session.prompt("retry");
+				await settleRuns(session, observed, 2 + attempt);
+			}
+			uiAtExhaustingSettle = ui.length;
+			await session.prompt("after the budget");
+			await settleRuns(session, observed, 2 + MAX_HANDOFF_ATTEMPTS);
+		} finally {
+			session.dispose();
+		}
+
+		const failures = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE)
+			.map((entry) => (entry.type === "custom_message" ? entry.content : undefined));
+		assert.deepEqual(failures, [
+			...Array.from({ length: MAX_HANDOFF_ATTEMPTS - 1 }, () => formatHandoffFailure(REASON_NOT_PERSISTED, true)),
+			formatHandoffFailure(REASON_NOT_PERSISTED, false),
+		]);
+		const failureNotify = `notify:error:Handoff failed: ${REASON_NOT_PERSISTED}. The handoff can be retried.`;
+		const failureAt = ui.flatMap((line, index) => (line === failureNotify ? [index] : []));
+		assert.equal(failureAt.length, MAX_HANDOFF_ATTEMPTS, JSON.stringify(ui));
+		// The failure sets the handoff status right before its notify.
+		assert.deepEqual(failureAt.map((index) => ui[index - 1]), [
+			...Array.from({ length: MAX_HANDOFF_ATTEMPTS - 1 }, () => `status:${STATUS_KEY_HANDOFF}:${HANDOFF_REQUIRED_STATUS}`),
+			`status:${STATUS_KEY_HANDOFF}:undefined`,
+		]);
+		const cancelledAt = ui.flatMap((line, index) =>
+			(line.startsWith(`notify:warning:Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts`) ? [index] : []));
+		assert.equal(cancelledAt.length, 1, JSON.stringify(ui));
+		assert.ok(cancelledAt[0] > failureAt.at(-1)! && cancelledAt[0] < uiAtExhaustingSettle,
+			"the watchdog cancels the request at the settle of the run whose cut failed last");
+		assert.ok(!carriesRequiredNudge(observed.requests.at(-1) ?? []), "the cancelled request is no longer enforced");
 		assert.deepEqual(observed.extensionErrors, []);
 	});
 });
