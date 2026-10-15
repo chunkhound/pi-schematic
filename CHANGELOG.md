@@ -14,10 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Handoff completes inside the calling run** — the cut and the successor are written together at the end of the turn that called `handoff` (a `turn_end` boundary pass: notebook discard entries, a retain-none compaction, the successor, and a hidden note), and the successor turn continues the same run unless another extension's `turn_end` handler stops the continuation, in which case the successor runs on the next prompt. The successor shows as a `pi-schematic-handoff` message instead of a user message, and a hidden `pi-schematic-handoff-note` tells it that the system prompt is stale until the next user message. When `discardPages` was requested, the discard report is also stored in the successor's `details.report`.
+- **Failed handoff cut** — a handoff whose cut is missing at the next turn or when the run settles reports the failure and leaves a pending handoff request pending. After an abort the failure guidance is a `pi-schematic-handoff-failed` message that starts no run; for any other cause (another extension replacing the `turn_end` entries, invalid drafts) it is a follow-up user message, as before, and the watchdog's `MAX_HANDOFF_ATTEMPTS` still bounds the retries.
 - **Pi minimum** — Pi 0.99.2 is now the documented minimum for the `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` peers, and the `typebox` peer minimum is 1.3.27.
+
+### Breaking Changes
+
+- **No compaction events for a handoff cut** — `session_before_compact` and `session_compact` no longer fire for a handoff; schematic no longer handles `session_before_compact`. Other extensions find the cut as a `compaction` entry whose `details.handoffId` is set.
+- **Sibling tool calls are refused** — tool calls in the same assistant message as `handoff` return an error result and do not run; the model can call them again after the handoff. Only the first `handoff` call in a message runs.
 
 ### Fixed
 
+- **Handoff successor cannot be lost between the cut and a send** — the successor is persisted in the same pass as the cut instead of being sent afterwards. Recovery of an absent successor remains only for sessions written by earlier versions (legacy cuts); a new cut carries no payload and stops recovery of older ones.
 - **Readonly blocks the powershell tool** — readonly mode now blocks pi's built-in `powershell` tool in the parent and removes it from readonly children, and readonly bash blocks launching PowerShell or cmd. Previously a Windows setup with `powershell` in `defaultTools` had an unguarded shell.
 - **Sections from other extensions reach the model** — schematic now adds its prompt content as named Pi prompt sections instead of replacing the system prompt, so sections written by extensions that run after it are no longer dropped (#45). A topic, Model Groups, or notebook change no longer re-sends the context-management primer.
 - **Empty notebook pages** — selecting a page with an empty body in `/notebook` now opens it like any other page instead of closing the picker.
