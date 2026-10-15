@@ -1044,10 +1044,19 @@ function readGitConfiguration(directory: string, args: string[], base: string, v
 }
 
 function probeGitConfiguration(directory: string, args: string[], base: string, vars: ReadonlyMap<string, string>): string[] {
+	return runGitConfig(["--git-dir", directory, "config", "-z", ...args], base, vars);
+}
+
+/** Run `git config` and split records on NUL. `-z` keeps value bytes exact, so a path ending in a
+ * space (or holding a newline) stays the path Git opens; a newline trim would check a different
+ * file. `--get-regexp`/`--list` records are `key\nvalue`, plain `--get` records are the value. */
+function runGitConfig(argv: string[], base: string, vars: ReadonlyMap<string, string>): string[] {
 	try {
 		// Only config-location overrides enter the probe; command PATH/hooks must never execute.
-		const value = execFileSync("git", ["--git-dir", directory, "config", ...args], { encoding: "utf8", timeout: GIT_CONFIG_PROBE_TIMEOUT_MS, stdio: ["ignore", "pipe", "pipe"], env: gitProbeEnvironment(base, vars), cwd: existingDirectory(base) }).trim();
-		return value ? value.split("\n") : [];
+		const value = execFileSync("git", argv, { encoding: "utf8", timeout: GIT_CONFIG_PROBE_TIMEOUT_MS, stdio: ["ignore", "pipe", "pipe"], env: gitProbeEnvironment(base, vars), cwd: existingDirectory(base) });
+		const records = value.split("\u0000");
+		if (records[records.length - 1] === "") records.pop();
+		return records;
 	} catch (error) {
 		if ((error as { status?: number }).status === 1) return [];
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("git binary unavailable");
@@ -1129,7 +1138,7 @@ function gitNamedPushLocations(metadata: string[], remote: string, base: string,
 function gitDefaultPushLocations(invocation: GitInvocation, metadata: string[], vars: ReadonlyMap<string, string>): string[] {
 	if (!metadata.length) return [];
 	const entries = gitRemoteConfigEntries(metadata, invocation.base, vars);
-	const locations = entries.map((line) => line.slice(line.indexOf(" ") + 1));
+	const locations = entries.map((line) => line.slice(line.indexOf("\n") + 1));
 	const selector = gitPushSelector(metadata, invocation.base, vars);
 	if (selector === undefined || configuredGitRemoteNames(entries).has(selector)) return locations;
 	return [...locations, selector];
@@ -1164,13 +1173,13 @@ function gitRemoteConfigEntries(metadata: string[], base: string, vars: Readonly
 function gitRemoteLocations(metadata: string[], remote: string, base: string, vars: ReadonlyMap<string, string>): string[] {
 	if (!metadata.length) return [];
 	const pattern = `^remote\\.${remote.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.(url|pushurl)$`;
-	return readGitConfiguration(metadata[0]!, ["--get-regexp", pattern], base, vars).map((line) => line.slice(line.indexOf(" ") + 1));
+	return readGitConfiguration(metadata[0]!, ["--get-regexp", pattern], base, vars).map((line) => line.slice(line.indexOf("\n") + 1));
 }
 
 /** Remote names declared by the config entries; the subsection preserves case. */
 function configuredGitRemoteNames(entries: string[]): Set<string> {
 	return new Set(entries.map((line) => {
-		const key = line.slice(0, line.indexOf(" "));
+		const key = line.slice(0, line.indexOf("\n"));
 		return key.slice("remote.".length, key.lastIndexOf("."));
 	}));
 }
@@ -1203,7 +1212,7 @@ type GitUrlRewrite = { base: string; prefix: string; pushOnly: boolean };
 function readGitUrlRewrites(directory: string, base: string, vars: ReadonlyMap<string, string>): GitUrlRewrite[] {
 	const rewrites: GitUrlRewrite[] = [];
 	for (const line of readGitConfiguration(directory, ["--get-regexp", "^url\\."], base, vars)) {
-		const separator = line.indexOf(" ");
+		const separator = line.indexOf("\n");
 		if (!line.startsWith("url.") || separator < 0) throw new Error("unsupported Git URL rewrite");
 		const key = line.slice(0, separator);
 		// Git lowercases variable names when it stores them; compare case-insensitively.

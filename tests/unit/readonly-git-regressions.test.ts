@@ -1036,3 +1036,17 @@ test("Git -C resolves link/.. with Git's traversal, not lexical collapse", gitSu
 	shell(`git -C ${quote(anchor)} config demo.proof written`, repo);
 	assert.notDeepEqual(readFileSync(config), before, "git must write the outside repo config");
 });
+
+test("Git preserves a trailing space in a probed core.worktree", gitSuiteOptions, (t) => {
+	const repo = repository(fixture(t));
+	const outsideDir = fixture(t, os.homedir());
+	const link = path.join(repo, "worktree-link ");
+	symlinkSync(outsideDir, link);
+	git(repo, "config", "core.worktree", link);
+	check("git clean -fd", repo, false);
+	// Premise: git resolves the untrimmed symlink and deletes the outside stray file.
+	const stray = path.join(outsideDir, "stray");
+	writeFileSync(stray, "x");
+	shell("git clean -fd", repo);
+	assert.equal(existsSync(stray), false, "git must operate through the untrimmed worktree");
+});
