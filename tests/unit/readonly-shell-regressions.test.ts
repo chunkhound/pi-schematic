@@ -1286,6 +1286,33 @@ test("a continued unquoted heredoc delimiter cannot hide a command", () => {
 		assertShellWrite(control, work, path.join(temp, "control"), true, [path.join(work, "control")]);
 	});
 });
+
+test("a heredoc body is classified in the consuming shell's environment", () => {
+	withDirectories((work, temp) => {
+		// Each shape hides an outside `$D` behind a parent value that stays inside temp.
+		const shapes = [
+			(target: string) => `D=${quote(temp)}; D=${quote(work)} bash <<EOF\ntouch "$D/${target}"\nEOF`,
+			(target: string) => `D=${quote(temp)}; D=${quote(work)} bash <<'EOF'\ntouch "$D/${target}"\nEOF`,
+			(target: string) => `D=${quote(temp)}; env D=${quote(work)} bash <<'EOF'\ntouch "$D/${target}"\nEOF`,
+			(target: string) => `D=${quote(temp)}; D=${quote(work)} cat <<EOF\n$(touch "$D/${target}")\nEOF`,
+			(target: string) => `D=${quote(temp)}; cat <<'EOF' | D=${quote(work)} bash\ntouch "$D/${target}"\nEOF`,
+			// `time` is a keyword: the timed command's assignment still binds for its redirections
+			// and still reaches the consuming shell, quoted or not.
+			(target: string) => `D=${quote(temp)}; time D=${quote(work)} bash <<'EOF'\ntouch "$D/${target}"\nEOF`,
+			(target: string) => `D=${quote(temp)}; time D=${quote(work)} bash <<EOF\ntouch "$D/${target}"\nEOF`,
+			// A redirect written before the command word still carries the command's assignments.
+			(target: string) => `D=${quote(temp)}; <<EOF D=${quote(work)} bash\ntouch "$D/${target}"\nEOF`,
+			// A group consumes stdin like a direct command, so its members' assignments apply too.
+			(target: string) => `D=${quote(temp)}; { D=${quote(work)} bash; } <<'EOF'\ntouch "$D/${target}"\nEOF`,
+		];
+		shapes.forEach((shape, index) => {
+			const blocked = `blocked-${index}`, control = `control-${index}`;
+			assertShellWrite(shape(blocked), temp, path.join(work, blocked), false, [path.join(temp, blocked)]);
+			// Positive control: the same shape pointing at temp stays allowed.
+			assertShellWrite(shape(control).replace(quote(work), quote(temp)), temp, path.join(temp, control), true, [path.join(work, control)]);
+		});
+	});
+});
 }
 
 // ── Classifier-only coverage ──────────────────────────────────────
@@ -1293,6 +1320,29 @@ test("a continued unquoted heredoc delimiter cannot hide a command", () => {
 // outside-temp writes, so they run on every host instead of behind the capability gate above.
 // `JSON.stringify` quotes paths portably (the gate above uses POSIX single quotes).
 const classifierQuote = (value: string): string => JSON.stringify(value);
+
+test("assignments carried by a sudo wrapper still reach the consuming shell", () => {
+	// Classifier-only like the section above: sudo prompts for a password, so a differential
+	// fixture cannot run it.
+	const cwd = shellPath(TEMP_DIR);
+	const temp = classifierQuote(cwd);
+	const outside = classifierQuote(path.join(os.homedir(), "readonly-heredoc-outside"));
+	// The child's `D` names an outside path while the parent's stays in temp: only a child-env
+	// classification sees the write.
+	assert.equal(classifyBashCommand(`D=${temp}; sudo D=${outside} bash <<'EOF'\ntouch "$D/blocked"\nEOF`, cwd).ok, false,
+		"sudo D=<outside> bash <<'EOF' must judge the body in the child's environment");
+	assert.equal(classifyBashCommand(`D=${temp}; time D=${outside} bash <<'EOF'\ntouch "$D/blocked"\nEOF`, cwd).ok, false,
+		"time D=<outside> bash <<'EOF' must judge the body in the child's environment too");
+	// A redirect written before the command word still carries its assignments, so the
+	// outer shell expands the unquoted body with the child's value.
+	assert.equal(classifyBashCommand(`D=${temp}; <<EOF D=${outside} bash\ntouch "$D/blocked"\nEOF`, cwd).ok, false,
+		"a redirect written before the command word must still carry its assignments");
+	// The same shapes with in-temp values stay allowed.
+	for (const consumer of [`sudo D=${temp} bash <<'EOF'`, `time D=${temp} bash <<'EOF'`, `<<EOF D=${temp} bash`]) {
+		assert.equal(classifyBashCommand(`D=${temp}; ${consumer}\ntouch "$D/ok"\nEOF`, cwd).ok, true,
+			`in-temp assignment stays allowed: ${consumer}`);
+	}
+});
 
 test("tracked command definitions fail closed even without a subsequent write", () => {
 	for (const name of trackedShellNames) {

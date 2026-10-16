@@ -897,6 +897,25 @@ function collectCommandPrefixAssignments(tokens: string[], start: number, vars: 
 	return i;
 }
 
+/** Variables a simple command's own leading `NAME=value` prefixes set. Bash applies these to the
+ * command's redirections, so they also supply a heredoc's unquoted expansion. `env`/`command`
+ * operand assignments are excluded: the outer shell expands the heredoc before `env` runs. */
+export function leadingShellAssignments(segment: string, inherited: ReadonlyMap<string, string>): Map<string, string> {
+	const tokens = segment.match(SHELL_WORD_PATTERN) ?? [];
+	const vars = new Map(inherited);
+	let i = 0;
+	for (let depth = 0; depth < 10; depth++) {
+		i = collectCommandPrefixAssignments(tokens, i, vars);
+		i = skipLeadingRedirections(tokens, i);
+		// `time` is a keyword: the timed command's own assignments still bind and its
+		// redirections still expand with them. Wrapper commands (`sudo`, `nohup`, …) take
+		// assignments as arguments, which the outer shell never applies to redirections.
+		if (normalizedCommand(tokens[i] ?? "") !== "time") break;
+		i += unescapeCommandWord(tokens[i + 1] ?? "") === "-p" ? 2 : 1;
+	}
+	return vars;
+}
+
 export function nonOptionArgs(args: string[]): string[] {
 	const result: string[] = [];
 	let stopOptions = false;

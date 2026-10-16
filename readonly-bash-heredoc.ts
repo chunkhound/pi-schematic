@@ -9,12 +9,15 @@
  *                     → stdinCodeKind / stdinStageKind → unwrapStdinTokens
  *                          — decide ownership: "shell" (classify body as code),
  *                            "other" (block), or "data" (body is inert).
- *   shellStdinCwdPrefix → stageCwdPrefix → scriptCwdPrefix
- *                          — track any `-c` cwd move a shell owner applies
- *                            before reading the body; UNKNOWN_CWD when it can't
- *                            be resolved. Depth guards (10) bound the recursion.
- *   classifyHeredocBody — expands stdin in the parent state, then checks child
- *                         code without propagating its cwd/variables back.
+ *   shellStdinConsumer → stageCwdPrefix → scriptCwdPrefix
+ *                          — the shell stage that runs the body (wrapper commands
+ *                            such as `sudo`/`time` stripped, its assignments kept)
+ *                            plus any `-c` cwd move it applies first; null when it
+ *                            can't be resolved. Depth guards (10) bound recursion.
+ *   classifyHeredocBody — expands unquoted stdin in the outer shell (parent vars
+ *                         plus the redirect command's leading assignments), then
+ *                         checks child code in the consuming shell's environment
+ *                         without propagating cwd/variables back.
  *
  * Ownership rule of thumb: stdin flows down a pipeline (`cat <<E | bash` = code),
  * but not across `||`/`&&` fallbacks (`cat <<E || bash` = inert). A group heredoc
@@ -51,23 +54,31 @@ import { classifyBashWithHeredocs } from "./readonly-bash.js";
 export type HeredocBody = { spec: HeredocSpec; text: string };
 type HeredocState = { header: string; kept: string[]; pending: HeredocSpec[]; body: string[]; continuation: string | null; heredocs: Map<string, HeredocBody>; markerPrefix: string };
 
-export function classifyHeredocBody({ spec, text }: HeredocBody, state: ShellState, depth: number): Verdict {
+/** Outer-shell variables for unquoted expansion plus the consuming shell's variables for child
+ * code. They differ: a direct `D=x cmd <<EOF` assignment expands the body, but an `env D=x cmd`
+ * operand does not — `env` has not run when the outer shell reads the heredoc. */
+export type HeredocEnvironments = { expansion: ReadonlyMap<string, string>; child: ReadonlyMap<string, string> };
+
+export function classifyHeredocBody({ spec, text }: HeredocBody, state: ShellState, depth: number, env?: HeredocEnvironments): Verdict {
+	const expansionVars = env?.expansion ?? state.vars;
+	const childVars = env?.child ?? state.vars;
 	if (!spec.keep) {
 		const commands = spec.quoted ? [] : extractCommandSubstitutions(text);
 		for (const command of commands) {
-			const verdict = classifyBashWithHeredocs(command, state.cwd, depth, state.vars, state.heredocs);
+			const verdict = classifyBashWithHeredocs(command, state.cwd, depth, expansionVars, state.heredocs);
 			if (!verdict.ok) return verdict;
 		}
 		return { ok: true };
 	}
-	// Bash expands unquoted stdin before the child can assign variables or change cwd.
-	const expanded = spec.quoted ? text : expandHeredocText(text, state);
+	// Bash expands unquoted stdin in the outer shell before the child runs, then the body executes
+	// in the consuming shell's environment.
+	const expanded = spec.quoted ? text : expandHeredocText(text, expansionVars, state.cwd);
 	if (expanded === null) return { ok: false, reason: `unresolvable shell heredoc expansion${FAIL_CLOSED_HINT}` };
 	const code = spec.stdinPrefix ? `${spec.stdinPrefix}; ${expanded}` : expanded;
-	return classifyBashWithHeredocs(code, state.cwd, depth, state.vars, state.heredocs);
+	return classifyBashWithHeredocs(code, state.cwd, depth, childVars, state.heredocs);
 }
 
-function expandHeredocText(text: string, state: ShellState): string | null {
+function expandHeredocText(text: string, vars: ReadonlyMap<string, string>, cwd: string): string | null {
 	let expanded = "";
 	for (let i = 0; i < text.length; i++) {
 		const ch = text[i];
@@ -80,7 +91,7 @@ function expandHeredocText(text: string, state: ShellState): string | null {
 		if (ch !== "$") { expanded += ch; continue; }
 		const reference = text.slice(i).match(/^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})/)?.[0];
 		if (!reference) return null; // Unsupported parameter/arithmetic/substitution output fails closed.
-		const value = heredocVariableValue(reference, state);
+		const value = heredocVariableValue(reference, vars, cwd);
 		if (value === undefined) return null;
 		expanded += value;
 		i += reference.length - 1;
@@ -88,9 +99,9 @@ function expandHeredocText(text: string, state: ShellState): string | null {
 	return expanded;
 }
 
-function heredocVariableValue(reference: string, state: ShellState): string | undefined {
+function heredocVariableValue(reference: string, vars: ReadonlyMap<string, string>, cwd: string): string | undefined {
 	const name = reference.replace(/^\$\{?|\}$/g, "");
-	return name === "PWD" ? state.cwd : state.vars.get(name) ?? process.env[name];
+	return name === "PWD" ? cwd : vars.get(name) ?? process.env[name];
 }
 
 function startHeredocHeader(line: string, state: HeredocState): boolean {
@@ -169,7 +180,7 @@ function shellHeaderContinues(line: string): boolean {
 	return trimmed.endsWith("|") || trimmed.endsWith("&&") || trimmed.endsWith("|&");
 }
 
-export type HeredocSpec = { delimiter: string; stripTabs: boolean; quoted: boolean; keep: boolean; stdinPrefix?: string; marker?: string };
+export type HeredocSpec = { delimiter: string; stripTabs: boolean; quoted: boolean; keep: boolean; stdinPrefix?: string; consumerStage?: string; marker?: string };
 
 /** Heredoc delimiters introduced on a single line, outside quotes. */
 function findHeredocDelimiters(line: string): (HeredocSpec & { start: number; end: number })[] | null {
@@ -201,9 +212,10 @@ function readStdinRedirect(line: string, start: number): (HeredocSpec & { start:
 	const parsed = readHeredocDelimiter(line, start);
 	if (!parsed) return null;
 	if (code !== "shell") return { ...parsed, keep: false };
-	// The body runs at the consuming shell's cwd, which a `-c` script may move first.
-	const prefix = shellStdinCwdPrefix(owner);
-	return prefix === null ? "blocked" : { ...parsed, keep: true, stdinPrefix: prefix.join("; ") || undefined };
+	// The body runs at the consuming shell's cwd (which a `-c` script may move first) and in that
+	// shell's environment; both come from one owner walk so they cannot drift.
+	const consumer = shellStdinConsumer(owner);
+	return consumer === null ? "blocked" : { ...parsed, keep: true, stdinPrefix: consumer.cwdPrefix.join("; ") || undefined, consumerStage: consumer.stage };
 }
 
 /** Redirects may precede the executable; ownership spans the entire simple command. */
@@ -493,28 +505,45 @@ function stdinWrapperCommandIndex(tokens: string[]): number {
  * runs: `bash -c 'cd /; bash' <<EOF` executes the body at `/`, not the parent cwd.
  * Null means the chain cannot be resolved — the owner must fail closed.
  */
-function shellStdinCwdPrefix(owner: string, depth = 0): string[] | null {
+/** The shell stage that consumes the heredoc body: it executes the body and owns its
+ * environment (wrapper commands stripped, so its prefix assignments stay visible), and
+ * a `-c` script inside it may move cwd first. Null fails closed. */
+function shellStdinConsumer(owner: string, depth = 0): { stage: string; cwdPrefix: string[] } | null {
 	if (depth > 10) return null;
 	let flows = true;
 	for (const part of splitUnquotedShellSegments(owner)) {
 		const stage = part.text.trim();
 		// The body flows down the pipeline into the first shell stage.
-		if (stage && flows && stdinStageKind(stage, depth) === "shell") return stageCwdPrefix(stage, depth);
+		if (stage && flows && stdinStageKind(stage, depth) === "shell") {
+			const consumer = stageCwdPrefix(stage, depth);
+			return consumer === null ? null : { stage: consumer.shellStage, cwdPrefix: consumer.cwdPrefix };
+		}
 		flows = part.operator === "|" || part.operator === "|&";
 	}
-	return [];
+	return null;
 }
 
-/** Prefix for one pipeline stage: unwraps groups/wrappers down to the shell invocation. */
-function stageCwdPrefix(stage: string, depth: number): string[] | null {
+/** Prefix for one pipeline stage: unwraps groups/wrappers down to the shell invocation.
+ * `shellStage` is the invocation text at the point the walk reached the shell, so prefix
+ * assignments survive wrapper stripping (`sudo D=x bash` → `D=x bash`) and the child
+ * environment parses from it without unwrapping a second time. */
+function stageCwdPrefix(stage: string, depth: number): { cwdPrefix: string[]; shellStage: string } | null {
 	const group = unwrapStdinGroup(stage, depth);
 	if (group !== null) return scriptCwdPrefix(group, depth + 1);
-	let tokens = stdinCommandTokens(envSplitCommand(stage) ?? stage);
+	let text = envSplitCommand(stage) ?? stage;
+	let tokens = stdinCommandTokens(text);
 	for (let step = 0; step < 10 && tokens.length; step++) {
-		if (SHELL_SCRIPT_CONSUMERS.has(normalizedCommand(tokens[0]))) return scriptCwdPrefix(interpreterStdinScript(tokens.slice(1)), depth);
+		if (SHELL_SCRIPT_CONSUMERS.has(normalizedCommand(tokens[0]))) {
+			// The body runs in the script's stdin-consuming member, whose environment is the
+			// outer invocation's: anything else the script sets up first fails closed below.
+			const script = interpreterStdinScript(tokens.slice(1));
+			const inner = script === null ? { cwdPrefix: [] as string[] } : scriptCwdPrefix(script, depth);
+			return inner === null ? null : { cwdPrefix: inner.cwdPrefix, shellStage: text };
+		}
 		const unwrapped = unwrapStdinTokens(tokens);
 		if (!unwrapped.length) return null;
-		tokens = stdinCommandTokens(unwrapped.join(" "));
+		text = unwrapped.join(" ");
+		tokens = stdinCommandTokens(text);
 	}
 	return null;
 }
@@ -524,8 +553,7 @@ function stageCwdPrefix(stage: string, depth: number): string[] | null {
  * Anything else before the consumer could read or redirect stdin in ways the
  * classifier cannot model — fail closed (null).
  */
-function scriptCwdPrefix(script: string | null, depth: number): string[] | null {
-	if (script === null) return [];
+function scriptCwdPrefix(script: string, depth: number): { cwdPrefix: string[]; shellStage: string } | null {
 	if (depth > 10) return null;
 	const prefix: string[] = [];
 	for (const part of splitUnquotedShellSegments(script)) {
@@ -533,7 +561,7 @@ function scriptCwdPrefix(script: string | null, depth: number): string[] | null 
 		if (!text) continue;
 		if (stdinStageKind(text, depth) === "shell") {
 			const inner = stageCwdPrefix(text, depth);
-			return inner === null ? null : [...prefix, ...inner];
+			return inner === null ? null : { cwdPrefix: [...prefix, ...inner.cwdPrefix], shellStage: inner.shellStage };
 		}
 		if (!DIR_CHANGE_BUILTINS.has(normalizedCommand(stdinCommandTokens(text)[0] ?? ""))) return null;
 		prefix.push(text);

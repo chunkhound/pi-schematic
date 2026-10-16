@@ -13,7 +13,7 @@ import type { ShellScan, ShellPart } from "./readonly-bash-scanner.js";
 import { stripHeredocBodies, classifyHeredocBody } from "./readonly-bash-heredoc.js";
 import type { HeredocBody } from "./readonly-bash-heredoc.js";
 import { getSafeMktempSyntheticPath, getSafeMktempFileSyntheticPath } from "./readonly-bash-mktemp.js";
-import { getFilesystemMutationReason, DECL_KEYWORDS, stripDeclKeywords } from "./readonly-bash-commands.js";
+import { getFilesystemMutationReason, DECL_KEYWORDS, stripDeclKeywords, parseCommandPrefix, leadingShellAssignments } from "./readonly-bash-commands.js";
 import {
 	applyDirectoryChange, compoundSegmentReason,
 	deferredCodeReason,
@@ -413,10 +413,16 @@ function nestedBlockReason(prefix: string, reason: string): string {
 }
 
 function heredocSegmentReason(segment: string, state: ShellState, depth: number): string | null {
+	// Expansion runs in the outer shell (parent vars plus this command's leading assignments);
+	// markers are stripped first so a redirect written before the command word still shows
+	// them (`<<EOF D=x bash`). The child code runs in the consuming shell's environment
+	// (spec.consumerStage, already wrapper-stripped by the owner walk).
+	const expansion = leadingShellAssignments(stripHeredocMarkers(segment, state.heredocs), state.vars);
 	for (const subcommand of extractCommandSubstitutions(segment)) {
 		const body = state.heredocs.get(subcommand);
 		if (!body) continue;
-		const verdict = classifyHeredocBody(body, state, depth + 1);
+		const child = body.spec.consumerStage ? parseCommandPrefix(body.spec.consumerStage, state.vars).vars : state.vars;
+		const verdict = classifyHeredocBody(body, state, depth + 1, { expansion, child });
 		if (!verdict.ok) return nestedBlockReason("heredoc blocked", verdict.reason);
 	}
 	return null;
