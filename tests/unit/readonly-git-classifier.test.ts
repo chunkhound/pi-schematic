@@ -201,11 +201,11 @@ else {
 		check("git push origin HEAD:refs/heads/verified", repo, true);
 		git(repo, "push", "--quiet", "origin", "HEAD:refs/heads/verified");
 		assert.equal(git(remote, "rev-parse", "verified"), git(repo, "rev-parse", "HEAD"));
-		check(`git push --repo=${quote(remote)} HEAD`, repo, true);
-		check(`git push --repo=${quote(outside)} HEAD`, repo, false);
+		check(`git push --repo=${quote(remote)}`, repo, true);
+		check(`git push --repo=${quote(outside)}`, repo, false);
 		git(repo, "remote", "set-url", "origin", outside);
 		check("git push origin HEAD", repo, false);
-		check("git push --repo=origin HEAD", repo, false);
+		check("git push --repo=origin", repo, false);
 		check(`git push ${quote(outside)} HEAD`, repo, false);
 		check("git push ext::unsupported HEAD", repo, false);
 		if (process.platform !== "win32") check("git push C:/x HEAD", repo, false);
@@ -347,7 +347,8 @@ else {
 		git(repo, "config", `url.${outside}.insteadOf`, prefix);
 		// CONTRACT: the configured remote URL looks local, but git rewrites it to `outside`.
 		check("git push evil HEAD", repo, false);
-		check("git push --repo=evil HEAD", repo, false);
+		// A positional <repository> overrides --repo in Git, so the option form carries no refspec.
+		check("git push --repo=evil", repo, false);
 		git(repo, "config", "--unset", `url.${outside}.insteadOf`);
 		const local = path.join(root, "local.git");
 		git(root, "init", "--bare", "--quiet", local);
@@ -726,7 +727,7 @@ else {
 			check('git push "origin" HEAD', repo, false);
 			check("git push 'origin' HEAD", repo, false);
 			check("R=origin; git push \"$R\" HEAD", repo, false);
-			check('git push --repo="origin" HEAD', repo, false);
+			check('git push --repo="origin"', repo, false);
 			// Positive control: the same quoted name against a temp-local remote stays allowed.
 			const tempRemote = path.join(root, "temp-remote.git");
 			git(root, "init", "--bare", "--quiet", tempRemote);

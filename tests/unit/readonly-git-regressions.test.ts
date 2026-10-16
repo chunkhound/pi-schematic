@@ -1126,3 +1126,27 @@ test("Git parses .gitmodules with Git's config semantics", gitSuiteOptions, (t) 
 	}
 	writeFileSync(modules, original);
 });
+
+test("Git positional push destination overrides --repo like Git", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const repo = repository(root);
+	const safe = path.join(root, "safe.git");
+	git(root, "init", "--bare", "--quiet", safe);
+	const outsideRemote = path.join(fixture(t, os.homedir()), "target.git");
+	git(root, "init", "--bare", "--quiet", outsideRemote);
+	// Git uses the positional <repository> over --repo; the guard must read the same destination.
+	const command = `git push --quiet --repo=${quote(safe)} ${quote(outsideRemote)} HEAD:refs/heads/verified`;
+	check(command, repo, false);
+	assert.equal(git(outsideRemote, "for-each-ref"), "");
+	shell(command, repo);
+	assert.equal(git(outsideRemote, "rev-parse", "verified"), git(repo, "rev-parse", "HEAD"));
+	// Positive control: the same shape with a temp positional destination stays allowed.
+	const tempRemote = path.join(root, "temp.git");
+	git(root, "init", "--bare", "--quiet", tempRemote);
+	const control = `git push --quiet --repo=${quote(safe)} ${quote(tempRemote)} HEAD:refs/heads/verified`;
+	check(control, repo, true);
+	shell(control, repo);
+	assert.equal(git(tempRemote, "rev-parse", "verified"), git(repo, "rev-parse", "HEAD"));
+	// With no positional repository, Git takes the LAST --repo value.
+	check(`git push --quiet --repo=${quote(safe)} --repo=${quote(outsideRemote)} --all`, repo, false);
+});

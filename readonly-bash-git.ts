@@ -1162,11 +1162,23 @@ function gitPushWriteRoots(invocation: GitInvocation, metadata: string[], workTr
 	return locations.flatMap((location) => gitLocalDestinationRoots(location!, workTree, vars));
 }
 
-/** Positional remote, or the `--repo[=]` value; undefined when the command names neither. */
+/** Git uses the positional repository when present, otherwise the LAST `--repo[=]` value. */
 function gitPushRemoteOperand(invocation: GitInvocation): string | undefined {
-	const index = invocation.args.findIndex((arg) => splitFlagValue(arg)[0] === "--repo");
-	if (index >= 0) return splitFlagValue(invocation.args[index]!)[1] ?? invocation.args[index + 1];
-	return gitPositionalArgs("push", invocation.args)[0];
+	const positional = gitPositionalArgs("push", invocation.args)[0];
+	return positional ?? lastGitRepoOption(invocation.args);
+}
+
+/** Last `--repo[=]` value before `--`; Git takes the final one when no positional repository is given. */
+function lastGitRepoOption(args: string[]): string | undefined {
+	let remote: string | undefined;
+	for (let i = 0; i < args.length; i++) {
+		if (args[i] === "--") break;
+		const [flag, inline] = splitFlagValue(args[i]!);
+		if (flag !== "--repo") continue;
+		remote = inline ?? args[i + 1];
+		if (inline === undefined) i++;
+	}
+	return remote;
 }
 
 /** Configured URL(s) for a named remote; an unconfigured name is itself the location Git uses. */
