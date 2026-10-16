@@ -49,7 +49,7 @@ import { classifyBashWithHeredocs } from "./readonly-bash.js";
  * data position (`echo "$(cat <<EOF)"`) the body stays inert.
  */
 export type HeredocBody = { spec: HeredocSpec; text: string };
-type HeredocState = { header: string; kept: string[]; pending: HeredocSpec[]; body: string[]; heredocs: Map<string, HeredocBody>; markerPrefix: string };
+type HeredocState = { header: string; kept: string[]; pending: HeredocSpec[]; body: string[]; continuation: string | null; heredocs: Map<string, HeredocBody>; markerPrefix: string };
 
 export function classifyHeredocBody({ spec, text }: HeredocBody, state: ShellState, depth: number): Verdict {
 	if (!spec.keep) {
@@ -109,10 +109,25 @@ function startHeredocHeader(line: string, state: HeredocState): boolean {
 	return true;
 }
 
+/** An unescaped trailing backslash makes Bash delete the following newline. An odd run ends
+ * with an unescaped backslash; an even run ends with an escaped one, so the newline stands. */
+function endsWithUnescapedBackslash(line: string): boolean {
+	let trailing = 0;
+	for (let i = line.length - 1; i >= 0 && line[i] === "\\"; i--) trailing++;
+	return trailing % 2 === 1;
+}
+
 function processHeredocLine(line: string, state: HeredocState): boolean {
 	const current = state.pending[0];
 	if (!current) return startHeredocHeader(line, state);
-	const candidate = current.stripTabs ? line.replace(/^\t+/, "") : line;
+	const candidate = (state.continuation ?? "") + (current.stripTabs ? line.replace(/^\t+/, "") : line);
+	state.continuation = null;
+	// Bash removes unescaped backslash-newline pairs from body and delimiter lines before it
+	// compares the delimiter, so a split delimiter joins. Quoted delimiters keep the backslash.
+	if (!current.quoted && endsWithUnescapedBackslash(candidate)) {
+		state.continuation = candidate.slice(0, -1);
+		return true;
+	}
 	if (candidate !== current.delimiter) { state.body.push(candidate); return true; }
 	state.heredocs.set(current.marker!, { spec: current, text: state.body.join("\n") });
 	state.body.length = 0;
@@ -123,7 +138,7 @@ function processHeredocLine(line: string, state: HeredocState): boolean {
 export function stripHeredocBodies(cmd: string, inherited: ReadonlyMap<string, HeredocBody>): { command: string; heredocs: Map<string, HeredocBody> } | null {
 	let markerPrefix = "__readonly_heredoc_";
 	while (cmd.includes(markerPrefix) || [...inherited.keys()].some((key) => key.startsWith(markerPrefix))) markerPrefix += "_";
-	const state: HeredocState = { header: "", kept: [], pending: [], body: [], heredocs: new Map(inherited), markerPrefix };
+	const state: HeredocState = { header: "", kept: [], pending: [], body: [], continuation: null, heredocs: new Map(inherited), markerPrefix };
 	for (const line of cmd.split("\n")) {
 		if (!processHeredocLine(line, state)) return null;
 	}

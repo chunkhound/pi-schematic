@@ -1275,6 +1275,17 @@ test("an ANSI-C fragment does not truncate a heredoc delimiter word", () => {
 		assertShellWrite(control, work, path.join(temp, "control"), true, [path.join(work, "control")]);
 	});
 });
+
+test("a continued unquoted heredoc delimiter cannot hide a command", () => {
+	withDirectories((work, temp) => {
+		// Bash removes the unescaped backslash-newline before comparing the delimiter, so `EO\`
+		// and `F` join to `EOF`. A physical-line guard never matches and reads the command as data.
+		const command = `cat <<EOF\nEO\\\nF\ntouch ${quote(path.join(work, "blocked"))}\nEOF\nexit 0`;
+		assertShellWrite(command, work, path.join(work, "blocked"), false, [path.join(temp, "blocked")]);
+		const control = `cat <<EOF\nEO\\\nF\ntouch ${quote(path.join(temp, "control"))}\nEOF\nexit 0`;
+		assertShellWrite(control, work, path.join(temp, "control"), true, [path.join(work, "control")]);
+	});
+});
 }
 
 // ── Classifier-only coverage ──────────────────────────────────────
