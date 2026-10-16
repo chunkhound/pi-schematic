@@ -1264,6 +1264,17 @@ test("a double-quoted heredoc delimiter keeps backslashes exactly like Bash", ()
 		assertShellWrite(command, temp, path.join(work, "leaked"), false, [path.join(temp, "leaked")]);
 	});
 });
+
+test("an ANSI-C fragment does not truncate a heredoc delimiter word", () => {
+	withDirectories((work, temp) => {
+		// Bash joins `$'E'` and the adjoining literal `O` into the delimiter `EO`. A guard that
+		// returns at the ANSI-C fragment reads `E` and treats the real command as inert body data.
+		const command = `cat <<$'E'O\ndata\nEO\ntouch ${quote(path.join(work, "blocked"))}\nE\nexit 0`;
+		assertShellWrite(command, work, path.join(work, "blocked"), false, [path.join(temp, "blocked")]);
+		const control = `cat <<$'E'O\ndata\nEO\ntouch ${quote(path.join(temp, "control"))}\nE\nexit 0`;
+		assertShellWrite(control, work, path.join(temp, "control"), true, [path.join(work, "control")]);
+	});
+});
 }
 
 // ── Classifier-only coverage ──────────────────────────────────────

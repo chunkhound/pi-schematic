@@ -242,16 +242,7 @@ function readHeredocDelimiter(cmd: string, start: number): (Omit<HeredocSpec, "k
 	return word ? { ...word, stripTabs, start } : null;
 }
 
-/** `$'...'` is ANSI-C quoting: decode its escapes; null when the word is not ANSI-C quoted. */
-function readAnsiCDelimiter(cmd: string, start: number): { delimiter: string; quoted: boolean; end: number } | null {
-	if (cmd[start] !== "$" || cmd[start + 1] !== "'") return null;
-	const ansi = readAnsiCDelimiterWord(cmd, start);
-	return ansi === null ? null : { delimiter: ansi.delimiter, quoted: true, end: ansi.end };
-}
-
 function readShellDelimiterWord(cmd: string, start: number): { delimiter: string; quoted: boolean; end: number } | null {
-	const ansi = readAnsiCDelimiter(cmd, start);
-	if (ansi) return ansi;
 	let delimiter = "", quoted = false, quote = "", i = start;
 	for (; i < cmd.length; i++) {
 		const ch = cmd[i]!;
@@ -267,6 +258,16 @@ function readShellDelimiterWord(cmd: string, start: number): { delimiter: string
 			continue;
 		}
 		if (quote) { if (ch === quote) quote = ""; else delimiter += ch; continue; }
+		// `$'...'` is ANSI-C quoting: decode it and keep reading the same word, so `$'E'O`
+		// (the ANSI-C fragment plus a literal) yields the joined delimiter `EO` as Bash does.
+		if (ch === "$" && cmd[i + 1] === "'") {
+			const ansi = readAnsiCDelimiterWord(cmd, i);
+			if (ansi === null) return null;
+			delimiter += ansi.delimiter;
+			quoted = true;
+			i = ansi.end - 1;
+			continue;
+		}
 		if (ch === "'" || ch === '"') { quoted = true; quote = ch; continue; }
 		delimiter += ch;
 	}
