@@ -389,9 +389,9 @@ function resolveGitDir(value: string, base: string): string | null {
 	if (resolved === null) return null;
 	try {
 		if (statSync(resolved).isDirectory()) return resolved;
-		const pointer = readGitMetadata(resolved);
+		const pointer = readGitPointer(resolved);
 		if (pointer && pointer.startsWith("gitdir: ")) {
-			const target = pointer.slice(8).trim();
+			const target = pointer.slice(8);
 			return resolveGitPath(target, path.dirname(resolved)) ?? path.resolve(path.dirname(resolved), target);
 		}
 	} catch (error) {
@@ -736,12 +736,24 @@ function gitHelpInvocation(invocation: GitInvocation): boolean {
 type GitRepository = { worktree: string; metadata: string[] };
 
 /** Missing files are normal during discovery; unreadable metadata is not silently ignored. */
-function readGitMetadata(file: string): string | null {
-	try { return readFileSync(file, "utf8").trim(); }
+function readGitText(file: string): string | null {
+	try { return readFileSync(file, "utf8"); }
 	catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
 		throw error;
 	}
+}
+
+function readGitMetadata(file: string): string | null {
+	return readGitText(file)?.trim() ?? null;
+}
+
+/** Git reads a `gitdir:` pointer pathname verbatim: it strips only trailing newline/return
+ * bytes, so a trailing space/tab selects the exact byte string Git opens. Trimming it would
+ * send the guard to a harmless path while Git follows a symlink named with the space into an
+ * outside repository. */
+function readGitPointer(file: string): string | null {
+	return readGitText(file)?.replace(/[\n\r]+$/, "") ?? null;
 }
 
 function gitMetadataRoots(directory: string): string[] {
@@ -768,7 +780,7 @@ function dotGitRepository(current: string, dotGit: string): GitRepository | null
 	if (!hasGitEntry) return null;
 	try {
 		if (statSync(dotGit).isDirectory()) return { worktree: current, metadata: gitMetadataRoots(dotGit) };
-		const pointer = readGitMetadata(dotGit);
+		const pointer = readGitPointer(dotGit);
 		if (!pointer?.startsWith("gitdir: ")) throw new Error("not a git repository");
 		return { worktree: current, metadata: gitMetadataRoots(path.resolve(current, pointer.slice(8))) };
 	} catch (error) {

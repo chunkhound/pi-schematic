@@ -1150,3 +1150,35 @@ test("Git positional push destination overrides --repo like Git", gitSuiteOption
 	// With no positional repository, Git takes the LAST --repo value.
 	check(`git push --quiet --repo=${quote(safe)} --repo=${quote(outsideRemote)} --all`, repo, false);
 });
+
+test("Git follows the exact bytes of a gitdir pointer pathname", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const outsideMetadata = path.join(fixture(t, os.homedir()), "metadata");
+	git(root, "init", "--bare", "--quiet", outsideMetadata);
+	// A symlink whose name ends in a space redirects Git to outside metadata. A guard that trims
+	// the pathname selects the nonexistent `meta` and misses the escape.
+	const link = path.join(root, "meta ");
+	symlinkSync(outsideMetadata, link);
+	const worktree = path.join(root, "work");
+	mkdirSync(worktree);
+	writeFileSync(path.join(worktree, ".git"), `gitdir: ${link}\n`);
+	const discovery = `git -C ${quote(worktree)} config pr70.key verified`;
+	check(discovery, root, false);
+	shell(discovery, worktree);
+	assert.equal(git(outsideMetadata, "config", "--get", "pr70.key"), "verified");
+	// --git-dir names the same pointer file directly.
+	const explicit = `git --git-dir=${quote(path.join(worktree, ".git"))} config pr70.flag verified`;
+	check(explicit, worktree, false);
+	shell(explicit, worktree);
+	assert.equal(git(outsideMetadata, "config", "--get", "pr70.flag"), "verified");
+	// Positive control: a normal in-temp pointer stays allowed and really writes there.
+	const tempMetadata = path.join(root, "temp-meta");
+	git(root, "init", "--bare", "--quiet", tempMetadata);
+	const tempWorktree = path.join(root, "temp-work");
+	mkdirSync(tempWorktree);
+	writeFileSync(path.join(tempWorktree, ".git"), `gitdir: ${tempMetadata}\n`);
+	const control = `git -C ${quote(tempWorktree)} config pr70.control verified`;
+	check(control, root, true);
+	shell(control, tempWorktree);
+	assert.equal(git(tempMetadata, "config", "--get", "pr70.control"), "verified");
+});
