@@ -16,8 +16,9 @@ const WORKFLOW_VALUE_PREFIX = `${WORKFLOW_COMMAND} `;
 // keeps `/workflows` out, and the group rejects a second token so args are never hijacked.
 const WORKFLOW_TOKEN = /^\/workflow(?=$|:|\s)(?::|\s)?([^\s:]*)$/;
 
-// The live session cwd, refreshed on every `session_start` and read by the installed provider.
-let currentCwd = process.cwd();
+// Per-UI cwd holder. One process can host two UIs; a module-global cwd would let the
+// last session_start redirect the other UI's completion to the wrong project.
+const cwdByUi = new WeakMap<object, { cwd: string }>();
 
 /** Where the cursor sits in the `/workflow` command. */
 interface WorkflowContext {
@@ -107,8 +108,11 @@ function workflowItem(entry: WorkflowFileEntry): AutocompleteItem {
 	};
 }
 
-/** Install the workflow name provider once per UI; later sessions refresh {@link currentCwd}. */
+/** Install the workflow name provider once per UI; later sessions refresh that UI's cwd. */
 export function registerWorkflowAutocomplete(ctx: ExtensionContext): void {
-	if (ctx.cwd) currentCwd = ctx.cwd;
-	installAutocompleteProviderOnce(ctx, "workflow", () => createWorkflowAutocompleteProvider(() => listWorkflows(currentCwd, getAgentDir())));
+	const fallback = { cwd: ctx.cwd || process.cwd() };
+	const holder = ctx.ui ? (cwdByUi.get(ctx.ui) ?? fallback) : fallback;
+	if (ctx.cwd) holder.cwd = ctx.cwd;
+	if (ctx.ui) cwdByUi.set(ctx.ui, holder);
+	installAutocompleteProviderOnce(ctx, "workflow", () => createWorkflowAutocompleteProvider(() => listWorkflows(holder.cwd, getAgentDir())));
 }

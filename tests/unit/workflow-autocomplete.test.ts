@@ -203,6 +203,31 @@ test("the installed provider follows the cwd of the latest session, without a se
 	}
 });
 
+test("two UIs keep their own completion cwd", async () => {
+	const agentDir = await tmpDir();
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	const first = await workflowProject("alpha");
+	const second = await workflowProject("beta");
+	try {
+		const builtin = { getSuggestions: async () => null, applyCompletion: () => "applied" };
+		const factoriesA: Array<(current: any) => any> = [];
+		const factoriesB: Array<(current: any) => any> = [];
+		const uiA = { addAutocompleteProvider: (factory: (current: any) => any) => factoriesA.push(factory) };
+		const uiB = { addAutocompleteProvider: (factory: (current: any) => any) => factoriesB.push(factory) };
+		const names = async (provider: any) => (await suggest(provider, "/workflow "))?.items.map((item: any) => item.value);
+
+		registerWorkflowAutocomplete({ hasUI: true, cwd: first, ui: uiA } as any);
+		registerWorkflowAutocomplete({ hasUI: true, cwd: second, ui: uiB } as any);
+		assert.deepEqual(await names(factoriesA[0](builtin)), ["/workflow alpha "], "UI A keeps its own cwd");
+		assert.deepEqual(await names(factoriesB[0](builtin)), ["/workflow beta "], "UI B uses its own cwd");
+	} finally {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		await Promise.all([agentDir, first, second].map((dir) => rm(dir, { recursive: true, force: true })));
+	}
+});
+
 test("workflow and model-groups providers stack on the same UI", () => {
 	const factories: any[] = [];
 	const ui = { addAutocompleteProvider: (factory: any) => factories.push(factory) };
