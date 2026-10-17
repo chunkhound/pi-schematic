@@ -208,7 +208,9 @@ function bindToolAndModelActions(runtime: ExtensionRuntime, state: HostState): v
 		getCommands: () => [...state.commands],
 		// The workflow shell reads shellPath from getSettings() before any await; an
 		// unbound handler is the notInitialized sentinel and kills every shell effect.
-		getSettings: () => ({ shellPath: state.shellPath }) as ReturnType<ExtensionAPI["getSettings"]>,
+		// Every Settings field is optional, so this is a valid full value; a future
+		// required field will fail this annotation without a cast hiding it.
+		getSettings: (): ReturnType<ExtensionAPI["getSettings"]> => ({ shellPath: state.shellPath }),
 		setModel: async () => true,
 		getThinkingLevel: () => state.thinkingLevel,
 		setThinkingLevel: (level: ThinkingLevel) => {
