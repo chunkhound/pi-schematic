@@ -6,6 +6,7 @@ import { createState, resetState } from "../../state.js";
 import { READONLY_BASH_SCOPE, READONLY_NO_SHELL_SUMMARY, READONLY_WRITE_EDIT_SUMMARY } from "../../notifications.js";
 import {
 	buildChildToolNames,
+	childUsageByCall,
 	createChildTools,
 	executeSpawn,
 	normalizeSpawnRequirements,
@@ -13,6 +14,7 @@ import {
 	truncateText,
 } from "../../spawn/index.js";
 import { renderSpawnResult } from "../../spawn/renderer.js";
+import { STRUCTURED_OUTPUT_TOOL } from "../../workflow/output.js";
 import { SpawnRouteError } from "../../model-groups/router.js";
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import { Value } from "typebox/value";
@@ -179,7 +181,7 @@ test("spawn forwards requested thinking and reports the session effective thinki
 	assert.equal(seenConfig.thinkingLevel, "max", "requested thinking is forwarded unchanged");
 	assert.equal(updates[0].details.thinking, "off", "running details report Pi's effective thinking");
 	assert.equal(result.details.thinking, "off", "final details report Pi's effective thinking");
-	assert.deepEqual(result.details.route, { status: "inherited" });
+	assert.deepEqual(result.details.route, { status: "inherited", provider: "", modelId: "non-reasoning-model" });
 });
 
 test("spawn execute composes Model Group routing with readonly child guards", async () => {
@@ -427,18 +429,19 @@ test("truncateText applies byte limit after line limit", () => {
 
 // ── Build child tool names ─────────────────────────────────────────
 
-test("child tool names inherit active registered builtins and exclude recursive controls", async () => {
+test("child tool names inherit active registered builtins and exclude recursive controls and the run-scoped output tool", async () => {
 	const state = createState();
 	const childTools = createChildTools(await createTestHost(), state);
 	assert.equal(childTools.some(t => t.name === "spawn"), false);
 	const childToolNames = buildChildToolNames(
-		["read", "bash", "spawn", "handoff", "future_tool"],
+		["read", "bash", "spawn", "handoff", STRUCTURED_OUTPUT_TOOL, "future_tool"],
 		childTools,
 		[
 			{ name: "read", sourceInfo: { source: "builtin" } },
 			{ name: "bash", sourceInfo: { source: "builtin" } },
 			{ name: "spawn", sourceInfo: { source: "builtin" } },
 			{ name: "handoff", sourceInfo: { source: "builtin" } },
+			{ name: STRUCTURED_OUTPUT_TOOL, sourceInfo: { source: "extension" } },
 			{ name: "future_tool", sourceInfo: { source: "project" } },
 		] as any,
 	);
@@ -446,6 +449,7 @@ test("child tool names inherit active registered builtins and exclude recursive 
 	assert.equal(childToolNames.includes("bash"), true);
 	assert.equal(childToolNames.includes("spawn"), false);
 	assert.equal(childToolNames.includes("handoff"), false);
+	assert.equal(childToolNames.includes(STRUCTURED_OUTPUT_TOOL), false);
 });
 
 test("child tool names inherit active registered MCP extension tools", async () => {
@@ -502,10 +506,11 @@ test("child tool names exclude inactive registered and active phantom tools", as
 	assert.equal(toolNames.includes("spawn"), false);
 });
 
-test("buildChildToolNames (2-arg fallback) removes spawn and handoff from inherited tools", () => {
-	const result = buildChildToolNames(["read", "bash", "spawn", "handoff"], []);
+test("buildChildToolNames (2-arg fallback) removes spawn, handoff, and the run-scoped output tool from inherited tools", () => {
+	const result = buildChildToolNames(["read", "bash", "spawn", "handoff", STRUCTURED_OUTPUT_TOOL], []);
 	assert.ok(!result.includes("spawn"), "spawn must be filtered out");
 	assert.ok(!result.includes("handoff"), "handoff must be filtered out");
+	assert.ok(!result.includes(STRUCTURED_OUTPUT_TOOL), "workflow_output must be filtered out");
 	assert.ok(result.includes("read"), "read must be preserved");
 	assert.ok(result.includes("bash"), "bash must be preserved");
 });
@@ -615,7 +620,7 @@ test("spawn execute returns result and stats", async () => {
 
 	assert.deepEqual(updates, [{
 		content: [],
-		details: { model: "mock-model", thinking: "high", truncated: false, outcome: "running", route: { status: "inherited" } },
+		details: { model: "mock-model", thinking: "high", truncated: false, outcome: "running", route: { status: "inherited", provider: "", modelId: "mock-model" } },
 	}]);
 	assert.equal(result.content[0].text, "child result");
 	assert.equal(result.details.outcome, "success");
@@ -628,6 +633,96 @@ test("spawn execute returns result and stats", async () => {
 		cost: 0.5,
 		turns: 2,
 	});
+});
+
+test("spawn execute reports child usage on the tool result", async () => {
+	const state = createState();
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactoryWith({
+		prompt: async () => {},
+		getSessionStats: () => ({
+			tokens: { input: 11, output: 22, cacheRead: 3, cacheWrite: 4, total: 40 },
+			cost: 0.5,
+			assistantMessages: 2,
+		}),
+	})), { activeTools: ["read", "bash", "spawn"] });
+
+	const result = await pi.tools.get("spawn").execute(
+		"spawn-usage",
+		{ prompt: "Do the task" },
+		undefined,
+		undefined,
+		{ model: { id: "mock-model" }, cwd: "/tmp" },
+	);
+
+	// Every session-cost consumer reads usage.cost.total; usage and display stats
+	// must come from the same snapshot so they cannot drift.
+	assert.deepEqual(result.usage, {
+		input: 11,
+		output: 22,
+		cacheRead: 3,
+		cacheWrite: 4,
+		totalTokens: 40,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.5 },
+	});
+	assert.equal(result.usage.cost.total, result.details.stats.cost);
+
+	// A success result already carries usage; the hook must not add a second copy.
+	const [onToolResult] = pi.handlers.get("tool_result")!;
+	const patch = await onToolResult({
+		type: "tool_result",
+		toolName: "spawn",
+		toolCallId: "spawn-usage",
+		input: {},
+		content: [],
+		isError: false,
+		usage: result.usage,
+	});
+	assert.equal(patch, undefined);
+	assert.equal(childUsageByCall().get("spawn-usage"), undefined, "success results never record in the backfill map");
+});
+
+test("spawn backfills child usage on an error tool result", async () => {
+	const state = createState();
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactoryWith({
+		prompt: async () => { throw new Error("prompt failed"); },
+		getSessionStats: () => ({
+			tokens: { input: 5, output: 6, cacheRead: 0, cacheWrite: 0, total: 11 },
+			cost: 0.25,
+			assistantMessages: 1,
+		}),
+	})), { activeTools: ["read", "bash", "spawn"] });
+
+	await assert.rejects(() => pi.tools.get("spawn").execute(
+		"spawn-error",
+		{ prompt: "Do the task" },
+		undefined,
+		undefined,
+		{ model: { id: "mock-model" }, cwd: "/tmp" },
+	));
+
+	// Pi builds the error result, so the recorded usage is backfilled by the hook.
+	const [onToolResult] = pi.handlers.get("tool_result")!;
+	const patch = await onToolResult({
+		type: "tool_result",
+		toolName: "spawn",
+		toolCallId: "spawn-error",
+		input: {},
+		content: [],
+		isError: true,
+	});
+	assert.equal(patch.usage.totalTokens, 11);
+	assert.equal(patch.usage.cost.total, 0.25);
+	assert.equal(childUsageByCall().get("spawn-error"), undefined, "the backfill consumes its map entry");
+	// A second delivery for the same call backfills nothing: no double count, no leak.
+	const again = await onToolResult({
+		type: "tool_result",
+		toolName: "spawn",
+		toolCallId: "spawn-error",
+		input: {},
+		content: [],
+		isError: true,
+	});
+	assert.equal(again, undefined);
 });
 
 test("spawn execute marks stats unavailable when stats collection throws", async () => {
@@ -715,7 +810,7 @@ test("UI spawn notifies when cleanup also fails after a primary failure", async 
 	assertChildRegistriesCleared(state);
 });
 
-test("UI spawn aggregates failures without mutating a frozen primary error", async () => {
+test("UI spawn swallows a throwing notify and aggregates without mutating a frozen primary error", async () => {
 	const originalCause = new Error("original cause");
 	const primaryFailure = new Error("prompt failed", { cause: originalCause });
 	const cleanupFailure = new Error("dispose failed");
@@ -738,7 +833,7 @@ test("UI spawn aggregates failures without mutating a frozen primary error", asy
 	assertChildRegistriesCleared(state);
 });
 
-test("UI spawn aggregates primitive primary, cleanup, and notification failures", async () => {
+test("UI spawn swallows a throwing notify and aggregates primitive primary and cleanup failures", async () => {
 	const primaryFailure = "prompt failed";
 	const cleanupFailure = new Error("dispose failed");
 	const notifyError = new Error("notify failed");
@@ -756,7 +851,7 @@ test("UI spawn aggregates primitive primary, cleanup, and notification failures"
 			[primaryFailure, cleanupFailure, notifyError],
 		),
 	);
-	assert.equal(notifications.length, 1, "notification is attempted exactly once");
+	assert.equal(notifications.length, 1, "notification is attempted exactly once, then its failure is swallowed");
 	assertChildRegistriesCleared(state);
 });
 
@@ -984,7 +1079,7 @@ test("executeSpawn forwards inherited constraints to routing and succeeds when s
 		modelRegistry: { find: (_p: string, id: string) => ({ provider: "openai", id, input: ["text", "image"], reasoning: false }), hasConfiguredAuth: () => true },
 	} as any, state, { prompt: "Do the task", constraints: { modalities: { required: ["text", "image"] } } }, undefined, undefined, "medium", async () => { factoryCalls++; return { session: session as any, extensionsResult: undefined as any }; });
 	assert.equal(result.details.outcome, "success");
-	assert.deepEqual(result.details.route, { status: "inherited" });
+	assert.deepEqual(result.details.route, { status: "inherited", provider: "openai", modelId: "parent" });
 	assert.equal(factoryCalls, 1, "inherited route with satisfied requirements creates one child");
 });
 

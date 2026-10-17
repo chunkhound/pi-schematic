@@ -55,6 +55,7 @@ const PACKAGE_ALIASES = {
 	"@earendil-works/pi-ai": findPackageEntry("@earendil-works/pi-ai", "dist/index.js", PACKAGE_ROOT),
 	"@earendil-works/pi-tui": findPackageEntry("@earendil-works/pi-tui", "dist/index.js", PACKAGE_ROOT),
 	"@earendil-works/pi-agent-core": findPackageEntry("@earendil-works/pi-agent-core", "dist/index.js", PACKAGE_ROOT),
+	"@earendil-works/pi-codemode": findPackageEntry("@earendil-works/pi-codemode", "dist/index.js", PACKAGE_ROOT),
 };
 
 export async function resolve(specifier, context, defaultResolve) {

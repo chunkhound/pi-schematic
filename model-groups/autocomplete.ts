@@ -1,11 +1,10 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
-import type { ExtensionContext, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, ExtensionUIContext, ThemeColor } from "@earendil-works/pi-coding-agent";
 import type { SchematicState } from "../state.js";
 import { getEffectiveModelGroups } from "./router.js";
 import { MODALITY_FG, modalityLetterRun } from "./modality.js";
 import type { ModelGroupModel, ResolvedModelGroup } from "./types.js";
-
-const registeredUis = new WeakSet<object>();
+import { installAutocompleteProviderOnce } from "../autocomplete-install.js";
 
 function isUnavailable(group: ResolvedModelGroup, entry: ModelGroupModel): boolean {
 	return group.validation.unavailableRefs.some((ref) => ref.provider === entry.provider && ref.modelId === entry.modelId);
@@ -101,18 +100,10 @@ export function createModelGroupAutocompleteProvider(state: SchematicState, colo
 }
 
 export function registerModelGroupAutocomplete(ctx: ExtensionContext, state: SchematicState): void {
-	if (!ctx.hasUI) return;
-	const ui = ctx.ui as unknown as {
-		addAutocompleteProvider?: (factory: ReturnType<typeof createModelGroupAutocompleteProvider>) => void;
-		theme?: { fg: (color: ThemeColor, text: string) => string };
-	};
-	if (typeof ui.addAutocompleteProvider !== "function") return;
-	const key = ui as object;
-	if (registeredUis.has(key)) return;
-	registeredUis.add(key);
-	// Lazy adapter so the colorizer reflects the live theme (not a snapshot).
-	const colorize: DescriptionColorizer | undefined = ui.theme
-		? (color, text) => ui.theme!.fg(color, text)
-		: undefined;
-	ui.addAutocompleteProvider(createModelGroupAutocompleteProvider(state, colorize));
+	installAutocompleteProviderOnce(ctx, "model-groups", () => createModelGroupAutocompleteProvider(state, liveColorizer(ctx.ui)));
+}
+
+/** Holds the UI, not the ctx: the provider outlives a stale ctx but reads the live theme. */
+function liveColorizer(ui: ExtensionUIContext): DescriptionColorizer {
+	return (color, text) => ui.theme.fg(color, text);
 }

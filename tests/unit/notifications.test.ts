@@ -136,6 +136,7 @@ test("parent readonly tool-call consumer uses centralized block copy", async () 
 			notify: () => {},
 			setStatus: () => {},
 			setWidget: () => {},
+			addAutocompleteProvider: () => {},
 		},
 	} as any);
 	const [toolCall] = pi.handlers.get("tool_call")!;

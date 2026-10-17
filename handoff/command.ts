@@ -6,7 +6,7 @@
  * situational context. The handoff tool performs the actual compaction.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { HANDOFF_REQUESTED_STATUS, HANDOFF_REQUIRED_STATUS } from "./copy.js";
 import { isHandoffEligible } from "./eligibility.js";
 import {
@@ -16,57 +16,67 @@ import {
 import type { SchematicState } from "../state.js";
 import { STATUS_KEY_HANDOFF } from "../tui.js";
 
-export function registerHandoffCommand(pi: ExtensionAPI, state: SchematicState): void {
-	pi.registerCommand("handoff", {
-		description:
-			"Store the next context's instruction verbatim from your direction, have the LLM " +
-			"curate the notebook and supply the remaining context, then perform the handoff automatically.",
+/**
+ * The `/handoff` body, shared with `workflow.handoff`. Stores the direction, then asks
+ * the LLM to prepare the cut. The handoff tool performs the compaction.
+ */
+export async function requestHandoff(
+	pi: ExtensionAPI,
+	state: SchematicState,
+	direction: string,
+	ctx: ExtensionCommandContext,
+): Promise<void> {
+	if (!direction.trim()) {
+		if (ctx.hasUI) ctx.ui.notify("Usage: /handoff <direction>", "error");
+		return;
+	}
+	resetHandoffRequest(state, direction);
+	notifyReadonlyHandoff(ctx, state);
+	showHandoffStatus(ctx);
+	pi.sendUserMessage(
+		buildHandoffPreparationMessage(direction, readonlyNoticeOf(state)),
+		ctx.isIdle() ? undefined : { deliverAs: "followUp" },
+	);
+}
 
-		handler: async (args, ctx) => {
-			const direction = args;
-			if (!direction.trim()) {
-				if (ctx.hasUI) ctx.ui.notify("Usage: /handoff <direction>", "error");
-				return;
-			}
+function resetHandoffRequest(state: SchematicState, direction: string): void {
+	if (state.handoffCompactionGeneration !== null) {
+		throw new Error("Handoff compaction already in progress; wait for it to complete before requesting another handoff.");
+	}
+	// Invalidate queued work from an earlier request before replacing its intent.
+	state.handoffGeneration++;
+	state.pendingHandoff = null;
+	state.pendingHandoffDelivery = null;
+	state.pendingRequestedHandoff = {
+		toolCalled: false,
+		enforcementAttempts: 0,
+		eligibleNudgeDelivered: false,
+		nextInstruction: direction,
+	};
+}
 
-			if (state.handoffCompactionGeneration !== null) {
-				throw new Error("Handoff compaction already in progress; wait for it to complete before requesting another handoff.");
-			}
-			// Invalidate queued work from an earlier request before replacing its intent.
-			state.handoffGeneration++;
-			state.pendingHandoff = null;
-			state.pendingHandoffDelivery = null;
-			state.pendingRequestedHandoff = {
-				toolCalled: false,
-				enforcementAttempts: 0,
-				eligibleNudgeDelivered: false,
-				nextInstruction: direction,
-			};
+function notifyReadonlyHandoff(ctx: ExtensionCommandContext, state: SchematicState): void {
+	if (ctx.hasUI && state.readonlyEnabled) {
+		ctx.ui.notify(READONLY_HANDOFF_EXCEPTION_NOTIFICATION, "info");
+	}
+}
 
-			if (ctx.hasUI && state.readonlyEnabled) {
-				ctx.ui.notify(
-					READONLY_HANDOFF_EXCEPTION_NOTIFICATION,
-					"info",
-				);
-			}
+function showHandoffStatus(ctx: ExtensionCommandContext): void {
+	if (!ctx.hasUI || !ctx.ui.theme) return;
+	const status = isHandoffEligible(ctx.getContextUsage())
+		? HANDOFF_REQUIRED_STATUS
+		: HANDOFF_REQUESTED_STATUS;
+	ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", status));
+}
 
-			// Show live progress indicator in footer
-			if (ctx.hasUI && ctx.ui.theme) {
-				const status = isHandoffEligible(ctx.getContextUsage())
-					? HANDOFF_REQUIRED_STATUS
-					: HANDOFF_REQUESTED_STATUS;
-				ctx.ui.setStatus(
-					STATUS_KEY_HANDOFF,
-					ctx.ui.theme.fg("accent", status),
-				);
-			}
+function readonlyNoticeOf(state: SchematicState): string {
+	return state.readonlyEnabled
+		? buildReadonlyHandoffCommandNotice()
+		: "\n\nA real handoff is required in the current session. Do not continue normal work instead.";
+}
 
-			const readonlyNotice = state.readonlyEnabled
-				? buildReadonlyHandoffCommandNotice()
-				: "\n\nA real handoff is required in the current session. Do not continue normal work instead.";
-
-			pi.sendUserMessage(
-				`Handoff requested. The next context will execute this instruction verbatim:
+function buildHandoffPreparationMessage(direction: string, readonlyNotice: string): string {
+	return `Handoff requested. The next context will execute this instruction verbatim:
 <next-instruction>
 ${direction}
 </next-instruction>
@@ -75,9 +85,16 @@ Do NOT start this instruction. This context is discarded at compaction, so actin
 
 Preparation duties for this context:
 1. Curate the notebook for what the instruction needs: refresh non-recoverable knowledge (user guidance, decisions, design, task scope) and discard pages holding only recoverable code facts.
-2. Call the handoff tool with \`context\`: the situational context still missing from the notebook — current state, blockers, unresolved questions, failed paths worth avoiding, and the concrete next step. Do NOT repeat the instruction; it is already stored and will be delivered verbatim.${readonlyNotice}`,
-				ctx.isIdle() ? undefined : { deliverAs: "followUp" },
-			);
+2. Call the handoff tool with \`context\`: the situational context still missing from the notebook — current state, blockers, unresolved questions, failed paths worth avoiding, and the concrete next step. Do NOT repeat the instruction; it is already stored and will be delivered verbatim.${readonlyNotice}`;
+}
+
+export function registerHandoffCommand(pi: ExtensionAPI, state: SchematicState): void {
+	pi.registerCommand("handoff", {
+		description:
+			"Store the next context's instruction verbatim from your direction, have the LLM " +
+			"curate the notebook and supply the remaining context, then perform the handoff automatically.",
+		handler: async (args, ctx) => {
+			await requestHandoff(pi, state, args, ctx);
 		},
 	});
 }

@@ -66,13 +66,20 @@ test("#group autocomplete prepends colored effective modal letters when a colori
 	assert.equal(delegated, 0);
 });
 
-test("registerModelGroupAutocomplete uses ctx.ui.addAutocompleteProvider once", () => {
+test("registerModelGroupAutocomplete installs one model-groups provider per UI", () => {
 	const state = createState();
 	const providers: any[] = [];
-	const ctx = { hasUI: true, ui: { addAutocompleteProvider: (factory: any) => providers.push(factory) } };
-	registerModelGroupAutocomplete(ctx as any, state);
-	registerModelGroupAutocomplete(ctx as any, state);
-	assert.equal(providers.length, 1);
+	const ui = { addAutocompleteProvider: (factory: any) => providers.push(factory) };
+	registerModelGroupAutocomplete({ hasUI: true, ui } as any, state);
+	registerModelGroupAutocomplete({ hasUI: true, ui } as any, state);
+	assert.equal(providers.length, 1, "re-registration on the same UI does not stack");
+	// A replacement UI gets its own install.
+	const next: any[] = [];
+	registerModelGroupAutocomplete({ hasUI: true, ui: { addAutocompleteProvider: (f: any) => next.push(f) } } as any, state);
+	assert.equal(next.length, 1, "a fresh UI is not blocked by the per-key guard");
+	// Headless contexts install nothing.
+	registerModelGroupAutocomplete({ hasUI: false, ui } as any, state);
+	assert.equal(providers.length, 1, "headless contexts install nothing");
 });
 
 test("group autocomplete consolidates to a single consistent letter column", async () => {

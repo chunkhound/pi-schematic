@@ -13,7 +13,7 @@ import { commitNotebookDiscard, formatByteCap, formatPagePreview, prepareNoteboo
 import { openInPager, resolvePager, spawnPager, __setPagerRuntimeForTests } from "../../notebook/pager.js";
 import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
-import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
+import { STATUS_KEY_NOTEBOOK, STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
 import { makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
 import { createBeforeAgentStartEvent, createTestHost } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
@@ -49,6 +49,7 @@ const Tlines = { truncatedBy: "lines", totalLines: 2001, totalBytes: 4001, outpu
 const Tbytes = { truncatedBy: "bytes", totalLines: 2, totalBytes: 51201, outputLines: 1, outputBytes: 25600 } as const;
 const ReportLines = "TRUNCATED by lines: kept 2000 of 2001 lines (3999 of 4001 bytes); tail dropped. Split this page into smaller pages.";
 const ReportBytes = "TRUNCATED by bytes: kept 1 of 2 lines (25600 of 51201 bytes); tail dropped. Split this page into smaller pages.";
+// Pinned literal: a wording change in store.ts must fail these assertions, not pass through.
 const Notice = "Notice: This page was clipped at write time; its stored body is incomplete.";
 const rejectMessage = (name: string) => `Notebook page "${name}" rejected: first line exceeds ${formatByteCap(DEFAULT_MAX_BYTES)}. Split it into shorter lines or smaller pages.`;
 const emptyHeadRejectMessage = (name: string) => `Notebook page "${name}" rejected: the first non-empty line exceeds ${formatByteCap(DEFAULT_MAX_BYTES)}, so truncation would retain no content. Split it into shorter lines or smaller pages.`;
@@ -380,7 +381,7 @@ test("notebook_write pushes onUpdate and refreshes UI indicators", async () => {
 
 	assert.equal((update.content[0] as any).text, 'Saved "entry-a": first line');
 	assert.deepEqual(update.details, { entries: ["entry-a"], preview: "first line", truncation: null, clipped: false });
-	assert.equal(record.statuses.get("pi-schematic-notebook"), "📒 1");
+	assert.equal(record.statuses.get(STATUS_KEY_NOTEBOOK), "📒 1");
 	assert.deepEqual(result.details, { entries: ["entry-a"], preview: "first line", truncation: null, clipped: false });
 });
 
@@ -443,15 +444,17 @@ test("/notebook <topic> notifies with info on first set and warning on boundary 
 	const pi = await createTestHost();
 	const notifications: Array<{ message: string; level: string }> = [];
 	const statuses = new Map<string, string | undefined>();
-	const widgets = new Map<string, string[] | undefined>();
+	const widgets = new Map<string, unknown>();
 	const ctx = {
 		hasUI: true,
+		mode: "tui",
 		getContextUsage: () => ({ percent: 20 }),
 		ui: {
 			theme: { fg: (_name: string, text: string) => text },
 			notify: (message: string, level: string) => { notifications.push({ message, level }); },
 			setStatus: (key: string, status: string | undefined) => { statuses.set(key, status); },
-			setWidget: (key: string, content: string[] | undefined) => { widgets.set(key, content); },
+			setWidget: (key: string, content: unknown) => { widgets.set(key, content); },
+			addAutocompleteProvider: () => {},
 		},
 	};
 
@@ -470,12 +473,14 @@ test("readonly /notebook boundary notification explains deferred handoff eligibi
 	const notifications: Array<{ message: string; level: string }> = [];
 	const ctx = {
 		hasUI: true,
+		mode: "tui",
 		getContextUsage: () => ({ percent: 20 }),
 		ui: {
 			theme: { fg: (_name: string, text: string) => text },
 			notify: (message: string, level: string) => { notifications.push({ message, level }); },
 			setStatus: () => {},
 			setWidget: () => {},
+			addAutocompleteProvider: () => {},
 		},
 	};
 
@@ -1924,7 +1929,7 @@ test("complete writes preserve their text list and existing detail fields", asyn
 	const project = (details: any) => ({ entries: details.entries, preview: details.preview });
 	assert.deepEqual(project(result.details), { entries: ["page"], preview: "first" });
 	assert.deepEqual(project(update.details), { entries: ["page"], preview: "first" });
-	assert.equal(record.statuses.get("pi-schematic-notebook"), "📒 1");
+	assert.equal(record.statuses.get(STATUS_KEY_NOTEBOOK), "📒 1");
 
 	const childPi = await createTestHost();
 	const childState = createState();

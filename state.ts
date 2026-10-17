@@ -6,10 +6,20 @@
  */
 
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { Usage } from "@earendil-works/pi-ai";
 import type { ModelGroupsBootValidation, ResolvedModelGroup } from "./model-groups/types.js";
 import type { FrontmatterEntry, FrontmatterIssue } from "./frontmatter-cache.js";
 import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
 import type { HandoffPayload } from "./handoff/format.js";
+import { clearChildUsageBackfill } from "./spawn/shared.js";
+
+/**
+ * Run-scoped sink for live child spend. The active workflow host installs it, and the
+ * spawn tool flushes each child's cumulative usage on every message_end and at settle.
+ * Null outside a workflow run; only host dispose uninstalls it, never resetState, because
+ * a run survives `workflow.new`.
+ */
+export type ChildUsageSink = (toolCallId: string, provider: string | null, model: string, usage: Usage) => void;
 
 export interface SchematicState {
 	/** Compact notebook pages keyed by kebab-case name */
@@ -116,6 +126,20 @@ export interface SchematicState {
 	liveChildSessions: Map<string, AgentSession>;
 
 	/**
+	 * Installed by the active workflow host so spawned children report spend into the run
+	 * ledger as it is incurred. Spawn writes cumulative stats per child; null outside a run.
+	 */
+	childUsageSink: ChildUsageSink | null;
+
+	/**
+	 * True only while a workflow run suppresses non-extension input. The frontmatter
+	 * `input` hook runs before the workflow's suppression handler in pi's dispatch
+	 * order, so it must skip dropped submissions instead of mutating model/readonly
+	 * state ahead of the drop. Set/cleared by the suppression subscribe/unsubscribe.
+	 */
+	inputSuppressed: boolean;
+
+	/**
 	 * Generation counter for child-session ownership.
 	 * Increment on /new so stale child updates/results cannot touch fresh state.
 	 */
@@ -192,6 +216,9 @@ export function createState(): SchematicState {
 		liveChildSessions,
 		childSessionEpoch: 0,
 		childAbortPromises: new WeakMap(),
+		childUsageSink: null,
+		// False until a workflow run raises it: suppression is run-scoped, not session-scoped.
+		inputSuppressed: false,
 		readonlyEnabled: false,
 		readonlyNudgePending: false,
 		frontmatterSkillCache,
@@ -245,6 +272,9 @@ export function resetState(state: SchematicState): void {
 	state.frontmatterSkillIssues.clear();
 	state.frontmatterPromptIssues.clear();
 	state.pendingReadonlyCommands.length = 0;
+	// inputSuppressed is deliberately NOT cleared here. A run survives `workflow.new`
+	// (rebindRun re-subscribes on the fresh runtime), so only the run's unsubscribe may
+	// clear it; clearing early would reopen the frontmatter side-effect leak mid-run.
 	abortAndClearChildSessions(state);
 }
 
@@ -297,6 +327,9 @@ export function abortAndClearChildSessions(state: SchematicState): void {
 	const sessions = new Set([...state.childSessions.values(), ...state.liveChildSessions.values()]);
 	state.childSessions.clear();
 	state.liveChildSessions.clear();
+	// The error-path usage backfill is keyed by toolCallId; a reset abandons every
+	// in-flight call, so pending entries would never be consumed — clear them here.
+	clearChildUsageBackfill();
 	for (const session of sessions) {
 		void abortChildSession(state, session).catch(() => {});
 	}

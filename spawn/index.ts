@@ -4,10 +4,17 @@
  * Creates an isolated in-memory child AgentSession for focused subtask execution.
  * Children inherit the parent's model, thinking level, cwd, active registered
  * executable tools, and notebook access.
- * Children do not inherit the spawn or handoff tools (recursion prevention).
+ * Children do not inherit the spawn or handoff tools (recursion prevention), nor the
+ * run-scoped `workflow_output` tool (host-owned structured contract; a child call would
+ * satisfy the parent's capture).
  *
  * Spawn is context isolation, not a security boundary. Child agents are trusted
  * extensions of the parent and inherit parent authority by design.
+ *
+ * Cost attribution: a child runs in a separate session, so its usage is invisible
+ * to the parent unless the spawn tool reports it. Every result carries the child's
+ * `usage`; Pi records it on the tool-result message, which every session-cost
+ * consumer sums (pi footer/stats and the /workflow budget).
  */
 
 import type {
@@ -17,7 +24,7 @@ import type {
 	ToolDefinition,
 	ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import { StringEnum, type TextContent } from "@earendil-works/pi-ai";
+import { StringEnum, type TextContent, type Usage } from "@earendil-works/pi-ai";
 import {
 	READONLY_CHILD_AUTHORITY_NOTE,
 	READONLY_NO_SHELL_SUMMARY,
@@ -37,14 +44,22 @@ import { resolveSpawnModelRoute } from "../model-groups/router.js";
 import { productionConstraintRegistry, type ConstraintRegistry } from "../model-groups/constraints/registry.js";
 import { MODEL_GROUP_MODALITY_PROSE } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
+import { messageOf, safeAppendEntry } from "../workflow/errors.js";
+import { STRUCTURED_OUTPUT_TOOL } from "../workflow/output.js";
+import { addUsage, sessionStatsToUsage } from "../usage.js";
 import {
 	renderSpawnCall,
 	renderSpawnResult,
 } from "./renderer.js";
 import {
+	childUsageByCall,
 	getLastAssistantText,
+	MAX_CHILD_USAGE_ENTRIES,
+	recordChildUsage,
+	SPAWN_NOTICE_ENTRY_TYPE,
 	type SpawnOutcome,
 	type SpawnResultDetails,
+	type SpawnRouteDetails,
 	type ThinkingValue,
 } from "./shared.js";
 
@@ -105,17 +120,40 @@ export function truncateText(text: string, maxLines: number, maxBytes: number): 
 	return truncated;
 }
 
+/** One-line issue text, shared by the UI notice and the transcript notice. */
+function spawnIssueMessage(summary: string, error: unknown): string {
+	return `${summary}: ${messageOf(error)}`;
+}
+
+/** Best-effort advisory UI report; returns whether the notice was delivered. Never throws. */
+function notifySpawnIssue(ctx: ExtensionContext, message: string): boolean {
+	if (!ctx.hasUI) return false;
+	try {
+		ctx.ui.notify(message, "error");
+		return true;
+	} catch {
+		// UI reporting is advisory; it must never break spawn teardown.
+		return false;
+	}
+}
+
+/** Deliver the cleanup notice. A headless ctx cannot notify; a throwing UI is captured so the
+ * cleanup catch can fold it into the aggregate instead of losing it (see executeSpawn). */
+function notifyCleanupFailure(ctx: ExtensionContext, error: unknown): { notified: boolean; failure: unknown } {
+	if (!ctx.hasUI) return { notified: false, failure: null };
+	try {
+		ctx.ui.notify(spawnIssueMessage("Spawn cleanup failed", error), "error");
+		return { notified: true, failure: null };
+	} catch (failure) {
+		return { notified: false, failure };
+	}
+}
+
 /**
  * Truncates child agent output to CHILD_MAX_LINES lines / CHILD_MAX_BYTES bytes.
  * Appends a "[Result truncated...]" advisory when truncation occurs.
  * Returns { text, truncated }.
  */
-function notifyCleanupFailure(ctx: ExtensionContext, error: unknown): void {
-	if (!ctx.hasUI) return;
-	const message = error instanceof Error ? error.message : String(error);
-	ctx.ui.notify(`Spawn cleanup failed: ${message}`, "error");
-}
-
 function truncateResult(text: string): { text: string; truncated: boolean } {
 	const lines = text.split("\n");
 	const bytes = new TextEncoder().encode(text).length;
@@ -143,7 +181,7 @@ function truncateResult(text: string): { text: string; truncated: boolean } {
  * Local child custom tools are added separately. Parent-only custom tools are
  * intentionally excluded so the child never advertises a tool it cannot execute.
  *
- * handoff and spawn never carry into children.
+ * handoff, spawn, and workflow_output never carry into children.
  */
 function shouldSwallowPromptError(error: unknown, isStale: () => boolean, wasAborted: boolean): boolean {
 	if (isStale()) return false;
@@ -164,11 +202,11 @@ function toSpawnStats(sessionStats: any): Record<string, number> {
 	};
 }
 
-function collectSpawnStats(session: { getSessionStats?: () => unknown }): { stats?: Record<string, number>; statsUnavailable: boolean } {
+function collectSpawnStats(session: { getSessionStats?: () => unknown }): { stats?: Record<string, number>; usage?: Usage; statsUnavailable: boolean } {
 	try {
 		const sessionStats = (session.getSessionStats as (() => any) | undefined)?.();
 		return sessionStats
-			? { stats: toSpawnStats(sessionStats), statsUnavailable: false }
+			? { stats: toSpawnStats(sessionStats), usage: sessionStatsToUsage(sessionStats), statsUnavailable: false }
 			: { statsUnavailable: false };
 	} catch {
 		return { statsUnavailable: true };
@@ -190,13 +228,9 @@ function createSpawnAbortContext(state: SchematicState, session: AgentSession, c
 		const p = abortChildSession(state, session);
 		if (p !== reported) {
 			reported = p;
-			// Report abort failures via UI. Guard against notify itself throwing
-			// so the detached promise never emits unhandledRejection.
-			// Detached path — the finally(dispose) branch aggregates notify failures
-			// differently; here we intentionally swallow to avoid unhandledRejection.
-			void p.catch((e) => {
-				try { notifyCleanupFailure(ctx, e); } catch { /* reporting must never reject */ }
-			});
+			// Report abort failures via UI; notify itself never throws, so the
+			// detached promise never emits unhandledRejection.
+			void p.catch((e) => notifyCleanupFailure(ctx, e));
 		}
 		return p;
 	};
@@ -237,7 +271,9 @@ export function buildChildToolNames(
 	const inheritableParentToolNames = availableTools
 		? getInheritableParentToolNames(parentToolNames, availableTools)
 		: parentToolNames;
-	const inheritedTools = inheritableParentToolNames.filter((name) => name !== "spawn" && name !== "handoff");
+	const inheritedTools = inheritableParentToolNames.filter(
+		(name) => name !== "spawn" && name !== "handoff" && name !== STRUCTURED_OUTPUT_TOOL,
+	);
 	return [...new Set([...inheritedTools, ...childTools.map((tool) => tool.name)])];
 }
 
@@ -284,7 +320,7 @@ function createReadonlyChildBashTool(
 
 const SPAWN_DESCRIPTION =
 	"Spawn an isolated child agent for a focused subtask. " +
-	"Child inherits parent model, thinking level, cwd, active registered tools executable in the child session, and shared notebook tools unless an optional Model Group routes its model/thinking; children cannot spawn or handoff. " +
+	"Child inherits parent model, thinking level, cwd, active registered tools executable in the child session, and shared notebook tools unless an optional Model Group routes its model/thinking; children cannot spawn or handoff, and never inherit the run-scoped workflow_output tool. " +
 	"Reference notebook pages by name — child will notebook_read them on demand.";
 
 const SPAWN_PROMPT_SNIPPET = "Spawn a focused subtask agent";
@@ -360,6 +396,9 @@ export function createChildTools(
 export type SpawnConstraintRequirements = Record<string, unknown>;
 export interface SpawnParameters { prompt: string; group?: string; constraints?: SpawnConstraintRequirements; thinking?: ThinkingValue }
 
+export { childUsageByCall, MAX_CHILD_USAGE_ENTRIES, recordChildUsage } from "./shared.js";
+export type { ChildUsageRecord } from "./shared.js";
+
 /** Validate the public constraint envelope once, rejecting unknown keys before routing. */
 export function normalizeSpawnRequirements(params: Pick<SpawnParameters, "constraints">, registry: ConstraintRegistry = productionConstraintRegistry): SpawnConstraintRequirements {
 	const raw = params.constraints;
@@ -394,8 +433,8 @@ export function executeSpawn(
 	defaultThinking: ThinkingValue,
 	sessionFactory: typeof createAgentSession = createAgentSession,
 	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
-): Promise<{ content: TextContent[]; details: SpawnResultDetails }> {
-	let execution!: Promise<{ content: TextContent[]; details: SpawnResultDetails }>;
+): Promise<{ content: TextContent[]; details: SpawnResultDetails; usage?: Usage }> {
+	let execution!: Promise<{ content: TextContent[]; details: SpawnResultDetails; usage?: Usage }>;
 	execution = (async () => {
 		const parentModel = ctx.model;
 		if (!parentModel) {
@@ -415,7 +454,10 @@ export function executeSpawn(
 		});
 		const childModel = route.model;
 		const requestedChildThinking: ThinkingValue = route.thinking;
-		const routeDetails: SpawnResultDetails["route"] = route.status === "routed"
+		// WHY: capture the run-owned sink before any await. A late flush after this run ends
+		// must write to the run that spawned the child, never the next run's sink.
+		const childUsageSink = state.childUsageSink;
+		const routeDetails: SpawnRouteDetails = route.status === "routed"
 			? {
 					status: "routed",
 					group: route.groupName ?? route.requestedGroup ?? params.group?.trim() ?? "",
@@ -429,7 +471,7 @@ export function executeSpawn(
 						provider: route.provider,
 						modelId: route.modelId,
 					}
-				: { status: "inherited" };
+				: { status: "inherited", provider: route.provider, modelId: route.modelId };
 
 	const childSessionEpoch = state.childSessionEpoch;
 	const isStale = () => state.childSessionEpoch !== childSessionEpoch;
@@ -503,8 +545,24 @@ export function executeSpawn(
 	const abortContext = createSpawnAbortContext(state, session, ctx, toolCallId);
 	const { invalidatedError, abortChild, clearChildSession, abortAndInvalidate } = abortContext;
 
+	// Child spend belongs to the run ledger from the moment it is incurred. Flushing
+	// cumulative stats on every message_end keeps the live cost attributed to the child's
+	// model, so an aborted run can never leave a model-less residual. The sink is null
+	// outside a workflow run. Cumulative (not delta) makes the settle flush idempotent.
+	// Every route (including inherited) carries the provider, so the ledger keys on `provider/model`
+	// instead of splitting one model across a bare-model row and a provider-qualified row.
+	const childProvider = route.provider;
+	const flushChildSpend = () => {
+		if (!childUsageSink) return;
+		const { usage } = collectSpawnStats(session as { getSessionStats?: () => unknown });
+		if (usage) childUsageSink(toolCallId, childProvider, childModel.id, usage);
+	};
+
 	let hasPrimaryError = false;
 	let primaryError: unknown;
+	let childUsage: Usage | undefined;
+	let usageReported = false;
+	let unsubscribeChildEvents: (() => void) | undefined;
 	try {
 		if (isStale()) {
 			await abortAndInvalidate();
@@ -514,6 +572,23 @@ export function executeSpawn(
 	// attach with a fully-published live ownership record.
 	state.liveChildSessions.set(toolCallId, session);
 	state.childSessions.set(toolCallId, session);
+
+	// Flush cumulative child spend into the run ledger on every message_end, so an
+	// aborted child still reports its model's cost. The subscription is UI-independent.
+	if (typeof session.subscribe === "function") {
+		try {
+			unsubscribeChildEvents = session.subscribe((event) => {
+				if (event.type === "message_end") flushChildSpend();
+			});
+		} catch (subscribeError) {
+			unsubscribeChildEvents = undefined;
+			// A failed subscription only loses live spend flushes; the settle flush still runs.
+			// The transcript notice keeps the failure visible when no UI is attached.
+			const issue = spawnIssueMessage("Spawn event subscription failed", subscribeError);
+			notifySpawnIssue(ctx, issue);
+			safeAppendEntry(pi, SPAWN_NOTICE_ENTRY_TYPE, { phase: "spawn-event-subscribe-failed", message: issue });
+		}
+	}
 
 	try {
 		if (signal?.aborted) {
@@ -585,7 +660,8 @@ export function executeSpawn(
 	// liveChildSessions — the child already completed so there's nothing to abort.
 	clearChildSession();
 
-	const { stats, statsUnavailable } = collectSpawnStats(session as { getSessionStats?: () => unknown });
+	const { stats, usage, statsUnavailable } = collectSpawnStats(session as { getSessionStats?: () => unknown });
+	childUsage = usage;
 
 	if (isStale()) {
 		// INVARIANT: live ownership was synchronously cleared before stats collection,
@@ -607,15 +683,39 @@ export function executeSpawn(
 		details.statsUnavailable = true;
 	}
 
-		return {
-			content: [{ type: "text" as const, text: finalText }] as TextContent[],
-			details,
-		};
+	usageReported = true;
+	return {
+		content: [{ type: "text" as const, text: finalText }] as TextContent[],
+		details,
+		usage: childUsage,
+	};
 	} catch (error) {
 		hasPrimaryError = true;
 		primaryError = error;
 		throw error;
 	} finally {
+		// Final flush before the session is disposed: covers headless runs, missed
+		// message_end events, and abort paths. Idempotent with any prior flush.
+		flushChildSpend();
+		// Record usage only when the returned result could not carry it. Pi builds
+		// error tool results itself, so the tool_result hook backfills from here.
+		if (!usageReported) {
+			const usage = childUsage ?? collectSpawnStats(session as { getSessionStats?: () => unknown }).usage;
+			// Child identity rides with the usage so the hook can attribute the row to
+			// the child model; a bare usage would surface as "unattributed" spend.
+			if (usage) {
+				const evicted = recordChildUsage(childUsageByCall(), toolCallId, { usage, model: childModel.id, thinking: effectiveChildThinking(), route: routeDetails });
+				// Advisory only: fan-out past MAX_CHILD_USAGE_ENTRIES drops the oldest
+				// error-path record. Never breaks spawn teardown.
+				if (evicted !== null) {
+					safeAppendEntry(pi, SPAWN_NOTICE_ENTRY_TYPE, {
+						phase: "spawn-usage-evict",
+						message: `child usage backfill evicted oldest entry ${evicted} (cap ${MAX_CHILD_USAGE_ENTRIES})`,
+					});
+				}
+			}
+		}
+		unsubscribeChildEvents?.();
 		clearChildSession();
 		try {
 			// AgentSession always provides dispose(); the guard keeps intentionally
@@ -625,18 +725,18 @@ export function executeSpawn(
 			if (!hasPrimaryError) {
 				throw cleanupError;
 			}
-			// Headless callers get no UI notification, so preserve both failures.
-			if (ctx.hasUI) {
-				try {
-					notifyCleanupFailure(ctx, cleanupError);
-				} catch (notifyError) {
-					// Do not mutate the primary error: its own cause may carry the root failure.
-					throw new AggregateError(
-						[primaryError, cleanupError, notifyError],
-						"Spawn, cleanup, and notification failed.",
-					);
-				}
-			} else {
+			// A delivered UI notification carries the cleanup failure, so the primary propagates
+			// unchanged; otherwise the failures stay visible in the aggregate. A throwing notify
+			// must not be swallowed, so it becomes the aggregate's third error.
+			// Do not mutate the primary error: its own cause may carry the root failure.
+			const { notified, failure } = notifyCleanupFailure(ctx, cleanupError);
+			if (failure !== null) {
+				throw new AggregateError(
+					[primaryError, cleanupError, failure],
+					"Spawn, cleanup, and notification failed.",
+				);
+			}
+			if (!notified) {
 				throw new AggregateError([primaryError, cleanupError], "Spawn failed and cleanup failed.");
 			}
 		}
@@ -661,6 +761,19 @@ export function registerSpawnTool(
 	sessionFactory: typeof createAgentSession = createAgentSession,
 	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
 ): void {
+	// Backfill child usage onto error results, which Pi builds itself. A success
+	// result already carries usage and never records here, so no double count.
+	// Details mirror the success path so usageByModel attributes the row to the child model.
+	pi.on("tool_result", (event) => {
+		if (event.toolName !== "spawn") return;
+		const record = childUsageByCall().get(event.toolCallId);
+		childUsageByCall().delete(event.toolCallId);
+		if (!record) return undefined;
+		const details = { model: record.model, thinking: record.thinking, route: record.route };
+		if (!event.usage) return { usage: record.usage, details };
+		return { usage: addUsage(record.usage, event.usage), details };
+	});
+
 	pi.registerTool({
 		name: "spawn",
 		label: "Spawn",
