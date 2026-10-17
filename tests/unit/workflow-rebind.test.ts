@@ -71,6 +71,22 @@ test("abort during wait rejects as cancelled", async () => {
 	await assert.rejects(pending, /cancelled/);
 });
 
+test("a non-extension compaction failure does not reject the pending handoff", async () => {
+	const pi = fakePi();
+	const branch: unknown[] = [];
+	const requestHandoff = async () => {
+		// A threshold/overflow compaction can fail while the handoff waits; it must not
+		// invalidate the extension-authored cut.
+		pi.emit("session_compact_failed", { fromExtension: false, errorMessage: "threshold failure" });
+		branch.push({ type: "compaction", id: "c1" });
+		pi.emit("session_compact", { fromExtension: true, compactionEntry: { id: "c1" } });
+		branch.push({ type: "message", id: "u1", message: { role: "user" } });
+		branch.push({ type: "message", id: "a1", message: { role: "assistant" } });
+		pi.emit("agent_settled", {});
+	};
+	await performHandoff(bundleWith(pi, 500, requestHandoff), ctlWith(ctxWith(branch), new AbortController().signal), "next");
+});
+
 // WHY: a successor that never settles must not hang the run past the deadline. Only the
 // compaction marker exists; no delivered user prompt and no assistant turn follow it.
 test("a handoff whose successor never settles is bounded by the deadline", async () => {

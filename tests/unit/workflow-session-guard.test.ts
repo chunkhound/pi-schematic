@@ -160,7 +160,7 @@ async function parkRun(handoffCompactions = 1, replacementSpec?: { competingResu
 			for (let index = 0; index < handoffCompactions; index += 1) {
 				record.grants.push(await boundary(pi, "session_before_compact", { reason: "manual" }, record));
 			}
-			await emitAll(pi, "session_compact_failed", { reason: "manual", aborted: false, errorMessage: "scripted compaction failure" }, boundaryCtx(record.notices));
+			await emitAll(pi, "session_compact_failed", { reason: "manual", aborted: false, fromExtension: true, errorMessage: "scripted compaction failure" }, boundaryCtx(record.notices));
 		},
 		sandboxFactory: (sandboxOptions) => {
 			armed.resolve(sandboxOptions.globals ?? []);

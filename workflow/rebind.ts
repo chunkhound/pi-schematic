@@ -238,7 +238,9 @@ function waitForCompaction(pi: ExtensionAPI): { done: Promise<string>; dispose: 
 		if (event.fromExtension) resolve(event.compactionEntry.id);
 	});
 	const offFail = pi.on("session_compact_failed", (event) => {
-		reject(new Error(event.errorMessage ?? "handoff compaction failed"));
+		// The handoff cut is extension-authored. A threshold/overflow compaction failure
+		// during the wait must not reject the requested handoff.
+		if (event.fromExtension) reject(new Error(event.errorMessage ?? "handoff compaction failed"));
 	});
 	return { done, dispose: () => { offOk(); offFail(); } };
 }
