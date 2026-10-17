@@ -12,7 +12,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isHandoffEligible } from "./handoff/eligibility.js";
 import { HANDOFF_REQUIRED_STATUS } from "./handoff/copy.js";
 import { buildReadonlyBoundaryPromotionNotification } from "./notifications.js";
-import type { SchematicState } from "./state.js";
+import { newRequestedHandoff, type SchematicState } from "./state.js";
 import { STATUS_KEY_HANDOFF } from "./tui.js";
 
 /** Can the queued human-set topic boundary be promoted to a handoff bypass right now? */
@@ -34,13 +34,8 @@ export function discardNonHumanBoundary(state: SchematicState): boolean {
 
 /** Create pendingRequestedHandoff from the queued topic boundary and notify the user. */
 export function promoteBoundary(state: SchematicState, ctx: ExtensionContext): void {
-	state.pendingRequestedHandoff = {
-		toolCalled: false,
-		enforcementAttempts: 0,
-		eligibleNudgeDelivered: false,
-		// A topic boundary carries no human direction, so the model must supply the instruction.
-		nextInstruction: null,
-	};
+	// A topic boundary carries no human direction, so the model must supply the instruction.
+	state.pendingRequestedHandoff = newRequestedHandoff(null);
 	if (ctx.hasUI) {
 		if (ctx.ui.theme) {
 			ctx.ui.setStatus(

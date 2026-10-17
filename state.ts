@@ -26,6 +26,22 @@ export interface StagedHandoff {
 	discarded: number;
 }
 
+interface RequestedHandoff {
+	/** True only after the current session has actually called the handoff tool. */
+	toolCalled: boolean;
+	/** Settled agent runs counted while the handoff is still owed. */
+	enforcementAttempts: number;
+	/** True once the context hook injected the eligible required-handoff nudge in the current run. */
+	eligibleNudgeDelivered: boolean;
+	/** Human `/handoff <direction>` instruction, or null when the model must supply one. */
+	nextInstruction: string | null;
+}
+
+/** A required handoff request that has not been called, counted or nudged yet. */
+export function newRequestedHandoff(nextInstruction: string | null): RequestedHandoff {
+	return { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction };
+}
+
 export interface SchematicState {
 	/** Compact notebook pages keyed by kebab-case name */
 	notebookPages: Map<string, string>;
@@ -84,16 +100,7 @@ export interface SchematicState {
 	 * Required handoff request that stays alive until a handoff cut is confirmed on
 	 * the branch, is explicitly reset, or ages out via watchdog enforcement.
 	 */
-	pendingRequestedHandoff: {
-		/** True only after the current session has actually called the handoff tool. */
-		toolCalled: boolean;
-		/** Settled agent runs counted while the handoff is still owed. */
-		enforcementAttempts: number;
-		/** True once the context hook injected the eligible required-handoff nudge in the current run. */
-		eligibleNudgeDelivered: boolean;
-		/** Human `/handoff <direction>` instruction, or null when the model must supply one. */
-		nextInstruction: string | null;
-	} | null;
+	pendingRequestedHandoff: RequestedHandoff | null;
 
 	/** Boot-time Model Groups validation snapshot used by /model-groups. */
 	modelGroups: {

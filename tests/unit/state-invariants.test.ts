@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import * as fc from "fast-check";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
-import { createState, resetState, abortAndClearChildSessions, invalidateHandoffState } from "../../state.js";
+import { createState, resetState, abortAndClearChildSessions, invalidateHandoffState, newRequestedHandoff } from "../../state.js";
 import type { SchematicState } from "../../state.js";
 import {
 	setActiveNotebookTopic,
@@ -394,6 +394,15 @@ test("reset clears a staged handoff and the refusals, keeping the refusal map id
 	assert.equal(state.handoffFailedInRun, false);
 	assert.equal(state.handoffRefusals.size, 0);
 	assert.equal(state.handoffRefusals, refusals);
+});
+
+test("a new requested handoff starts uncalled, uncounted and unnudged with the given instruction", () => {
+	assert.deepEqual(newRequestedHandoff("ship the release notes"), {
+		toolCalled: false,
+		enforcementAttempts: 0,
+		eligibleNudgeDelivered: false,
+		nextInstruction: "ship the release notes",
+	});
 });
 
 test("invalidateHandoffState clears the staged handoff, the refusals and the pending request", () => {

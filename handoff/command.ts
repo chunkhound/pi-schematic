@@ -14,7 +14,7 @@ import {
 	READONLY_HANDOFF_EXCEPTION_NOTIFICATION,
 	buildReadonlyHandoffCommandNotice,
 } from "../notifications.js";
-import type { SchematicState } from "../state.js";
+import { newRequestedHandoff, type SchematicState } from "../state.js";
 import { STATUS_KEY_HANDOFF } from "../tui.js";
 
 export function registerHandoffCommand(pi: ExtensionAPI, state: SchematicState): void {
@@ -31,12 +31,7 @@ export function registerHandoffCommand(pi: ExtensionAPI, state: SchematicState):
 			}
 
 			if (state.stagedHandoff) throw new Error(HANDOFF_COMMAND_BUSY);
-			state.pendingRequestedHandoff = {
-				toolCalled: false,
-				enforcementAttempts: 0,
-				eligibleNudgeDelivered: false,
-				nextInstruction: direction,
-			};
+			state.pendingRequestedHandoff = newRequestedHandoff(direction);
 
 			if (ctx.hasUI && state.readonlyEnabled) {
 				ctx.ui.notify(
