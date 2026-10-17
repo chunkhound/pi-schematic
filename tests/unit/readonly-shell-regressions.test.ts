@@ -1425,6 +1425,41 @@ test("heredoc expansion blocks name the failing expansion candidate", () => {
 	assert.equal(prefixBlocked.ok, false);
 	assert.match(prefixBlocked.reason, /assignment-prefix expansion/);
 });
+
+test("an explicit PWD assignment in a heredoc expansion is classified", () => {
+	// $PWD must resolve from the candidate's variable map before falling back to the tracked cwd.
+	// An explicit PWD assignment bypasses the cwd tracker, so the classifier must see it.
+	const cwd = shellPath(TEMP_DIR);
+	const temp = classifierQuote(cwd);
+	const outside = classifierQuote(path.join(path.parse(TEMP_DIR).root, "readonly-heredoc-pwd-outside"));
+	// Parent-assigned PWD outside: the classifier must block the outside path.
+	const parentPwd = classifyBashCommand(`PWD=${outside}; bash <<EOF\ntouch "$PWD/probe"\nEOF`, cwd);
+	assert.equal(parentPwd.ok, false, "parent-assigned PWD outside must block");
+	// Prefix-assigned PWD outside: the prefix candidate sees PWD=/outside and blocks.
+	const prefixPwd = classifyBashCommand(`PWD=${outside} bash <<EOF\ntouch "$PWD/probe"\nEOF`, cwd);
+	assert.equal(prefixPwd.ok, false, "prefix-assigned PWD outside must block");
+	assert.match(prefixPwd.reason, /assignment-prefix expansion/, "prefix candidate should be named in the block reason");
+	// Positive control: PWD inside temp stays allowed.
+	const insidePwd = classifyBashCommand(`PWD=${temp}; bash <<EOF\ntouch "$PWD/ok"\nEOF`, cwd);
+	assert.equal(insidePwd.ok, true, "PWD inside temp must allow");
+});
+
+test("a directory change replaces an explicit PWD assignment", () => {
+	// Bash rewrites PWD on every cd. The old in-temp assignment must not hide the new outside cwd.
+	const cwd = shellPath(TEMP_DIR);
+	const temp = classifierQuote(cwd);
+	const outside = classifierQuote(shellPath(path.parse(TEMP_DIR).root));
+	const unquoted = `PWD=${temp}; cd ${outside}; bash <<EOF\ntouch "$PWD/blocked"\nEOF`;
+	assert.equal(classifyBashCommand(unquoted, cwd).ok, false, unquoted);
+	const direct = `PWD=${temp}; cd ${outside}; touch "$PWD/blocked"`;
+	assert.equal(classifyBashCommand(direct, cwd).ok, false, direct);
+	// eval may move the shell to an unknown cwd; that branch must not keep the stale PWD.
+	const uncertain = `PWD=${temp}; eval "cd ${outside}"; bash <<EOF\ntouch "$PWD/blocked"\nEOF`;
+	assert.equal(classifyBashCommand(uncertain, cwd).ok, false, uncertain);
+	const inside = `PWD=${temp}; cd ${temp}; bash <<EOF\ntouch "$PWD/ok"\nEOF`;
+	assert.equal(classifyBashCommand(inside, cwd).ok, true, inside);
+});
+
 test("tracked command definitions fail closed even without a subsequent write", () => {
 	for (const name of trackedShellNames) {
 		for (const definition of [

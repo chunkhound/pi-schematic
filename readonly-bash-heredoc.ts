@@ -153,7 +153,8 @@ function expandHeredocText(text: string, vars: ReadonlyMap<string, string>, cwd:
 
 function heredocVariableValue(reference: string, vars: ReadonlyMap<string, string>, cwd: string): string | undefined {
 	const name = reference.replace(/^\$\{?|\}$/g, "");
-	return name === "PWD" ? cwd : vars.get(name) ?? process.env[name];
+	if (name === "PWD") return vars.get(name) ?? cwd;
+	return vars.get(name) ?? process.env[name];
 }
 
 function startHeredocHeader(line: string, state: HeredocState): boolean {

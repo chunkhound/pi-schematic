@@ -124,9 +124,15 @@ function expandCommandWordAt(segment: string, index: number | null, vars: Readon
 	return { segment: segment.slice(0, start) + value + segment.slice(start + word[0].length), resolved: true };
 }
 
+/** Bash rewrites `PWD` on every successful directory change. Keep the map in sync so an earlier
+ * `PWD=…` assignment cannot outlive the `cd` and send `$PWD` expansion to a stale directory. */
+function withTrackedCwd(state: ShellState, cwd: string, stack: string[] = state.stack): ShellState {
+	return { ...state, cwd, stack, vars: new Map(state.vars).set("PWD", cwd) };
+}
+
 /** A dynamic command word may move the shell; fork UNKNOWN_CWD so later paths fail closed. */
 function unknownCwdOutcome(state: ShellState): ShellOutcome {
-	const unknown = { ...state, cwd: UNKNOWN_CWD };
+	const unknown = withTrackedCwd(state, UNKNOWN_CWD);
 	return { success: [state, unknown], failure: [state, unknown] };
 }
 
@@ -145,7 +151,7 @@ export function applyDirectoryChange(segment: string, state: ShellState): ShellO
 	const reachable = resolved.traversalOk && (synthetic || directoryAccessible(cwd));
 	// Runtime creation/cd can fail; only && may discard the caller-cwd branch.
 	const failure = cwd === UNKNOWN_CWD || synthetic || !reachable || redirectMayAbortCommand(segment) ? [state] : [];
-	return { success: [{ ...state, cwd, stack }], failure };
+	return { success: [withTrackedCwd(state, cwd, stack)], failure };
 }
 
 /** Keep the real state, plus an unknown-cwd branch when the segment may move the shell. */
@@ -158,7 +164,7 @@ export function nonDirectoryChangeOutcome(segment: string, state: ShellState): S
 	const deferredUncertain = getTrapHandlerCode(segment) !== null
 		|| getAliasDefinitionValues(segment).some(deferredCodeMayChangeDirectory);
 	const uncertain = lead && (CWD_UNCERTAIN_BUILTINS.has(normalizedCommand(lead)) || compoundChangesDirectory(segment) || deferredUncertain)
-		? [{ ...state, cwd: UNKNOWN_CWD }] : [];
+		? [withTrackedCwd(state, UNKNOWN_CWD)] : [];
 	// A failing eval/source may also have moved the shell, so its `||` branch must
 	// classify at UNKNOWN_CWD too; keeping only the caller state let
 	// `eval "cd /etc; false" || touch x` write outside temp.
