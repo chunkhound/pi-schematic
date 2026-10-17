@@ -82,6 +82,24 @@ test("composed driver plus compiled body executes as real JS", async () => {
 
 // ── explicit compile behavior ─────────────────────────────────────
 
+test("adds ASI barriers to statement-start calls in lists and branches", async () => {
+	const source = `return defineWorkflow((workflow) => {\n  const r = workflow.run("a")\n  workflow.run("b")\n  switch (r) { case 1: workflow.run("c")\n  }\n  if (r) workflow.run("d")\n  else workflow.run("e")\n});\n`;
+	const code = compileWorkflow(source).code;
+	assert.match(code, /const r = \(await workflow\.run\("a"\)\)\n  ;\(await workflow\.run\("b"\)\)/);
+	assert.match(code, /case 1: ;\(await workflow\.run\("c"\)\)/);
+	assert.match(code, /if \(r\) \(await workflow\.run\("d"\)\)\n  else \(await workflow\.run\("e"\)\)/);
+	const calls: string[] = [];
+	const invoke = new Function("workflow", composeWorkflow(code)) as (w: { run: (s: string) => Promise<string> }) => Promise<unknown>;
+	await invoke({ run: async (s) => { calls.push(s); return s; } });
+	assert.deepEqual(calls, ["a", "b", "d"]);
+});
+
+test("rejects defineWorkflow references except the entry point and property keys", () => {
+	rejects("return defineWorkflow((workflow) => { const d = defineWorkflow; });\n", /defineWorkflow may only/);
+	rejects("return defineWorkflow((workflow) => { consume(defineWorkflow); });\n", /defineWorkflow may only/);
+	assert.doesNotThrow(() => compileWorkflow("return defineWorkflow((workflow) => ({ defineWorkflow: 1 }));\n"));
+});
+
 test("wraps direct calls and marks the workflow lambda async", () => {
 	const source = 'return defineWorkflow((workflow) => {\n  const r = workflow.run("x");\n  workflow.checkpoint(null);\n  return r;\n});\n';
 	const out = compileWorkflow(source).code;
@@ -118,7 +136,7 @@ test("accepts a computed checkpoint name and still reports the run as bounded", 
 	const source = 'return defineWorkflow((workflow) => {\n  workflow["checkpoint"](null);\n});\n';
 	const compiled = compileWorkflow(source);
 	assert.equal(compiled.hasCheckpoint, true, "a computed checkpoint marks the run bounded");
-	assert.equal(compiled.code, 'return defineWorkflow(async (workflow) => {\n  (await workflow["checkpoint"](null));\n});\n');
+	assert.equal(compiled.code, 'return defineWorkflow(async (workflow) => {\n  ;(await workflow["checkpoint"](null));\n});\n');
 });
 
 test("rejects a checkpoint inside a nested scope before the presence check", () => {
@@ -145,7 +163,7 @@ test("wraps computed string keys and optional chains", () => {
 	const source = 'return defineWorkflow((workflow) => {\n  workflow["a"]();\n  workflow?.b();\n  workflow.c?.();\n  workflow.checkpoint(null);\n});\n';
 	assert.equal(
 		compileWorkflow(source).code,
-		'return defineWorkflow(async (workflow) => {\n  (await workflow["a"]());\n  (await workflow?.b());\n  (await workflow.c?.());\n  (await workflow.checkpoint(null));\n});\n',
+		'return defineWorkflow(async (workflow) => {\n  ;(await workflow["a"]());\n  ;(await workflow?.b());\n  ;(await workflow.c?.());\n  ;(await workflow.checkpoint(null));\n});\n',
 	);
 });
 
@@ -334,6 +352,43 @@ test("rejects any workflow binding other than the workflow parameter", () => {
 	rejects(wrapBody("class workflow {}"));
 	rejects(wrapBody("const f = (workflow) => workflow;"));
 	rejects("const workflow = 1;\nreturn defineWorkflow((workflow) => {});\n");
+});
+
+test("rejects workflow bindings in every remaining binding position, including nested defineWorkflow", () => {
+	rejects(wrapBody("try {} catch (workflow) {}"));
+	rejects(wrapBody("const [workflow] = [];"));
+	rejects(wrapBody("const { workflow } = x;"));
+	rejects(wrapBody("function f(workflow) {}"));
+	rejects(wrapBody("return defineWorkflow((workflow) => { return defineWorkflow((w) => {}); });"));
+});
+
+test("labels and class members named workflow compile (acorn-walk never visits them as references)", () => {
+	const source = wrapBody(
+		"workflow: for (;;) { break workflow; }\n" +
+		"class C { workflow() {} static workflow = 1; }\n" +
+		"workflow.checkpoint(null);",
+	);
+	assert.doesNotThrow(() => compileWorkflow(source));
+});
+
+test("compiled calls execute correctly at statement boundaries (ASI hazard coverage)", async () => {
+	// WHY: ASI hazards occur when a call starts a statement after an unsemicolon'd call.
+	// Table-driven execution test verifies the invariant ("compiled output executes with
+	// author-intended sequencing") instead of the rewrite shape.
+	const cases = [
+		{ body: "workflow.run('a')\nworkflow.run('b')", expected: ["a", "b"] },
+		{ body: "const x = workflow.run('a')\nworkflow.run('b')", expected: ["a", "b"] },
+		{ body: "if (true) workflow.run('a')\nelse workflow.run('b')", expected: ["a"] },
+		{ body: "switch (1) { case 1: workflow.run('a')\nbreak; }", expected: ["a"] },
+	];
+	for (const { body, expected } of cases) {
+		const source = `return defineWorkflow((workflow) => {\n${body}\n});\n`;
+		const code = compileWorkflow(source).code;
+		const calls: string[] = [];
+		const invoke = new Function("workflow", composeWorkflow(code)) as (w: { run: (s: string) => Promise<string> }) => Promise<unknown>;
+		await invoke({ run: async (s) => { calls.push(s); return s; } });
+		assert.deepEqual(calls, expected, `execution mismatch for:\n${body}`);
+	}
 });
 
 // ── fast-check invariants ─────────────────────────────────────────

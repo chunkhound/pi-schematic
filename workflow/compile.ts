@@ -21,14 +21,11 @@ type Ast = { type: string; start: number; end: number; loc?: { start: { line: nu
 const FUNCTION_TYPES = new Set(["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"]);
 
 // Scopes where a wrapped `await` would silently change a callback/getter/field contract.
+// Class bodies, members and static blocks always sit under a ClassDeclaration/ClassExpression.
 const FORBIDDEN_TYPES = new Set([
 	...FUNCTION_TYPES,
 	"ClassDeclaration",
 	"ClassExpression",
-	"ClassBody",
-	"MethodDefinition",
-	"PropertyDefinition",
-	"StaticBlock",
 ]);
 
 function fail(node: Ast, message: string): never {
@@ -101,12 +98,6 @@ function isDirectWorkflowCall(node: Ast | undefined): boolean {
 	return node?.type === "CallExpression" && isMemberOnWorkflow(node.callee);
 }
 
-/** The `workflow.<member>` name a member expression names, or null when it is not the workflow object. */
-function workflowMemberName(member: Ast | undefined | null): string | null {
-	if (!member || !isMemberOnWorkflow(member)) return null;
-	return staticMemberKey(member.property, member.computed);
-}
-
 // Optional chains wrap the call; `await workflow?.run()` awaits the ChainExpression.
 function isAwaitedDirectWorkflowCall(node: Ast | undefined): boolean {
 	return isDirectWorkflowCall(node) || (node?.type === "ChainExpression" && isDirectWorkflowCall(node.expression));
@@ -122,12 +113,11 @@ function inForbiddenContext(ancestors: Ast[]): boolean {
 function isNonReference(node: Ast, parent: Ast | undefined): boolean {
 	if (!parent) return false;
 	if (parent.type === "MemberExpression") return parent.property === node && !parent.computed;
-	if (["Property", "MethodDefinition", "PropertyDefinition"].includes(parent.type)) {
+	if (parent.type === "Property") {
 		// Shorthand `{ workflow }` is also a value read — a capture, not a key.
 		if (parent.shorthand && parent.value === node) return false;
 		return parent.key === node && !parent.computed;
 	}
-	if (parent.type === "LabeledStatement") return parent.label === node;
 	if (parent.type === "BreakStatement" || parent.type === "ContinueStatement") return parent.label === node;
 	return false;
 }
@@ -171,31 +161,10 @@ function declaresCheckpoint(lambda: Ast): boolean {
 	let found = false;
 	walk.simple<any>(lambda as any, {
 		CallExpression(node: Ast) {
-			if (isDirectWorkflowCall(node) && workflowMemberName(node.callee) === "checkpoint") found = true;
+			if (isDirectWorkflowCall(node) && staticMemberKey(node.callee.property, node.callee.computed) === "checkpoint") found = true;
 		},
 	});
 	return found;
-}
-
-function patternIdentifiers(node: Ast | null | undefined): Ast[] {
-	if (!node) return [];
-	if (node.type === "Identifier") return [node];
-	if (node.type === "ObjectPattern")
-		return node.properties.flatMap((p: Ast) => (p.type === "RestElement" ? patternIdentifiers(p.argument) : patternIdentifiers(p.value)));
-	if (node.type === "ArrayPattern") return node.elements.flatMap((el: Ast | null) => patternIdentifiers(el));
-	if (node.type === "AssignmentPattern") return patternIdentifiers(node.left);
-	if (node.type === "RestElement") return patternIdentifiers(node.argument);
-	return [];
-}
-
-function bindingIdentifiers(node: Ast): Ast[] {
-	if (node.type === "VariableDeclarator") return patternIdentifiers(node.id);
-	if (node.type === "FunctionDeclaration" || node.type === "FunctionExpression")
-		return [...(node.id ? [node.id] : []), ...node.params.flatMap(patternIdentifiers)];
-	if (node.type === "ArrowFunctionExpression") return node.params.flatMap(patternIdentifiers);
-	if (node.type === "ClassDeclaration" || node.type === "ClassExpression") return node.id ? [node.id] : [];
-	if (node.type === "CatchClause") return patternIdentifiers(node.param);
-	return [];
 }
 
 // The sandbox puts `workflow` on the global object, so `globalThis.workflow.run(...)` reaches the
@@ -280,12 +249,13 @@ function validateDestructuringKeys(program: Ast): void {
 	});
 }
 
-// The workflow lambda's `workflow` param is the only legal binding named `workflow` (docs/workflows.md, File and entry point).
-function validateBindings(program: Ast, allowedParam: Ast): void {
-	walk.fullAncestor<any>(program as any, (node: Ast) => {
-		for (const id of bindingIdentifiers(node)) {
-			if (id.name === "workflow" && id !== allowedParam) fail(id, "illegal workflow binding");
-		}
+function validateDefineWorkflowReferences(program: Ast, statement: Ast): void {
+	walk.fullAncestor<any>(program as any, (node: Ast, _state: unknown, ancestors: Ast[]) => {
+		if (node.type !== "Identifier" || node.name !== "defineWorkflow") return;
+		const parent = ancestors[ancestors.length - 2];
+		if (parent?.type === "CallExpression" && parent.callee === node && parent === statement.argument) return;
+		if (isNonReference(node, parent)) return;
+		fail(node, "defineWorkflow may only be used as the top-level entry point");
 	});
 }
 
@@ -305,16 +275,12 @@ function insertAwaits(source: string, lambda: Ast): string {
 	const s = new MagicString(source);
 	let wrapped = 0;
 	walk.fullAncestor<any>(lambda as any, (node: Ast, _state: unknown, ancestors: Ast[]) => {
-		const isWorkflowCall = isDirectWorkflowCall(node) || (node?.type === "ChainExpression" && isDirectWorkflowCall(node.expression));
-		if (!isWorkflowCall || isAwaitedCall(node, ancestors)) return;
-		// `ancestors` includes the current node — acorn-walk pushes it before its
-		// callback and pops after — so `current` is the node itself, not its parent.
-		// Skip the ChainExpression wrapper: its inner direct workflow call is visited
-		// and wrapped on its own visit, so wrapping the wrapper too would nest
-		// `(await (await workflow?.run()))`. Awaited calls are already skipped above.
-		const current = ancestors[ancestors.length - 1];
-		if (current?.type === "ChainExpression" && isDirectWorkflowCall(current.expression)) return;
-		s.appendLeft(node.start, "(await ");
+		// A ChainExpression and its inner direct call share start/end, so wrapping only the inner call suffices.
+		if (!isDirectWorkflowCall(node) || isAwaitedCall(node, ancestors)) return;
+		const stmtIndex = ancestors.map((a) => a.type).lastIndexOf("ExpressionStatement");
+		const stmt = ancestors[stmtIndex];
+		const inList = stmt && ["BlockStatement", "Program", "SwitchCase"].includes(ancestors[stmtIndex - 1]?.type);
+		s.appendLeft(node.start, stmt?.start === node.start && inList ? ";(await " : "(await ");
 		s.appendRight(node.end, ")");
 		wrapped += 1;
 	});
@@ -336,7 +302,7 @@ export function compileWorkflow(source: string): CompiledWorkflow {
 	const program = parseProgram(source);
 	const statement = findWorkflowStatement(program);
 	const lambda = extractLambda(statement);
-	validateBindings(program, lambda.params[0]);
+	validateDefineWorkflowReferences(program, statement);
 	validateGlobalObject(program);
 	validateDestructuringKeys(program);
 	validateLambda(lambda, lambda.params[0]);

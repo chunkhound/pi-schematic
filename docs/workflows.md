@@ -96,6 +96,7 @@ The compiler rejects a `workflow` reference that is not a direct member call. It
 - `eval` and `Function`, which could hide a `workflow` call from the checks;
 - `Reflect`, which reads a member by a runtime string and reaches `constructor` the same way;
 - any binding named `workflow` other than the workflow arrow's parameter;
+- any `defineWorkflow` reference other than the single top-level entry call (an alias, a bare reference, or a nested entry point);
 - `workflow.*` inside nested functions, methods, getters, setters, parameter defaults, class fields, static blocks, and constructors.
 
 Calls reach the host only as `workflow.<member>(...)` or `workflow['<member>'](...)`, optionally with `?.`. A constant template key (`` workflow[`run`](...) ``) is rejected too: the rewrite recognizes only dot and string-literal forms.
