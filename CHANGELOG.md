@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking Changes
 
 - **No compaction events for a handoff cut** — `session_before_compact` and `session_compact` no longer fire for a handoff; schematic no longer handles `session_before_compact`. Other extensions find the cut as a `compaction` entry whose `details.handoffId` is set.
-- **`handoff` must be the only tool call in its message** — a `handoff` that shares an assistant message with other tool calls is refused and stages nothing; the other calls go to their own handlers, and the refusal tells the model to call `handoff` alone in its next message. Previously the `handoff` ran and the batch did not end the turn. When a message holds only `handoff` calls, every call after the first is refused.
+- **`handoff` must be the only tool call in its message** — a `handoff` that shares an assistant message with other tool calls is refused and stages nothing; the other calls go to their own handlers, and the refusal tells the model to call `handoff` alone in its next message. Previously the `handoff` ran, its cut aborted the run, and the calls after it in the message were skipped. When a message holds only `handoff` calls, every call after the first is refused.
 - **Successor recovery is removed** — a session written by an earlier version whose successor was lost after its cut is not repaired, and the user prompts again.
 
 ### Changed
