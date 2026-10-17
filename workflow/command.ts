@@ -1,11 +1,12 @@
 // WHY: `/workflow` is the single blocking entry point for the workflow engine. This
 // module owns the TUI budget dialog, compile/execute orchestration, input
-// suppression, cancellation, and the two context-shift deps (`new`, `handoff`).
+// suppression, the session-boundary guard, cancellation, and the two context-shift
+// deps (`new`, `handoff`).
 // A replacement session invalidates the captured pi/state/deps, so every runtime
 // reference is read through the live bundle and rebound from the coordinator, and
 // all user-visible output goes through ctx.ui — never console.*.
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isKeyRelease, isKeyRepeat, matchesKey } from "@earendil-works/pi-tui";
 import type { CodemodeResult, CodemodeSandbox } from "@earendil-works/pi-codemode";
 import type { SchematicState } from "../state.js";
@@ -26,6 +27,7 @@ import { WORKFLOW_SUMMARY_ENTRY_TYPE, buildWorkflowSummary } from "./summary.js"
 import type { WorkflowHost, WorkflowHostDeps, WorkflowProgress, WorkflowSandboxFactory, ReservedReason, ExitOutcome, ExitRecord, WorkflowErrorPhase } from "./types.js";
 import { WORKFLOW_ERROR_ENTRY_TYPE } from "./types.js";
 import { parseWorkflowArgs, listWorkflows, readWorkflow, resolveWorkflowPath } from "./file.js";
+import { registeredState } from "../process-state.js";
 
 type CancelKey = "escape" | "ctrl+c";
 const CANCEL_KEYS: readonly CancelKey[] = ["escape", "ctrl+c"];
@@ -58,6 +60,7 @@ export function registerWorkflowCommand(pi: ExtensionAPI, state: SchematicState,
 	pi.registerFlag("workflow-cost", { description: "Soft cost target in USD: stops at the next checkpoint, so the final cost can run over", type: "string" });
 	pi.registerFlag("workflow-time", { description: "Soft wall-clock target in milliseconds, e.g. 3600000 for 1 hour: stops at the next checkpoint, so the final time can run over", type: "string" });
 	publishRuntimeOnSessionStart(pi, state, deps);
+	registerSessionGuard(pi, state);
 	pi.registerCommand("workflow", {
 		description: "Run a workflow: /workflow <workflow> [args]. The workflow runs in a codemode sandbox and owns control flow and the exit.",
 		handler: async (raw, ctx) => runWorkflow(pi, state, deps, raw, ctx),
@@ -238,8 +241,8 @@ function hostDeps(bundle: RunBundle, ctl: RunCtl, onEffect: WorkflowHostDeps["on
 		getCtx: () => ctl.ctx,
 		setReadonly: (enabled) => bundle.deps.setReadonly(enabled),
 		prepareRunFrontmatter: (text, ctx) => bundle.deps.prepareRunFrontmatter(text, ctx),
-		handoff: (direction) => performHandoff(bundle, ctl, direction),
-		newSession: () => performNewSession(bundle, ctl, rebindHooksFor(ctl)),
+		handoff: (direction) => admitted("compact", () => performHandoff(bundle, ctl, direction)),
+		newSession: () => admitted("new", () => performNewSession(bundle, ctl, rebindHooksFor(ctl))),
 		onProgress: (progress) => publishProgress(ctl, bundle, progress),
 		onEffect,
 		shellRun: bundle.deps.shellRun,
@@ -541,6 +544,83 @@ async function closeSandbox(sandbox: CodemodeSandbox, pi: ExtensionAPI, ctx: Ext
 	}
 }
 
+/** The only session changes a workflow can own: `workflow.new` starts a new session (pi's
+ * `reason: "new"` switch), `workflow.handoff` compacts. Admission is this token, never a
+ * blocklist of commands, so a fork, a tree move, or a `/resume` has no grant and always cancels. */
+type AdmittedChange = "new" | "compact";
+
+/** pi's own capacity compactions: blocking one only defers the same shift into the run's next
+ * turn and can fail it outright (overflow recovery). Any other reason replaced context on
+ * request — `/compact`, RPC, or the handoff tool — so it is a boundary the run owns. */
+const HOST_MANAGED_COMPACTIONS: readonly string[] = ["threshold", "overflow"];
+
+/** Notice text per switch reason, so the operator learns which command to retry. */
+const SWITCH_LABELS: Record<"new" | "resume", string> = { new: "start a new session", resume: "switch session" };
+
+/**
+ * Session boundaries cancel while a run owns the session. pi dispatches `/new`, `/resume`,
+ * `/fork`, `/tree` and `/compact` before the `input` hook, so suppression alone cannot exclude
+ * them and a lifecycle command can replace the session under a live run. The guard answers each
+ * boundary pi offers; rule and residual windows: docs/workflows.md (Constraints, Host gaps).
+ */
+function registerSessionGuard(pi: ExtensionAPI, state: SchematicState): void {
+	pi.on("session_before_switch", (event, ctx) => {
+		// Only pi's `new` switch can be the workflow's own; a `resume` never is.
+		return rejectBoundary(state, ctx, event.reason === "new" ? "new" : null, SWITCH_LABELS[event.reason]);
+	});
+	pi.on("session_before_fork", (_event, ctx) => rejectBoundary(state, ctx, null, "fork this session"));
+	pi.on("session_before_tree", (_event, ctx) => rejectBoundary(state, ctx, null, "move in the session tree"));
+	pi.on("session_before_compact", (event, ctx) =>
+		HOST_MANAGED_COMPACTIONS.includes(event.reason) ? undefined : rejectBoundary(state, ctx, "compact", "compact this session"));
+}
+
+/** Decide one boundary: pass when no run owns the session, or when this run asked for it.
+ * `state.inputSuppressed` is the run's own flag, raised with the `input` handler and cleared on
+ * release, so the guard follows the serial invariant instead of mirroring the reservation. */
+function rejectBoundary(state: SchematicState, ctx: ExtensionContext, kind: AdmittedChange | null, label: string): { cancel: true } | undefined {
+	if (!state.inputSuppressed) return undefined;
+	if (kind !== null && spendAdmission(kind)) return undefined;
+	warnOperator(ctx, `A workflow is running. Wait for it to finish, or press Escape or Ctrl+C twice to stop it, before you ${label}.`);
+	return { cancel: true };
+}
+
+/** Advisory only: pi reports a throwing `session_before_*` handler and lets the boundary
+ * through, so the cancel must stand even when the notice cannot be shown. Without a UI, the
+ * caller still gets pi's own cancellation (`{ cancelled: true }`, "Compaction cancelled"). */
+function warnOperator(ctx: ExtensionContext, message: string): void {
+	try {
+		if (ctx.hasUI) ctx.ui.notify(message, "warning");
+	} catch {
+		// The cancel is what the operator's safety depends on, and it already stands.
+	}
+}
+
+/** Admission slot. Process-global because module copies are not shared state: after
+ * `workflow.new` the run requests its next handoff through the replacement runtime, whose guard
+ * handler is a second copy of this module (jiti `moduleCache:false`, see process-state.ts). */
+const admissionSlot = registeredState<{ granted: AdmittedChange | null }>("pi-schematic.workflow-session-admission", () => ({ granted: null }));
+
+/** Hold one grant while the workflow asks pi for its own session change, so the guard admits
+ * exactly that change and cancels every other boundary until the grant is spent. Releasing on
+ * return means a change that never reached pi leaves no standing admission behind. */
+async function admitted<T>(kind: AdmittedChange, change: () => Promise<T>): Promise<T> {
+	const slot = admissionSlot;
+	slot.granted = kind;
+	try {
+		return await change();
+	} finally {
+		if (slot.granted === kind) slot.granted = null;
+	}
+}
+
+/** Spend the grant once, and only on the change it was held for. */
+function spendAdmission(kind: AdmittedChange): boolean {
+	const slot = admissionSlot;
+	if (slot.granted !== kind) return false;
+	slot.granted = null;
+	return true;
+}
+
 /**
  * Suppress non-extension input for the run. Also raises `state.inputSuppressed` so the
  * frontmatter `input` hook (registered at load, hence earlier in pi's dispatch order)
@@ -548,6 +628,7 @@ async function closeSandbox(sandbox: CodemodeSandbox, pi: ExtensionAPI, ctx: Ext
  * Takes the bundle so rebindRun sets the flag on the replacement's live state.
  *
  * Input exclusion is not atomic, including across `workflow.new`: see docs/workflows.md (Host gaps).
+ * {@link registerSessionGuard} covers the boundaries pi dispatches ahead of this hook.
  */
 function suppressInput(bundle: RunBundle): () => void {
 	// Capture the state: the unsubscribe that runs AFTER a rebind must clear the state
