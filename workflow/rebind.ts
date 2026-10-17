@@ -147,6 +147,9 @@ export function rebindRun<B extends RebindBundle>(bundle: B, ctl: RunCtl, next: 
 	// Rebind through the published registry: the session-scoped dep list lives there,
 	// so a new dep cannot silently keep the dead session's implementation.
 	bundle.deps = binding.rebindDeps(bundle.deps);
+	// The old branch is gone; drop its ids so long runs do not scan dead history forever.
+	const branch = next.sessionManager.getBranch?.() ?? [];
+	ctl.host?.pruneExclusions?.(new Set(branch.map((entry) => entry.id)));
 	// WHY: session_start reset readonlyEnabled to false on the shared state, so without this
 	// re-apply the replacement drops the posture and observers would see a stale readwrite state.
 	// Set it through the binding setter BEFORE onRebound republishes progress, so the refreshed

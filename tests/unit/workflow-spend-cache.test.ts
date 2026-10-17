@@ -131,3 +131,14 @@ test("the child ledger merges same-model children into one row with one call eac
 	const widget = host.metrics().spend.find((row) => row.key === "anthropic/widget");
 	assert.equal(widget?.calls, 2, "one call per child");
 });
+
+// WHY: workflow.new replaces the branch. Pruning keeps the exclusion set proportional to
+// the live branch, so an id that is gone no longer suppresses its spend.
+test("pruneExclusions keeps only ids still present in the branch", () => {
+	const env = createEnv();
+	env.branch.push(assistant("a1", "anthropic", "opus", 0.5), assistant("a2", "anthropic", "opus", 0.25));
+	const host = createWorkflowHost(env.deps);
+	close(cost(host), 0, "both entries start excluded as the pre-run branch");
+	host.pruneExclusions(new Set(["a2"]));
+	close(cost(host), 0.5, "the pruned id becomes live spend; the retained id stays excluded");
+});

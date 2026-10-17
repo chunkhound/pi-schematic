@@ -957,6 +957,15 @@ function disposeHost(deps: WorkflowHostDeps, state: HostState): void {
 	state.activeRun = null;
 }
 
+/** Drop exclusion ids that no longer exist in the current branch after a replacement.
+ * Baseline spend keeps its own map; only branch-scan claims are pruned. */
+function pruneExclusions(state: HostState, branchIds: ReadonlySet<string>): void {
+	const next = new Set([...state.excludedEntryIds].filter((id) => branchIds.has(id)));
+	if (next.size === state.excludedEntryIds.size) return;
+	state.excludedEntryIds = next;
+	bumpSpendRevision(state);
+}
+
 function buildHostInterface(deps: WorkflowHostDeps, state: HostState): WorkflowHost {
 	// Wire the child-usage sink here (not in createHostState) so rebinding installs
 	// the replacement's sink on the live deps.state, not a half-rebuilt host.
@@ -972,6 +981,7 @@ function buildHostInterface(deps: WorkflowHostDeps, state: HostState): WorkflowH
 		progress: () => currentProgress(deps, state),
 		metrics: () => buildMetrics(deps, state),
 		installedSink: state.installedSink,
+		pruneExclusions: (branchIds) => pruneExclusions(state, branchIds),
 		dispose: () => disposeHost(deps, state),
 		registry: state.registry,
 	};

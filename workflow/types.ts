@@ -394,6 +394,9 @@ export interface WorkflowHost {
 	readonly installedSink: ChildUsageSink | null;
 	/** Reject pending correlations and clean up; command parent calls this. */
 	dispose(): void;
+	/** Keep only branch identities that still exist after a session replacement, so
+	 * long runs do not accumulate dead entry ids across `workflow.new`. */
+	pruneExclusions(branchIds: ReadonlySet<string>): void;
 	registry: import("./run-registry.js").RunRegistry;
 }
 
