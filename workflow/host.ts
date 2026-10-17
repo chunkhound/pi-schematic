@@ -833,7 +833,7 @@ async function primeRunTurn(deps: WorkflowHostDeps, prepared: PreparedRun): Prom
 	return { marker: prepared.ctx.sessionManager.getLeafId(), restore };
 }
 
-async function settleRun(deps: WorkflowHostDeps, state: HostState, prepared: PreparedRun, marker: string | null): Promise<RunResult> {
+async function settleRun(deps: WorkflowHostDeps, state: HostState, prepared: PreparedRun, marker: string | null): Promise<Omit<RunResult, "state">> {
 	const match = await sendCorrelated(deps, state, prepared, marker);
 	state.settledRuns += 1;
 	// One settled run may contain many assistant messages (the tool-use loop); each is a model turn.
@@ -843,7 +843,6 @@ async function settleRun(deps: WorkflowHostDeps, state: HostState, prepared: Pre
 		fromEntryId: match.fromEntryId,
 		toEntryId: match.toEntryId,
 		usage: collectUsage(match.branch),
-		state: buildDigest(deps, state),
 		model: lastAssistantModel(match.branch),
 	};
 }
@@ -871,7 +870,7 @@ async function handleRun(deps: WorkflowHostDeps, state: HostState, args: unknown
 async function runWithStructuredOutput(deps: WorkflowHostDeps, state: HostState, prepared: PreparedRun, marker: string | null, restore: () => Promise<void>): Promise<RunResult> {
 	let armed: ArmedStructuredOutput | null = null;
 	const release = (): Promise<void> => releaseStructuredRun(armed, restore);
-	let result: RunResult;
+	let result: Omit<RunResult, "state">;
 	try {
 		// Arm inside the try: a registration failure (e.g. a malformed output.schema) must still
 		// run the override restore, or this run's model/thinking leak into the next turn.
@@ -886,7 +885,10 @@ async function runWithStructuredOutput(deps: WorkflowHostDeps, state: HostState,
 		throw await joinRestoreFailure(error, release);
 	}
 	await release();
-	return armed ? { ...result, output: armed.value() } : result;
+	// Snapshot after release: the result's active tools must match the next workflow.state(),
+	// which no longer sees the run-scoped output tool.
+	const settledState = buildDigest(deps, state);
+	return armed ? { ...result, state: settledState, output: armed.value() } : { ...result, state: settledState };
 }
 
 /** Release the output tool, then restore overrides; the restore runs even when the release throws. */

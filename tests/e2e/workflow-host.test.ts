@@ -407,6 +407,10 @@ describe("workflow host E2E — structured output", () => {
 		const entries = await runWorkflowArgs(h, ECHO, `{"handle":"run","prompt":"hello","options":${options}}`);
 		assert.deepEqual(exitOf(entries).metadata.result.output, { command: "npm test" });
 		assert.ok(!(await readActiveTools(h)).includes("workflow_output"), "the tool is disarmed after the run");
+		assert.ok(
+			!exitOf(entries).metadata.result.state.activeTools.includes("workflow_output"),
+			"the returned digest is post-release and matches the next workflow.state()",
+		);
 	}));
 
 	it("accepts any JSON object when no schema is given", async () => withWorkflowChild(async (h) => {
