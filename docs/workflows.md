@@ -328,9 +328,9 @@ The interactive transcript draws the summary as a bordered card. Collapsed, it s
 While a run is live in the interactive TUI, the workflow replaces the built-in footer with one unified bar in two zones:
 
 - **Run zone:** `🛠️ <name>`, checkpoints as `🚩 <n>` or `∞ unbounded` when no checkpoint is declared, elapsed as `⏱ <m:ss>` (`h:mm:ss` from one hour), cost as `$<n>.<nn>`, each paired with its target when one is set, plus a warning pill `⏸ <reason> — stopping at next checkpoint` while a stop is pending. The `currentEffect` cell (the shell command or the run prompt) also lives here.
-- **Conversation zone:** `ctx <n>%`, topic, readonly, notebook count.
+- **Conversation zone:** `ctx <n>%`, topic, readonly, notebook count, then other extensions' status cells (one line each).
 - Elision drops one cell at a time, least important first:
-  1. conversation cells: notebook, readonly, topic, then `ctx`;
+  1. conversation cells: other extensions' statuses, notebook, readonly, topic, then `ctx`;
   2. run cells: the `currentEffect` cell, cost, elapsed, then checkpoints;
   3. the run name. With a stop pill on the bar, the name drops out first. Without one, the name shrinks with `…`.
   The stop pill shrinks last.

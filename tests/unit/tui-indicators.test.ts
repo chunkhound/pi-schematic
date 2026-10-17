@@ -93,6 +93,24 @@ test("updateIndicators preserves overflow context percentages", () => {
 	assert.ok(record.widgets.get("pi-schematic-warning")?.[0]?.includes("125%"));
 });
 
+test("updateIndicators skips duplicate status and widget writes", () => {
+	const state = createState();
+	const record: TUIRecord = { statuses: new Map(), widgets: new Map() };
+	const ctx = makeTUICtx({ percent: 85, record });
+	let statuses = 0;
+	let widgets = 0;
+	const setStatus = ctx.ui.setStatus;
+	const setWidget = ctx.ui.setWidget;
+	ctx.ui.setStatus = (...args: [string, string | undefined]) => { statuses++; setStatus(...args); };
+	ctx.ui.setWidget = (...args: [string, string[] | undefined]) => { widgets++; setWidget(...args); };
+	updateIndicators(ctx, state);
+	const first = [statuses, widgets];
+	assert.ok(first[0] > 0, "the first refresh writes statuses");
+	assert.equal(first[1], 1, "the first refresh writes the warning widget");
+	updateIndicators(ctx, state);
+	assert.deepEqual([statuses, widgets], first, "a repeated refresh writes nothing");
+});
+
 test("updateIndicators no-ops when ctx.hasUI is false", () => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
@@ -244,6 +262,18 @@ test("installWorkflowFooter replaces the footer once; uninstall restores the bui
 	uninstallWorkflowFooter(ctx);
 	assert.equal(record.footer, undefined, "run end restores the built-in footer");
 	assert.equal(record.footerRestores, 1);
+});
+
+test("workflow footer renders foreign statuses as one-line fitted cells", () => {
+	const state = createState();
+	const record: TUIRecord = { statuses: new Map([["other-extension", "FOREIGN\nSTATUS"], [STATUS_KEY_TOPIC, "INJECTED-TOPIC"]]), widgets: new Map() };
+	const ctx = makeTUICtx({ percent: 62, record });
+	installWorkflowFooter(ctx, () => ({ state, progress: { name: "review", checkpoints: 1, costUsd: 0.1, elapsedMs: 1000, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, unbounded: false, currentEffect: null } }));
+	const lines = renderFooterAt(record, 120) ?? [];
+	assert.ok(lines[0].includes("FOREIGN STATUS"), lines[0]);
+	assert.equal(lines[0].includes("\n"), false, lines[0]);
+	assert.ok(visibleWidth(lines[0]) <= 120, lines[0]);
+	assert.equal(lines[0].includes("INJECTED-TOPIC"), false, "schematic-owned keys are not re-rendered as foreign cells");
 });
 
 test("installWorkflowFooter stays silent headless", () => {

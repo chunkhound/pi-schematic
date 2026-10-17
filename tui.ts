@@ -146,7 +146,7 @@ export function workflowSegments(view: WorkflowProgressView, theme: Theme): BarS
 }
 
 /** Conversation cells, all below every run cell: ctx › topic › readonly › notebook. */
-export function conversationSegments(ctx: ExtensionContext, state: SchematicState, theme: Theme): BarSegment[] {
+function conversationSegments(ctx: ExtensionContext, state: SchematicState, theme: Theme): BarSegment[] {
 	const percent = normalizeContextPercent(ctx.getContextUsage()?.percent);
 	const ctxText = percent === null
 		? theme.fg("dim", "ctx --%")
@@ -177,6 +177,10 @@ export function renderUnifiedBar(segments: readonly BarSegment[], width: number)
 /** Elide ladder: drop the lowest-priority cells first (highest number), so every
  * conversation cell goes before any run cell, and the run identity truncates last
  * instead of clipping mid-line into an ellipsis. Mutates the passed copies. */
+function sanitizeFooterCell(text: string): string {
+	return text.replace(/[\r\n\t]+/g, " ");
+}
+
 function fitBarLine(build: () => string, conversation: Array<{ text: string }>, workflow: Array<{ text: string }>, width: number): string {
 	let line = build();
 	while (visibleWidth(line) > width && conversation.length > 0) {
@@ -270,6 +274,7 @@ function renderDimStatsLine(ctx: ExtensionContext, theme: Theme, footerData: Rea
 // ── Footer install / restore ─────────────────────────────────────────
 
 const installedFooters = new WeakSet<ExtensionContext>();
+const schematicStatusKeys = new Set([STATUS_KEY_HANDOFF, STATUS_KEY_CTX, STATUS_KEY_NOTEBOOK, STATUS_KEY_TOPIC, STATUS_KEY_READONLY]);
 
 /**
  * Replace pi's built-in footer with the unified workflow bar for one run.
@@ -288,50 +293,68 @@ export function installWorkflowFooter(ctx: ExtensionContext, read: () => Workflo
 			render: (width: number) => {
 				const { state, progress } = read();
 				const segments = [...workflowSegments(progress, theme), ...conversationSegments(ctx, state, theme)];
+				for (const [key, value] of footerData.getExtensionStatuses()) {
+					if (value === undefined || schematicStatusKeys.has(key)) continue;
+					segments.push({ key, text: sanitizeFooterCell(value), priority: 8, zone: "conversation" });
+				}
 				const handoff = footerData.getExtensionStatuses().get(STATUS_KEY_HANDOFF);
-				if (handoff) segments.push({ key: STATUS_KEY_HANDOFF, text: handoff, priority: 6, zone: "conversation" });
+				if (handoff) segments.push({ key: STATUS_KEY_HANDOFF, text: sanitizeFooterCell(handoff), priority: 6, zone: "conversation" });
 				return [renderUnifiedBar(segments, width), renderDimStatsLine(ctx, theme, footerData, width)];
 			},
 		};
 	});
 }
 
-/** Restore pi's built-in footer when the run ends. */
+/** Restore pi's built-in footer when the run ends. Membership in `installedFooters`
+ * implies `hasUI` and tui mode (install only adds under both), so no re-check here. */
 export function uninstallWorkflowFooter(ctx: ExtensionContext): void {
-	if (ctx.mode !== "tui" || !installedFooters.has(ctx)) return;
-	installedFooters.delete(ctx);
-	if (ctx.hasUI) ctx.ui.setFooter(undefined);
+	if (!installedFooters.delete(ctx)) return;
+	ctx.ui.setFooter(undefined);
 }
 
 // ── Persistent indicators (non-workflow footer path) ─────────────────
+
+/** Last value sent per ctx, so a repeated refresh is silent: the 1s ticker calls
+ * `updateIndicators` throughout a model turn, and over RPC every call is an event.
+ * Scoped to `ctx`: a session reset clears the warning widget outside this module. */
+const sentIndicators = new WeakMap<ExtensionContext, Map<string, string | undefined>>();
+
+/** Send one surface only when its value changed since the last call for this `ctx`. */
+function sendOnce(sent: Map<string, string | undefined>, key: string, value: string | undefined, send: () => void): void {
+	if (sent.has(key) && sent.get(key) === value) return;
+	send();
+	sent.set(key, value);
+}
 
 /** Update indicators: context usage, notebook count, topic, warning widget. Any UI surface
  * (TUI and RPC alike) receives statuses/widgets; only footer chrome is TUI-exclusive. */
 export function updateIndicators(ctx: ExtensionContext, state: SchematicState): void {
 	if (!ctx.hasUI) return;
+	const sent = sentIndicators.get(ctx) ?? new Map<string, string | undefined>();
+	sentIndicators.set(ctx, sent);
 
 	const theme = ctx.ui.theme;
 
 	// One producer for the conversation cells; the built-in footer shows each by key.
 	const byKey = new Map(conversationSegments(ctx, state, theme).map(segment => [segment.key, segment.text]));
-	ctx.ui.setStatus(STATUS_KEY_CTX, byKey.get(STATUS_KEY_CTX));
-	ctx.ui.setStatus(STATUS_KEY_NOTEBOOK, byKey.get(STATUS_KEY_NOTEBOOK));
-	ctx.ui.setStatus(STATUS_KEY_TOPIC, byKey.get(STATUS_KEY_TOPIC));
-	ctx.ui.setStatus(STATUS_KEY_READONLY, byKey.get(STATUS_KEY_READONLY));
+	for (const key of [STATUS_KEY_CTX, STATUS_KEY_NOTEBOOK, STATUS_KEY_TOPIC, STATUS_KEY_READONLY]) {
+		const value = byKey.get(key);
+		sendOnce(sent, key, value, () => ctx.ui.setStatus(key, value));
+	}
 
 	// High-context warning widget (above editor)
 	const percent = normalizeContextPercent(ctx.getContextUsage()?.percent);
-	if (percent !== null && percent >= 70) {
-		const pct = Math.round(percent);
-		const warning = state.readonlyEnabled
-			? `Context at ${pct}% — readonly: same topic → spawn; different topic → ${READONLY_HANDOFF_TRIGGER}`
-			: state.activeNotebookTopic
-				? `Context at ${pct}% — use topic fit: same topic → spawn, different topic → handoff`
-				: `Context at ${pct}% — no active topic; handoff soon unless you can assign one cleanly`;
-		ctx.ui.setWidget(WIDGET_KEY_WARNING, [
-			theme.fg("error", "\u26A0 ") + theme.fg("warning", warning),
-		]);
-	} else {
-		ctx.ui.setWidget(WIDGET_KEY_WARNING, undefined);
-	}
+	const warning = percent !== null && percent >= 70 ? warningLine(theme, state, Math.round(percent)) : undefined;
+	sendOnce(sent, WIDGET_KEY_WARNING, warning, () =>
+		ctx.ui.setWidget(WIDGET_KEY_WARNING, warning === undefined ? undefined : [warning]));
+}
+
+/** The single-line warning shown above the editor past the context threshold. */
+function warningLine(theme: Theme, state: SchematicState, pct: number): string {
+	const message = state.readonlyEnabled
+		? `Context at ${pct}% — readonly: same topic → spawn; different topic → ${READONLY_HANDOFF_TRIGGER}`
+		: state.activeNotebookTopic
+			? `Context at ${pct}% — use topic fit: same topic → spawn, different topic → handoff`
+			: `Context at ${pct}% — no active topic; handoff soon unless you can assign one cleanly`;
+	return theme.fg("error", "\u26A0 ") + theme.fg("warning", message);
 }

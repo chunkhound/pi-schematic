@@ -64,10 +64,13 @@ interface CleanupHarness {
 
 async function createCleanupHarness(spec: {
 	headless?: boolean;
+	/** Vary the reported context percent per call: the ticker then has a real change to repaint. */
+	varyingContext?: boolean;
 	/** Runs inside the sandbox call, so a test controls exactly when its fault is live. */
 	body?: (window: RunWindow) => Promise<CodemodeResult | undefined>;
 } = {}): Promise<CleanupHarness> {
 	const state = createState();
+	let usageCalls = 0;
 	const faults: CleanupFaults = {};
 	const log: string[] = [];
 	const notes: string[] = [];
@@ -94,7 +97,7 @@ async function createCleanupHarness(spec: {
 		newSession: async () => ({ cancelled: false }),
 		isIdle: () => true,
 		modelRegistry: { getModelsOfType: () => [], getModelOfType: () => undefined },
-		getContextUsage: () => ({ percent: 40, tokens: 40_000, contextWindow: 100_000 }),
+		getContextUsage: () => ({ percent: spec.varyingContext ? 40 + (usageCalls++ % 25) : 40, tokens: 40_000, contextWindow: 100_000 }),
 		sessionManager: {
 			getSessionId: () => "cleanup-test",
 			getLeafId: () => null,
@@ -202,6 +205,7 @@ async function createCleanupHarness(spec: {
 // interval callback raises an uncaught exception mid-run.
 test("a throwing ticker paint stays inside the timer and the run still releases", async () => {
 	const h = await createCleanupHarness({
+		varyingContext: true, // a changing indicator makes each tick repaint
 		body: async (window) => {
 			// An in-flight effect keeps the progress view non-idle, so the ticker really repaints.
 			const running = Promise.resolve(window.tools.get("workflow.shell")!.execute(["sleep 1"], { signal: window.signal }));
@@ -265,7 +269,9 @@ test("a throwing openRun binding reports a failed start and never poisons the ne
 // first chrome step after disposal, so snapshotting there proves the order, and failing it
 // proves the indicator refresh after it is not skipped.
 test("release disposes the host before chrome and keeps going when a chrome restore throws", async () => {
-	const h = await createCleanupHarness();
+	// Varying context forces the post-restore indicator refresh to paint, so the paint log
+	// proves that refresh still ran after the throwing footer restore.
+	const h = await createCleanupHarness({ varyingContext: true });
 	const releasedAtChrome: Array<{ sink: boolean; input: boolean }> = [];
 	h.faults.footer = (factory) => {
 		if (factory !== undefined) return false;
