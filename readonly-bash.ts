@@ -1,19 +1,35 @@
-import path from "node:path";
-import os from "node:os";
-import { globSync } from "node:fs";
 import { canUseOsSandbox, wrapCommandWithOsSandbox } from "./os-sandbox.js";
 import {
 	buildReadonlyBashBlockReason,
-	buildReadonlyPackageManagerBlockReason,
+	FAIL_CLOSED_HINT,
 	READONLY_INVALID_BASH_COMMAND_REASON,
 } from "./notifications.js";
-import { resolveRealPath } from "./resolve-path.js";
-import { TEMP_DIR } from "./temp-dir.js";
+import {
+	decodeShellAssignmentValue, tempPathBlockReason, getCommandTokens,
+	normalizedCommand, unescapeCommandWord, matchRedirectToken,
+} from "./readonly-shell-utils.js";
+import { consumeShellCharacter, splitUnquotedShellSegments, extractCommandSubstitutions } from "./readonly-bash-scanner.js";
+import type { ShellScan, ShellPart } from "./readonly-bash-scanner.js";
+import { stripHeredocBodies, classifyHeredocBody } from "./readonly-bash-heredoc.js";
+import type { HeredocBody } from "./readonly-bash-heredoc.js";
+import { getSafeMktempSyntheticPath, getSafeMktempFileSyntheticPath } from "./readonly-bash-mktemp.js";
+import { getFilesystemMutationReason, DECL_KEYWORDS, stripDeclKeywords, parseCommandPrefix, leadingShellAssignments } from "./readonly-bash-commands.js";
+import {
+	applyDirectoryChange, compoundSegmentReason,
+	deferredCodeReason,
+	runWithPassDirectoryCache,
+} from "./readonly-bash-dirchange.js";
+
+/** Outcome of classifying one bash command: allowed, or a user-facing reason it is blocked. */
+export type Verdict =
+	| { ok: true }
+	| { ok: false; reason: string };
 
 /**
  * Readonly bash guard.
  *
- * Contract: block filesystem writes/deletions outside the OS temp dir.
+ * Contract: block filesystem writes/deletions outside the writable temp roots
+ * (`TEMP_WRITE_ROOTS` in temp-dir.ts).
  * Non-mutating commands, unknown commands, and environment inheritance are
  * allowed. Process-level commands (kill, reboot, shutdown, systemctl, su)
  * are not filesystem mutations and are intentionally allowed.
@@ -33,78 +49,107 @@ import { TEMP_DIR } from "./temp-dir.js";
  *   - **Interpreters with programmatic code** — `node -e`, `python3 -c`, etc.
  *     running code like `require('fs').writeFileSync(...)` are not checked.
  *     The classifier only parses shell command tokens, not JS/Python/Perl code.
+ *     A `-c`/`-e` script that contains shell metacharacters (e.g. an `=>` arrow
+ *     function's `>`, or `$(...)` of its own) is scanned for shell operators too,
+ *     so such code may over-block (fail closed) — safe, but surprising.
  *   - **xargs with stdin-fed package managers** — `printf install | xargs npm`
  *     bypasses because `xargs npm` alone has no verb args. The pipe feeds
  *     `install` at runtime via stdin; only the OS sandbox blocks the writes.
+ *   - **Wrapper indirection** — `nohup`/`nice`/`timeout`/`stdbuf`/`chroot` (and
+ *     similar) around a mutation are not unwrapped by the dispatcher; only L1
+ *     blocks the enclosed write. (They are unwrapped for heredoc stdin owners.)
+ *   - **Read-only subcommands that still write metadata** — a `git status` index
+ *     refresh can still write inside a repository found by ambient cwd discovery or
+ *     `-C <outside>` outside temp. A command that PINS the `.git` metadata (`--git-dir`,
+ *     `GIT_DIR`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`) is path-checked like a write.
+ *   - **`GIT_OBJECT_DIRECTORY` on immutable Git commands** — mutable commands
+ *     path-check it, but immutable commands anchor only `GIT_DIR`, `GIT_COMMON_DIR`,
+ *     and `GIT_INDEX_FILE`, so a redirected object store goes unchecked. Immutable
+ *     reads rarely write objects, so the exposure is small.
+ *   - **Wrapper flags before the wrapped command** — `time -p`, `exec -c/-a`,
+ *     `sudo -nu/--user`, and `xargs -a/--max-args` are not
+ *     fully parsed, so the value can be mistaken for the command word. Attached
+ *     interpreter flags (`python3 -c"…"`) have the same shape.
+ *   - **Heredocs attached to a `( ... )`/`{ ... }` group** — the owner is read from the
+ *     header line only, so a benign group heredoc whose closing bracket is on a later
+ *     line (`(cat <<EOF … )`) is treated as code and false-blocks. A group whose shell
+ *     member sits behind other commands (`{ cat; bash; }`) also fails closed: how much
+ *     stdin each member consumes is unknowable before execution.
+ *   - **Body written to a temp file then executed** — `cat <<EOF > /tmp/x; bash < /tmp/x`
+ *     is not tracked across commands. Same class as running an unread script file.
+ *   - **Literal `$(...)`/backticks inside single quotes** — Bash does not expand them,
+ *     but the substitution scanner reads the quoted text as code and classifies it, so
+ *     `echo '$(rm -rf /)'` false-blocks. A benign literal (`echo '$(date)'`) passes
+ *     because the inner command is itself allowed. Pre-existing; fails closed only.
+ *   - **`||` after a brace group or `eval`/`source`** — the body runs in the parent
+ *     shell, so a failed body may already have moved the cwd. The classifier checks the
+ *     `||` branch in every reachable body cwd plus the caller cwd: the body's final cwd
+ *     for brace groups, the unknown cwd for `eval`/`source`. A failure it cannot model
+ *     (an accessible `cd` that fails at runtime) still runs the fallback in the caller
+ *     cwd, so the extra candidates over-block when the body succeeded — safe, never
+ *     under-blocking. `{ cd /etc; false; } || touch x` therefore blocks. Provable LHS
+ *     success still unions the caller cwd (`{ cd /tmp; } || touch rel` blocks):
+ *     documented over-block, kept because a runtime failure the classifier cannot
+ *     model still runs the fallback in the caller cwd.
+ *   - **`shopt -s lastpipe`** — pipelines normally do not leak the cwd, but with
+ *     lastpipe the last stage runs in the parent shell: `shopt -s lastpipe;
+ *     echo x | cd /etc; touch y` fails open. Only the OS sandbox blocks the write.
+ *   - **Opaque command-substitution output fed to `eval`/`source`** — the classifier
+ *     models the substitution's inner command but not what it prints, so
+ *     `eval "$(echo touch /etc/x)"` is allowed: `echo` is non-mutating and the
+ *     `touch /etc/x` text reaches `eval` only at runtime. Deliberate and fail-open.
+ *     Modeled substitutions (`$(cd /etc; pwd)`) still move the tracked cwd.
+ *   - **Command-substitution command words** — a substitution in command position
+ *     (`$(which sh) -c true`) is not expanded because its output becomes argv and
+ *     cannot be proven, so it fails closed. Harmless substitutions over-block.
+ *   - **Shared host `/tmp` under L1** — Linux bwrap bind-mounts the world-writable host
+ *     `/tmp` instead of a private tmpfs, matching macOS Seatbelt, which always allowed it.
+ *     A hostile local process can plant a symlink in `/tmp` between classification and
+ *     execution (TOCTOU); the classifier resolves paths only before the command runs.
+ *   - **Process substitution `>(...)`** — the substitution scanner extracts backticks,
+ *     `$(...)`, and `<(...)`, but not `>(...)`. With a temp cwd, the redirect scan reads the
+ *     `>` target as `(command`, resolves it inside temp, and the inner command runs
+ *     unclassified: `cd /tmp && echo x >(touch /etc/x)`. From an outside cwd the bogus target
+ *     blocks. Pre-existing.
+ *   - **Brace expansion** — `{a,b}` alternatives are not expanded, so an unmatched brace
+ *     pattern falls back to a literal containment check: `touch {/outside/x,/tmp/a}` writes
+ *     outside temp. Pre-existing.
+ *   - **`mv`/`cp` check only the destination** — `getCpTargets` returns the last operand, so
+ *     `mv /outside/x /tmp/` deletes outside temp unclassified (a source `cp` is a read).
+ *     Pre-existing.
+ *   - **`sudo --chdir`/`-D`** — `--chdir` sits in the value-flag set, so its value is skipped
+ *     rather than modeled like `env -C`'s chdir; short `-D` is unmodeled. Both classify the
+ *     wrapped command at the caller cwd. Pre-existing.
+ *   - **Repo-local Git configuration is trusted input** — a `.git/config` inside temp that
+ *     names executables (`remote.<n>.uploadpack`, `core.pager`, `core.sshCommand`) runs them;
+ *     only command-provided `-c`/environment values are vetted. Executing a program is outside
+ *     the write contract, so this is a deliberate trust boundary, not an outside write.
+ *   - **Top-level `>=`** — the redirect scanner treats `>` before `=` as a comparison. That is
+ *     true only inside `[[ ]]`/`(( ))`/`[ ]`; at command level `echo a >= notes.txt` writes a
+ *     file named `=` in the current directory.
+ *   - **`mktemp` targets** — `getMutationTargets` has no `mktemp` case, so
+ *     `mktemp -d /outside/x.XXXXXX` is allowed. Only `mktemp -d` substitution output used as a
+ *     directory anchor is validated. L1 blocks the write.
+ *   - **`sed` `w`/`W` and `sort -o` output targets** — these stdin data consumers can name an
+ *     output path in a script or flag. Only `sed -i` targets are extracted, so
+ *     `sed "w /outside/x" <<EOF` and `sort -o /outside/x <<EOF` write unclassified.
  */
-
-type Verdict =
-	| { ok: true }
-	| { ok: false; reason: string };
-
-// TEMP_DIR is resolved in temp-dir.ts — imported above so both
-// readonly-bash and os-sandbox use the same canonical temp dir.
-
-const GIT_IMMUTABLE = new Set([
-	"diff", "log", "show", "status", "blame", "grep",
-	"ls-files", "ls-tree", "merge-tree", "format-patch",
-	"rev-parse", "rev-list", "cat-file", "for-each-ref",
-	"merge-base", "fsck", "range-diff", "shortlog", "name-rev",
-	"describe", "var", "version",
-]);
-
-const GIT_MUTABLE = new Set([
-	"add", "am", "apply", "checkout", "cherry-pick", "clean",
-	"clone", "commit", "fetch", "init", "merge", "mv", "pull", "push",
-	"rebase", "reset", "restore", "revert", "rm", "switch",
-]);
-
-const GIT_MIXED: Record<string, (sub: string) => boolean> = {
-	reflog: (sub) => sub === "" || sub === "show" || sub.startsWith("show "),
-	branch: (sub) =>
-		sub === "" || sub === "-l" || sub === "--show-current" ||
-		/^--?[a-zA-Z-]*list(?:[=\s]|$)/.test(sub),
-	tag: (sub) => sub === "" || sub === "-l" || /^--?[a-zA-Z-]*list(?:[=\s]|$)/.test(sub),
-	remote: (sub) => sub === "" || sub === "-v" || sub === "show" || sub === "get-url",
-	config: (sub) =>
-		sub === "" || sub === "-l" || sub === "--list" ||
-		sub === "--get" || sub.startsWith("--get ") || sub.startsWith("--get="),
-	notes: (sub) => sub === "list" || sub === "show",
-	stash: (sub) => sub === "list" || sub === "show",
-	bisect: (sub) => sub === "log" || sub === "view" || sub === "",
-	worktree: (sub) => sub === "list",
-	submodule: (sub) => sub === "status",
-};
-
-// Interpreters whose inline-execution flag is recursively classified.
-// node -c = syntax check only (non-executing); node -e executes code.
-const INTERPRETER_EXEC_FLAGS: Record<string, string[]> = {
-	node: ["-e"],
-	bash: ["-c"], sh: ["-c"], zsh: ["-c"], dash: ["-c"], ksh: ["-c"],
-	python3: ["-c"], python: ["-c"],
-	perl: ["-e"],
-	ruby: ["-e"],
-};
-
-const INTERPRETERS = new Set(Object.keys(INTERPRETER_EXEC_FLAGS));
-
-// Package managers are blocked unconditionally — they mutate system state
-// outside any single directory (npm install writes to node_modules, pip
-// installs to site-packages, etc.). Temp-dir path checking is not meaningful.
-const PACKAGE_MANAGERS = new Set(["npm", "yarn", "pnpm", "pip", "pip3", "pipx", "apt", "apt-get", "brew", "cargo", "gem", "yum", "dnf", "pacman", "choco"]);
-
-// Shells whose command strings this classifier cannot parse are blocked
-// unconditionally. Matched on the basename so Windows paths such as
-// C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe are caught.
-const UNPARSABLE_SHELLS = new Set(["pwsh", "pwsh.exe", "powershell", "powershell.exe", "cmd", "cmd.exe"]);
 
 
 /**
  * Classify a bash command string for readonly mode.
  *
- * Splits the command into shell-operator-separated segments (&&, ||, ;, |, &, \n),
- * checks each segment for command substitutions ($(...), backticks), write redirects (>),
- * and filesystem mutations. Blocks if any target path resolves outside the OS temp dir.
+ * Heredoc bodies are preprocessed first (stdin data is inert; shell stdin is
+ * recursively classified). The remainder is split into shell-operator-separated
+ * segments (&&, ||, ;, |, &, \n) and walked with a tracked state: cwd, directory
+ * stack, and shell variables. Parent-shell cd/pushd/popd move it, compound
+ * commands (if/while/for/case/function definitions) and eval/source yield a
+ * fail-closed unknown-cwd branch, while pipelines and background jobs do not
+ * leak state. Each segment is checked for command substitutions ($(...),
+ * backticks), write redirects (>), and filesystem mutations — including
+ * path-aware Git write-root analysis. Blocks if any write target resolves
+ * outside the shared temp-write roots (TEMP_WRITE_ROOTS in temp-dir.ts,
+ * enforced identically by the OS sandbox).
  *
  * When OS-level sandboxing (canUseOsSandbox()) is available, this serves as a fallback —
  * the kernel-enforced sandbox enforces the same write-restriction policy.
@@ -114,821 +159,466 @@ const UNPARSABLE_SHELLS = new Set(["pwsh", "pwsh.exe", "powershell", "powershell
  * @returns {ok: true} if allowed, or {ok: false, reason} with explanation
  */
 
-export function classifyBashCommand(cmd: string, cwd: string = process.cwd(), depth: number = 0, shellVars: ReadonlyMap<string, string> = new Map()): Verdict {
-	if (depth > 10) return { ok: false, reason: "recursion depth exceeded in command classification" };
-	const localVars = new Map(shellVars);
-	for (const rawSegment of splitUnquotedShellSegments(cmd)) {
-		const segment = rawSegment.trim();
-		if (!segment) continue;
-
-		for (const subcommand of extractCommandSubstitutions(segment)) {
-			const nested = classifyBashCommand(subcommand, cwd, depth + 1, localVars);
-			if (!nested.ok) {
-				return { ok: false, reason: `command substitution blocked: ${nested.reason}` };
-			}
-		}
-
-		const redirectTarget = getUnsafeWriteRedirectTarget(segment, cwd, localVars);
-		if (redirectTarget) {
-			return { ok: false, reason: `write redirect blocked outside temp dir: ${redirectTarget}` };
-		}
-
-		const mutationReason = getFilesystemMutationReason(segment, cwd, depth, localVars);
-		if (mutationReason) return { ok: false, reason: mutationReason };
-
-		for (const [name, value] of getStandaloneShellAssignments(segment, cwd, localVars)) {
-			localVars.set(name, value);
-		}
-	}
-
-	return { ok: true };
+export function classifyBashCommand(
+	cmd: string, cwd: string = process.cwd(), depth: number = 0,
+	shellVars: ReadonlyMap<string, string> = new Map(),
+): Verdict {
+	return classifyBashWithHeredocs(cmd, cwd, depth, shellVars, new Map());
 }
 
 /**
- * Classify a shell segment's filesystem mutation risk.
+ * Classify a command whose heredoc bodies were pre-extracted by stripHeredocBodies.
+ * Bodies travel as records instead of inline text so stdin data is never parsed as
+ * shell source; nested classifications re-enter here to inherit them.
  *
- * Extracts the command and its targets, then blocks if any target
- * resolves outside the OS temp dir. Handles git, sudo, env, eval/exec,
- * interpreter inline execution flags (-c/-e), dd of=, sed -i,
- * find -exec/-delete, perl/ruby -pi, and package managers.
- * Command names are compared case-insensitively (normalized via .toLowerCase()).
- * Unknown commands return null (allowed).
+ * @param cmd - Command text with heredoc operators replaced by body markers
+ * @param inheritedHeredocs - Body records bound to those markers
+ * @param cwd - Working directory for relative path resolution
+ * @param depth - Recursion depth (bounded by classifyBashCommand)
+ * @param shellVars - Variables assigned by earlier segments
+ * @returns {ok: true} if allowed, or {ok: false, reason} with an explanation
  */
-// ── Command-specific mutation classifiers (one per command, ≤15 lines each) ──
-
-/** Strip subshell parens: (rm file) → rm file, then classify recursively. */
-function classifySubshellSegment(segment: string, cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
-	if (!segment.startsWith("(") || !segment.endsWith(")")) return null;
-	const inner = segment.slice(1, -1).trim();
-	return inner ? getFilesystemMutationReason(inner, cwd, depth, shellVars) : null;
+export function classifyBashWithHeredocs(
+	cmd: string, cwd: string, depth: number,
+	shellVars: ReadonlyMap<string, string>, inheritedHeredocs: ReadonlyMap<string, HeredocBody>,
+): Verdict {
+	// One memoized fs view per top-level pass so cd reachability cannot drift mid-command.
+	return runWithPassDirectoryCache(() => {
+		const prepared = stripHeredocBodies(cmd, inheritedHeredocs);
+		if (prepared === null) return { ok: false, reason: `unsupported stdin code, group heredoc, or unterminated heredoc (e.g. avoid { cat; bash; } <<EOF)${FAIL_CLOSED_HINT}` };
+		const initial: ShellState = { cwd, stack: [], vars: new Map(shellVars), directories: new Set(), heredocs: prepared.heredocs };
+		try {
+			const result = classifyShellSequence(prepared.command, [initial], depth);
+			return result.ok ? { ok: true } : result;
+		} catch (error) {
+			if (error instanceof ShellStateBudgetError) return { ok: false, reason: `unsupported shell state expansion blocked${FAIL_CLOSED_HINT}` };
+			throw error;
+		}
+	});
 }
 
-/** eval/exec: recursively classify the remaining argument string. */
-function classifyEvalExec(command: string, tokens: string[], cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
-	if (command !== "eval" && command !== "exec") return null;
-	const inner = tokens.slice(1).map(stripMatchingQuotes).join(" ");
-	const nested = classifyBashCommand(inner, cwd, depth + 1, shellVars);
-	return nested.ok ? null : nested.reason;
-}
-
-/** sudo: classify the command after sudo flags. */
-function classifySudo(command: string, tokens: string[], cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
-	if (command !== "sudo") return null;
-	const nested = classifyBashCommand(tokens.slice(findSudoCommandIndex(tokens)).join(" "), cwd, depth + 1, shellVars);
-	return nested.ok ? null : nested.reason;
-}
-
-/** env: handle env prefix including -S/--split-string. */
-function classifyEnv(command: string, segment: string, tokens: string[], cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
-	if (command !== "env") return null;
-	if (tokens.length > 1) {
-		const nested = classifyBashCommand(tokens.slice(1).join(" "), cwd, depth + 1, shellVars);
-		return nested.ok ? null : nested.reason;
+function classifyShellSequence(cmd: string, initial: ShellState[], depth: number): ShellGroupResult {
+	if (depth > 10) return { ok: false, reason: `recursion depth exceeded in command classification${FAIL_CLOSED_HINT}` };
+	let states = initial;
+	const parts = splitUnquotedShellSegments(cmd);
+	if (parts.some((part) => part.unsupported)) return { ok: false, reason: `unsupported shell grouping syntax${FAIL_CLOSED_HINT}` };
+	for (const group of shellExecutionGroups(parts)) {
+		const result = classifyShellGroup(group.parts, states, depth);
+		if (!result.ok) return result;
+		// Background jobs run in a child shell: their state changes never propagate.
+		if (!group.background) states = result.states;
 	}
-	// env with only flags (e.g., env -S "cmd") — extract -S value
-	const sMatch = segment.match(/\benv\b.*?(?:-S|--split-string)\s+/);
-	if (!sMatch) return null;
-	const afterS = segment.slice(sMatch.index! + sMatch[0].length).trim();
-	const nested = classifyBashCommand(stripMatchingQuotes(afterS), cwd, depth + 1, shellVars);
-	return nested.ok ? null : nested.reason;
+	return { ok: true, states };
 }
 
-/** PowerShell and cmd: block unconditionally — their syntax is not parsed. */
-function classifyUnparsableShell(command: string): string | null {
-	const shell = stripMatchingQuotes(command).split(/[\\/]/).pop()!;
-	if (!UNPARSABLE_SHELLS.has(shell)) return null;
-	return `${shell} blocked: readonly cannot inspect commands run through ${shell}`;
+// Vars travel with the state so each && / || branch sees exactly the assignments
+// that ran on its path — no shared mutable map, no conditional-invalidation hacks.
+export type ShellState = {
+	cwd: string; stack: string[]; vars: Map<string, string>;
+	directories: ReadonlySet<string>; heredocs: ReadonlyMap<string, HeredocBody>;
+};
+export type ShellOutcome = { success: ShellState[]; failure: ShellState[] };
+type ShellGroupResult = { ok: true; states: ShellState[] } | { ok: false; reason: string };
+
+/** Cap on shell states carried between branch points. Each `;`/`&&`/`||` can keep a success and
+ * a failure branch (a `pushd` with an aborting redirect forks both), and states that differ only
+ * in directory history never merge, so the count can double per command. Classification runs
+ * synchronously in the extension host, so an unbounded set hangs or OOMs it; exceeding the
+ * budget fails closed instead of allocating further. */
+const MAX_SHELL_STATES = 256;
+
+class ShellStateBudgetError extends Error {}
+
+function uniqueShellStates(states: ShellState[]): ShellState[] {
+	if (states.length > MAX_SHELL_STATES) throw new ShellStateBudgetError(`shell state expansion exceeded ${MAX_SHELL_STATES} states`);
+	// Map does not survive JSON.stringify — serialize vars explicitly so states
+	// that differ only by their var maps stay distinct.
+	const key = (state: ShellState) => JSON.stringify([state.cwd, state.stack, [...state.vars], [...state.directories]]);
+	return [...new Map(states.map((state) => [key(state), state])).values()];
 }
 
-/** git: classify subcommand via three-tier allowlist (immutable/mutable/mixed). */
-function classifyGit(command: string, tokens: string[]): string | null {
-	if (command !== "git") return null;
-	return isSafeGitCommand(tokens.slice(1).join(" ")) ? null : "mutable git command blocked outside temp dir";
-}
-
-/** Interpreters with inline-execution flags — classify inline code recursively. */
-function classifyInterpreter(command: string, tokens: string[], cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
-	if (!INTERPRETERS.has(command)) return null;
-	const args = tokens.slice(1);
-	for (const flag of INTERPRETER_EXEC_FLAGS[command]) {
-		const idx = args.indexOf(flag);
-		if (idx === -1 || idx + 1 >= args.length) continue;
-		const nested = classifyBashCommand(stripMatchingQuotes(args[idx + 1]), cwd, depth + 1, shellVars);
-		if (!nested.ok) return `${command} ${flag} blocked: ${nested.reason}`;
-	}
-	return null;
-}
-
-/** dd of= target check. */
-function classifyDdOutput(segment: string, cwd: string, shellVars: ReadonlyMap<string, string>): string | null {
-	const ddMatch = segment.match(/\bof=([^\s]+)/);
-	if (!ddMatch || isTempPath(ddMatch[1], cwd, shellVars)) return null;
-	return `dd output blocked outside temp dir: ${stripMatchingQuotes(ddMatch[1])}`;
-}
-
-/** wget -P/--download-dir outside temp — block. No-flag case falls through to classifyGenericMutation. */
-function classifyWget(command: string, tokens: string[], cwd: string, shellVars: ReadonlyMap<string, string>): string | null {
-	if (command !== "wget") return null;
-	const wArgs = tokens.slice(1);
-	const hasOutputFlag = wArgs.some((a) => a === "-O" || a.startsWith("-O") || a === "--output-document" || a.startsWith("--output-document="));
-	if (hasOutputFlag) return null;
-	const outputDir = getWgetOutputDir(tokens);
-	if (outputDir && !isTempPath(outputDir, cwd, shellVars)) return `wget download dir blocked outside temp dir: ${outputDir}`;
-	return null;
-}
-
-/** curl -O/--remote-name writes to disk — block unless cwd is temp. */
-function classifyCurl(command: string, tokens: string[], cwd: string, shellVars: ReadonlyMap<string, string>): string | null {
-	if (command !== "curl") return null;
-	const { hasRemoteName, outputDir } = getCurlWriteTargets(tokens);
-	if (hasRemoteName && !isTempPath(outputDir ?? ".", cwd, shellVars)) {
-		return "curl blocked outside temp dir: current directory (use -o /tmp/... to write to temp)";
-	}
-	return null;
-}
-
-/** xargs: classify the command xargs would run + block targetless mutation commands. */
-function classifyXargs(command: string, tokens: string[], cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
-	if (command !== "xargs") return null;
-	const xArgs = tokens.slice(1);
-	const XARGS_FLAGS_WITH_VALUE = new Set(["-I", "-L", "-n", "-P", "-d", "-E", "-s"]);
-	let cmdStart = 0;
-	while (cmdStart < xArgs.length) {
-		if (XARGS_FLAGS_WITH_VALUE.has(xArgs[cmdStart])) { cmdStart += 2; continue; }
-		if (xArgs[cmdStart].startsWith("-")) { cmdStart++; continue; }
-		break;
-	}
-	if (cmdStart >= xArgs.length) return null;
-	const xTokens = xArgs.slice(cmdStart);
-	const nested = classifyBashCommand(xTokens.join(" "), cwd, depth + 1, shellVars);
-	if (!nested.ok) return nested.reason;
-	const xCmd = xTokens[0]?.toLowerCase();
-	if (xCmd && getMutationTargets(xCmd, xTokens) !== null) return `xargs ${xCmd} blocked: mutation command via xargs`;
-	return null;
-}
-
-/** Generic mutation: extract targets via getMutationTargets, block non-temp paths. */
-function classifyGenericMutation(command: string, tokens: string[], cwd: string, shellVars: ReadonlyMap<string, string>): string | null {
-	const paths = getMutationTargets(command, tokens);
-	if (!paths) return null;
-	for (const target of paths) {
-		if (!isTempPath(target, cwd, shellVars)) return `${command} blocked outside temp dir: ${stripMatchingQuotes(target)}`;
-	}
-	return null;
-}
-
-// ── Main dispatcher ─────────────────────────────────────────────────
-
-function getFilesystemMutationReason(segment: string, cwd: string, depth: number = 0, shellVars: ReadonlyMap<string, string> = new Map()): string | null {
-	const tokens = getCommandTokens(segment);
-	const command = tokens[0]?.toLowerCase();
-	if (!command) return null;
-
-	return classifySubshellSegment(segment, cwd, depth, shellVars)
-		?? classifyEvalExec(command, tokens, cwd, depth, shellVars)
-		?? classifySudo(command, tokens, cwd, depth, shellVars)
-		?? classifyEnv(command, segment, tokens, cwd, depth, shellVars)
-		?? classifyUnparsableShell(command)
-		?? classifyGit(command, tokens)
-		?? classifyInterpreter(command, tokens, cwd, depth, shellVars)
-		?? classifyDdOutput(segment, cwd, shellVars)
-		?? classifyPackageManager(command, tokens)
-		?? classifyWget(command, tokens, cwd, shellVars)
-		?? classifyCurl(command, tokens, cwd, shellVars)
-		?? classifyXargs(command, tokens, cwd, depth, shellVars)
-		?? classifyGenericMutation(command, tokens, cwd, shellVars);
-}
-
-/** Package manager mutation: block unconditionally regardless of target path. */
-function classifyPackageManager(command: string, tokens: string[]): string | null {
-	if (!PACKAGE_MANAGERS.has(command)) return null;
-	if (!isPackageMutation(tokens.slice(1))) return null;
-	const args = tokens.slice(1).join(" ");
-	return buildReadonlyPackageManagerBlockReason(command, args);
-}
-
-function skipFlagValues(args: string[], flagsWithValues: Set<string>): string[] {
-	const result: string[] = [];
-	let i = 0;
-	while (i < args.length) {
-		if (flagsWithValues.has(args[i])) {
-			i += 2; // skip flag + value
-		} else {
-			result.push(args[i]);
-			i++;
+function shellExecutionGroups(parts: ShellPart[]): { parts: ShellPart[]; background: boolean }[] {
+	const groups: { parts: ShellPart[]; background: boolean }[] = [];
+	let pending: ShellPart[] = [];
+	for (const part of parts) {
+		pending.push(part);
+		if ([";", "\n", "&", ""].includes(part.operator)) {
+			groups.push({ parts: pending, background: part.operator === "&" });
+			pending = [];
 		}
 	}
-	return result;
+	return groups;
 }
 
-function getCurlWriteTargets(tokens: string[]): { hasRemoteName: boolean; outputs: string[]; outputDir: string | null } {
-	const cArgs = tokens.slice(1);
-	const outputs: string[] = [];
-	let hasRemoteName = false;
-	let outputDir: string | null = null;
-	for (let i = 0; i < cArgs.length; i++) {
-		if (cArgs[i] === "--") break; // end of options; remaining args are URLs
-		if ((cArgs[i] === "-o" || cArgs[i] === "--output") && cArgs[i + 1]) {
-			outputs.push(cArgs[i + 1]);
-			i++;
-			continue;
-		}
-		if (cArgs[i] === "--output-dir" && cArgs[i + 1]) {
-			outputDir = cArgs[i + 1];
-			i++;
-			continue;
-		}
-		if (cArgs[i].startsWith("--output=")) {
-			outputs.push(cArgs[i].slice("--output=".length));
-			continue;
-		}
-		if (cArgs[i].startsWith("--output-dir=")) {
-			outputDir = cArgs[i].slice("--output-dir=".length);
-			continue;
-		}
-		if (cArgs[i].startsWith("-o") && cArgs[i].length > 2 && !cArgs[i].startsWith("--")) {
-			outputs.push(cArgs[i].slice(2));
-			continue;
-		}
-		if (cArgs[i] === "-O" || cArgs[i] === "--remote-name" || cArgs[i] === "--remote-name-all") {
-			hasRemoteName = true;
-			continue;
-		}
-		if (isCurlShortFlagBundleWithRemoteName(cArgs[i])) {
-			hasRemoteName = true;
-			continue;
-		}
+function classifyShellGroup(parts: ShellPart[], initial: ShellState[], depth: number): ShellGroupResult {
+	let outcome: ShellOutcome = { success: initial, failure: initial };
+	let operator = "";
+	// States entering the most recent pipeline, kept for the `||` fallback in activeShellStates.
+	let pipelineInput = initial;
+	for (let i = 0; i < parts.length; i++) {
+		const active = activeShellStates(operator, outcome, pipelineInput, initial);
+		pipelineInput = active;
+		const pipeline = takeShellPipeline(parts, i);
+		const result = classifyShellPipeline(pipeline, uniqueShellStates(active), depth);
+		if (!result.ok) return result;
+		outcome = carryShellOutcome(operator, outcome, result.outcome);
+		i += pipeline.length - 1;
+		operator = pipeline[pipeline.length - 1].operator;
 	}
-	return { hasRemoteName, outputs, outputDir };
+	return { ok: true, states: uniqueShellStates([...outcome.success, ...outcome.failure]) };
 }
 
-const CURL_VALUE_SHORT_FLAGS = new Set([
-	// All 27 value-consuming short flags per curl --help all.
-	// A, b, u, X pre-existed; C, K fixed -CO/-KO; remaining cover -dO, -oO, etc.
-	"A", "b", "u", "X",
-	"C", "K", "y", "Y", "z",
-	"c", "d", "D", "e", "E", "F", "h", "H", "m", "o",
-	"P", "Q", "r", "t", "T", "U", "w", "x",
-]);
+/** States entering the next pipeline. Invariant: at least one success state and at least one
+ * failure branch always survive, because an empty set would iterate zero states, classify
+ * nothing, and pass vacuously as {ok:true} — a silent fail-open. A `||` branch always keeps its
+ * previous states too: a failure that the classifier cannot model (an accessible `cd` that fails
+ * at runtime) still runs the fallback in the caller cwd. */
+function activeShellStates(operator: string, outcome: ShellOutcome, previous: ShellState[], initial: ShellState[]): ShellState[] {
+	// A `||` branch runs only when the LHS fails, and a failed directory change keeps the cwd it
+	// started from. Union those caller states with the LHS failure branches: an accessible final
+	// cd reports no failure branch, yet a runtime failure still runs the fallback in the caller
+	// cwd (`{ cd /tmp; } || touch rel`). A superset is conservative and cannot fail open.
+	const active = operator === "&&" ? outcome.success
+		: operator === "||" ? uniqueShellStates([...outcome.failure, ...previous])
+		: initial;
+	return active.length === 0 ? initial : active;
+}
 
-function isCurlShortFlagBundleWithRemoteName(token: string): boolean {
-	if (!token.startsWith("-") || token.startsWith("--") || token.length <= 2) return false;
-	const flags = token.slice(1);
-	if (!/^[A-Za-z]+$/.test(flags)) return false;
-	for (const flag of flags) {
-		if (flag === "O") return true;
-		if (CURL_VALUE_SHORT_FLAGS.has(flag)) return false;
+function carryShellOutcome(operator: string, previous: ShellOutcome, next: ShellOutcome): ShellOutcome {
+	if (operator === "&&") next.failure.push(...previous.failure);
+	if (operator === "||") next.success.push(...previous.success);
+	return next;
+}
+
+function takeShellPipeline(parts: ShellPart[], start: number): ShellPart[] {
+	let end = start;
+	while (parts[end]?.operator === "|" || parts[end]?.operator === "|&") end++;
+	return parts.slice(start, end + 1);
+}
+
+function classifyShellPipeline(parts: ShellPart[], states: ShellState[], depth: number):
+	{ ok: true; outcome: ShellOutcome } | { ok: false; reason: string } {
+	const outcome: ShellOutcome = { success: [], failure: [] };
+	for (const state of states) {
+		let next: ShellOutcome = { success: [state], failure: [state] };
+		for (const part of parts) {
+			// Pipeline stages run concurrently: cwd/stack/vars/directory-provenance never leak across stages or downstream.
+			const result = classifyShellPart(part.text.trim(), state, depth);
+			if (!result.ok) return result;
+			if (parts.length === 1) next = result.outcome;
+		}
+		outcome.success.push(...next.success);
+		outcome.failure.push(...next.failure);
 	}
-	return false;
+	return { ok: true, outcome };
+}
+
+// Brace groups execute in the parent shell; subshells and pipelines must not leak cwd/stack.
+function classifyShellPart(segment: string, state: ShellState, depth: number):
+	{ ok: true; outcome: ShellOutcome } | { ok: false; reason: string } {
+	const heredocReason = heredocSegmentReason(segment, state, depth);
+	if (heredocReason) return { ok: false, reason: heredocReason };
+	segment = stripHeredocMarkers(segment, state.heredocs);
+	if (segment.startsWith("{")) return classifyBraceGroup(segment, state, depth);
+	const reason = shellSegmentReason(segment, state, depth);
+	if (reason) return { ok: false, reason };
+	return { ok: true, outcome: applySegmentAssignments(segment, applyDirectoryChange(segment, state)) };
 }
 
 /**
- * Extract the download directory from wget flags (-P / --directory-prefix).
- * Returns null when no directory flag is present.
+ * Standalone assignments (including export/declare forms) update the shell's
+ * vars for subsequent segments. Prefix assignments belong to their command
+ * only and never leak into the shell state (parseCommandPrefix handles those).
  */
-function getWgetOutputDir(tokens: string[]): string | null {
-	const wArgs = tokens.slice(1);
-	for (let i = 0; i < wArgs.length; i++) {
-		if (wArgs[i] === "--") break;
-		if (wArgs[i] === "-P" && wArgs[i + 1]) {
-			return wArgs[i + 1];
-		}
-		if (wArgs[i].startsWith("-P") && wArgs[i].length > 2) {
-			return wArgs[i].slice(2);
-		}
-		if (wArgs[i] === "--directory-prefix" && wArgs[i + 1]) {
-			return wArgs[i + 1];
-		}
-		if (wArgs[i].startsWith("--directory-prefix=")) {
-			return wArgs[i].slice("--directory-prefix=".length);
-		}
+function applySegmentAssignments(segment: string, outcome: ShellOutcome): ShellOutcome {
+	return {
+		success: outcome.success.map((state) => assignedShellState(segment, state, true)),
+		failure: outcome.failure.map((state) => assignedShellState(segment, state, false)),
+	};
+}
+
+function assignedShellState(segment: string, state: ShellState, success: boolean): ShellState {
+	const { assignments, complete, directories, files } = getStandaloneShellAssignments(segment, state.cwd, state.vars);
+	const vars = new Map(state.vars), tokens = getCommandTokens(segment);
+	if (normalizedCommand(tokens[0] ?? "") === "unset") {
+		// `-v/-f/-n` (combined like `-vf`) and `--` are unset's own options, not
+		// variable names; treating them as names once deleted a var called "v".
+		let operands = tokens.slice(1);
+		if (operands[0] === "--") operands = operands.slice(1);
+		for (const token of operands) if (!UNSET_FLAG_PATTERN.test(token)) vars.delete(unescapeCommandWord(token));
+	}
+	if (!complete || assignments.size === 0) return { ...state, vars };
+	// Failed command substitutions assign empty output, never file or directory provenance.
+	for (const [name, value] of assignments) vars.set(name, !success && (directories.has(value) || files.has(value)) ? "" : value);
+	return { ...state, vars, directories: success ? new Set([...state.directories, ...directories]) : state.directories };
+}
+
+/** Var-name check for `unset` operands: exclude its `-v/-f/-n` option tokens. */
+const UNSET_FLAG_PATTERN = /^-[vfn]+$/;
+
+/** Split `{ body; } trailing` at the matching close brace. Null when unterminated. */
+function splitBraceGroup(segment: string): { body: string; trailing: string } | null {
+	if (!/^\{\s/.test(segment)) return null;
+	const scan: ShellScan = { current: "", quote: "", escaped: false, nesting: 0 };
+	for (let i = 0; i < segment.length; i++) {
+		consumeShellCharacter(scan, segment[i], segment.slice(0, i));
+		if (scan.nesting !== 0) continue;
+		if (segment[i] !== "}") return null;
+		const body = segment.slice(1, i);
+		return /[;\n]\s*$/.test(body) ? { body, trailing: segment.slice(i + 1) } : null;
 	}
 	return null;
 }
 
-// ── Mutation target extractors (one per command group, ≤20 lines each) ──
-
-function getRmTargets(tokens: string[]): string[] {
-	return nonOptionArgs(skipFlagValues(tokens.slice(1), new Set(["-s", "-o", "--io-size"])));
-}
-
-function getTruncateTargets(tokens: string[]): string[] {
-	return nonOptionArgs(skipFlagValues(tokens.slice(1), new Set(["-s", "-r", "--reference", "-o", "--io-size"])));
-}
-
-function getTouchTargets(tokens: string[]): string[] {
-	return nonOptionArgs(skipFlagValues(tokens.slice(1), new Set(["-t", "-d", "-r"])));
-}
-
-function getChmodTargets(tokens: string[]): string[] {
-	const args = nonOptionArgs(tokens.slice(1));
-	return args.slice(1);
-}
-
-function getCpTargets(tokens: string[]): string[] {
-	const args = nonOptionArgs(tokens.slice(1));
-	return args.length > 0 ? [args[args.length - 1]] : [];
-}
-
-function getTeeTargets(tokens: string[]): string[] {
-	return nonOptionArgs(tokens.slice(1));
-}
-
-function getPerlRubyTargets(tokens: string[]): string[] | null {
-	if (!tokens.slice(1).some((arg) => /^-p?i/.test(arg))) return null;
-	return nonOptionArgs(tokens.slice(1));
-}
-
-/** Strip -e/--expression flag-value pairs from sed tokens, tracking if any were found. */
-function filterSedExpressionTokens(sedTokens: string[]): { filtered: string[]; hasExpression: boolean } {
-	const filtered: string[] = [];
-	let hasExpression = false;
-	let ti = 0;
-	while (ti < sedTokens.length) {
-		if (sedTokens[ti] === "-e" || sedTokens[ti] === "--expression") {
-			ti += 2; hasExpression = true;
-		} else if (sedTokens[ti].startsWith("-e")) {
-			ti += 1; hasExpression = true; // -e'expr' concatenated form
-		} else if (sedTokens[ti].startsWith("--expression=")) {
-			ti += 1; hasExpression = true;
-		} else {
-			filtered.push(sedTokens[ti]); ti++;
-		}
-	}
-	return { filtered, hasExpression };
-}
-
-/** sed -i target extraction with -e/--expression and backup-extension handling. */
-function getSedTargets(tokens: string[]): string[] | null {
-	if (!tokens.slice(1).some((arg) => arg === "-i" || arg.startsWith("-i"))) return null;
-	const { filtered, hasExpression } = filterSedExpressionTokens(tokens.slice(1));
-	const args = nonOptionArgs(filtered);
-	const extArg = args.length > 0 ? stripMatchingQuotes(args[0]) : "";
-	const hasBackupExt = args.length > 0 && (extArg === "" || /^[a-zA-Z0-9._-]{1,10}$/.test(extArg));
-	if (hasBackupExt) return hasExpression ? (extArg === "" ? args.slice(1) : args) : args.slice(2);
-	return hasExpression ? args : args.slice(1);
-}
-
-/** wget target extraction from -O/--output-document flags. */
-function getWgetTargets(tokens: string[]): string[] {
-	const wArgs = tokens.slice(1);
-	let outputTarget: string | null = null;
-	for (let i = 0; i < wArgs.length; i++) {
-		if (wArgs[i] === "-O" && wArgs[i + 1]) { outputTarget = wArgs[i + 1]; i++; continue; }
-		if (wArgs[i].startsWith("-O") && wArgs[i].length > 2) { outputTarget = wArgs[i].slice(2); continue; }
-		if (wArgs[i] === "--output-document" && wArgs[i + 1]) { outputTarget = wArgs[i + 1]; i++; continue; }
-		if (wArgs[i].startsWith("--output-document=")) { outputTarget = wArgs[i].slice("--output-document=".length); }
-	}
-	if (outputTarget !== null) return stripMatchingQuotes(outputTarget) === "-" ? ["/dev/null"] : [outputTarget];
-	const outputDir = getWgetOutputDir(tokens);
-	if (outputDir !== null) return [outputDir];
-	return ["."]; // safety net — unreachable via getFilesystemMutationReason
-}
-
-/** curl target extraction from -o/--output and -O/--remote-name flags. */
-function getCurlTargets(tokens: string[]): string[] | null {
-	const { hasRemoteName, outputs, outputDir } = getCurlWriteTargets(tokens);
-	const mapped = outputs.map((o) => stripMatchingQuotes(o) === "-" ? "/dev/null" : o);
-	const remoteNameTarget = outputDir ?? ".";
-	if (mapped.length > 0) return hasRemoteName ? [...mapped, remoteNameTarget] : mapped;
-	if (hasRemoteName) return [remoteNameTarget];
-	return null;
-}
-
-// ── Main dispatcher ─────────────────────────────────────────────────
-
-function getMutationTargets(command: string, tokens: string[]): string[] | null {
-	switch (command) {
-		case "rm": case "rmdir": case "unlink": case "mkdir": return getRmTargets(tokens);
-		case "truncate": return getTruncateTargets(tokens);
-		case "touch": return getTouchTargets(tokens);
-		case "chmod": case "chown": case "chgrp": return getChmodTargets(tokens);
-		case "cp": case "mv": case "install": case "ln": return getCpTargets(tokens);
-		case "tee": return getTeeTargets(tokens);
-		case "sed": return getSedTargets(tokens);
-		case "perl": case "ruby": return getPerlRubyTargets(tokens);
-		case "find": return getFindMutationTargets(tokens.slice(1));
-		case "wget": return getWgetTargets(tokens);
-		case "curl": return getCurlTargets(tokens);
-		default: return null;
-	}
-}
-
-function getFindMutationTargets(args: string[]): string[] | null {
-	// Skip glob-pattern args (e.g., -name '*.txt') — these cannot be filesystem roots.
-	const roots = args.filter((arg) => arg && !arg.startsWith("-") && !/[*?{}()\[\]~]/.test(arg));
-	for (let i = 0; i < args.length; i++) {
-		const arg = args[i];
-		if (arg === "-delete") return roots.length > 0 ? roots : ["."];
-		if (["-exec", "-execdir", "-ok", "-okdir"].includes(arg)) return roots.length > 0 ? roots : ["."];
-		if (["-fprintf", "-fprint", "-fprint0", "-fls"].includes(arg)) {
-			const output = args[i + 1];
-			return output ? [output] : ["."];
-		}
-	}
-	return null;
-}
-
-function isPackageMutation(args: string[]): boolean {
-	// Match individual tokens against known package-mutation verbs.
-	// Token-level matching (vs. substring-on-joined-string) avoids false
-	// positives when a path or argument contains a verb word (install-sh, etc.).
-	const VERBS = new Set(["install", "uninstall", "update", "upgrade", "ci", "link", "publish", "add", "remove", "reinstall", "tap", "untap", "download", "build-dep", "i", "un", "ad", "rm", "up", "in", "rb"]);
-	return args.some((a) => VERBS.has(a.toLowerCase()));
-}
-
-function findSudoCommandIndex(tokens: string[]): number {
-	const FLAGS_WITH_VALUE = new Set(["-u", "-g", "-p", "-C", "-T", "-h"]);
-	let i = 1;
-	while (i < tokens.length) {
-		const token = tokens[i];
-		if (token === "--") return i + 1;
-		if (!token.startsWith("-")) return i;
-		if (FLAGS_WITH_VALUE.has(token)) i += 2;
-		else i += 1;
-	}
-	return tokens.length;
-}
-
-/**
- * Extract the command tokens from a shell segment, stripping env-prefixes,
- * env-var assignments, and the `command` builtin wrapper.
- *
- * The `env` prefix is handled specially: env flags with values (-u, --unset,
- * -S, -g) consume the next token as their value, and env-var assignments
- * (KEY=value) before the real command are stripped.
- */
-function getCommandTokens(segment: string): string[] {
-	const tokens = segment.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
-	let i = 0;
-
-	if (tokens[i] === "env") {
-		i++;
-		// env -u VAR and -S "string" take a value — consume as flag-value pairs
-		const ENV_FLAGS_WITH_VALUE = new Set(["-u", "--unset", "-S", "--split-string", "-g", "--group"]);
-		while (i < tokens.length && tokens[i].startsWith("-")) {
-			if (ENV_FLAGS_WITH_VALUE.has(tokens[i])) {
-				i += 2; // skip flag + its value
-			} else {
-				i++; // valueless flag
-			}
-		}
-		while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++;
-		// Skip -- separator between env assignments and the command
-		if (i < tokens.length && tokens[i] === "--") i++;
-		if (i >= tokens.length) return ["env"];
-	}
-
-	while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++;
-	if (tokens[i] === "command") i++;
-	return tokens.slice(i);
-}
-
-function nonOptionArgs(args: string[]): string[] {
-	const result: string[] = [];
-	let stopOptions = false;
-	for (const arg of args) {
-		if (!stopOptions && arg === "--") {
-			stopOptions = true;
-			continue;
-		}
-		if (!stopOptions && arg.startsWith("-") && arg !== "-") continue;
-		result.push(arg);
-	}
-	return result;
-}
-
-function isSafeGitCommand(rest: string): boolean {
-	const trimmed = rest.trim();
-	if (!trimmed) return false;
-
-	const tokens = trimmed.split(/\s+/);
-	const FLAGS_WITH_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace"]);
-	let subcommand = "";
-
+/** True when trailing text holds only write redirects (fd/operator plus target). */
+function isRedirectOnlyTrailing(trailing: string): boolean {
+	const tokens = getCommandTokens(trailing);
 	for (let i = 0; i < tokens.length; i++) {
-		const token = tokens[i];
-		if (FLAGS_WITH_VALUE.has(token)) { i++; continue; }
-		if (token.startsWith("-")) continue;
-		subcommand = token;
-		break;
+		const match = matchRedirectToken(tokens[i]!);
+		if (!match) return false;
+		if (match[0] === tokens[i]) i++;
+		if (i >= tokens.length) return false;
 	}
-
-	if (!subcommand) return false;
-	if (GIT_IMMUTABLE.has(subcommand)) return true;
-	if (GIT_MUTABLE.has(subcommand)) return false;
-	const mixed = GIT_MIXED[subcommand];
-	if (!mixed) return false;
-	const afterSub = trimmed.slice(trimmed.indexOf(subcommand) + subcommand.length).trim();
-	return mixed(afterSub);
+	return true;
 }
 
-function stripMatchingQuotes(token: string): string {
-	if (
-		(token.startsWith('"') && token.endsWith('"')) ||
-		(token.startsWith("'") && token.endsWith("'"))
-	) {
-		return token.slice(1, -1);
-	}
-	return token;
+/** Brace groups run in the parent shell; redirects apply before the body runs. */
+function classifyBraceGroup(segment: string, state: ShellState, depth: number):
+	{ ok: true; outcome: ShellOutcome } | { ok: false; reason: string } {
+	const split = splitBraceGroup(segment);
+	if (!split || !isRedirectOnlyTrailing(split.trailing)) return { ok: false, reason: `unsupported brace group syntax${FAIL_CLOSED_HINT}` };
+	const unsafe = split.trailing.trim() ? writeRedirectBlockReason(split.trailing, state.cwd, state.vars) : null;
+	if (unsafe) return { ok: false, reason: unsafe };
+	const result = classifyShellSequence(split.body, [state], depth + 1);
+	if (!result.ok) return result;
+	// The body's reachable cwds serve as both the `;` continuation states and the failure
+	// branches. A body state may already reflect an earlier command that moved the shell before
+	// a later failure (`{ cd /etc; cd /tmp <missing; }`), so the `||` fallback must classify
+	// there; the caller cwd joins at the `||` consumer (see activeShellStates).
+	if (!split.trailing.trim()) return { ok: true, outcome: { success: result.states, failure: result.states } };
+	// A failing trailing redirect skips the body, so the failure branch keeps caller state.
+	return { ok: true, outcome: { success: result.states, failure: [...result.states, state] } };
 }
 
-/**
- * Expand shell variable references ($VAR, ${VAR}) in a raw path string.
- * Looks up the variable name in the provided map first, then falls back
- * to process.env. Returns null if the path contains no variable reference
- * or the variable is unknown.
- */
-function expandShellVariable(rawPath: string, shellVars: ReadonlyMap<string, string>, visited: Set<string> = new Set()): string | null {
-	const braceMatch = rawPath.match(/^\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:-|:=)([^}]*))?\}(.*)$/);
-	if (braceMatch) {
-		const [, varName, operator, fallback = "", suffix] = braceMatch;
-		if (visited.has(varName)) return null;
-		visited.add(varName);
-		const value = shellVars.get(varName) ?? process.env[varName];
-		if (value !== undefined && value !== "") return value + suffix;
-		if (operator === ":-" || operator === ":=") return fallback + suffix;
-		return null;
+function stripHeredocMarkers(segment: string, heredocs: ReadonlyMap<string, HeredocBody>): string {
+	for (const marker of extractCommandSubstitutions(segment)) {
+		if (heredocs.has(marker)) segment = segment.replaceAll(`$(${marker})`, "");
 	}
-	const plainMatch = rawPath.match(/^\$([A-Za-z_][A-Za-z0-9_]*)(.*)$/);
-	if (plainMatch) {
-		const varName = plainMatch[1];
-		if (visited.has(varName)) return null;
-		visited.add(varName);
-		const value = shellVars.get(varName) ?? process.env[varName];
-		return value !== undefined && value !== "" ? value + plainMatch[2] : null;
+	return segment.trim();
+}
+
+/** Prefix a nested block reason once; nested classifications repeat the same prefix. */
+export function nestedBlockReason(prefix: string, reason: string): string {
+	return reason.includes(prefix) ? reason : `${prefix}: ${reason}`;
+}
+
+function heredocSegmentReason(segment: string, state: ShellState, depth: number): string | null {
+	// Unquoted expansion runs in the outer shell. Host shells disagree on whether this command's
+	// leading assignments are visible yet, so pass both candidates and let the heredoc classifier
+	// require the body to be safe under each. Markers are stripped first so a redirect written
+	// before the command word still shows them (`<<EOF D=x bash`). The child code runs in the
+	// consuming shell's environment (spec.consumerStage, already wrapper-stripped by the owner
+	// walk).
+	const prefix = leadingShellAssignments(stripHeredocMarkers(segment, state.heredocs), state.vars);
+	for (const subcommand of extractCommandSubstitutions(segment)) {
+		const body = state.heredocs.get(subcommand);
+		if (!body) continue;
+		const child = body.spec.consumerStage ? parseCommandPrefix(body.spec.consumerStage, state.vars).vars : state.vars;
+		const verdict = classifyHeredocBody(body, state, depth + 1, { parent: state.vars, prefix, child });
+		if (!verdict.ok) return nestedBlockReason("heredoc blocked", verdict.reason);
 	}
 	return null;
 }
 
-/**
- * Extract standalone shell variable assignments from a segment.
- * Handles: VAR=value, export VAR=value, declare -r VAR=value, etc.
- * Declaration keywords (export/declare/typeset/local/readonly) and their
- * flags are skipped before looking for assignments.
- * Returns empty map if any non-keyword, non-flag token is not an assignment.
- * Special-cases $(mktemp) to a synthetic temp-dir path.
- */
-function getStandaloneShellAssignments(segment: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map()): Map<string, string> {
-	const assignments = new Map<string, string>();
-	let tokens: string[] = segment.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
-	if (tokens.length === 0) return assignments;
-
-	// Skip declaration keywords and their flags (export -x, declare -r, etc.)
-	const DECL_KEYWORDS = new Set(["export", "declare", "typeset", "local", "readonly"]);
-	if (tokens.length > 0 && DECL_KEYWORDS.has(tokens[0]!)) {
-		tokens = tokens.slice(1) as string[];
-		// Skip flags after the keyword (e.g., declare -r -x VAR=val)
-		while (tokens.length > 0 && tokens[0]!.startsWith("-")) {
-			tokens = tokens.slice(1) as string[];
-		}
+function shellSegmentReason(segment: string, state: ShellState, depth: number): string | null {
+	for (const subcommand of extractCommandSubstitutions(segment)) {
+		const nested = classifyBashWithHeredocs(subcommand, state.cwd, depth + 1, state.vars, state.heredocs);
+		if (!nested.ok) return nestedBlockReason("command substitution blocked", nested.reason) + quotedSubstitutionHint(segment, nested.reason);
 	}
+	const redirect = writeRedirectBlockReason(segment, state.cwd, state.vars);
+	if (redirect) return redirect;
+	return compoundSegmentReason(segment, state, depth)
+		?? deferredCodeReason(segment, state, depth)
+		?? getFilesystemMutationReason(segment, state.cwd, depth, state.vars);
+}
+
+/** Single quotes make `$(...)`/backticks literal, but the scanner still reads them as code. */
+function quotedSubstitutionHint(segment: string, reason: string): string {
+	if (reason.includes("fail-closed") || !/'[^']*(?:\$\(|`)/.test(segment)) return "";
+	return ` (literal '$(...)' is still scanned; rephrase without it)${FAIL_CLOSED_HINT}`;
+}
+
+/**
+ * Classify the heredoc bodies a substitution carries as shell code.
+ *
+ * A data-consumer heredoc (`cat <<EOF`) is inert to its own command, but when an
+ * outer shell consumes the substitution result as its script (`bash -c "$(…)"`,
+ * `eval "$(…)"`, `bash <(…)`) that same body becomes the child's program text.
+ * Bind the bodies, force `keep`, and classify each as code; fail closed when the
+ * heredoc is unterminated. Returns a block reason, or null when every body is safe.
+ */
+export function classifySubstitutionScript(
+	subcommand: string, cwd: string, depth: number, vars: ReadonlyMap<string, string>,
+): string | null {
+	const prepared = stripHeredocBodies(subcommand, new Map());
+	if (prepared === null) return `unsupported substitution heredoc${FAIL_CLOSED_HINT}`;
+	const state: ShellState = { cwd, stack: [], vars: new Map(vars), directories: new Set(), heredocs: prepared.heredocs };
+	// The outer shell expands an unquoted body here too, so the same shell-version split applies.
+	// Markers are stripped first so a redirect written before the command word exposes its assignments.
+	const prefix = leadingShellAssignments(stripHeredocMarkers(prepared.command, prepared.heredocs), state.vars);
+	for (const body of prepared.heredocs.values()) {
+		const verdict = classifyHeredocBody({ spec: { ...body.spec, keep: true }, text: body.text }, state, depth + 1,
+			{ parent: state.vars, prefix, child: state.vars });
+		if (!verdict.ok) return verdict.reason;
+	}
+	return null;
+}
+
+/** First block reason from the heredoc bodies in any `$(…)`/backtick substitution of `script`. */
+export function classifySubstitutionOutput(script: string, cwd: string, depth: number, vars: ReadonlyMap<string, string>): string | null {
+	for (const subcommand of extractCommandSubstitutions(script)) {
+		const reason = classifySubstitutionScript(subcommand, cwd, depth, vars);
+		if (reason) return reason;
+	}
+	return null;
+}
+
+// ── Assignment tracking ───────────────────────────────
+
+function countParentheses(s: string): number {
+	let diff = 0;
+	for (const ch of s) { if (ch === "(") diff++; else if (ch === ")") diff--; }
+	return diff;
+}
+
+/** Walk `cmd` once, Bash-quote-aware: single quotes make backslash literal,
+ * double quotes honor escapes. Returns indices of unquoted characters and
+ * the quote (if any) left open at the end. */
+function scanUnquoted(cmd: string): { unquoted: number[]; openQuote: '"' | "'" | null } {
+	const unquoted: number[] = [];
+	let quote: '"' | "'" | null = null, escaped = false;
+	for (let i = 0; i < cmd.length; i++) {
+		const ch = cmd[i];
+		if (escaped) { escaped = false; continue; }
+		if (ch === "\\" && quote !== "'") { escaped = true; continue; }
+		if (quote) { if (ch === quote) quote = null; continue; }
+		if (ch === '"' || ch === "'") { quote = ch; continue; }
+		unquoted.push(i);
+	}
+	return { unquoted, openQuote: quote };
+}
+
+/** True when `word` ends inside an unclosed quote (backslash escapes honored). */
+function hasUnbalancedQuote(word: string): boolean {
+	return scanUnquoted(word).openQuote !== null;
+}
+
+/** True while a `$(` / backtick substitution at the value start is still unterminated. */
+function substitutionOpen(rawValue: string): boolean {
+	const sub = rawValue.startsWith('"') ? rawValue.slice(1) : rawValue;
+	if (sub.startsWith("$(")) return countParentheses(sub) > 0;
+	return sub.startsWith("`") && sub.indexOf("`", 1) === -1;
+}
+
+/** Values split on whitespace rejoin while a quote or substitution stays unterminated. */
+function rejoinValueTokens(tokens: string[], start: number, initial: string): { rawValue: string; nextIndex: number } {
+	let rawValue = initial, i = start;
+	while (i + 1 < tokens.length && (hasUnbalancedQuote(rawValue) || substitutionOpen(rawValue))) {
+		rawValue += ` ${tokens[++i]}`;
+	}
+	return { rawValue, nextIndex: i };
+}
+
+function substitutionSuccessBound(segment: string): boolean {
+	// Declaration builtins mask substitution failure; multiple substitutions report
+	// only the last status. Neither proves that a particular mktemp succeeded.
+	return !DECL_KEYWORDS.has(getCommandTokens(segment)[0] ?? "") && extractCommandSubstitutions(segment).length === 1;
+}
+
+/** Mutable sinks and inputs shared by the assignment-walk helpers. */
+interface ShellAssignmentContext {
+	cwd: string;
+	shellVars: ReadonlyMap<string, string>;
+	successBound: boolean;
+	assignments: Map<string, string>;
+	directories: Set<string>;
+	files: Set<string>;
+}
+
+/** Result of scanning one segment for standalone assignments and mktemp provenance. */
+type ShellAssignmentScan = { assignments: Map<string, string>; directories: Set<string>; files: Set<string>; complete: boolean };
+
+export function getStandaloneShellAssignments(
+	segment: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map(),
+): ShellAssignmentScan {
+	const assignments = new Map<string, string>(), directories = new Set<string>(), files = new Set<string>();
+	const tokens = stripDeclKeywords(getCommandTokens(segment));
+	if (tokens.length === 0) return { assignments, directories, files, complete: false };
+	const context: ShellAssignmentContext = {
+		cwd, shellVars, successBound: substitutionSuccessBound(segment), assignments, directories, files,
+	};
+	const complete = collectShellAssignments(tokens, context);
+	return { assignments, directories, files, complete };
+}
+
+/** Walk tokens, recording every `NAME=value` and reporting whether any token was neither. */
+function collectShellAssignments(tokens: string[], context: ShellAssignmentContext): boolean {
+	let unconsumed = false;
 	for (let i = 0; i < tokens.length; i++) {
 		const match = tokens[i]?.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-		if (!match) continue;
-		const [, name, initialRawValue] = match;
-		let rawValue = initialRawValue;
-		const quoteWrapped = rawValue.startsWith('"');
-		const substitutionStart = quoteWrapped ? rawValue.slice(1) : rawValue;
-
-		// Tokenization splits command substitutions on spaces. Rejoin a standalone
-		// assignment value until the substitution closes so mktemp templates are visible.
-		if (substitutionStart.startsWith("$(")) {
-			let depth = 1;
-			for (const ch of substitutionStart.slice(2)) {
-				if (ch === "(") depth++;
-				if (ch === ")") depth--;
-			}
-			while ((depth > 0 || (quoteWrapped && !rawValue.endsWith('"'))) && i + 1 < tokens.length) {
-				rawValue += ` ${tokens[++i]}`;
-				for (const ch of tokens[i]!) {
-					if (ch === "(") depth++;
-					if (ch === ")") depth--;
-				}
-			}
-		} else if (substitutionStart.startsWith("`")) {
-			while ((!rawValue.endsWith("`") || (quoteWrapped && !rawValue.endsWith('`"'))) && i + 1 < tokens.length) {
-				rawValue += ` ${tokens[++i]}`;
-			}
-		}
-
-		const value = stripMatchingQuotes(rawValue);
-		const assignmentVars = new Map(shellVars);
-		for (const [assignedName, assignedValue] of assignments) assignmentVars.set(assignedName, assignedValue);
-		const syntheticMktempPath = getSafeMktempSyntheticPath(value, cwd, assignmentVars, name);
-		if (syntheticMktempPath) {
-			assignments.set(name, syntheticMktempPath);
+		if (!match) {
+			// Redirects were validated on the raw segment; they are syntax, not stray
+			// words that make the assignment list incomplete (`export D=x 2>/dev/null`).
+			// Handled here, not by pre-stripping: rejoin must still see `>` inside
+			// an unbalanced quoted value (`D="a > b"`).
+			const redirect = matchRedirectToken(tokens[i]!);
+			if (redirect) { if (redirect[0] === tokens[i]) i++; continue; }
+			unconsumed = true;
 			continue;
 		}
-		assignments.set(name, value);
+		i = recordShellAssignment(tokens, i, match, context);
 	}
-	return assignments;
+	return !unconsumed;
 }
 
-function unwrapCommandSubstitution(rawValue: string): string | null {
-	const normalized = stripMatchingQuotes(rawValue);
-	if (normalized.startsWith("$(") && normalized.endsWith(")")) return normalized.slice(2, -1);
-	if (normalized.startsWith("`") && normalized.endsWith("`")) return normalized.slice(1, -1);
-	return null;
+/** Decode one assignment token (rejoining unbalanced-quote continuations) into the sinks. */
+function recordShellAssignment(tokens: string[], index: number, match: RegExpMatchArray, context: ShellAssignmentContext): number {
+	const [, name, initial] = match;
+	const { rawValue, nextIndex } = rejoinValueTokens(tokens, index, initial);
+	const value = decodeShellAssignmentValue(rawValue);
+	const currentVars = new Map([...context.shellVars, ...context.assignments]);
+	const directory = context.successBound ? getSafeMktempSyntheticPath(rawValue, context.cwd, currentVars, name) : null;
+	const file = !directory && context.successBound ? getSafeMktempFileSyntheticPath(rawValue, context.cwd, currentVars, name) : null;
+	if (directory) context.directories.add(directory);
+	if (file) context.files.add(file);
+	context.assignments.set(name, directory ?? file ?? value);
+	return nextIndex;
 }
 
-function getSafeMktempSyntheticPath(rawValue: string, cwd: string, shellVars: ReadonlyMap<string, string>, name: string): string | null {
-	const innerCmd = unwrapCommandSubstitution(rawValue);
-	if (!innerCmd) return null;
+// ── Redirect checking ─────────────────────────────────
 
-	const innerTokens = getCommandTokens(innerCmd);
-	if (innerTokens[0] !== "mktemp") return null;
-
-	let template: string | null = null;
-	let tmpdirBase: string | null = null;
-	const args = innerTokens.slice(1);
-
-	for (let i = 0; i < args.length; i++) {
-		const arg = stripMatchingQuotes(args[i]!);
-		if (!arg) continue;
-		if (arg === "--") {
-			template = stripMatchingQuotes(args[i + 1] ?? "");
-			break;
-		}
-		if (arg === "-p") {
-			tmpdirBase = stripMatchingQuotes(args[i + 1] ?? "");
-			if (!tmpdirBase) return null;
-			i++;
-			continue;
-		}
-		if (arg.startsWith("-p") && arg.length > 2) {
-			tmpdirBase = stripMatchingQuotes(arg.slice(2));
-			continue;
-		}
-		if (arg === "-t") {
-			if (process.platform !== "darwin") return null;
-			template = stripMatchingQuotes(args[i + 1] ?? "");
-			if (!template) return null;
-			tmpdirBase = TEMP_DIR;
-			i++;
-			continue;
-		}
-		if (arg.startsWith("-t") && arg.length > 2) {
-			if (process.platform !== "darwin") return null;
-			template = stripMatchingQuotes(arg.slice(2));
-			if (!template) return null;
-			tmpdirBase = TEMP_DIR;
-			continue;
-		}
-		if (arg === "--tmpdir") {
-			// Bare --tmpdir defaults to TEMP_DIR, but with two following positionals
-			// the first is an explicit DIR even if relative, so validate it later.
-			const next = stripMatchingQuotes(args[i + 1] ?? "");
-			const nextNext = stripMatchingQuotes(args[i + 2] ?? "");
-			if (next && !next.startsWith("-") && nextNext && !nextNext.startsWith("-")) {
-				tmpdirBase = next;
-				i++;
-				continue;
-			}
-			if (next && !next.startsWith("-") && (next.startsWith("/") || next.startsWith("~") || next.startsWith("$") || next.includes("/") || next === "." || next === "..")) {
-				tmpdirBase = next;
-				i++;
-				continue;
-			}
-			tmpdirBase = TEMP_DIR;
-			continue;
-		}
-		if (arg.startsWith("--tmpdir=")) {
-			tmpdirBase = stripMatchingQuotes(arg.slice("--tmpdir=".length)) || TEMP_DIR;
-			continue;
-		}
-		if (arg === "--suffix") {
-			i++;
-			continue;
-		}
-		if (arg.startsWith("--suffix=")) continue;
-		if (arg.startsWith("-")) continue;
-		template = arg;
-	}
-
-	if (tmpdirBase !== null) {
-		if (!isTempPath(tmpdirBase, cwd, shellVars)) return null;
-		if (!template) return path.join(TEMP_DIR, `.pi-mktemp-${name.toLowerCase()}`);
-		if (path.isAbsolute(template)) return null;
-		const joinedTemplate = path.join(tmpdirBase, template);
-		return isTempPath(joinedTemplate, cwd, shellVars)
-			? path.join(TEMP_DIR, `.pi-mktemp-${name.toLowerCase()}`)
-			: null;
-	}
-
-	if (template && !isTempPath(template, cwd, shellVars)) return null;
-	return path.join(TEMP_DIR, `.pi-mktemp-${name.toLowerCase()}`);
-}
-
-/**
- * Expand a glob pattern to include hidden-file (dotfile) variants.
- *
- * WORKAROUND: `node:fs.globSync` ignores the `dot: true` option on
- * Node.js v24+ — it silently skips dotfiles. This function explicitly
- * generates `.*` variants for each wildcard segment so hidden files
- * are matched.
- */
-function expandHiddenGlobPatterns(pattern: string): string[] {
-	const segments = pattern.split("/");
-	const options = segments.map((segment) => {
-		if (segment === "**") return [segment, "**/.*", "**/.*/**"];
-		// Literal or already-dotfile segments need no expansion.
-		// Brace patterns ({a,b}) get a redundant .{a,b} variant — harmless.
-		if (!/[*?{}\[\]]/.test(segment) || segment.startsWith(".")) return [segment];
-		return [segment, `.${segment}`];
-	});
-	const patterns = new Set<string>();
-	const visit = (index: number, built: string[]) => {
-		if (index === options.length) return void patterns.add(built.join("/"));
-		for (const option of options[index]) visit(index + 1, [...built, option]);
-	};
-	visit(0, []);
-	return [...patterns];
-}
-
-function isTempPath(rawPath: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map(), visited: Set<string> = new Set()): boolean {
-	const normalized = stripMatchingQuotes(rawPath);
-	if (!normalized || normalized === "/dev/null" || /^&\d+$/.test(normalized)) return true;
-
-	// Expand ~ and ~/path to the home directory (os.homedir()).
-	// ~user/path is not resolvable without getpwuid — block conservatively.
-	if (normalized.startsWith("~")) {
-		if (normalized === "~" || normalized.startsWith("~/")) {
-			const expanded = normalized.replace(/^~/, os.homedir());
-			return isTempPath(expanded, cwd);
-		}
-		return false; // ~user/path cannot be resolved safely
-	}
-
-	const expandedVar = expandShellVariable(normalized, shellVars, visited);
-	if (expandedVar !== null && expandedVar !== normalized) {
-		return isTempPath(expandedVar, cwd, shellVars, visited);
-	}
-
-	// Unresolved dynamic paths are unsafe: if a shell var expansion still leaves
-	// command/process substitution or an unknown $VAR, we cannot prove temp-dir safety.
-	if (/`|\$\(|<\(/.test(normalized) || /\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)/.test(normalized)) {
-		return false;
-	}
-
-	if (/[*?{}\[\]]/.test(normalized)) {
-		// Glob pattern - resolve against cwd and check each target individually.
-		// Expand hidden variants explicitly because node:fs globSync skips dotfiles.
-		// Empty glob (no matches) is allowed — no files to mutate.
-		try {
-			const matches = globSync(expandHiddenGlobPatterns(normalized), { cwd });
-			if (matches.length === 0) return true;
-			return matches.every((m) => isTempPath(m, cwd));
-		} catch {
-			return false;
-		}
-	}
-	const absolute = path.resolve(cwd, normalized);
-	// Resolve symlinks so /tmp/link -> /etc/passwd is correctly classified as non-temp.
-	// Walking up to the nearest existing ancestor handles new files inside symlinked dirs.
-	const real = resolveRealPath(absolute);
-	const relative = path.relative(TEMP_DIR, real);
-	return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
-/**
- * Read the file redirect target starting at position `start`.
- *
- * Handles quoted targets (single/double quotes) and backslash escapes.
- * Scope: > (write), >> (append), >| (noclobber override). Heredoc redirects
- * (<<EOF) are stdin, not file writes, and are not checked by this function.
- */
-function readRedirectTarget(
-	cmd: string,
-	start: number,
-): { target: string; end: number } {
+/** Skip whitespace; return the current index. */
+function skipWhitespace(cmd: string, start: number): number {
 	let i = start;
 	while (i < cmd.length && /\s/.test(cmd[i])) i++;
-	if (i >= cmd.length) return { target: "", end: i };
+	return i;
+}
 
-	const first = cmd[i];
-	if (first === '"' || first === "'") {
-		const quote = first;
-		let target = quote;
+function readQuotedRedirectTarget(cmd: string, start: number): { target: string; end: number } {
+	const quote = cmd[start];
+	let target = quote, i = start + 1;
+	while (i < cmd.length) {
+		const ch = cmd[i];
+		target += ch;
+		if (ch === "\\" && quote === '"' && i + 1 < cmd.length) { i++; target += cmd[i]; continue; }
+		if (ch === quote) { i++; break; }
 		i++;
-		while (i < cmd.length) {
-			const ch = cmd[i];
-			target += ch;
-			if (ch === "\\" && quote === '"' && i + 1 < cmd.length) {
-				i++;
-				target += cmd[i];
-				continue;
-			}
-			if (ch === quote) {
-				i++;
-				break;
-			}
-			i++;
-		}
-		return { target, end: i };
 	}
+	return { target, end: i };
+}
 
-	let target = "";
+function readUnquotedRedirectTarget(cmd: string, start: number): { target: string; end: number } {
+	let target = "", i = start;
 	while (i < cmd.length) {
 		const ch = cmd[i];
 		if (/\s/.test(ch) || ch === ";" || ch === "|" || ch === "\n") break;
@@ -939,150 +629,50 @@ function readRedirectTarget(
 	return { target, end: i };
 }
 
-/**
- * Detect write redirects (>) to unsafe targets outside the temp dir.
- *
- * Scope: > (write), >> (append), >| (noclobber override), 2> (stderr), &> (combined).
- * Heredoc redirect targets (<<EOF) are stdin, not file writes, and are not checked.
- * This is a best-effort inspection layer, not a security sandbox.
- */
-function getUnsafeWriteRedirectTarget(cmd: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map()): string | null {
-	let quote: '"' | "'" | null = null;
-	let escaped = false;
+function readRedirectTarget(cmd: string, start: number): { target: string; end: number } {
+	const i = skipWhitespace(cmd, start);
+	if (i >= cmd.length) return { target: "", end: i };
+	const first = cmd[i];
+	return (first === '"' || first === "'") ? readQuotedRedirectTarget(cmd, i) : readUnquotedRedirectTarget(cmd, i);
+}
 
-	for (let i = 0; i < cmd.length; i++) {
+/** Is the `>` at position `i` a non-file redirect (fd redirect or comparison)? */
+function isNonFileRedirect(cmd: string, i: number): boolean {
+	const next = cmd[i + 1];
+	if (next === "&" && /^[\d-]$/.test(cmd[i + 2] ?? "")) return true; // >&N = fd redirect
+	// `>=` is a comparison only inside `[[ ]]`/`(( ))`/`[ ]`; at command level Bash writes a
+	// file named `=` (Known L2 limitation). The skip stays until context-aware scoping lands.
+	if (next === "=") return true;
+	return false;
+}
+
+/** First write-redirect block reason, or null when all targets stay inside the temp roots. */
+function writeRedirectBlockReason(cmd: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map()): string | null {
+	for (const i of scanUnquoted(cmd).unquoted) {
 		const ch = cmd[i];
-		if (escaped) { escaped = false; continue; }
-		if (ch === "\\") { escaped = true; continue; }
-		if (quote) { if (ch === quote) quote = null; continue; }
-		if (ch === '"' || ch === "'") { quote = ch; continue; }
-		if (ch !== ">") continue;
-
-		const next = cmd[i + 1];
-		// >&N = fd redirect (e.g., 2>&1) — not a file write, skip
-		if (next === "&" && /^[\d-]$/.test(cmd[i + 2] ?? "")) continue;
-		// >= is the comparison operator (e.g., in [[ or node -e), not a write redirect
-		if (next === "=") continue;
-		// >& = combined stdout+stderr redirect to a file, treat as 2-char operator
-		const opLen = next === ">" || next === "|" || next === "&" ? 2 : 1;
+		if (ch !== ">" || isNonFileRedirect(cmd, i)) continue;
+		const opLen = ">|&".includes(cmd[i + 1] ?? "") ? 2 : 1;
 		const { target, end } = readRedirectTarget(cmd, i + opLen);
-		if (!isTempPath(target, cwd, shellVars)) return stripMatchingQuotes(target) || "(unknown target)";
-		i = Math.max(i, end - 1);
+		const reason = tempPathBlockReason("write redirect", target, cwd, shellVars);
+		if (reason) return reason;
 	}
-
 	return null;
 }
 
 /**
- * Split a shell command string into segments separated by shell operators.
- *
- * Handles quoted strings (single/double quotes) and backslash escapes.
- * Shell operator handling:
- *   ;  — sequential (segment boundary)
- *   |  — pipe (segment boundary)
- *   &  — background (segment boundary, but >& and <& are redirects not separators)
- *   && — AND (segment boundary)
- *   || — OR (segment boundary)
- *   \n — newline (segment boundary)
- * The >| and >& operators are consumed as part of the preceding segment.
+ * Bash applies redirects before cd. File existence cannot prove redirect success:
+ * permissions, noclobber, descriptor state, and races can preserve the original cwd.
+ * Keep that failure branch without tracking shell options; && selects success only.
  */
-function splitUnquotedShellSegments(cmd: string): string[] {
-	const segments: string[] = [];
-	let current = "";
-	let quote: '"' | "'" | null = null;
-	let escaped = false;
-
-	for (let i = 0; i < cmd.length; i++) {
-		const ch = cmd[i];
-		const next = cmd[i + 1];
-
-		if (escaped) {
-			current += ch;
-			escaped = false;
-			continue;
-		}
-		if (ch === "\\") {
-			current += ch;
-			escaped = true;
-			continue;
-		}
-		if (quote) {
-			current += ch;
-			if (ch === quote) quote = null;
-			continue;
-		}
-		if (ch === '"' || ch === "'") {
-			quote = ch;
-			current += ch;
-			continue;
-		}
-		if ((ch === "&" && next === "&") || (ch === "|" && next === "|")) {
-			segments.push(current);
-			current = "";
-			i++;
-			continue;
-		}
-		const prev = current[current.length - 1];
-		if (ch === "|" && prev === ">") {
-			current += ch;
-			continue;
-		}
-		if (ch === "&" && (prev === ">" || prev === "<" || next === ">")) {
-			current += ch;
-			continue;
-		}
-		if (ch === ";" || ch === "|" || ch === "&" || ch === "\n") {
-			segments.push(current);
-			current = "";
-			continue;
-		}
-		current += ch;
+export function redirectMayAbortCommand(segment: string): boolean {
+	for (const i of scanUnquoted(segment).unquoted) {
+		const ch = segment[i];
+		const next = segment[i + 1] ?? "";
+		if ((ch === "<" || ch === ">") && next === "&") return true; // Untracked fd may be closed.
+		if (ch === "<" ? ["<", "(", ">"].includes(next) : ch !== ">" || isNonFileRedirect(segment, i)) continue;
+		return true;
 	}
-	segments.push(current);
-	return segments;
-}
-
-/**
- * Extract command substitution targets ($(...) and backticks) from a shell line.
- *
- * Uses simple depth-tracked matching. This is a best-effort guard — nested
- * nesting, backslash escapes, and quote-aware tracking are intentionally
- * skipped for simplicity since this is not a security boundary.
- */
-function extractCommandSubstitutions(line: string): string[] {
-	const commands: string[] = [];
-
-	// Backtick substitutions: `` `cmd` ``
-	const backtickRe = /`([^`]*)`/g;
-	let match: RegExpExecArray | null;
-	while ((match = backtickRe.exec(line)) !== null) {
-		if (match[1].trim()) commands.push(match[1].trim());
-	}
-
-	// $() substitutions: handles arbitrary nesting via depth counter
-	for (let i = 0; i < line.length; i++) {
-		if (line[i] !== "$" || line[i + 1] !== "(") continue;
-		let depth = 1;
-		let cmd = "";
-		let j = i + 2;
-		for (; j < line.length && depth > 0; j++) {
-			if (line[j] === "(" && line[j - 1] === "$") depth++;
-			else if (line[j] === ")") depth--;
-			if (depth > 0) cmd += line[j];
-		}
-		if (cmd.trim()) commands.push(cmd.trim());
-		i = j;
-	}
-
-	// <() process substitutions: extract inner command for recursive classification.
-	// Handles one level of nesting inside <().
-	const procSubRe = /<\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g;
-	let procMatch: RegExpExecArray | null;
-	while ((procMatch = procSubRe.exec(line)) !== null) {
-		if (procMatch[1].trim()) commands.push(procMatch[1].trim());
-	}
-
-	return commands;
+	return false;
 }
 
 // ── Shared readonly bash guard (consumed by parent tool_call hook and child spawnHook) ──
@@ -1102,27 +692,23 @@ export type ReadonlyBashGuardResult =
  * @param cwd - Working directory for path resolution
  * @returns Structured result: allow, block (with reason), or sandbox (with wrapped command)
  */
+function classifyResult(cmd: string, cwd: string): ReadonlyBashGuardResult | null {
+	const verdict = classifyBashCommand(cmd, cwd);
+	return verdict.ok ? null : { action: "block", reason: buildReadonlyBashBlockReason(verdict.reason, cmd) };
+}
+
 export function applyReadonlyBashGuard(cmd: unknown, cwd: string): ReadonlyBashGuardResult {
 	if (typeof cmd !== "string") {
-		return {
-			action: "block",
-			reason: buildReadonlyBashBlockReason(READONLY_INVALID_BASH_COMMAND_REASON, "<invalid input>"),
-		};
+		return { action: "block", reason: buildReadonlyBashBlockReason(READONLY_INVALID_BASH_COMMAND_REASON, "<invalid input>") };
 	}
-
-	// L1: OS sandbox (primary enforcement when available)
-	if (canUseOsSandbox()) {
-		const verdict = classifyBashCommand(cmd, cwd);
-		if (verdict.ok === false) {
-			return { action: "block", reason: buildReadonlyBashBlockReason(verdict.reason, cmd) };
-		}
+	const blocked = classifyResult(cmd, cwd);
+	if (blocked) return blocked;
+	if (!canUseOsSandbox()) return { action: "allow" };
+	// Sandbox build failure (e.g. no writable temp root) fails closed, never passthrough-allow.
+	try {
 		return { action: "sandbox", sandboxedCommand: wrapCommandWithOsSandbox(cmd) };
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : String(error);
+		return { action: "block", reason: buildReadonlyBashBlockReason(`sandbox unavailable: ${detail}`, cmd) };
 	}
-
-	// L2: Pattern inspection fallback (no sandbox available)
-	const verdict = classifyBashCommand(cmd, cwd);
-	if (verdict.ok === false) {
-		return { action: "block", reason: buildReadonlyBashBlockReason(verdict.reason, cmd) };
-	}
-	return { action: "allow" };
 }
