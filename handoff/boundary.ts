@@ -1,6 +1,7 @@
 /**
  * Handoff lifecycle: stages the request in the handoff tool, writes it as one
- * turn_end boundary, and completes only once the cut is found on the branch.
+ * turn_end boundary, and completes only once the cut is found on the branch
+ * with its successor after it and no later compaction.
  * Pi does not acknowledge a boundary result: a later turn_end handler or draft
  * validation can drop it.
  */
@@ -28,6 +29,7 @@ import {
 	REASON_NOT_PERSISTED,
 	REASON_NO_BOUNDARY,
 	REASON_RESULT_MISSING,
+	REASON_SUCCESSOR_NOT_PERSISTED,
 } from "./copy.js";
 import { isHandoffEligible } from "./eligibility.js";
 import {
@@ -39,6 +41,7 @@ import {
 	buildNextUserMessage,
 	formatHandoffComplete,
 	formatHandoffFailure,
+	formatLostSuccessorFailure,
 } from "./format.js";
 import { HANDOFF_TOOL_NAME } from "./tool.js";
 import { settleExhaustsHandoffBudget } from "../watchdog.js";
@@ -100,6 +103,27 @@ function findHandoffCut(branch: readonly SessionEntry[], handoffId: string): Ses
 		if (getHandoffId(branch[index]) === handoffId) return branch[index];
 	}
 	return undefined;
+}
+
+/** The `handoffId` in a successor's details, or undefined when it has none. */
+function successorHandoffId(details: unknown): string | undefined {
+	if (typeof details !== "object" || details === null) return undefined;
+	const { handoffId } = details as Record<string, unknown>;
+	return typeof handoffId === "string" ? handoffId : undefined;
+}
+
+/**
+ * Whether the successor of `handoffId` follows `cut` on `branch` with no later
+ * compaction, which would hide it from the model's context.
+ */
+function successorFollowsCut(branch: readonly SessionEntry[], cut: SessionEntry, handoffId: string): boolean {
+	let found = false;
+	for (const entry of branch.slice(branch.indexOf(cut) + 1)) {
+		if (entry.type === "compaction") return false;
+		if (entry.type === "custom_message" && entry.customType === HANDOFF_SUCCESSOR_CUSTOM_TYPE &&
+			successorHandoffId(entry.details) === handoffId) found = true;
+	}
+	return found;
 }
 
 /** Settle the durable handoff state once the cut is confirmed on the branch. */
@@ -171,6 +195,36 @@ function failStagedHandoff(
 	notifyHandoffFailure(ctx, reason, pendingRequest);
 }
 
+/**
+ * Fail a handoff whose cut landed without its successor in context. The context
+ * is already cut, so the request is settled as after a completed cut and not
+ * retried; the failure message carries the instruction. At turn_start the run is
+ * aborted, so the continuation turn never reaches the model without an instruction.
+ */
+function failLostSuccessor(
+	pi: ExtensionAPI,
+	state: SchematicState,
+	ctx: ExtensionContext,
+	staged: StagedHandoff,
+	branch: readonly SessionEntry[],
+	at: "turn_start" | "agent_settled",
+): void {
+	reconstructNotebook(state, branch);
+	finalizeHandoffState(state);
+	state.stagedHandoff = null;
+	state.handoffFailedInRun = true;
+	const successor = buildNextUserMessage({ nextInstruction: staged.nextInstruction, context: staged.context });
+	pi.sendMessage(
+		{ customType: HANDOFF_FAILED_CUSTOM_TYPE, content: formatLostSuccessorFailure(REASON_SUCCESSOR_NOT_PERSISTED, successor), display: true },
+		{ triggerTurn: false },
+	);
+	if (at === "turn_start") ctx.abort();
+	if (!ctx.hasUI) return;
+	ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
+	ctx.ui.notify(`Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}. The instruction is in the failure message.`, "error");
+	updateIndicators(ctx, state);
+}
+
 function resolveStagedHandoff(
 	pi: ExtensionAPI,
 	state: SchematicState,
@@ -193,8 +247,11 @@ function resolveStagedHandoff(
 			return;
 		case "submitted": {
 			const branch = ctx.sessionManager.getBranch();
-			if (findHandoffCut(branch, staged.handoffId)) {
+			const cut = findHandoffCut(branch, staged.handoffId);
+			if (cut && successorFollowsCut(branch, cut, staged.handoffId)) {
 				completeHandoff(state, ctx, staged, branch, at === "turn_start");
+			} else if (cut) {
+				failLostSuccessor(pi, state, ctx, staged, branch, at);
 			} else {
 				// A later turn_end handler can drop the cut but keep the notebook drafts.
 				reconstructNotebook(state, branch);

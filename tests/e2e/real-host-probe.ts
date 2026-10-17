@@ -18,6 +18,7 @@ import { createAssistantMessageEventStream, type AssistantMessage, type ToolCall
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
+import { HANDOFF_SUCCESSOR_CUSTOM_TYPE } from "../../handoff/format.js";
 import {
 	PROBE_API,
 	PROBE_BARRIER_STATUS_KEY,
@@ -102,7 +103,9 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	let runScript: ScriptedStep[] | null = null;
 	let step = 0;
 	let runEntryCount = 0;
-	let dropNextCut = false;
+	// How the next turn_end boundary that carries a handoff cut is altered: the whole
+	// boundary dropped, only its successor dropped, or a compaction appended after the cut.
+	let nextCutTamper: "drop" | "dropSuccessor" | "compactAfter" | null = null;
 	let abortAfterHandoff = false;
 	// Runs `/e2e-turn <count>` still has to start, one per agent_settled.
 	let chainedTurns = 0;
@@ -267,11 +270,20 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		const handoffId = event.entries.map(cutHandoffId).find((id) => id !== null);
 		wake();
 		if (handoffId === undefined) return undefined;
-		const dropped = dropNextCut;
-		dropNextCut = false;
-		log({ kind: "cut", handoffId, dropped });
-		// Drop every draft and the continuation, as pi itself does for an invalid boundary.
-		return dropped ? { entries: [], continue: false } : undefined;
+		const tamper = nextCutTamper;
+		nextCutTamper = null;
+		log({ kind: "cut", handoffId, dropped: tamper === "drop" });
+		switch (tamper) {
+			case null:
+				return undefined;
+			case "drop":
+				// Drop every draft and the continuation, as pi itself does for an invalid boundary.
+				return { entries: [], continue: false };
+			case "dropSuccessor":
+				return { entries: event.entries.filter((entry) => !(entry.type === "custom_message" && entry.customType === HANDOFF_SUCCESSOR_CUSTOM_TYPE)) };
+			case "compactAfter":
+				return { entries: [...event.entries, { type: "compaction", summary: "e2e compaction after the cut", firstKeptEntryId: null }] };
+		}
 	});
 
 	pi.on("input", async (event) => {
@@ -344,7 +356,21 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	pi.registerCommand(PROBE_COMMAND.dropNextCut, {
 		description: "Drop the next handoff cut and its continuation from the turn_end boundary",
 		handler: async () => {
-			dropNextCut = true;
+			nextCutTamper = "drop";
+		},
+	});
+
+	pi.registerCommand(PROBE_COMMAND.dropNextSuccessor, {
+		description: "Keep the next handoff cut but drop its successor from the turn_end boundary",
+		handler: async () => {
+			nextCutTamper = "dropSuccessor";
+		},
+	});
+
+	pi.registerCommand(PROBE_COMMAND.compactAfterNextCut, {
+		description: "Append a compaction after the next handoff cut in the turn_end boundary",
+		handler: async () => {
+			nextCutTamper = "compactAfter";
 		},
 	});
 

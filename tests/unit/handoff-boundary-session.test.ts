@@ -23,6 +23,7 @@ import {
 	type AgentSession,
 	type ExtensionAPI,
 	type ExtensionUIContext,
+	type SessionBoundaryDraft,
 	type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -45,6 +46,7 @@ import {
 	buildNextUserMessage,
 	formatHandoffComplete,
 	formatHandoffFailure,
+	formatLostSuccessorFailure,
 } from "../../handoff/format.js";
 import {
 	HANDOFF_FAILED_IN_RUN_REFUSAL,
@@ -54,6 +56,7 @@ import {
 	HANDOFF_SUCCESSOR_NOT_RUN,
 	REASON_ABORTED,
 	REASON_NOT_PERSISTED,
+	REASON_SUCCESSOR_NOT_PERSISTED,
 } from "../../handoff/copy.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS, buildNudge } from "../../watchdog.js";
@@ -705,6 +708,73 @@ describe("failed handoff cut in a real agent session", () => {
 				entry.type === "message" && entry.message.role === "user" ? [messageText(entry.message as Message)] : []);
 			assert.deepEqual(userTexts.filter((text) => text.includes("Handoff failed")), [], "no user message announces the failure");
 			assert.ok(carriesRequiredNudge(observed.requests.at(-1) ?? []), "the request stays pending and is enforced on the next prompt");
+			assert.deepEqual(observed.extensionErrors, []);
+		});
+	}
+
+	// Each tamper keeps the cut but leaves no successor in context after it, once.
+	const lostSuccessorVariants: { name: string; tamper: (entries: SessionBoundaryDraft[]) => SessionBoundaryDraft[] }[] = [
+		{
+			name: "a later extension drops the successor",
+			tamper: (entries) => entries.filter((entry) => !(entry.type === "custom_message" && entry.customType === HANDOFF_SUCCESSOR_CUSTOM_TYPE)),
+		},
+		{
+			name: "a later extension appends a compaction after the cut",
+			tamper: (entries) => [...entries, { type: "compaction", summary: "another extension's summary", firstKeptEntryId: null }],
+		},
+	];
+	for (const variant of lostSuccessorVariants) {
+		it(`fails the handoff, aborts the continuation and clears the request when the cut lands without its successor (${variant.name})`, async () => {
+			let tampered = false;
+			const tamperBoundary: ExtensionFactory = (pi) => {
+				pi.on("turn_end", async (event) => {
+					if (tampered || event.entries.length === 0) return undefined;
+					tampered = true;
+					return { entries: variant.tamper(event.entries) };
+				});
+			};
+			const ui: string[] = [];
+			const { session, sessionManager, observed } = await startSession(
+				[reply("ready"), call(handoffCall()), call(fauxToolCall("handoff", { nextInstruction: NEXT_INSTRUCTION }, { id: "call-later" })), reply("successor answer")],
+				{ after: [tamperBoundary], ui: recordingUI(ui) },
+			);
+			let requestsAfterHandoffRun: number;
+			let uiAfterHandoffRun: string[];
+			try {
+				await session.prompt(LARGE_PROMPT);
+				await session.prompt("/handoff finish the report");
+				await settleRuns(session, observed, 2);
+				requestsAfterHandoffRun = observed.requests.length;
+				uiAfterHandoffRun = [...ui];
+				await session.prompt(LARGE_PROMPT);
+				await settleRuns(session, observed, 3);
+			} finally {
+				session.dispose();
+			}
+
+			const lostSuccessor = buildNextUserMessage({ nextInstruction: "finish the report", context: HANDOFF_CONTEXT });
+			assert.equal(requestsAfterHandoffRun, 2, "the continuation turn is aborted before it reaches the model");
+			const failures = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE);
+			assert.equal(failures.length, 1);
+			const [failure] = failures;
+			assert.ok(failure.type === "custom_message");
+			assert.equal(failure.content, formatLostSuccessorFailure(REASON_SUCCESSOR_NOT_PERSISTED, lostSuccessor), "the failure carries the instruction");
+			assert.equal(failure.display, true);
+			assert.ok(uiAfterHandoffRun.includes(`notify:error:Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}. The instruction is in the failure message.`), JSON.stringify(uiAfterHandoffRun));
+			assert.ok(!uiAfterHandoffRun.some((line) => line.startsWith("notify:info:Handoff complete")), "no completion notice");
+			assert.ok(!uiAfterHandoffRun.includes(`notify:warning:${HANDOFF_SUCCESSOR_NOT_RUN}`), "no successor-not-run warning");
+			const nextRequest = nonSystem(observed.requests[2]).map(messageText);
+			assert.ok(!nextRequest.includes(lostSuccessor), "no successor reaches the next run");
+			assert.ok(!carriesRequiredNudge(observed.requests[2]), "the request was cleared, so the next run is not enforced");
+			const later = toolResultFor(sessionManager, "call-later");
+			assert.ok(later, "the later handoff has a tool result");
+			assert.equal(messageText(later as Message), HANDOFF_STAGED_RESULT, "a later handoff is accepted");
+			assert.deepEqual(sessionManager.getBranch().map(entryLabel).slice(-4), [
+				"compaction",
+				`custom_message:${HANDOFF_SUCCESSOR_CUSTOM_TYPE}`,
+				`custom_message:${HANDOFF_NOTE_CUSTOM_TYPE}`,
+				"message",
+			], "the later handoff lands its cut and successor");
 			assert.deepEqual(observed.extensionErrors, []);
 		});
 	}

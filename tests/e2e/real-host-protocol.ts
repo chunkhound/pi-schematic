@@ -31,6 +31,8 @@ export const PROBE_COMMAND = {
 	tree: "e2e-tree",
 	turn: "e2e-turn",
 	dropNextCut: "e2e-drop-next-cut",
+	dropNextSuccessor: "e2e-drop-next-successor",
+	compactAfterNextCut: "e2e-compact-after-next-cut",
 	abortAfterHandoff: "e2e-abort-after-handoff",
 	tools: "e2e-tools",
 } as const;

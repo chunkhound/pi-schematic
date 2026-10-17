@@ -27,3 +27,4 @@ export const REASON_ABORTED = "the run was aborted before the cut";
 export const REASON_NO_BOUNDARY = "the turn ended without writing the cut";
 export const REASON_RESULT_MISSING = "the handoff result was missing from its turn";
 export const REASON_NOT_PERSISTED = "pi did not persist the cut (another extension replaced the turn_end entries, or pi rejected them)";
+export const REASON_SUCCESSOR_NOT_PERSISTED = "the cut was written but its successor instruction was not persisted after it (another extension's turn_end handler may have dropped it or written a later compaction)";

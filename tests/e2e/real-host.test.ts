@@ -16,6 +16,7 @@ import {
 	HANDOFF_STAGED_RESULT,
 	REASON_ABORTED,
 	REASON_NOT_PERSISTED,
+	REASON_SUCCESSOR_NOT_PERSISTED,
 } from "../../handoff/copy.js";
 import {
 	HANDOFF_FAILED_CUSTOM_TYPE,
@@ -23,6 +24,7 @@ import {
 	HANDOFF_SUCCESSOR_CUSTOM_TYPE,
 	buildNextUserMessage,
 	formatHandoffFailure,
+	formatLostSuccessorFailure,
 } from "../../handoff/format.js";
 import {
 	READONLY_ACTIVE_SUMMARY,
@@ -403,6 +405,47 @@ describe("pi-schematic real-host E2E", () => {
 		assert.equal(results[1].text, HANDOFF_STAGED_RESULT);
 		onlyHandoffCut(retried.entries);
 	}));
+
+	for (const variant of [
+		{ name: "another extension drops its successor", command: PROBE_COMMAND.dropNextSuccessor },
+		{ name: "another extension appends a compaction after it", command: PROBE_COMMAND.compactAfterNextCut },
+	]) {
+		it(`a cut that lands without its successor in context fails, aborts the run, and a later handoff still lands (${variant.name})`, TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+			await host.command("/" + variant.command);
+			await handoffCommand(host, "finish the report", { context: "mid-task state" }, 1);
+
+			const failed = await host.entries();
+			const cut = onlyHandoffCut(failed.entries);
+			const handoffId = cutHandoffId(cut)!;
+			assert.deepEqual(requestsAfterCut(host.probeLog(), handoffId), [], "the run is aborted before the model is called after the cut");
+			const lostSuccessor = buildNextUserMessage({ nextInstruction: "finish the report", context: "mid-task state" });
+			const failure = onlyCustomMessage(failed.entries, HANDOFF_FAILED_CUSTOM_TYPE);
+			assert.equal(failure.content, formatLostSuccessorFailure(REASON_SUCCESSOR_NOT_PERSISTED, lostSuccessor), "the failure carries the instruction");
+			assert.equal(failure.display, true, "the failure is shown");
+			assert.ok(
+				host.notifications.some((notification) => notification.message.startsWith(`Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}.`)),
+				"failure notified",
+			);
+			assert.ok(!host.notifications.some((notification) => notification.message.startsWith("Handoff complete")), "no completion notice");
+			const handoffStatuses = host.statuses.filter((status) => status.statusKey === STATUS_KEY_HANDOFF);
+			assert.equal(handoffStatuses.at(-1)?.statusText, undefined, "no handoff stays required");
+
+			await handoff(host, { nextInstruction: "later work" }, 1);
+			const retried = await host.entries();
+			const results = toolResults(retried.entries, "handoff");
+			assert.equal(results.length, 2, "two handoff results");
+			assert.equal(results[1].text, HANDOFF_STAGED_RESULT, "a later handoff is accepted");
+			const laterCut = handoffCuts(retried.entries).find((entry) => entry.id !== cut.id);
+			assert.ok(laterCut, "the later handoff lands its cut");
+			const [laterRequest] = requestsAfterCut(host.probeLog(), cutHandoffId(laterCut)!);
+			assert.ok(laterRequest, "the model is called after the later cut");
+			assert.deepEqual(
+				laterRequest.texts.filter((text) => text.startsWith(NEXT_INSTRUCTION_PREFIX)),
+				[buildNextUserMessage({ nextInstruction: "later work" })],
+				"only the later successor reaches the model",
+			);
+		}));
+	}
 
 	it("a handoff aborted before its cut persists the failure without starting a run", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
 		await host.command("/" + PROBE_COMMAND.abortAfterHandoff);

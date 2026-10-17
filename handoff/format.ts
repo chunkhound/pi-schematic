@@ -56,6 +56,14 @@ export function formatHandoffFailure(reason: string, pendingRequest: boolean): s
 	return `Handoff failed — ${reason}. ${nextStep}`;
 }
 
+/**
+ * Failure guidance for a cut whose successor is missing. The context is already
+ * cut, so nothing is retried; `successor` carries the instruction so it is not lost.
+ */
+export function formatLostSuccessorFailure(reason: string, successor: string): string {
+	return `Handoff failed — ${reason}. The context is already cut, so the handoff is not retried and no required handoff remains pending. The instruction it carried:\n\n${successor}`;
+}
+
 /** Completion report; with a discard request it states the notebook outcome. */
 export function formatHandoffComplete(discardRequested: boolean, kept: number, discarded: number): string {
 	if (!discardRequested) return "Handoff complete.";
