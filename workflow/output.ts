@@ -1,7 +1,7 @@
 // WHY: one module owns the run-scoped structured-output tool: its primer, its schema
-// wiring, and the armed/deactivated lifecycle. The host only calls arm/disarm and reads
-// the captured value, so tool-registration details never leak into the run orchestration.
-import type { AgentToolResult, ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+// wiring, and the armed life-cycle. The host holds one handle and reads the captured
+// value, so tool-registration details never leak into the run orchestration.
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { StructuredOutputRequest } from "./types.js";
 
 /** Host-owned tool name. The same name is re-registered per structured run, so the schema follows the run. */
@@ -17,10 +17,16 @@ const OUTPUT_GUIDELINES = [
 	"If workflow_output rejects the arguments, fix them and call it again.",
 ];
 
-/** Live capture for one structured run; `execute` writes `value`, the host reads it after settle. */
-export interface OutputCapture {
+/** Live capture for one structured run; `execute` writes `value`, the handle reads it after settle. */
+interface OutputCapture {
 	request: StructuredOutputRequest;
 	value?: unknown;
+}
+
+/** Handle for one armed run: `value` reads the submission, `release` restores the previous active set. */
+export interface ArmedStructuredOutput {
+	value(): unknown;
+	release(): void;
 }
 
 // WHY: the primer is the tool's job, not a second prompt line. A model that never calls it
@@ -40,7 +46,6 @@ function captureSubmission(capture: OutputCapture): ToolDefinition["execute"] {
 		return Promise.resolve({
 			content: [{ type: "text", text: "Structured output received; the run is complete." }],
 			details: undefined,
-			structuredContent: params as AgentToolResult["structuredContent"],
 			terminate: true,
 		});
 	};
@@ -51,7 +56,7 @@ function captureSubmission(capture: OutputCapture): ToolDefinition["execute"] {
  * a model-issued call before `execute` runs: an invalid submission never reaches the host,
  * it becomes an error tool result the model corrects inside the same settled run.
  */
-export function buildStructuredOutputTool(capture: OutputCapture): ToolDefinition {
+function buildStructuredOutputTool(capture: OutputCapture): ToolDefinition {
 	return {
 		name: STRUCTURED_OUTPUT_TOOL,
 		label: "workflow output",
@@ -70,16 +75,15 @@ export function buildStructuredOutputTool(capture: OutputCapture): ToolDefinitio
 
 /**
  * Register (replace) the output tool with this run's schema and add it to the active set.
- * Returns the previous active set so the caller can restore it exactly.
+ * The handle closes over the previous set, so `release` restores it exactly.
  */
-export function armStructuredOutput(pi: ExtensionAPI, capture: OutputCapture): string[] {
+export function armStructuredOutput(pi: ExtensionAPI, request: StructuredOutputRequest): ArmedStructuredOutput {
+	const capture: OutputCapture = { request };
 	const previous = pi.getActiveTools();
 	pi.registerTool(buildStructuredOutputTool(capture));
 	pi.setActiveTools([...previous.filter((name) => name !== STRUCTURED_OUTPUT_TOOL), STRUCTURED_OUTPUT_TOOL]);
-	return previous;
-}
-
-/** Deactivate the output tool; the definition stays registered but unreachable. */
-export function disarmStructuredOutput(pi: ExtensionAPI, previousActive: readonly string[]): void {
-	pi.setActiveTools([...previousActive]);
+	return {
+		value: () => capture.value,
+		release: () => pi.setActiveTools([...previous]),
+	};
 }

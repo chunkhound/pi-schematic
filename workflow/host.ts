@@ -10,7 +10,7 @@ import { messageOf, safeAppendEntry, withRecordStatus } from "./errors.js";
 import { notebookIndex, notebookRead, notebookTopic, notebookWrite } from "./notebook.js";
 import { createRunRegistry, resolveRunTarget, type RunCorrelation, type RunMatch, type RunRegistry } from "./run-registry.js";
 import { createShellRunner } from "./shell.js";
-import { armStructuredOutput, disarmStructuredOutput, type OutputCapture } from "./output.js";
+import { armStructuredOutput, type ArmedStructuredOutput } from "./output.js";
 import { addModelSpend, assistantCount, collectUsage, mergeModelSpend, spendIdentity, spendRowsTotal, type ModelSpend } from "../usage.js";
 import { armPendingStop, branchSpend, bumpSpendRevision, computeCurrentCost, liveBranch, limitReason, runSpendRows, type SpendState } from "./spend.js";
 import type { ChildUsageSink } from "../state.js";
@@ -51,7 +51,7 @@ export const MAX_EFFECTS = 100;
 // A detail is a human-readable label (e.g. the shell command); the run message and output
 // live elsewhere. Without a cap, 100 records of long commands bloat the summary entry in
 // the session file. Not docs-pinned; the overview truncates further for display.
-export const MAX_EFFECT_DETAIL = 200;
+const MAX_EFFECT_DETAIL = 200;
 type AnyRun = (args: unknown, signal: AbortSignal) => unknown;
 type ReplacementOptions = NonNullable<Parameters<ExtensionCommandContext["newSession"]>[0]>;
 type ReplacementContext = Parameters<NonNullable<ReplacementOptions["withSession"]>>[0];
@@ -98,6 +98,9 @@ interface PreparedRun {
 	/** pendingReadonlyCommands depth before this run's frontmatter queued its decision;
 	 * the rollback point when the run fails before dispatch (see restoreUnsentRun). */
 	readonlyDepth: number;
+	/** True once `sendCorrelated` handed the run text to `dispatchMessage`. Until then the run
+	 * left no trace in shared state, so `handleRun` rolls it back (see restoreUnsentRun). */
+	dispatched: boolean;
 }
 
 /** Host decided the reserved reason after a failed execute; script/unknown errors are "error". */
@@ -194,10 +197,10 @@ function recordHardAbortExit(deps: WorkflowHostDeps, state: HostState, error: st
  * effect run; the workflow stops at its next checkpoint. Guarded effects past that point
  * are bounded so an unreachable checkpoint cannot spend without bound. Inspectors that
  * cannot reach a checkpoint do not run here at all.
+ * Lifecycle needs no check here: `executeGuarded` runs `ensureActive` for every handle that is
+ * not soft-lifecycle before it gates.
  */
-function guardDeferredStop(deps: WorkflowHostDeps, state: HostState, softLifecycle = false): void {
-	// softLifecycle handles convert lifecycle failures themselves (see executeGuarded).
-	if (!softLifecycle) ensureActive(state);
+function guardDeferredStop(deps: WorkflowHostDeps, state: HostState): void {
 	const reason = limitReason(deps, state);
 	if (state.pendingStop) {
 		if (++state.deferredEffects > MAX_DEFERRED_EFFECTS) {
@@ -338,10 +341,15 @@ function safeEmitProgress(deps: WorkflowHostDeps, state: HostState): void {
 	}
 }
 
-/** Open an effect record and tell the UI it started. The detail is capped here, at capture:
- * every downstream consumer (live widget, bounded log, summary entry) inherits the bound. */
+/** Bound an effect detail for every downstream consumer (live widget, log, summary entry,
+ * footer). The cap lives at capture so no consumer re-truncates. */
+function boundEffectDetail(detail: string): string {
+	return detail.length > MAX_EFFECT_DETAIL ? `${detail.slice(0, MAX_EFFECT_DETAIL - 3)}...` : detail;
+}
+
+/** Open an effect record and tell the UI it started. */
 function startEffect(deps: WorkflowHostDeps, state: HostState, name: WorkflowEffect["name"], rawDetail: string): WorkflowEffect {
-	const detail = rawDetail.length > MAX_EFFECT_DETAIL ? `${rawDetail.slice(0, MAX_EFFECT_DETAIL - 3)}...` : rawDetail;
+	const detail = boundEffectDetail(rawDetail);
 	const effect: WorkflowEffect = { id: state.nextEffectId++, name, detail, ok: true, durationMs: 0 };
 	state.currentEffect = detail;
 	safeOnEffect(deps, { phase: "start", effect });
@@ -570,7 +578,7 @@ const OVERLAP_ERROR = "workflow calls must not overlap: workflow effects are ser
  * soft-lifecycle handle is blocked by escalation (classify never rejects); rethrows otherwise. */
 function gateRun(deps: WorkflowHostDeps, state: HostState, spec: HandlePolicy): unknown {
 	try {
-		guardDeferredStop(deps, state, spec.softLifecycle);
+		guardDeferredStop(deps, state);
 	} catch (error) {
 		// Escalation already aborted the host and wrote the single exit record, but a
 		// soft-lifecycle handle must still return a normal result: classify never rejects.
@@ -628,21 +636,16 @@ function buildNotebookDeps(deps: WorkflowHostDeps, state: HostState): { pi: type
  * union and its option/result types there are the single source of truth.
  */
 function buildGlobals(deps: WorkflowHostDeps, state: HostState): CodemodeTool[] {
-	const specs = buildHandleSpecs(deps, state, buildNotebookDeps(deps, state));
-	// The map keys ARE the built handles, so assembly cannot omit one.
-	return (Object.keys(specs) as WorkflowHandleName[]).map((name) => {
-		const { run, ...spec } = specs[name];
-		return buildHandle(name, spec, run, state, deps);
-	});
+	const runs = buildHandleRuns(deps, state, buildNotebookDeps(deps, state));
+	// The policy table keys ARE the built handles, so assembly cannot omit one.
+	return (Object.keys(HANDLE_POLICY) as WorkflowHandleName[]).map((name) => buildHandle(name, HANDLE_POLICY[name], runs[name], state, deps));
 }
 
-type HandleSpecEntry = HandlePolicy & { run: AnyRun };
-
-/** Spec+handler for every `workflow.<member>` handle: the policy table plus one run handler
- * per name. Both Records are exhaustive over `WorkflowHandleName`, so a new member fails
- * compile until its policy and handler are declared. */
-function buildHandleSpecs(deps: WorkflowHostDeps, state: HostState, notebookDeps: ReturnType<typeof buildNotebookDeps>): Record<WorkflowHandleName, HandleSpecEntry> {
-	const runs: Record<WorkflowHandleName, AnyRun> = {
+/** One run handler per `workflow.<member>` handle. The Record is exhaustive over
+ * `WorkflowHandleName`, so a new member fails compile until its handler is declared here
+ * and its policy in `HANDLE_POLICY`. */
+function buildHandleRuns(deps: WorkflowHostDeps, state: HostState, notebookDeps: ReturnType<typeof buildNotebookDeps>): Record<WorkflowHandleName, AnyRun> {
+	return {
 		run: (args) => handleRun(deps, state, args as unknown[]),
 		handoff: (args) => handleHandoff(deps, state, args),
 		classify: (args, signal) => handleClassify(deps, state, args, signal),
@@ -659,8 +662,6 @@ function buildHandleSpecs(deps: WorkflowHostDeps, state: HostState, notebookDeps
 		checkpoint: (args) => handleCheckpoint(deps, state, args),
 		exit: (args) => handleExit(deps, state, args),
 	};
-	const entries = (Object.keys(HANDLE_POLICY) as WorkflowHandleName[]).map((name) => [name, { ...HANDLE_POLICY[name], run: runs[name] }] as const);
-	return Object.fromEntries(entries) as Record<WorkflowHandleName, HandleSpecEntry>;
 }
 
 /** Apply the explicit `workflow.run` model for this turn; an unknown or unauthenticated model fails the run. */
@@ -750,12 +751,12 @@ function dispatchMessage(deps: WorkflowHostDeps, ctx: ExtensionCommandContext, t
 // Subscribe before either send: replacement sends propagate errors, initial sends
 // expose only void. In both sessions only agent_settled defines the final branch.
 // Initial-session dispatch failures are invisible to the host: see docs/workflows.md (Host gaps).
-async function sendCorrelated(deps: WorkflowHostDeps, state: HostState, ctx: ExtensionCommandContext, marker: string | null, text: string, onDispatched?: () => void): Promise<RunMatch> {
+async function sendCorrelated(deps: WorkflowHostDeps, state: HostState, prepared: PreparedRun, marker: string | null): Promise<RunMatch> {
 	const correlation = state.registry.correlate(marker);
 	state.activeRun = correlation;
 	try {
-		await dispatchMessage(deps, ctx, text);
-		onDispatched?.();
+		await dispatchMessage(deps, prepared.ctx, prepared.text);
+		prepared.dispatched = true;
 		const match = await correlation.promise;
 		rejectIfTerminalFailure(match.branch);
 		return match;
@@ -807,7 +808,7 @@ function prepareRun(deps: WorkflowHostDeps, state: HostState, args: unknown[]): 
 	// touched, so the previews stay buffered for the next run instead of being dropped.
 	const ctx = requireCtx(deps);
 	const previewsForRun = state.previews.splice(0);
-	return { ctx, options, text: buildRunMessage(target.text, options, previewsForRun), previewsForRun, readonlyDepth: deps.state.pendingReadonlyCommands.length };
+	return { ctx, options, text: buildRunMessage(target.text, options, previewsForRun), previewsForRun, readonlyDepth: deps.state.pendingReadonlyCommands.length, dispatched: false };
 }
 
 /** A run that failed before dispatch leaves no trace in shared state: the buffered previews
@@ -832,8 +833,8 @@ async function primeRunTurn(deps: WorkflowHostDeps, prepared: PreparedRun): Prom
 	return { marker: prepared.ctx.sessionManager.getLeafId(), restore };
 }
 
-async function settleRun(deps: WorkflowHostDeps, state: HostState, prepared: PreparedRun, marker: string | null, onDispatched?: () => void): Promise<RunResult> {
-	const match = await sendCorrelated(deps, state, prepared.ctx, marker, prepared.text, onDispatched);
+async function settleRun(deps: WorkflowHostDeps, state: HostState, prepared: PreparedRun, marker: string | null): Promise<RunResult> {
+	const match = await sendCorrelated(deps, state, prepared, marker);
 	state.settledRuns += 1;
 	// One settled run may contain many assistant messages (the tool-use loop); each is a model turn.
 	state.turns += assistantCount(match.branch);
@@ -849,17 +850,16 @@ async function settleRun(deps: WorkflowHostDeps, state: HostState, prepared: Pre
 
 async function handleRun(deps: WorkflowHostDeps, state: HostState, args: unknown[]): Promise<RunResult> {
 	const prepared = prepareRun(deps, state, args);
-	// WHY (preview-buffer invariant): prepareRun removes the buffered previews from the shared
-	// buffer; a failure before the send restores them, after the send it must not (they went out).
-	let sent = false;
 	// The footer middle cell names the running effect; run and shell are serial, so no clash.
-	state.currentEffect = prepared.text;
+	state.currentEffect = boundEffectDetail(prepared.text);
 	safeEmitProgress(deps, state);
 	try {
 		const { marker, restore } = await primeRunTurn(deps, prepared);
-		return await runWithStructuredOutput(deps, state, prepared, marker, restore, () => { sent = true; });
+		return await runWithStructuredOutput(deps, state, prepared, marker, restore);
 	} catch (error) {
-		if (!sent) restoreUnsentRun(deps, state, prepared);
+		// WHY (preview-buffer invariant): prepareRun took the buffered previews out of the shared
+		// buffer; a failure before the dispatch restores them, after it must not (they went out).
+		if (!prepared.dispatched) restoreUnsentRun(deps, state, prepared);
 		throw error;
 	} finally {
 		state.currentEffect = null;
@@ -868,32 +868,31 @@ async function handleRun(deps: WorkflowHostDeps, state: HostState, args: unknown
 }
 
 /** One run with `output` armed for this run only; the tool is inert otherwise. */
-async function runWithStructuredOutput(deps: WorkflowHostDeps, state: HostState, prepared: PreparedRun, marker: string | null, restore: () => Promise<void>, onDispatched?: () => void): Promise<RunResult> {
-	const capture: OutputCapture | null = prepared.options.output ? { request: prepared.options.output } : null;
-	let previousActive: string[] | null = null;
-	const release = (): Promise<void> => releaseStructuredRun(deps, previousActive, restore);
+async function runWithStructuredOutput(deps: WorkflowHostDeps, state: HostState, prepared: PreparedRun, marker: string | null, restore: () => Promise<void>): Promise<RunResult> {
+	let armed: ArmedStructuredOutput | null = null;
+	const release = (): Promise<void> => releaseStructuredRun(armed, restore);
 	let result: RunResult;
 	try {
 		// Arm inside the try: a registration failure (e.g. a malformed output.schema) must still
 		// run the override restore, or this run's model/thinking leak into the next turn.
-		previousActive = capture ? armStructuredOutput(deps.pi, capture) : null;
-		result = await settleRun(deps, state, prepared, marker, onDispatched);
+		armed = prepared.options.output ? armStructuredOutput(deps.pi, prepared.options.output) : null;
+		result = await settleRun(deps, state, prepared, marker);
 		// WHY: a requested output with no captured object is an unsatisfied contract. Never
 		// resolve silently: the workflow may catch this, otherwise the run aborts as `error`.
-		if (capture && capture.value === undefined)
+		if (armed && armed.value() === undefined)
 			throw new Error("workflow.run: output was requested but the model did not call workflow_output");
 	} catch (error) {
 		// WHY: a failed run keeps its error even when the release also fails (joinRestoreFailure).
 		throw await joinRestoreFailure(error, release);
 	}
 	await release();
-	return capture ? { ...result, output: capture.value } : result;
+	return armed ? { ...result, output: armed.value() } : result;
 }
 
-/** Disarm the output tool, then restore overrides; the restore runs even when the disarm throws. */
-async function releaseStructuredRun(deps: WorkflowHostDeps, previousActive: readonly string[] | null, restore: () => Promise<void>): Promise<void> {
+/** Release the output tool, then restore overrides; the restore runs even when the release throws. */
+async function releaseStructuredRun(armed: ArmedStructuredOutput | null, restore: () => Promise<void>): Promise<void> {
 	try {
-		if (previousActive) disarmStructuredOutput(deps.pi, previousActive);
+		armed?.release();
 	} finally {
 		await restore();
 	}
@@ -915,10 +914,13 @@ function initialCounters(): Pick<HostState, "counts" | "turns" | "previews" | "s
 }
 
 /** Field defaults for one host lifecycle; the child-usage sink wiring stays in createHostState. */
-function initialHostState(registry: HostState["registry"]): HostState {
+function initialHostState(deps: WorkflowHostDeps): HostState {
 	return {
 		controller: new AbortController(),
-		registry,
+		registry: createRunRegistry({
+			onSettled: (listener) => deps.pi.on("agent_settled", listener),
+			getBranch: () => liveBranch(deps),
+		}),
 		startedAt: Date.now(),
 		disposed: false,
 		executing: false,
@@ -931,12 +933,7 @@ function initialHostState(registry: HostState["registry"]): HostState {
 }
 
 function createHostState(deps: WorkflowHostDeps): HostState {
-	const state = initialHostState(
-		createRunRegistry({
-			onSettled: (listener) => deps.pi.on("agent_settled", listener),
-			getBranch: () => liveBranch(deps),
-		}),
-	);
+	const state = initialHostState(deps);
 	// Freeze the pre-run branch by id so spend rows and the cost limit count usage from
 	// run start onward; the host is created as `/workflow` claims the run.
 	state.excludedEntryIds = new Set(liveBranch(deps).map((entry) => entry.id));

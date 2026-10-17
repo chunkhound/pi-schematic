@@ -289,27 +289,26 @@ function openRun(bundle: RunBundle, program: RunProgram): { ctl: RunCtl; host: W
 }
 
 async function executeWorkflow(bundle: RunBundle, program: RunProgram): Promise<void> {
-	let ctl: RunCtl | null = null;
-	let host: WorkflowHost | null = null;
-	let activity: ShellActivity | null = null;
+	// One value for the whole opened run: `ctl`, `host` and `activity` are always all-null or all-set.
+	let run: ReturnType<typeof openRun> | null = null;
 	let stopTicker: () => void = () => {};
 	try {
 		// ALL setup lives inside the try, including openRun: a throwing binding seam (progress
 		// paint, cancel funnel) must still reach the finally so input stays usable and the host
 		// gets disposed.
-		({ ctl, host, activity } = openRun(bundle, program));
-		stopTicker = armRun(bundle, ctl, host, program.ctx);
-		await runSandbox(bundle, program, host, ctl);
+		run = openRun(bundle, program);
+		stopTicker = armRun(bundle, run.ctl, run.host, program.ctx);
+		await runSandbox(bundle, program, run.host, run.ctl);
 	} catch (error) {
 		// runSandbox records its own failures; anything escaping it is a setup failure
 		// (openRun binding, suppression, cancel, first paint), recorded here so no run ends silently.
-		if (host && ctl) recordInfraExit(bundle.pi, host, ctl, error);
+		if (run) recordInfraExit(bundle.pi, run.host, run.ctl, error);
 		else reportStartFailure(bundle.pi, program.ctx, `workflow failed to start: ${messageOf(error)}`);
 	} finally {
 		stopTicker();
-		if (host && ctl) {
-			finalizeRun(bundle, ctl, host);
-			if (activity) releaseRun(bundle, ctl, host, activity);
+		if (run) {
+			finalizeRun(bundle, run.ctl, run.host);
+			releaseRun(bundle, run.ctl, run.host, run.activity);
 		}
 	}
 }
