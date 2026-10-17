@@ -17,13 +17,12 @@ export function resolveRunTarget(commands: readonly SlashCommandInfo[], prompt: 
 	const trimmed = prompt.trim();
 	const hadSlash = trimmed.startsWith("/");
 	const slashless = hadSlash ? trimmed.slice(1) : trimmed;
-	const [head, ...restParts] = slashless.split(/\s+/);
+	const [, head = "", rest = ""] = /^(\S+)(?:\s+([\s\S]*))?$/.exec(slashless) ?? [];
 	// A slashless prompt with arguments is prose (`run("review the diff")`), not a command:
 	// only an explicit `/name` or a bare name selects the command/skill target.
-	if (!hadSlash && restParts.length > 0) return { text: trimmed, source: "plain" };
-	const rest = restParts.join(" ");
+	if (!hadSlash && rest) return { text: trimmed, source: "plain" };
 	const match = commands.find((command) => command.name === head) ?? commands.find((command) => command.name === `skill:${head}`);
-	if (!match) return { text: hadSlash ? `/${head}${rest ? ` ${rest}` : ""}` : trimmed, source: "plain" };
+	if (!match) return { text: trimmed, source: "plain" };
 	if (match.source === "extension")
 		throw new Error(`workflow.run cannot run extension command "${head}"; use a prompt template or skill`);
 	const canonical = match.source === "skill" ? match.name : head;
