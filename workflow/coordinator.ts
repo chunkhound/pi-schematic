@@ -3,17 +3,18 @@
 // more than once per process (moduleCache false), so the registry lives on globalThis
 // under a registered symbol: the fresh runtime's publisher and the still-running
 // command share one process-wide map.
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registeredState } from "../process-state.js";
 import type { SchematicState } from "../state.js";
+import type { RebindableDeps } from "./rebind.js";
 
-/** Live runtime pieces published by `session_start` and consumed by a running workflow. */
+/** Live runtime pieces published by `session_start` and consumed by a running workflow.
+ * `rebindDeps` is the one place that knows which deps are session-scoped; a new one is
+ * added here (and to RebindableDeps), never in rebindRun's call site. */
 export interface WorkflowRuntimeBinding {
 	pi: ExtensionAPI;
 	state: SchematicState;
-	setReadonly(enabled: boolean): boolean;
-	requestHandoff(direction: string, ctx: ExtensionCommandContext): Promise<void>;
-	prepareRunFrontmatter(text: string, ctx: ExtensionCommandContext): Promise<void>;
+	rebindDeps(current: RebindableDeps): RebindableDeps;
 }
 
 interface WorkflowGlobal {

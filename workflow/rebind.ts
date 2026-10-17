@@ -144,8 +144,9 @@ export function rebindRun<B extends RebindBundle>(bundle: B, ctl: RunCtl, next: 
 	// Rebind the child-usage sink so children spawned after the replacement
 	// still flush live spend into the run ledger.
 	bundle.state.childUsageSink = ctl.host?.installedSink ?? null;
-	// Test seams (sandboxFactory, handoffTimeoutMs) stay from the original registration.
-	bundle.deps = { ...bundle.deps, setReadonly: binding.setReadonly, requestHandoff: binding.requestHandoff, prepareRunFrontmatter: binding.prepareRunFrontmatter };
+	// Rebind through the published registry: the session-scoped dep list lives there,
+	// so a new dep cannot silently keep the dead session's implementation.
+	bundle.deps = binding.rebindDeps(bundle.deps);
 	// WHY: session_start reset readonlyEnabled to false on the shared state, so without this
 	// re-apply the replacement drops the posture and observers would see a stale readwrite state.
 	// Set it through the binding setter BEFORE onRebound republishes progress, so the refreshed

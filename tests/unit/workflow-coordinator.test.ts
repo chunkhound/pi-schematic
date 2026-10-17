@@ -18,9 +18,7 @@ function fakeBinding(): WorkflowRuntimeBinding {
 	return {
 		pi: undefined as never,
 		state: undefined as never,
-		setReadonly: () => false,
-		requestHandoff: async () => {},
-		prepareRunFrontmatter: async () => {},
+		rebindDeps: (current) => current,
 	};
 }
 

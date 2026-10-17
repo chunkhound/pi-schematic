@@ -129,9 +129,12 @@ function runCtx(pi: TestPI, record: RunRecord, deps: WorkflowCommandDeps, replac
 			publishWorkflowRuntime(replacement.ctx.sessionManager.getSessionId(), {
 				pi: replacement.pi,
 				state: replacement.state,
-				setReadonly: deps.setReadonly,
-				requestHandoff: deps.requestHandoff,
-				prepareRunFrontmatter: deps.prepareRunFrontmatter,
+				rebindDeps: (current) => ({
+					...current,
+					setReadonly: deps.setReadonly,
+					requestHandoff: deps.requestHandoff,
+					prepareRunFrontmatter: deps.prepareRunFrontmatter,
+				}),
 			});
 			await options?.withSession?.(replacement.ctx);
 			return { cancelled: false };

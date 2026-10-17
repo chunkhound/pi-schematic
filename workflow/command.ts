@@ -78,7 +78,18 @@ function publishRuntimeOnSessionStart(pi: ExtensionAPI, state: SchematicState, d
 		const sessionId = ctx.sessionManager?.getSessionId?.();
 		if (!sessionId) return;
 		publishedFor.add(sessionId);
-		publishWorkflowRuntime(sessionId, { pi, state, setReadonly: deps.setReadonly, requestHandoff: deps.requestHandoff, prepareRunFrontmatter: deps.prepareRunFrontmatter });
+		publishWorkflowRuntime(sessionId, {
+			pi,
+			state,
+			// Single registry for session-scoped deps. Add a new one here and to
+			// RebindableDeps; rebindRun needs no change.
+			rebindDeps: (current) => ({
+				...current,
+				setReadonly: deps.setReadonly,
+				requestHandoff: deps.requestHandoff,
+				prepareRunFrontmatter: deps.prepareRunFrontmatter,
+			}),
+		});
 	});
 	pi.on("session_shutdown", () => {
 		// SessionShutdownEvent carries no session id and pi emits shutdown(old) before

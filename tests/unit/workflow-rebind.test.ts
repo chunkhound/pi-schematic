@@ -5,7 +5,7 @@ import test from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { publishWorkflowRuntime } from "../../workflow/coordinator.js";
 import { type RunRegistry } from "../../workflow/run-registry.js";
-import { performHandoff, performNewSession, rebindRun, type RebindBundle, type RebindHooks, type RunCtl } from "../../workflow/rebind.js";
+import { performHandoff, performNewSession, rebindRun, type RebindableDeps, type RebindBundle, type RebindHooks, type RunCtl } from "../../workflow/rebind.js";
 
 /** ExtensionAPI stub plus `emit`, so a test can fire the events a real runtime would. */
 type EmittingPi = ExtensionAPI & { emit(event: string, payload: unknown): void; count(event: string): number };
@@ -176,7 +176,11 @@ test("a near-deadline compaction does not starve the successor-settle wait", asy
 test("rebindRun swaps bundle pi/state/deps and republishes progress", () => {
 	const fns = { setReadonly: () => true, requestHandoff: async () => {}, prepareRunFrontmatter: async () => {} };
 	const fresh = { pi: fakePi(), state: { marker: "fresh" } };
-	publishWorkflowRuntime("sess-rebind", { pi: fresh.pi, state: fresh.state, ...fns } as never);
+	publishWorkflowRuntime("sess-rebind", {
+		pi: fresh.pi,
+		state: fresh.state,
+		rebindDeps: (current: RebindableDeps) => ({ ...current, ...fns }),
+	} as never);
 	const bundle = bundleWith(fakePi());
 	const ctl = ctlWith(null, new AbortController().signal);
 	let rebound = 0;
@@ -213,7 +217,15 @@ function ctxThatReplaces(next: ExtensionCommandContext, settleMs = 0) {
 /** Publish a replacement runtime the way a fresh session's `session_start` does. */
 function publishReplacement(sessionId: string, prepareRunFrontmatter: (text: string, ctx: ExtensionCommandContext) => Promise<void> = async () => {}) {
 	const fresh = { pi: fakePi(), state: { marker: `state:${sessionId}` } };
-	publishWorkflowRuntime(sessionId, { ...fresh, setReadonly: () => false, requestHandoff: async () => {}, prepareRunFrontmatter } as never);
+	publishWorkflowRuntime(sessionId, {
+		...fresh,
+		rebindDeps: (current: RebindableDeps) => ({
+			...current,
+			setReadonly: () => false,
+			requestHandoff: async () => {},
+			prepareRunFrontmatter,
+		}),
+	} as never);
 	return fresh;
 }
 
@@ -332,7 +344,11 @@ test("a concurrent workflow.new fails fast instead of starting a second replacem
 test("rebindRun re-applies the previous readonly posture before republishing progress", () => {
 	const log: string[] = [];
 	const setReadonly = (enabled: boolean) => { log.push("setReadonly"); return enabled; };
-	publishWorkflowRuntime("sess-readonly", { pi: fakePi(), state: { marker: "fresh" }, setReadonly, requestHandoff: async () => {}, prepareRunFrontmatter: async () => {} } as never);
+	publishWorkflowRuntime("sess-readonly", {
+		pi: fakePi(),
+		state: { marker: "fresh" },
+		rebindDeps: (current: RebindableDeps) => ({ ...current, setReadonly, requestHandoff: async () => {}, prepareRunFrontmatter: async () => {} }),
+	} as never);
 	const bundle = bundleWith(fakePi());
 	const ctl = ctlWith(null, new AbortController().signal);
 	const next = { sessionManager: { getSessionId: () => "sess-readonly" } } as unknown as ExtensionCommandContext;
@@ -347,7 +363,11 @@ test("workflow.new carries the previous readonly posture into the replacement se
 	const sessionId = "sess-new-readonly";
 	const log: string[] = [];
 	const setReadonly = (enabled: boolean) => { log.push(String(enabled)); return enabled; };
-	publishWorkflowRuntime(sessionId, { pi: fakePi(), state: { marker: "fresh", readonlyEnabled: false }, setReadonly, requestHandoff: async () => {}, prepareRunFrontmatter: async () => {} } as never);
+	publishWorkflowRuntime(sessionId, {
+		pi: fakePi(),
+		state: { marker: "fresh", readonlyEnabled: false },
+		rebindDeps: (current: RebindableDeps) => ({ ...current, setReadonly, requestHandoff: async () => {}, prepareRunFrontmatter: async () => {} }),
+	} as never);
 	const next = { sessionManager: { getSessionId: () => sessionId } } as unknown as ExtensionCommandContext;
 	const bundle = bundleWith(fakePi());
 	// The previous session (the one being replaced) had readonly enabled.
