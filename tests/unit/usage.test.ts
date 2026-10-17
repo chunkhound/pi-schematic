@@ -6,15 +6,15 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Usage } from "@earendil-works/pi-ai";
 import {
 	UNATTRIBUTED_MODEL,
+	addModelSpend,
 	addUsage,
-	childSpendRows,
 	collectUsage,
 	mergeModelSpend,
 	sessionStatsToUsage,
 	spendRowsTotal,
 	usageByModel,
 	ZERO_USAGE,
-	type ChildSpend,
+	type ModelSpend,
 } from "../../usage.js";
 
 const usd = (total: number): Usage => ({
@@ -145,6 +145,15 @@ test("usageByModel skips a child-owned tool result when claimed, and counts it o
 	assert.equal(unclaimed.get("anthropic/haiku")?.costUsd, 0.2, "unclaimed tool result is attributed");
 });
 
+// SSOT contract: an empty entry id is never matched against `skip` (only a non-empty id
+// or the tool-call id can claim an entry), preserving spendIdentity's fallback.
+test("usageByModel ignores an empty entry id and skips by tool-call id only", () => {
+	const entries: SessionEntry[] = [childToolResult("", "c1", 0.2)];
+	assert.equal(usageByModel(entries, { skip: new Set(["c1"]) }).size, 0, "empty-id entry skipped via tool-call id");
+	assert.equal(usageByModel(entries, { skip: new Set([""]) }).get("anthropic/haiku")?.costUsd, 0.2, "empty id is never matched");
+	assert.equal(usageByModel(entries).get("anthropic/haiku")?.costUsd, 0.2, "unclaimed empty-id entry attributed");
+});
+
 // SSOT contract: the run-scoped spend scan drops the conversation that predates the run,
 // so only entries kept by the run's id-exclusion set reach the cost rows.
 test("usageByModel omits every entry whose id is excluded", () => {
@@ -158,27 +167,10 @@ test("usageByModel omits every entry whose id is excluded", () => {
 	assert.equal(usageByModel(entries).get("anthropic/opus")?.costUsd, 0.75, "omitting the option keeps every entry");
 });
 
-// SSOT contract: each child contributes one call, and repeated model rows merge.
-test("childSpendRows merges children by model with one call each", () => {
-	const children = new Map<string, ChildSpend>([
-		["c1", { provider: "anthropic", model: "opus", usage: usd(0.5) }],
-		["c2", { provider: "anthropic", model: "opus", usage: usd(0.25) }],
-		["c3", { provider: null, model: "widget", usage: usd(0.4) }],
-	]);
-	const rows = childSpendRows(children);
-	assert.equal(rows.get("anthropic/opus")?.costUsd, 0.75);
-	assert.equal(rows.get("anthropic/opus")?.calls, 2, "one call per child");
-	assert.equal(rows.get("widget")?.costUsd, 0.4);
-	assert.equal(rows.get("widget")?.provider, null);
-});
-
 test("spendRowsTotal equals the exact row sum", () => {
-	const rows = childSpendRows(
-		new Map<string, ChildSpend>([
-			["c1", { provider: "anthropic", model: "opus", usage: usd(0.5) }],
-			["c2", { provider: null, model: "widget", usage: usd(0.4) }],
-		]),
-	);
+	const rows = new Map<string, ModelSpend>();
+	addModelSpend(rows, "anthropic", "opus", usd(0.5));
+	addModelSpend(rows, null, "widget", usd(0.4));
 	assert.ok(Math.abs(spendRowsTotal(rows) - 0.9) < 1e-9);
 	assert.equal(spendRowsTotal(new Map()), 0);
 });

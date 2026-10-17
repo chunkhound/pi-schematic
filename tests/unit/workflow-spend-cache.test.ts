@@ -120,3 +120,15 @@ test("the cached run projection follows every spend source move", async () => {
 	close(cost(host), 1.5, "baseline commit carries the committed spend after the branch clears");
 	assert.deepEqual(host.metrics().spend.map((row) => row.key).sort(), ["anthropic/opus", "anthropic/widget", "typesafe/jev"].sort());
 });
+
+// WHY: the child ledger is keyed per tool call; same-model children must merge into one row
+// with one call each, or the overview double-counts or hides a child.
+test("the child ledger merges same-model children into one row with one call each", () => {
+	const env = createEnv();
+	const host = createWorkflowHost(env.deps);
+	env.state.childUsageSink!("c1", "anthropic", "widget", usd(0.25));
+	env.state.childUsageSink!("c2", "anthropic", "widget", usd(0.2));
+	close(cost(host), 0.45, "two child rows");
+	const widget = host.metrics().spend.find((row) => row.key === "anthropic/widget");
+	assert.equal(widget?.calls, 2, "one call per child");
+});

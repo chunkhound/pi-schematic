@@ -3,6 +3,7 @@
 // the run overview read the same rows and can never drift.
 import type { Usage } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { SpawnRouteDetails } from "./spawn/shared.js";
 
 /** AgentMessage widens to custom roles; usage reads only these optional fields. */
 type AnyMessage = {
@@ -13,7 +14,7 @@ type AnyMessage = {
 	/** Identifies a tool result so child-owned spend can be skipped (see `spendIdentity`). */
 	toolCallId?: string;
 	/** Tool-result details; the spawn tool records the child model and its route here. */
-	details?: { model?: string; route?: { provider?: string } };
+	details?: { model?: string; route?: SpawnRouteDetails };
 };
 
 /** Bucket for usage pi records without a model: compaction and branch summaries. */
@@ -83,12 +84,12 @@ export function spendIdentity(entry: SessionEntry): string | null {
 	return entry.type === "message" ? (entry.message as AnyMessage).toolCallId ?? null : null;
 }
 
-/** Whether `skip` already owns this entry. Also check the tool-call id: the child ledger is
- * keyed by it, and a tool result may carry a distinct pi entry id. */
+/** Whether `skip` already owns this entry. Checks the entry id and the tool-call id: the
+ * child ledger is keyed by the latter, and a tool result may carry a distinct pi id. An
+ * empty entry id is never matched, preserving the fallback to the tool-call id. */
 function isClaimed(entry: SessionEntry, skip: ReadonlySet<string>): boolean {
-	const identity = spendIdentity(entry);
-	if (identity !== null && skip.has(identity)) return true;
 	const toolCallId = entry.type === "message" ? (entry.message as AnyMessage).toolCallId : undefined;
+	if (entry.id && skip.has(entry.id)) return true;
 	return toolCallId !== undefined && skip.has(toolCallId);
 }
 
@@ -97,7 +98,7 @@ function isClaimed(entry: SessionEntry, skip: ReadonlySet<string>): boolean {
  * ledger and classifier calls. Assistant turns carry provider/model, `usage` entries carry
  * provider/model, and model-less usage (compaction and branch summaries) falls into
  * {@link UNATTRIBUTED_MODEL} with its tokens. Child-owned tool results are skipped so the
- * child ledger (`childSpendRows`) is their single owner and a settled child is counted once.
+ * child ledger is their single owner and a settled child is counted once.
  * Entries whose spend identity (the entry id when pi assigned one, else the tool-call id) is
  * in `skip` are omitted entirely. The run-scoped scan drops pre-run and already-committed
  * entries, and the child ledger claims its tool results, so no entry is counted twice.
@@ -165,13 +166,6 @@ export interface ChildSpend {
 	provider: string | null;
 	model: string;
 	usage: Usage;
-}
-
-/** Fold the run's child ledger into per-model rows; each child contributes one call. */
-export function childSpendRows(children: ReadonlyMap<string, ChildSpend>): Map<string, ModelSpend> {
-	const map = new Map<string, ModelSpend>();
-	for (const child of children.values()) addModelSpend(map, child.provider, child.model, child.usage);
-	return map;
 }
 
 /** Total USD of a spend map. The run's cost is always this sum, never a parallel snapshot. */

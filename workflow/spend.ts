@@ -1,6 +1,6 @@
 // WHY: one spend projection feeds the cost limit and the run overview, so they cannot diverge.
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { childSpendRows, mergeModelSpend, spendRowsTotal, usageByModel, type ChildSpend, type ModelSpend } from "../usage.js";
+import { addModelSpend, mergeModelSpend, spendRowsTotal, usageByModel, type ChildSpend, type ModelSpend } from "../usage.js";
 import type { ReservedReason, WorkflowHostDeps } from "./types.js";
 
 /** Minimal spend slice of the host state; the host's state extends this. */
@@ -80,9 +80,14 @@ export function runSpendRows(deps: WorkflowHostDeps, state: SpendState): Map<str
 	return rows;
 }
 
-/** Full rescan of the four spend sources; the single reader is `runSpendRows`. */
+/** Full rescan of the four spend sources; the single reader is `runSpendRows`.
+ * Children fold into baseline+branch BEFORE the classifier so the per-key float-sum
+ * order (baseline, branch, child, classifier) is preserved — adding them after the
+ * classifier merge would reorder accumulation and shift rounding. */
 function projectRunSpend(deps: WorkflowHostDeps, state: SpendState): Map<string, ModelSpend> {
-	return mergeModelSpend(state.baselineSpend, branchSpend(deps, state), childSpendRows(state.childSpend), state.classifierSpend);
+	const rows = mergeModelSpend(state.baselineSpend, branchSpend(deps, state));
+	for (const child of state.childSpend.values()) addModelSpend(rows, child.provider, child.model, child.usage);
+	return mergeModelSpend(rows, state.classifierSpend);
 }
 
 export function computeCurrentCost(deps: WorkflowHostDeps, state: SpendState): number {
