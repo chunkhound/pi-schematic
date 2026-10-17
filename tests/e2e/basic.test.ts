@@ -6,7 +6,6 @@
  */
 
 import { describe, it } from "node:test";
-import assert from "node:assert/strict";
 import { ProcessHarness } from "./pty-harness.js";
 
 /** Create a fresh host, wait for READY, and return the harness. */
@@ -36,13 +35,9 @@ describe("pi-schematic E2E", () => {
 		await h.waitForText("ERR:Context usage unavailable");
 	}));
 
-	it("spawn tool errors gracefully without model infrastructure", async () => withHarness(async (h) => {
-		// Without a real model/session manager, spawn should throw immediately.
+	it("spawn tool refuses when the host has no model", async () => withHarness(async (h) => {
 		h.write('tool spawn {"prompt":"any task"}');
-		await h.waitForText("ERR:");
-
-		const snap = h.snapshot();
-		assert.ok(snap.includes("No model") || snap.includes("ERR"), "spawn errors gracefully");
+		await h.waitForText("ERR:No model configured. Cannot spawn child agent.");
 	}));
 
 	it("headless mode keeps readonly command a no-op", async () => withHarness(async (h) => {
