@@ -454,6 +454,9 @@ export function executeSpawn(
 		});
 		const childModel = route.model;
 		const requestedChildThinking: ThinkingValue = route.thinking;
+		// WHY: capture the run-owned sink before any await. A late flush after this run ends
+		// must write to the run that spawned the child, never the next run's sink.
+		const childUsageSink = state.childUsageSink;
 		const routeDetails: SpawnRouteDetails = route.status === "routed"
 			? {
 					status: "routed",
@@ -550,10 +553,9 @@ export function executeSpawn(
 	// instead of splitting one model across a bare-model row and a provider-qualified row.
 	const childProvider = route.provider;
 	const flushChildSpend = () => {
-		const sink = state.childUsageSink;
-		if (!sink) return;
+		if (!childUsageSink) return;
 		const { usage } = collectSpawnStats(session as { getSessionStats?: () => unknown });
-		if (usage) sink(toolCallId, childProvider, childModel.id, usage);
+		if (usage) childUsageSink(toolCallId, childProvider, childModel.id, usage);
 	};
 
 	let hasPrimaryError = false;

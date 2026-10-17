@@ -327,3 +327,35 @@ test("an inherited child's success details carry provider/modelId and one spend 
 	const spend = usageByModel([toolResultEntry("tr-inherited-ok", "spawn-inherited-ok", result.usage, result.details)]);
 	assert.deepEqual([...spend.keys()], ["openai/parent-model"], "one provider/model row, no bare-model split");
 });
+
+// WHY: a child can outlive its run's teardown. Its flush must stay bound to the sink it
+// captured at spawn, never the next run's sink.
+test("a late child flush stays on the run that spawned it", async () => {
+	const state = createState();
+	const seen: string[] = [];
+	state.childUsageSink = (toolCallId) => seen.push(`A:${toolCallId}`);
+	const factory = async () => ({
+		session: {
+			messages: [] as unknown[],
+			prompt: async () => { throw new Error("prompt failed"); },
+			abort: async () => {},
+			dispose: () => {},
+			getSessionStats: () => ({ tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2 }, cost: 0.1, assistantMessages: 1 }),
+		},
+		extensionsResult: undefined as never,
+	});
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, factory as never), {
+		activeTools: ["read", "bash", "spawn"],
+	});
+	const pending = pi.tools.get("spawn").execute(
+		"spawn-late",
+		{ prompt: "Do the task" },
+		undefined,
+		undefined,
+		{ model: { provider: "openai", id: "parent-model" }, cwd: "/tmp" },
+	);
+	// The next run installs its own sink before this child's finally flush.
+	state.childUsageSink = (toolCallId) => seen.push(`B:${toolCallId}`);
+	await assert.rejects(pending);
+	assert.deepEqual(seen, ["A:spawn-late"], "the late flush never reaches the next run's sink");
+});
