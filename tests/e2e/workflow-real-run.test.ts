@@ -107,7 +107,7 @@ test("/workflow runs the real sandbox against a real model turn and attributes i
 		assert.equal(failure, undefined, `the run must settle without rejecting: ${String(failure)}`);
 
 		const exits = pi.appendedEntries.filter((record) => record.customType === "workflow-exit");
-		assert.deepEqual(exits.map((record) => record.data), [{ reason: "done", metadata: { reason: "done", text: child.expectedText } }], "exactly one exit record, carrying the workflow's own reason and the model's reply");
+		assert.deepEqual(exits.map((record) => record.data), [{ v: 1, reason: "done", metadata: { reason: "done", text: child.expectedText } }], "exactly one exit record, carrying the workflow's own reason and the model's reply");
 		assert.ok(pi.appendedEntries.some((record) => record.customType === "workflow-limits"), "the headless no-target start is recorded, never silently unbounded");
 
 		const summaries = pi.appendedEntries.filter((record) => record.customType === "workflow-summary");
@@ -160,7 +160,7 @@ test("a poisoned prior run never blocks the next run", { timeout: 60_000 }, asyn
 		assert.equal(state.inputSuppressed, false, "input ends usable");
 		assert.equal(state.childUsageSink, null, "no sink survives the run");
 		const exits = pi.appendedEntries.filter((record) => record.customType === "workflow-exit");
-		assert.deepEqual(exits.map((record) => record.data), [{ reason: "done", metadata: { reason: "done", text: "ok" } }], "the run completes despite the poisoned state");
+		assert.deepEqual(exits.map((record) => record.data), [{ v: 1, reason: "done", metadata: { reason: "done", text: "ok" } }], "the run completes despite the poisoned state");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}

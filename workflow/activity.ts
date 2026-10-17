@@ -14,7 +14,7 @@ import {
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { workflowCard } from "./card.js";
 import { safeAppendEntry } from "./errors.js";
-import type { WorkflowEffect, WorkflowEffectEvent } from "./types.js";
+import { WORKFLOW_ENTRY_VERSION, isNewerWorkflowEntry, type WorkflowEffect, type WorkflowEffectEvent } from "./types.js";
 
 /** Custom-entry type of one shell audit row; the renderer registers the same name. */
 export const WORKFLOW_SHELL_ENTRY_TYPE = "workflow-shell";
@@ -135,7 +135,7 @@ export function createShellActivity(deps: ShellActivityDeps): ShellActivity {
 		flush(event.effect.output ?? "");
 		// Advisory visibility: append before any UI paint, so a throwing render cannot
 		// drop the mandatory audit row. A failed append never aborts the shell effect.
-		safeAppendEntry(deps.getPi(), WORKFLOW_SHELL_ENTRY_TYPE, { ...event.effect, output: boundedOutput(event.effect.output) });
+		safeAppendEntry(deps.getPi(), WORKFLOW_SHELL_ENTRY_TYPE, { v: WORKFLOW_ENTRY_VERSION, ...event.effect, output: boundedOutput(event.effect.output) });
 		component?.setComplete(
 			event.effect.exitCode ?? (event.effect.ok ? 0 : 1),
 			Boolean(event.effect.killed),
@@ -162,13 +162,28 @@ export function createShellActivity(deps: ShellActivityDeps): ShellActivity {
 	return { onEffect, dispose };
 }
 
+/** Read a persisted shell audit entry, accepting legacy entries without `v`. */
+function readWorkflowShellEntry(data: unknown): WorkflowEffect | null {
+	if (!data || typeof data !== "object" || isNewerWorkflowEntry(data)) return null;
+	const effect = data as Partial<WorkflowEffect>;
+	if (effect.name !== "shell" || typeof effect.detail !== "string") return null;
+	if (typeof effect.id !== "number" || typeof effect.ok !== "boolean" || typeof effect.durationMs !== "number") return null;
+	return effect as WorkflowEffect;
+}
+
 /** Transcript card for one persisted shell effect; expanded reveals the output tail. */
 export function renderWorkflowShellEntry(
-	entry: CustomEntry<WorkflowEffect>,
+	entry: CustomEntry<unknown>,
 	expanded: boolean,
 	theme: Theme,
 ): Component {
-	const effect = entry.data as WorkflowEffect;
+	const effect = readWorkflowShellEntry(entry.data);
+	if (!effect) {
+		const fallback = isNewerWorkflowEntry(entry.data)
+			? "This shell entry was written by a newer schematic version and cannot be read here."
+			: "This shell entry is unreadable and was skipped.";
+		return workflowCard(theme, theme.fg("accent", "$ workflow"), [theme.fg("warning", fallback)]);
+	}
 	const status = effect.ok
 		? theme.fg("success", "ok")
 		: theme.fg("error", effect.killed ? "killed" : `exit ${effect.exitCode ?? "?"}`);
@@ -194,7 +209,7 @@ export function renderWorkflowLogEntry(
 }
 
 export function registerWorkflowShellRenderer(pi: ExtensionAPI): void {
-	pi.registerEntryRenderer<WorkflowEffect>(WORKFLOW_SHELL_ENTRY_TYPE, (entry, { expanded }, theme) =>
+	pi.registerEntryRenderer<unknown>(WORKFLOW_SHELL_ENTRY_TYPE, (entry, { expanded }, theme) =>
 		renderWorkflowShellEntry(entry, expanded, theme),
 	);
 	pi.registerEntryRenderer<{ text: string }>(WORKFLOW_LOG_ENTRY_TYPE, (entry, { expanded }, theme) =>

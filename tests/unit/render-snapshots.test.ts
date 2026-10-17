@@ -341,6 +341,7 @@ function spendRow(key: string, model: string, costUsd: number, tokens: number, c
 function overviewData(): WorkflowRunSummaryData {
 	const startedAt = Date.UTC(2026, 0, 2, 3, 0, 0);
 	return {
+		v: 1,
 		workflow: "review-worktree",
 		reason: "approved",
 		startedAt: new Date(startedAt).toISOString(),

@@ -49,12 +49,31 @@ export const WORKFLOW_EXIT_ENTRY_TYPE = "workflow-exit";
 /** Transcript entry type of advisory engine-failure visibility; never carries the run outcome. */
 export const WORKFLOW_ERROR_ENTRY_TYPE = "workflow-error";
 
+/** Persisted workflow entries carry this version. Readers accept a missing version as the
+ * legacy v1 shape and refuse a newer version with a safe fallback. */
+export const WORKFLOW_ENTRY_VERSION = 1;
+
+/** Read the persisted schema version; null means the entry predates the envelope. */
+export function workflowEntryVersion(data: unknown): number | null {
+	if (!data || typeof data !== "object") return null;
+	const version = (data as { v?: unknown }).v;
+	return typeof version === "number" && Number.isInteger(version) && version >= 0 ? version : null;
+}
+
+/** True when a persisted entry was written by a newer engine than this one understands. */
+export function isNewerWorkflowEntry(data: unknown): boolean {
+	const version = workflowEntryVersion(data);
+	return version !== null && version > WORKFLOW_ENTRY_VERSION;
+}
+
 /**
  * Wire shape of the single `workflow-exit` transcript entry. Every writer uses this shape:
  * `reason` is always derived first, and the path-specific payload rides in exactly one field.
- * A compatibility/version envelope is a deliberate follow-up; the type is the contract until then.
+ * `v` is the persisted schema version; readers accept a missing `v` as the legacy v1 shape.
  */
 export interface WorkflowExitEntry {
+	/** Persisted schema version. */
+	v: number;
 	/** Derived from the exit metadata before the write; the record's single reason source. */
 	reason: string | null;
 	/** `workflow.exit` metadata exactly as the workflow supplied it. */
@@ -63,6 +82,21 @@ export interface WorkflowExitEntry {
 	partial?: unknown;
 	/** Host abort message for a hard abort (e.g. the deferred-stop escalation). */
 	error?: string;
+}
+
+/** Read a persisted `workflow-exit` entry, accepting the legacy shape without `v`.
+ * Returns null for malformed or newer entries so external consumers can branch safely. */
+export function readWorkflowExitEntry(data: unknown): WorkflowExitEntry | null {
+	if (!data || typeof data !== "object" || isNewerWorkflowEntry(data)) return null;
+	const entry = data as Partial<WorkflowExitEntry>;
+	if (entry.reason !== null && typeof entry.reason !== "string") return null;
+	return {
+		v: workflowEntryVersion(data) ?? WORKFLOW_ENTRY_VERSION,
+		reason: entry.reason ?? null,
+		...(entry.metadata !== undefined ? { metadata: entry.metadata } : {}),
+		...(entry.partial !== undefined ? { partial: entry.partial } : {}),
+		...(entry.error !== undefined && typeof entry.error === "string" ? { error: entry.error } : {}),
+	};
 }
 
 /** Structured diagnostic phase of a `workflow-error` entry; the single source for every

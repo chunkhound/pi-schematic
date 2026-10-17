@@ -43,6 +43,7 @@ function spendRow(model: string, costUsd: number, tokens = 1000): ModelSpend {
 
 function makeData(overrides: Partial<WorkflowRunSummaryData> = {}): WorkflowRunSummaryData {
 	return {
+		v: 1,
 		workflow: "test-wf",
 		reason: "approved",
 		startedAt: "2026-01-01T00:00:00.000Z",

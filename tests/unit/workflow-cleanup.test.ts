@@ -234,7 +234,7 @@ test("a throwing ticker paint stays inside the timer and the run still releases"
 	assert.ok(h.thrown.paint > 0, "the ticker paint really threw");
 	assert.deepEqual(escaped, [], "a throwing paint must never escape the interval callback");
 	h.assertReleased();
-	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ reason: "returned" }], "the run records its own outcome");
+	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ v: 1, reason: "returned" }], "the run records its own outcome");
 	assert.equal(h.entries(WORKFLOW_SUMMARY_ENTRY_TYPE).length, 1, "the overview still lands");
 	assert.ok(h.log.includes("footer:restore"), "chrome is restored after the paint fault");
 });
@@ -260,7 +260,7 @@ test("a throwing openRun binding reports a failed start and never poisons the ne
 
 	delete h.faults.branch;
 	await h.run();
-	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ reason: "returned" }], "the next run completes");
+	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ v: 1, reason: "returned" }], "the next run completes");
 	h.assertReleased();
 });
 
@@ -286,7 +286,7 @@ test("release disposes the host before chrome and keeps going when a chrome rest
 	assert.deepEqual(releasedAtChrome, [{ sink: true, input: true }], "host-owned resources and input are released before chrome is restored");
 	assert.ok(h.log.slice(h.log.indexOf("footer:throw")).some((entry) => entry.startsWith("paint:")), "the indicator refresh still ran after the throwing footer restore");
 	h.assertReleased();
-	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ reason: "returned" }]);
+	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ v: 1, reason: "returned" }]);
 	assert.equal(h.entries(WORKFLOW_SUMMARY_ENTRY_TYPE).length, 1);
 });
 
@@ -311,7 +311,7 @@ test("a throwing readonly notice leaves the posture applied and the run alive", 
 	await h.run();
 	assert.equal(h.thrown.notify, 1, "the readonly notice really threw");
 	assert.equal(h.state.readonlyEnabled, true, "the posture is applied even when the notice fails");
-	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ reason: "returned" }], "an advisory paint failure never aborts the run");
+	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ v: 1, reason: "returned" }], "an advisory paint failure never aborts the run");
 	assert.equal(h.entries(WORKFLOW_SUMMARY_ENTRY_TYPE)[0]?.reason, "returned");
 	assert.ok(h.notes.includes("returned"), "the run outcome is still noticed");
 	h.assertReleased();
@@ -326,7 +326,7 @@ test("a throwing summary-fallback notice still releases every run resource", asy
 	h.faults.notify = (message) => message.startsWith("workflow overview could not be persisted");
 	await h.run();
 	assert.equal(h.thrown.notify, 1, "the fallback notice really threw");
-	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ reason: "returned" }], "the exit record stands on its own");
+	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ v: 1, reason: "returned" }], "the exit record stands on its own");
 	assert.equal(h.entries(WORKFLOW_SUMMARY_ENTRY_TYPE).length, 0, "the failed overview is not recorded");
 	h.assertReleased();
 	assert.ok(h.log.includes("footer:restore"), "chrome is restored even when every record path fails");

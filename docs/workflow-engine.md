@@ -105,15 +105,17 @@ All surfaces are CustomEntry or UI only. None enter the LLM context.
 
 | Surface | Owner | Content |
 |---|---|---|
-| `workflow-exit` entry | `workflow/host.ts` | One exit record, always `{ reason, ... }`: workflow metadata as `metadata`, a checkpoint stop or hard abort adds `partial` (and `error`), and a script that ends without `workflow.exit` records `returned`. No registered renderer. |
-| `workflow-summary` entry | `workflow/summary.ts`, rendered by `workflow/summary-renderer.ts` | Run overview: reason, elapsed, counts, spend rows, effect log. |
-| `workflow-shell` entry | `workflow/activity.ts` | One shell call: exit status, duration, bounded output tail. |
+| `workflow-exit` entry | `workflow/host.ts` | One exit record, always `{ v, reason, ... }`: workflow metadata as `metadata`, a checkpoint stop or hard abort adds `partial` (and `error`), and a script that ends without `workflow.exit` records `returned`. No registered renderer. |
+| `workflow-summary` entry | `workflow/summary.ts`, rendered by `workflow/summary-renderer.ts` | Versioned run overview: reason, elapsed, counts, spend rows, effect log. |
+| `workflow-shell` entry | `workflow/activity.ts` | Versioned one shell call: exit status, duration, bounded output tail. |
 | `workflow-log` entry | `workflow/command.ts` | The script's `console`/`text()` output. |
 | `workflow-error` entry | `workflow/command.ts`, `workflow/limits-dialog.ts`, `workflow/host.ts` | Diagnostic `{ phase, error }`. |
 | `workflow-limits` entry | `workflow/limits-dialog.ts` | Headless no-target, unbounded, or checkpoint-less hard-deadline start. Unbounded runs include `unbounded: true` and `ignoredFlags` when the operator supplied an ignored flag; a checkpoint-less `--workflow-time` records `hardDeadlineMs`. UI/transcript-only; never enters LLM context. |
 | `workflow-activity` widget | `workflow/activity.ts` | Live shell progress above the editor. TUI only. |
 
 `workflow-error` phases: `command.ts` writes `reserve`, `start`, `exit-record`, `summary`, `cleanup`; `limits-dialog.ts` writes `start`; `host.ts` writes `abort`, `effect`, `progress`.
+
+Every persisted workflow entry carries `v` (`WORKFLOW_ENTRY_VERSION`). Readers accept a missing `v` as the legacy v1 shape and show a safe fallback for a newer version instead of throwing inside a process-wide renderer.
 
 ## Process coordination
 

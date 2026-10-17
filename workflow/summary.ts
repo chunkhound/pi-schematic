@@ -3,13 +3,15 @@
 // builder; `summary-renderer.ts` owns the TUI component. Keeping the builder free
 // of TUI imports lets tests assert the persisted contract without a terminal.
 import type { ModelSpend } from "../usage.js";
-import type { WorkflowEffect, WorkflowHandleName, WorkflowLimits, WorkflowRunMetrics } from "./types.js";
+import { WORKFLOW_ENTRY_VERSION, isNewerWorkflowEntry, workflowEntryVersion, type WorkflowEffect, type WorkflowHandleName, type WorkflowLimits, type WorkflowRunMetrics } from "./types.js";
 
 /** Custom-entry type of the end-of-run overview; the renderer registers the same name. */
 export const WORKFLOW_SUMMARY_ENTRY_TYPE = "workflow-summary";
 
 /** Persisted overview data. Read by the entry renderer and the run's audit trail. */
 export interface WorkflowRunSummaryData {
+	/** Persisted schema version. Missing on legacy entries, read as v1. */
+	v: number;
 	workflow: string;
 	/** Workflow exit reason, a reserved abort reason, or `returned`. */
 	reason: string;
@@ -50,6 +52,7 @@ export function buildWorkflowSummary(
 	partial?: unknown,
 ): WorkflowRunSummaryData {
 	return {
+		v: WORKFLOW_ENTRY_VERSION,
 		workflow,
 		reason,
 		...(error ? { error } : {}),
@@ -68,5 +71,36 @@ export function buildWorkflowSummary(
 		crossedAt: metrics.crossedAt,
 		...(metrics.effects.length > 0 ? { effects: metrics.effects } : {}),
 		...(partial !== undefined ? { partial } : {}),
+	};
+}
+
+/** Read a persisted summary, accepting legacy entries without `v`. Returns null for a
+ * malformed or newer entry so the renderer can show a safe fallback instead of throwing. */
+export function readWorkflowSummaryData(data: unknown): WorkflowRunSummaryData | null {
+	if (!data || typeof data !== "object" || isNewerWorkflowEntry(data)) return null;
+	const entry = data as Partial<WorkflowRunSummaryData>;
+	if (typeof entry.workflow !== "string" || typeof entry.reason !== "string") return null;
+	if (typeof entry.startedAt !== "string" || typeof entry.elapsedMs !== "number") return null;
+	if (!Array.isArray(entry.spend) || !entry.limits || typeof entry.limits !== "object") return null;
+	return {
+		v: workflowEntryVersion(data) ?? WORKFLOW_ENTRY_VERSION,
+		workflow: entry.workflow,
+		reason: entry.reason,
+		...(entry.error !== undefined ? { error: entry.error } : {}),
+		startedAt: entry.startedAt,
+		endedAt: entry.endedAt ?? new Date(Date.parse(entry.startedAt) + entry.elapsedMs).toISOString(),
+		elapsedMs: entry.elapsedMs,
+		checkpoints: entry.checkpoints ?? 0,
+		steps: entry.steps ?? 0,
+		turns: entry.turns ?? 0,
+		classifySteps: entry.classifySteps ?? 0,
+		activity: entry.activity ?? {},
+		costUsd: entry.costUsd ?? 0,
+		spend: entry.spend,
+		limits: entry.limits,
+		unbounded: entry.unbounded ?? false,
+		crossedAt: entry.crossedAt ?? null,
+		...(entry.partial !== undefined ? { partial: entry.partial } : {}),
+		...(entry.effects !== undefined ? { effects: entry.effects } : {}),
 	};
 }

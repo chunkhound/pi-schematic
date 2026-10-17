@@ -39,7 +39,7 @@ import type {
 	WorkflowErrorPhase,
 	WorkflowExitEntry,
 } from "./types.js";
-import { RESERVED_REASONS, WORKFLOW_ERROR_ENTRY_TYPE, WORKFLOW_EXIT_ENTRY_TYPE, deriveExitReason } from "./types.js";
+import { RESERVED_REASONS, WORKFLOW_ENTRY_VERSION, WORKFLOW_ERROR_ENTRY_TYPE, WORKFLOW_EXIT_ENTRY_TYPE, deriveExitReason } from "./types.js";
 
 // A deferred stop lets a workflow reach its next checkpoint, but an unreachable or
 // far-away one must not spend without bound: after this many guarded effects past the
@@ -142,6 +142,7 @@ function requireCtx(deps: WorkflowHostDeps): ExtensionCommandContext {
 /** Build the `workflow-exit` wire entry for one outcome: reason first, path payload in named fields. */
 function exitEntryOf(outcome: ExitOutcome): WorkflowExitEntry {
 	return {
+		v: WORKFLOW_ENTRY_VERSION,
 		reason: outcome.reason,
 		...(outcome.metadata !== undefined ? { metadata: outcome.metadata } : {}),
 		...(outcome.partial !== undefined ? { partial: outcome.partial } : {}),

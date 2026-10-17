@@ -135,7 +135,7 @@ describe("workflow host E2E — run correlation", () => {
 	}));
 	it("records an explicit exit reason and metadata", async () => withWorkflowChild(async (h) => {
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"exit","metadata":{"reason":"approved","note":1}}');
-		assert.deepEqual(exitOf(entries), { reason: "approved", metadata: { reason: "approved", note: 1 } });
+		assert.deepEqual(exitOf(entries), { v: 1, reason: "approved", metadata: { reason: "approved", note: 1 } });
 		assert.equal(summaryOf(entries).reason, "approved");
 	}));
 

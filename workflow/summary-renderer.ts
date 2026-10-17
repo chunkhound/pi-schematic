@@ -7,8 +7,8 @@ import type { Component } from "@earendil-works/pi-tui";
 import { formatCost, formatCompactTokens, formatElapsed, reasonLabel } from "../tui.js";
 import { UNATTRIBUTED_MODEL } from "../usage.js";
 import { workflowCard } from "./card.js";
-import { WORKFLOW_SUMMARY_ENTRY_TYPE, type WorkflowRunSummaryData } from "./summary.js";
-import { RESERVED_REASONS, type ReservedReason, type WorkflowHandleName } from "./types.js";
+import { WORKFLOW_SUMMARY_ENTRY_TYPE, readWorkflowSummaryData, type WorkflowRunSummaryData } from "./summary.js";
+import { RESERVED_REASONS, isNewerWorkflowEntry, type ReservedReason, type WorkflowHandleName } from "./types.js";
 
 export const MAX_MODELS_COLLAPSED = 8;
 
@@ -162,19 +162,26 @@ function modelRows(data: WorkflowRunSummaryData, expanded: boolean, theme: Theme
 }
 
 export function renderWorkflowSummary(
-	data: WorkflowRunSummaryData | undefined,
+	raw: unknown,
 	expanded: boolean,
 	theme: Theme,
 ): Component {
-	const title = theme.fg("accent", theme.bold(`\u{1F6E0}\u{FE0F} workflow ${data?.workflow ?? ""}`));
-	if (!data) return workflowCard(theme, title, []);
+	const rawName = raw && typeof raw === "object" && typeof (raw as { workflow?: unknown }).workflow === "string"
+		? (raw as { workflow: string }).workflow
+		: "";
+	const title = theme.fg("accent", theme.bold(`\u{1F6E0}\u{FE0F} workflow ${rawName}`));
+	if (!raw) return workflowCard(theme, title, []);
+	if (isNewerWorkflowEntry(raw))
+		return workflowCard(theme, title, [theme.fg("warning", "This workflow summary was written by a newer schematic version and cannot be read here.")]);
+	const data = readWorkflowSummaryData(raw);
+	if (!data) return workflowCard(theme, title, [theme.fg("warning", "This workflow summary is unreadable and was skipped.")]);
 	const modelHeading = data.spend.length > 0 ? [theme.fg("dim", "by model")] : [];
 	return workflowCard(theme, title, [...summaryRows(data, expanded, theme), ...modelHeading, ...modelRows(data, expanded, theme)]);
 }
 
 export function registerWorkflowSummaryRenderer(pi: ExtensionAPI): void {
-	pi.registerEntryRenderer<WorkflowRunSummaryData>(
+	pi.registerEntryRenderer<unknown>(
 		WORKFLOW_SUMMARY_ENTRY_TYPE,
-		(entry: CustomEntry<WorkflowRunSummaryData>, { expanded }, theme) => renderWorkflowSummary(entry.data, expanded, theme),
+		(entry: CustomEntry<unknown>, { expanded }, theme) => renderWorkflowSummary(entry.data, expanded, theme),
 	);
 }
