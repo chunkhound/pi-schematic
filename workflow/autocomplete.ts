@@ -6,12 +6,10 @@
 import type { AutocompleteItem, AutocompleteProvider, AutocompleteSuggestions } from "@earendil-works/pi-tui";
 import { fuzzyFilter } from "@earendil-works/pi-tui";
 import { getAgentDir, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isPathLike, listWorkflows, type WorkflowFileEntry, type WorkflowRootSource } from "./file.js";
+import { isPathLike, listWorkflows, type WorkflowFileEntry } from "./file.js";
 import { installAutocompleteProviderOnce } from "../autocomplete-install.js";
 
 const MAX_SUGGESTIONS = 20;
-/** UI label per discovery root; keyed by the union so an unlabelled root fails compile. */
-export const ROOT_DESCRIPTIONS: Record<WorkflowRootSource, string> = { project: ".pi/workflows", global: "global" };
 const WORKFLOW_COMMAND = "/workflow";
 const WORKFLOW_VALUE_PREFIX = `${WORKFLOW_COMMAND} `;
 // `/workflow`, `/workflow:`, `/workflow <partial>`, `/workflow:<partial>`. The lookahead
@@ -105,7 +103,7 @@ function workflowItem(entry: WorkflowFileEntry): AutocompleteItem {
 	return {
 		value: `${WORKFLOW_VALUE_PREFIX}${entry.name} `,
 		label: `${WORKFLOW_COMMAND} ${entry.name}`,
-		description: ROOT_DESCRIPTIONS[entry.source],
+		description: entry.label,
 	};
 }
 

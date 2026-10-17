@@ -10,14 +10,16 @@ import type { AutocompleteProviderFactory, ExtensionContext } from "@earendil-wo
 /** One key per provider so workflow and model-groups stack instead of blocking. */
 export type AutocompleteProviderKey = "workflow" | "model-groups";
 
-const installedKeys = new WeakMap<object, Set<AutocompleteProviderKey>>();
+/** Dedupe stays per UI via WeakSet; one slot per key removes the lazy-set bookkeeping. */
+const installedProviders: Record<AutocompleteProviderKey, WeakSet<object>> = {
+	"workflow": new WeakSet(),
+	"model-groups": new WeakSet(),
+};
 
 /** Skips headless contexts. `buildFactory` runs only on the first install per key for a UI. */
 export function installAutocompleteProviderOnce(ctx: ExtensionContext, key: AutocompleteProviderKey, buildFactory: () => AutocompleteProviderFactory): void {
 	if (!ctx.hasUI) return;
-	let keys = installedKeys.get(ctx.ui);
-	if (keys?.has(key)) return;
-	if (!keys) installedKeys.set(ctx.ui, (keys = new Set()));
-	keys.add(key);
+	if (installedProviders[key].has(ctx.ui)) return;
+	installedProviders[key].add(ctx.ui);
 	ctx.ui.addAutocompleteProvider(buildFactory());
 }

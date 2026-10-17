@@ -33,21 +33,17 @@ function isFile(path: string): boolean {
 	return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
 }
 
-/** Single precedence source: the project workflows dir shadows the global one.
- * Both {@link resolveWorkflowPath} and {@link listWorkflows} read these roots, and completion
- * derives its per-root label from {@link WorkflowRootSource}. */
-export const WORKFLOW_ROOTS = [
-	{ dir: (cwd: string, _agentDir: string) => join(cwd, ".pi", "workflows"), source: "project" },
-	{ dir: (_cwd: string, agentDir: string) => join(agentDir, "workflows"), source: "global" },
-] as const;
-
-/** Every discovery root's label. A new root widens this union and breaks the completion map. */
-export type WorkflowRootSource = (typeof WORKFLOW_ROOTS)[number]["source"];
-
-/** Resolve {@link WORKFLOW_ROOTS} for one cwd/agent-dir pair, in precedence order. */
-export function workflowRoots(cwd: string, agentDir: string): Array<{ dir: string; source: WorkflowRootSource }> {
-	return WORKFLOW_ROOTS.map((root) => ({ dir: root.dir(cwd, agentDir), source: root.source }));
+/** The two discovery roots, in precedence order: project shadows global. Each row
+ * carries its own label so completion reads `entry.label` and a new root fails compile without one. */
+export function workflowRoots(cwd: string, agentDir: string) {
+	return [
+		{ dir: join(cwd, ".pi", "workflows"), label: ".pi/workflows", source: "project" },
+		{ dir: join(agentDir, "workflows"), label: "global", source: "global" },
+	] as const;
 }
+
+/** Every discovery root's source. A new root widens this union and forces label coverage above. */
+export type WorkflowRootSource = (ReturnType<typeof workflowRoots>)[number]["source"];
 
 /**
  * Resolve a workflow name to a file. Path-like names resolve against `cwd`;
@@ -78,34 +74,24 @@ export interface WorkflowFileEntry {
 	path: string;
 	/** Discovery root; a project entry shadows a global entry with the same name. */
 	source: WorkflowRootSource;
+	/** Human-readable root label for completion descriptions. */
+	label: string;
 }
 
 /**
  * List discoverable bare-name workflows. The result matches {@link resolveWorkflowPath}
- * precedence by iterating the same {@link workflowRoots} (project before global), so completion
- * and resolution cannot disagree. Sorted by name for a stable UI.
+ * precedence by iterating the same {@link workflowRoots} (project before global). Symlinked
+ * files resolve (`statSync` follows) but are not listed (`dirent.isFile()`). Sorted by name for a stable UI.
  */
 export async function listWorkflows(cwd: string, agentDir: string): Promise<WorkflowFileEntry[]> {
-	const layers = await Promise.all(workflowRoots(cwd, agentDir).map((root) => listWorkflowDir(root.dir, root.source)));
-	return shadowByPrecedence(layers).sort((a, b) => a.name.localeCompare(b.name));
+	const layers = await Promise.all(workflowRoots(cwd, agentDir).map((root) => listWorkflowDir(root.dir, root.source, root.label)));
+	// First-wins dedupe across precedence-ordered layers (project before global), then sort by name.
+	const byName = new Map<string, WorkflowFileEntry>();
+	for (const entry of layers.flat()) if (!byName.has(entry.name)) byName.set(entry.name, entry);
+	return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Flatten root layers in precedence order: the first layer seen for a name wins, so adding a root
- * never lets a lower-precedence file shadow a higher one. */
-export function shadowByPrecedence(layers: ReadonlyArray<readonly WorkflowFileEntry[]>): WorkflowFileEntry[] {
-	const seen = new Set<string>();
-	const merged: WorkflowFileEntry[] = [];
-	for (const layer of layers) {
-		for (const entry of layer) {
-			if (seen.has(entry.name)) continue;
-			seen.add(entry.name);
-			merged.push(entry);
-		}
-	}
-	return merged;
-}
-
-async function listWorkflowDir(dir: string, source: WorkflowFileEntry["source"]): Promise<WorkflowFileEntry[]> {
+async function listWorkflowDir(dir: string, source: WorkflowFileEntry["source"], label: string): Promise<WorkflowFileEntry[]> {
 	let dirents;
 	try {
 		dirents = await readdir(dir, { withFileTypes: true });
@@ -116,5 +102,5 @@ async function listWorkflowDir(dir: string, source: WorkflowFileEntry["source"])
 	}
 	return dirents
 		.filter((dirent) => dirent.isFile() && dirent.name.endsWith(".js"))
-		.map((dirent) => ({ name: dirent.name.slice(0, -3), path: join(dir, dirent.name), source }));
+		.map((dirent) => ({ name: dirent.name.slice(0, -3), path: join(dir, dirent.name), source, label }));
 }

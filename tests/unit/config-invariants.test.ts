@@ -271,7 +271,7 @@ test("workflow engine constants stay pinned to the code and the docs name them",
 });
 
 test("the /workflow completion list is capped at the engine suggestion limit", async () => {
-	const entries = Array.from({ length: 25 }, (_, index) => ({ name: `flow-${index}`, path: `/w/flow-${index}.js`, source: "global" as const }));
+	const entries = Array.from({ length: 25 }, (_, index) => ({ name: `flow-${index}`, path: `/w/flow-${index}.js`, source: "global" as const, label: "global" }));
 	const current = { getSuggestions: async () => null, applyCompletion: () => "", shouldTriggerFileCompletion: () => false };
 	const provide = createWorkflowAutocompleteProvider(async () => entries)(current as any);
 	const options = { signal: new AbortController().signal };

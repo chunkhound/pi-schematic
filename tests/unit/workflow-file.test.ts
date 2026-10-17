@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpDir } from "./helpers.js";
-import { parseWorkflowArgs, listWorkflows, readWorkflow, resolveWorkflowPath, shadowByPrecedence, workflowRoots, type WorkflowFileEntry } from "../../workflow/file.js";
+import { parseWorkflowArgs, listWorkflows, readWorkflow, resolveWorkflowPath, workflowRoots, type WorkflowFileEntry } from "../../workflow/file.js";
 
 test("parseWorkflowArgs takes the first token as the workflow and keeps the rest verbatim", () => {
 	assert.deepEqual(parseWorkflowArgs("review.js"), { name: "review.js", args: "" });
@@ -86,9 +86,9 @@ test("listWorkflows merges both roots, strips .js, drops non-files, and lets pro
 		await writeFile(join(agent, "workflows", "shared.js"), "g");
 
 		assert.deepEqual(await listWorkflows(cwd, agent), [
-			{ name: "alpha", path: join(agent, "workflows", "alpha.js"), source: "global" },
-			{ name: "beta", path: join(cwd, ".pi", "workflows", "beta.js"), source: "project" },
-			{ name: "shared", path: join(cwd, ".pi", "workflows", "shared.js"), source: "project" },
+			{ name: "alpha", path: join(agent, "workflows", "alpha.js"), source: "global", label: "global" },
+			{ name: "beta", path: join(cwd, ".pi", "workflows", "beta.js"), source: "project", label: ".pi/workflows" },
+			{ name: "shared", path: join(cwd, ".pi", "workflows", "shared.js"), source: "project", label: ".pi/workflows" },
 		]);
 	} finally {
 		await rm(root, { recursive: true, force: true });
@@ -113,25 +113,24 @@ test("workflowRoots resolves to expected directories", () => {
 	assert.deepEqual(roots.map((root) => root.source), ["project", "global"]);
 });
 
-// WHY: workflowRoots is the single precedence source; if it ever gains a root, a lower-precedence
-// file must not shadow a higher one. Three layers exercise that generalized shadowing directly.
-test("shadowByPrecedence keeps the first root's entry for a repeated name", () => {
-	const entry = (name: string, source: WorkflowFileEntry["source"]): WorkflowFileEntry => ({ name, path: `/${source}/${name}.js`, source });
-	const merged = shadowByPrecedence([
-		[entry("alpha", "project"), entry("shared", "project")],
-		[entry("shared", "global"), entry("beta", "global")],
-		[entry("beta", "global"), entry("gamma", "global")],
-	]);
-	assert.deepEqual(merged, [
-		{ name: "alpha", path: "/project/alpha.js", source: "project" },
-		{ name: "shared", path: "/project/shared.js", source: "project" },
-		{ name: "beta", path: "/global/beta.js", source: "global" },
-		{ name: "gamma", path: "/global/gamma.js", source: "global" },
-	]);
+// WHY: the listing reads `dirent.isFile()` (symlinks excluded) while resolution follows the
+// symlink via `statSync`, so the two deliberately disagree for a symlinked workflow. This pins
+// the contract stated on `listWorkflows`, so a change to either side must update this test.
+test("a symlinked workflow resolves but is not listed", { skip: process.platform === "win32" }, async () => {
+	const root = await tmpDir();
+	const cwd = join(root, "project");
+	const agent = join(root, "agent");
+	try {
+		await mkdir(join(cwd, ".pi", "workflows"), { recursive: true });
+		await writeFile(join(root, "real.js"), "x");
+		await symlink(join(root, "real.js"), join(cwd, ".pi", "workflows", "link.js"));
+		assert.equal(resolveWorkflowPath("link", cwd, agent), join(cwd, ".pi", "workflows", "link.js"));
+		assert.equal((await listWorkflows(cwd, agent)).find((entry) => entry.name === "link"), undefined);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
 });
 
-// WHY: one precedence source (workflowRoots) feeds both resolution and listing, so a
-// clashing name must resolve to exactly the file the listing reports for that name.
 test("resolveWorkflowPath agrees with listWorkflows for a clashing name", async () => {
 	const root = await tmpDir();
 	const cwd = join(root, "project");
