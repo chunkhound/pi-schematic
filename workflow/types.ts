@@ -7,12 +7,6 @@ import type { SchematicState, ChildUsageSink } from "../state.js";
 import type { ModelSpend } from "../usage.js";
 import type { ShellRun } from "./shell.js";
 
-export type { CodemodeSandbox, CodemodeSandboxOptions, CodemodeTool } from "@earendil-works/pi-codemode";
-// The overview's spend rows are derived by usage.ts; the host only hands them out.
-export type { ModelSpend } from "../usage.js";
-// Classifier types pass through to workflows; the design pins pi-ai's shape.
-export type { ClassifierResult, ClassifierQuestion } from "@earendil-works/pi-ai";
-
 /**
  * Soft cost/time targets for one workflow run. Null means no target.
  * Crossing a target arms a deferred stop: the run ends at its next checkpoint, so the
@@ -400,7 +394,7 @@ export interface WorkflowHost {
 	readonly installedSink: ChildUsageSink | null;
 	/** Reject pending correlations and clean up; command parent calls this. */
 	dispose(): void;
-	registry: ReturnType<typeof import("./run-registry.js").createRunRegistry>;
+	registry: import("./run-registry.js").RunRegistry;
 }
 
 export interface WorkflowHostDeps {
@@ -434,5 +428,3 @@ export interface WorkflowHostDeps {
 
 /** Injectable seam for orchestration tests; production builds a real CodemodeSandbox. */
 export type WorkflowSandboxFactory = (options: CodemodeSandboxOptions) => CodemodeSandbox;
-
-export type { Usage };

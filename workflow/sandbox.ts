@@ -1,9 +1,8 @@
 // WHY: Node timers overflow above 2^31-1 ms and fire almost immediately, so a finite
 // deadline clamps to the timer max instead of becoming an instant timeout. Only an
 // explicit no-limit (non-finite or non-positive input) disables the deadline.
-import { CodemodeSandbox } from "@earendil-works/pi-codemode";
-import type { CodemodeSandbox as Sandbox, CodemodeSandboxOptions, WorkflowLimits } from "./types.js";
-import type { WorkflowSandboxFactory } from "./types.js";
+import { CodemodeSandbox, type CodemodeSandboxOptions } from "@earendil-works/pi-codemode";
+import type { WorkflowLimits, WorkflowSandboxFactory } from "./types.js";
 import { registeredState } from "../process-state.js";
 
 export const MAX_TIMEOUT_MS = 2147483647;
@@ -43,21 +42,14 @@ function withClampedTimeout(options: CodemodeSandboxOptions): CodemodeSandboxOpt
  * The e2e harness spawns one process per test, so a set fake never leaks past that process.
  * WHY registeredState: jiti double-loads this module (moduleCache:false), so a module-global
  * would fork per copy and silently drop the fake; a Symbol.for slot is shared by every copy. */
-interface TestFactorySlot {
-	factory: WorkflowSandboxFactory | null;
-}
-const TEST_FACTORY_KEY = "pi-schematic.workflow-sandbox-factory-for-tests";
-
-function testFactorySlot(): TestFactorySlot {
-	return registeredState<TestFactorySlot>(TEST_FACTORY_KEY, () => ({ factory: null }));
-}
+const TEST_SANDBOX = registeredState<{ factory: WorkflowSandboxFactory | null }>("pi-schematic.workflow-sandbox-factory-for-tests", () => ({ factory: null }));
 
 export function setSandboxFactoryForTests(factory: WorkflowSandboxFactory | null): void {
-	testFactorySlot().factory = factory;
+	TEST_SANDBOX.factory = factory;
 }
 
 /** Build the sandbox. Tests inject a factory; production uses the real CodemodeSandbox. */
-export function createWorkflowSandbox(options: CodemodeSandboxOptions, factory?: WorkflowSandboxFactory): Sandbox {
-	const build = factory ?? testFactorySlot().factory ?? ((opts: CodemodeSandboxOptions) => new CodemodeSandbox(opts));
+export function createWorkflowSandbox(options: CodemodeSandboxOptions, factory?: WorkflowSandboxFactory): CodemodeSandbox {
+	const build = factory ?? TEST_SANDBOX.factory ?? ((opts: CodemodeSandboxOptions) => new CodemodeSandbox(opts));
 	return build(withClampedTimeout(options));
 }

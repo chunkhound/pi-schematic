@@ -8,7 +8,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { classifierAbortedResult, classifyRequest } from "./classify.js";
 import { messageOf, safeAppendEntry, withRecordStatus } from "./errors.js";
 import { notebookIndex, notebookRead, notebookTopic, notebookWrite } from "./notebook.js";
-import { createRunRegistry, resolveRunTarget, type RunCorrelation, type RunMatch } from "./run-registry.js";
+import { createRunRegistry, resolveRunTarget, type RunCorrelation, type RunMatch, type RunRegistry } from "./run-registry.js";
 import { createShellRunner } from "./shell.js";
 import { armStructuredOutput, disarmStructuredOutput, type OutputCapture } from "./output.js";
 import { addModelSpend, assistantCount, collectUsage, mergeModelSpend, spendIdentity, spendRowsTotal, type ModelSpend } from "../usage.js";
@@ -58,7 +58,7 @@ type ReplacementContext = Parameters<NonNullable<ReplacementOptions["withSession
 
 interface HostState extends SpendState {
 	controller: AbortController;
-	registry: ReturnType<typeof createRunRegistry>;
+	registry: RunRegistry;
 	startedAt: number;
 	/** Invocation counts per counted handle; the run's technical metrics. Inspectors are absent. */
 	counts: Map<WorkflowHandleName, number>;
