@@ -14,8 +14,7 @@
  *                            such as `sudo`/`time` stripped, its assignments kept)
  *                            plus any `-c` cwd move it applies first; null when it
  *                            can't be resolved. Depth guards (10) bound recursion.
- *   classifyHeredocBody — expands unquoted stdin in the outer shell (parent vars
- *                         plus the redirect command's leading assignments), then
+ *   classifyHeredocBody — expands unquoted stdin under `expansionCandidates`, then
  *                         checks child code in the consuming shell's environment
  *                         without propagating cwd/variables back.
  *
@@ -31,7 +30,7 @@ import type { ShellScan } from "./readonly-bash-scanner.js";
 import { INTERPRETERS, findSudoCommandIndex, envSplitCommand, demangleNestedArgument, parseCommandPrefix } from "./readonly-bash-commands.js";
 import { COMPOUND_FRAGMENT, DIR_CHANGE_BUILTINS } from "./readonly-bash-dirchange.js";
 import type { Verdict, ShellState } from "./readonly-bash.js";
-import { classifyBashWithHeredocs } from "./readonly-bash.js";
+import { classifyBashWithHeredocs, nestedBlockReason } from "./readonly-bash.js";
 
 /**
  * Remove heredoc bodies before segmentation.
@@ -54,28 +53,81 @@ import { classifyBashWithHeredocs } from "./readonly-bash.js";
 export type HeredocBody = { spec: HeredocSpec; text: string };
 type HeredocState = { header: string; kept: string[]; pending: HeredocSpec[]; body: string[]; continuation: string | null; heredocs: Map<string, HeredocBody>; markerPrefix: string };
 
-/** Outer-shell variables for unquoted expansion plus the consuming shell's variables for child
- * code. They differ: a direct `D=x cmd <<EOF` assignment expands the body, but an `env D=x cmd`
- * operand does not — `env` has not run when the outer shell reads the heredoc. */
-export type HeredocEnvironments = { expansion: ReadonlyMap<string, string>; child: ReadonlyMap<string, string> };
+/** Expansion environments plus the consuming shell's variables for child code. They differ: a
+ * direct `D=x cmd <<EOF` assignment may or may not expand the body (see `expansionCandidates`),
+ * while an `env D=x cmd` operand does not — `env` has not run when the outer shell reads it. */
+export type HeredocEnvironments = { parent: ReadonlyMap<string, string>; prefix: ReadonlyMap<string, string>; child: ReadonlyMap<string, string> };
+
+/** Shells disagree on whether a redirect command's leading assignments are visible to its
+ * unquoted heredoc expansion: bash <= 4.0 applies them, >= 4.1 expands with the parent
+ * environment first (manual: redirections before assignment values). Classify under both and
+ * block if either fails, so the verdict never depends on the host shell's version. The parent
+ * candidate models >= 4.1 exactly: a prefix-only name is unset there, and unset plain names
+ * expand to "" — ambient values still come from `process.env`. Other names absent from both
+ * maps keep failing closed, guarding against assignments the classifier failed to track; `PWD`
+ * resolves from the tracked cwd, which every directory change refreshes. */
+function expansionCandidates({ parent, prefix }: HeredocEnvironments): readonly ReadonlyMap<string, string>[] {
+	if (sameVariables(parent, prefix)) return [parent];
+	const parentModel = new Map(parent);
+	for (const name of prefix.keys()) if (!parent.has(name) && process.env[name] === undefined) parentModel.set(name, "");
+	return [parentModel, prefix];
+}
+
+const CANDIDATE_LABELS = ["parent expansion", "assignment-prefix expansion"] as const;
+
+/** Attribute a candidate's failure to its expansion model, so a script that works on the user's
+ * own shell still points at the version divergence. Unlabeled when one model suffices. */
+function candidateReason(expansions: readonly ReadonlyMap<string, string>[], index: number, reason: string): string {
+	return expansions.length > 1 ? nestedBlockReason(CANDIDATE_LABELS[index], reason) : reason;
+}
+
+function sameVariables(a: ReadonlyMap<string, string>, b: ReadonlyMap<string, string>): boolean {
+	if (a.size !== b.size) return false;
+	for (const [name, value] of a) if (b.get(name) !== value) return false;
+	return true;
+}
 
 export function classifyHeredocBody({ spec, text }: HeredocBody, state: ShellState, depth: number, env?: HeredocEnvironments): Verdict {
-	const expansionVars = env?.expansion ?? state.vars;
 	const childVars = env?.child ?? state.vars;
-	if (!spec.keep) {
-		const commands = spec.quoted ? [] : extractCommandSubstitutions(text);
-		for (const command of commands) {
-			const verdict = classifyBashWithHeredocs(command, state.cwd, depth, expansionVars, state.heredocs);
-			if (!verdict.ok) return verdict;
-		}
-		return { ok: true };
-	}
+	const expansions = env ? expansionCandidates(env) : [state.vars];
+	if (!spec.keep) return spec.quoted ? { ok: true } : classifyHeredocData(text, state, depth, expansions);
+	if (spec.quoted) return classifyHeredocCode(text, spec, state, depth, childVars);
 	// Bash expands unquoted stdin in the outer shell before the child runs, then the body executes
-	// in the consuming shell's environment.
-	const expanded = spec.quoted ? text : expandHeredocText(text, expansionVars, state.cwd);
-	if (expanded === null) return { ok: false, reason: `unresolvable shell heredoc expansion${FAIL_CLOSED_HINT}` };
-	const code = spec.stdinPrefix ? `${spec.stdinPrefix}; ${expanded}` : expanded;
-	return classifyBashWithHeredocs(code, state.cwd, depth, childVars, state.heredocs);
+	// in the consuming shell's environment. Labels name the model whose expansion failed, including
+	// value-independent failures such as an unsupported `$` form. Classification failures are
+	// labeled only if the expanded text differs between candidates; identical expansions imply the
+	// child environment failed, so labeling would mislead.
+	const expandedTexts: string[] = [];
+	for (const [index, vars] of expansions.entries()) {
+		const expanded = expandHeredocText(text, vars, state.cwd);
+		if (expanded === null) return { ok: false, reason: candidateReason(expansions, index, `unresolvable shell heredoc expansion${FAIL_CLOSED_HINT}`) };
+		expandedTexts.push(expanded);
+	}
+	const firstExpanded = expandedTexts[0];
+	const sameExpansion = expandedTexts.every(exp => exp === firstExpanded);
+	for (const [index, expanded] of expandedTexts.entries()) {
+		const verdict = classifyHeredocCode(expanded, spec, state, depth, childVars);
+		if (!verdict.ok) return sameExpansion ? verdict : { ok: false, reason: candidateReason(expansions, index, verdict.reason) };
+	}
+	return { ok: true };
+}
+
+function classifyHeredocData(text: string, state: ShellState, depth: number, expansions: readonly ReadonlyMap<string, string>[]): Verdict {
+	// An unquoted data body still runs its command substitutions in the outer shell. Failures are
+	// expansion-dependent: the same command text is classified under each candidate's variables.
+	const commands = extractCommandSubstitutions(text);
+	for (const [index, vars] of expansions.entries()) {
+		for (const command of commands) {
+			const verdict = classifyBashWithHeredocs(command, state.cwd, depth, vars, state.heredocs);
+			if (!verdict.ok) return { ok: false, reason: candidateReason(expansions, index, verdict.reason) };
+		}
+	}
+	return { ok: true };
+}
+
+function classifyHeredocCode(text: string, spec: HeredocSpec, state: ShellState, depth: number, vars: ReadonlyMap<string, string>): Verdict {
+	const code = spec.stdinPrefix ? `${spec.stdinPrefix}; ${text}` : text;
+	return classifyBashWithHeredocs(code, state.cwd, depth, vars, state.heredocs);
 }
 
 function expandHeredocText(text: string, vars: ReadonlyMap<string, string>, cwd: string): string | null {

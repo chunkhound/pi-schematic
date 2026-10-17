@@ -408,21 +408,23 @@ function stripHeredocMarkers(segment: string, heredocs: ReadonlyMap<string, Here
 }
 
 /** Prefix a nested block reason once; nested classifications repeat the same prefix. */
-function nestedBlockReason(prefix: string, reason: string): string {
+export function nestedBlockReason(prefix: string, reason: string): string {
 	return reason.includes(prefix) ? reason : `${prefix}: ${reason}`;
 }
 
 function heredocSegmentReason(segment: string, state: ShellState, depth: number): string | null {
-	// Expansion runs in the outer shell (parent vars plus this command's leading assignments);
-	// markers are stripped first so a redirect written before the command word still shows
-	// them (`<<EOF D=x bash`). The child code runs in the consuming shell's environment
-	// (spec.consumerStage, already wrapper-stripped by the owner walk).
-	const expansion = leadingShellAssignments(stripHeredocMarkers(segment, state.heredocs), state.vars);
+	// Unquoted expansion runs in the outer shell. Host shells disagree on whether this command's
+	// leading assignments are visible yet, so pass both candidates and let the heredoc classifier
+	// require the body to be safe under each. Markers are stripped first so a redirect written
+	// before the command word still shows them (`<<EOF D=x bash`). The child code runs in the
+	// consuming shell's environment (spec.consumerStage, already wrapper-stripped by the owner
+	// walk).
+	const prefix = leadingShellAssignments(stripHeredocMarkers(segment, state.heredocs), state.vars);
 	for (const subcommand of extractCommandSubstitutions(segment)) {
 		const body = state.heredocs.get(subcommand);
 		if (!body) continue;
 		const child = body.spec.consumerStage ? parseCommandPrefix(body.spec.consumerStage, state.vars).vars : state.vars;
-		const verdict = classifyHeredocBody(body, state, depth + 1, { expansion, child });
+		const verdict = classifyHeredocBody(body, state, depth + 1, { parent: state.vars, prefix, child });
 		if (!verdict.ok) return nestedBlockReason("heredoc blocked", verdict.reason);
 	}
 	return null;
@@ -461,8 +463,12 @@ export function classifySubstitutionScript(
 	const prepared = stripHeredocBodies(subcommand, new Map());
 	if (prepared === null) return `unsupported substitution heredoc${FAIL_CLOSED_HINT}`;
 	const state: ShellState = { cwd, stack: [], vars: new Map(vars), directories: new Set(), heredocs: prepared.heredocs };
+	// The outer shell expands an unquoted body here too, so the same shell-version split applies.
+	// Markers are stripped first so a redirect written before the command word exposes its assignments.
+	const prefix = leadingShellAssignments(stripHeredocMarkers(prepared.command, prepared.heredocs), state.vars);
 	for (const body of prepared.heredocs.values()) {
-		const verdict = classifyHeredocBody({ spec: { ...body.spec, keep: true }, text: body.text }, state, depth + 1);
+		const verdict = classifyHeredocBody({ spec: { ...body.spec, keep: true }, text: body.text }, state, depth + 1,
+			{ parent: state.vars, prefix, child: state.vars });
 		if (!verdict.ok) return verdict.reason;
 	}
 	return null;

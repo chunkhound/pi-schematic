@@ -6,6 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import { classifyBashCommand } from "../../readonly-bash.js";
 import { TEMP_DIR, TEMP_WRITE_ROOTS_CANONICAL } from "../../temp-dir.js";
+import { isTempLiteralPath } from "../../readonly-shell-utils.js";
 import { canWriteOutsideTemp, capabilityGate, posixHost } from "./readonly-git-helpers.js";
 import { shellPath } from "./helpers.js";
 
@@ -1287,21 +1288,18 @@ test("a continued unquoted heredoc delimiter cannot hide a command", () => {
 	});
 });
 
-test("a heredoc body is classified in the consuming shell's environment", () => {
+test("a quoted heredoc body is classified in the consuming shell's environment", () => {
 	withDirectories((work, temp) => {
-		// Each shape hides an outside `$D` behind a parent value that stays inside temp.
+		// Only quoted bodies are host-independent: the child shell expands `$D` in its own
+		// environment. An unquoted body is expanded by the outer shell, whose leading-assignment
+		// visibility changed between bash 4.0 and 4.1 (covered classifier-only below).
 		const shapes = [
-			(target: string) => `D=${quote(temp)}; D=${quote(work)} bash <<EOF\ntouch "$D/${target}"\nEOF`,
 			(target: string) => `D=${quote(temp)}; D=${quote(work)} bash <<'EOF'\ntouch "$D/${target}"\nEOF`,
 			(target: string) => `D=${quote(temp)}; env D=${quote(work)} bash <<'EOF'\ntouch "$D/${target}"\nEOF`,
-			(target: string) => `D=${quote(temp)}; D=${quote(work)} cat <<EOF\n$(touch "$D/${target}")\nEOF`,
 			(target: string) => `D=${quote(temp)}; cat <<'EOF' | D=${quote(work)} bash\ntouch "$D/${target}"\nEOF`,
 			// `time` is a keyword: the timed command's assignment still binds for its redirections
-			// and still reaches the consuming shell, quoted or not.
+			// and still reaches the consuming shell.
 			(target: string) => `D=${quote(temp)}; time D=${quote(work)} bash <<'EOF'\ntouch "$D/${target}"\nEOF`,
-			(target: string) => `D=${quote(temp)}; time D=${quote(work)} bash <<EOF\ntouch "$D/${target}"\nEOF`,
-			// A redirect written before the command word still carries the command's assignments.
-			(target: string) => `D=${quote(temp)}; <<EOF D=${quote(work)} bash\ntouch "$D/${target}"\nEOF`,
 			// A group consumes stdin like a direct command, so its members' assignments apply too.
 			(target: string) => `D=${quote(temp)}; { D=${quote(work)} bash; } <<'EOF'\ntouch "$D/${target}"\nEOF`,
 		];
@@ -1333,8 +1331,8 @@ test("assignments carried by a sudo wrapper still reach the consuming shell", ()
 		"sudo D=<outside> bash <<'EOF' must judge the body in the child's environment");
 	assert.equal(classifyBashCommand(`D=${temp}; time D=${outside} bash <<'EOF'\ntouch "$D/blocked"\nEOF`, cwd).ok, false,
 		"time D=<outside> bash <<'EOF' must judge the body in the child's environment too");
-	// A redirect written before the command word still carries its assignments, so the
-	// outer shell expands the unquoted body with the child's value.
+	// A redirect written before the command word still carries its assignments. The prefix
+	// candidate sees the outside value and blocks; the parent candidate sees the in-temp value.
 	assert.equal(classifyBashCommand(`D=${temp}; <<EOF D=${outside} bash\ntouch "$D/blocked"\nEOF`, cwd).ok, false,
 		"a redirect written before the command word must still carry its assignments");
 	// The same shapes with in-temp values stay allowed.
@@ -1344,6 +1342,89 @@ test("assignments carried by a sudo wrapper still reach the consuming shell", ()
 	}
 });
 
+test("an unquoted heredoc body is classified under every shell expansion environment", () => {
+	// Host shells disagree: bash <= 4.0 applies the redirect command's leading assignment before
+	// expanding the body, bash >= 4.1 expands with the parent value. A differential fixture would
+	// encode one host's version, so assert the fail-closed verdict directly.
+	const cwd = shellPath(TEMP_DIR);
+	const temp = classifierQuote(cwd);
+	const nested = classifierQuote(path.join(cwd, "nested"));
+	// HOME may be inside temp. This root-anchored fixture is classified, never created.
+	const outside = path.join(path.parse(TEMP_DIR).root, "readonly-heredoc-outside");
+	assert.equal(isTempLiteralPath(outside, TEMP_DIR), false, `${outside} must be outside all temp roots`);
+	const outsidePath = classifierQuote(shellPath(outside));
+	const shapes = [
+		(parent: string, prefix: string, target: string) => `D=${parent}; D=${prefix} bash <<EOF\ntouch "$D/${target}"\nEOF`,
+		(parent: string, prefix: string, target: string) => `D=${parent}; time D=${prefix} bash <<EOF\ntouch "$D/${target}"\nEOF`,
+		(parent: string, prefix: string, target: string) => `D=${parent}; <<EOF D=${prefix} bash\ntouch "$D/${target}"\nEOF`,
+		(parent: string, prefix: string, target: string) => `D=${parent}; D=${prefix} cat <<EOF\n$(touch "$D/${target}")\nEOF`,
+	];
+	for (const shape of shapes) {
+		const prefixOutside = shape(temp, outsidePath, "blocked");
+		assert.equal(classifyBashCommand(prefixOutside, cwd).ok, false, prefixOutside);
+		const parentOutside = shape(outsidePath, temp, "blocked");
+		assert.equal(classifyBashCommand(parentOutside, cwd).ok, false, parentOutside);
+		const allInside = shape(temp, nested, "ok");
+		assert.equal(classifyBashCommand(allInside, cwd).ok, true, allInside);
+	}
+	// `env` operand assignments never join the outer-shell expansion: the body keeps the parent value.
+	const envOperand = `D=${temp}; env D=${outsidePath} bash <<EOF\ntouch "$D/ok"\nEOF`;
+	assert.equal(classifyBashCommand(envOperand, cwd).ok, true, envOperand);
+});
+
+test("an unquoted heredoc in a substitution script uses every expansion environment", () => {
+	// A substitution's heredoc body is expanded by the outer shell. Classify it under both
+	// version-dependent environments, or `bash -c "$(D=/etc cat <<EOF … EOF)"` escapes on bash <= 4.0.
+	const cwd = shellPath(TEMP_DIR);
+	const temp = classifierQuote(cwd);
+	const nested = classifierQuote(path.join(cwd, "nested"));
+	const outside = classifierQuote(shellPath(path.join(path.parse(TEMP_DIR).root, "readonly-heredoc-outside")));
+	const shapes = [
+		(parent: string, prefix: string, target: string) => `D=${parent}; bash -c "$(D=${prefix} cat <<EOF\ntouch "$D/${target}"\nEOF\n)"`,
+		(parent: string, prefix: string, target: string) => `D=${parent}; eval "$(D=${prefix} cat <<EOF\ntouch "$D/${target}"\nEOF\n)"`,
+	];
+	for (const shape of shapes) {
+		const prefixOutside = shape(temp, outside, "blocked");
+		assert.equal(classifyBashCommand(prefixOutside, cwd).ok, false, prefixOutside);
+		const parentOutside = shape(outside, temp, "blocked");
+		assert.equal(classifyBashCommand(parentOutside, cwd).ok, false, parentOutside);
+		const allInside = shape(temp, nested, "ok");
+		assert.equal(classifyBashCommand(allInside, cwd).ok, true, allInside);
+	}
+});
+
+test("a prefix-only heredoc variable expands empty in the parent expansion model", () => {
+	// bash >= 4.1 expands the body before the prefix binds, so a prefix-only name is empty there;
+	// bash <= 4.0 uses the prefix value. Both models classify, each with its own value.
+	const name = "PI_READONLY_PREFIX_ONLY_DIR";
+	// The parent model reads ambient values, so this host-environment name must be unset.
+	delete process.env[name];
+	const cwd = shellPath(TEMP_DIR);
+	const temp = classifierQuote(cwd);
+	assert.equal(classifyBashCommand(`${name}=${temp} bash <<EOF\necho "$${name}"\nEOF`, cwd).ok, true,
+		"a non-path use of a prefix-only variable stays allowed");
+	// On bash >= 4.1 the empty parent value makes this `touch "/blocked"` — a real escape.
+	assert.equal(classifyBashCommand(`${name}=${temp} bash <<EOF\ntouch "$${name}/blocked"\nEOF`, cwd).ok, false,
+		"an empty parent value must still block a path outside temp");
+	assert.equal(classifyBashCommand(`${name}=${temp} bash <<EOF\ntouch $PI_READONLY_UNSET_HEREDOC_VAR/blocked\nEOF`, cwd).ok, false,
+		"a variable no candidate defines still fails closed");
+	assert.equal(classifyBashCommand(`${name}=${temp} cat <<EOF\n$(echo "$${name}")\nEOF`, cwd).ok, true,
+		"the data path models the parent candidate the same way");
+});
+
+test("heredoc expansion blocks name the failing expansion candidate", () => {
+	const cwd = shellPath(TEMP_DIR);
+	const temp = classifierQuote(cwd);
+	const outside = classifierQuote(path.join(path.parse(TEMP_DIR).root, "readonly-heredoc-outside"));
+	// Parent value outside, prefix value inside: only the parent expansion sees the escape.
+	const parentBlocked = classifyBashCommand(`D=${outside}; D=${temp} bash <<EOF\ntouch "$D/blocked"\nEOF`, cwd);
+	assert.equal(parentBlocked.ok, false);
+	assert.match(parentBlocked.reason, /parent expansion/);
+	// Prefix value outside, parent value inside: only the assignment-prefix expansion sees it.
+	const prefixBlocked = classifyBashCommand(`D=${temp}; D=${outside} bash <<EOF\ntouch "$D/blocked"\nEOF`, cwd);
+	assert.equal(prefixBlocked.ok, false);
+	assert.match(prefixBlocked.reason, /assignment-prefix expansion/);
+});
 test("tracked command definitions fail closed even without a subsequent write", () => {
 	for (const name of trackedShellNames) {
 		for (const definition of [
