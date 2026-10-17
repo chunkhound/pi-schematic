@@ -13,6 +13,9 @@ import {
 import type { SchematicState } from "../state.js";
 import { createWriteLock, __setSingletons, getSingletons } from "../runtime-singletons.js";
 
+/** Version stamped on every persisted notebook entry and generation marker. */
+export const NOTEBOOK_ENTRY_VERSION = 1;
+
 /** Reset write lock state. Only for test cleanup after concurrent runs. */
 export function resetNotebookWriteLock(): void {
 	__setSingletons(
@@ -157,7 +160,7 @@ export async function saveNotebookPage(
 		if (clipped) state.clippedPages.add(name);
 		else state.clippedPages.delete(name);
 		pi.appendEntry("notebook-entry", {
-			version: 1,
+			version: NOTEBOOK_ENTRY_VERSION,
 			epoch: state.epoch,
 			name,
 			content: truncated.content,
@@ -191,16 +194,16 @@ export function buildNotebookDiscardDrafts(
 
 	const nextEpoch = Math.max(state.epoch, state.discardEpochWatermark) + 1;
 	const drafts: CustomEntryDraft[] = [
-		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: state.epoch } },
+		{ type: "custom", customType: "notebook-generation", data: { version: NOTEBOOK_ENTRY_VERSION, epoch: state.epoch } },
 	];
 	for (const [name, content] of state.notebookPages) {
 		if (deleted.has(name)) continue;
 		drafts.push({
 			type: "custom",
 			customType: "notebook-entry",
-			data: { version: 1, epoch: nextEpoch, name, content, clipped: state.clippedPages.has(name) },
+			data: { version: NOTEBOOK_ENTRY_VERSION, epoch: nextEpoch, name, content, clipped: state.clippedPages.has(name) },
 		});
 	}
-	drafts.push({ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: nextEpoch } });
+	drafts.push({ type: "custom", customType: "notebook-generation", data: { version: NOTEBOOK_ENTRY_VERSION, epoch: nextEpoch } });
 	return { drafts, discarded: deleted.size };
 }

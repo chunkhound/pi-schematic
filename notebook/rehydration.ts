@@ -11,6 +11,7 @@
 
 import type { CustomEntry, ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { SchematicState } from "../state.js";
+import { NOTEBOOK_ENTRY_VERSION } from "./store.js";
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -42,9 +43,9 @@ function isNotebookEpoch(value: unknown): value is number {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-/** Accept version 1 (current) or absent (legacy); reject unknown future versions. */
+/** Accept the current version or absent (legacy); reject unknown future versions. */
 function isKnownNotebookVersion(value: unknown): boolean {
-	return value === undefined || value === 1;
+	return value === undefined || value === NOTEBOOK_ENTRY_VERSION;
 }
 
 // ── Reconstruction ────────────────────────────────────────────────────
