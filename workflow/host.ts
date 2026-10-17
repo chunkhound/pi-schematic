@@ -14,7 +14,7 @@ import { armStructuredOutput, disarmStructuredOutput, type OutputCapture } from 
 import { addModelSpend, assistantCount, collectUsage, mergeModelSpend, spendIdentity, spendRowsTotal, type ModelSpend } from "../usage.js";
 import { armPendingStop, branchSpend, bumpSpendRevision, computeCurrentCost, liveBranch, limitReason, runSpendRows, type SpendState } from "./spend.js";
 import type { ChildUsageSink } from "../state.js";
-import { buildEntryDigests, buildStateDigest, contextPercentOf, lastAssistantModel, lastAssistantText } from "./state-digest.js";
+import { buildEntryDigests, buildStateDigest, contextPercentOf, lastAssistant, lastAssistantModel, lastAssistantText } from "./state-digest.js";
 import type {
 	Budget,
 	CheckpointRecord,
@@ -41,7 +41,6 @@ import type {
 } from "./types.js";
 import { RESERVED_REASONS, WORKFLOW_ERROR_ENTRY_TYPE, WORKFLOW_EXIT_ENTRY_TYPE, deriveExitReason } from "./types.js";
 
-type AnyMessage = { role?: string; stopReason?: string };
 // A deferred stop lets a workflow reach its next checkpoint, but an unreachable or
 // far-away one must not spend without bound: after this many guarded effects past the
 // pending stop the host escalates to a hard abort and salvages the last checkpoint.
@@ -771,16 +770,8 @@ async function sendCorrelated(deps: WorkflowHostDeps, state: HostState, ctx: Ext
 
 // Reject the run if the final assistant has error/aborted stopReason; allow retries otherwise.
 function rejectIfTerminalFailure(branch: readonly import("@earendil-works/pi-coding-agent").SessionEntry[]): void {
-	for (let i = branch.length - 1; i >= 0; i--) {
-		const entry = branch[i];
-		if (entry.type === "message" && (entry.message as AnyMessage).role === "assistant") {
-			const stopReason = (entry.message as AnyMessage).stopReason;
-			if (stopReason === "error" || stopReason === "aborted") {
-				throw new Error(`run failed: ${stopReason}`);
-			}
-			return;
-		}
-	}
+	const stopReason = lastAssistant(branch)?.message.stopReason;
+	if (stopReason === "error" || stopReason === "aborted") throw new Error(`run failed: ${stopReason}`);
 }
 
 const RUN_THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies readonly ThinkingLevel[];

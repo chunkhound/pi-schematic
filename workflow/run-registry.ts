@@ -1,8 +1,7 @@
 // WHY: `pi.sendUserMessage` is fire-and-forget, so a run resolves only when a later
 // `agent_settled` boundary reveals the assistant entry appended after our marker.
 import type { SessionEntry, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
-
-type AnyMessage = { role?: string };
+import { lastAssistant } from "./state-digest.js";
 
 /** A workflow-supplied target resolved against the live slash-command catalogue. */
 export interface RunTarget {
@@ -55,11 +54,7 @@ interface PendingRun {
 function assistantIndexAfter(entries: readonly SessionEntry[], marker: string | null): number | null {
 	const at = marker ? entries.findIndex((entry) => entry.id === marker) : -1;
 	if (marker !== null && at < 0) return null;
-	for (let i = entries.length - 1; i > at; i--) {
-		const entry = entries[i];
-		if (entry.type === "message" && (entry.message as AnyMessage).role === "assistant") return i;
-	}
-	return null;
+	return lastAssistant(entries, at)?.index ?? null;
 }
 
 /** Correlate one sent run. Null when the branch has no assistant entry after the marker yet. */

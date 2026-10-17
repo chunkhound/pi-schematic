@@ -4,13 +4,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
-	buildEntryDigest,
 	buildEntryDigests,
 	buildStateDigest,
 	contextPercentOf,
+	lastAssistant,
 	lastAssistantModel,
 	lastAssistantText,
-	sliceAfter,
 	type StateDigestInput,
 } from "../../workflow/state-digest.js";
 
@@ -50,62 +49,65 @@ function branchFixture(): SessionEntry[] {
 	];
 }
 
-test("buildEntryDigest keeps text and names tool calls on assistant and tool-result rows", () => {
-	const [user, assistant, toolResult] = branchFixture();
-	assert.deepEqual(buildEntryDigest(user!), { id: "u0", role: "user", type: "message", text: "start the run", toolNames: [] });
-	assert.deepEqual(buildEntryDigest(assistant!), {
+test("buildEntryDigests keeps text and names tool calls on assistant and tool-result rows", () => {
+	const rows = buildEntryDigests(branchFixture(), {});
+	assert.deepEqual(rows[0], { id: "u0", role: "user", type: "message", text: "start the run", toolNames: [] });
+	assert.deepEqual(rows[1], {
 		id: "a1",
 		role: "assistant",
 		type: "message",
 		text: "Looking",
 		toolNames: ["bash", "read"],
 	});
-	assert.deepEqual(buildEntryDigest(toolResult!).toolNames, ["bash"]);
+	assert.deepEqual(rows[2]!.toolNames, ["bash"]);
 });
 
-test("buildEntryDigest reports summaries as text and other entry types as empty rows", () => {
-	assert.deepEqual(buildEntryDigest(compaction("c1", "summary text")), {
+test("buildEntryDigests reports summaries as text and other entry types as empty rows", () => {
+	const label = { type: "label", id: "l1", parentId: null, timestamp: "", label: "x" } as unknown as SessionEntry;
+	const rows = buildEntryDigests([compaction("c1", "summary text"), label], {});
+	assert.deepEqual(rows[0], {
 		id: "c1",
 		role: "compaction",
 		type: "compaction",
 		text: "summary text",
 		toolNames: [],
 	});
-	const label = { type: "label", id: "l1", parentId: null, timestamp: "", label: "x" } as unknown as SessionEntry;
-	assert.deepEqual(buildEntryDigest(label), { id: "l1", role: "label", type: "label", text: "", toolNames: [] });
+	assert.deepEqual(rows[1], { id: "l1", role: "label", type: "label", text: "", toolNames: [] });
 });
 
-test("buildEntryDigest drops non-text blocks and keeps text blocks in order", () => {
+test("buildEntryDigests drops non-text blocks and keeps text blocks in order", () => {
 	const entry = message("a1", "assistant", [
 		{ type: "thinking", thinking: "private" },
 		{ type: "text", text: "first" },
 		{ type: "image", data: "..." },
 		{ type: "text", text: "second" },
 	]);
-	assert.equal(buildEntryDigest(entry).text, "firstsecond");
+	assert.equal(buildEntryDigests([entry], {})[0]!.text, "firstsecond");
 });
 
-test("buildEntryDigest accepts plain string content on user messages", () => {
-	assert.equal(buildEntryDigest(message("u1", "user", "plain prompt")).text, "plain prompt");
+test("buildEntryDigests accepts plain string content on user messages", () => {
+	assert.equal(buildEntryDigests([message("u1", "user", "plain prompt")], {})[0]!.text, "plain prompt");
 });
 
-test("sliceAfter returns every entry when the id is null, undefined, or empty", () => {
-	const entries = [{ id: "a" }, { id: "b" }];
-	for (const afterId of [null, undefined, ""]) {
-		const sliced = sliceAfter(entries, afterId);
-		assert.deepEqual(sliced, entries);
-		assert.notEqual(sliced, entries, "returns a copy, not the caller's array");
+test("buildEntryDigests returns every entry when after is null, undefined, or empty", () => {
+	const entries = branchFixture();
+	for (const after of [null, undefined, ""]) {
+		const rows = buildEntryDigests(entries, { after: after as string | undefined });
+		assert.deepEqual(rows.map((row) => row.id), entries.map((entry) => entry.id));
 	}
 });
 
-test("sliceAfter returns only entries strictly after the id", () => {
-	const entries = [{ id: "a" }, { id: "b" }, { id: "c" }];
-	assert.deepEqual(sliceAfter(entries, "a"), [{ id: "b" }, { id: "c" }]);
-	assert.deepEqual(sliceAfter(entries, "c"), [], "the last id yields nothing after it");
+test("buildEntryDigests returns only entries strictly after the id", () => {
+	const entries = branchFixture();
+	assert.deepEqual(
+		buildEntryDigests(entries, { after: "u0" }).map((row) => row.id),
+		["a1", "t1", "c1", "a2"],
+	);
+	assert.deepEqual(buildEntryDigests(entries, { after: "a2" }), [], "the last id yields nothing after it");
 });
 
-test("sliceAfter throws by name on an unknown id instead of returning the whole branch", () => {
-	assert.throws(() => sliceAfter([{ id: "a" }], "typo"), /unknown after id "typo"/);
+test("buildEntryDigests throws by name on an unknown after id instead of returning the whole branch", () => {
+	assert.throws(() => buildEntryDigests(branchFixture(), { after: "typo" }), /unknown after id "typo"/);
 });
 
 test("buildEntryDigests applies after before the limit and keeps the newest rows", () => {
@@ -132,6 +134,15 @@ test("buildEntryDigests rejects a limit that is not a finite non-negative intege
 	for (const limit of [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
 		assert.throws(() => buildEntryDigests(entries, { limit }), /limit must be a non-negative integer/, `limit ${limit}`);
 	}
+});
+
+test("lastAssistant returns the newest assistant index and message, honouring after", () => {
+	const entries = branchFixture();
+	const found = lastAssistant(entries);
+	assert.equal(found?.index, 4);
+	assert.equal(found?.message.role, "assistant");
+	assert.equal(lastAssistant(entries, 4), null, "nothing sits after the newest assistant");
+	assert.equal(lastAssistant([message("u0", "user", "hi")]), null);
 });
 
 test("lastAssistantText returns the newest assistant text, skipping user and tool rows", () => {
