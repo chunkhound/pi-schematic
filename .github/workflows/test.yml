@@ -6,6 +6,11 @@
 
 name: test
 
+# Single source for the supported Node floor. The matrix and package.json engines are
+# pinned to this value by tests/unit/config-invariants.test.ts.
+env:
+  NODE_FLOOR: "22.19.0"
+
 permissions:
   contents: read
 
@@ -73,14 +78,14 @@ jobs:
 
       # The packed extension is exercised from a foreign cwd with the latest host.
       - name: Packed latest Pi host contract
-        if: (matrix.os == 'ubuntu-latest' && matrix.node-version == '22.19.0') || matrix.os == 'windows-latest'
+        if: (matrix.os == 'ubuntu-latest' && matrix.node-version == env.NODE_FLOOR) || matrix.os == 'windows-latest'
         working-directory: ${{ runner.temp }}
         env:
           COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/packed-host-diagnostics-${{ matrix.os }}-node-${{ matrix.node-version }}
         run: node "${{ github.workspace }}/scripts/test-package-host.mjs"
 
       - name: Upload packed host diagnostics
-        if: always() && ((matrix.os == 'ubuntu-latest' && matrix.node-version == '22.19.0') || matrix.os == 'windows-latest')
+        if: always() && ((matrix.os == 'ubuntu-latest' && matrix.node-version == env.NODE_FLOOR) || matrix.os == 'windows-latest')
         uses: actions/upload-artifact@v4
         with:
           name: packed-host-diagnostics-${{ matrix.os }}-node-${{ matrix.node-version }}-attempt-${{ github.run_attempt }}

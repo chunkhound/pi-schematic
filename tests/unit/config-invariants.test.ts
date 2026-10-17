@@ -47,12 +47,14 @@ const WORKFLOW_PATH = new URL(".github/workflows/test.yml", REPO_ROOT_URL);
 const LOCK_PATH = new URL("package-lock.json", REPO_ROOT_URL);
 const SPAWN_SOURCE_PATH = new URL("spawn/index.ts", REPO_ROOT_URL);
 const RENDERER_SOURCE_PATH = new URL("spawn/renderer.ts", REPO_ROOT_URL);
+const README_PATH = new URL("README.md", REPO_ROOT_URL);
 const WORKFLOWS_DOC_PATH = new URL("docs/workflows.md", REPO_ROOT_URL);
 const WORKFLOW_ENGINE_DOC_PATH = new URL("docs/workflow-engine.md", REPO_ROOT_URL);
 // Pinned versions verified against package.json + lockfile.
 // Update when Pi devDependencies are bumped.
 const EXPECTED_PI_VERSION = "1.0.4";
 const EXPECTED_TYPEBOX_VERSION = "1.3.27";
+const EXPECTED_NODE_FLOOR = "22.19.0";
 // Approved peer floors — must track the pinned devDependency versions above.
 const EXPECTED_PI_PEER = `>=${EXPECTED_PI_VERSION}`;
 const EXPECTED_TYPEBOX_PEER = `>=${EXPECTED_TYPEBOX_VERSION}`;
@@ -298,6 +300,18 @@ test("workflow docs keep one owner per shared rule", () => {
 	assert.match(workflowsDoc, /`MAX_EFFECT_ROWS`[^\n]*workflow-engine\.md/);
 	// workflow-limits: the engine-doc surfaces table lists it; the e2e run pins the entry.
 	assert.match(engineDoc, /\| `workflow-limits` entry \| `workflow\/limits-dialog\.ts` \|/);
+});
+
+test("the Node floor has one source across CI and package metadata", () => {
+	const pkg = JSON.parse(readText(PACKAGE_JSON_PATH)) as PackageJson;
+	const workflow = readText(WORKFLOW_PATH);
+	assert.equal(pkg.engines.node, `>=${EXPECTED_NODE_FLOOR}`);
+	assert.match(workflow, new RegExp(`NODE_FLOOR: "${EXPECTED_NODE_FLOOR.replaceAll(".", "\\.")}"`));
+	// The matrix keeps the literal (strategy cannot read env), but no step condition may.
+	assert.match(workflow, /node-version: "22\.19\.0"/);
+	assert.doesNotMatch(workflow, /matrix\.node-version == '22\.19\.0'/);
+	assert.match(readText(README_PATH), /Node\.js 22\.19\.0/);
+	assert.match(readText(WORKFLOWS_DOC_PATH), /Node\.js >= 22\.19\.0/);
 });
 
 test("Windows current-Pi step runs after packed-host failure but not on cancellation", () => {
