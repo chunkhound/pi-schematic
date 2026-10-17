@@ -161,7 +161,7 @@ test("rebindRun swaps bundle pi/state/deps and republishes progress", () => {
 	const ctl = ctlWith(null, new AbortController().signal);
 	let rebound = 0;
 	const next = { sessionManager: { getSessionId: () => "sess-rebind" } } as unknown as ExtensionCommandContext;
-	rebindRun(bundle, ctl, next, { onRebound: () => { rebound += 1; }, registry: noopRegistry() });
+	rebindRun(bundle, ctl, next, { onRebound: () => { rebound += 1; }, registry: noopRegistry() }, false);
 	assert.equal(bundle.pi, fresh.pi);
 	assert.equal(bundle.state, fresh.state as never);
 	assert.equal(bundle.deps.setReadonly, fns.setReadonly);
@@ -173,7 +173,7 @@ test("rebindRun throws when no runtime was published", () => {
 	const bundle = bundleWith(fakePi());
 	const ctl = ctlWith(null, new AbortController().signal);
 	const next = { sessionManager: { getSessionId: () => "sess-missing" } } as unknown as ExtensionCommandContext;
-	assert.throws(() => rebindRun(bundle, ctl, next, { onRebound: () => {}, registry: noopRegistry() }), /no runtime was published/);
+	assert.throws(() => rebindRun(bundle, ctl, next, { onRebound: () => {}, registry: noopRegistry() }, false), /no runtime was published/);
 });
 
 /** A ctx that replaces the session the way pi does: `withSession` runs, and its failure rejects the call. */
@@ -305,3 +305,36 @@ test("a concurrent workflow.new fails fast instead of starting a second replacem
 	assert.equal(from.calls(), 1, "exactly one replacement ran");
 	assert.equal(ctl.ctx, next, "the run is bound to the replacement");
 });
+
+// WHY (reviewer 4288158708): `workflow.new` must carry the readonly posture across the
+// replacement; the replacement session_start resets it to false, so rebindRun re-applies the
+// captured value through the binding setter BEFORE onRebound republishes progress.
+test("rebindRun re-applies the previous readonly posture before republishing progress", () => {
+	const log: string[] = [];
+	const setReadonly = (enabled: boolean) => { log.push("setReadonly"); return enabled; };
+	publishWorkflowRuntime("sess-readonly", { pi: fakePi(), state: { marker: "fresh" }, setReadonly, requestHandoff: async () => {}, prepareRunFrontmatter: async () => {} } as never);
+	const bundle = bundleWith(fakePi());
+	const ctl = ctlWith(null, new AbortController().signal);
+	const next = { sessionManager: { getSessionId: () => "sess-readonly" } } as unknown as ExtensionCommandContext;
+	rebindRun(bundle, ctl, next, { onRebound: () => { log.push("onRebound"); }, registry: noopRegistry() }, true);
+	assert.deepEqual(log, ["setReadonly", "onRebound"], "readonly is carried via the binding setter before progress republish");
+	assert.equal(bundle.deps.setReadonly, setReadonly, "the binding setter is the live replacement setter");
+});
+
+// WHY (reviewer 4288158708): capture happens in performNewSession, which reads the pre-replacement
+// state before newSession's resetState runs.
+test("workflow.new carries the previous readonly posture into the replacement session", async () => {
+	const sessionId = "sess-new-readonly";
+	const log: string[] = [];
+	const setReadonly = (enabled: boolean) => { log.push(String(enabled)); return enabled; };
+	publishWorkflowRuntime(sessionId, { pi: fakePi(), state: { marker: "fresh", readonlyEnabled: false }, setReadonly, requestHandoff: async () => {}, prepareRunFrontmatter: async () => {} } as never);
+	const next = { sessionManager: { getSessionId: () => sessionId } } as unknown as ExtensionCommandContext;
+	const bundle = bundleWith(fakePi());
+	// The previous session (the one being replaced) had readonly enabled.
+	bundle.state.readonlyEnabled = true;
+	const ctl = ctlWith(ctxThatReplaces(next) as unknown as ExtensionCommandContext, new AbortController().signal);
+
+	await performNewSession(bundle, ctl, { onRebound: () => {}, registry: noopRegistry() });
+	assert.equal(log[0], "true", "the previous readonly posture is carried to the replacement session");
+});
+

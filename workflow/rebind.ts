@@ -85,12 +85,17 @@ export async function performNewSession<B extends RebindBundle>(bundle: B, ctl: 
 	const from = ctl.ctx;
 	if (!from) throw new Error("workflow.new: no live session context");
 	const previous = snapshotRuntime(bundle);
+	// WHY: the replacement's session_start runs resetState, which clears readonlyEnabled to
+	// false on the shared singleton state (state persists across sessions; resetState mutates
+	// it in place). Capture the posture BEFORE newSession tears the session down, or rebindRun
+	// would always read the reset value. Snapshot holds a reference, so it cannot recover it later.
+	const readonlyEnabled = bundle.state.readonlyEnabled;
 	// pi invalidates `from` the moment `newSession` starts tearing down the session, and a
 	// fresh ctx exists only inside `withSession`. Null the slot so every reader skips it.
 	ctl.ctx = null;
 	let result: { cancelled: boolean };
 	try {
-		result = await from.newSession({ withSession: async (next) => rebindRun(bundle, ctl, next, hooks) });
+		result = await from.newSession({ withSession: async (next) => rebindRun(bundle, ctl, next, hooks, readonlyEnabled) });
 	} catch (error) {
 		// Any throw once teardown started leaves `from` dead; the replacement, when built, is the
 		// live runtime. Restoring either would bind the run to a dead session, so fail loudly on
@@ -127,7 +132,7 @@ function restorePreReplacement<B extends RebindBundle>(bundle: B, ctl: RunCtl, p
 }
 
 /** Rebind the run to the replacement session's published runtime and subscriptions. */
-export function rebindRun<B extends RebindBundle>(bundle: B, ctl: RunCtl, next: ExtensionCommandContext, hooks: RebindHooks<B>): void {
+export function rebindRun<B extends RebindBundle>(bundle: B, ctl: RunCtl, next: ExtensionCommandContext, hooks: RebindHooks<B>, readonlyEnabled: boolean): void {
 	const sessionId = next.sessionManager.getSessionId();
 	// takeWorkflowRuntime consumes the binding (it deletes the map entry): a replacement
 	// session publishes exactly one runtime, so rebind is single-use. A later failure does
@@ -141,6 +146,11 @@ export function rebindRun<B extends RebindBundle>(bundle: B, ctl: RunCtl, next: 
 	bundle.state.childUsageSink = ctl.host?.installedSink ?? null;
 	// Test seams (sandboxFactory, handoffTimeoutMs) stay from the original registration.
 	bundle.deps = { ...bundle.deps, setReadonly: binding.setReadonly, requestHandoff: binding.requestHandoff, prepareRunFrontmatter: binding.prepareRunFrontmatter };
+	// WHY: session_start reset readonlyEnabled to false on the shared state, so without this
+	// re-apply the replacement drops the posture and observers would see a stale readwrite state.
+	// Set it through the binding setter BEFORE onRebound republishes progress, so the refreshed
+	// indicators already reflect the carried posture.
+	bundle.deps.setReadonly(readonlyEnabled);
 	ctl.ctx = next;
 	hooks.onRebound(bundle, ctl, next);
 	hooks.registry.dispose();
