@@ -51,12 +51,16 @@ function bundleWith(pi: ExtensionAPI, handoffTimeoutMs = 50, requestHandoff: (di
 	} as unknown as RebindBundle;
 }
 
-test("compaction timeout rejects with the handoff message", async () => {
+test("compaction timeout aborts the host with error before rejecting", async () => {
 	const pi = fakePi();
+	const aborts: Array<[string, string | undefined]> = [];
 	await assert.rejects(
-		performHandoff(bundleWith(pi), ctlWith(ctxWith(), new AbortController().signal), "next"),
+		performHandoff(bundleWith(pi, 30), ctlWith(ctxWith(), new AbortController().signal, aborts), "next"),
 		/handoff compaction did not start/,
 	);
+	assert.equal(aborts.length, 1, "the host is aborted exactly once");
+	assert.equal(aborts[0][0], "error", "the abort reason is error");
+	assert.match(aborts[0][1] ?? "", /compaction did not start/, "the abort message names the timeout");
 });
 
 test("abort during wait rejects as cancelled", async () => {
@@ -338,3 +342,23 @@ test("workflow.new carries the previous readonly posture into the replacement se
 	assert.equal(log[0], "true", "the previous readonly posture is carried to the replacement session");
 });
 
+// WHY (reviewer 4288158850): a successor-settle deadline must abort the host (stopping the
+// successor turn) BEFORE rejecting, so a workflow that catches the rejection does not keep the
+// successor spending.
+test("a successor-settle deadline aborts the host with error before rejecting", async () => {
+	const pi = fakePi();
+	const branch: unknown[] = [{ type: "compaction", id: "c1" }];
+	const requestHandoff = async () => {
+		pi.emit("session_compact", { fromExtension: true, compactionEntry: { id: "c1" } });
+	};
+	const aborts: Array<[string, string | undefined]> = [];
+	const ctl = ctlWith(ctxWith(branch), new AbortController().signal, aborts);
+	await assert.rejects(
+		performHandoff(bundleWith(pi, 30, requestHandoff), ctl, "next"),
+		/handoff successor did not settle/,
+	);
+	assert.equal(aborts.length, 1, "the host is aborted exactly once");
+	assert.equal(aborts[0][0], "error", "the abort reason is error");
+	assert.ok(aborts[0][1], "the abort message is defined");
+	assert.match(aborts[0][1], /successor did not settle/, "the abort message names the timeout");
+});

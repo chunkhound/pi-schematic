@@ -163,6 +163,16 @@ function getSignal(ctl: RunCtl): AbortSignal {
 	return ctl.host.signal;
 }
 
+/** Abort the run as `error` when a handoff wait expires, before the deadline rejects, so a
+ * caught timeout still stops the run and the model turn it started. */
+function abortOnTimeout(ctl: RunCtl, message: string): () => void {
+	return () => ctl.host?.abort("error", message);
+}
+
+/** Rejection messages for the two handoff waits; each expiry aborts the run as `error`. */
+const COMPACTION_TIMEOUT_MSG = "handoff compaction did not start; the model did not call the handoff tool";
+const SUCCESSOR_SETTLE_TIMEOUT_MSG = "handoff successor did not settle; the successor run never finished";
+
 /**
  * `workflow.handoff`: arm settle tracking BEFORE the request (a successor that settles
  * immediately after the compaction must still be observed), await the compaction,
@@ -182,8 +192,10 @@ export async function performHandoff(bundle: RebindBundle, ctl: RunCtl, directio
 		// Clamp stops a huge test-seam value overflowing the Node timer and firing at once.
 		const budgetMs = clampTimeoutMs(bundle.deps.handoffTimeoutMs ?? HANDOFF_COMPACTION_TIMEOUT_MS);
 		const signal = getSignal(ctl);
-		const marker = await withDeadline(compaction.done, budgetMs, undefined, signal);
-		await withDeadline(gate.wait(marker), budgetMs, "handoff successor did not settle; the successor run never finished", signal);
+		// Both waits abort the host before their deadline rejects: a workflow that catches the
+		// timeout must not leave the compaction or the successor turn running outside the run.
+		const marker = await withDeadline(compaction.done, budgetMs, COMPACTION_TIMEOUT_MSG, signal, abortOnTimeout(ctl, COMPACTION_TIMEOUT_MSG));
+		await withDeadline(gate.wait(marker), budgetMs, SUCCESSOR_SETTLE_TIMEOUT_MSG, signal, abortOnTimeout(ctl, SUCCESSOR_SETTLE_TIMEOUT_MSG));
 	} finally {
 		compaction.dispose();
 		gate.dispose();
@@ -193,8 +205,9 @@ export async function performHandoff(bundle: RebindBundle, ctl: RunCtl, directio
 /** Bound a handoff wait: no other backstop exists if the model never calls the handoff tool.
  * The abort signal rejects as "cancelled" (also when already dead: a pending wait must not
  * hang past cancellation) and clears the timer — after a cancelled handoff a surviving timer
- * would pin the event loop for up to the full deadline, blocking headless process exit. */
-function withDeadline<T>(promise: Promise<T>, ms: number, message = "handoff compaction did not start; the model did not call the handoff tool", signal?: AbortSignal): Promise<T> {
+ * would pin the event loop for up to the full deadline, blocking headless process exit.
+ * `onTimeout` runs before the deadline rejection, so the abort wins even if the caller catches. */
+function withDeadline<T>(promise: Promise<T>, ms: number, message: string, signal?: AbortSignal, onTimeout?: () => void): Promise<T> {
 	if (!Number.isFinite(ms)) return promise;
 	if (signal?.aborted) {
 		promise.catch(() => {});
@@ -202,7 +215,11 @@ function withDeadline<T>(promise: Promise<T>, ms: number, message = "handoff com
 	}
 	return new Promise<T>((resolve, reject) => {
 		const onAbort = () => { clearTimeout(timer); reject(new Error("cancelled")); };
-		const timer = setTimeout(() => { signal?.removeEventListener("abort", onAbort); reject(new Error(message)); }, ms);
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			onTimeout?.();
+			reject(new Error(message));
+		}, ms);
 		signal?.addEventListener("abort", onAbort, { once: true });
 		promise.then(
 			(value) => { signal?.removeEventListener("abort", onAbort); clearTimeout(timer); resolve(value); },
