@@ -37,13 +37,14 @@ return defineWorkflow((workflow) => {
     const out = detected.output;
     testCommand = out && typeof out.command === "string" && out.command.trim() ? out.command.trim() : null;
   } catch {
-    return workflow.exit({ reason: "test-command-unknown" });
+    // Fall through to the shared exit below: readonly must be restored first.
+    testCommand = null;
   }
+  // Baseline gate: prove the command before review spends a round. The suite may write (caches,
+  // artifacts), so drop the detection run's readonly posture before every exit after detection.
+  workflow.readonly(false);
   if (!testCommand) return workflow.exit({ reason: "test-command-unknown" });
 
-  // Baseline gate: prove the command before review spends a round. The suite may write (caches,
-  // artifacts), so drop the detection run's readonly posture first.
-  workflow.readonly(false);
   const baseline = workflow.shell(testCommand);
   if (!baseline.ok)
     return workflow.exit({ reason: "baseline-tests-failing", exitCode: baseline.exitCode, output: baseline.output });

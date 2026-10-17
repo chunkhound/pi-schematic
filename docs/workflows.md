@@ -426,8 +426,9 @@ try {
       instructions: "Return the single command that runs the full test suite from the repo root; do not run it.",
     },
   });
-  cmd = typeof detected.output?.command === "string" ? detected.output.command : null;
-} catch { return workflow.exit({ reason: "test-command-unknown" }); }
+  cmd = typeof detected.output?.command === "string" ? detected.output.command.trim() : null;
+} catch { cmd = null; }
+workflow.readonly(false);
 if (!cmd) return workflow.exit({ reason: "test-command-unknown" });
 ```
 

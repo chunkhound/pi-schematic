@@ -27,13 +27,15 @@ return defineWorkflow((workflow) => {
     });
     // `output` is untyped here: narrow before reading fields so a non-object response cannot throw.
     const detectedOutput = typeof detected.output === "object" && detected.output !== null ? detected.output : null;
-    testCommand = detectedOutput && typeof detectedOutput.command === "string" ? detectedOutput.command : null;
+    testCommand = detectedOutput && typeof detectedOutput.command === "string" ? detectedOutput.command.trim() : null;
   } catch {
-    return workflow.exit({ reason: "test-command-unknown" });
+    // Fall through to the shared exit below: readonly must be restored first.
+    testCommand = null;
   }
+  // Restore write posture before any exit after the readonly detection run.
+  workflow.readonly(false);
   if (!testCommand) return workflow.exit({ reason: "test-command-unknown" });
 
-  workflow.readonly(false);
   const baseline = workflow.shell(testCommand);
   if (!baseline.ok) return workflow.exit({ reason: "baseline-tests-failing", output: baseline.output });
   // Safe exit point: a pending cost or time stop lands here and salvages this metadata.

@@ -28,3 +28,18 @@ for (const name of EXPECTED) {
 		assert.doesNotThrow(() => compileWorkflow(source));
 	});
 }
+
+test("readonly detection examples restore write posture before every exit", () => {
+	for (const name of ["review.js", "gate-then-loop.js"]) {
+		const source = readFileSync(new URL(name, EXAMPLES_DIR_URL), "utf8");
+		const restore = source.indexOf("workflow.readonly(false)");
+		const exitAfterDetection = source.indexOf("if (!testCommand)");
+		assert.ok(restore >= 0, `${name} disables readonly`);
+		assert.ok(exitAfterDetection > restore, `${name} restores readonly before the detection-failure exit`);
+	}
+});
+
+test("review example trims the detected command before use", () => {
+	const source = readFileSync(new URL("review.js", EXAMPLES_DIR_URL), "utf8");
+	assert.match(source, /detectedOutput\.command\.trim\(\)/);
+});
