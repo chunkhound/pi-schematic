@@ -14,9 +14,9 @@ import { discardWorkflowRuntime, publishWorkflowRuntime, releaseWorkflow, reserv
 import { registerWorkflowAutocomplete } from "./autocomplete.js";
 import { compileWorkflow } from "./compile.js";
 import { composeWorkflow } from "./driver.js";
-import { messageOf, safeAppendEntry, withRecordStatus } from "./errors.js";
+import { messageOf, notify, safeAppendEntry, withRecordStatus, reportRejectedStart } from "./errors.js";
 import { createWorkflowHost, mapSandboxError } from "./host.js";
-import { notify, resolveLimits } from "./limits-dialog.js";
+import { resolveLimits } from "./limits-dialog.js";
 import { performHandoff, performNewSession, type RebindableDeps, type RebindBundle, type RebindHooks, type RunCtl } from "./rebind.js";
 import { createShellActivity, WORKFLOW_LOG_ENTRY_TYPE, type ShellActivity } from "./activity.js";
 import { READONLY_DISABLED_NOTIFICATION, READONLY_ENABLED_STATUS } from "../notifications.js";
@@ -108,16 +108,13 @@ async function runWorkflow(pi: ExtensionAPI, state: SchematicState, deps: Workfl
 /** docs/workflows.md (Constraints): a second `/workflow` is rejected with a visible notice. `notify` no-ops
  * headless, so the transcript carries a workflow-error entry instead. */
 function rejectSecondRun(pi: ExtensionAPI, ctx: ExtensionCommandContext): void {
-	const message = "A workflow is already running in this process. Wait for it to finish or press Escape or Ctrl+C twice to cancel it before you start a new one.";
-	notify(ctx, message, "error");
-	if (!ctx.hasUI) pi.appendEntry(WORKFLOW_ERROR_ENTRY_TYPE, { phase: "reserve" satisfies WorkflowErrorPhase, error: message });
+	reportRejectedStart(pi, ctx, "A workflow is already running in this process. Wait for it to finish or press Escape or Ctrl+C twice to cancel it before you start a new one.", "reserve");
 }
 
 /** Start-failure visibility: `notify` no-ops headless, so the transcript carries a
  * workflow-error entry instead (mirrors {@link rejectSecondRun}). */
 function reportStartFailure(pi: ExtensionAPI, ctx: ExtensionCommandContext, message: string): void {
-	notify(ctx, message, "error");
-	if (!ctx.hasUI) pi.appendEntry(WORKFLOW_ERROR_ENTRY_TYPE, { phase: "start" satisfies WorkflowErrorPhase, error: message });
+	reportRejectedStart(pi, ctx, message, "start");
 }
 
 async function startWorkflow(pi: ExtensionAPI, state: SchematicState, deps: WorkflowCommandDeps, raw: string, ctx: ExtensionCommandContext): Promise<void> {

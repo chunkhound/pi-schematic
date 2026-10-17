@@ -1,17 +1,12 @@
 // WHY: budget dialog is the run's first user decision (flags bypass, headless skips).
 // Checkpoint-less workflows skip the dialog: no soft target can stop them. They still honor
 // --workflow-time as the sandbox's hard deadline.
-// Isolated so command.ts keeps orchestration only; notify lives here as the shared
-// UI-notice helper (leaf module, no cycle back into command).
+// Isolated so command.ts keeps orchestration only; the shared UI-notice helper lives in
+// errors.ts (the leaf reporting module) so no cycle forms.
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { safeAppendEntry } from "./errors.js";
+import { notify, safeAppendEntry } from "./errors.js";
 import { MAX_TIME_BUDGET_MS, MAX_TIMEOUT_MS } from "./sandbox.js";
 import { WORKFLOW_ERROR_ENTRY_TYPE, type WorkflowErrorPhase, type WorkflowLimits } from "./types.js";
-
-/** UI notice when present, silent headless; transcript entries cover the silent path. */
-export function notify(ctx: ExtensionCommandContext, message: string, level: "info" | "warning" | "error"): void {
-	if (ctx.hasUI) ctx.ui.notify(message, level);
-}
 
 // Workflows are long-running: cost is the true runaway guard. Both values are SOFT targets —
 // crossing one arms a stop at the run's next checkpoint, so the final cost/time can run over.
