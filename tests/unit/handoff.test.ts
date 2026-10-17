@@ -287,7 +287,7 @@ test("turn_end appends the cut, successor and note after the existing entries an
 			{
 				type: "custom_message",
 				customType: "pi-schematic-handoff-note",
-				content: "The system prompt above was written before this handoff and is refreshed at the next user message. Until then, ignore its notebook topic (the topic is cleared) and its notebook page list (use `notebook_index` for the current pages).",
+				content: "The system prompt above was written before this handoff and is refreshed when the next run starts; a message typed during this run does not refresh it. Until then, ignore its notebook topic (the topic is cleared) and its notebook page list (use `notebook_index` for the current pages).",
 				display: false,
 				details: { handoffId },
 			},

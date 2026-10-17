@@ -55,7 +55,7 @@ export function buildNextUserMessage(input: Pick<HandoffPayload, "nextInstructio
  * so its system prompt still carries the pre-handoff topic and page list.
  */
 export function buildHandoffSystemPromptNote(): string {
-	return "The system prompt above was written before this handoff and is refreshed at the next user message. Until then, ignore its notebook topic (the topic is cleared) and its notebook page list (use `notebook_index` for the current pages).";
+	return "The system prompt above was written before this handoff and is refreshed when the next run starts; a message typed during this run does not refresh it. Until then, ignore its notebook topic (the topic is cleared) and its notebook page list (use `notebook_index` for the current pages).";
 }
 
 /** Model-facing failure guidance for a handoff that did not cut. */

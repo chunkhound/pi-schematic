@@ -63,7 +63,7 @@ The handoff tool only stages the request and ends its batch. At the end of that 
 
 1. a retain-none compaction with the fixed continuation frame and `details.handoffId`;
 2. a `pi-schematic-handoff` custom message (`## Next instruction` verbatim + `## Context`);
-3. a hidden `pi-schematic-handoff-note` message saying the system prompt is stale until the next user message.
+3. a hidden `pi-schematic-handoff-note` message saying the system prompt is stale until the next run starts; a message typed during the run is a steer and does not refresh it.
 
 The same run continues with the successor turn. If another extension's `turn_end` handler stops the continuation, the cut is persisted and the successor runs on the next prompt; a session with a UI (interactive or RPC) shows a warning, a print-mode session gets no report, and legacy recovery does not re-send a boundary cut's successor. If the run is aborted after the cut, pi still starts the successor turn, so the handoff completes at `turn_start` (a session with a UI shows the completion notice), the successor turn ends with an empty aborted assistant message, and the persisted successor reaches the model on the next prompt. A `handoff` that shares an assistant message with other tool calls is refused and stages nothing; the other calls go to their own handlers, and the refusal tells the model to call `handoff` alone in its next message.
 
