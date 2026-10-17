@@ -4,7 +4,7 @@
 // spawned child agents (the spawn tool reports child usage on its tool result).
 import type { CodemodeTool } from "@earendil-works/pi-codemode";
 import type { ClassifierResult, ThinkingLevel, Usage } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { classifierAbortedResult, classifyRequest } from "./classify.js";
 import { messageOf, safeAppendEntry, withRecordStatus } from "./errors.js";
 import { notebookIndex, notebookRead, notebookTopic, notebookWrite } from "./notebook.js";
@@ -675,14 +675,11 @@ async function applyModelOverride(deps: WorkflowHostDeps, ctx: ExtensionCommandC
 		throw new Error(`cannot authenticate model: ${options.model.provider}/${options.model.id}`);
 }
 
-/** Built BEFORE any mutation: if setThinkingLevel throws after setModel succeeded,
- * the changed model must still be restored. */
-function buildOverrideRestore(
-	deps: WorkflowHostDeps,
-	options: RunOptions,
-	previousModel: ExtensionCommandContext["model"],
-	previousThinking: ReturnType<ExtensionAPI["getThinkingLevel"]>,
-): () => Promise<void> {
+/** Captures the pre-override values BEFORE any mutation, so a setThinkingLevel throw after a
+ * successful setModel still restores the changed model. */
+function buildOverrideRestore(deps: WorkflowHostDeps, ctx: ExtensionCommandContext, options: RunOptions): () => Promise<void> {
+	const previousModel = ctx.model;
+	const previousThinking = deps.pi.getThinkingLevel();
 	return async (): Promise<void> => {
 		// Restore each field independently: a throwing setModel must not skip the thinking restore.
 		// Aggregate both failures so neither is masked.
@@ -694,7 +691,7 @@ function buildOverrideRestore(
 				failures.push(error);
 			}
 		}
-		if (options.thinking) {
+		if (options.thinking || options.model) {
 			try {
 				deps.pi.setThinkingLevel(previousThinking);
 			} catch (error) {
@@ -707,7 +704,7 @@ function buildOverrideRestore(
 }
 
 async function applyOverrides(deps: WorkflowHostDeps, ctx: ExtensionCommandContext, options: RunOptions): Promise<() => Promise<void>> {
-	const restore = buildOverrideRestore(deps, options, ctx.model, deps.pi.getThinkingLevel());
+	const restore = buildOverrideRestore(deps, ctx, options);
 	try {
 		await applyModelOverride(deps, ctx, options);
 		if (options.thinking) deps.pi.setThinkingLevel(options.thinking as ThinkingLevel);

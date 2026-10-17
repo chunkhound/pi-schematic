@@ -467,6 +467,26 @@ test("a throwing model restore still restores the run's thinking level", async (
 	assert.deepEqual(thinking, ["high", "medium"], "the thinking restore runs even though setModel threw");
 });
 
+// WHY: pi's `setModel` resets the thinking level to the per-model/default value, so a model-only
+// override must still restore the captured level or it leaks into the session after the run.
+test("a model-only override still restores the captured thinking level", async () => {
+	const { deps } = fakeRunDeps();
+	const previousModel = { provider: "prev", id: "m" };
+	const requestedModel = { provider: "next", id: "m" };
+	const thinking: Array<string | undefined> = [];
+	(deps.pi as unknown as { setModel: unknown }).setModel = async () => true;
+	(deps.pi as unknown as { setThinkingLevel: unknown }).setThinkingLevel = (level: string | undefined) => { thinking.push(level); };
+	(deps.pi as unknown as { getThinkingLevel: unknown }).getThinkingLevel = () => "medium";
+	const ctx = deps.getCtx() as unknown as { model: unknown; modelRegistry: { getModelOfType: unknown } };
+	ctx.model = previousModel;
+	ctx.modelRegistry.getModelOfType = () => requestedModel;
+	const tools = new Map(createWorkflowHost(deps).globals().map((tool) => [tool.name, tool]));
+	const context = { signal: new AbortController().signal } as never;
+
+	await tools.get("workflow.run")!.execute(["/review", { model: requestedModel }], context);
+	assert.deepEqual(thinking, ["medium"], "the captured level is restored although no thinking was overridden");
+});
+
 // WHY: arming the output tool mutates run-scoped state, so a registration failure must still
 // run the override restore or the run's model/thinking leak into the next turn.
 test("a throwing output-tool arming still restores the run's model and thinking", async () => {
