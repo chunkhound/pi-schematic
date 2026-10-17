@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Handoff successor cannot be lost between the cut and a send** — the successor is persisted in the same pass as the cut instead of being sent afterwards. Recovery of an absent successor remains only for sessions written by earlier versions (legacy cuts); a new cut carries no payload and stops recovery of older ones.
+- **Handoff successor cannot be lost between the cut and a send** — the successor is persisted in the same pass as the cut instead of being sent afterwards. Successor recovery is removed: a session written by an earlier version whose successor was lost after its cut is not repaired, and the user prompts again.
 - **Readonly blocks the powershell tool** — readonly mode now blocks pi's built-in `powershell` tool in the parent and removes it from readonly children, and readonly bash blocks launching PowerShell or cmd. Previously a Windows setup with `powershell` in `defaultTools` had an unguarded shell.
 - **Sections from other extensions reach the model** — schematic now adds its prompt content as named Pi prompt sections instead of replacing the system prompt, so sections written by extensions that run after it are no longer dropped (#45). A topic, Model Groups, or notebook change no longer re-sends the context-management primer.
 - **Empty notebook pages** — selecting a page with an empty body in `/notebook` now opens it like any other page instead of closing the picker.

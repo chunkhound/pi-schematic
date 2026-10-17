@@ -78,18 +78,6 @@ export interface SchematicState {
 	handoffFailedInRun: boolean;
 
 	/**
-	 * Successor delivery already requested by recovery in this process.
-	 * Coalesces repeated recovery triggers for one persisted handoff cut while the
-	 * delivery is pending; cleared when a run settles and reset on session_start.
-	 * Deliberately not cleared on branch switch (invalidateHandoffState): the
-	 * durable cut key lets a cut shared across `/tree` branches coalesce instead
-	 * of double-sending. Entries carrying a v1 payload but no recovery key fall
-	 * back to their persisted entry identity; legacy entries without a payload
-	 * are never recovered (recovery.ts stops at the newest unreadable cut).
-	 */
-	recoveryRequestedMessage: { handoffEntryId: string | null; recoveryKey: string | null; message: string } | null;
-
-	/**
 	 * High-water mark for discard epochs, derived from the branch by
 	 * reconstruction (max valid observed page/generation epoch); see
 	 * `reconstructNotebook` in notebook/rehydration.ts.
@@ -193,7 +181,6 @@ export function createState(): SchematicState {
 		stagedHandoff: null,
 		handoffRefusals: new Map(),
 		handoffFailedInRun: false,
-		recoveryRequestedMessage: null,
 		discardEpochWatermark: 0,
 		pendingRequestedHandoff: null,
 		modelGroups: { groups: [], validation: null },
@@ -241,7 +228,6 @@ export function resetState(state: SchematicState): void {
 	state.activeNotebookTopicSource = null;
 	state.lastContextPercent = null;
 	invalidateHandoffState(state);
-	state.recoveryRequestedMessage = null;
 	state.modelGroups.groups = [];
 	state.modelGroups.validation = null;
 	state.readonlyEnabled = false;
@@ -266,7 +252,6 @@ export function invalidateHandoffState(state: SchematicState): void {
 	state.pendingRequestedHandoff = null;
 	state.pendingTopicBoundaryHint = null;
 	state.lastWatchdogBand = null;
-	// recoveryRequestedMessage is deliberately NOT reset here — see its state doc.
 }
 
 /** Return the session's single shared abort operation, starting it if necessary. */

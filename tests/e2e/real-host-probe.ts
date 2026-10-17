@@ -301,7 +301,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 			// Returns at once and reports through a status, so the wait is bounded by the
 			// deadline the harness passes, not by RpcClient's fixed request timeout.
 			// Still assumed: a send that a command, session_tree or agent_settled handler starts
-			// (the /handoff request, handoff recovery) shows up first as its "input" event; no
+			// (the /handoff request) shows up first as its "input" event; no
 			// public event announces it earlier. A barrier processed before that event reports
 			// quiet with the run still to come, so a harness step that has counted fewer runs
 			// than it expects waits for the next observed event and barriers again. The

@@ -30,7 +30,6 @@ import {
 	REASON_RESULT_MISSING,
 } from "./copy.js";
 import { isHandoffEligible } from "./eligibility.js";
-import { getHandoffId } from "./recovery.js";
 import {
 	HANDOFF_FAILED_CUSTOM_TYPE,
 	HANDOFF_NOTE_CUSTOM_TYPE,
@@ -55,7 +54,7 @@ function buildHandoffBoundaryDrafts(
 	const notebook = buildNotebookDiscardDrafts(state, staged.discardPages);
 	const discardRequested = staged.discardPages.length > 0;
 	// Headless sessions have no UI report; the discard outcome rides in the
-	// successor's details so the successor content stays the verbatim payload.
+	// successor's details so the successor content stays the verbatim instruction and context.
 	const report = discardRequested
 		? formatHandoffComplete(true, state.notebookPages.size - notebook.discarded, notebook.discarded)
 		: undefined;
@@ -83,6 +82,15 @@ function buildHandoffBoundaryDrafts(
 		},
 	];
 	return { drafts, discarded: notebook.discarded };
+}
+
+/** The `handoffId` of a handoff cut, or undefined for any other entry. */
+function getHandoffId(entry: SessionEntry): string | undefined {
+	if (entry.type !== "compaction") return undefined;
+	const details: unknown = entry.details;
+	if (typeof details !== "object" || details === null) return undefined;
+	const { handoff, handoffId } = details as Record<string, unknown>;
+	return handoff === true && typeof handoffId === "string" ? handoffId : undefined;
 }
 
 /** The compaction entry on `branch` written for `handoffId`, if pi persisted it. */

@@ -18,7 +18,7 @@ import os from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { TestContext } from "node:test";
-import { RpcClient, SessionManager, type RpcClientOptions, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { RpcClient, type RpcClientOptions, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
 	parseBarrierReport,
 	parseProbeRecord,
@@ -106,7 +106,6 @@ export interface RealHostSettings {
 }
 
 export interface RealHostOptions {
-	seedSession?: (session: SessionManager) => void;
 	settings?: RealHostSettings;
 }
 
@@ -248,15 +247,6 @@ export class RealHost {
 				"-e", SCHEMATIC_ENTRY,
 				"-e", PROBE_ENTRY,
 			];
-			if (options.seedSession) {
-				const session = SessionManager.create(projectDir, sessionsDir);
-				options.seedSession(session);
-				const sessionFile = session.getSessionFile();
-				if (!sessionFile || !existsSync(sessionFile)) {
-					throw new Error(`Seeded session file was not written (${sessionFile}); the seed must append a user or assistant message`);
-				}
-				args.push("--session", sessionFile);
-			}
 			const clientOptions: RpcClientOptions = {
 				cliPath: CLI_PATH,
 				cwd: projectDir,
@@ -331,15 +321,6 @@ export class RealHost {
 	/** Wait for outstanding work; a step that starts `runs` runs. */
 	async settle(runs: number): Promise<void> {
 		await this.step(this.events.length, "settle", runs);
-	}
-
-	/**
-	 * Wait for the work session_start began, before any other step. A session_start handler can
-	 * start a run before any step marks the event list, so `settle` would not count it.
-	 */
-	async settleStartup(runs: number): Promise<void> {
-		if (this.barrierPhases > 0) throw new Error("settleStartup() must be the first step of a host");
-		await this.step(0, "startup", runs);
 	}
 
 	async entries(): Promise<{ entries: SessionEntry[]; leafId: string | null }> {

@@ -7,16 +7,6 @@ export const HANDOFF_NOTE_CUSTOM_TYPE = "pi-schematic-handoff-note";
 /** Custom type of the failure message sent when a handoff leaves no cut. */
 export const HANDOFF_FAILED_CUSTOM_TYPE = "pi-schematic-handoff-failed";
 
-/** Delimits extension-owned operational reporting after a legacy successor payload. */
-export const HANDOFF_REPORT_DELIMITER = "\n\n## Handoff report\n\n";
-
-/** Versioned durable handoff data stored on a legacy handoff compaction entry. */
-export interface HandoffPayload {
-	version: 1;
-	nextInstruction: string;
-	context: string;
-}
-
 /**
  * The compaction summary shown to the fresh context.
  *
@@ -43,7 +33,7 @@ export function buildContinuationFrame(): string {
  *
  * The instruction is copied, never summarized, so it cannot be paraphrased away.
  */
-export function buildNextUserMessage(input: Pick<HandoffPayload, "nextInstruction"> & { context?: string }): string {
+export function buildNextUserMessage(input: { nextInstruction: string; context?: string }): string {
 	const context = input.context?.trim();
 	const parts = ["## Next instruction", "", input.nextInstruction];
 	if (context) parts.push("", "## Context", "", context);

@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { CompactionEntry, CustomMessageEntry, SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
+import type { CompactionEntry, CustomMessageEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
 	HANDOFF_IN_PROGRESS_STATUS,
 	HANDOFF_REQUIRED_STATUS,
@@ -21,7 +21,6 @@ import {
 	HANDOFF_FAILED_CUSTOM_TYPE,
 	HANDOFF_NOTE_CUSTOM_TYPE,
 	HANDOFF_SUCCESSOR_CUSTOM_TYPE,
-	buildContinuationFrame,
 	buildNextUserMessage,
 	formatHandoffFailure,
 } from "../../handoff/format.js";
@@ -45,11 +44,8 @@ import {
 } from "./real-host.js";
 import {
 	NEXT_INSTRUCTION_PREFIX,
-	PROBE_API,
 	PROBE_COMMAND,
 	PROBE_CONTEXT_WINDOW,
-	PROBE_MODEL_ID,
-	PROBE_PROVIDER,
 	cutHandoffId,
 	type ProbeRecord,
 	type ScriptedCall,
@@ -177,51 +173,6 @@ async function expectCancellationAtLastAttempt(host: RealHost): Promise<void> {
 function onlyResult<T>(results: T[], label: string): T {
 	assert.equal(results.length, 1, `exactly one ${label} result`);
 	return results[0];
-}
-
-const LEGACY_RECOVERY_KEY = "legacy-recovery-key";
-const LEGACY_PAYLOAD = { nextInstruction: "do the legacy resumed work", context: "legacy remaining state" };
-const LEGACY_SUCCESSOR_TEXT = buildNextUserMessage(LEGACY_PAYLOAD);
-
-function seedUser(session: SessionManager, text: string): string {
-	return session.appendMessage({ role: "user", content: [{ type: "text", text }], timestamp: Date.now() });
-}
-
-function seedAssistant(session: SessionManager, text: string): string {
-	return session.appendMessage({
-		role: "assistant",
-		content: [{ type: "text", text }],
-		api: PROBE_API,
-		provider: PROBE_PROVIDER,
-		model: PROBE_MODEL_ID,
-		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-		stopReason: "stop",
-		timestamp: Date.now(),
-	});
-}
-
-/**
- * A handoff cut as releases before the turn_end boundary wrote it. Those releases sent the
- * successor as a user message after the cut; the seed omits it.
- */
-function seedLegacyCut(session: SessionManager): string {
-	seedUser(session, "earlier work");
-	const leafId = seedAssistant(session, "earlier reply");
-	return session.appendCompaction(
-		`${buildContinuationFrame()}\n\n<!-- handoff-cut:${LEGACY_RECOVERY_KEY} -->`,
-		`${leafId}-handoff-cut`,
-		50000,
-		{ handoff: true, payload: { version: 1, ...LEGACY_PAYLOAD }, recoveryKey: LEGACY_RECOVERY_KEY },
-		true,
-	);
-}
-
-function seedLegacyCutThenNewerWork(session: SessionManager): void {
-	seedLegacyCut(session);
-	seedUser(session, "newer user work");
-	seedAssistant(session, "newer reply");
-	seedUser(session, "later user work");
-	seedAssistant(session, "later reply");
 }
 
 describe("pi-schematic real-host E2E", () => {
@@ -424,42 +375,6 @@ describe("pi-schematic real-host E2E", () => {
 		assert.equal(customMessages(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE).length, 1, "one successor entry");
 		assert.equal(userEntriesWithText(entries, buildNextUserMessage(payload)).length, 0, "no successor resent as a user message");
 	}));
-
-	it("legacy recovery resends the lost successor of an old-format cut once", TEST_OPTIONS, async (t) => {
-		let cutId = "";
-		await withRealHost(t, async (host) => {
-			await host.settleStartup(1);
-			const { entries } = await host.entries();
-			const recovered = userEntriesWithText(entries, LEGACY_SUCCESSOR_TEXT);
-			assert.equal(recovered.length, 1, "recovery sends the absent successor");
-			assert.ok(
-				entries.findIndex((entry) => entry.id === cutId) < entries.indexOf(recovered[0]),
-				"the recovered successor follows the cut",
-			);
-
-			await host.turn("/" + PROBE_COMMAND.turn, 1);
-			assert.equal(userEntriesWithText((await host.entries()).entries, LEGACY_SUCCESSOR_TEXT).length, 1, "a delivered successor is not resent");
-		}, { seedSession: (session) => { cutId = seedLegacyCut(session); } });
-	});
-
-	it("legacy recovery never appends a lost successor after newer user work", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
-		await host.settleStartup(0);
-		await host.turn("/" + PROBE_COMMAND.turn, 1);
-
-		const { entries } = await host.entries();
-		assert.equal(userEntriesWithText(entries, LEGACY_SUCCESSOR_TEXT).length, 0, "no successor user entry");
-	}, { seedSession: seedLegacyCutThenNewerWork }));
-
-	it("tree navigation never appends a lost legacy successor after newer user work", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
-		await host.settleStartup(0);
-		const before = await host.entries();
-		const [newer] = userEntriesWithText(before.entries, "newer user work");
-		assert.ok(newer, "the seed holds the newer user work");
-		await host.navigate(firstAssistantAfter(before.entries, newer.id).id, 0);
-
-		const { entries } = await host.entries();
-		assert.equal(userEntriesWithText(entries, LEGACY_SUCCESSOR_TEXT).length, 0, "no successor user entry");
-	}, { seedSession: seedLegacyCutThenNewerWork }));
 
 	it("a dropped handoff cut fails in one run without a follow-up and stays retryable", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
 		await host.command("/" + PROBE_COMMAND.dropNextCut);
