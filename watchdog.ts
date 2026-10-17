@@ -9,7 +9,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { SchematicState } from "./state.js";
+import type { RequestedHandoff, SchematicState } from "./state.js";
 import { normalizeContextPercent } from "./handoff/eligibility.js";
 import {
 	READONLY_HANDOFF_RETRY_ADVICE,
@@ -22,8 +22,6 @@ import { STATUS_KEY_HANDOFF } from "./tui.js";
  * required handoff auto-clears. 5 gives the model several response
  * cycles to supply the instruction and context. */
 export const MAX_HANDOFF_ATTEMPTS = 5;
-
-type RequestedHandoff = NonNullable<SchematicState["pendingRequestedHandoff"]>;
 
 /** Whether the settle of the current run counts it against the enforcement budget. */
 function settleCountsAttempt(request: RequestedHandoff): boolean {

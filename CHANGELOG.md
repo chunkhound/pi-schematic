@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **No compaction events for a handoff cut** — `session_before_compact` and `session_compact` no longer fire for a handoff; schematic no longer handles `session_before_compact`. Other extensions find the cut as a `compaction` entry whose `details.handoffId` is set.
 - **`handoff` must be the only tool call in its message** — a `handoff` that shares an assistant message with other tool calls is refused and stages nothing; the other calls go to their own handlers, and the refusal tells the model to call `handoff` alone in its next message. Previously the `handoff` ran and the batch did not end the turn. When a message holds only `handoff` calls, every call after the first is refused.
+- **Successor recovery is removed** — a session written by an earlier version whose successor was lost after its cut is not repaired, and the user prompts again.
 
 ### Changed
 
@@ -25,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Handoff successor cannot be lost between the cut and a send** — the successor is persisted in the same pass as the cut instead of being sent afterwards. Successor recovery is removed: a session written by an earlier version whose successor was lost after its cut is not repaired, and the user prompts again.
+- **Handoff successor cannot be lost between the cut and a send** — the successor is persisted in the same pass as the cut instead of being sent afterwards.
 - **Readonly blocks the powershell tool** — readonly mode now blocks pi's built-in `powershell` tool in the parent and removes it from readonly children, and readonly bash blocks launching PowerShell or cmd. Previously a Windows setup with `powershell` in `defaultTools` had an unguarded shell.
 - **Sections from other extensions reach the model** — schematic now adds its prompt content as named Pi prompt sections instead of replacing the system prompt, so sections written by extensions that run after it are no longer dropped (#45). A topic, Model Groups, or notebook change no longer re-sends the context-management primer.
 - **Empty notebook pages** — selecting a page with an empty body in `/notebook` now opens it like any other page instead of closing the picker.

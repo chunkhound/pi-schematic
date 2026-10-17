@@ -312,14 +312,14 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		handler: async (args, ctx) => {
 			// Returns at once and reports through a status, so the wait is bounded by the
 			// deadline the harness passes, not by RpcClient's fixed request timeout.
-			// Still assumed: a send that a command, session_tree or agent_settled handler starts
-			// (the /handoff request) shows up first as its "input" event; no
+			// Still assumed: a send that a command handler starts (schematic's /handoff
+			// request) shows up first as its "input" event; no
 			// public event announces it earlier. A barrier processed before that event reports
 			// quiet with the run still to come, so a harness step that has counted fewer runs
 			// than it expects waits for the next observed event and barriers again. The
 			// assumption therefore only reaches a step whose expected count is already met —
 			// the "nothing happened" checks (0 expected runs) above all. Those stay sound while
-			// schematic's /handoff, session_tree and agent_settled handlers and its "input"
+			// schematic's /handoff handler and its "input"
 			// handler ahead of this file's await no I/O (that one returns early for the
 			// extension-sourced sends at issue here). A run that starts late anyway lands in the
 			// next step's window or in close(), which fails on any run no step expected. Closing

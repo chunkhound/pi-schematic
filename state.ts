@@ -26,7 +26,8 @@ export interface StagedHandoff {
 	discarded: number;
 }
 
-interface RequestedHandoff {
+/** A required handoff request; lifecycle on `SchematicState.pendingRequestedHandoff`. */
+export interface RequestedHandoff {
 	/** True only after the current session has actually called the handoff tool. */
 	toolCalled: boolean;
 	/** Settled agent runs counted while the handoff is still owed. */

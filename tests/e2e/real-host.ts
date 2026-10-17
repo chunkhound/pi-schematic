@@ -8,8 +8,8 @@
  * the work it waits for), so tests never issue a non-command prompt while work is
  * outstanding. A step fails unless it started exactly the runs its caller expected.
  * A step that has counted fewer runs than it expects barriers again — a run a
- * command, session_tree or agent_settled handler starts is first visible to the
- * probe at its "input" event — within one barrier's budget. `close()` fails on any
+ * command handler starts (schematic's /handoff) is first visible to the probe at
+ * its "input" event — within one barrier's budget. `close()` fails on any
  * run that started outside every step.
  */
 
@@ -412,7 +412,7 @@ export class RealHost {
 	 * since `mark`, then require exactly `runs` runs started since `mark`, counted by `countRuns`
 	 * (the passes of one run up to its agent_settled are one run).
 	 *
-	 * A run a command, session_tree or agent_settled handler starts is first visible to the probe at
+	 * A run a command handler starts (schematic's /handoff) is first visible to the probe at
 	 * its "input" event, so a barrier can report quiet before that run has started. A step that has
 	 * counted fewer runs than it expects therefore barriers again after the next observed event,
 	 * inside the step's one `STEP_BUDGET_MS`; every round spends what is left of it, so a run that
