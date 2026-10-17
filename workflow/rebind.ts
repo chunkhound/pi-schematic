@@ -7,7 +7,7 @@ import type { SchematicState } from "../state.js";
 import type { WorkflowProgressView } from "../tui.js";
 import { takeWorkflowRuntime } from "./coordinator.js";
 import { messageOf } from "./errors.js";
-import { matchRun, type RunMatch, type RunRegistry } from "./run-registry.js";
+import { matchRun, type RunRegistry } from "./run-registry.js";
 import { clampTimeoutMs } from "./sandbox.js";
 import type { WorkflowHost, WorkflowLimits, WorkflowProgress } from "./types.js";
 
@@ -213,28 +213,28 @@ function waitForCompaction(pi: ExtensionAPI): { done: Promise<string>; dispose: 
 	const offFail = pi.on("session_compact_failed", (event) => {
 		reject(new Error(event.errorMessage ?? "handoff compaction failed"));
 	});
-	return { done, dispose: () => { offOk(); offFail(); reject(new Error("compaction tracking disposed")); } };
+	return { done, dispose: () => { offOk(); offFail(); } };
 }
 
 /** The successor run follows a delivered user message; the preparing turn's own tail (tool
  * result, closing text) also lands after the compaction entry and must not pass for it. */
-function successorMatch(entries: readonly SessionEntry[], marker: string): RunMatch | null {
+function hasSuccessorRun(entries: readonly SessionEntry[], marker: string): boolean {
 	const at = entries.findIndex((entry) => entry.id === marker);
-	if (at < 0) return null;
+	if (at < 0) return false;
 	const delivered = entries.slice(at + 1).find((entry) =>
 		entry.type === "message" && (entry.message as { role?: string }).role === "user",
 	);
-	return delivered ? matchRun(entries, delivered.id) : null;
+	return delivered ? matchRun(entries, delivered.id) !== null : false;
 }
 
 interface PendingSettle {
 	marker: string;
-	resolve: (match: RunMatch) => void;
+	resolve: () => void;
 	reject: (error: Error) => void;
 }
 
 interface SettleGate {
-	wait(marker: string): Promise<RunMatch>;
+	wait(marker: string): Promise<void>;
 	dispose(): void;
 }
 
@@ -263,20 +263,18 @@ function armSettleGate(pi: ExtensionAPI, getBranch: () => readonly SessionEntry[
 /** Future settles either satisfy the waiter or buffer for a later marker scan. */
 function absorbSettle(state: GateState, branch: readonly SessionEntry[]): void {
 	const waiting = state.pending;
-	const match = waiting ? successorMatch(branch, waiting.marker) : null;
-	if (waiting && match) {
+	if (waiting && hasSuccessorRun(branch, waiting.marker)) {
 		state.pending = null;
-		waiting.resolve(match);
+		waiting.resolve();
 		return;
 	}
 	state.buffered.push([...branch]);
 }
 
-function awaitSettle(state: GateState, marker: string): Promise<RunMatch> {
+function awaitSettle(state: GateState, marker: string): Promise<void> {
 	// Buffer scan and waiter registration are synchronous: no settle can slip between.
-	const settled = state.buffered.find((branch) => successorMatch(branch, marker) !== null);
-	if (settled) return Promise.resolve(successorMatch(settled, marker)!);
-	return new Promise<RunMatch>((resolve, reject) => {
+	if (state.buffered.some((branch) => hasSuccessorRun(branch, marker))) return Promise.resolve();
+	return new Promise<void>((resolve, reject) => {
 		state.pending = { marker, resolve, reject };
 	});
 }
