@@ -1,9 +1,15 @@
 // WHY: `workflow.classify` must never reject, so a missing model becomes a normal
 // ClassifierResult with stopReason "error". The host charges usage cost separately
 // because the read-only session manager cannot append a usage entry.
-import type { ClassifierApi, ClassifierContext, ClassifierModel, ClassifierResult } from "@earendil-works/pi-ai";
+import type { ClassifierAnswer, ClassifierApi, ClassifierContext, ClassifierModel, ClassifierQuestion, ClassifierResult } from "@earendil-works/pi-ai";
 import { messageOf } from "./errors.js";
 import type { ClassifierRequest } from "./types.js";
+
+/** Runtime discriminators pinned to the pi-ai unions. The docs test compares the author
+ * contract in docs/workflows.md to these arrays, so a pi-ai change fails visibly. */
+export const CLASSIFIER_QUESTION_TYPES = ["choice", "score", "bool"] as const satisfies readonly ClassifierQuestion["type"][];
+export const CLASSIFIER_ANSWER_TYPES = ["choice", "score", "bool"] as const satisfies readonly ClassifierAnswer["type"][];
+export const CLASSIFIER_STOP_REASONS = ["stop", "error", "aborted"] as const satisfies readonly ClassifierResult["stopReason"][];
 
 export interface ClassifierDeps {
 	getModels: () => readonly ClassifierModel<ClassifierApi>[];
