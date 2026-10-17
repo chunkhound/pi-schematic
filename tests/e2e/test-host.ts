@@ -7,13 +7,9 @@
  * Protocol:
  *   → cmd <name> [arg]      — call a registered command
  *   → tool <name> <json>    — call a registered tool with JSON params
- *   → toolcall <name> <json> — run the first tool_call hook directly
+ *   → toolcall <name> <json> — run the tool_call hooks; prints the first block or null
  *   → context [json]        — run the first context hook
- *   → usage <json|null>     — set getContextUsage() result for later calls
  *   → headless              — select headless mode for subsequent calls
- *   → ui-events             — return current status values and emitted notifications
- *   → compact-success       — run queued handoff compaction success path
- *   → session-tree          — fire a tree-navigation event without changing the active branch
  *   → exit                  — graceful shutdown
  *
  *   ← READY\n               — sent after extension registration
@@ -37,34 +33,15 @@ const tools = pi.tools;
 
 // ── Mock ExtensionContext for tool/command execution ──────────────
 
-type MockContextUsage = { tokens?: number | null; percent?: number | null; contextWindow?: number | null } | null;
-type CompactRequest = { onComplete?: () => void; onError?: (error: Error) => void };
-
-let currentUsage: MockContextUsage = null;
-let lastCompactRequest: CompactRequest | null = null;
-const statuses = new Map<string, string | undefined>();
-const notifications: Array<{ message: string; level: string }> = [];
-// `branch` models the active path while `entries` preserves the session history.
-// Pi moves a selected user turn into the editor by moving the active leaf to its
-// parent, but the delivered turn remains in session history as recovery evidence.
-const branch: any[] = [];
-const entries: any[] = [];
-let entrySeq = 0;
-
-function appendEntry(entry: any): void {
-	// Mirror pi: each entry is a child of the current leaf, and the leaf advances.
-	entry.parentId = branch.at(-1)?.id ?? null;
-	branch.push(entry);
-	entries.push(entry);
-}
+// The line host has no session: context usage is unavailable and the branch is empty.
 
 const mockCtx = {
 	hasUI: true,
 	mode: "non-interactive",
 	cwd: process.cwd(),
 	ui: {
-		notify: (message: string, level: string) => { notifications.push({ message, level }); },
-		setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
+		notify: () => {},
+		setStatus: () => {},
 		setWidget: () => {},
 		theme: { fg: (_name: string, text: string) => text },
 		select: () => Promise.resolve(undefined),
@@ -88,8 +65,8 @@ const mockCtx = {
 		getTheme: () => undefined,
 		setTheme: () => ({ ok: true }),
 	},
-	getContextUsage: () => currentUsage,
-	sessionManager: { getBranch: () => branch, getEntries: () => entries },
+	getContextUsage: () => null,
+	sessionManager: { getBranch: () => [], getEntries: () => [] },
 	modelRegistry: null,
 	isProjectTrusted: () => true,
 	// Required by spawn tool which checks ctx.model existence before using it
@@ -100,9 +77,6 @@ const mockCtx = {
 	// The line host keeps no follow-up queue: sends are only recorded in pi.sentUserMessages.
 	hasPendingMessages: () => false,
 	shutdown: () => process.exit(0),
-	compact: (request: { onComplete?: () => void; onError?: (error: Error) => void }) => {
-		lastCompactRequest = request;
-	},
 	getSystemPrompt: () => "",
 } as any; // Type assertion needed: mock intentionally omits some interface fields
 
@@ -120,59 +94,6 @@ for await (const line of rl) {
 	} else if (trimmed === "headless") {
 		mockCtx.hasUI = false;
 		process.stdout.write("OK\n");
-	} else if (trimmed === "ui-events") {
-		process.stdout.write("OK:" + JSON.stringify({ statuses: Object.fromEntries(statuses), notifications }) + "\n");
-	} else if (trimmed.startsWith("usage ")) {
-		const jsonArg = trimmed.slice(6).trim();
-		try {
-			currentUsage = JSON.parse(jsonArg);
-			process.stdout.write("OK\n");
-		} catch (e: unknown) {
-			process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n");
-		}
-	} else if (trimmed === "compact-success") {
-		const [beforeCompact] = pi.handlers.get("session_before_compact") ?? [];
-		const compactRequest = lastCompactRequest as any;
-		if (!beforeCompact || !compactRequest) {
-			process.stdout.write("ERR:no queued compaction\n");
-			continue;
-		}
-		if (typeof compactRequest.onComplete !== "function") {
-			process.stdout.write("ERR:no success callback\n");
-			continue;
-		}
-		const result = await beforeCompact(
-			{ preparation: { tokensBefore: 1 }, branchEntries: [{ id: "leaf-e2e" }] },
-			mockCtx,
-		);
-		lastCompactRequest = null;
-		if (!result?.compaction) {
-			process.stdout.write("OK:null\n");
-			continue;
-		}
-		// Mirror Pi: the compaction entry lands in the branch before the successor
-		// delivery, so recovery scans observe the same order.
-		appendEntry({
-			type: "compaction",
-			id: `compaction-${++entrySeq}`,
-			summary: result.compaction.summary,
-			details: result.compaction.details,
-		});
-		compactRequest.onComplete();
-		const lastMessage = pi.sentUserMessages.at(-1);
-		process.stdout.write("OK:" + JSON.stringify({
-			...result.compaction,
-			queuedFollowUp: lastMessage?.options?.deliverAs === "followUp",
-		}) + "\n");
-	} else if (trimmed === "session-tree") {
-		const [sessionTree] = pi.handlers.get("session_tree") ?? [];
-		if (!sessionTree) {
-			process.stdout.write("ERR:no session_tree handler\n");
-			continue;
-		}
-		const oldLeafId = branch.at(-1)?.id ?? "old-leaf";
-		await sessionTree({ newLeafId: branch.at(-1)?.id ?? "root", oldLeafId }, mockCtx);
-		process.stdout.write("OK\n");
 	} else if (trimmed.startsWith("toolcall ")) {
 		const rest = trimmed.slice(9).trim();
 		const spaceIdx = rest.indexOf(" ");
@@ -189,9 +110,16 @@ for await (const line of rl) {
 			continue;
 		}
 		try {
-			const [handler] = pi.handlers.get("tool_call") ?? [];
-			const result = await handler({ toolName, input }, { cwd: mockCtx.cwd });
-			process.stdout.write("OK:" + JSON.stringify(result ?? null) + "\n");
+			// As pi does: every tool_call handler in registration order, the first block wins.
+			let result = null;
+			for (const handler of pi.handlers.get("tool_call") ?? []) {
+				const outcome = await handler({ toolCallId: "e2e-toolcall", toolName, input }, mockCtx);
+				if (outcome?.block) {
+					result = outcome;
+					break;
+				}
+			}
+			process.stdout.write("OK:" + JSON.stringify(result) + "\n");
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
 			process.stdout.write("ERR:" + msg + "\n");

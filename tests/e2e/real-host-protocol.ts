@@ -30,15 +30,14 @@ export const PROBE_COMMAND = {
 	barrier: "e2e-barrier",
 	tree: "e2e-tree",
 	turn: "e2e-turn",
+	dropNextCut: "e2e-drop-next-cut",
 	dropNextSuccessor: "e2e-drop-next-successor",
-	cancelNextCompaction: "e2e-cancel-next-compaction",
+	compactAfterNextCut: "e2e-compact-after-next-cut",
+	abortAfterHandoff: "e2e-abort-after-handoff",
 	tools: "e2e-tools",
 } as const;
 
-/**
- * Heading the successor user message opens with, read off the production builder
- * so the probe recognizes the message schematic sends after a handoff.
- */
+/** Heading the successor message opens with, read off the production builder. */
 export const NEXT_INSTRUCTION_PREFIX = buildNextUserMessage({ nextInstruction: "x" }).split("\n")[0];
 
 /** One scripted tool call. */
@@ -50,14 +49,17 @@ export type ScriptedError = { error: string };
 /** A text reply that reports `inputTokens` of context usage in place of the probe's default. */
 export type ScriptedReply = { text: string; inputTokens: number };
 
+/** Several tool calls the model makes in one assistant message, in order. */
+export type ScriptedBatch = { calls: ScriptedCall[] };
+
 /** One scripted model response: what `/e2e-script` arms, one per model call of the run, and what the log carries. */
-export type ScriptedStep = ScriptedCall | ScriptedError | ScriptedReply;
+export type ScriptedStep = ScriptedCall | ScriptedBatch | ScriptedError | ScriptedReply;
 
 /** One line of the probe log. */
 export type ProbeRecord =
 	| { kind: "request"; step: number; calls: ScriptedStep[] | null; texts: string[] }
 	| { kind: "compact"; entryId: string }
-	| { kind: "successor-send"; text: string; dropped: boolean }
+	| { kind: "cut"; handoffId: string; dropped: boolean }
 	| { kind: "tools"; names: string[] };
 
 /**
@@ -103,9 +105,20 @@ function requireStringArray(record: Record<string, unknown>, field: string, line
 	return value;
 }
 
+function parseScriptedCall(value: unknown, fail: (reason: string) => never): ScriptedCall {
+	if (!isJsonObject(value)) fail(`not an object: ${JSON.stringify(value)}`);
+	const { name, arguments: callArguments, ...rest } = value;
+	if (typeof name !== "string" || name === "") fail(`no name: ${JSON.stringify(value)}`);
+	if (!isJsonObject(callArguments)) fail(`no arguments object: ${JSON.stringify(value)}`);
+	if (Object.keys(rest).length > 0) fail(`a call step takes only name and arguments: ${JSON.stringify(value)}`);
+	// The value came out of JSON.parse, so the arguments are JSON.
+	return { name, arguments: callArguments as ToolCall["arguments"] };
+}
+
 /**
  * One scripted step, parsed strictly: an object with `error` is a `ScriptedError`, one with `text`
- * a `ScriptedReply`, any other a `ScriptedCall`. `fail` throws with the reason.
+ * a `ScriptedReply`, one with `calls` a `ScriptedBatch`, any other a `ScriptedCall`. `fail` throws
+ * with the reason.
  */
 export function parseScriptedStep(value: unknown, fail: (reason: string) => never): ScriptedStep {
 	if (!isJsonObject(value)) fail(`not an object: ${JSON.stringify(value)}`);
@@ -124,12 +137,13 @@ export function parseScriptedStep(value: unknown, fail: (reason: string) => neve
 		if (Object.keys(rest).length > 0) fail(`a reply step takes only text and inputTokens: ${JSON.stringify(value)}`);
 		return { text, inputTokens };
 	}
-	const { name, arguments: callArguments, ...rest } = value;
-	if (typeof name !== "string" || name === "") fail(`no name: ${JSON.stringify(value)}`);
-	if (!isJsonObject(callArguments)) fail(`no arguments object: ${JSON.stringify(value)}`);
-	if (Object.keys(rest).length > 0) fail(`a call step takes only name and arguments: ${JSON.stringify(value)}`);
-	// The value came out of JSON.parse, so the arguments are JSON.
-	return { name, arguments: callArguments as ToolCall["arguments"] };
+	if ("calls" in value) {
+		const { calls, ...rest } = value;
+		if (!Array.isArray(calls) || calls.length === 0) fail(`calls is not a non-empty array: ${JSON.stringify(value)}`);
+		if (Object.keys(rest).length > 0) fail(`a batch step takes only calls: ${JSON.stringify(value)}`);
+		return { calls: calls.map((call: unknown, index) => parseScriptedCall(call, (reason) => fail(`calls[${index}]: ${reason}`))) };
+	}
+	return parseScriptedCall(value, fail);
 }
 
 /** A request record's `calls`: the armed script, or null when no script was armed. */
@@ -159,10 +173,10 @@ export function parseProbeRecord(line: string): ProbeRecord {
 			};
 		case "compact":
 			return { kind: "compact", entryId: requireString(parsed, "entryId", line) };
-		case "successor-send":
+		case "cut":
 			return {
-				kind: "successor-send",
-				text: requireString(parsed, "text", line),
+				kind: "cut",
+				handoffId: requireString(parsed, "handoffId", line),
 				dropped: requireBoolean(parsed, "dropped", line),
 			};
 		case "tools":
@@ -190,4 +204,11 @@ export function parseBarrierReport(text: string): BarrierReport {
 		throw new Error(`Barrier report failure is neither a string nor null: ${text}`);
 	}
 	return { id, failure };
+}
+
+/** `handoffId` of a handoff cut written in a turn_end boundary, or null for any other entry or draft. */
+export function cutHandoffId(entry: { type: string; details?: unknown }): string | null {
+	if (entry.type !== "compaction" || typeof entry.details !== "object" || entry.details === null) return null;
+	const handoffId = (entry.details as Record<string, unknown>).handoffId;
+	return typeof handoffId === "string" ? handoffId : null;
 }

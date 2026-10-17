@@ -33,7 +33,7 @@ import { registerNotebookTopicTool } from "./notebook/topic-tool.js";
 import { setActiveNotebookTopic } from "./notebook/topic.js";
 import { formatPageTuiPreview } from "./notebook/store.js";
 import { openInPager, pagerRuntime, type ResolvedPager } from "./notebook/pager.js";
-import { registerHandoffTool } from "./handoff/tool.js";
+import { HANDOFF_TOOL_NAME, registerHandoffTool } from "./handoff/tool.js";
 import {
 	canPromoteBoundary,
 	discardNonHumanBoundary,
@@ -44,9 +44,7 @@ import { isHandoffEligible, normalizeContextPercent } from "./handoff/eligibilit
 import { getReadonlyFromBranch } from "./readonly-rehydration.js";
 import { HANDOFF_REQUIRED_STATUS } from "./handoff/copy.js";
 import { registerHandoffCommand } from "./handoff/command.js";
-import { registerHandoffCompaction } from "./handoff/compact.js";
-import { getUndeliveredHandoffMessage } from "./handoff/recovery.js";
-import { sendFollowUp } from "./follow-up.js";
+import { registerHandoffBoundary } from "./handoff/boundary.js";
 import {
 	READONLY_ACTIVE_SUMMARY,
 	READONLY_COMMAND_DESCRIPTION,
@@ -468,9 +466,13 @@ export default function (pi: ExtensionAPI): void {
 	registerSpawnTool(pi, state);
 
 	// ── Register event handlers ─────────────────────────────────────
+	// Handoff boundary first. Its failure path resets toolCalled before the
+	// watchdog's agent_settled handler counts the attempt, and the watchdog counts
+	// only once toolCalled is reset. Its tool_call refusal of a handoff that
+	// shares a message with other calls precedes the readonly block.
+	registerHandoffBoundary(pi, state);
 	registerWatchdog(pi, state);
 	registerNotebookRehydration(pi, state);
-	registerHandoffCompaction(pi, state);
 
 	// ── Register commands ───────────────────────────────────────────
 	registerHandoffCommand(pi, state);
@@ -527,38 +529,6 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 
-	function recoverHandoffMessage(ctx: ExtensionContext): void {
-		// Never fight an in-flight cut: the compaction hook owns the reservation and
-		// will deliver its own payload on completion.
-		if (state.handoffCompactionGeneration !== null) return;
-		// A queued follow-up may be the successor message itself, not yet persisted;
-		// resending now would double-deliver once the queue drains.
-		if (ctx.hasPendingMessages?.()) return;
-		const branch = ctx.sessionManager?.getBranch?.() ?? [];
-		const candidate = getUndeliveredHandoffMessage(branch, ctx.sessionManager?.getEntries?.() ?? branch);
-		// The latch coalesces repeated triggers for one persisted cut. New cuts carry a
-		// durable recovery key; legacy cuts fall back to their persisted entry identity.
-		if (!candidate) return;
-		const requested = state.recoveryRequestedMessage;
-		if (requested?.message === candidate.message &&
-			((candidate.recoveryKey !== null && requested.recoveryKey === candidate.recoveryKey) ||
-				(candidate.recoveryKey === null && requested.handoffEntryId === candidate.handoffEntryId))) {
-			requested.handoffEntryId = candidate.handoffEntryId;
-			return;
-		}
-		state.recoveryRequestedMessage = candidate;
-		try {
-			sendFollowUp(pi, candidate.message);
-		} catch (error) {
-			state.recoveryRequestedMessage = null;
-			if (ctx.hasUI) {
-				const message = error instanceof Error ? error.message : String(error);
-				ctx.ui.notify(`Handoff recovery delivery failed: ${message}. It will retry when the session settles.`, "error");
-			}
-			throw error;
-		}
-	}
-
 	function rehydrateReadonlyState(ctx: ExtensionContext): void {
 		const wasEnabled = state.readonlyEnabled;
 		const branch = ctx.sessionManager?.getBranch?.() ?? [];
@@ -599,7 +569,7 @@ export default function (pi: ExtensionAPI): void {
 			};
 		}
 
-		if (event.toolName === "handoff" && !state.pendingRequestedHandoff) {
+		if (event.toolName === HANDOFF_TOOL_NAME && !state.pendingRequestedHandoff) {
 			return {
 				block: true as const,
 				reason: READONLY_HANDOFF_BLOCK_REASON,
@@ -728,7 +698,7 @@ export default function (pi: ExtensionAPI): void {
 						}
 						selectList.onSelect = ({ value }) => {
 							const body = state.notebookPages.get(value);
-							// A handoff discard can commit while the list is open (its compaction finishes in the background).
+							// A handoff discard can apply while the list is open (the cut completes during the agent run).
 							if (body === undefined) {
 								finished = true;
 								done({ action: "reopen", name: value });
@@ -960,10 +930,6 @@ export default function (pi: ExtensionAPI): void {
 		}
 
 		rehydrateReadonlyState(ctx);
-		// A session start is a fresh delivery scope; drop any latch carried over from
-		// an in-process resume before scanning the newly active branch.
-		state.recoveryRequestedMessage = null;
-		recoverHandoffMessage(ctx);
 		updateIndicators(ctx, state);
 	});
 
@@ -980,20 +946,7 @@ export default function (pi: ExtensionAPI): void {
 		reconstructNotebook(state, ctx.sessionManager?.getBranch?.() ?? []);
 		ensureNotebookToolsActive(pi);
 		rehydrateReadonlyState(ctx);
-		recoverHandoffMessage(ctx);
 		updateIndicators(ctx, state);
-	});
-
-	// A failed fire-and-forget successor follow-up has no extension-visible error or
-	// acknowledgement. Once a later agent run settles with no queued messages, inspect
-	// the persisted branch and resend only when no user turn follows the cut (a
-	// delivered successor or newer user input ends recovery).
-	pi.on("agent_settled", async (_event, ctx: ExtensionContext) => {
-		// A settle is the retry boundary: the earlier request either landed (the branch
-		// now shows it) or failed silently (still absent). Clear the latch so an absent
-		// successor is retried, while repeats before the run settles stay coalesced.
-		state.recoveryRequestedMessage = null;
-		recoverHandoffMessage(ctx);
 	});
 
 	// ── update TUI indicators after each turn ───────────────────────

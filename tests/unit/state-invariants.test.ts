@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import * as fc from "fast-check";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
-import { createState, resetState, abortAndClearChildSessions, invalidateHandoffState } from "../../state.js";
+import { createState, resetState, abortAndClearChildSessions, invalidateHandoffState, newRequestedHandoff } from "../../state.js";
 import type { SchematicState } from "../../state.js";
 import {
 	setActiveNotebookTopic,
@@ -124,7 +124,8 @@ function assertResetClears(state: SchematicState): void {
 	assert.equal(state.epoch, 0, "epoch must be 0 after reset");
 	assert.equal(state.activeNotebookTopic, null, "topic must be null after reset");
 	assert.equal(state.activeNotebookTopicSource, null, "topic source must be null after reset");
-	assert.equal(state.pendingHandoff, null, "pendingHandoff must be null after reset");
+	assert.equal(state.stagedHandoff, null, "stagedHandoff must be null after reset");
+	assert.equal(state.handoffRefusals.size, 0, "handoffRefusals must be empty after reset");
 	assert.equal(state.pendingRequestedHandoff, null, "pendingRequestedHandoff must be null after reset");
 	assert.equal(state.pendingTopicBoundaryHint, null, "pendingTopicBoundaryHint must be null after reset");
 	assert.equal(state.modelGroups.groups.length, 0, "modelGroups.groups must be empty after reset");
@@ -365,28 +366,58 @@ test("Property 5: Epoch counter — set to 1 on first savePage", async () => {
 	}
 });
 
-test("reset increments handoffGeneration and clears compaction reservations", () => {
+const STAGED_HANDOFF: NonNullable<SchematicState["stagedHandoff"]> = {
+	handoffId: "handoff-1",
+	toolCallId: "call-1",
+	nextInstruction: "continue",
+	context: "",
+	discardPages: [],
+	phase: "staged",
+	declineReason: null,
+	discarded: 0,
+};
+
+test("a new state has no staged handoff and no refusals", () => {
 	const state = createState();
-	const initial = state.handoffGeneration;
-	state.handoffCompactionGeneration = 7;
-	setActiveNotebookTopic(state, "topic", "agent");
-	assert.equal(state.handoffGeneration, initial);
-	resetState(state);
-	assert.equal(state.handoffGeneration, initial + 1);
-	assert.equal(state.handoffCompactionGeneration, null);
-	resetState(state);
-	assert.equal(state.handoffGeneration, initial + 2);
+	assert.equal(state.stagedHandoff, null);
+	assert.equal(state.handoffRefusals.size, 0);
 });
 
-test("invalidateHandoffState clears branch-local compaction reservations", () => {
+test("reset clears a staged handoff and the refusals, keeping the refusal map identity", () => {
 	const state = createState();
-	state.handoffCompactionGeneration = 7;
+	const refusals = state.handoffRefusals;
+	state.stagedHandoff = { ...STAGED_HANDOFF };
+	refusals.set("call-2", "refused");
+	state.handoffFailedInRun = true;
+	resetState(state);
+	assert.equal(state.stagedHandoff, null);
+	assert.equal(state.handoffFailedInRun, false);
+	assert.equal(state.handoffRefusals.size, 0);
+	assert.equal(state.handoffRefusals, refusals);
+});
+
+test("a new requested handoff starts uncalled, uncounted and unnudged with the given instruction", () => {
+	assert.deepEqual(newRequestedHandoff("ship the release notes"), {
+		toolCalled: false,
+		enforcementAttempts: 0,
+		eligibleNudgeDelivered: false,
+		nextInstruction: "ship the release notes",
+	});
+});
+
+test("invalidateHandoffState clears the staged handoff, the refusals and the pending request", () => {
+	const state = createState();
+	const refusals = state.handoffRefusals;
+	state.stagedHandoff = { ...STAGED_HANDOFF };
+	refusals.set("call-2", "refused");
 	setActiveNotebookTopic(state, "topic", "agent");
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 1, eligibleNudgeDelivered: false, nextInstruction: null };
-	const initial = state.handoffGeneration;
+	state.handoffFailedInRun = true;
 	invalidateHandoffState(state);
-	assert.equal(state.handoffGeneration, initial + 1);
-	assert.equal(state.handoffCompactionGeneration, null);
+	assert.equal(state.stagedHandoff, null);
+	assert.equal(state.handoffFailedInRun, false);
+	assert.equal(state.handoffRefusals.size, 0);
+	assert.equal(state.handoffRefusals, refusals);
 	assert.equal(state.pendingRequestedHandoff, null);
 	assert.equal(state.pendingTopicBoundaryHint, null);
 });

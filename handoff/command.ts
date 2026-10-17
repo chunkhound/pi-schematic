@@ -3,17 +3,18 @@
  *
  * Stores the human direction as the successor's instruction, then asks the LLM to
  * prepare this context for the cut: curate the notebook and supply the remaining
- * situational context. The handoff tool performs the actual compaction.
+ * situational context. The handoff tool stages the cut; handoff/boundary.ts writes it
+ * at the end of the turn.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { HANDOFF_REQUESTED_STATUS, HANDOFF_REQUIRED_STATUS } from "./copy.js";
+import { HANDOFF_COMMAND_BUSY, HANDOFF_REQUESTED_STATUS, HANDOFF_REQUIRED_STATUS } from "./copy.js";
 import { isHandoffEligible } from "./eligibility.js";
 import {
 	READONLY_HANDOFF_EXCEPTION_NOTIFICATION,
 	buildReadonlyHandoffCommandNotice,
 } from "../notifications.js";
-import type { SchematicState } from "../state.js";
+import { newRequestedHandoff, type SchematicState } from "../state.js";
 import { STATUS_KEY_HANDOFF } from "../tui.js";
 
 export function registerHandoffCommand(pi: ExtensionAPI, state: SchematicState): void {
@@ -29,19 +30,8 @@ export function registerHandoffCommand(pi: ExtensionAPI, state: SchematicState):
 				return;
 			}
 
-			if (state.handoffCompactionGeneration !== null) {
-				throw new Error("Handoff compaction already in progress; wait for it to complete before requesting another handoff.");
-			}
-			// Invalidate queued work from an earlier request before replacing its intent.
-			state.handoffGeneration++;
-			state.pendingHandoff = null;
-			state.pendingHandoffDelivery = null;
-			state.pendingRequestedHandoff = {
-				toolCalled: false,
-				enforcementAttempts: 0,
-				eligibleNudgeDelivered: false,
-				nextInstruction: direction,
-			};
+			if (state.stagedHandoff) throw new Error(HANDOFF_COMMAND_BUSY);
+			state.pendingRequestedHandoff = newRequestedHandoff(direction);
 
 			if (ctx.hasUI && state.readonlyEnabled) {
 				ctx.ui.notify(

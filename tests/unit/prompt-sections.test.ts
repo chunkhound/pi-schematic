@@ -7,7 +7,7 @@ import { applyPromptSections, createPromptSectionRegistry } from "../../prompt-s
 import { modelGroupsPath } from "../../model-groups/store.js";
 import { createBeforeAgentStartEvent, createTestHost, emitBeforeAgentStart } from "./test-host.js";
 import { withTemp } from "./model-groups-helpers.js";
-import { makeTUICtx } from "./helpers.js";
+import { callHandlers, handoffToolResult, makeTUICtx, turnEndEvent } from "./helpers.js";
 
 // ── Registry ────────────────────────────────────────────────────────
 
@@ -235,19 +235,23 @@ test("re-renders the topic and notebook sections after a handoff completes", asy
 	assert.ok(beforeHandoff.systemPromptOptions.sections.schematic_topic?.includes("Current topic: `oauth`"));
 	assert.ok(beforeHandoff.systemPromptOptions.sections.schematic_notebook?.includes("  stale: obsolete finding"));
 
-	let compaction: { onComplete(): void } | undefined;
+	let branch: unknown[] = [];
+	const handoffCtx = {
+		getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
+		hasUI: false,
+		sessionManager: { getBranch: () => branch },
+	};
 	await pi.tools.get("handoff").execute(
 		"handoff",
 		{ nextInstruction: "continue without the stale page", discardPages: ["stale"] },
 		undefined,
 		undefined,
-		{
-			getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
-			hasUI: false,
-			compact: (options: { onComplete(): void }) => { compaction = options; },
-		},
+		handoffCtx,
 	);
-	compaction!.onComplete();
+	const results = await callHandlers(pi, "turn_end", turnEndEvent({ toolResults: [handoffToolResult("handoff")] }), handoffCtx);
+	const boundary = results.find((result) => result !== undefined) as { entries: Array<Record<string, unknown>> };
+	branch = boundary.entries.map((entry, index) => ({ ...entry, id: `entry-${index}` }));
+	await callHandlers(pi, "turn_start", { type: "turn_start", turnIndex: 1, timestamp: 0 }, handoffCtx);
 	const afterHandoff = createBeforeAgentStartEvent();
 	await handler(afterHandoff, ctx);
 

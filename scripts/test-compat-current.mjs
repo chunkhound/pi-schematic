@@ -45,6 +45,7 @@ async function main() {
       "tests/unit/model-groups-integration.test.ts",
       "tests/unit/module-evaluation-order.test.ts",
       "tests/unit/handoff.test.ts",
+      "tests/unit/handoff-boundary-session.test.ts",
       "tests/unit/notebook.test.ts",
       "tests/unit/prompt-sections.test.ts",
       "tests/unit/readonly-frontmatter.test.ts",

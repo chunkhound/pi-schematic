@@ -5,16 +5,16 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Text } from "@earendil-works/pi-tui";
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { CustomEntryDraft, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import { createState, resetState, invalidateHandoffState } from "../../state.js";
 import { registerNotebookRehydration, reconstructNotebook } from "../../notebook/rehydration.js";
-import { commitNotebookDiscard, formatByteCap, formatPagePreview, prepareNotebookDiscard, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
+import { buildNotebookDiscardDrafts, formatByteCap, formatPagePreview, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
 import { openInPager, resolvePager, spawnPager, __setPagerRuntimeForTests } from "../../notebook/pager.js";
 import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
 import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
-import { makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
+import { callHandlers, handoffToolResult, turnEndEvent, makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
 import { createBeforeAgentStartEvent, createTestHost } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
 
@@ -840,7 +840,7 @@ test("/notebook enter suspends the TUI, awaits the pager, then restores the TUI 
  * ctx.ui.custom stub: runs beforeEnter, then presses Enter on the first open.
  * Every later open is rendered into `reopens` and closed.
  */
-function enterOnFirstOpen(beforeEnter: () => void = () => {}) {
+function enterOnFirstOpen(beforeEnter: () => void | Promise<void> = () => {}) {
 	const reopens: string[] = [];
 	let opened = false;
 	const custom = async (build: any) => {
@@ -851,7 +851,7 @@ function enterOnFirstOpen(beforeEnter: () => void = () => {}) {
 			return undefined;
 		}
 		opened = true;
-		beforeEnter();
+		await beforeEnter();
 		overlay.handleInput("\r");
 		return result;
 	};
@@ -947,15 +947,21 @@ test("/notebook reopens the list when the selected page vanished while it was op
 
 	const pi = await createTestHost();
 	await pi.tools.get("notebook_write").execute("1", { name: "alpha", content: "body" }, undefined, undefined, makeTUICtx());
-	let compaction: any;
-	await pi.tools.get("handoff").execute("2", { nextInstruction: "continue", discardPages: ["alpha"] }, undefined, undefined, {
+	let branch: unknown[] = [];
+	const handoffCtx = {
 		...makeTUICtx(),
 		getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
-		compact: (options: any) => { compaction = options; },
-	});
+		sessionManager: { getBranch: () => branch },
+	};
+	await pi.tools.get("handoff").execute("2", { nextInstruction: "continue", discardPages: ["alpha"] }, undefined, undefined, handoffCtx);
+	const results = await callHandlers(pi, "turn_end", turnEndEvent({ toolResults: [handoffToolResult("2")] }), handoffCtx);
+	const boundary = results.find((result) => result !== undefined) as { entries: Array<Record<string, unknown>> };
+	branch = boundary.entries.map((entry, index) => ({ ...entry, id: `entry-${index}` }));
 
-	// The handoff's compaction finishes in the background and commits the discard while the list is open.
-	const { custom, reopens } = enterOnFirstOpen(() => compaction.onComplete());
+	// turn_start applies the discard after the list was built with alpha and before Enter selects it.
+	const { custom, reopens } = enterOnFirstOpen(async () => {
+		await callHandlers(pi, "turn_start", { type: "turn_start", turnIndex: 1, timestamp: 0 }, handoffCtx);
+	});
 	await pi.commands.get("notebook")!.handler("", makeTUICtx({ percent: 20, custom }));
 
 	assert.equal(reopens.length, 1, "list must reopen instead of closing");
@@ -1240,65 +1246,122 @@ test("notebook tool definitions omit prompt hints by default", async () => {
 	}
 });
 
-// ── Transactional handoff discard tests ───────────────────────────────
+// ── Handoff notebook discard drafts ───────────────────────────────────
 
-test("prepared discard remains invisible to a fresh active-branch rehydration", async () => {
+async function notebookWithPages(pages: Record<string, string>) {
 	const pi = await createTestHost();
 	const state = createState();
-	await saveNotebookPage(pi as any, state, "page-a", "content-a");
-	await saveNotebookPage(pi as any, state, "page-b", "content-b");
+	for (const [name, content] of Object.entries(pages)) {
+		await saveNotebookPage(pi as any, state, name, content);
+	}
+	return { pi, state };
+}
 
-	const deleted = await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
-	const restored = await rehydratePersistedNotebook(pi);
+function branchWith(pi: TestPI, drafts: readonly CustomEntryDraft[]): any[] {
+	return [
+		...persistedBranch(pi),
+		...drafts.map(({ customType, data }) => ({ type: "custom", customType, data })),
+	];
+}
 
-	assert.deepEqual(deleted, ["page-a"]);
+function restoredFrom(branch: any[]) {
+	const restored = createState();
+	reconstructNotebook(restored, branch);
+	return restored;
+}
+
+test("buildNotebookDiscardDrafts leaves the state untouched", async () => {
+	const { state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
+	const pagesBefore = Array.from(state.notebookPages.entries());
+
+	buildNotebookDiscardDrafts(state, ["page-a"]);
+
+	assert.deepEqual(Array.from(state.notebookPages.entries()), pagesBefore);
 	assert.equal(state.epoch, 1);
-	assert.deepEqual(Array.from(restored.notebookPages.entries()).sort(), [
-		["page-a", "content-a"], ["page-b", "content-b"],
-	]);
-	assert.equal(restored.epoch, 1);
+	assert.equal(state.discardEpochWatermark, 0);
 });
 
-test("committed discard advances the active generation and persists survivors", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	await saveNotebookPage(pi as any, state, "page-a", "content-a");
-	await saveNotebookPage(pi as any, state, "page-b", "content-b");
+test("buildNotebookDiscardDrafts closes the current generation, stages survivors and opens the next generation", async () => {
+	const { state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b", "page-c": "content-c" });
 
-	await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
-	commitNotebookDiscard(pi as any, state, 1);
-	const restored = await rehydratePersistedNotebook(pi);
+	const { drafts, discarded } = buildNotebookDiscardDrafts(state, ["page-b"]);
 
-	assert.equal(state.epoch, 2);
-	assert.deepEqual(Array.from(state.notebookPages.entries()), [["page-b", "content-b"]]);
+	assert.equal(discarded, 1);
+	assert.deepEqual(drafts, [
+		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
+		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 2, name: "page-a", content: "content-a", clipped: false } },
+		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 2, name: "page-c", content: "content-c", clipped: false } },
+		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 2 } },
+	]);
+});
+
+test("buildNotebookDiscardDrafts keeps a survivor's clipped flag", async () => {
+	const { state } = await notebookWithPages({ drop: C, keep: L(2001) });
+
+	const { drafts } = buildNotebookDiscardDrafts(state, ["drop"]);
+
+	const survivor = drafts.find((draft) => draft.customType === "notebook-entry")!;
+	assert.deepEqual(survivor.data, { version: 1, epoch: 2, name: "keep", content: L(2000), clipped: true });
+});
+
+test("buildNotebookDiscardDrafts moves past the discard watermark", async () => {
+	const { state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
+	state.discardEpochWatermark = 4;
+
+	const { drafts } = buildNotebookDiscardDrafts(state, ["page-a"]);
+
+	assert.deepEqual(drafts.map((draft) => (draft.data as { epoch: number }).epoch), [1, 5, 5]);
+});
+
+test("buildNotebookDiscardDrafts ignores unknown and repeated names", async () => {
+	const { state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
+
+	const result = buildNotebookDiscardDrafts(state, ["page-a", "ghost", "page-a"]);
+
+	assert.equal(result.discarded, 1);
+	assert.deepEqual(result, buildNotebookDiscardDrafts(state, ["page-a"]));
+});
+
+test("buildNotebookDiscardDrafts writes nothing when no named page exists", async () => {
+	const { state } = await notebookWithPages({ "page-a": "content-a" });
+
+	assert.deepEqual(buildNotebookDiscardDrafts(state, ["ghost"]), { drafts: [], discarded: 0 });
+	assert.deepEqual(buildNotebookDiscardDrafts(state, []), { drafts: [], discarded: 0 });
+});
+
+test("discard drafts written to a branch make the survivors the active generation", async () => {
+	const { pi, state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
+	const { drafts } = buildNotebookDiscardDrafts(state, ["page-a"]);
+
+	const restored = restoredFrom(branchWith(pi, drafts));
+
 	assert.deepEqual(Array.from(restored.notebookPages.entries()), [["page-b", "content-b"]]);
-	assert.deepEqual(pi.appendedEntries.filter((entry) => entry.customType === "notebook-generation").map((entry) => entry.data), [
-		{ version: 1, epoch: 1 }, { version: 1, epoch: 2 },
-	]);
+	assert.equal(restored.epoch, 2);
+	assert.equal(restored.discardEpochWatermark, 2);
 });
 
-test("partial survivor staging failure rehydrates the prior committed generation", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	await saveNotebookPage(pi as any, state, "page-a", "content-a");
-	await saveNotebookPage(pi as any, state, "page-b", "content-b");
-	await saveNotebookPage(pi as any, state, "page-c", "content-c");
-	let calls = 0;
-	const throwingPi = {
-		...pi as any,
-		appendEntry: (...args: any[]) => {
-			if (++calls > 2) throw new Error("persist failed");
-			(pi as any).appendEntry(...args);
-		},
-	};
+test("discarding every page leaves an empty next generation", async () => {
+	const { pi, state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
+	const { drafts, discarded } = buildNotebookDiscardDrafts(state, ["page-a", "page-b"]);
 
-	await assert.rejects(() => prepareNotebookDiscard(throwingPi, state, 1, ["page-a"]), /persist failed/);
-	const restored = await rehydratePersistedNotebook(pi);
+	const restored = restoredFrom(branchWith(pi, drafts));
+
+	assert.equal(discarded, 2);
+	assert.deepEqual(Array.from(restored.notebookPages.entries()), []);
+	assert.equal(restored.epoch, 2);
+});
+
+test("survivors staged without their closing generation marker stay invisible to rehydration", async () => {
+	const { pi, state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b", "page-c": "content-c" });
+	const { drafts } = buildNotebookDiscardDrafts(state, ["page-a"]);
+
+	const restored = restoredFrom(branchWith(pi, drafts.slice(0, -1)));
 
 	assert.deepEqual(Array.from(restored.notebookPages.entries()).sort(), [
 		["page-a", "content-a"], ["page-b", "content-b"], ["page-c", "content-c"],
 	]);
 	assert.equal(restored.epoch, 1);
+	assert.equal(restored.discardEpochWatermark, 2);
 });
 
 test("rehydration uses only the active session branch", async () => {
@@ -1314,107 +1377,32 @@ test("rehydration uses only the active session branch", async () => {
 	assert.deepEqual(Array.from(state.notebookPages.entries()), [["active", "kept"]]);
 });
 
-test("failed discard retry with same set uses fresh epoch and does not resurrect orphaned survivors", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	await saveNotebookPage(pi as any, state, "page-a", "content-a");
-	await saveNotebookPage(pi as any, state, "page-b", "content-b");
-	await saveNotebookPage(pi as any, state, "page-c", "content-c");
+test("a discard after orphaned staged survivors uses a fresh epoch and does not resurrect them", async () => {
+	const { pi, state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b", "page-c": "content-c" });
+	// An earlier pass discarding page-b staged survivors at epoch 2 and never closed that generation.
+	const orphanDrafts = buildNotebookDiscardDrafts(state, ["page-b"]).drafts.slice(0, -1);
 
-	// First attempt: prepare + simulate failure (don't commit)
-	const deleted1 = await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
-	assert.deepEqual(deleted1, ["page-a"]);
-	assert.equal(state.discardEpochWatermark, 2);
+	const restarted = restoredFrom(branchWith(pi, orphanDrafts));
+	const retry = buildNotebookDiscardDrafts(restarted, ["page-a"]);
+	const restored = restoredFrom(branchWith(pi, [...orphanDrafts, ...retry.drafts]));
 
-	// Simulate failed handoff — clear pending discard but watermark remains
-	state.pendingNotebookDiscard = null;
-
-	// Retry with same discard set
-	const deleted2 = await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
-	assert.deepEqual(deleted2, ["page-a"]);
-	assert.equal(state.discardEpochWatermark, 3, "retry must use a higher epoch");
-
-	// Commit the retry
-	commitNotebookDiscard(pi as any, state, 1);
-	assert.equal(state.epoch, 3);
-
-	// Rehydrate: only the retry survivors at epoch 3 should appear
-	const restored = await rehydratePersistedNotebook(pi);
+	assert.deepEqual(retry.drafts.map((draft) => (draft.data as { epoch: number }).epoch), [1, 3, 3, 3]);
 	assert.deepEqual(Array.from(restored.notebookPages.entries()).sort(), [
 		["page-b", "content-b"], ["page-c", "content-c"],
 	]);
 	assert.equal(restored.epoch, 3);
 });
 
-test("failed discard retry with different set uses fresh epoch", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	await saveNotebookPage(pi as any, state, "page-a", "content-a");
-	await saveNotebookPage(pi as any, state, "page-b", "content-b");
-	await saveNotebookPage(pi as any, state, "page-c", "content-c");
-
-	// First attempt: discard page-a
-	await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
-	assert.equal(state.discardEpochWatermark, 2);
-	state.pendingNotebookDiscard = null; // simulate failure
-
-	// Retry with different set: discard page-b
-	await prepareNotebookDiscard(pi as any, state, 1, ["page-b"]);
-	assert.equal(state.discardEpochWatermark, 3, "retry must use a higher epoch");
-
-	commitNotebookDiscard(pi as any, state, 1);
-	assert.equal(state.epoch, 3);
-
-	const restored = await rehydratePersistedNotebook(pi);
-	assert.deepEqual(Array.from(restored.notebookPages.entries()).sort(), [
-		["page-a", "content-a"], ["page-c", "content-c"],
-	]);
-	assert.equal(restored.epoch, 3);
-});
-
-test("failed discard retry with all-pages discard uses fresh epoch", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	await saveNotebookPage(pi as any, state, "page-a", "content-a");
-	await saveNotebookPage(pi as any, state, "page-b", "content-b");
-
-	// First attempt: discard page-a
-	await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
-	state.pendingNotebookDiscard = null; // simulate failure
-
-	// Retry: discard everything
-	await prepareNotebookDiscard(pi as any, state, 1, ["page-a", "page-b"]);
-	assert.equal(state.discardEpochWatermark, 3);
-
-	commitNotebookDiscard(pi as any, state, 1);
-	assert.equal(state.epoch, 3);
-
-	const restored = await rehydratePersistedNotebook(pi);
-	assert.deepEqual(Array.from(restored.notebookPages.entries()), []);
-	assert.equal(restored.epoch, 3);
-});
-
 test("branch invalidation preserves the discard watermark until reconstruction derives a fresh one", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	await saveNotebookPage(pi as any, state, "page-a", "content-a");
-	await saveNotebookPage(pi as any, state, "page-b", "content-b");
-
-	// Advance watermark via failed discard
-	await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
+	const { pi, state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
+	const orphan = branchWith(pi, buildNotebookDiscardDrafts(state, ["page-a"]).drafts.slice(0, -1));
+	reconstructNotebook(state, orphan);
 	assert.equal(state.discardEpochWatermark, 2);
-	state.pendingNotebookDiscard = null; // simulate failure
 
 	// Branch switch must not prematurely drop the watermark: a retry that reuses
 	// the staged epoch would resurrect orphaned survivors.
 	invalidateHandoffState(state);
 	assert.equal(state.discardEpochWatermark, 2, "invalidation alone must not reset the watermark");
-
-	// Reconstruction on the newly active branch derives the watermark from the
-	// branch itself — staged survivor epochs included (restart-safe).
-	reconstructNotebook(state, persistedBranch(pi) as any);
-	assert.equal(state.epoch, 1, "state.epoch stays the committed epoch");
-	assert.equal(state.discardEpochWatermark, 2);
 
 	// A fresh branch with no staged survivors resets the derived watermark.
 	reconstructNotebook(state, []);
@@ -1423,53 +1411,13 @@ test("branch invalidation preserves the discard watermark until reconstruction d
 });
 
 test("resetState clears the discard watermark for a fresh session", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	await saveNotebookPage(pi as any, state, "page-a", "content-a");
-	await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
+	const { pi, state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
+	reconstructNotebook(state, branchWith(pi, buildNotebookDiscardDrafts(state, ["page-a"]).drafts.slice(0, -1)));
 	assert.equal(state.discardEpochWatermark, 2);
 
 	resetState(state);
 	assert.equal(state.discardEpochWatermark, 0, "/new must reset the watermark with the session");
 	assert.equal(state.epoch, 0);
-});
-
-test("restart after a failed discard derives the watermark from observed epochs and cannot resurrect orphaned survivors", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	await saveNotebookPage(pi as any, state, "page-a", "content-a");
-	await saveNotebookPage(pi as any, state, "page-b", "content-b");
-	await saveNotebookPage(pi as any, state, "page-c", "content-c");
-
-	// Failed attempt: survivors staged at epoch 2, never committed.
-	await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
-	state.pendingNotebookDiscard = null; // failure path clears pending discard only
-
-	// Restart: a fresh process state rehydrates from the persisted branch. The
-	// watermark must come from the branch itself, not from lost memory.
-	const restarted = createState();
-	const restartedPi = await createTestHost((api) => registerNotebookRehydration(api, restarted));
-	const [handler] = restartedPi.handlers.get("session_start")!;
-	await handler({}, { sessionManager: { getBranch: () => persistedBranch(pi) } });
-
-	assert.equal(restarted.epoch, 1, "state.epoch stays the committed epoch after restart");
-	assert.equal(restarted.discardEpochWatermark, 2, "watermark derived from the staged survivor epoch");
-	assert.deepEqual(Array.from(restarted.notebookPages.entries()).sort(), [
-		["page-a", "content-a"], ["page-b", "content-b"], ["page-c", "content-c"],
-	], "staged survivors remain invisible until committed");
-
-	// Retry on the restarted process must not reuse the staged epoch 2.
-	const deleted = await prepareNotebookDiscard(restartedPi as any, restarted, 1, ["page-a"]);
-	assert.deepEqual(deleted, ["page-a"]);
-	assert.equal(restarted.discardEpochWatermark, 3, "retry must skip the previously staged epoch");
-	commitNotebookDiscard(restartedPi as any, restarted, 1);
-	assert.equal(restarted.epoch, 3);
-
-	const final = await rehydratePersistedNotebook(restartedPi);
-	assert.deepEqual(Array.from(final.notebookPages.entries()).sort(), [
-		["page-b", "content-b"], ["page-c", "content-c"],
-	], "orphaned epoch-2 survivors must not resurrect");
-	assert.equal(final.epoch, 3);
 });
 
 test("session_tree rehydrates notebook state branch-scoped: pages and epoch follow the branch, writes use B state", async () => {
@@ -1785,22 +1733,10 @@ test("legacy page entries without clipped read as false", async () => {
 });
 
 test("discard survivor retains its durable clipped flag", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	await saveNotebookPage(pi as any, state, "drop", C);
-	await saveNotebookPage(pi as any, state, "keep", L(2001));
+	const { pi, state } = await notebookWithPages({ drop: C, keep: L(2001) });
 
-	await prepareNotebookDiscard(pi as any, state, 1, ["drop"]);
-	const staged = pi.appendedEntries.find((entry) => entry.customType === "notebook-entry" && entry.data.name === "keep" && entry.data.epoch === 2)!;
-	assert.deepEqual(staged.data, { version: 1, epoch: 2, name: "keep", content: L(2000), clipped: true });
+	const restored = restoredFrom(branchWith(pi, buildNotebookDiscardDrafts(state, ["drop"]).drafts));
 
-	commitNotebookDiscard(pi as any, state, 1);
-	assert.equal(state.notebookPages.get("keep"), L(2000));
-	assert.deepEqual(pi.appendedEntries.filter((entry) => entry.customType === "notebook-generation").map((entry) => entry.data), [
-		{ version: 1, epoch: 1 }, { version: 1, epoch: 2 },
-	]);
-
-	const restored = await rehydratePersistedNotebook(pi);
 	assert.equal(restored.notebookPages.get("keep"), L(2000));
 	const restoredPi = await createTestHost();
 	const [, restoredRead] = createNotebookToolDefinitions(restoredPi as any, restored);
