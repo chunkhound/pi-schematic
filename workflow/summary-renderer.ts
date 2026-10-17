@@ -22,6 +22,15 @@ export const DETAIL_LABELS: Partial<Record<WorkflowHandleName, string>> = {
 	new: "new",
 };
 
+/** Handles whose counts are already on the headline row: run=steps, classify, checkpoint. */
+export const HEADLINE_HANDLES = ["run", "classify", "checkpoint"] as const satisfies readonly WorkflowHandleName[];
+/** Every handle the overview reports. A new counted handle must join one side; the test
+ * pins this union so a new handle cannot disappear from both rows silently. */
+export const COUNTED_HANDLES: readonly WorkflowHandleName[] = [
+	...HEADLINE_HANDLES,
+	...(Object.keys(DETAIL_LABELS) as WorkflowHandleName[]),
+];
+
 /** Map a free-form or reserved exit reason to a semantic tone. Reserved aborts stand out. */
 export function reasonTone(reason: string): "error" | "warning" | "accent" {
 	if (reason === "error") return "error";

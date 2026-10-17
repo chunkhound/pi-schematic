@@ -6,7 +6,7 @@ import test from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { UNATTRIBUTED_MODEL } from "../../usage.js";
 import type { ModelSpend } from "../../usage.js";
-import { renderWorkflowSummary, reasonTone, MAX_MODELS_COLLAPSED, DETAIL_LABELS } from "../../workflow/summary-renderer.js";
+import { renderWorkflowSummary, reasonTone, MAX_MODELS_COLLAPSED, DETAIL_LABELS, HEADLINE_HANDLES, COUNTED_HANDLES } from "../../workflow/summary-renderer.js";
 import type { WorkflowRunSummaryData } from "../../workflow/summary.js";
 import type { WorkflowHandleName } from "../../workflow/types.js";
 
@@ -100,6 +100,11 @@ test("DETAIL_LABELS maps only counted handles that appear in the detail ledger",
 	for (const name of ["run", "checkpoint", "exit", "classify", "budget", "state", "notebookIndex", "notebookRead", "notebookTopic"] as WorkflowHandleName[]) {
 		assert.equal(DETAIL_LABELS[name as keyof typeof DETAIL_LABELS], undefined, `${name} is not a detail label`);
 	}
+});
+
+test("COUNTED_HANDLES is exactly the headline plus detail sets", () => {
+	const covered = new Set<WorkflowHandleName>([...HEADLINE_HANDLES, ...(Object.keys(DETAIL_LABELS) as WorkflowHandleName[])]);
+	assert.deepEqual([...covered].sort(), [...COUNTED_HANDLES].sort());
 });
 
 test("collapsed rendering truncates models to MAX_MODELS_COLLAPSED and shows a more line", () => {
