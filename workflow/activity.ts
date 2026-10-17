@@ -133,6 +133,9 @@ export function createShellActivity(deps: ShellActivityDeps): ShellActivity {
 		}
 		// end: finish the component, then persist the audit row (LLM-invisible).
 		flush(event.effect.output ?? "");
+		// Advisory visibility: append before any UI paint, so a throwing render cannot
+		// drop the mandatory audit row. A failed append never aborts the shell effect.
+		safeAppendEntry(deps.getPi(), WORKFLOW_SHELL_ENTRY_TYPE, { ...event.effect, output: boundedOutput(event.effect.output) });
 		component?.setComplete(
 			event.effect.exitCode ?? (event.effect.ok ? 0 : 1),
 			Boolean(event.effect.killed),
@@ -142,8 +145,6 @@ export function createShellActivity(deps: ShellActivityDeps): ShellActivity {
 			event.effect.fullOutputPath,
 		);
 		tui?.requestRender();
-		// Advisory visibility: a failed append must never abort the workflow's shell effect.
-		safeAppendEntry(deps.getPi(), WORKFLOW_SHELL_ENTRY_TYPE, { ...event.effect, output: boundedOutput(event.effect.output) });
 	};
 
 	const dispose = (): void => {
