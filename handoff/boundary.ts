@@ -199,7 +199,8 @@ function failStagedHandoff(
  * Fail a handoff whose cut landed without its successor in context. The context
  * is already cut, so the request is settled as after a completed cut and not
  * retried; the failure message carries the instruction. At turn_start the run is
- * aborted, so the continuation turn never reaches the model without an instruction.
+ * aborted, so the continuation turn never reaches the model without an instruction,
+ * and a pending readonly nudge is re-armed when the run settles.
  */
 function failLostSuccessor(
 	pi: ExtensionAPI,
@@ -218,7 +219,10 @@ function failLostSuccessor(
 		{ customType: HANDOFF_FAILED_CUSTOM_TYPE, content: formatLostSuccessorFailure(REASON_SUCCESSOR_NOT_PERSISTED, successor), display: true },
 		{ triggerTurn: false },
 	);
-	if (at === "turn_start") ctx.abort();
+	if (at === "turn_start") {
+		state.readonlyNudgeRearmAtSettle = state.readonlyNudgePending;
+		ctx.abort();
+	}
 	if (!ctx.hasUI) return;
 	ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
 	ctx.ui.notify(`Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}. The instruction is in the failure message.`, "error");
@@ -326,5 +330,9 @@ export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState)
 	pi.on("agent_settled", async (_event, ctx) => {
 		resolveStagedHandoff(pi, state, ctx, "agent_settled");
 		state.handoffFailedInRun = false;
+		if (state.readonlyNudgeRearmAtSettle) {
+			state.readonlyNudgeRearmAtSettle = false;
+			state.readonlyNudgePending = true;
+		}
 	});
 }

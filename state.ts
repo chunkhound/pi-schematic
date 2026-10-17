@@ -130,6 +130,13 @@ export interface SchematicState {
 	/** One-shot flag: deliver a readonly ON or OFF nudge via context hook, then clear. */
 	readonlyNudgePending: boolean;
 
+	/**
+	 * Re-arm `readonlyNudgePending` when the run settles. Set when a handoff that
+	 * lost its successor aborts the run at turn_start: the aborted turn still runs
+	 * the context hook, which spends the nudge on a request that is never sent.
+	 */
+	readonlyNudgeRearmAtSettle: boolean;
+
 	/** Session-owned frontmatter cache for loaded skills. */
 	frontmatterSkillCache: Map<string, FrontmatterEntry>;
 
@@ -191,6 +198,7 @@ export function createState(): SchematicState {
 		childAbortPromises: new WeakMap(),
 		readonlyEnabled: false,
 		readonlyNudgePending: false,
+		readonlyNudgeRearmAtSettle: false,
 		frontmatterSkillCache,
 		frontmatterPromptCache,
 		frontmatterSkillIssues,
@@ -246,6 +254,7 @@ export function invalidateHandoffState(state: SchematicState): void {
 	state.stagedHandoff = null;
 	state.handoffRefusals.clear();
 	state.handoffFailedInRun = false;
+	state.readonlyNudgeRearmAtSettle = false;
 	// The discard watermark is deliberately NOT reset here. A branch change is
 	// immediately followed by reconstruction, which derives the watermark from
 	// the newly active branch (staged survivor epochs included). Resetting early

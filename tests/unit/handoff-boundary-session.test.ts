@@ -779,6 +779,46 @@ describe("failed handoff cut in a real agent session", () => {
 		});
 	}
 
+	it("fails the handoff at settle without an abort and clears the request when a later extension drops the successor and stops the continuation", async () => {
+		const dropSuccessorAndStop: ExtensionFactory = (pi) => {
+			pi.on("turn_end", async (event) => (event.entries.length > 0
+				? { entries: lostSuccessorVariants[0].tamper(event.entries), continue: false }
+				: undefined));
+		};
+		const ui: string[] = [];
+		const { session, sessionManager, observed } = await startSession(
+			[reply("ready"), call(handoffCall()), reply("next prompt answer")],
+			{ after: [dropSuccessorAndStop], ui: recordingUI(ui) },
+		);
+		let requestsAfterHandoffRun: number;
+		try {
+			await session.prompt(LARGE_PROMPT);
+			await session.prompt("/handoff finish the report");
+			await settleRuns(session, observed, 2);
+			requestsAfterHandoffRun = observed.requests.length;
+			await session.prompt("continue");
+			await settleRuns(session, observed, 3);
+		} finally {
+			session.dispose();
+		}
+
+		assert.equal(requestsAfterHandoffRun, 2, "the stopped continuation made no request");
+		const abortedReplies = sessionManager.getBranch().filter((entry) =>
+			entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason === "aborted");
+		assert.deepEqual(abortedReplies, [], "nothing was aborted");
+		const failures = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE);
+		assert.equal(failures.length, 1);
+		const [failure] = failures;
+		assert.ok(failure.type === "custom_message");
+		const lostSuccessor = buildNextUserMessage({ nextInstruction: "finish the report", context: HANDOFF_CONTEXT });
+		assert.equal(failure.content, formatLostSuccessorFailure(REASON_SUCCESSOR_NOT_PERSISTED, lostSuccessor), "the failure carries the instruction");
+		assert.ok(ui.includes(`notify:error:Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}. The instruction is in the failure message.`), JSON.stringify(ui));
+		assert.ok(!ui.some((line) => line.startsWith("notify:info:Handoff complete")), "no completion notice");
+		assert.ok(!ui.includes(`notify:warning:${HANDOFF_SUCCESSOR_NOT_RUN}`), "no successor-not-run warning");
+		assert.ok(!carriesRequiredNudge(observed.requests[2]), "the request was cleared, so the next prompt is not enforced");
+		assert.deepEqual(observed.extensionErrors, []);
+	});
+
 	it("writes no cut, persists the abort failure and starts no new run when the run is aborted", async () => {
 		const abortOnHandoffResult: ExtensionFactory = (pi) => {
 			pi.on("turn_end", async (event, ctx) => {

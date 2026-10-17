@@ -447,6 +447,19 @@ describe("pi-schematic real-host E2E", () => {
 		}));
 	}
 
+	it("readonly is re-announced in the run after a handoff whose successor was dropped", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+		await host.command("/readonly");
+		await host.say("start", 1);
+		await host.command("/" + PROBE_COMMAND.dropNextSuccessor);
+		await handoffCommand(host, "continue readonly work", { context: "mid-task state" }, 1);
+		await host.turn("/" + PROBE_COMMAND.turn, 1);
+
+		const cut = onlyHandoffCut((await host.entries()).entries);
+		const laterRequests = requestsAfterCut(host.probeLog(), cutHandoffId(cut)!);
+		assert.ok(laterRequests.length > 0, "the later run calls the model");
+		assert.ok(laterRequests.some((record) => containsText(record, READONLY_ACTIVE_SUMMARY)), "readonly is re-announced after the failed handoff");
+	}));
+
 	it("a handoff aborted before its cut persists the failure without starting a run", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
 		await host.command("/" + PROBE_COMMAND.abortAfterHandoff);
 		await handoff(host, { nextInstruction: "work after the abort" }, 1);
