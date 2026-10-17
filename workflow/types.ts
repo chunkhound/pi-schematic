@@ -293,6 +293,30 @@ export type WorkflowHandleName =
 	| "checkpoint"
 	| "exit";
 
+/** Runtime form of the handle union: the compiler validates every `workflow.<member>`
+ * against it, and HANDLE_POLICY stays exhaustive over the union. */
+export const WORKFLOW_HANDLE_NAMES = [
+	"run",
+	"handoff",
+	"classify",
+	"shell",
+	"state",
+	"entries",
+	"notebookIndex",
+	"notebookRead",
+	"notebookWrite",
+	"notebookTopic",
+	"budget",
+	"readonly",
+	"new",
+	"checkpoint",
+	"exit",
+] as const satisfies readonly WorkflowHandleName[];
+// Compile guard: a new WorkflowHandleName member without a WORKFLOW_HANDLE_NAMES entry fails here.
+type WorkflowHandleNamesExhaustive = Exclude<WorkflowHandleName, (typeof WORKFLOW_HANDLE_NAMES)[number]> extends never ? true : never;
+const WORKFLOW_HANDLE_NAMES_EXHAUSTIVE: WorkflowHandleNamesExhaustive = true;
+void WORKFLOW_HANDLE_NAMES_EXHAUSTIVE;
+
 /** Live progress of one workflow run, read by the command's status ticker. */
 export interface WorkflowProgress {
 	/** `workflow.checkpoint` calls that passed; the human-readable progress marker. */

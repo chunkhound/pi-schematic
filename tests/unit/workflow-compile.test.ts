@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fc from "fast-check";
 import { compileWorkflow, WorkflowCompileError } from "../../workflow/compile.js";
 import { WORKFLOW_DRIVER, composeWorkflow } from "../../workflow/driver.js";
+import { WORKFLOW_HANDLE_NAMES } from "../../workflow/types.js";
 
 // ── helpers ───────────────────────────────────────────────────────
 
@@ -33,9 +34,9 @@ const STATEMENT_BUILDERS: Array<(i: number) => string> = [
 	() => `workflow.handoff("d");`,
 	() => `if (workflow.state()) { workflow.run("y"); }`,
 	() => `for (const e of workflow.entries()) { workflow.run(e); }`,
-	(i) => `const v${i} = workflow.a() ? workflow.b() : workflow.c();`,
+	(i) => `const v${i} = workflow.state() ? workflow.budget() : workflow.state();`,
 	() => `try { workflow.run("t"); } catch (err) { workflow.run("c"); } finally { workflow.run("f"); }`,
-	(i) => `const v${i} = workflow.outer(workflow.inner(${i}));`,
+	(i) => `const v${i} = workflow.run(workflow.state());`,
 	(i) => `switch (workflow.state()) { case ${i}: workflow.run("a"); break; default: workflow.run("b"); }`,
 	() => `while (workflow.budget()) { break; }`,
 	() => `do { workflow.run("d"); } while (false);`,
@@ -160,31 +161,41 @@ test("rejects a bare workflow(...) expression statement (docs/workflows.md File 
 });
 
 test("wraps computed string keys and optional chains", () => {
-	const source = 'return defineWorkflow((workflow) => {\n  workflow["a"]();\n  workflow?.b();\n  workflow.c?.();\n  workflow.checkpoint(null);\n});\n';
+	const source = 'return defineWorkflow((workflow) => {\n  workflow["state"]();\n  workflow?.budget();\n  workflow.run?.();\n  workflow.checkpoint(null);\n});\n';
 	assert.equal(
 		compileWorkflow(source).code,
-		'return defineWorkflow(async (workflow) => {\n  ;(await workflow["a"]());\n  ;(await workflow?.b());\n  ;(await workflow.c?.());\n  ;(await workflow.checkpoint(null));\n});\n',
+		'return defineWorkflow(async (workflow) => {\n  ;(await workflow["state"]());\n  ;(await workflow?.budget());\n  ;(await workflow.run?.());\n  ;(await workflow.checkpoint(null));\n});\n',
 	);
 });
 
 test("wraps workflow calls in workflow heads, tests, updates, and iterables", () => {
 	const source = [
 		"return defineWorkflow((workflow) => {",
-		"  for (let i = workflow.start(); i < workflow.limit(); i = workflow.step(i)) {}",
-		"  for (const x of workflow.items()) {}",
-		"  while (workflow.more()) {}",
-		"  switch (workflow.tag()) { case workflow.case1(): break; }",
+		"  for (let i = workflow.state(); i < workflow.budget(); i = workflow.shell(i)) {}",
+		"  for (const x of workflow.entries()) {}",
+		"  while (workflow.state()) {}",
+		"  switch (workflow.state()) { case workflow.budget(): break; }",
 		"  workflow.checkpoint(null);",
 		"});",
 		"",
 	].join("\n");
 	const out = compileWorkflow(source).code;
-	assert.ok(out.includes("for (let i = (await workflow.start()); i < (await workflow.limit()); i = (await workflow.step(i))) {}"));
-	assert.ok(out.includes("for (const x of (await workflow.items())) {}"));
-	assert.ok(out.includes("while ((await workflow.more())) {}"));
-	assert.ok(out.includes("switch ((await workflow.tag())) { case (await workflow.case1()): break; }"));
+	assert.ok(out.includes("for (let i = (await workflow.state()); i < (await workflow.budget()); i = (await workflow.shell(i))) {}"));
+	assert.ok(out.includes("for (const x of (await workflow.entries())) {}"));
+	assert.ok(out.includes("while ((await workflow.state())) {}"));
+	assert.ok(out.includes("switch ((await workflow.state())) { case (await workflow.budget()): break; }"));
 	assert.ok(out.includes("(await workflow.checkpoint(null));"));
 	assert.equal(countNewlines(out), countNewlines(source));
+});
+
+test("rejects unknown workflow members before execution", () => {
+	rejects(wrapBody('workflow.nope("x");'), /unknown workflow member "nope"/);
+});
+
+test("accepts every declared handle name", () => {
+	for (const name of WORKFLOW_HANDLE_NAMES) {
+		assert.doesNotThrow(() => compileWorkflow(wrapBody(`workflow.${name}();`)), `handle ${name} must compile`);
+	}
 });
 
 test("error message carries the line and column of the violation", () => {

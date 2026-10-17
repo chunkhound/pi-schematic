@@ -6,6 +6,7 @@
 import { parse } from "acorn";
 import * as walk from "acorn-walk";
 import MagicString from "magic-string";
+import { WORKFLOW_HANDLE_NAMES } from "./types.js";
 
 /** Every workflow contract violation surfaces here. The message carries `line:column`. */
 export class WorkflowCompileError extends Error {
@@ -147,6 +148,12 @@ function checkNode(node: Ast, ancestors: Ast[], lambda: Ast, allowedParam: Ast):
 	if (inForbiddenContext(ancestors)) fail(node, "workflow is not allowed inside a nested scope");
 	if (isNonReference(node, ancestors[ancestors.length - 2])) return;
 	if (!isWorkflowCalleeObject(node, ancestors)) fail(node, "workflow must be called directly as workflow.<member>(...)");
+	// Validate the handle name here: an unknown member must fail before the run spends
+	// any effect, not as an internal sandbox error mid-run.
+	const member = ancestors[ancestors.length - 2];
+	const key = staticMemberKey(member.property, member.computed);
+	if (key === null || !(WORKFLOW_HANDLE_NAMES as readonly string[]).includes(key))
+		fail(node, `unknown workflow member "${key ?? "<computed>"}"`);
 }
 
 function validateLambda(lambda: Ast, allowedParam: Ast): void {

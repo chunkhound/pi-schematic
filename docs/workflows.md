@@ -108,7 +108,7 @@ The whole file MUST be exactly one top-level `return defineWorkflow(<arrow>)` st
 
 The workflow sees one namespace, `workflow`. Every member is a function. A snapshot is a call: `const b = workflow.budget();`.
 
-Handles are **two-level only**. A global name has at most one dot. Any `workflow.<member>` form is valid; a deeper name such as `workflow.notebook.read` is invalid. A signature shown as `→ void` resolves to `null` across the JSON round trip. The surface is 15 handles with `WorkflowHandleName` in `workflow/types.ts` as the single source; the run-scoped `workflow_output` tool (`workflow/output.ts`) is not a handle.
+Handles are **two-level only**. A global name has at most one dot. A `workflow.<member>` form is valid only for a declared handle; an unknown member is a compile error. A deeper name such as `workflow.notebook.read` is invalid. A signature shown as `→ void` resolves to `null` across the JSON round trip. The surface is 15 handles with `WorkflowHandleName` in `workflow/types.ts` as the single source; the run-scoped `workflow_output` tool (`workflow/output.ts`) is not a handle.
 
 | Handle | Signature | Contract |
 |---|---|---|

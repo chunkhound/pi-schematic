@@ -148,13 +148,13 @@ test("a returned workflow runs every effect through the wrapper; a bare statemen
 	let calls = 0;
 	const sandbox = createWorkflowSandbox({
 		globals: [
-			{ name: "workflow.echo", spread: true, execute: async () => { calls += 1; return "ok"; } },
+			{ name: "workflow.run", spread: true, execute: async () => { calls += 1; return "ok"; } },
 			{ name: "workflow.checkpoint", spread: false, execute: async () => null },
 		],
 		timeoutMs: 30_000,
 		memoryLimitBytes: 256 * 1024 * 1024,
 	});
-	const source = 'return defineWorkflow((workflow) => {\n  workflow.echo("a");\n  workflow.echo("b");\n  workflow.checkpoint(null);\n});\n';
+	const source = 'return defineWorkflow((workflow) => {\n  workflow.run("a");\n  workflow.run("b");\n  workflow.checkpoint(null);\n});\n';
 	const result = await sandbox.execute(composeWorkflow(compileWorkflow(source).code), { store: { intent: "x", args: "x" } });
 	await sandbox.close();
 	assert.equal(result.ok, true, "a returned workflow settles the wrapper only after the workflow completes");
