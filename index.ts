@@ -189,16 +189,19 @@ function formatCommandRef(command: PendingCommand): string {
 
 /**
  * Shared frontmatter gate for both resolution paths (interactive `input` hook and the
- * workflow-run bridge), so the two can never drift apart. Builtin readonly-bypass
- * commands own their own state transitions, and commands whose source is not a prompt
- * template carry no resolvable frontmatter. Plain prompts never reach this gate:
- * `parsePendingCommand` returns null for them, which is exactly what lets workflow runs
- * dispatch free-form prompts.
+ * workflow-run bridge), so the two can never drift apart. Null means plain text or a
+ * command whose frontmatter must stay untouched: builtin readonly-bypass commands own
+ * their own state transitions, and commands whose source is not a prompt template carry
+ * no resolvable frontmatter. Plain prompts parse to null, which is exactly what lets
+ * workflow runs dispatch free-form prompts.
  */
-function shouldResolveFrontmatter(pending: PendingCommand, commands: readonly { name: string; source: string }[]): boolean {
-	if (pending.type !== "command") return true;
-	if (isBuiltinReadonlyBypassCommand(pending.name)) return false;
-	return !commands.some((command) => command.name === pending.name && command.source !== "prompt");
+function pendingFrontmatterCommand(text: string, pi: ExtensionAPI): PendingCommand | null {
+	const pending = parsePendingCommand(text);
+	if (!pending) return null;
+	if (pending.type !== "command") return pending;
+	if (isBuiltinReadonlyBypassCommand(pending.name)) return null;
+	// Commands whose source is not a prompt template carry no resolvable frontmatter.
+	return pi.getCommands().some((command) => command.name === pending.name && command.source !== "prompt") ? null : pending;
 }
 
 /** Extract the leading slash-command invocation. Returns null for plain text. */
@@ -510,11 +513,8 @@ export async function prepareWorkflowRunFrontmatter(
 	pi: ExtensionAPI,
 	text: string,
 ): Promise<void> {
-	const pending = parsePendingCommand(text);
+	const pending = pendingFrontmatterCommand(text, pi);
 	if (!pending) return;
-	// Same gate as the interactive hook: skipping here keeps workflow turns from
-	// mutating model/readonly state for commands the hook would leave alone.
-	if (!shouldResolveFrontmatter(pending, pi.getCommands())) return;
 	const { selection } = loadCommandFrontmatter(state, ctx, pi, pending);
 	if (await commitCommandFrontmatter(state, ctx, pi, pending, selection)) {
 		throw new Error(`workflow.run: frontmatter model selection failed for ${formatCommandRef(pending)}`);
@@ -722,11 +722,10 @@ export default function (pi: ExtensionAPI): void {
 		// it must not mutate model/readonly state first.
 		if (state.inputSuppressed) return { action: "continue" };
 
-		const pending = parsePendingCommand(event.text);
-		if (!pending) return { action: "continue" };
 		// The extension-source and input-suppression skips above are hook-specific: a
 		// workflow.run turn is extension-sourced by definition and must still resolve.
-		if (!shouldResolveFrontmatter(pending, pi.getCommands())) return { action: "continue" };
+		const pending = pendingFrontmatterCommand(event.text, pi);
+		if (!pending) return { action: "continue" };
 
 		// Command metadata is already available at input time. This prevents a
 		// failed selection from reaching Pi's expansion/agent-start lifecycle.
