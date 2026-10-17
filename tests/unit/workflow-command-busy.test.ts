@@ -5,6 +5,9 @@
 // These tests pin the rejection and prove it leaks neither the reservation nor the next start.
 import assert from "node:assert/strict";
 import test from "node:test";
+import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { CodemodeResult, CodemodeSandbox } from "@earendil-works/pi-codemode";
 import type { ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
@@ -18,13 +21,13 @@ const RETURN_WORKFLOW = "tests/e2e/fixtures/command-return.js";
 const OK_RESULT = { ok: true, value: undefined, output: [], calls: [], storeWrites: { set: {}, delete: [] } } as unknown as CodemodeResult;
 
 /** Headless command context; `busy` is the only knob the busy guard reads. */
-function headlessCtx(getIdle: () => boolean): ExtensionCommandContext {
+function headlessCtx(getIdle: () => boolean, cwd = process.cwd()): ExtensionCommandContext {
 	const branch: SessionEntry[] = [];
 	const noop = (): void => {};
 	return {
 		hasUI: false,
 		mode: "rpc",
-		cwd: process.cwd(),
+		cwd,
 		ui: { notify: noop, setStatus: noop, setWidget: noop, setFooter: noop, setWorkingMessage: noop, theme: { fg: (_name: string, text: string) => text } },
 		sessionManager: {
 			getSessionId: () => "busy-test",
@@ -70,6 +73,31 @@ test("/workflow on a busy session is rejected before it reserves or builds a san
 	// A leaked reservation would make the next start fail as a second-run rejection.
 	assert.equal(reserveWorkflow(), true, "a rejected busy start leaves no reservation");
 	releaseWorkflow();
+});
+
+test("a discovery error is reported through the start-failure path", { skip: process.platform === "win32" }, async () => {
+	const state = createState();
+	const cwd = await mkdtemp(join(tmpdir(), "pi-workflow-discovery-"));
+	const agentDir = await mkdtemp(join(tmpdir(), "pi-workflow-agent-"));
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	try {
+		await mkdir(join(cwd, ".pi", "workflows"), { recursive: true });
+		await chmod(join(cwd, ".pi", "workflows"), 0o000);
+		const pi = await createTestHost((api) => registerWorkflowCommand(api, state, countingDeps(() => {})));
+		await pi.commands.get("workflow")!.handler("missing", headlessCtx(() => true, cwd));
+		const errors = pi.appendedEntries
+			.filter((entry) => entry.customType === WORKFLOW_ERROR_ENTRY_TYPE)
+			.map((entry) => entry.data as { phase: string; error: string });
+		assert.equal(errors.length, 1, "the failure is recorded instead of a rejected command");
+		assert.equal(errors[0]!.phase, "start");
+		assert.match(errors[0]!.error, /Cannot (list|resolve) workflow/);
+	} finally {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		await chmod(join(cwd, ".pi", "workflows"), 0o700).catch(() => {});
+		await Promise.all([rm(cwd, { recursive: true, force: true }), rm(agentDir, { recursive: true, force: true })]);
+	}
 });
 
 test("a rejected busy start does not block the next idle start", async () => {

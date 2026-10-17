@@ -143,9 +143,24 @@ async function resolveProgram(pi: ExtensionAPI, raw: string, ctx: ExtensionComma
 		reportStartFailure(pi, ctx, "Usage: /workflow <workflow> [args]");
 		return null;
 	}
-	const path = resolveWorkflowPath(name, ctx.cwd, getAgentDir());
+	let path: string | null;
+	try {
+		path = resolveWorkflowPath(name, ctx.cwd, getAgentDir());
+	} catch (error) {
+		reportStartFailure(pi, ctx, `Cannot resolve workflow: ${messageOf(error)}`);
+		return null;
+	}
 	if (!path) {
-		reportStartFailure(pi, ctx, await workflowNotFound(name, ctx.cwd));
+		let notFound: string;
+		try {
+			notFound = await workflowNotFound(name, ctx.cwd);
+		} catch (error) {
+			// A discovery root can be unreadable (EACCES). Surface it through the same
+			// start-failure channel instead of a rejected command with no notice.
+			reportStartFailure(pi, ctx, `Cannot list workflows: ${messageOf(error)}`);
+			return null;
+		}
+		reportStartFailure(pi, ctx, notFound);
 		return null;
 	}
 	const compiled = await readAndCompile(pi, path, ctx);
