@@ -14,7 +14,7 @@ One `/workflow <file> [args]` run. Each step names its owner module.
 | 4 | Read | `workflow/file.ts` | `readWorkflow` reads the source; `workflow/command.ts` (`readAndCompile`) wraps the failure. |
 | 5 | Compile | `workflow/compile.ts` | `compileWorkflow` parses, validates the synchronous contract, and rewrites calls. |
 | 6 | Compose driver | `workflow/driver.ts` | `composeWorkflow` prepends `WORKFLOW_DRIVER`, which defines `defineWorkflow`. |
-| 7 | Resolve limits | `workflow/limits-dialog.ts` | `resolveLimits` receives `hasCheckpoint`; without one it skips the dialog, ignores `--workflow-cost`, and turns a valid `--workflow-time` into the sandbox hard deadline. |
+| 7 | Resolve limits | `workflow/limits-dialog.ts` | `resolveLimits` receives `hasCheckpoint`; without one it skips the dialog, ignores `--workflow-cost`, and turns a valid `--workflow-time` into the sandbox hard deadline. A checkpoint-less run is a supported unbounded mode, not a gap (rule in [workflows.md](workflows.md)). |
 | 8 | Build host | `workflow/host.ts` | `createWorkflowHost` via `command.ts` (`buildHost`): run registry, child-usage sink, exit state, and metrics. `host.globals()` supplies the handle list. |
 | 9 | Suppress input, arm cancel | `workflow/command.ts` | Installs the `input` handler and the arm-then-confirm cancellation funnel. |
 | 10 | Build sandbox | `workflow/sandbox.ts` | `createWorkflowSandbox` clamps the deadline; `command.ts` (`runSandbox`) supplies `MEMORY_LIMIT_BYTES` and `hardDeadlineMs(limits)`. |
@@ -63,7 +63,7 @@ One `/workflow <file> [args]` run. Each step names its owner module.
 
 **Rewrite.** `insertAwaits` (magic-string) wraps every direct `workflow.<member>(...)` call in `(await ...)`, including optional-chain forms. It prepends `async ` to the arrow when it wrapped at least one call. A call already awaited is not wrapped twice.
 
-**Rejections.** The rules live in [workflows.md](workflows.md) — the author contract owns them (language rejections in "Accepted control flow"). Checkpoints are optional. `compileWorkflow` returns `{ code, hasCheckpoint }`; the command passes `hasCheckpoint` to limit resolution and threads `unbounded` through run progress and summary. Mechanism: every compile violation throws `WorkflowCompileError` with `line:column`. Non-reference positions (property keys, method names, labels) are exempt from the global-object, dynamic-code, and `workflow` reference checks.
+**Rejections.** The rules live in [workflows.md](workflows.md) — the author contract owns them (language rejections in "Accepted control flow"). Checkpoints are optional by design: a checkpoint-less workflow runs unbounded. `compileWorkflow` returns `{ code, hasCheckpoint }`; the command passes `hasCheckpoint` to limit resolution and threads `unbounded` through run progress and summary. Mechanism: every compile violation throws `WorkflowCompileError` with `line:column`. Non-reference positions (property keys, method names, labels) are exempt from the global-object, dynamic-code, and `workflow` reference checks.
 
 ## Sandbox
 
@@ -73,7 +73,7 @@ One `/workflow <file> [args]` run. Each step names its owner module.
 
 **Memory cap.** `MEMORY_LIMIT_BYTES` in `workflow/command.ts` caps the script heap. Exceeding it fails inside the script as `InternalError: out of memory`.
 
-**Deadline clamp.** `workflow/sandbox.ts` `hardDeadlineMs({ timeBudgetMs, hardDeadlineMs })` returns the explicit hard deadline when one is set (a checkpoint-less `--workflow-time`), else `timeBudgetMs * HARD_DEADLINE_FACTOR` with `HARD_DEADLINE_FACTOR`, the backstop factor (rule in [workflows.md](workflows.md)). `clampTimeoutMs` clamps a finite positive value to `MAX_TIMEOUT_MS`; a non-finite or non-positive input becomes `Infinity` (no limit). A null time target disables the sandbox deadline. Limit resolution rejects a soft target above `MAX_TIME_BUDGET_MS` (`MAX_TIMEOUT_MS / HARD_DEADLINE_FACTOR`) so the derived backstop never clamps; `command.ts` (`runSandbox`) passes `hardDeadlineMs(limits)`. `createWorkflowSandbox` clamps any explicit `timeoutMs` the same way.
+**Deadline clamp.** `workflow/sandbox.ts` `hardDeadlineMs({ timeBudgetMs, hardDeadlineMs })` returns the explicit hard deadline when one is set (the `--workflow-time` hard deadline of a checkpoint-less run), else `timeBudgetMs * HARD_DEADLINE_FACTOR` with `HARD_DEADLINE_FACTOR`, the backstop factor (rule in [workflows.md](workflows.md)). `clampTimeoutMs` clamps a finite positive value to `MAX_TIMEOUT_MS`; a non-finite or non-positive input becomes `Infinity` (no limit). A null time target disables the sandbox deadline. Limit resolution rejects a soft target above `MAX_TIME_BUDGET_MS` (`MAX_TIMEOUT_MS / HARD_DEADLINE_FACTOR`) so the derived backstop never clamps; `command.ts` (`runSandbox`) passes `hardDeadlineMs(limits)`. `createWorkflowSandbox` clamps any explicit `timeoutMs` the same way.
 
 **Boundary.** The VM has no timers and no I/O. The compile checks add no network, file, or dynamic-code path. The security posture is stated in [workflows.md](workflows.md) (Constraints).
 
@@ -94,6 +94,7 @@ Soft targets and author semantics live in [workflows.md](workflows.md). Engine m
 - A crossed target calls `armPendingStop` (`workflow/host.ts`); the crossing effect still runs. `handleCheckpoint` stops the run and salvages the checkpoint metadata.
 - `MAX_DEFERRED_EFFECTS` in `workflow/host.ts` bounds guarded effects after a pending stop (rule in [workflows.md](workflows.md)); beyond it `recordHardAbortExit` writes the exit and `abortHost` hard-aborts.
 - `HARD_DEADLINE_FACTOR` in `workflow/sandbox.ts` sets the sandbox backstop past the soft time target.
+- A checkpoint-less run is a supported mode, not a defect: it has no soft stop point, so `limitReason` returns null and `guardDeferredStop` never arms. Only the `--workflow-time` hard deadline (when set) bounds it.
 - Reserved abort reasons: the list and the no-reuse rule live in [workflows.md](workflows.md) (`ReservedReason` in `workflow/types.ts` pins the tokens). `handleExit` rejects a workflow reason that reuses one.
 - Exactly one `workflow-exit` entry per finished run. `WorkflowHost.recordExit` (`workflow/host.ts`) is the single writer; `workflow.exit`, a checkpoint stop, a hard abort, `returned`, and an infra failure all converge on it.
 - `salvagedPartial` (`command.ts`) attaches the last checkpoint metadata only for a checkpoint stop or an abort after a checkpoint.
@@ -160,7 +161,9 @@ Entry-type strings are named exports: `WORKFLOW_SUMMARY_ENTRY_TYPE` (`summary.ts
 - The partial summary row reads `stopped at checkpoint` (`workflow/summary-renderer.ts`).
 - The collapsed summary card caps its model rows (`workflow/summary-renderer.ts`).
 - Every `RunResult` carries the settled run's concrete `model`; a group-routed run reports the chosen member (`workflow/host.ts`).
+- Checkpoints are optional: a run without one is unbounded (`workflow/compile.ts`, `workflow/limits-dialog.ts`).
 - The footer has two zones (`tui.ts`).
+- The slash-command adapter (`workflow/command.ts`) is the single lifecycle owner for a run — reserve, compile, limits, host, UI, rebind, execute, report, release. No second entry point exists; extract the lifecycle only when one appears.
 - `workflow.exit` returns its metadata argument (`workflow/host.ts`).
 
 ## See also
