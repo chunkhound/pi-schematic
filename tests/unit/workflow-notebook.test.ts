@@ -18,7 +18,6 @@ function notebookHost(state = createState()): { host: WorkflowHost; state: Retur
 		limits: { costLimit: null, timeBudgetMs: null },
 		unbounded: false,
 		getCtx: () => null,
-		isReadonly: () => false,
 		setReadonly: (enabled: boolean) => enabled,
 		prepareRunFrontmatter: async () => {},
 		handoff: async () => {},

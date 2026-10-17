@@ -236,7 +236,6 @@ function hostDeps(bundle: RunBundle, ctl: RunCtl, onEffect: WorkflowHostDeps["on
 		limits: bundle.limits,
 		unbounded: bundle.unbounded,
 		getCtx: () => ctl.ctx,
-		isReadonly: () => bundle.state.readonlyEnabled,
 		setReadonly: (enabled) => bundle.deps.setReadonly(enabled),
 		prepareRunFrontmatter: (text, ctx) => bundle.deps.prepareRunFrontmatter(text, ctx),
 		handoff: (direction) => performHandoff(bundle, ctl, direction),

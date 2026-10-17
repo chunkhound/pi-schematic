@@ -72,7 +72,6 @@ function createEnv(): Env {
 		limits: { costLimit: null, timeBudgetMs: null },
 		unbounded: false,
 		getCtx: () => ctx,
-		isReadonly: () => false,
 		setReadonly: () => false,
 		prepareRunFrontmatter: async () => {},
 		handoff: async () => {},

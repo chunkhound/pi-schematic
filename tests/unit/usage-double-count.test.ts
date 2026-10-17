@@ -93,7 +93,6 @@ function createEnv(limits: WorkflowLimits = { costLimit: null, timeBudgetMs: nul
 		limits,
 		unbounded: false,
 		getCtx: () => ctx,
-		isReadonly: () => false,
 		setReadonly: () => false,
 		prepareRunFrontmatter: async () => {},
 		handoff: async () => {},

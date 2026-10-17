@@ -407,7 +407,6 @@ export interface WorkflowHostDeps {
 	 * `newSession` teardown and only `withSession` yields a valid one. Host effect handlers
 	 * use {@link requireCtx}; progress and metrics degrade to committed spend instead. */
 	getCtx: () => ExtensionCommandContext | null;
-	isReadonly: () => boolean;
 	setReadonly: (enabled: boolean) => boolean;
 	/** Apply skill/prompt frontmatter (model routing + readonly) for one `workflow.run` turn before dispatch. */
 	prepareRunFrontmatter: (text: string, ctx: ExtensionCommandContext) => Promise<void>;

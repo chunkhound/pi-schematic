@@ -576,6 +576,7 @@ export default function (pi: ExtensionAPI): void {
 
 	/** Set the readonly posture and persist it; returns the new value. Shared with `workflow.readonly`. */
 	function setReadonly(enabled: boolean): boolean {
+		if (state.readonlyEnabled === enabled) return enabled;
 		state.readonlyEnabled = enabled;
 		state.readonlyNudgePending = true;
 		pi.appendEntry("pi-schematic-readonly", { enabled: state.readonlyEnabled });

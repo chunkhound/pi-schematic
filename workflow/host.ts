@@ -227,7 +227,7 @@ function buildDigest(deps: WorkflowHostDeps, state: HostState): StateDigest {
 		branch,
 		contextPercent: contextPercentOf(ctx.getContextUsage()),
 		activeTools: deps.pi.getActiveTools(),
-		readonly: deps.isReadonly(),
+		readonly: deps.state.readonlyEnabled,
 		notebookTopic: deps.state.activeNotebookTopic,
 		notebookTopicSource: deps.state.activeNotebookTopicSource,
 		settledRuns: state.settledRuns,
@@ -382,7 +382,7 @@ function buildShellRunner(deps: WorkflowHostDeps, state: HostState, ctx: Extensi
 	return createShellRunner({
 		cwd: ctx.cwd,
 		signal: AbortSignal.any([state.controller.signal, contextSignal]),
-		isReadonly: deps.isReadonly,
+		isReadonly: () => deps.state.readonlyEnabled,
 		shellPath: shellPathOf(deps),
 		ctx,
 		onOutput: (display) => safeOnEffect(deps, { phase: "update", effect, display }),
@@ -408,10 +408,12 @@ function handleReadonly(deps: WorkflowHostDeps, state: HostState, args: unknown)
 	requireCtx(deps);
 	// Strict: a coerced value such as "false" would silently enable readonly.
 	if (typeof args !== "boolean") throw new Error(`workflow.readonly takes a boolean, got ${typeof args}`);
+	const before = deps.state.readonlyEnabled;
 	const enabled = deps.setReadonly(args);
 	// Mirror `/readonly`'s observable effect (indicator refresh + notice) through the
-	// command-owned UI channel, so the posture is visible mid-run.
-	deps.onReadonlyToggled?.(enabled);
+	// command-owned UI channel, so the posture is visible mid-run. Skip when unchanged: a
+	// redundant `workflow.readonly(false)` must not re-notify or queue a stale hidden message.
+	if (before !== enabled) deps.onReadonlyToggled?.(enabled);
 	return { readonly: enabled };
 }
 

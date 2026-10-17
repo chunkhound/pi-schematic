@@ -110,7 +110,6 @@ function lifecycleDeps(pi: TestPI, state: SchematicState, branch: SessionEntry[]
 		limits: { costLimit: null, timeBudgetMs: null },
 		unbounded: false,
 		getCtx: () => ctx,
-		isReadonly: () => false,
 		setReadonly: () => false,
 		prepareRunFrontmatter: async () => {},
 		handoff: async () => {},

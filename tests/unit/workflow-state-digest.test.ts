@@ -46,7 +46,6 @@ function digestHost(branch: SessionEntry[], state = createState()): { host: Work
 		limits: { costLimit: null, timeBudgetMs: null },
 		unbounded: false,
 		getCtx: () => ctx,
-		isReadonly: () => true,
 		setReadonly: (enabled: boolean) => enabled,
 		prepareRunFrontmatter: async () => {},
 		handoff: async () => {},
@@ -121,6 +120,7 @@ test("workflow.state reports the host-composed view of the session", async () =>
 	const state = createState();
 	state.activeNotebookTopic = "runtime";
 	state.activeNotebookTopicSource = "agent";
+	state.readonlyEnabled = true;
 	const { host } = digestHost(entries, state);
 	entries.push(message("a1", "assistant", [{ type: "text", text: "answer" }], { usage: usd(0.4) }));
 	const digest = (await handle(host, "workflow.state").execute()) as Record<string, unknown>;

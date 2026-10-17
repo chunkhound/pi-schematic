@@ -38,7 +38,6 @@ function fakeDeps(shellRun: NonNullable<WorkflowHostDeps["shellRun"]>): Workflow
 		limits: { costLimit: null, timeBudgetMs: null },
 		unbounded: false,
 		getCtx: () => ctx,
-		isReadonly: () => false,
 		setReadonly: () => false,
 		prepareRunFrontmatter: async () => {},
 		handoff: async () => {},

@@ -50,7 +50,6 @@ function fakeDeps(): WorkflowHostDeps {
 		limits: { costLimit: null, timeBudgetMs: null },
 		unbounded: false,
 		getCtx: () => ctx,
-		isReadonly: () => false,
 		setReadonly: () => false,
 		prepareRunFrontmatter: async () => {},
 		handoff: async () => {},
@@ -308,8 +307,7 @@ test("the docs Handles table lists exactly the runtime handle surface", () => {
 test("workflow.readonly accepts only a boolean and leaves the posture unchanged otherwise", async () => {
 	const deps = fakeDeps();
 	let posture = false;
-	deps.setReadonly = (enabled) => { posture = enabled; return posture; };
-	deps.isReadonly = () => posture;
+	deps.setReadonly = (enabled) => { posture = deps.state.readonlyEnabled = enabled; return enabled; };
 	const readonly = new Map(createWorkflowHost(deps).globals().map((tool) => [tool.name, tool])).get("workflow.readonly")!;
 	const context = { signal: new AbortController().signal } as never;
 	for (const bad of [undefined, "false", 1]) {
@@ -318,6 +316,23 @@ test("workflow.readonly accepts only a boolean and leaves the posture unchanged 
 	}
 	assert.deepEqual(await readonly.execute(true, context), { readonly: true });
 	assert.equal(posture, true);
+});
+
+// WHY: a redundant `workflow.readonly(x)` must not re-notify or queue a stale hidden message;
+// the notice (indicator refresh + nudge) belongs only to an actual posture change.
+test("workflow.readonly notifies only when the posture changes", async () => {
+	const deps = fakeDeps();
+	const toggles: boolean[] = [];
+	deps.setReadonly = (enabled) => { deps.state.readonlyEnabled = enabled; return enabled; };
+	deps.onReadonlyToggled = (enabled) => { toggles.push(enabled); };
+	const readonly = new Map(createWorkflowHost(deps).globals().map((tool) => [tool.name, tool])).get("workflow.readonly")!;
+	const context = { signal: new AbortController().signal } as never;
+
+	await readonly.execute(false, context);
+	assert.deepEqual(toggles, [], "a redundant readwrite call emits no notice");
+	await readonly.execute(true, context);
+	await readonly.execute(true, context);
+	assert.deepEqual(toggles, [true], "only the first enable emits a notice");
 });
 
 // WHY: run options arrive untyped from workflow JS. A malformed field must fail by name
