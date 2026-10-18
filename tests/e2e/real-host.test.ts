@@ -23,8 +23,6 @@ import {
 	HANDOFF_NOTE_CUSTOM_TYPE,
 	HANDOFF_SUCCESSOR_CUSTOM_TYPE,
 	buildNextUserMessage,
-	formatHandoffFailure,
-	formatLostSuccessorFailure,
 } from "../../handoff/format.js";
 import {
 	READONLY_ACTIVE_SUMMARY,
@@ -392,9 +390,12 @@ describe("pi-schematic real-host E2E", () => {
 			"failure notified",
 		);
 		const failure = onlyCustomMessage(failed.entries, HANDOFF_FAILED_CUSTOM_TYPE);
-		assert.equal(failure.content, formatHandoffFailure(REASON_NOT_PERSISTED, true));
+		assert.equal(typeof failure.content, "string");
+		const failureText = failure.content as string;
+		assert.ok(failureText.includes(REASON_NOT_PERSISTED), "the failure names its reason");
+		assert.ok(failureText.includes("The required handoff remains pending"), "the failure says the handoff stays required");
 		assert.equal(failure.display, true, "the failure is shown");
-		assert.equal(userEntriesWithText(failed.entries, formatHandoffFailure(REASON_NOT_PERSISTED, true)).length, 0, "no follow-up user message");
+		assert.equal(userEntriesWithText(failed.entries, failureText).length, 0, "no follow-up user message");
 		const handoffStatuses = host.statuses.filter((status) => status.statusKey === STATUS_KEY_HANDOFF);
 		assert.equal(handoffStatuses.at(-1)?.statusText, HANDOFF_REQUIRED_STATUS, "the handoff stays required");
 
@@ -418,9 +419,10 @@ describe("pi-schematic real-host E2E", () => {
 			const cut = onlyHandoffCut(failed.entries);
 			const handoffId = cutHandoffId(cut)!;
 			assert.deepEqual(requestsAfterCut(host.probeLog(), handoffId), [], "the run is aborted before the model is called after the cut");
-			const lostSuccessor = buildNextUserMessage({ nextInstruction: "finish the report", context: "mid-task state" });
 			const failure = onlyCustomMessage(failed.entries, HANDOFF_FAILED_CUSTOM_TYPE);
-			assert.equal(failure.content, formatLostSuccessorFailure(REASON_SUCCESSOR_NOT_PERSISTED, lostSuccessor), "the failure carries the instruction");
+			assert.equal(typeof failure.content, "string");
+			assert.ok((failure.content as string).includes("## Next instruction\n\nfinish the report"), "the failure carries the instruction");
+			assert.ok((failure.content as string).includes("mid-task state"), "the failure carries the context");
 			assert.equal(failure.display, true, "the failure is shown");
 			assert.ok(
 				host.notifications.some((notification) => notification.message.startsWith(`Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}.`)),
@@ -497,7 +499,9 @@ describe("pi-schematic real-host E2E", () => {
 		assert.equal(handoffCuts(entries).length, 0, "no handoff cut after the abort");
 		assert.deepEqual(host.cuts(), [], "no cut reached the turn_end boundary");
 		const failure = onlyCustomMessage(entries, HANDOFF_FAILED_CUSTOM_TYPE);
-		assert.equal(failure.content, formatHandoffFailure(REASON_ABORTED, false));
+		assert.equal(typeof failure.content, "string");
+		assert.ok((failure.content as string).includes(REASON_ABORTED), "the failure names its reason");
+		assert.ok((failure.content as string).includes("No required handoff remains pending"), "the failure says no handoff stays required");
 		assert.equal(failure.display, true, "the failure is shown");
 		assert.ok(
 			host.notifications.some((notification) => notification.message.startsWith(`Handoff failed: ${REASON_ABORTED}.`)),

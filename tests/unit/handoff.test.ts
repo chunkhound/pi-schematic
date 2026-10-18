@@ -19,10 +19,16 @@ import {
 	REASON_NOT_PERSISTED,
 	REASON_NO_BOUNDARY,
 	REASON_RESULT_MISSING,
+	REASON_SUCCESSOR_NOT_PERSISTED,
 	REASON_TURN_FAILED,
 } from "../../handoff/copy.js";
 import { registerHandoffTool } from "../../handoff/tool.js";
-import { buildContinuationFrame, buildNextUserMessage } from "../../handoff/format.js";
+import {
+	buildContinuationFrame,
+	buildNextUserMessage,
+	formatHandoffFailure,
+	formatLostSuccessorFailure,
+} from "../../handoff/format.js";
 import { STATUS_KEY_HANDOFF, STATUS_KEY_NOTEBOOK, STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS, registerWatchdog } from "../../watchdog.js";
 import { callHandlers, emitAll, handoffToolResult, turnEndEvent } from "./helpers.js";
@@ -1133,6 +1139,25 @@ test("the continuation frame is pinned byte-for-byte", () => {
 		"- Use `spawn` to delegate isolated subtasks to child agents",
 		"- Build on notebook memory and the instruction rather than reconstructing old context",
 	].join("\n"));
+});
+
+test("the handoff failure guidance is pinned byte-for-byte", () => {
+	// Golden strings, hand-written on purpose: comparing against formatHandoffFailure()
+	// would pass vacuously if the guidance regressed.
+	assert.equal(formatHandoffFailure(REASON_NOT_PERSISTED, true),
+		`Handoff failed — ${REASON_NOT_PERSISTED}. The required handoff remains pending; retry when context usage is eligible.`);
+	assert.equal(formatHandoffFailure(REASON_NOT_PERSISTED, false),
+		`Handoff failed — ${REASON_NOT_PERSISTED}. No required handoff remains pending; retry when ready.`);
+});
+
+test("the lost-successor failure is pinned byte-for-byte and carries the instruction", () => {
+	// Golden string, hand-written on purpose: the failure is the only place the lost
+	// instruction survives, and comparing against formatLostSuccessorFailure() would
+	// pass vacuously if the formatter dropped it.
+	assert.equal(
+		formatLostSuccessorFailure(REASON_SUCCESSOR_NOT_PERSISTED, "## Next instruction\n\nfinish the report\n\n## Context\n\nmid-task state"),
+		`Handoff failed — ${REASON_SUCCESSOR_NOT_PERSISTED}. The context is already cut, so the handoff is not retried and no required handoff remains pending. The instruction it carried:\n\n## Next instruction\n\nfinish the report\n\n## Context\n\nmid-task state`,
+	);
 });
 
 test("buildNextUserMessage carries the instruction verbatim and the context second", () => {

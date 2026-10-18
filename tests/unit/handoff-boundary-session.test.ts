@@ -45,8 +45,6 @@ import {
 	buildHandoffSystemPromptNote,
 	buildNextUserMessage,
 	formatHandoffComplete,
-	formatHandoffFailure,
-	formatLostSuccessorFailure,
 } from "../../handoff/format.js";
 import {
 	HANDOFF_FAILED_IN_RUN_REFUSAL,
@@ -676,7 +674,9 @@ describe("failed handoff cut in a real agent session", () => {
 			const dropBoundary: ExtensionFactory = (pi) => {
 				pi.on("turn_end", async (event) => (event.entries.length > 0 ? variant.result : undefined));
 			};
-			const guidance = formatHandoffFailure(REASON_NOT_PERSISTED, true);
+			// Hand-written, not the formatter's output: the persisted guidance is what
+			// this test pins.
+			const guidance = `Handoff failed — ${REASON_NOT_PERSISTED}. The required handoff remains pending; retry when context usage is eligible.`;
 			const { session, sessionManager, observed } = await startSession(
 				[reply("ready"), call(handoffCall()), reply("plain answer"), reply("next prompt answer")],
 				{ after: [dropBoundary] },
@@ -758,7 +758,9 @@ describe("failed handoff cut in a real agent session", () => {
 			assert.equal(failures.length, 1);
 			const [failure] = failures;
 			assert.ok(failure.type === "custom_message");
-			assert.equal(failure.content, formatLostSuccessorFailure(REASON_SUCCESSOR_NOT_PERSISTED, lostSuccessor), "the failure carries the instruction");
+			assert.equal(typeof failure.content, "string");
+			assert.ok((failure.content as string).includes("## Next instruction\n\nfinish the report"), "the failure carries the instruction");
+			assert.ok((failure.content as string).includes(HANDOFF_CONTEXT), "the failure carries the context");
 			assert.equal(failure.display, true);
 			assert.ok(uiAfterHandoffRun.includes(`notify:error:Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}. The instruction is in the failure message.`), JSON.stringify(uiAfterHandoffRun));
 			assert.ok(!uiAfterHandoffRun.some((line) => line.startsWith("notify:info:Handoff complete")), "no completion notice");
@@ -810,8 +812,9 @@ describe("failed handoff cut in a real agent session", () => {
 		assert.equal(failures.length, 1);
 		const [failure] = failures;
 		assert.ok(failure.type === "custom_message");
-		const lostSuccessor = buildNextUserMessage({ nextInstruction: "finish the report", context: HANDOFF_CONTEXT });
-		assert.equal(failure.content, formatLostSuccessorFailure(REASON_SUCCESSOR_NOT_PERSISTED, lostSuccessor), "the failure carries the instruction");
+		assert.equal(typeof failure.content, "string");
+		assert.ok((failure.content as string).includes("## Next instruction\n\nfinish the report"), "the failure carries the instruction");
+		assert.ok((failure.content as string).includes(HANDOFF_CONTEXT), "the failure carries the context");
 		assert.ok(ui.includes(`notify:error:Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}. The instruction is in the failure message.`), JSON.stringify(ui));
 		assert.ok(!ui.some((line) => line.startsWith("notify:info:Handoff complete")), "no completion notice");
 		assert.ok(!ui.includes(`notify:warning:${HANDOFF_SUCCESSOR_NOT_RUN}`), "no successor-not-run warning");
@@ -855,7 +858,8 @@ describe("failed handoff cut in a real agent session", () => {
 		assert.equal(failuresAfterAbort.length, 1, "the failure is persisted when the aborted run settles");
 		const [failure] = failuresAfterAbort;
 		assert.ok(failure.type === "custom_message");
-		assert.equal(failure.content, formatHandoffFailure(REASON_ABORTED, true));
+		assert.equal(failure.content,
+			`Handoff failed — ${REASON_ABORTED}. The required handoff remains pending; retry when context usage is eligible.`);
 		assert.equal(failure.display, true);
 		assert.ok(carriesRequiredNudge(observed.requests[2]), "the request stays pending and is enforced on the next prompt");
 		assert.deepEqual(observed.extensionErrors, []);
@@ -955,8 +959,9 @@ describe("failed handoff cut in a real agent session", () => {
 		const failures = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE)
 			.map((entry) => (entry.type === "custom_message" ? entry.content : undefined));
 		assert.deepEqual(failures, [
-			...Array.from({ length: MAX_HANDOFF_ATTEMPTS - 1 }, () => formatHandoffFailure(REASON_NOT_PERSISTED, true)),
-			formatHandoffFailure(REASON_NOT_PERSISTED, false),
+			...Array.from({ length: MAX_HANDOFF_ATTEMPTS - 1 }, () =>
+				`Handoff failed — ${REASON_NOT_PERSISTED}. The required handoff remains pending; retry when context usage is eligible.`),
+			`Handoff failed — ${REASON_NOT_PERSISTED}. No required handoff remains pending; retry when ready.`,
 		]);
 		const failureNotify = `notify:error:Handoff failed: ${REASON_NOT_PERSISTED}. The handoff can be retried.`;
 		const failureAt = ui.flatMap((line, index) => (line === failureNotify ? [index] : []));
