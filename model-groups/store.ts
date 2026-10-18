@@ -2,7 +2,6 @@ import { homedir } from "node:os";
 import path from "node:path";
 import * as fs from "node:fs";
 import { CONFIG_DIR_NAME, type ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { modalitiesConstraint } from "./constraints/modalities.js";
 import { evaluateConstraint, evaluateConstraints } from "./constraints/engine.js";
 import { presentConstraintDiagnosticRecords } from "./constraints/presentation.js";
@@ -10,10 +9,10 @@ import { productionConstraintRegistry, type ConstraintRegistry } from "./constra
 import { resolveConstraintMembers } from "./constraints/resolution.js";
 import { canonicalizeModelGroupName } from "./names.js";
 import { isModelUsable } from "./availability.js";
+import { isThinkingLevel } from "../thinking-levels.js";
 import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModalities, type ModelGroupModality, type ModelGroupModel, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ModelGroupsConfig, type ModelGroupsLoadedGroup, type ModelGroupsLoadIssue, type ModelGroupsLoadResult, type ResolvedModelGroup } from "./types.js";
 
 const CURRENT_VERSION = 2;
-const VALID_THINKING = new Set<ModelThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 type FsOps = Pick<typeof fs, "existsSync" | "mkdirSync" | "readFileSync" | "writeFileSync" | "renameSync" | "copyFileSync" | "unlinkSync">;
 let fsOps: FsOps = fs;
 export function __setModelGroupsFsForTests(next: Partial<FsOps> | null): void { fsOps = next ? { ...fs, ...next } : fs; }
@@ -37,7 +36,7 @@ function validateModelEntry(value: unknown, at: string): { ok: true; model: Mode
 	if (!isPlainRecord(value)) return { ok: false, message: `${at} must be an object` };
 	if (typeof value.provider !== "string" || !value.provider) return { ok: false, message: `${at}.provider must be a non-empty string` };
 	if (typeof value.modelId !== "string" || !value.modelId) return { ok: false, message: `${at}.modelId must be a non-empty string` };
-	if (value.thinkingLevel !== undefined && !VALID_THINKING.has(value.thinkingLevel as ModelThinkingLevel)) return { ok: false, message: `${at}.thinkingLevel is invalid` };
+	if (value.thinkingLevel !== undefined && !isThinkingLevel(value.thinkingLevel)) return { ok: false, message: `${at}.thinkingLevel is invalid` };
 	const model = { ...value, provider: value.provider, modelId: value.modelId } as ModelGroupModel;
 	if (value.thinkingLevel === undefined) delete (model as any).thinkingLevel;
 	return { ok: true, model };

@@ -22,6 +22,7 @@ import { homedir } from "node:os";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import type { Skill, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+import { isThinkingLevel, THINKING_LEVELS } from "./thinking-levels.js";
 
 export interface FrontmatterEntry {
 	readonly: boolean | null;
@@ -49,8 +50,6 @@ interface CacheReadResult {
 	issue: FrontmatterIssue | null;
 }
 
-const THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-
 function parseExplicitModel(raw: unknown): string | null {
 	if (typeof raw !== "string" || raw.trim().length === 0) return null;
 	const trimmed = raw.trim();
@@ -62,8 +61,8 @@ function parseExplicitModel(raw: unknown): string | null {
 
 function parseExplicitThinking(raw: unknown): ModelThinkingLevel | null {
 	if (typeof raw !== "string") return null;
-	const trimmed = raw.trim().toLowerCase() as ModelThinkingLevel;
-	return THINKING_LEVELS.includes(trimmed) ? trimmed : null;
+	const trimmed = raw.trim().toLowerCase();
+	return isThinkingLevel(trimmed) ? trimmed : null;
 }
 
 function readCacheEntry(
@@ -208,7 +207,7 @@ export function formatFrontmatterIssue(commandRef: string, issue: FrontmatterIss
 		: issue.kind === "invalid-explicit-model-value"
 			? "`model` frontmatter must be in `<provider>/<model-id>` format"
 		: issue.kind === "invalid-thinking-value"
-			? "`thinking` frontmatter must be one of: off, minimal, low, medium, high, xhigh, max"
+			? `\`thinking\` frontmatter must be one of: ${THINKING_LEVELS.join(", ")}`
 		: issue.kind === "malformed-frontmatter"
 			? "frontmatter could not be parsed"
 			: "prompt/skill file could not be read";

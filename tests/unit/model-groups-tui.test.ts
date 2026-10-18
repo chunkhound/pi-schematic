@@ -6,6 +6,8 @@ import { ModelGroupsPersistenceError, type ModelGroupsBootValidation, type Resol
 import { stripAnsi, theme } from "./helpers.js";
 import { group } from "./model-groups-helpers.js";
 
+const GPT5_THINKING_OPTIONS = ["inherit", "off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
 function registry(): any {
 	const models = [
 		{ provider: "anthropic", id: "claude", reasoning: false },
@@ -424,7 +426,7 @@ test("model groups TUI wizard renders provider/model/thinking steps and preserve
 	press(c, ENTER);
 	text = rendered(c);
 	assert.match(text, /Add model — Step 3\/3 Thinking/);
-	for (const option of ["inherit", "off", "minimal", "low", "medium", "high", "xhigh"]) {
+	for (const option of GPT5_THINKING_OPTIONS) {
 		assert.match(text, new RegExp(`\\b${option}\\b`));
 	}
 	assert.doesNotMatch(text, /Step 4/);
@@ -542,15 +544,13 @@ test("model groups TUI model edit renders identity/status and filters thinking o
 	assert.match(text, /Status: available/);
 	assert.match(text, /Thinking: inherit/);
 	assert.equal(text.match(/Thinking:/g)?.length, 1);
-	assert.doesNotMatch(text, /Thinking: off/);
-	assert.doesNotMatch(text, /Thinking: (minimal|low|medium|high|xhigh)/);
 
 	press(c, ESC, DOWN, DOWN, DOWN, DOWN, DOWN, ENTER);
 	text = rendered(c);
 	assert.match(text, /Provider: openai/);
 	assert.match(text, /Model ID: gpt-5/);
 	assert.match(text, /Status: available/);
-	for (const option of ["inherit", "off", "minimal", "low", "medium", "high", "xhigh"]) {
+	for (const option of GPT5_THINKING_OPTIONS) {
 		assert.match(text, new RegExp(`Thinking: ${option}`));
 	}
 

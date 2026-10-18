@@ -23,10 +23,12 @@ import {
 	cacheLookupSkillExplicitThinking,
 	cacheLookupSkillIssue,
 	cacheLookupSkillModelGroup,
+	formatFrontmatterIssue,
 	populateFromSkills,
 	populatePromptCacheFromResolvedCommandsAndDirs,
 } from "../../frontmatter-cache.js";
 import { createState } from "../../state.js";
+import { THINKING_LEVELS } from "../../thinking-levels.js";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -791,20 +793,6 @@ test("populateFromSkills returns null and records issue for invalid model-group 
 	}
 });
 
-test("populateFromSkills accepts max thinking level", async () => {
-	const state = createState();
-	const dir = await tmpDir();
-	try {
-		const filePath = await writeMd(dir, "max-think", { thinking: "max" });
-		populateFromSkills(state, [makeSkill("max-think", filePath)]);
-
-		assert.equal(cacheLookupSkillExplicitThinking(state, "max-think"), "max");
-		assert.equal(cacheLookupSkillIssue(state, "max-think"), null);
-	} finally {
-		await rm(dir, { recursive: true, force: true });
-	}
-});
-
 test("populateFromSkills returns null and records issue for invalid explicit model format", async () => {
 	const state = createState();
 	const dir = await tmpDir();
@@ -845,8 +833,7 @@ test("populateFromSkills accepts all valid thinking levels", async () => {
 	const state = createState();
 	const dir = await tmpDir();
 	try {
-		const levels = ["off", "minimal", "low", "medium", "high", "xhigh"];
-		for (const level of levels) {
+		for (const level of THINKING_LEVELS) {
 			const name = `think-${level}`;
 			const filePath = await writeMd(dir, name, { thinking: level });
 			populateFromSkills(state, [makeSkill(name, filePath)]);
@@ -857,6 +844,12 @@ test("populateFromSkills accepts all valid thinking levels", async () => {
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
+});
+
+test("invalid thinking frontmatter warning lists every thinking level", () => {
+	const message = formatFrontmatterIssue("/plan", { kind: "invalid-thinking-value", filePath: "/prompts/plan.md" });
+
+	assert.equal(message, "Frontmatter ignored for `/plan`: `thinking` frontmatter must be one of: off, minimal, low, medium, high, xhigh, max at `/prompts/plan.md`.");
 });
 
 test("populateFromSkills normalizes thinking level case", async () => {

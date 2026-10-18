@@ -4,6 +4,7 @@
 
 import type { Theme, TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -80,7 +81,7 @@ export function createSubscribableSession(messages: any[] = []) {
 }
 
 export function stripAnsi(text: string): string {
-	return text.replace(/\u001b\[[0-9;]*m/g, "").replace(/\u001b\][^\u0007]*\u0007/g, "");
+	return stripTerminalSequences(text);
 }
 
 export function getRenderedLine(lines: string[], match: (plain: string) => boolean): string {

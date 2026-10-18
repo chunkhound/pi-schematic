@@ -30,9 +30,10 @@ import {
 
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
-import { Container, Spacer, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, Spacer, stripTerminalSequences, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
 import { escapeDisplayLabel } from "../model-groups/display.js";
+import { isThinkingLevel } from "../thinking-levels.js";
 import { abortChildSession, type SchematicState } from "../state.js";
 import {
 	__setSingletons,
@@ -43,7 +44,6 @@ import {
 	type SpawnOutcome,
 	type SpawnResultDetails,
 	type SpawnRouteDetails,
-	type ThinkingValue,
 } from "./shared.js";
 
 // ── Render-only constants ────────────────────────────────────────────
@@ -141,8 +141,7 @@ function normalizeRoute(value: unknown): SpawnRouteDetails | undefined {
 
 function normalizeSpawnResultDetails(value: unknown): SpawnResultDetails | undefined {
 	if (!isRecord(value) || typeof value.model !== "string") return undefined;
-	const thinkingValues: ThinkingValue[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-	if (!thinkingValues.includes(value.thinking as ThinkingValue)) return undefined;
+	if (!isThinkingLevel(value.thinking)) return undefined;
 
 	const outcome: SpawnOutcome = value.outcome === "success"
 		|| value.outcome === "aborted"
@@ -152,7 +151,7 @@ function normalizeSpawnResultDetails(value: unknown): SpawnResultDetails | undef
 		: "running";
 	const details: SpawnResultDetails = {
 		model: value.model,
-		thinking: value.thinking as ThinkingValue,
+		thinking: value.thinking,
 		truncated: typeof value.truncated === "boolean" ? value.truncated : false,
 		outcome,
 	};
@@ -258,17 +257,13 @@ function padVisibleWidth(text: string, width: number): string {
 }
 
 function getShellBackground(theme: Theme | undefined, outcome: SpawnOutcome): ((text: string) => string) | undefined {
-	// Theme.bg() is a TUI extension API available on runtime themes beyond the
-	// base Theme type. The typeof guard prevents crashes in tests or headless
-	// mode where bg may not exist. The (theme as any) cast is unavoidable
-	// without extending the Theme interface.
-	if (!theme || typeof (theme as any).bg !== "function") return undefined;
+	if (!theme || typeof theme.bg !== "function") return undefined;
 	const bgName = outcome === "success"
 		? "toolSuccessBg"
 		: outcome === "error" || outcome === "aborted"
 			? "toolErrorBg"
 			: "toolPendingBg";
-	return (text: string) => (theme as any).bg(bgName, text);
+	return (text: string) => theme.bg(bgName, text);
 }
 
 function wrapSpawnShell(lines: string[], width: number, theme: Theme | undefined, outcome: SpawnOutcome, expanded: boolean): string[] {
@@ -291,7 +286,7 @@ function wrapSpawnShell(lines: string[], width: number, theme: Theme | undefined
 function truncatePlainText(text: string, width: number): string {
 	// truncateToWidth() may inject ANSI resets even when truncating plain
 	// unicode text. Strip them here so outer shell/background styling stays intact.
-	return truncateToWidth(text, width).replace(/\u001b\[[0-9;]*m/g, "");
+	return stripTerminalSequences(truncateToWidth(text, width));
 }
 
 function truncateAndColor(text: string, width: number, color: (name: ThemeColor, text: string) => string, colorName: ThemeColor): string {
