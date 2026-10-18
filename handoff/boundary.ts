@@ -30,6 +30,7 @@ import {
 	REASON_NO_BOUNDARY,
 	REASON_RESULT_MISSING,
 	REASON_SUCCESSOR_NOT_PERSISTED,
+	REASON_TURN_FAILED,
 } from "./copy.js";
 import { isHandoffEligible } from "./eligibility.js";
 import {
@@ -273,7 +274,7 @@ function resolveStagedHandoff(
 
 function declineReason(event: TurnEndEvent, ctx: ExtensionContext, staged: StagedHandoff): string | null {
 	if (ctx.signal?.aborted === true || event.outcome === "aborted") return REASON_ABORTED;
-	if (event.outcome !== "completed") return REASON_RESULT_MISSING;
+	if (event.outcome === "error") return REASON_TURN_FAILED;
 	const result = event.toolResults.find((toolResult) => toolResult.toolCallId === staged.toolCallId);
 	if (!result || result.isError) return REASON_RESULT_MISSING;
 	return null;

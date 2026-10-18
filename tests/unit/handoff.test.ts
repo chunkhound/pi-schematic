@@ -19,6 +19,7 @@ import {
 	REASON_NOT_PERSISTED,
 	REASON_NO_BOUNDARY,
 	REASON_RESULT_MISSING,
+	REASON_TURN_FAILED,
 } from "../../handoff/copy.js";
 import { registerHandoffTool } from "../../handoff/tool.js";
 import { buildContinuationFrame, buildNextUserMessage } from "../../handoff/format.js";
@@ -353,7 +354,7 @@ test("turn_end declines the cut when the run was aborted, the turn failed, or th
 	const cases: Array<{ name: string; reason: string; ctx?: { aborted: boolean }; event: Parameters<typeof turnEndEvent>[0] }> = [
 		{ name: "ctx.signal aborted", reason: REASON_ABORTED, ctx: { aborted: true }, event: {} },
 		{ name: "outcome aborted", reason: REASON_ABORTED, event: { outcome: "aborted" } },
-		{ name: "outcome error", reason: REASON_RESULT_MISSING, event: { outcome: "error" } },
+		{ name: "outcome error", reason: REASON_TURN_FAILED, event: { outcome: "error" } },
 		{ name: "result missing", reason: REASON_RESULT_MISSING, event: { toolResults: [] } },
 		{ name: "result for another call", reason: REASON_RESULT_MISSING, event: { toolResults: [handoffToolResult("other-call")] } },
 		{ name: "result is an error", reason: REASON_RESULT_MISSING, event: { toolResults: [handoffToolResult("call-1", true)] } },

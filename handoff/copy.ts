@@ -25,6 +25,7 @@ export const HANDOFF_SUCCESSOR_NOT_RUN = "Handoff complete, but the successor tu
 /** Why a handoff left no cut; inserted into the failure notification and guidance. */
 export const REASON_ABORTED = "the run was aborted before the cut";
 export const REASON_NO_BOUNDARY = "the turn ended without writing the cut";
+export const REASON_TURN_FAILED = "the turn ended with an error";
 export const REASON_RESULT_MISSING = "the handoff result was missing from its turn";
 export const REASON_NOT_PERSISTED = "pi did not persist the cut (another extension replaced the turn_end entries, or pi rejected them)";
 export const REASON_SUCCESSOR_NOT_PERSISTED = "the cut was written but its successor instruction was not persisted after it (another extension's turn_end handler may have dropped it or written a later compaction)";
