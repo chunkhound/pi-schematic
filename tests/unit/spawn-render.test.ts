@@ -141,6 +141,52 @@ test("collapsed nested spawn render keeps all text blocks from the last assistan
 	assert.ok(lines.some((l: string) => l.includes("second")));
 });
 
+async function renderCollapsedPreview(text: string, width: number): Promise<string[]> {
+	const state = createState();
+	const childSpawnTool = await makeChildSpawnTool(state);
+	state.childSessions.set("tool-call-1", createSession([
+		{ role: "assistant", content: [{ type: "text", text }] },
+	]));
+	const component = childSpawnTool.renderResult(
+		{
+			content: [{ type: "text", text: "ignored" }],
+			details: { model: "mock-model", thinking: "medium", truncated: false },
+		},
+		{ expanded: false },
+		theme,
+		createRenderContext(),
+	) as any;
+	return component.render(width);
+}
+
+test("collapsed nested spawn preview strips OSC 8 hyperlink sequences from child text", async () => {
+	const lines = await renderCollapsedPreview(
+		"see \u001b]8;;https://example.com\u0007the docs\u001b]8;;\u0007 now",
+		120,
+	);
+
+	const preview = lines.find((l: string) => l.includes("the docs"));
+	assert.ok(preview, "preview line with the link label is rendered");
+	assert.ok(preview.includes("see the docs now"));
+	assert.ok(!preview.includes("\u001b"), `escape byte leaked: ${JSON.stringify(preview)}`);
+	assert.ok(!preview.includes("example.com"));
+});
+
+test("collapsed nested spawn preview strips erase and cursor-home sequences from child text", async () => {
+	const lines = await renderCollapsedPreview("before\u001b[2Kmiddle\u001b[Hafter", 120);
+
+	const preview = lines.find((l: string) => l.includes("before"));
+	assert.ok(preview, "preview line is rendered");
+	assert.ok(preview.includes("beforemiddleafter"));
+	assert.ok(!preview.includes("\u001b"), `escape byte leaked: ${JSON.stringify(preview)}`);
+});
+
+test("collapsed nested spawn preview leaves plain text unchanged", async () => {
+	const lines = await renderCollapsedPreview("plain text, with unicode: café — 日本", 120);
+
+	assert.ok(lines.some((l: string) => l.includes("plain text, with unicode: café — 日本")));
+});
+
 test("collapsed nested spawn truncation preserves shell background across preview and stats lines", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
