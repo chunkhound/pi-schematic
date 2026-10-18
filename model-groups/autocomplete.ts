@@ -1,5 +1,5 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
-import type { ExtensionContext, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteProviderFactory, ExtensionContext, ThemeColor } from "@earendil-works/pi-coding-agent";
 import type { SchematicState } from "../state.js";
 import { getEffectiveModelGroups } from "./router.js";
 import { MODALITY_FG, modalityLetterRun } from "./modality.js";
@@ -61,9 +61,9 @@ function buildSuggestionDescription(route: string, letters: string, capsWidth: n
 	return `${padded}${gap}${colorize("muted", route)}`;
 }
 
-export function createModelGroupAutocompleteProvider(state: SchematicState, colorize?: DescriptionColorizer) {
-	return (current: any) => ({
-		async getSuggestions(lines: string[], cursorLine: number, cursorCol: number, options: unknown) {
+export function createModelGroupAutocompleteProvider(state: SchematicState, colorize?: DescriptionColorizer): AutocompleteProviderFactory {
+	return (current) => ({
+		async getSuggestions(lines, cursorLine, cursorCol, options) {
 			const line = lines[cursorLine] ?? "";
 			const beforeCursor = line.slice(0, cursorCol);
 			const match = beforeCursor.match(/(?:^|[\t ])#([^\s#]*)$/);
@@ -90,11 +90,11 @@ export function createModelGroupAutocompleteProvider(state: SchematicState, colo
 			return { prefix: `#${match[1] ?? ""}`, items };
 		},
 
-		applyCompletion(lines: string[], cursorLine: number, cursorCol: number, item: unknown, prefix: string) {
+		applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
 			return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
 		},
 
-		shouldTriggerFileCompletion(lines: string[], cursorLine: number, cursorCol: number) {
+		shouldTriggerFileCompletion(lines, cursorLine, cursorCol) {
 			return current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true;
 		},
 	});

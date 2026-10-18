@@ -1,4 +1,6 @@
-export type ThinkingValue = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+import type { ModelThinkingLevel, TextContent } from "@earendil-works/pi-ai";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+
 export type SpawnOutcome = "running" | "success" | "aborted" | "error";
 
 export type SpawnRouteDetails =
@@ -9,7 +11,7 @@ export type SpawnRouteDetails =
 export type SpawnResultDetails = {
 	model: string;
 	/** Effective child-session level after Pi applies model capability clamping. */
-	thinking: ThinkingValue;
+	thinking: ModelThinkingLevel;
 	truncated: boolean;
 	outcome: SpawnOutcome;
 	route?: SpawnRouteDetails;
@@ -17,26 +19,16 @@ export type SpawnResultDetails = {
 	statsUnavailable?: boolean;
 };
 
-// Widen content to accept AgentMessage variants (UserMessage may have string content,
-// AssistantMessage has (TextContent | ThinkingContent | ToolCall)[] content).
-// Functions reading from AgentMessage[] arrays cast via this type at call sites.
-type AssistantMessageLike = {
-	role: string;
-	content?: unknown;
-	stopReason?: unknown;
-};
-
 /**
  * Returns all text blocks from the last assistant message, joined by newlines.
  */
-export function getLastAssistantText(messages: AssistantMessageLike[]): string {
+export function getLastAssistantText(messages: AgentSession["messages"]): string {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
 		if (msg.role !== "assistant") continue;
-		const blocks = Array.isArray(msg.content) ? (msg.content as Array<Record<string, unknown>>) : [];
-		const text = blocks
-			.filter((block) => block.type === "text" && typeof block.text === "string")
-			.map((block) => block.text as string ?? "")
+		const text = msg.content
+			.filter((block): block is TextContent => block.type === "text")
+			.map((block) => block.text)
 			.join("\n")
 			.trim();
 		if (text) return text;
