@@ -4,12 +4,13 @@
  * `real-host-probe.ts`.
  *
  * Every helper that starts a run or navigates the tree is a step: it returns only
- * once `/e2e-barrier` reports no outstanding work, so tests never issue a
- * non-command prompt while a run or compaction is active, and it fails unless the
- * step started exactly the runs its caller expected. A step that has counted fewer
- * runs than it expects barriers again — a run a command, session_tree or agent_settled
- * handler starts is first visible to the probe at its "input" event — within one
- * barrier's budget. `close()` fails on any run that started outside every step.
+ * once `/e2e-barrier` reports no outstanding work (CONTRIBUTING.md `## Tests` names
+ * the work it waits for), so tests never issue a non-command prompt while work is
+ * outstanding. A step fails unless it started exactly the runs its caller expected.
+ * A step that has counted fewer runs than it expects barriers again — a run a
+ * command handler starts (schematic's /handoff) is first visible to the probe at
+ * its "input" event — within one barrier's budget. `close()` fails on any
+ * run that started outside every step.
  */
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -17,7 +18,7 @@ import os from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { TestContext } from "node:test";
-import { RpcClient, SessionManager, type RpcClientOptions, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { RpcClient, type RpcClientOptions, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import {
 	parseBarrierReport,
@@ -105,7 +106,6 @@ export interface RealHostSettings {
 }
 
 export interface RealHostOptions {
-	seedSession?: (session: SessionManager) => void;
 	settings?: RealHostSettings;
 }
 
@@ -247,15 +247,6 @@ export class RealHost {
 				"-e", SCHEMATIC_ENTRY,
 				"-e", PROBE_ENTRY,
 			];
-			if (options.seedSession) {
-				const session = SessionManager.create(projectDir, sessionsDir);
-				options.seedSession(session);
-				const sessionFile = session.getSessionFile();
-				if (!sessionFile || !existsSync(sessionFile)) {
-					throw new Error(`Seeded session file was not written (${sessionFile}); the seed must append a user or assistant message`);
-				}
-				args.push("--session", sessionFile);
-			}
 			const clientOptions: RpcClientOptions = {
 				cliPath: CLI_PATH,
 				cwd: projectDir,
@@ -343,8 +334,9 @@ export class RealHost {
 			.map((line) => parseProbeRecord(line));
 	}
 
-	successorSends(): Array<Extract<ProbeRecord, { kind: "successor-send" }>> {
-		return this.probeLog().filter((record): record is Extract<ProbeRecord, { kind: "successor-send" }> => record.kind === "successor-send");
+	/** Handoff cuts the probe saw in turn_end boundaries, in order, with whether it dropped each one. */
+	cuts(): Array<Extract<ProbeRecord, { kind: "cut" }>> {
+		return this.probeLog().filter((record): record is Extract<ProbeRecord, { kind: "cut" }> => record.kind === "cut");
 	}
 
 	/** Navigate the tree to `entryId`; a step that starts `runs` runs. */
@@ -420,7 +412,7 @@ export class RealHost {
 	 * since `mark`, then require exactly `runs` runs started since `mark`, counted by `countRuns`
 	 * (the passes of one run up to its agent_settled are one run).
 	 *
-	 * A run a command, session_tree or agent_settled handler starts is first visible to the probe at
+	 * A run a command handler starts (schematic's /handoff) is first visible to the probe at
 	 * its "input" event, so a barrier can report quiet before that run has started. A step that has
 	 * counted fewer runs than it expects therefore barriers again after the next observed event,
 	 * inside the step's one `STEP_BUDGET_MS`; every round spends what is left of it, so a run that
