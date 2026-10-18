@@ -17,7 +17,7 @@ import { getFilesystemMutationReason, DECL_KEYWORDS, stripDeclKeywords, parseCom
 import {
 	applyDirectoryChange, compoundSegmentReason,
 	deferredCodeReason,
-	runWithPassDirectoryCache,
+	runWithPassDirectoryCache, seedTrackedPwd,
 } from "./readonly-bash-dirchange.js";
 
 /** Outcome of classifying one bash command: allowed, or a user-facing reason it is blocked. */
@@ -186,7 +186,7 @@ export function classifyBashWithHeredocs(
 	return runWithPassDirectoryCache(() => {
 		const prepared = stripHeredocBodies(cmd, inheritedHeredocs);
 		if (prepared === null) return { ok: false, reason: `unsupported stdin code, group heredoc, or unterminated heredoc (e.g. avoid { cat; bash; } <<EOF)${FAIL_CLOSED_HINT}` };
-		const initial: ShellState = { cwd, stack: [], vars: new Map(shellVars), directories: new Set(), heredocs: prepared.heredocs };
+		const initial: ShellState = { cwd, stack: [], vars: seedTrackedPwd(shellVars, cwd), directories: new Set(), heredocs: prepared.heredocs };
 		try {
 			const result = classifyShellSequence(prepared.command, [initial], depth);
 			return result.ok ? { ok: true } : result;
@@ -462,7 +462,7 @@ export function classifySubstitutionScript(
 ): string | null {
 	const prepared = stripHeredocBodies(subcommand, new Map());
 	if (prepared === null) return `unsupported substitution heredoc${FAIL_CLOSED_HINT}`;
-	const state: ShellState = { cwd, stack: [], vars: new Map(vars), directories: new Set(), heredocs: prepared.heredocs };
+	const state: ShellState = { cwd, stack: [], vars: seedTrackedPwd(vars, cwd), directories: new Set(), heredocs: prepared.heredocs };
 	// The outer shell expands an unquoted body here too, so the same shell-version split applies.
 	// Markers are stripped first so a redirect written before the command word exposes its assignments.
 	const prefix = leadingShellAssignments(stripHeredocMarkers(prepared.command, prepared.heredocs), state.vars);

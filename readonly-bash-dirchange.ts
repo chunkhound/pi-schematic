@@ -124,6 +124,15 @@ function expandCommandWordAt(segment: string, index: number | null, vars: Readon
 	return { segment: segment.slice(0, start) + value + segment.slice(start + word[0].length), resolved: true };
 }
 
+/** Bash always defines `PWD` from the current directory. Seed it when creating shell state so
+ * heredoc expansion and data substitutions share one source; an explicit assignment survives
+ * until a directory change overwrites it (see withTrackedCwd). */
+export function seedTrackedPwd(vars: ReadonlyMap<string, string>, cwd: string): Map<string, string> {
+	const tracked = new Map(vars);
+	if (!tracked.has("PWD")) tracked.set("PWD", cwd);
+	return tracked;
+}
+
 /** Bash rewrites `PWD` on every successful directory change. Keep the map in sync so an earlier
  * `PWD=…` assignment cannot outlive the `cd` and send `$PWD` expansion to a stale directory. */
 function withTrackedCwd(state: ShellState, cwd: string, stack: string[] = state.stack): ShellState {

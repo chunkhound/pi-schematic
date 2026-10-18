@@ -58,6 +58,15 @@ function assertShellWrite(command: string, cwd: string, target: string, allowed:
 	assert.equal(classifyBashCommand(command, cwd).ok, allowed, command);
 }
 
+function withAbsentPwd(fn: () => void): void {
+	const saved = process.env.PWD;
+	delete process.env.PWD;
+	try { fn(); } finally {
+		if (saved === undefined) delete process.env.PWD;
+		else process.env.PWD = saved;
+	}
+}
+
 function hasBash(): boolean {
 	try {
 		execFileSync("bash", ["--noprofile", "--norc", "-c", "true"], { ...bashOptions, stdio: "ignore" });
@@ -1426,22 +1435,48 @@ test("heredoc expansion blocks name the failing expansion candidate", () => {
 	assert.match(prefixBlocked.reason, /assignment-prefix expansion/);
 });
 
-test("an explicit PWD assignment in a heredoc expansion is classified", () => {
-	// $PWD must resolve from the candidate's variable map before falling back to the tracked cwd.
-	// An explicit PWD assignment bypasses the cwd tracker, so the classifier must see it.
+function assertPwdHeredoc(command: string, cwd: string, allowed: boolean, reason?: RegExp): void {
+	withAbsentPwd(() => {
+		const verdict = classifyBashCommand(command, cwd);
+		assert.equal(verdict.ok, allowed, command);
+		if (reason) {
+			assert.equal(verdict.ok, false, command);
+			assert.match(verdict.reason, reason, command);
+		}
+	});
+}
+
+// Missing ambient PWD must not replace the parent cwd or hide explicit assignments.
+for (const [consumer, body] of [
+	["bash", 'touch "$PWD/probe"'],
+	["cat", '$(touch "$PWD/probe")'],
+] as const) {
+	for (const [name, outsideValue, standalone, allowed, reason] of [
+		["parent outside", true, true, false, undefined],
+		["prefix outside", true, false, false, /assignment-prefix expansion/],
+		["parent inside", false, true, true, undefined],
+		["prefix inside", false, false, true, undefined],
+	] as const) {
+		test(`heredoc PWD assignment (${consumer}): ${name}`, () => {
+			const cwd = shellPath(TEMP_DIR);
+			const value = outsideValue ? path.join(path.parse(TEMP_DIR).root, "readonly-heredoc-pwd-outside") : cwd;
+			const assignment = `PWD=${classifierQuote(value)}${standalone ? ";" : ""}`;
+			assertPwdHeredoc(`${assignment} ${consumer} <<EOF\n${body}\nEOF`, cwd, allowed, reason);
+		});
+	}
+
+	test(`prefix-only heredoc PWD cannot hide an outside parent cwd (${consumer})`, () => {
+		// Different cwd and prefix values expose accidental use of the prefix for both models.
+		const cwd = shellPath(path.join(path.parse(TEMP_DIR).root, "readonly-heredoc-pwd-outside"));
+		assert.equal(isTempLiteralPath(cwd, TEMP_DIR), false, "parent cwd must be outside temp");
+		const prefix = classifierQuote(shellPath(TEMP_DIR));
+		assertPwdHeredoc(`PWD=${prefix} ${consumer} <<EOF\n${body}\nEOF`, cwd, false, /parent expansion/);
+	});
+}
+
+test("a data heredoc resolves PWD from cwd without ambient PWD", () => {
 	const cwd = shellPath(TEMP_DIR);
-	const temp = classifierQuote(cwd);
-	const outside = classifierQuote(path.join(path.parse(TEMP_DIR).root, "readonly-heredoc-pwd-outside"));
-	// Parent-assigned PWD outside: the classifier must block the outside path.
-	const parentPwd = classifyBashCommand(`PWD=${outside}; bash <<EOF\ntouch "$PWD/probe"\nEOF`, cwd);
-	assert.equal(parentPwd.ok, false, "parent-assigned PWD outside must block");
-	// Prefix-assigned PWD outside: the prefix candidate sees PWD=/outside and blocks.
-	const prefixPwd = classifyBashCommand(`PWD=${outside} bash <<EOF\ntouch "$PWD/probe"\nEOF`, cwd);
-	assert.equal(prefixPwd.ok, false, "prefix-assigned PWD outside must block");
-	assert.match(prefixPwd.reason, /assignment-prefix expansion/, "prefix candidate should be named in the block reason");
-	// Positive control: PWD inside temp stays allowed.
-	const insidePwd = classifyBashCommand(`PWD=${temp}; bash <<EOF\ntouch "$PWD/ok"\nEOF`, cwd);
-	assert.equal(insidePwd.ok, true, "PWD inside temp must allow");
+	assertPwdHeredoc(`cat <<EOF\n$(touch "$PWD/probe")\nEOF`, cwd, true);
 });
 
 test("a directory change replaces an explicit PWD assignment", () => {

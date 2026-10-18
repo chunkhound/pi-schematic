@@ -64,8 +64,9 @@ export type HeredocEnvironments = { parent: ReadonlyMap<string, string>; prefix:
  * block if either fails, so the verdict never depends on the host shell's version. The parent
  * candidate models >= 4.1 exactly: a prefix-only name is unset there, and unset plain names
  * expand to "" — ambient values still come from `process.env`. Other names absent from both
- * maps keep failing closed, guarding against assignments the classifier failed to track; `PWD`
- * resolves from the tracked cwd, which every directory change refreshes. */
+ * maps keep failing closed, guarding against assignments the classifier failed to track. `PWD`
+ * is seeded into shell state from the tracked cwd and refreshed on every directory change, so it
+ * already exists in `parent` and a PWD prefix cannot blank it here. */
 function expansionCandidates({ parent, prefix }: HeredocEnvironments): readonly ReadonlyMap<string, string>[] {
 	if (sameVariables(parent, prefix)) return [parent];
 	const parentModel = new Map(parent);
@@ -99,7 +100,7 @@ export function classifyHeredocBody({ spec, text }: HeredocBody, state: ShellSta
 	// child environment failed, so labeling would mislead.
 	const expandedTexts: string[] = [];
 	for (const [index, vars] of expansions.entries()) {
-		const expanded = expandHeredocText(text, vars, state.cwd);
+		const expanded = expandHeredocText(text, vars);
 		if (expanded === null) return { ok: false, reason: candidateReason(expansions, index, `unresolvable shell heredoc expansion${FAIL_CLOSED_HINT}`) };
 		expandedTexts.push(expanded);
 	}
@@ -130,7 +131,7 @@ function classifyHeredocCode(text: string, spec: HeredocSpec, state: ShellState,
 	return classifyBashWithHeredocs(code, state.cwd, depth, vars, state.heredocs);
 }
 
-function expandHeredocText(text: string, vars: ReadonlyMap<string, string>, cwd: string): string | null {
+function expandHeredocText(text: string, vars: ReadonlyMap<string, string>): string | null {
 	let expanded = "";
 	for (let i = 0; i < text.length; i++) {
 		const ch = text[i];
@@ -143,7 +144,7 @@ function expandHeredocText(text: string, vars: ReadonlyMap<string, string>, cwd:
 		if (ch !== "$") { expanded += ch; continue; }
 		const reference = text.slice(i).match(/^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})/)?.[0];
 		if (!reference) return null; // Unsupported parameter/arithmetic/substitution output fails closed.
-		const value = heredocVariableValue(reference, vars, cwd);
+		const value = heredocVariableValue(reference, vars);
 		if (value === undefined) return null;
 		expanded += value;
 		i += reference.length - 1;
@@ -151,9 +152,8 @@ function expandHeredocText(text: string, vars: ReadonlyMap<string, string>, cwd:
 	return expanded;
 }
 
-function heredocVariableValue(reference: string, vars: ReadonlyMap<string, string>, cwd: string): string | undefined {
+function heredocVariableValue(reference: string, vars: ReadonlyMap<string, string>): string | undefined {
 	const name = reference.replace(/^\$\{?|\}$/g, "");
-	if (name === "PWD") return vars.get(name) ?? cwd;
 	return vars.get(name) ?? process.env[name];
 }
 
