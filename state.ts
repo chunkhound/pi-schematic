@@ -19,11 +19,15 @@ export interface StagedHandoff {
 	context: string;
 	/** Deduplicated discard request, not yet filtered against the notebook. */
 	discardPages: string[];
+	/**
+	 * Names of the pages the submitted boundary's discard drafts remove, set at
+	 * turn_end. Completion counts a name discarded when the rebuilt notebook lacks it
+	 * and warns about every name still present. Empty until the boundary is submitted.
+	 */
+	discardedPages: string[];
 	phase: "staged" | "submitted" | "declined";
 	/** Non-null exactly when phase is "declined". */
 	declineReason: string | null;
-	/** Pages the submitted drafts remove; 0 until submitted. */
-	discarded: number;
 }
 
 /** A required handoff request; lifecycle on `SchematicState.pendingRequestedHandoff`. */

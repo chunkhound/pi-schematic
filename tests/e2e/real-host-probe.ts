@@ -104,8 +104,9 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	let step = 0;
 	let runEntryCount = 0;
 	// How the next turn_end boundary that carries a handoff cut is altered: the whole
-	// boundary dropped, only its successor dropped, or a compaction appended after the cut.
-	let nextCutTamper: "drop" | "dropSuccessor" | "compactAfter" | null = null;
+	// boundary dropped, only its successor dropped, a compaction appended after the cut,
+	// or only its notebook rewrite dropped.
+	let nextCutTamper: "drop" | "dropSuccessor" | "compactAfter" | "dropNotebookRewrite" | null = null;
 	let abortAfterHandoff = false;
 	// Runs `/e2e-turn <count>` still has to start, one per agent_settled.
 	let chainedTurns = 0;
@@ -283,6 +284,8 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 				return { entries: event.entries.filter((entry) => !(entry.type === "custom_message" && entry.customType === HANDOFF_SUCCESSOR_CUSTOM_TYPE)) };
 			case "compactAfter":
 				return { entries: [...event.entries, { type: "compaction", summary: "e2e compaction after the cut", firstKeptEntryId: null }] };
+			case "dropNotebookRewrite":
+				return { entries: event.entries.filter((entry) => !(entry.type === "custom" && entry.customType.startsWith("notebook-"))) };
 		}
 	});
 
@@ -371,6 +374,13 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		description: "Append a compaction after the next handoff cut in the turn_end boundary",
 		handler: async () => {
 			nextCutTamper = "compactAfter";
+		},
+	});
+
+	pi.registerCommand(PROBE_COMMAND.dropNotebookRewriteAtNextCut, {
+		description: "Keep the next handoff cut and its successor but drop the notebook rewrite from the turn_end boundary",
+		handler: async () => {
+			nextCutTamper = "dropNotebookRewrite";
 		},
 	});
 

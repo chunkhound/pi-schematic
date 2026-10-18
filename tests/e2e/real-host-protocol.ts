@@ -33,6 +33,7 @@ export const PROBE_COMMAND = {
 	dropNextCut: "e2e-drop-next-cut",
 	dropNextSuccessor: "e2e-drop-next-successor",
 	compactAfterNextCut: "e2e-compact-after-next-cut",
+	dropNotebookRewriteAtNextCut: "e2e-drop-notebook-rewrite-at-next-cut",
 	abortAfterHandoff: "e2e-abort-after-handoff",
 	tools: "e2e-tools",
 } as const;

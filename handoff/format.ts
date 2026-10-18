@@ -70,3 +70,8 @@ export function formatHandoffComplete(discardRequested: boolean, kept: number, d
 	return `Handoff complete. Notebook: ${kept} page${kept === 1 ? "" : "s"} kept` +
 		(discarded > 0 ? `, ${discarded} discarded.` : ".");
 }
+
+/** Warning for requested discards a later turn_end handler kept off the branch; `pages` are still in the notebook. */
+export function formatDiscardNotPersisted(pages: readonly string[]): string {
+	return `The notebook discard was not persisted (another extension's turn_end handler may have dropped it); still in the notebook: ${pages.join(", ")}.`;
+}

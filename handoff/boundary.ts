@@ -39,6 +39,7 @@ import {
 	buildContinuationFrame,
 	buildHandoffSystemPromptNote,
 	buildNextUserMessage,
+	formatDiscardNotPersisted,
 	formatHandoffComplete,
 	formatHandoffFailure,
 	formatLostSuccessorFailure,
@@ -53,14 +54,8 @@ import { settleExhaustsHandoffBudget } from "../watchdog.js";
 function buildHandoffBoundaryDrafts(
 	state: SchematicState,
 	staged: StagedHandoff,
-): { drafts: SessionBoundaryDraft[]; discarded: number } {
+): { drafts: SessionBoundaryDraft[]; discardedPages: string[] } {
 	const notebook = buildNotebookDiscardDrafts(state, staged.discardPages);
-	const discardRequested = staged.discardPages.length > 0;
-	// Headless sessions have no UI report; the discard outcome rides in the
-	// successor's details so the successor content stays the verbatim instruction and context.
-	const report = discardRequested
-		? formatHandoffComplete(true, state.notebookPages.size - notebook.discarded, notebook.discarded)
-		: undefined;
 	const drafts: SessionBoundaryDraft[] = [
 		...notebook.drafts,
 		{
@@ -74,7 +69,7 @@ function buildHandoffBoundaryDrafts(
 			customType: HANDOFF_SUCCESSOR_CUSTOM_TYPE,
 			content: buildNextUserMessage({ nextInstruction: staged.nextInstruction, context: staged.context }),
 			display: true,
-			details: report === undefined ? { handoffId: staged.handoffId } : { handoffId: staged.handoffId, report },
+			details: { handoffId: staged.handoffId },
 		},
 		{
 			type: "custom_message",
@@ -84,7 +79,9 @@ function buildHandoffBoundaryDrafts(
 			details: { handoffId: staged.handoffId },
 		},
 	];
-	return { drafts, discarded: notebook.discarded };
+	// The names `buildNotebookDiscardDrafts` removes: the same existence filter.
+	const discardedPages = staged.discardPages.filter((name) => state.notebookPages.has(name));
+	return { drafts, discardedPages };
 }
 
 /** The `handoffId` of a handoff cut, or undefined for any other entry. */
@@ -143,15 +140,23 @@ function completeHandoff(
 ): void {
 	// Pages, epoch and watermark follow what pi actually persisted.
 	reconstructNotebook(state, branch);
+	// A later turn_end handler can keep the cut but drop the notebook rewrite, and
+	// can add a page named by the request after the boundary. Only a page the
+	// boundary's discard drafts removed could be missing from the rebuilt notebook,
+	// so the check covers exactly that set: a page created later is neither counted
+	// as discarded nor warned about.
+	const notDiscarded = staged.discardedPages.filter((name) => state.notebookPages.has(name));
 	finalizeHandoffState(state);
 	state.stagedHandoff = null;
 	if (!ctx.hasUI) return;
 	ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
 	if (successorRan) {
-		ctx.ui.notify(formatHandoffComplete(staged.discardPages.length > 0, state.notebookPages.size, staged.discarded), "info");
+		const discarded = staged.discardedPages.length - notDiscarded.length;
+		ctx.ui.notify(formatHandoffComplete(staged.discardPages.length > 0, state.notebookPages.size, discarded), "info");
 	} else {
 		ctx.ui.notify(HANDOFF_SUCCESSOR_NOT_RUN, "warning");
 	}
+	if (notDiscarded.length > 0) ctx.ui.notify(formatDiscardNotPersisted(notDiscarded), "warning");
 	updateIndicators(ctx, state);
 }
 
@@ -313,9 +318,9 @@ export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState)
 			staged.declineReason = reason;
 			return undefined;
 		}
-		const { drafts, discarded } = buildHandoffBoundaryDrafts(state, staged);
+		const { drafts, discardedPages } = buildHandoffBoundaryDrafts(state, staged);
 		staged.phase = "submitted";
-		staged.discarded = discarded;
+		staged.discardedPages = discardedPages;
 		// The batch terminated, so pi would not request again on its own; continuing
 		// gives exactly one more turn in this run, and it sees the successor.
 		return { entries: [...event.entries, ...drafts], continue: true };

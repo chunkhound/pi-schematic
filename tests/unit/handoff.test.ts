@@ -189,9 +189,9 @@ test("handoff stages the request, marks it called, shows progress and appends no
 		nextInstruction: "Goal: continue auth-refresh",
 		context: "blocked on the token spike",
 		discardPages: ["stale", "old"],
+		discardedPages: [],
 		phase: "staged",
 		declineReason: null,
-		discarded: 0,
 	});
 	assert.equal(state.pendingRequestedHandoff?.toolCalled, true);
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), "🤝 Handoff in progress");
@@ -297,7 +297,7 @@ test("turn_end appends the cut, successor and note after the existing entries an
 	assert.equal(state.stagedHandoff?.phase, "submitted");
 });
 
-test("turn_end with discardPages writes the notebook rewrite before the cut and reports the outcome in the successor details", async () => {
+test("turn_end with discardPages writes the notebook rewrite before the cut", async () => {
 	const { state, pi } = await boundaryHost((s) => {
 		s.epoch = 1;
 		s.notebookPages.set("stale", "obsolete");
@@ -315,9 +315,8 @@ test("turn_end with discardPages writes the notebook rewrite before the cut and 
 		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 2 } },
 	]);
 	assert.equal(result.entries[3].type, "compaction");
-	assert.deepEqual(result.entries[4].details, { handoffId, report: "Handoff complete. Notebook: 1 page kept, 1 discarded." });
-	assert.equal(result.entries[4].content, "## Next instruction\n\ngo", "the report must not enter the successor content");
-	assert.equal(state.stagedHandoff?.discarded, 1);
+	assert.deepEqual(result.entries[4].details, { handoffId });
+	assert.deepEqual(state.stagedHandoff?.discardedPages, ["stale"], "only the requested page that existed is discarded");
 	assert.equal(state.notebookPages.has("stale"), true, "the in-memory notebook changes only once the cut is confirmed");
 });
 
@@ -348,15 +347,6 @@ test("turn_end adds no notebook entries when discardPages is empty or names no p
 		assert.deepEqual(result.entries.map((entry: any) => entry.type), ["compaction", "custom_message", "custom_message"],
 			`discardPages ${JSON.stringify(discardPages)}`);
 	}
-});
-
-test("a handoff without discardPages carries no report in the successor details", async () => {
-	const { state, pi } = await boundaryHost();
-	await executeHandoff(pi, makeCtx().ctx, { nextInstruction: "go" });
-
-	const result = await endTurn(pi, makeCtx().ctx);
-
-	assert.deepEqual(result.entries[1].details, { handoffId: state.stagedHandoff!.handoffId });
 });
 
 test("turn_end declines the cut when the run was aborted, the turn failed, or the handoff result is unusable", async () => {
@@ -440,7 +430,6 @@ test("a completed handoff without discardPages notifies a plain completion", asy
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
 	assert.equal(state.notebookPages.size, 2, "the pages survive, so the plain form does not depend on an empty notebook");
-	assert.equal("report" in result.entries[1].details, false);
 	assert.deepEqual(notifications, [{ message: "Handoff complete.", level: "info" }]);
 });
 
@@ -463,8 +452,59 @@ test("a discard naming no page reports the kept pages without a discarded count"
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
-	assert.deepEqual(result.entries[1].details, { handoffId, report: "Handoff complete. Notebook: 2 pages kept." });
 	assert.deepEqual(notifications, [{ message: "Handoff complete. Notebook: 2 pages kept.", level: "info" }]);
+});
+
+test("a discard dropped from the boundary is counted from the branch and warned about", async () => {
+	const { state, pi } = await boundaryHost((s) => {
+		s.epoch = 1;
+		s.notebookPages.set("a", "one");
+		s.notebookPages.set("stale", "obsolete");
+	});
+	const { ctx, notifications, session } = makeCtx();
+	await executeHandoff(pi, ctx, { nextInstruction: "go", discardPages: ["stale"] });
+	const result = await endTurn(pi, ctx);
+	// Another extension's turn_end handler keeps the cut, successor and note but drops the notebook rewrite.
+	session.branch = persist([
+		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
+		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "a", content: "one", clipped: false } },
+		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "stale", content: "obsolete", clipped: false } },
+		...result.entries.filter((entry: any) => entry.type !== "custom"),
+	]);
+
+	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+
+	assert.equal(state.notebookPages.get("stale"), "obsolete", "the page stays on the branch");
+	assert.deepEqual(notifications, [
+		{ message: "Handoff complete. Notebook: 2 pages kept.", level: "info" },
+		{ message: "The notebook discard was not persisted (another extension's turn_end handler may have dropped it); still in the notebook: stale.", level: "warning" },
+	]);
+});
+
+test("a page created under a requested discard name after staging is neither counted nor warned about", async () => {
+	const { state, pi } = await boundaryHost((s) => {
+		s.epoch = 1;
+		s.notebookPages.set("stale", "obsolete");
+	});
+	const { ctx, notifications, session } = makeCtx();
+	// "ghost" names no page when the boundary is built, so the drafts discard only "stale".
+	await executeHandoff(pi, ctx, { nextInstruction: "go", discardPages: ["stale", "ghost"] });
+	const result = await endTurn(pi, ctx);
+	// Another extension's turn_end handler keeps the boundary and adds a page named
+	// by the request, which never existed when the boundary was built and was never discarded.
+	session.branch = persist([
+		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
+		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "stale", content: "obsolete", clipped: false } },
+		...result.entries,
+		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 2, name: "ghost", content: "created after staging", clipped: false } },
+	]);
+
+	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+
+	assert.deepEqual([...state.notebookPages], [["ghost", "created after staging"]], "the page added after staging survives");
+	assert.deepEqual(notifications, [
+		{ message: "Handoff complete. Notebook: 1 page kept, 1 discarded.", level: "info" },
+	]);
 });
 
 test("a completed handoff leaves the readonly nudge off when readonly is off", async () => {

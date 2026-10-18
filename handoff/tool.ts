@@ -147,15 +147,16 @@ export function registerHandoffTool(
 			if (ctx.hasUI && ctx.ui.theme) {
 				ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_IN_PROGRESS_STATUS));
 			}
+			const discardPages = [...new Set(params.discardPages ?? [])];
 			state.stagedHandoff = {
 				handoffId: randomUUID(),
 				toolCallId,
 				nextInstruction,
 				context,
-				discardPages: [...new Set(params.discardPages ?? [])],
+				discardPages,
+				discardedPages: [],
 				phase: "staged",
 				declineReason: null,
-				discarded: 0,
 			};
 			if (state.pendingRequestedHandoff) state.pendingRequestedHandoff.toolCalled = true;
 

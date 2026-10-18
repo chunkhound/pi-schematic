@@ -372,9 +372,9 @@ const STAGED_HANDOFF: NonNullable<SchematicState["stagedHandoff"]> = {
 	nextInstruction: "continue",
 	context: "",
 	discardPages: [],
+	discardedPages: [],
 	phase: "staged",
 	declineReason: null,
-	discarded: 0,
 };
 
 test("a new state has no staged handoff and no refusals", () => {

@@ -447,6 +447,35 @@ describe("pi-schematic real-host E2E", () => {
 		}));
 	}
 
+	it("a cut whose notebook rewrite another extension dropped reports the discard from the branch and warns", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+		await host.command("/" + PROBE_COMMAND.dropNotebookRewriteAtNextCut);
+		await host.script([
+			{ name: "notebook_write", arguments: { name: "p1", content: "page one" } },
+			{ name: "notebook_write", arguments: { name: "p2", content: "page two" } },
+			{ name: "notebook_write", arguments: { name: "p3", content: "page three" } },
+			{ name: "handoff", arguments: { nextInstruction: "continue with the pages", discardPages: ["p3"] } },
+			{ name: "notebook_read", arguments: { name: "p3" } },
+		], 1);
+
+		const { entries } = await host.entries();
+		const cut = onlyHandoffCut(entries);
+		const successor = onlyCustomMessage(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE);
+		assert.deepEqual(successor.details, { handoffId: cutHandoffId(cut) }, "the successor details carry no discard report");
+		assert.deepEqual(
+			host.notifications.filter((notification) => notification.message.startsWith("Handoff complete")).map((notification) => notification.message),
+			["Handoff complete. Notebook: 3 pages kept."],
+			"the completion counts follow the branch",
+		);
+		assert.ok(
+			host.notifications.some((notification) => notification.notifyType === "warning" &&
+				notification.message === "The notebook discard was not persisted (another extension's turn_end handler may have dropped it); still in the notebook: p3."),
+			JSON.stringify(host.notifications),
+		);
+		const read = onlyResult(toolResults(entries, "notebook_read"), "notebook_read");
+		assert.equal(read.isError, false, "the page is still in the notebook after the cut");
+		assert.ok(read.text.includes("page three"), read.text);
+	}));
+
 	it("readonly is re-announced in the run after a handoff whose successor was dropped", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
 		await host.command("/readonly");
 		await host.say("start", 1);
