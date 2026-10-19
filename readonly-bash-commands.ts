@@ -6,7 +6,7 @@
  * them; the first matching reason wins. Target extractors (getRmTargets, etc.)
  * pull filesystem paths from command arguments for temp-dir checking.
  */
-import { decodeShellAssignmentValue, tempPathBlockReason, rawAttachedFlagValue, stripMatchingQuotes, stripRedirectTokens, expandShellVariable, splitFlagValue, normalizedCommand, unescapeCommandWord, getCommandTokens, SHELL_WORD_PATTERN, SHELL_SCRIPT_CONSUMERS, skipLeadingRedirections } from "./readonly-shell-utils.js";
+import { decodeShellAssignmentValue, decodeShellWord, tempPathBlockReason, rawAttachedFlagValue, stripMatchingQuotes, stripRedirectTokens, expandShellVariable, splitFlagValue, normalizedCommand, unescapeCommandWord, getCommandTokens, SHELL_WORD_PATTERN, SHELL_SCRIPT_CONSUMERS, skipLeadingRedirections } from "./readonly-shell-utils.js";
 import { matchingParenIndex, extractProcessSubstitutions } from "./readonly-bash-scanner.js";
 import { classifyGit } from "./readonly-bash-git.js";
 import { resolveDirectoryTarget } from "./readonly-bash-dirchange.js";
@@ -203,25 +203,224 @@ function isWholeCommandSubstitution(script: string): boolean {
 	return false;
 }
 
-/** xargs: classify the command xargs would run + block targetless mutation commands. */
+type XargsOptionArity = "value" | "flag" | "optional";
+
+/** Option arity for `xargs`. A required value consumes the next token or the attached
+ * rest; an optional value binds only when attached (`-iX`, `--eof=X`). Unknown options
+ * fail closed: their value could otherwise become the wrapped command word. */
+const XARGS_SHORT_ARITY: Record<string, XargsOptionArity> = {
+	a: "value", d: "value", E: "value", I: "value", J: "value", L: "value", n: "value",
+	P: "value", R: "value", s: "value", S: "value",
+	e: "optional", i: "optional", l: "optional",
+	"0": "flag", o: "flag", p: "flag", r: "flag", t: "flag", x: "flag",
+};
+
+const XARGS_LONG_ARITY: Record<string, XargsOptionArity> = {
+	"--arg-file": "value", "--delimiter": "value", "--max-args": "value", "--max-chars": "value",
+	"--max-lines": "optional", "--max-procs": "value", "--process-slot-var": "value",
+	"--eof": "optional", "--replace": "optional",
+	"--interactive": "flag", "--no-run-if-empty": "flag", "--null": "flag", "--open-tty": "flag",
+	"--show-limits": "flag", "--verbose": "flag", "--exit": "flag", "--help": "flag", "--version": "flag",
+};
+
+/** Tokens consumed by one short `xargs` option, the replacement token it selects, and
+ * mode resets: GNU xargs lets the last of replace/max-lines/max-args win. */
+type XargsShortScan = { readonly size: number; readonly replaceToken: string | null; readonly clearsReplacement?: boolean; readonly maxArgsValue?: string; readonly unsafeJ?: boolean } | { readonly reason: string };
+
+/** Decode the token xargs receives. A dynamic value cannot be compared to the wrapped
+ * command, so it fails closed; a null return means the shell hides its value. `{}` is the
+ * default token and stays literal even though the shell decoder rejects unquoted braces. */
+function decodedReplacement(raw: string | undefined): string | null {
+	const shell = decodeShellWord(raw ?? "");
+	if (shell !== null) return shell;
+	const word = unescapeCommandWord(raw ?? "");
+	// Unquoted redirect/operator syntax ends the shell word; the fallback would keep it
+	// attached and hide the real replacement token (`-I X<&0` passes `X` to xargs).
+	return word !== "{}" && /[$`*?[\]{}~<>|&;()]/.test(word) ? null : word;
+}
+
+function replacementReason(raw: string | undefined): { reason: string } {
+	return { reason: `xargs replacement token blocked: cannot model ${raw ?? "(missing)"}${FAIL_CLOSED_HINT}` };
+}
+
+/** `I`/`J` take a replacement token; `i` defaults to `{}` when bare. Other values are
+ * consumed so they cannot become the wrapped command word. `J` is not a safe replacement
+ * mode: BSD xargs appends stdin when its token is absent. */
+function xargsShortOptionScan(raw: string, args: string[], index: number, word: string): XargsShortScan | null {
+	const letters = word.slice(1);
+	let clearsReplacement = false;
+	for (let i = 0; i < letters.length; i++) {
+		const letter = letters[i]!;
+		const arity = XARGS_SHORT_ARITY[letter];
+		if (arity === undefined) return null;
+		const attached = letters.slice(i + 1);
+		if (arity === "value") {
+			const size = attached ? 1 : 2;
+			if (letter === "L") return { size, replaceToken: null, clearsReplacement: true };
+			if (letter === "n") {
+				const rawValue = attached ? rawAttachedFlagValue(raw, `-${letters.slice(0, i + 1)}`) : args[index + 1] ?? "";
+				return { size, replaceToken: null, maxArgsValue: decodeShellWord(rawValue) ?? rawValue };
+			}
+			if (letter === "J") return { size, replaceToken: null, clearsReplacement: true, unsafeJ: true };
+			if (letter !== "I") return { size, replaceToken: null };
+			const rawValue = attached ? rawAttachedFlagValue(raw, `-${letters.slice(0, i + 1)}`) : args[index + 1];
+			const replaceToken = decodedReplacement(rawValue);
+			return replaceToken === null ? replacementReason(rawValue) : { size, replaceToken };
+		}
+		// Optional values bind only when attached; bare `-i` still selects the default `{}`.
+		if (arity === "optional" && attached) {
+			if (letter === "l") return { size: 1, replaceToken: null, clearsReplacement: true };
+			if (letter !== "i") return { size: 1, replaceToken: null };
+			const rawValue = rawAttachedFlagValue(raw, `-${letters.slice(0, i + 1)}`);
+			const replaceToken = decodedReplacement(rawValue);
+			return replaceToken === null ? replacementReason(rawValue) : { size: 1, replaceToken };
+		}
+		if (letter === "l") clearsReplacement = true;
+		if (letter === "i") return { size: 1, replaceToken: "{}" };
+	}
+	return { size: 1, replaceToken: null, clearsReplacement };
+}
+
+/** Wrapped-command start, the active replacement token, and whether BSD `-J` mode is active. */
+type XargsOptionScan = { readonly start: number; readonly replaceToken: string | null; readonly unsafeJ: boolean };
+
+function xargsCommandStart(args: string[]): XargsOptionScan | { reason: string } {
+	let i = 0;
+	let replaceToken: string | null = null;
+	let unsafeJ = false;
+	while (i < args.length) {
+		const word = unescapeCommandWord(args[i]!);
+		if (word === "--") return { start: i + 1, replaceToken, unsafeJ };
+		if (!word.startsWith("-") || word === "-") return { start: i, replaceToken, unsafeJ };
+		if (word.startsWith("--")) {
+			const [name, inline] = splitFlagValue(word);
+			const arity = XARGS_LONG_ARITY[name];
+			if (arity === undefined) return { reason: `xargs option blocked: cannot model "${name}"${FAIL_CLOSED_HINT}` };
+			if (name === "--replace") {
+				const token = inline === undefined ? "{}" : decodedReplacement(inline);
+				if (token === null) return replacementReason(inline);
+				replaceToken = token;
+				unsafeJ = false;
+			}
+			if (name === "--max-lines") { replaceToken = null; unsafeJ = false; }
+			if (name === "--max-args") {
+				const rawValue = inline ?? args[i + 1] ?? "";
+				if ((decodeShellWord(rawValue) ?? rawValue) !== "1") { replaceToken = null; unsafeJ = false; }
+			}
+			i += arity === "value" && inline === undefined ? 2 : 1;
+			continue;
+		}
+		const scan = xargsShortOptionScan(args[i]!, args, i, word);
+		if (scan === null) return { reason: `xargs option blocked: cannot model "${word}"${FAIL_CLOSED_HINT}` };
+		if ("reason" in scan) return scan;
+		if (scan.clearsReplacement || (scan.maxArgsValue !== undefined && scan.maxArgsValue !== "1")) {
+			replaceToken = null;
+			unsafeJ = false;
+		}
+		if (scan.replaceToken !== null) {
+			replaceToken = scan.replaceToken;
+			unsafeJ = false;
+		}
+		if (scan.unsafeJ) {
+			replaceToken = null;
+			unsafeJ = true;
+		}
+		i += scan.size;
+	}
+	return { start: i, replaceToken, unsafeJ };
+}
+
+/** True when the word xargs receives can contain the replacement token. A token the
+ * shell decoder cannot prove literal can still expand to it, so it fails closed. */
+function carriesReplacementToken(token: string, replaceToken: string): boolean {
+	const decoded = decodeShellWord(token);
+	return decoded === null || decoded.includes(replaceToken);
+}
+
+/** Wrappers the dispatcher does not unwrap; xargs cannot prove their child without a
+ * replacement token, so a mutation could hide behind them. */
+const XARGS_WRAPPER_COMMANDS = new Set(["nohup", "nice", "timeout", "stdbuf", "chroot"]);
+
+const XARGS_J_REASON = `xargs -J blocked: BSD -J can append stdin paths; use -I with explicit targets${FAIL_CLOSED_HINT}`;
+
+/** Strip assignments that `env` parses before its command word. Quote removal happens
+ * before the assignment split, so `env 'FOO=bar' rm` still hides rm without this. */
+function stripXargsEnvAssignments(tokens: string[]): string[] {
+	let i = 0;
+	while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(unescapeCommandWord(tokens[i]!))) i++;
+	return tokens.slice(i);
+}
+
+/** Effective command tokens after wrappers the dispatcher models. Null when a child cwd
+ * or split string cannot be represented as plain tokens; callers fail closed when stdin
+ * can append. */
+function xargsEffectiveTokens(tokens: string[]): string[] | null {
+	let current = tokens;
+	for (let depth = 0; depth < 10; depth++) {
+		current = current.slice(collectCommandPrefixAssignments(current, 0, new Map()));
+		if (current.length === 0) return null;
+		const command = normalizedCommand(current[0]!);
+		if (command === "sudo") { current = current.slice(findSudoCommandIndex(current)); continue; }
+		if (command === "env") {
+			const prefix = skipEnvOptions(current, 1);
+			if (prefix.chdir !== null) return null;
+			if (prefix.splitString !== null) {
+				const split = envSplitCommand(current.join(" "));
+				if (split === null) return null;
+				current = stripXargsEnvAssignments(getCommandTokens(split));
+				continue;
+			}
+			current = stripXargsEnvAssignments(current.slice(prefix.next));
+			continue;
+		}
+		// xargs execs external programs only: shell builtins such as `command` and
+		// `builtin` do not run their argument here, so do not unwrap them.
+		return current;
+	}
+	return null;
+}
+
+/** Block a mutation launched by xargs unless -I/-i/--replace proves stdin is not appended.
+ * `-J` always blocks mutations: BSD appends stdin when its token is absent. */
+function xargsMutationReason(tokens: string[], replaceToken: string | null, unsafeJ: boolean): string | null {
+	const effective = xargsEffectiveTokens(tokens);
+	if (effective === null) {
+		if (unsafeJ) return XARGS_J_REASON;
+		return replaceToken === null ? `xargs blocked: stdin appends unchecked paths; use a replacement token${FAIL_CLOSED_HINT}` : null;
+	}
+	const command = effective[0] ? normalizedCommand(effective[0]) : "";
+	if (replaceToken === null && XARGS_WRAPPER_COMMANDS.has(command)) {
+		return `xargs ${command} blocked: cannot model its wrapped command${FAIL_CLOSED_HINT}`;
+	}
+	const targets = command ? getMutationTargets(command, effective) : null;
+	if (targets === null) return null;
+	if (unsafeJ) return XARGS_J_REASON;
+	// Without a replacement token xargs appends stdin after the explicit arguments, so
+	// the checked targets cannot bound the write. -I/-i/--replace substitute the token
+	// instead; an absent token means the input is ignored and the targets stay checked.
+	if (replaceToken === null) return `xargs ${command} blocked: stdin appends unchecked paths; use a replacement token${FAIL_CLOSED_HINT}`;
+	if (targets.length === 0) return `xargs ${command} blocked: mutation command via xargs`;
+	return null;
+}
+
+/** xargs: classify the wrapped command and bound mutation targets. */
 export function classifyXargs(command: string, tokens: string[], cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
 	if (command !== "xargs") return null;
 	const xArgs = tokens.slice(1);
-	const XARGS_FLAGS_WITH_VALUE = new Set(["-I", "-L", "-n", "-P", "-d", "-E", "-s"]);
-	let cmdStart = 0;
-	while (cmdStart < xArgs.length) {
-		const word = unescapeCommandWord(xArgs[cmdStart]);
-		if (XARGS_FLAGS_WITH_VALUE.has(word)) { cmdStart += 2; continue; }
-		if (word.startsWith("-")) { cmdStart++; continue; }
-		break;
+	const parsed = xargsCommandStart(xArgs);
+	if ("reason" in parsed) return parsed.reason;
+	const xTokens = xArgs.slice(parsed.start);
+	if (xTokens.length === 0) return null;
+	// stdin replaces every occurrence of the token at runtime. A checked literal cannot
+	// bound that substitution, so any occurrence in the wrapped command fails closed.
+	// Undecodable shell syntax (`\{\}`, `$'\x7b'`, globs, expansions) can still produce
+	// the token after the shell decodes it, so it fails closed too.
+	if (parsed.replaceToken !== null && xTokens.some((token) => carriesReplacementToken(token, parsed.replaceToken!))) {
+		return `xargs replacement token blocked: "${parsed.replaceToken}" is substituted at runtime${FAIL_CLOSED_HINT}`;
 	}
-	if (cmdStart >= xArgs.length) return null;
-	const xTokens = xArgs.slice(cmdStart);
 	const nested = classifyBashCommand(xTokens.join(" "), cwd, depth + 1, shellVars);
 	if (!nested.ok) return nested.reason;
-	const xCmd = xTokens[0] ? normalizedCommand(xTokens[0]) : "";
-	if (xCmd && getMutationTargets(xCmd, xTokens) !== null) return `xargs ${xCmd} blocked: mutation command via xargs`;
-	return null;
+	return xargsMutationReason(xTokens, parsed.replaceToken, parsed.unsafeJ);
 }
 
 /** Generic mutation: extract targets via getMutationTargets, block non-temp paths. */

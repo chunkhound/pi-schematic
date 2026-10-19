@@ -1290,9 +1290,8 @@ test("quoted redirect targets resolve identically to unquoted targets", () => {
 // ── xargs flag variants (-L, -P, -d, -E, -s, --replace) ──────────────────────
 
 test("xargs flag variants still block wrapped mutation commands", () => {
-	// CONTRACT: xargs flag-value flags (-L, -P, -d, -E, -s, --replace) consume their
-	// value operand so the real command word (rm) is reached and classified.
-	// Both separate (-L 1 rm) and attached (-L1 rm) spellings must block.
+	// CONTRACT: every modeled xargs value option consumes its value so the real command
+	// word (rm) is reached and classified. Separate, attached, and long forms must block.
 	const cases = [
 		// -L: max lines per command — separate and attached
 		"printf x | xargs -L 1 rm",
@@ -1308,10 +1307,143 @@ test("xargs flag variants still block wrapped mutation commands", () => {
 		"printf x | xargs -s 100 rm",
 		// --replace (deprecated alias for -I) — attached and separate
 		"printf x | xargs --replace={} rm {}",
-		"printf x | xargs --replace {} rm {}",
+		"printf x | xargs --replace=% rm %",
+		// --delimiter / -d, --arg-file / -a, --max-args / -n
+		"printf x | xargs --delimiter X rm /etc/passwd",
+		"printf x | xargs --delimiter=X rm /etc/passwd",
+		"printf x | xargs --arg-file LIST rm /etc/passwd",
+		"printf x | xargs -a LIST rm /etc/passwd",
+		"printf x | xargs --max-args 1 rm /etc/passwd",
+		"printf x | xargs -d X rm /etc/passwd",
+		// Remaining required-value options must consume their value too.
+		"printf x | xargs -R 1 rm /etc/passwd",
+		"printf x | xargs -S 100 rm /etc/passwd",
+		"printf x | xargs --max-chars 100 rm /etc/passwd",
+		"printf x | xargs --max-procs 2 rm /etc/passwd",
+		"printf x | xargs --process-slot-var S rm /etc/passwd",
+		"printf x | xargs --eof=EOF rm /etc/passwd",
+		// Unknown short options, --, and flag bundles keep the wrapped command visible.
+		"printf x | xargs -Z rm /etc/passwd",
+		"printf x | xargs -- rm /etc/passwd",
+		"printf x | xargs -r0 rm /etc/passwd",
+		// An unknown option must not let its value become the wrapped command word.
+		"printf x | xargs --frobnicate echo hi",
 	];
 	for (const command of cases) {
 		assert.equal(classifyBashCommand(command, "/workspace").ok, false, `expected block: ${command}`);
+	}
+	const unknown = classifyBashCommand("printf x | xargs --frobnicate echo hi", "/workspace");
+	assert.ok(!unknown.ok && /xargs option blocked: cannot model/.test(unknown.reason),
+		"unknown xargs option must fail closed with its own reason");
+	const unknownShort = classifyBashCommand("printf x | xargs -Z rm /etc/passwd", "/workspace");
+	assert.ok(!unknownShort.ok && /xargs option blocked: cannot model/.test(unknownShort.reason),
+		"unknown xargs short option must fail closed with its own reason");
+});
+
+test("xargs option values keep the wrapped command word", () => {
+	for (const prefix of ["--delimiter X", "--delimiter=X", "--arg-file LIST", "-a LIST", "--max-args 1", "-d X", "-R 1", "-S 100", "--max-chars 100", "--max-procs 2", "--process-slot-var S", "--eof=EOF"]) {
+		const command = `printf x | xargs ${prefix} ls`;
+		assert.equal(classifyBashCommand(command, "/workspace").ok, true, `expected allow: ${command}`);
+	}
+	assert.equal(classifyBashCommand("printf x | xargs ls", "/workspace").ok, true);
+});
+
+test("xargs without replacement mode blocks explicit mutation targets", () => {
+	const target = quoteShellArgument(shellPath(path.join(os.tmpdir(), "xargs-option-value")));
+	for (const prefix of ["", "--delimiter X", "--arg-file LIST", "-a LIST", "--max-args 1", "--max-lines", "-d X", "env", "env 'FOO=bar'", "env -C /tmp", "sudo"]) {
+		const command = `printf x | xargs ${prefix ? `${prefix} ` : ""}rm ${target}`;
+		const verdict = classifyBashCommand(command, "/workspace");
+		assert.equal(verdict.ok, false, `expected block: ${command}`);
+		assert.match(verdict.reason!, /stdin appends unchecked paths/, command);
+	}
+});
+
+test("xargs unmodeled wrappers cannot hide a mutation", () => {
+	const target = quoteShellArgument(shellPath(path.join(os.tmpdir(), "xargs-wrapper-target")));
+	for (const wrapper of ["nohup", "nice", "timeout", "stdbuf", "chroot"]) {
+		const command = `printf x | xargs ${wrapper} rm ${target}`;
+		const verdict = classifyBashCommand(command, "/workspace");
+		assert.equal(verdict.ok, false, `expected block: ${command}`);
+		assert.match(verdict.reason!, /cannot model its wrapped command/, command);
+	}
+});
+
+test("xargs replacement mode keeps explicit temp mutation targets writable", () => {
+	const target = quoteShellArgument(shellPath(path.join(os.tmpdir(), "xargs-replacement-target")));
+	for (const prefix of ["-I{}", "-i", "--replace=%"]) {
+		const command = `printf x | xargs ${prefix} rm ${target}`;
+		assert.equal(classifyBashCommand(command, "/workspace").ok, true, `expected allow: ${command}`);
+	}
+	for (const wrapper of ["env", "env -C /tmp", "sudo"]) {
+		const command = `printf x | xargs -I{} ${wrapper} rm ${target}`;
+		assert.equal(classifyBashCommand(command, "/workspace").ok, true, `expected allow: ${command}`);
+	}
+});
+
+test("xargs -J mutations fail closed because BSD can append stdin", () => {
+	const temp = os.tmpdir();
+	const target = quoteShellArgument(shellPath(path.join(temp, "xargs-j-target")));
+	const command = `printf /etc/passwd | xargs -J % rm ${target}`;
+	const verdict = classifyBashCommand(command, temp);
+	assert.equal(verdict.ok, false, command);
+	assert.match(verdict.reason!, /xargs -J blocked/, command);
+	assert.equal(classifyBashCommand("printf /etc/passwd | xargs -J % rm %", temp).ok, false,
+		"a replacement token in the wrapped command must still block");
+	assert.equal(classifyBashCommand("printf x | xargs -J % echo hi", temp).ok, true,
+		"non-mutating -J commands stay allowed");
+});
+
+test("xargs later max-lines or max-args cancels replacement mode", () => {
+	const target = quoteShellArgument(shellPath(path.join(os.tmpdir(), "xargs-mode-target")));
+	for (const options of ["-I{} -L 1", "-I{} -l", "-I{} -n 2", "-I{} --max-lines", "-I{} --max-args 2"]) {
+		const command = `printf x | xargs ${options} rm ${target}`;
+		const verdict = classifyBashCommand(command, "/workspace");
+		assert.equal(verdict.ok, false, `expected block: ${command}`);
+		assert.match(verdict.reason!, /stdin appends unchecked paths/, command);
+	}
+	for (const options of ["-I{} -n1", "-I{} -n 1", "-I{} -n'1'", "-I{} --max-args=1", "-I{} --max-args 1", "-I{} --max-args '1'"]) {
+		const command = `printf x | xargs ${options} rm ${target}`;
+		assert.equal(classifyBashCommand(command, "/workspace").ok, true, `expected allow: ${command}`);
+	}
+});
+
+test("xargs attached optional values select the right replacement token", () => {
+	assert.equal(classifyBashCommand("printf x | xargs -iX echo X", "/workspace").ok, false,
+		"-iX selects X as the replacement token");
+	assert.equal(classifyBashCommand("printf x | xargs -eX echo hi", "/workspace").ok, true,
+		"-eX consumes its optional value");
+	assert.equal(classifyBashCommand("printf x | xargs -lX echo hi", "/workspace").ok, true,
+		"-lX consumes its optional value");
+});
+
+test("xargs replacement placeholders fail closed at a temp cwd", () => {
+	const temp = os.tmpdir();
+	const target = quoteShellArgument(shellPath(path.join(temp, "xargs-replacement-f")));
+	for (const command of [
+		"printf /etc/passwd | xargs -I{} rm {}",
+		"printf x | xargs -I{} echo {}",
+		"printf x | xargs --replace=% echo %",
+		"printf /etc/passwd | xargs -i rm {}",
+		"printf /etc/passwd | xargs --replace={} rm {}",
+		"printf /etc/passwd | xargs -I{} sh -c 'rm {}'",
+		"printf /etc/passwd | xargs -I{} rm \\{\\}",
+		"printf /etc/passwd | xargs -I{} rm $'\\{\\}'",
+		"printf /etc/passwd | xargs -I 'X' rm X",
+		"printf /etc/passwd | xargs -I \\% rm %",
+		"printf /etc/passwd | xargs --replace='X' rm X",
+		"printf /etc/passwd | xargs -I \"$B\" rm X",
+		"printf /etc/passwd | xargs -I X<&0 rm X",
+		"printf /etc/passwd | xargs -IX<&0 rm X",
+		"printf /etc/passwd | xargs -I 'X'<&0 rm X",
+		"printf /etc/passwd | xargs --replace=X<&0 rm X",
+	]) {
+		assert.equal(classifyBashCommand(command, temp).ok, false, `expected block: ${command}`);
+	}
+	for (const harmless of [
+		`printf /etc/passwd | xargs -I{} rm ${target}`,
+		`printf /etc/passwd | xargs -I 'X' rm ${target}`,
+	]) {
+		assert.equal(classifyBashCommand(harmless, temp).ok, true, `expected allow: ${harmless}`);
 	}
 });
 

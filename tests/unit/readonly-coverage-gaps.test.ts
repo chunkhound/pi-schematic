@@ -11,6 +11,7 @@ import { shellPath } from "./helpers.js";
 // block outside / fail closed) for a classifier branch the broader suites leave open.
 // Path literals are POSIX; Windows has no OS sandbox and skips these by design.
 const posixOnly = { skip: posixHost ? false : "POSIX path literal contracts" };
+const darwinOnly = { skip: process.platform === "darwin" ? false : "macOS option contracts" };
 const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 const outside = path.join(os.homedir(), "readonly-coverage-gaps-outside");
 const outsideFile = quote(shellPath(path.join(outside, "f")));
@@ -94,6 +95,15 @@ test("cp-family target-directory flags name the destination", posixOnly, () => {
 	}
 });
 
+test("macOS xargs -J mutations fail closed", darwinOnly, () => {
+	const temp = shellPath(TEMP_DIR);
+	const target = quote(shellPath(path.join(TEMP_DIR, "j-target")));
+	assert.equal(classifyBashCommand("printf /etc/passwd | xargs -J % rm %", temp).ok, false,
+		"a replacement token in the wrapped command blocks");
+	assert.equal(classifyBashCommand(`printf /etc/passwd | xargs -J % rm ${target}`, temp).ok, false,
+		"BSD appends stdin when the replacement token is absent");
+});
+
 test("unterminated command and arithmetic substitutions fail closed", () => {
 	// The scanner cannot find the matching delimiter, so no write may be authorized.
 	verdict('touch "$(echo', false);
@@ -119,4 +129,11 @@ test("GNU sed s///e flag executes the pattern space, unlike a plain substitution
 	for (const script of ["s/a/b/", "s/a/b/g", "s/e/x/"]) {
 		verdict(`sed '${script}' <<'EOF'\n${body}\nEOF`, true);
 	}
+});
+
+test("xargs without replacement mode blocks appended stdin paths", posixOnly, () => {
+	const command = `printf ${quote(shellPath(path.join(outside, "x")))} | xargs rm ${quote(shellPath(path.join(TEMP_DIR, "f")))}`;
+	const verdict = classifyBashCommand(command, shellPath(TEMP_DIR));
+	assert.equal(verdict.ok, false, command);
+	assert.match(verdict.reason!, /stdin appends unchecked paths/, command);
 });
