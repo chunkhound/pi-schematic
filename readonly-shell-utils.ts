@@ -99,6 +99,20 @@ export function getCommandTokens(segment: string): string[] {
 	return segment.match(SHELL_WORD_PATTERN) ?? [];
 }
 
+/** Longest first: a shorter operator must never win a prefix match. Invalid Bash forms
+ * (`>>|`, `>>&`) stay out of the table so no parser lists them as operators. Both parsers
+ * consume every entry; keep one list so they cannot drift. */
+export const REDIRECT_OPERATORS: readonly string[] = Object.freeze([
+	"<<-", "<<<", "&>>", ">>", "<<", "<>", "<&", ">|", ">&", "&>", "<", ">",
+]);
+
+const escapeRedirectOperator = (operator: string): string => operator.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Alternation preserving the table's longest-first order. */
+function redirectOperatorAlternation(): string {
+	return REDIRECT_OPERATORS.map(escapeRedirectOperator).join("|");
+}
+
 /** Leading redirection token: optional fd prefix + operator + optional attached target.
  *
  * NOTE: the bare `<` alternative matches `<(` as a redirect operator, so a token
@@ -107,7 +121,7 @@ export function getCommandTokens(segment: string): string[] {
  * process-substitution token precedes a directory-change builtin.
  *
  * Exported so the module-graph guard asserts on this value, not on regex source text. */
-export const LEADING_REDIRECTION_PATTERN = /^(?:\d+)?(<<-|<<<|<<|<>|<&|<|&>>|&>|>>|>\||>&|>)(.*)$/;
+export const LEADING_REDIRECTION_PATTERN = new RegExp(`^(?:\\d+)?(${redirectOperatorAlternation()})(.*)$`);
 
 /**
  * Skip redirection tokens that precede the command word (`> out rm x`, `2> out rm x`,
@@ -129,16 +143,16 @@ export function skipLeadingRedirections(tokens: string[], start: number): number
 }
 
 /**
- * Redirect operator at the start of a token, with optional fd prefix (`2>`, `>>&`,
- * `&>>`) and any attached target. Shared by the brace-group trailing scanner
+ * Redirect operator at the start of a token, with optional fd prefix (`2>`, `&>>`)
+ * and any attached target. Shared by the brace-group trailing scanner
  * (`readonly-bash.ts`) and the cd-operand stripper (`readonly-bash-dirchange.ts`).
  *
- * WHY one copy: both must agree on what counts as an operator, otherwise a redirect
- * target drifts into being read as a command operand in one of the two scanners.
+ * WHY one table: both scanners must agree on what counts as an operator, otherwise a
+ * redirect target drifts into being read as a command operand in one of them.
  * Heredoc stdin parsing (`readonly-bash-heredoc.ts`) uses a different, narrower pattern.
  */
 // Exported so the module-graph guard asserts on this value, not on regex source text.
-export const REDIRECT_TOKEN_PATTERN = /^(?:\d+)?(?:<<<|<<|<&|<>|<|>>\||>>&|>>|>&|>)|^&>>?/;
+export const REDIRECT_TOKEN_PATTERN = new RegExp(`^(?:\\d+)?(?:${redirectOperatorAlternation()})`);
 
 /** Match a leading redirect operator in `word`; null when the word is not an operator. */
 export function matchRedirectToken(word: string): RegExpExecArray | null {

@@ -4,9 +4,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
 	LEADING_REDIRECTION_PATTERN,
+	REDIRECT_OPERATORS,
 	REDIRECT_TOKEN_PATTERN,
 	matchRedirectToken,
 	skipLeadingRedirections,
+	stripRedirectTokens,
 } from "../../readonly-shell-utils.js";
 
 // Static guards for the readonly classifier's module graph. The classifier split into
@@ -106,12 +108,39 @@ test("write-redirect token parsing has a single source of truth", () => {
 	// exact drift, while assertSingleOwner catches a redeclaration.
 	assert.match(matchRedirectToken.toString(), /REDIRECT_TOKEN_PATTERN/, "matcher must use the shared pattern, not a copy");
 	assertSingleOwner("matchRedirectToken");
-	// Independent operator expectations guard the pattern itself, not just the wiring.
-	for (const [word, expected] of [[">", ">"], ["2>", "2>"], [">>", ">>"], ["&>", "&>"], ["<", "<"], ["rm", null], ["2", null]] as const) {
+});
+
+test("redirect operator table drives both parsers", () => {
+	assert.ok(Object.isFrozen(REDIRECT_OPERATORS), "operator table must be immutable");
+	assertSingleOwner("REDIRECT_OPERATORS");
+	// Independent literal expectations: deleting a table entry must fail here, not delete
+	// its own assertion in the loop below.
+	const expectedOperators = ["<<-", "<<<", "&>>", ">>", "<<", "<>", "<&", ">|", ">&", "&>", "<", ">"];
+	assert.deepEqual([...REDIRECT_OPERATORS].sort(), [...expectedOperators].sort());
+	assert.ok(REDIRECT_OPERATORS.length > 0, "operator table must not be empty");
+	assert.equal(new Set(REDIRECT_OPERATORS).size, REDIRECT_OPERATORS.length,
+		"operator table must not repeat an operator");
+	for (let i = 1; i < REDIRECT_OPERATORS.length; i++) {
+		assert.ok(REDIRECT_OPERATORS[i - 1]!.length >= REDIRECT_OPERATORS[i]!.length,
+			"operators must be ordered longest first");
+	}
+	for (const operator of REDIRECT_OPERATORS) {
+		assert.equal(LEADING_REDIRECTION_PATTERN.exec(operator)?.[1] ?? null, operator, `leading parser: ${operator}`);
+		assert.equal(matchRedirectToken(operator)?.[0] ?? null, operator, `redirect parser: ${operator}`);
+		assert.deepEqual(stripRedirectTokens(["cmd", operator, "target"]), ["cmd"], `bare ${operator}`);
+		assert.deepEqual(stripRedirectTokens(["cmd", `${operator}target`]), ["cmd"], `attached ${operator}`);
+	}
+	assert.ok(REDIRECT_OPERATORS.includes(">|"), ">| must be shared by both parsers");
+	for (const invalid of [">>|", ">>&"]) assert.ok(!REDIRECT_OPERATORS.includes(invalid), `${invalid} is not a Bash operator`);
+	// Independent operator expectations guard the generated patterns, not just the wiring.
+	for (const [word, expected] of [[">", ">"], ["2>", "2>"], [">>", ">>"], ["&>", "&>"], [">|", ">|"], ["<<-", "<<-"], ["<", "<"], ["rm", null], ["2", null]] as const) {
 		assert.equal(matchRedirectToken(word)?.[0] ?? null, expected, word);
 	}
 });
 
 test("redirect token stripping has a single source of truth", () => {
 	assertSingleOwner("stripRedirectTokens");
+	// The >| operator must consume its target. Otherwise the target stays as the last
+	// operand and a copy destination earlier in the command goes unchecked.
+	assert.deepEqual(stripRedirectTokens(["cp", "src", ">|", "/tmp/log"]), ["cp", "src"]);
 });
