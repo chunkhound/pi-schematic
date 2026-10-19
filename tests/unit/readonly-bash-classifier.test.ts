@@ -305,6 +305,9 @@ test("blocks tar bundles whose attached value cannot be attributed", async () =>
 	// the archive path cannot be attributed, so these fail closed from any cwd.
 	await assertBlocked(toolCall, `tar -czf/etc/a.tar ${tmp}/f`, tmp);
 	await assertBlocked(toolCall, `tar czf/etc/a.tar ${tmp}/f`, tmp);
+	const unattributable = classifyBashCommand(`tar -czf/etc/a.tar ${tmp}/f`, tmp);
+	assert.ok(!unattributable.ok && /cannot model/.test(unattributable.reason),
+		"an unattributable archive must fail closed, not claim a fake outside path");
 	// Obsolescent dash-less bundles take the archive from the NEXT token: `f` must
 	// not swallow the following option letter as the archive name.
 	await assertBlocked(toolCall, `tar fc /etc/a.tar ${tmp}/f`, tmp);

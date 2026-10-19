@@ -479,6 +479,7 @@ export function classifyGenericMutation(command: string, tokens: string[], cwd: 
 	const paths = getMutationTargets(command, tokens);
 	if (!paths) return null;
 	for (const target of paths) {
+		if (target === UNPROVABLE_TARGET) return `${command} blocked: cannot model its write target${FAIL_CLOSED_HINT}`;
 		const reason = tempPathBlockReason(command, target, cwd, shellVars);
 		if (reason) return reason;
 	}
@@ -647,23 +648,205 @@ function getChmodTargets(tokens: string[]): string[] {
 	return operands.slice(hasReference ? 0 : 1);
 }
 
-function getCpTargets(tokens: string[]): string[] {
-	const target = getCpTargetDirectory(tokens);
-	if (target !== null) return [target];
-	const args = nonOptionArgs(tokens.slice(1));
-	return args.length > 0 ? [args[args.length - 1]] : [];
+type CpFamilyOptionSpec = { readonly boolean: ReadonlySet<string>; readonly value: ReadonlySet<string> };
+
+/** Short option letters for the copy family. `value` letters consume the rest of the
+ * cluster (or the next token); `t` is the target-directory flag. A letter in neither set
+ * makes the destination unprovable, so the parser fails closed. */
+const CP_FAMILY_SHORT_OPTIONS: Record<string, CpFamilyOptionSpec> = {
+	cp: { boolean: new Set(["a", "b", "d", "f", "H", "i", "L", "l", "n", "P", "p", "R", "r", "s", "T", "u", "v", "x", "Z"]), value: new Set(["S", "t"]) },
+	mv: { boolean: new Set(["b", "f", "i", "n", "T", "u", "v", "Z"]), value: new Set(["S", "t"]) },
+	install: { boolean: new Set(["b", "c", "C", "d", "D", "p", "s", "T", "v", "Z"]), value: new Set(["g", "m", "o", "S", "t"]) },
+	ln: { boolean: new Set(["b", "d", "F", "f", "i", "L", "n", "P", "r", "s", "T", "v", "Z"]), value: new Set(["S", "t"]) },
+};
+
+/** macOS changes the arity of some letters; GNU `-S` takes a suffix, macOS `-S` is a
+ * flag, and `-D`/`-T` disagree in the other direction. */
+type CpFamilyOptionDelta = {
+	readonly addBoolean?: readonly string[];
+	readonly addValue?: readonly string[];
+	readonly removeBoolean?: readonly string[];
+	readonly removeValue?: readonly string[];
+};
+
+const DARWIN_CP_FAMILY_SHORT_OPTIONS: Record<string, CpFamilyOptionDelta> = {
+	cp: { addBoolean: ["c", "N", "X", "S"], removeValue: ["S"] },
+	mv: { addBoolean: ["h"] },
+	install: { addBoolean: ["S", "U"], addValue: ["B", "D", "f", "h", "l", "M", "T"], removeBoolean: ["D", "T"], removeValue: ["S"] },
+	ln: { addBoolean: ["h", "w"] },
+};
+
+function cpFamilyOptionSpec(command: string): CpFamilyOptionSpec | null {
+	const base = CP_FAMILY_SHORT_OPTIONS[command];
+	if (!base) return null;
+	const delta = process.platform === "darwin" ? DARWIN_CP_FAMILY_SHORT_OPTIONS[command] : undefined;
+	if (!delta) return base;
+	const boolean = new Set(base.boolean);
+	const value = new Set(base.value);
+	for (const letter of delta.removeBoolean ?? []) boolean.delete(letter);
+	for (const letter of delta.removeValue ?? []) value.delete(letter);
+	for (const letter of delta.addBoolean ?? []) boolean.add(letter);
+	for (const letter of delta.addValue ?? []) value.add(letter);
+	return { boolean, value };
 }
 
-/** `-tDIR`/`-t DIR`/`--target-directory[=]DIR` destination, or null when unused. */
-function getCpTargetDirectory(tokens: string[]): string | null {
-	for (let i = 1; i < tokens.length; i++) {
-		const word = unescapeCommandWord(tokens[i]!);
-		if (word === "--") break;
-		if (word === "-t" || word === "--target-directory") return tokens[i + 1] ? stripMatchingQuotes(tokens[i + 1]!) : null;
-		if (word.startsWith("--target-directory=")) return rawAttachedFlagValue(tokens[i]!, "--target-directory=");
-		if (word.startsWith("-t") && word.length > 2 && !word.startsWith("--")) return rawAttachedFlagValue(tokens[i]!, "-t");
+/** GNU long-option arity per cp-family command. Optional values bind only when attached.
+ * Unknown or ambiguous spellings fail closed: GNU accepts unique prefixes, so ignoring an
+ * unmodeled spelling can hide a destination or consume its value. macOS rejects long options;
+ * treating them as GNU options only over-blocks there. The macOS short-option delta assumes
+ * the host's native BSD tools; GNU coreutils earlier in PATH can change `-S`/`-D`/`-T` arity. */
+type CpLongOptionArity = "value" | "flag" | "optional";
+type CpLongOptionSpec = Readonly<Record<string, CpLongOptionArity>>;
+
+const CP_FAMILY_LONG_OPTIONS: Record<string, CpLongOptionSpec> = {
+	cp: {
+		"--archive": "flag", "--attributes-only": "flag", "--backup": "optional", "--context": "optional",
+		"--copy-contents": "flag", "--debug": "flag", "--dereference": "flag", "--force": "flag",
+		"--help": "flag", "--interactive": "flag", "--keep-directory-symlink": "flag", "--link": "flag", "--no-clobber": "flag",
+		"--no-dereference": "flag", "--no-preserve": "value", "--no-target-directory": "flag",
+		"--one-file-system": "flag", "--parents": "flag", "--preserve": "optional", "--recursive": "flag",
+		"--reflink": "optional", "--remove-destination": "flag", "--sparse": "value",
+		"--strip-trailing-slashes": "flag", "--suffix": "value", "--symbolic-link": "flag",
+		"--target-directory": "value", "--update": "optional", "--verbose": "flag", "--version": "flag",
+	},
+	mv: {
+		"--backup": "optional", "--context": "optional", "--debug": "flag", "--exchange": "flag",
+		"--force": "flag", "--help": "flag", "--interactive": "flag", "--no-clobber": "flag",
+		"--no-copy": "flag", "--no-target-directory": "flag", "--strip-trailing-slashes": "flag",
+		"--suffix": "value", "--target-directory": "value", "--update": "optional", "--verbose": "flag",
+		"--version": "flag",
+	},
+	install: {
+		"--backup": "optional", "--compare": "flag", "--context": "optional", "--debug": "flag",
+		"--directory": "flag", "--group": "value", "--help": "flag", "--mode": "value",
+		"--no-target-directory": "flag", "--owner": "value", "--preserve-context": "flag", "--preserve-timestamps": "flag",
+		"--strip": "flag", "--strip-program": "value", "--suffix": "value",
+		"--target-directory": "value", "--verbose": "flag", "--version": "flag",
+	},
+	ln: {
+		"--backup": "optional", "--directory": "flag", "--force": "flag", "--help": "flag",
+		"--interactive": "flag", "--logical": "flag", "--no-dereference": "flag",
+		"--no-target-directory": "flag", "--physical": "flag", "--relative": "flag",
+		"--symbolic": "flag", "--suffix": "value", "--target-directory": "value",
+		"--verbose": "flag", "--version": "flag",
+	},
+};
+
+type CpLongOptionResolution = { readonly name: string; readonly arity: CpLongOptionArity };
+
+/** Resolve an exact GNU long option or a unique prefix, as getopt_long does. */
+function resolveCpLongOption(command: string, name: string): CpLongOptionResolution | null {
+	const spec = CP_FAMILY_LONG_OPTIONS[command];
+	if (!spec) return null;
+	const exact = spec[name];
+	if (exact !== undefined) return { name, arity: exact };
+	const matches = Object.keys(spec).filter((option) => option.startsWith(name));
+	if (matches.length !== 1) return null;
+	const matched = matches[0]!;
+	return { name: matched, arity: spec[matched]! };
+}
+
+/** Unique fail-closed sentinel. It is not a path, so a real `/` operand keeps its
+ * truthful "outside temp" reason; classifyGenericMutation turns it into a clear block. */
+const UNPROVABLE_TARGET = "\u0000unprovable-target";
+
+/** Effect of one cp-family option word: a destination, a consumed next token, or a
+ * side-write target (macOS `install -M metalog`). */
+type CpOptionScan = { readonly target: string | null; readonly skipNext: boolean; readonly extraTargets: readonly string[]; readonly unprovable: boolean; readonly flags?: readonly string[] };
+
+/** One long option: a modeled spelling names the destination or consumes its value. */
+function scanCpLongOption(command: string, raw: string, word: string, tokens: string[], index: number): CpOptionScan {
+	const [name, inline] = splitFlagValue(word);
+	const resolved = resolveCpLongOption(command, name);
+	if (!resolved) return { target: null, skipNext: false, extraTargets: [], unprovable: true };
+	if (resolved.name === "--target-directory") {
+		if (inline !== undefined) return { target: rawAttachedFlagValue(raw, `${name}=`), skipNext: false, extraTargets: [], unprovable: false };
+		const next = tokens[index + 1];
+		return { target: next ? stripMatchingQuotes(next) : UNPROVABLE_TARGET, skipNext: Boolean(next), extraTargets: [], unprovable: false };
 	}
-	return null;
+	if (resolved.arity === "value") {
+		const next = tokens[index + 1];
+		if (inline === undefined && !next) return { target: null, skipNext: false, extraTargets: [], unprovable: true };
+		return { target: null, skipNext: inline === undefined, extraTargets: [], unprovable: false };
+	}
+	return { target: null, skipNext: false, extraTargets: [], unprovable: false, flags: resolved.name === "--directory" ? ["directory"] : [] };
+}
+
+/** One short cluster: `t` names the destination; a value letter consumes the cluster tail
+ * or the next token. An unknown letter makes the destination unprovable. */
+function scanCpShortOption(command: string, raw: string, word: string, tokens: string[], index: number, spec: CpFamilyOptionSpec): CpOptionScan {
+	const letters = word.slice(1);
+	const flags: string[] = [];
+	for (let j = 0; j < letters.length; j++) {
+		const letter = letters[j]!;
+		if (letter === "t") {
+			const attached = letters.slice(j + 1);
+			const next = tokens[index + 1];
+			const target = attached
+				? rawAttachedFlagValue(raw, `-${letters.slice(0, j + 1)}`)
+				: next ? stripMatchingQuotes(next) : UNPROVABLE_TARGET;
+			return { target, skipNext: !attached && Boolean(next), extraTargets: [], unprovable: false, flags };
+		}
+		if (spec.value.has(letter)) {
+			const attached = letters.slice(j + 1);
+			const next = tokens[index + 1];
+			const value = attached
+				? rawAttachedFlagValue(raw, `-${letters.slice(0, j + 1)}`)
+				: next ? stripMatchingQuotes(next) : null;
+			const extraTargets = command === "install" && letter === "M" && value !== null ? [value] : [];
+			return { target: null, skipNext: !attached && Boolean(next), extraTargets, unprovable: false, flags };
+		}
+		if (!spec.boolean.has(letter)) return { target: null, skipNext: false, extraTargets: [], unprovable: true, flags };
+		flags.push(letter);
+	}
+	return { target: null, skipNext: false, extraTargets: [], unprovable: false, flags };
+}
+
+/** One pass over a cp-family segment: destination, operands, flags, side writes, unprovable. */
+type CpFamilyScan = { target: string | null; operands: string[]; extraTargets: string[]; unprovable: boolean; flags: Set<string> };
+
+function scanCpFamily(command: string, tokens: string[]): CpFamilyScan {
+	const result: CpFamilyScan = { target: null, operands: [], extraTargets: [], unprovable: false, flags: new Set() };
+	const spec = cpFamilyOptionSpec(command);
+	if (!spec) return result;
+	for (let i = 1; i < tokens.length; i++) {
+		const raw = tokens[i]!;
+		const word = unescapeCommandWord(raw);
+		if (word === "--") {
+			result.operands.push(...tokens.slice(i + 1));
+			break;
+		}
+		if (!word.startsWith("-") || word === "-") {
+			result.operands.push(raw);
+			continue;
+		}
+		const scan = word.startsWith("--")
+			? scanCpLongOption(command, raw, word, tokens, i)
+			: scanCpShortOption(command, raw, word, tokens, i, spec);
+		if (scan.unprovable) {
+			result.unprovable = true;
+			return result;
+		}
+		for (const flag of scan.flags ?? []) result.flags.add(flag);
+		if (scan.target !== null) result.target = scan.target; // last `-t` wins, like getopt
+		result.extraTargets.push(...scan.extraTargets);
+		if (scan.skipNext) i++;
+	}
+	return result;
+}
+
+function getCpTargets(command: string, tokens: string[]): string[] {
+	const scan = scanCpFamily(command, tokens);
+	if (scan.unprovable) return [UNPROVABLE_TARGET];
+	if (command === "install" && (scan.flags.has("d") || scan.flags.has("directory"))) {
+		const targets = [...scan.operands, ...scan.extraTargets];
+		if (scan.target !== null) targets.unshift(scan.target);
+		return targets;
+	}
+	// `ln source` has no target operand: it creates the link in the tracked cwd.
+	if (command === "ln" && scan.target === null && scan.operands.length === 1) return [".", ...scan.extraTargets];
+	const target = scan.target ?? scan.operands.at(-1) ?? null;
+	return target !== null ? [target, ...scan.extraTargets] : scan.extraTargets;
 }
 
 function getTeeTargets(tokens: string[]): string[] {
@@ -919,20 +1102,15 @@ function scanTarOptions(tokens: string[]): TarScan {
 	return scan;
 }
 
-// Fail-closed sentinel for unparseable tar option words: the archive operand may be
-// hidden inside them, so no real target can be proven inside temp. "/" sits outside
-// every temp root, forcing a block from any cwd.
-const TAR_UNPARSEABLE_TARGET = "/";
-
 function getTarTargets(tokens: string[]): string[] | null {
 	const scan = scanTarOptions(tokens);
-	if (scan.unparseable) return [TAR_UNPARSEABLE_TARGET];
+	if (scan.unparseable) return [UNPROVABLE_TARGET];
 	// Exec/side-write options run code or write files regardless of stdout routing.
-	if (scan.exec) return [TAR_UNPARSEABLE_TARGET];
+	if (scan.exec) return [UNPROVABLE_TARGET];
 	if (scan.list && !scan.write && !scan.extract) return null; // `tar -t` reads the archive only
 	// Conflicting action modes cannot be proven safe: creation targets the archive while
 	// extraction writes member files, so check neither guess and fail closed.
-	if (scan.write && scan.extract) return [TAR_UNPARSEABLE_TARGET];
+	if (scan.write && scan.extract) return [UNPROVABLE_TARGET];
 	if (scan.write) {
 		// Creation writes the archive operand. `-f -`/`--file=-` streams the archive to
 		// stdout, so `-` is not a filesystem path.
@@ -976,7 +1154,7 @@ export function getMutationTargets(command: string, tokens: string[]): string[] 
 		case "truncate": return getTruncateTargets(tokens);
 		case "touch": return getTouchTargets(tokens);
 		case "chmod": case "chown": case "chgrp": return getChmodTargets(tokens);
-		case "cp": case "mv": case "install": case "ln": return getCpTargets(tokens);
+		case "cp": case "mv": case "install": case "ln": return getCpTargets(command, tokens);
 		case "tee": return getTeeTargets(tokens);
 		case "sed": return getSedTargets(tokens);
 		case "perl": case "ruby": return getPerlRubyTargets(tokens);
