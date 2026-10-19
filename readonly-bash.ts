@@ -66,10 +66,9 @@ export type Verdict =
  *     path-check it, but immutable commands anchor only `GIT_DIR`, `GIT_COMMON_DIR`,
  *     and `GIT_INDEX_FILE`, so a redirected object store goes unchecked. Immutable
  *     reads rarely write objects, so the exposure is small.
- *   - **Wrapper flags before the wrapped command** — `time -p`, `exec -c/-a`,
- *     `sudo -nu/--user`, and `xargs -a/--max-args` are not
- *     fully parsed, so the value can be mistaken for the command word. Attached
- *     interpreter flags (`python3 -c"…"`) have the same shape.
+ *   - **Wrapper flags before the wrapped command** — `time -p`, `exec -c/-a`, and
+ *     `sudo -nu/--user` are not fully parsed, so the value can be mistaken for the
+ *     command word.
  *   - **Heredocs attached to a `( ... )`/`{ ... }` group** — the owner is read from the
  *     header line only, so a benign group heredoc whose closing bracket is on a later
  *     line (`(cat <<EOF … )`) is treated as code and false-blocks. A group whose shell

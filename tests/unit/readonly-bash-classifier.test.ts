@@ -583,9 +583,40 @@ test("blocks interpreter inline execution that shells out to mutation commands",
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertBlocked(toolCall, "node -e 'rm /etc/passwd'");
+	await assertBlocked(toolCall, "node --eval 'rm /etc/passwd'");
+	await assertBlocked(toolCall, "node --eval='rm /etc/passwd'");
+	await assertBlocked(toolCall, "node -e'rm /etc/passwd'");
 	await assertBlocked(toolCall, "python -c 'touch /etc/test'");
 	await assertBlocked(toolCall, "perl -e 'rm /etc/passwd'");
 	await assertBlocked(toolCall, "ruby -e 'touch /etc/test'");
+	// Bundled short flags: the exec letter is not first, or trailing letters are flags.
+	await assertBlocked(toolCall, "bash -lc 'rm /etc/passwd'");
+	await assertBlocked(toolCall, "bash -ce 'rm /etc/passwd'");
+	await assertBlocked(toolCall, "sh -ec 'touch /etc/test'");
+	await assertBlocked(toolCall, "python3 -Ic 'touch /etc/test'");
+	await assertBlocked(toolCall, "perl -we 'touch /etc/test'");
+	await assertBlocked(toolCall, "node -pe 'touch /etc/test'");
+	// Quoted clusters and digit-bearing clusters must not hide the exec letter.
+	await assertBlocked(toolCall, "perl -0we 'unlink /etc/passwd'");
+	await assertBlocked(toolCall, "ruby -w0e 'unlink /etc/passwd'");
+	await assertBlocked(toolCall, "perl -w'e'\"unlink /etc/passwd\"");
+	await assertBlocked(toolCall, "perl '-e'\"unlink /etc/passwd\"");
+	// Standard aliases for inline execution.
+	await assertBlocked(toolCall, "perl -E 'unlink /etc/passwd'");
+	await assertBlocked(toolCall, "node -p 'rm /etc/passwd'");
+	await assertBlocked(toolCall, "node --print 'rm /etc/passwd'");
+	await assertAllowed(toolCall, "node --eval 'echo ok'");
+	await assertAllowed(toolCall, "bash -lc 'echo ok'");
+	// Attached and clustered scripts still classify as code without over-blocking.
+	await assertAllowed(toolCall, "python3 -c'print(1)'");
+	await assertAllowed(toolCall, "perl -e'print 1'");
+	await assertAllowed(toolCall, "ruby -e'puts 1'");
+	await assertAllowed(toolCall, "node -pe '1+1'");
+	await assertAllowed(toolCall, "perl -0we 'print 1'");
+	await assertAllowed(toolCall, "ruby -w0e 'puts 1'");
+	await assertAllowed(toolCall, "perl -w'e'\"print 1\"");
+	await assertAllowed(toolCall, "node -p '1+1'");
+	await assertAllowed(toolCall, "node --print '1+1'");
 });
 
 test("blocks process substitution with mutation", async () => {

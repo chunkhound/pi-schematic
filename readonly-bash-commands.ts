@@ -14,16 +14,23 @@ import { classifyBashCommand, classifySubstitutionOutput, classifySubstitutionSc
 import { buildReadonlyPackageManagerBlockReason, FAIL_CLOSED_HINT } from "./notifications.js";
 
 // Interpreters whose inline-execution flag is recursively classified.
-// node -c = syntax check only (non-executing); node -e executes code.
-export const INTERPRETER_EXEC_FLAGS: Record<string, string[]> = {
-	node: ["-e"],
+// node -c = syntax check only (non-executing); -e/--eval and -p/--print execute code.
+// perl -E is -e with optional features enabled.
+// One table holds every modeled alias so a modeled spelling cannot bypass the check.
+export const INTERPRETER_EXEC_FLAGS: Record<string, readonly string[]> = {
+	node: ["-e", "--eval", "-p", "--print"],
 	bash: ["-c"], sh: ["-c"], zsh: ["-c"], dash: ["-c"], ksh: ["-c"],
 	python3: ["-c"], python: ["-c"],
-	perl: ["-e"],
+	perl: ["-e", "-E"],
 	ruby: ["-e"],
 };
 
 export const INTERPRETERS = new Set(Object.keys(INTERPRETER_EXEC_FLAGS));
+
+// Interpreters that accept an attached inline script (`python3 -cprint(1)`, `perl -e'…'`).
+// Shells do not: `bash -ce 'cmd'` treats `e` as a flag and runs the next word.
+// Node rejects attached scripts; treating one as code only over-blocks, never misses code.
+const ATTACHED_SCRIPT_INTERPRETERS = new Set(["node", "python", "python3", "perl", "ruby"]);
 
 // Package managers are blocked unconditionally — they mutate system state
 // outside any single directory (npm install writes to node_modules, pip
@@ -117,23 +124,67 @@ export function demangleNestedArgument(raw: string): string {
 	return stripMatchingQuotes(raw).replace(/\\\$/g, "$");
 }
 
+/** Script attached to a flag in the decoded word. The raw suffix keeps `$'…'` intact;
+ * the decoded suffix is what the interpreter receives when quoting splits the prefix
+ * (`perl -w'e'…`, `'-e'…`). Never substitute a path sentinel here: classifyInlineScript
+ * would read it as a whole command substitution and skip the script. */
+function attachedInterpreterScript(raw: string, word: string, prefix: string): string {
+	return raw.startsWith(prefix) ? raw.slice(prefix.length) : word.slice(prefix.length);
+}
+
+/** Script carried by a short option cluster. Leading option letters and digits are flags;
+ * value-taking letters before the exec letter can move the script into their value, so
+ * treating the remainder as code may over-block. That is the safe direction. */
+function clusteredInterpreterScript(command: string, raw: string, word: string, flag: string, next: string | undefined): string | null {
+	const match = /^-([A-Za-z0-9]+)(.*)$/.exec(word);
+	if (!match) return null;
+	const letters = match[1]!;
+	const at = letters.indexOf(flag[1]!);
+	if (at === -1) return null;
+	if (!ATTACHED_SCRIPT_INTERPRETERS.has(command)) return next ?? null;
+	const attached = attachedInterpreterScript(raw, word, `-${letters.slice(0, at + 1)}`);
+	return attached || next || null;
+}
+
+/** Inline script named by one flag spelling, or null when this word is not that flag. */
+function inlineInterpreterScript(command: string, raw: string, word: string, flag: string, next: string | undefined): string | null {
+	if (flag.startsWith("--")) {
+		if (word === flag) return next ?? null;
+		return word.startsWith(`${flag}=`) ? attachedInterpreterScript(raw, word, `${flag}=`) : null;
+	}
+	if (word === flag) return next ?? null;
+	if (word.startsWith(flag) && ATTACHED_SCRIPT_INTERPRETERS.has(command)) {
+		return attachedInterpreterScript(raw, word, flag) || next || null;
+	}
+	return clusteredInterpreterScript(command, raw, word, flag, next);
+}
+
+/** Classify one inline script; a whole-substitution argument runs the substitution's
+ * OUTPUT, so its heredoc bodies were already forced to code above. */
+function classifyInlineScript(command: string, flag: string, rawScript: string, cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
+	const script = demangleNestedArgument(rawScript);
+	// The inline script is code; a command substitution inside it is code once expanded.
+	const outputReason = classifySubstitutionOutput(script, cwd, depth, shellVars);
+	if (outputReason) return `${command} ${flag} blocked: ${outputReason}`;
+	if (isWholeCommandSubstitution(script)) return null;
+	const nested = classifyBashCommand(script, cwd, depth + 1, shellVars);
+	return nested.ok ? null : `${command} ${flag} blocked: ${nested.reason}`;
+}
+
 /** Interpreters with inline-execution flags — classify inline code recursively. */
 export function classifyInterpreter(command: string, tokens: string[], cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
 	if (!INTERPRETERS.has(command)) return null;
 	const args = tokens.slice(1);
-	for (const flag of INTERPRETER_EXEC_FLAGS[command]) {
-		const idx = args.indexOf(flag);
-		if (idx === -1 || idx + 1 >= args.length) continue;
-		const script = demangleNestedArgument(args[idx + 1]!);
-		// The inline script is code; a command substitution inside it is code once expanded.
-		const outputReason = classifySubstitutionOutput(script, cwd, depth, shellVars);
-		if (outputReason) return `${command} ${flag} blocked: ${outputReason}`;
-		// A whole-substitution `-c` argument runs the substitution's OUTPUT; its heredoc
-		// bodies were forced to code above. Classifying the raw `$(…)` text as shell would
-		// misread the substitution command as the child program.
-		if (isWholeCommandSubstitution(script)) continue;
-		const nested = classifyBashCommand(script, cwd, depth + 1, shellVars);
-		if (!nested.ok) return `${command} ${flag} blocked: ${nested.reason}`;
+	for (let i = 0; i < args.length; i++) {
+		const raw = args[i]!;
+		const word = unescapeCommandWord(raw);
+		for (const flag of INTERPRETER_EXEC_FLAGS[command]!) {
+			const script = inlineInterpreterScript(command, raw, word, flag, args[i + 1]);
+			if (script === null) continue;
+			const reason = classifyInlineScript(command, flag, script, cwd, depth, shellVars);
+			if (reason) return reason;
+			break;
+		}
 	}
 	return null;
 }
