@@ -288,6 +288,8 @@ test("sudo long flags with space-separated values skip to the wrapped command", 
 			assert.equal(classifyBashCommand(`sudo ${flag} ${quote(work)} touch ${quote(path.join(work, "blocked"))}`, temp).ok, false,
 				`sudo ${flag} <outside> touch ... must block`);
 		}
+		// `--chdir` is skipped, not modeled: the relative-write gap is pinned in
+		// readonly-coverage-gaps.test.ts, but an absolute temp target stays proven.
 		assert.equal(classifyBashCommand(`sudo --chdir=${quote(work)} touch ${quote(path.join(temp, "ok"))}`, temp).ok, true,
 			"sudo --chdir=<outside> touch <temp> attached form still allows temp");
 	});

@@ -22,6 +22,14 @@ function verdict(command: string, allowed: boolean): void {
 	assert.equal(classifyBashCommand(command, outside).ok, allowed, command);
 }
 
+const KNOWN_GAP = "KNOWN GAP: the classifier allows this write; only the OS sandbox can block it.";
+
+/** Pin a documented fail-open gap. A future block is an improvement, but it must be an
+ * owner decision, not a silent test update. */
+function knownGapAllow(command: string, cwd: string): void {
+	assert.equal(classifyBashCommand(command, cwd).ok, true, `${KNOWN_GAP} ${command}`);
+}
+
 test("mktemp -- ends option parsing and fails closed on extra operands", posixOnly, () => {
 	const template = quote(shellPath(path.join(TEMP_DIR, "x.XXXXXX")));
 	// `--` makes the following word the template, even though it starts with `/`.
@@ -347,6 +355,30 @@ test("GNU sed s///e flag executes the pattern space, unlike a plain substitution
 	for (const script of ["s/a/b/", "s/a/b/g", "s/e/x/"]) {
 		verdict(`sed '${script}' <<'EOF'\n${body}\nEOF`, true);
 	}
+});
+
+// The pins below are not security coverage: they freeze documented fail-open behavior.
+// A change from allow to block fails the pin and forces an owner decision.
+test("KNOWN GAP: sudo --chdir leaves a relative write unmodeled", posixOnly, () => {
+	knownGapAllow(`sudo --chdir=${quote(shellPath(outside))} touch rel`, shellPath(TEMP_DIR));
+});
+
+test("KNOWN GAP: brace expansion hides an outside write", posixOnly, () => {
+	knownGapAllow(
+		`touch {${shellPath(path.join(outside, "x"))},${shellPath(path.join(TEMP_DIR, "a"))}}`,
+		shellPath(TEMP_DIR),
+	);
+});
+
+test("KNOWN GAP: mv checks only the destination", posixOnly, () => {
+	knownGapAllow(
+		`mv ${quote(shellPath(path.join(outside, "x")))} ${quote(shellPath(TEMP_DIR))}`,
+		shellPath(TEMP_DIR),
+	);
+});
+
+test("KNOWN GAP: lastpipe lets a pipeline stage move the shell cwd", posixOnly, () => {
+	knownGapAllow(`shopt -s lastpipe; echo x | cd ${quote(shellPath(outside))}; touch y`, shellPath(TEMP_DIR));
 });
 
 test("xargs without replacement mode blocks appended stdin paths", posixOnly, () => {
