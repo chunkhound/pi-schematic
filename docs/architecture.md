@@ -46,7 +46,32 @@ interface SchematicState {
 
 ## Behavioral notes
 
-**Spawn** — Without a Model Group, the child inherits the parent's public model and explicit/default thinking level. An exact known group randomly selects a registry-resolved, authenticated entry; an entry-specific thinking level overrides explicit/inherited thinking and is clamped for the selected model. An unknown group reports fallback and uses the parent model/thinking. A known empty group or one with no usable authenticated entries fails before child-session creation. The selected public model enters a child-owned runtime. Children also inherit cwd and active registered tools executable in that session, retain child-local notebook tools, cannot spawn or handoff, and inherit readonly posture.
+**Spawn** — Without a Model Group, the child inherits the parent's public model and explicit/default thinking level. An exact known group randomly selects a registry-resolved, authenticated entry. An entry-specific thinking level overrides explicit/inherited thinking and is clamped for the selected model. An unknown group reports fallback and uses the parent model/thinking.
+
+A known empty group, or one with no usable authenticated entries, fails before child-session creation. The selected public model enters a child-owned runtime. Children also inherit cwd and active registered tools executable in that session, retain child-local notebook tools, cannot spawn or handoff, and inherit readonly posture.
+
+Only a failure before the child session exists throws: model or route resolution, constraint validation, or the session factory rejecting. Once the session exists, a failure returns as an error result carrying the child's usage, zero when nothing ran, unless the thrown value cannot be turned into text (see the limitations below). This includes Pi's prompt pre-checks and a reset invalidation. A throw before the session exists carries no usage.
+
+A child run that Pi resolves with stop reason `error` or `aborted` also returns an error result with the child's usage. `details.outcome` stays `error` or `aborted`. When the parent aborted, the outcome is `aborted` and the text reads `Child agent aborted: ` followed by the parent signal's reason, whatever stop reason the child ended with. A prompt failure thrown under an aborted parent signal also reads as aborted, unless a reset made the run stale; a reset gives `error`. Without a parent abort, stop reason `error` reads `Child agent failed: ` and Pi's `errorMessage`, or `no error message` when Pi set none. Stop reason `aborted` reads `Child agent aborted: ` and Pi's `errorMessage`, or `Child agent aborted.` when Pi set none. The child's last partial output follows after a blank line, if any.
+
+An error result from a thrown failure shows the error's own message, or its text form when the thrown value is not an `Error`; an `Error` with an empty message shows its name. A reset reads `Spawn invalidated by reset.` A failure to dispose the child after a run that returned normally (a success, or an `error` or `aborted` completion) becomes the error result, with the dispose error's message as its text. After a thrown failure with a UI, the dispose failure goes to an error notice and the result keeps the primary error, unless the notice itself throws, in which case the notice error becomes the result text. After a thrown failure without a UI, the result text names both failures. A child abort that rejects goes to an error notice when there is a UI. Before the prompt, the abort error is the result text; during a reset, the text is `Spawn invalidated by reset; child abort failed.` A rejection from the parent-signal listener is not part of the result.
+
+The UI shows an aborted result as aborted although it carries `isError`. Once `details.outcome` is final, the renderer prefers it over the child's stop reasons. The collapsed view of a retained child shows the child's stats, or `stats unavailable` when `statsUnavailable` is set, once the final details arrive; the running update carries no stats. The static result view shows no stats.
+
+The result text is cut at the first 2000 lines, then at 51,200 bytes (50 KB) on a UTF-8 character boundary. The marker writes the size as `50 KiB (51200 bytes)`, the form notebook uses, and advises spawning a new child with a narrower request. Error results are cut to the same limits with the same marker.
+
+The spawn result returns the child's token and cost usage. It counts toward the parent's session totals and footer, not its context size. The usage is one sum over the child session's entries, built the way Pi sums its own session usage. If the entries cannot be read or summed, the spawn keeps the child's text, reports zero usage, omits `details.stats` and sets `statsUnavailable`; the underlying error is not part of the result. `details.stats` and `statsUnavailable` are never both set.
+
+Spawn limitations:
+
+- Usage values outside Pi's types are summed as Pi sums them. An unreadable or unsummable entry list counts the child as zero usage and sets `statsUnavailable`.
+- A dispose failure after a run that returned normally (a success, or an `error` or `aborted` completion) replaces the result with the dispose error.
+- A parent abort after the child's final answer returns the answer behind the abort line.
+- A prompt failure under an aborted parent signal reads as aborted.
+- Error texts show only the error's own message, except two combined texts: `Spawn invalidated by reset; child abort failed.` and, without a UI, `Spawn failed and cleanup failed: <primary>; <cleanup>`.
+- With a UI, a cleanup notice that throws after a thrown failure replaces that failure's text.
+- A thrown value that cannot be turned into text makes the spawn reject instead of resolving.
+- A child abort that rejects after the prompt started is reported only as a notice, and only when there is a UI. Pi's own abort does not reject, so only another session implementation reaches this.
 
 **Model Groups** — `/model-groups` manages versioned global and trusted-project JSON configuration. Project groups shadow same-named global groups. Configuration is loaded and validated against Pi's model registry into the `modelGroups` snapshot; only group names and their effective modalities reach the agent prompt (see **Prompt sections**). Routing uses the parent registry only to select configured/authenticated entries—the registry/auth objects are not passed into the child runtime.
 

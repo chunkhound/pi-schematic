@@ -19,6 +19,16 @@ export const theme = {
 	bold: (text: string) => text,
 } as unknown as Theme;
 
+export const EMPTY_CHILD_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+
+/** A failure after the child session exists is returned as an error result, not thrown. */
+export function assertErrorResult(result: any, text: string, usage: unknown): void {
+	assert.equal(result.isError, true);
+	assert.deepEqual(result.content, [{ type: "text", text }]);
+	assert.equal(result.details.outcome, "error");
+	assert.deepEqual(result.usage, usage);
+}
+
 export const ansiTheme = {
 	fg: (_name: string, text: string) => `\u001b[38;5;245m${text}\u001b[39m`,
 	bg: (_name: string, text: string) => `\u001b[48;5;236m${text}\u001b[49m`,

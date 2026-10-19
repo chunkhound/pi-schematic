@@ -20,13 +20,13 @@ import { Type } from "typebox";
 import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
 import { HANDOFF_SUCCESSOR_CUSTOM_TYPE } from "../../handoff/format.js";
 import {
-	PROBE_API,
 	PROBE_BARRIER_STATUS_KEY,
 	PROBE_COMMAND,
-	PROBE_CONTEXT_WINDOW,
 	PROBE_LOG_ENV_VAR,
-	PROBE_MODEL_ID,
+	PROBE_MODEL_FIELDS,
 	PROBE_PROVIDER,
+	PROBE_PROVIDER_FIELDS,
+	ZERO_COST,
 	cutHandoffId,
 	parseScriptedStep,
 	type BarrierReport,
@@ -34,7 +34,6 @@ import {
 	type ScriptedStep,
 } from "./real-host-protocol.js";
 
-const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
 const SCRIPTED_INPUT_TOKENS = 50000;
 // Load-time check: every scripted response must clear the handoff floor whatever the
 // context size, or schematic rejects the handoffs this suite scripts.
@@ -45,7 +44,7 @@ if (!(SCRIPTED_INPUT_TOKENS > MIN_HANDOFF_TOKENS)) {
 	);
 }
 function usageOf(inputTokens: number): AssistantMessage["usage"] {
-	return { input: inputTokens, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: inputTokens, cost: zeroCost };
+	return { input: inputTokens, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: inputTokens, cost: ZERO_COST };
 }
 
 function parseScript(args: string): ScriptedStep[] {
@@ -165,11 +164,8 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	};
 
 	pi.registerProvider(PROBE_PROVIDER, {
-		api: PROBE_API, apiKey: "test-key", baseUrl: "http://localhost.invalid",
-		models: [{
-			id: PROBE_MODEL_ID, name: "Schematic E2E Model", reasoning: false,
-			input: ["text"], cost: zeroCost, contextWindow: PROBE_CONTEXT_WINDOW, maxTokens: 1024,
-		}],
+		...PROBE_PROVIDER_FIELDS,
+		models: [{ ...PROBE_MODEL_FIELDS, name: "Schematic E2E Model" }],
 		streamSimple(model, context) {
 			const i = step++;
 			log({ kind: "request", step: i, calls: runScript, texts: contextTexts(context.messages) });

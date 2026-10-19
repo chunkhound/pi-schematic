@@ -53,6 +53,7 @@ The suites leave these behaviours unpinned:
 - A handoff that shares its message with other calls whose results all set `terminate`. The refusal then ends the run, and the model sees it only on the next prompt. Deliberate: the handoff tool is the only tool in this repo whose result sets `terminate`, so a test would pin a case that only a test tool can produce.
 - `findHandoffCut` matching only a compaction whose details carry `handoff: true`. Deliberate: every boundary cut writes that flag, and the unit tests pin the drafts that write it.
 - The refusal of a second handoff in a run that already lost its cut, at e2e level. Deliberate: the unit and real-session tests pin it, and the e2e probe drops the cut with `continue: false`, which ends the run before a second call. An e2e test would need a probe change.
+- A spawn can fail after its child's agent run started, for a reason other than an empty reply. Examples are a failed prompt, a reset, or a dispose failure. Its child usage reaching the parent's totals in a real host is unpinned. Deliberate: the unit tests pin each cause (the error result from the `catch` block, an `error` or `aborted` completion, a dispose failure), and the e2e suite pins the empty-reply path.
 
 ## CI
 

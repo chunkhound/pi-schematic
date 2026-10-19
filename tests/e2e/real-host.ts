@@ -16,7 +16,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { TestContext } from "node:test";
 import { RpcClient, type RpcClientOptions, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
@@ -36,6 +36,7 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const SCHEMATIC_ENTRY = resolve(HERE, "..", "..", "index.ts");
 const PROBE_ENTRY = resolve(HERE, "real-host-probe.ts");
+const CHILD_PROBE_ENTRY = resolve(HERE, "real-host-child-probe.ts");
 const CLI_PATH = join(dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"))), "cli.js");
 const REQUIRED_COMMANDS = ["handoff", "notebook", "readonly", PROBE_COMMAND.barrier];
 
@@ -236,6 +237,13 @@ export class RealHost {
 			const logPath = join(root, "probe.jsonl");
 			for (const dir of [agentDir, homeDir, projectDir, sessionsDir]) mkdirSync(dir);
 			writeFileSync(logPath, "");
+			// Spawned child sessions discover extensions in the agent directory; the parent
+			// runs with --no-extensions and loads only the -e entries below.
+			mkdirSync(join(agentDir, "extensions"));
+			writeFileSync(
+				join(agentDir, "extensions", "child-probe.ts"),
+				`export { default } from ${JSON.stringify(pathToFileURL(CHILD_PROBE_ENTRY).href)};\n`,
+			);
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({
 				compaction: { enabled: false, keepRecentTokens: 1, ...options.settings?.compaction },
 				retry: { enabled: false, ...options.settings?.retry },

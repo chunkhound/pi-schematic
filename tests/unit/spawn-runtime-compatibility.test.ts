@@ -4,10 +4,12 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Value } from "typebox/value";
+import { createAgentSession, DefaultResourceLoader, ModelRuntime, type SessionStats } from "@earendil-works/pi-coding-agent";
+import { fauxAssistantMessage, fauxProvider, type Usage } from "@earendil-works/pi-ai";
 import { createState } from "../../state.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
 import { createTestHost } from "./test-host.js";
-import { runRealChildInvocation } from "./helpers.js";
+import { assertErrorResult, EMPTY_CHILD_USAGE, runRealChildInvocation } from "./helpers.js";
 
 test("real child completes through inherited/default thinking", async () => {
 	const proof = await runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK." });
@@ -42,33 +44,30 @@ test("real child output is truncated at the public line limit", async () => {
 
 	assert.equal(proof.result.details.truncated, true);
 	assert.match(text, /^line 0/);
-	assert.match(text, /\[Result truncated to 2000 lines \/ 50KB/);
+	assert.match(text, /\[Result truncated to 2000 lines \/ 50 KiB \(51200 bytes\)\. Spawn a new child with a narrower request if more is needed\.\]/);
 	assert.equal(text.includes("line 2099"), false);
 });
 
-test("real child abort before prompt rejects without publishing a result", async () => {
-	await assert.rejects(
-		() => runRealChildInvocation({
-			prompt: "Use the agentic_e2e_probe tool.",
-			abortBeforeStart: true,
-		}),
-		(error) => {
-			assert.match((error as Error).message, /fixture abort/);
-			// The signal is already aborted before the session starts, so no onUpdate fires.
-			assert.equal((error as any).proof.updates.length, 0, "no result published before the early abort");
-			return true;
-		},
-	);
+test("real child abort before prompt returns an aborted result without a running update", async () => {
+	const proof = await runRealChildInvocation({
+		prompt: "Use the agentic_e2e_probe tool.",
+		abortBeforeStart: true,
+	});
+
+	assert.equal(proof.result.isError, true);
+	assert.deepEqual(proof.result.content, [{ type: "text", text: "Child agent aborted: fixture abort" }]);
+	assert.equal(proof.result.details.outcome, "aborted");
+	assert.deepEqual(proof.result.usage, EMPTY_CHILD_USAGE);
+	assert.equal(proof.updates.length, 0);
 });
 
 test("real child reset during its running update invalidates the session", async () => {
-	await assert.rejects(
-		() => runRealChildInvocation({
-			prompt: "Use the agentic_e2e_probe tool.",
-			resetOnRunningUpdate: true,
-		}),
-		/invalidated by reset/i,
-	);
+	const proof = await runRealChildInvocation({
+		prompt: "Use the agentic_e2e_probe tool.",
+		resetOnRunningUpdate: true,
+	});
+
+	assertErrorResult(proof.result, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
 });
 
 test("concurrent real children both complete", async () => {
@@ -166,13 +165,13 @@ test("a parent-transient selected model fails explicitly in the real child runti
 			contextWindow: 128000,
 			maxTokens: 1024,
 		};
-		await assert.rejects(
-			() => executeSpawn(
-				"spawn-transient", pi as any, { model, cwd } as any, state,
-				{ prompt: "work" }, undefined, undefined, "medium",
-			),
-			/No API key found for transient-parent/, // real provider error — no silent fallback
+		const result = await executeSpawn(
+			"spawn-transient", pi as any, { model, cwd } as any, state,
+			{ prompt: "work" }, undefined, undefined, "medium",
 		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0].text, /No API key found for transient-parent/);
 	} finally {
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
@@ -182,16 +181,11 @@ test("a parent-transient selected model fails explicitly in the real child runti
 
 // ── Real-invocation contract coverage (no session mocks) ──────────
 
-// 1. No-output rejection: empty assistant text must throw, with no lingering child.
-test("real child with no output triggers the 'produced no output' rejection", async () => {
-	await assert.rejects(
-		() => runRealChildInvocation({ prompt: "say nothing", noOutput: true }),
-		(error) => {
-			assert.match((error as Error).message, /Child agent produced no output/);
-			assert.equal((error as any).proof.state.childSessions.size, 0, "no child session lingers after the rejection");
-			return true;
-		},
-	);
+// 1. No output: empty assistant text returns an error result, with no lingering child.
+test("real child with no output returns the 'produced no output' error result", async () => {
+	const proof = await runRealChildInvocation({ prompt: "say nothing", noOutput: true });
+	assertErrorResult(proof.result, "Child agent produced no output.", EMPTY_CHILD_USAGE);
+	assert.equal(proof.state.childSessions.size, 0, "no child session lingers after the error");
 });
 
 // 2. Thinking forwarding: the requested thinking reaches the child session.
@@ -237,13 +231,8 @@ test("real child session registry is cleared after a successful spawn", async ()
 
 // 5. Stale during prompt: reset inside the first stream call invalidates the child.
 test("real child invalidated when state is reset mid-prompt", async () => {
-	await assert.rejects(
-		() => runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool.", resetDuringPrompt: true }),
-		(error) => {
-			assert.match((error as Error).message, /invalidated by reset/);
-			return true;
-		},
-	);
+	const proof = await runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool.", resetDuringPrompt: true });
+	assertErrorResult(proof.result, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
 });
 
 // 6. Mid-prompt abort: the parent controller abort yields an aborted outcome (the
@@ -251,6 +240,8 @@ test("real child invalidated when state is reset mid-prompt", async () => {
 test("real child records an aborted outcome when the parent aborts mid-prompt", async () => {
 	const proof = await runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool.", abortMidPrompt: true });
 	assert.equal(proof.result.details.outcome, "aborted", "mid-prompt abort yields an aborted outcome");
+	assert.equal(proof.result.isError, true);
+	assert.equal(proof.result.content[0].text, "Child agent aborted: mid-prompt abort");
 	assert.equal(proof.state.childSessions.size, 0, "no child session lingers after the abort");
 });
 
@@ -261,5 +252,82 @@ test("real child publishes the session stats contract shape", async () => {
 	assert.ok(stats && typeof stats === "object", "stats object must be published");
 	for (const key of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "totalTokens", "cost", "turns"]) {
 		assert.ok(key in stats!, `stats must contain ${key}`);
+	}
+});
+
+// 8. Usage parity: the usage spawn returns matches Pi's own session stats on a real child session.
+test("real child usage matches the session stats across assistant, usage, compaction and branch-summary entries", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-schematic-usage-parity-"));
+	const previousPiOffline = process.env.PI_OFFLINE;
+	const faux = fauxProvider();
+	try {
+		process.env.PI_OFFLINE = "1";
+		const usageOf = (input: number, output: number, cacheRead: number, cacheWrite: number, total: number) => ({
+			input, output, cacheRead, cacheWrite, totalTokens: total,
+			cost: { input: total / 1024, output: 0, cacheRead: 0, cacheWrite: 0, total: total / 1024 },
+		});
+		faux.setResponses([fauxAssistantMessage("child done")]);
+		// The faux provider replaces a scripted usage with its own estimate, so read the assistant usage it recorded.
+		let assistant!: Usage;
+		let piStats!: SessionStats;
+		const modelRuntime = await ModelRuntime.create({ authPath: join(root, "auth.json"), modelsPath: null, refreshOnCreate: false });
+		modelRuntime.registerNativeProvider(faux.provider);
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: root, agentDir: root, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+		});
+		await resourceLoader.reload();
+		const model = faux.getModel();
+		const pi = await createTestHost();
+		const state = createState();
+		const result = await executeSpawn(
+			"spawn-usage-parity", pi as any, { model, cwd: root } as any, state,
+			{ prompt: "work" }, undefined, undefined, "medium",
+			async (config) => {
+				const created = await createAgentSession({ ...config, agentDir: root, modelRuntime, resourceLoader });
+				const { session } = created;
+				const runPrompt = session.prompt.bind(session);
+				// Entries beyond assistant messages that Pi's stats also count, written through the real session manager.
+				session.prompt = async (...args: Parameters<typeof runPrompt>) => {
+					await runPrompt(...args);
+					assistant = session.messages.filter((message) => message.role === "assistant").at(-1)!.usage;
+					const manager = session.sessionManager;
+					manager.appendUsage("title", model.provider, model.id, usageOf(30, 3, 1, 0, 34));
+					manager.appendCompaction("summary", null, 500, undefined, false, usageOf(200, 20, 0, 4, 224));
+					manager.branchWithSummary(null, "branch", undefined, false, usageOf(7, 1, 0, 0, 8));
+					piStats = session.getSessionStats();
+				};
+				return created;
+			},
+		);
+
+		const stats = result.details.stats;
+		assert.equal((result as any).isError, undefined);
+		// Hand-computed extras on top of the assistant usage: usage entry 30/3/1/0 + compaction 200/20/0/4 + branch summary 7/1/0/0 = 237/24/1/4, cost 266/1024.
+		assert.equal(result.usage.input, assistant.input + 237);
+		assert.equal(result.usage.output, assistant.output + 24);
+		assert.equal(result.usage.cacheRead, assistant.cacheRead + 1);
+		assert.equal(result.usage.cacheWrite, assistant.cacheWrite + 4);
+		assert.equal(result.usage.totalTokens, assistant.totalTokens + 266);
+		// The faux provider always reports zero cost for an assistant message, so this covers the extras' cost only.
+		assert.equal(result.usage.cost.total, 0.259765625);
+		assert.deepEqual(stats, {
+			inputTokens: piStats.tokens.input,
+			outputTokens: piStats.tokens.output,
+			cacheReadTokens: piStats.tokens.cacheRead,
+			cacheWriteTokens: piStats.tokens.cacheWrite,
+			totalTokens: piStats.tokens.total,
+			cost: piStats.cost,
+			turns: piStats.assistantMessages,
+		});
+		assert.equal(result.usage.input, piStats.tokens.input);
+		assert.equal(result.usage.output, piStats.tokens.output);
+		assert.equal(result.usage.cacheRead, piStats.tokens.cacheRead);
+		assert.equal(result.usage.cacheWrite, piStats.tokens.cacheWrite);
+		assert.equal(result.usage.cost.total, piStats.cost);
+		// Provider-reported usage.totalTokens need not match Pi's four-field stats total.
+	} finally {
+		if (previousPiOffline === undefined) delete process.env.PI_OFFLINE;
+		else process.env.PI_OFFLINE = previousPiOffline;
+		await rm(root, { recursive: true, force: true });
 	}
 });

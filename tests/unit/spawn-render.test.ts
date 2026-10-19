@@ -10,7 +10,7 @@
 
 import test, { afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
 import { renderSpawnResult } from "../../spawn/renderer.js";
@@ -272,6 +272,97 @@ test("static no-output child error with empty details renders without fabricated
 	assert.equal(lines.some((line: string) => line.includes("unknown")), false);
 });
 
+const returnedErrorResult = {
+	content: [{ type: "text", text: "Child agent produced no output." }],
+	details: {
+		model: "mock-model",
+		thinking: "high",
+		truncated: false,
+		outcome: "error",
+		route: { status: "inherited" },
+		stats: { inputTokens: 80, outputTokens: 4, turns: 2, cost: 0.5 },
+	},
+};
+
+// Each case renders its error result statically and over a retained running child.
+// `present` and `absent` hold for both; `staticPresent` holds for the static render only.
+const errorResultRenderCases = [
+	{
+		name: "returned spawn error result with details renders as an error",
+		result: returnedErrorResult,
+		present: ["⚠ mock-model • high", "💬 error"],
+		staticPresent: ["Child agent produced no output."],
+		absent: ["💬 done"],
+	},
+	{
+		name: "an aborted error result renders as aborted",
+		result: {
+			content: [{ type: "text", text: "child stopped" }],
+			details: { model: "mock-model", thinking: "high", truncated: false, outcome: "aborted" },
+		},
+		present: ["✗ mock-model • high", "💬 aborted"],
+		staticPresent: [],
+		absent: ["💬 error"],
+	},
+	{
+		name: "a result flagged isError renders as an error even when its details report success",
+		result: {
+			content: [{ type: "text", text: "flagged failure" }],
+			details: { model: "mock-model", thinking: "high", truncated: false, outcome: "success" },
+		},
+		present: ["💬 error"],
+		staticPresent: ["flagged failure"],
+		absent: ["💬 done"],
+	},
+];
+
+for (const { name, result, present, staticPresent, absent } of errorResultRenderCases) {
+	test(`${name} statically`, async () => {
+		const state = createState();
+		const childSpawnTool = await makeChildSpawnTool(state);
+
+		const lines = (childSpawnTool.renderResult(
+			result,
+			{ expanded: false },
+			theme,
+			createRenderContext({ isError: true }),
+		) as any).render(120);
+		for (const text of [...present, ...staticPresent]) {
+			assert.ok(lines.some((line: string) => line.includes(text)));
+		}
+		for (const text of absent) {
+			assert.equal(lines.some((line: string) => line.includes(text)), false);
+		}
+	});
+
+	test(`${name} on a retained child`, async () => {
+		const state = createState();
+		const childSpawnTool = await makeChildSpawnTool(state);
+
+		state.childSessions.set("tool-call-1", createSession([]));
+		const running = childSpawnTool.renderResult(
+			{ content: [], details: { model: "mock-model", thinking: "high", truncated: false, outcome: "running" } },
+			{ expanded: false },
+			theme,
+			createRenderContext(),
+		) as any;
+		const retained = childSpawnTool.renderResult(
+			result,
+			{ expanded: false },
+			theme,
+			createRenderContext({ lastComponent: running, isError: true }),
+		) as any;
+		const lines = retained.render(120);
+		assert.equal(retained, running);
+		for (const text of present) {
+			assert.ok(lines.some((line: string) => line.includes(text)));
+		}
+		for (const text of absent) {
+			assert.equal(lines.some((line: string) => line.includes(text)), false);
+		}
+	});
+}
+
 test("retained nested spawn preserves identity when malformed terminal details report an error", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
@@ -469,3 +560,88 @@ test("nested spawn rerenders when stats become unavailable", async () => {
 	assert.ok(after.some((l: string) => l.includes("stats unavailable")));
 	assert.equal(after.some((l: string) => l.includes("initializing")), false);
 });
+
+const collapsedStatsCases = [
+	{
+		name: "collapsed spawn stats show unavailable text when stats are marked unavailable",
+		stats: false,
+		statsUnavailable: true,
+		present: ["stats unavailable"],
+		absent: ["tok 12/34"],
+	},
+	{
+		name: "collapsed spawn stats show figures when stats are available",
+		stats: true,
+		statsUnavailable: false,
+		present: ["tok 12/34"],
+		absent: ["stats unavailable"],
+	},
+];
+
+for (const { name, stats, statsUnavailable, present, absent } of collapsedStatsCases) {
+	test(name, async () => {
+		const state = createState();
+		const childSpawnTool = await makeChildSpawnTool(state);
+		state.childSessions.set("tool-call-1", createSession([]));
+		const component = childSpawnTool.renderResult(
+			{
+				content: [],
+				details: {
+					model: "mock-model",
+					thinking: "medium",
+					truncated: false,
+					outcome: "success",
+					...(stats ? { stats: { inputTokens: 12, outputTokens: 34, turns: 2, cost: 0.125 } } : {}),
+					...(statsUnavailable ? { statsUnavailable: true } : {}),
+				},
+			},
+			{ expanded: false },
+			theme,
+			createRenderContext(),
+		) as any;
+		const lines = component.render(120);
+		for (const text of present) {
+			assert.ok(lines.some((line: string) => line.includes(text)));
+		}
+		for (const text of absent) {
+			assert.equal(lines.some((line: string) => line.includes(text)), false);
+		}
+	});
+}
+
+const stopReasonOutcomeCases = [
+	{
+		name: "a retained child whose last stop reason is error renders the aborted outcome of its final result",
+		outcome: "aborted",
+		isError: true,
+		present: "💬 aborted",
+		absent: "💬 error",
+	},
+	{
+		name: "a retained running child whose last stop reason is error renders error",
+		outcome: "running",
+		isError: false,
+		present: "💬 error",
+		absent: "💬 aborted",
+	},
+];
+
+for (const { name, outcome, isError, present, absent } of stopReasonOutcomeCases) {
+	test(name, async () => {
+		// The child's error message renders through pi's global theme.
+		initTheme();
+		const state = createState();
+		const childSpawnTool = await makeChildSpawnTool(state);
+		state.childSessions.set("tool-call-1", createSession([
+			{ role: "assistant", content: [{ type: "text", text: "partial" }], stopReason: "error", errorMessage: "provider failed" },
+		]));
+		const lines = (childSpawnTool.renderResult(
+			{ content: [], details: { model: "mock-model", thinking: "high", truncated: false, outcome } },
+			{ expanded: false },
+			theme,
+			createRenderContext({ isError }),
+		) as any).render(120);
+		assert.ok(lines.some((line: string) => line.includes(present)));
+		assert.equal(lines.some((line: string) => line.includes(absent)), false);
+	});
+}
