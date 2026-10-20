@@ -51,6 +51,7 @@ import {
 	getStopReasonOutcome,
 	type SpawnOutcome,
 	type SpawnResultDetails,
+	type SpawnToolResult,
 } from "./shared.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -101,7 +102,12 @@ function emptyChildUsage(): Usage {
 	};
 }
 
-/** Mirrors pi-coding-agent's unexported combineUsage: the optional token splits appear only once some usage reports them. */
+/**
+ * Mirrors pi-coding-agent's unexported combineUsage: the optional token splits appear only once some usage reports them.
+ * This copy and the entry walk in collectChildAccounting follow Pi's own session usage sum. A Pi upgrade that changes
+ * the usage fields or the entry kinds that carry usage must update both; the test "real child usage matches the
+ * session stats across assistant, tool result, usage, compaction and branch-summary entries" checks them against Pi.
+ */
 function combineUsage(first: Usage, second: Usage): Usage {
 	return {
 		input: first.input + second.input,
@@ -399,8 +405,8 @@ export function executeSpawn(
 	defaultThinking: ModelThinkingLevel,
 	sessionFactory: typeof createAgentSession = createAgentSession,
 	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
-): Promise<{ content: TextContent[]; details: SpawnResultDetails; usage: Usage; isError?: true }> {
-	let execution!: Promise<{ content: TextContent[]; details: SpawnResultDetails; usage: Usage; isError?: true }>;
+): Promise<SpawnToolResult> {
+	let execution!: Promise<SpawnToolResult>;
 	execution = (async () => {
 		const parentModel = ctx.model;
 		if (!parentModel) {

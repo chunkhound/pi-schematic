@@ -1,4 +1,4 @@
-import { contentText, type ModelThinkingLevel, type StopReason } from "@earendil-works/pi-ai";
+import { contentText, type ModelThinkingLevel, type StopReason, type TextContent, type Usage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 export type SpawnOutcome = "running" | "success" | "aborted" | "error";
@@ -18,6 +18,8 @@ export type SpawnResultDetails = {
 	stats?: Record<string, number>;
 	statsUnavailable?: boolean;
 };
+
+export type SpawnToolResult = { content: TextContent[]; details: SpawnResultDetails; usage: Usage; isError?: true };
 
 /** Maps the failure stop reasons to their outcome; every other stop reason has none. */
 export function getStopReasonOutcome(stopReason: StopReason | undefined): SpawnOutcome | undefined {

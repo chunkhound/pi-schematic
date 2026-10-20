@@ -1,5 +1,5 @@
 import test, { afterEach, beforeEach } from "node:test";
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -13,6 +13,7 @@ import {
 	registerSpawnTool,
 } from "../../spawn/index.js";
 import { renderSpawnResult } from "../../spawn/renderer.js";
+import { formatByteCap } from "../../notebook/store.js";
 import { SpawnRouteError } from "../../model-groups/router.js";
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import { Value } from "typebox/value";
@@ -337,7 +338,8 @@ test("spawn execute builds prompt with notebook pages and task", async () => {
 	assert.match(seenPrompt, /entry-a: preview line/);
 	assert.match(seenPrompt, /durable shared memory for the parent and future contexts/i);
 	assert.doesNotMatch(seenPrompt, /durable grounding/i);
-	assert.match(seenPrompt, /Keep the result under 2000 lines \/ 50 KiB \(51200 bytes\)\.$/);
+	const limitLine = `Keep the result under ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}.`;
+	assert.equal(seenPrompt.slice(-limitLine.length), limitLine);
 });
 
 test("spawn emits no capability notice when the routed group has no explicit override", async () => {
@@ -1020,31 +1022,37 @@ test("a parent abort between child creation and the prompt returns an aborted re
 
 // ── Result truncation ───────────────────────────────────────────────
 
-const TRUNCATION_MARKER = "\n\n[Result truncated to 2000 lines / 50 KiB (51200 bytes). Spawn a new child with a narrower request if more is needed.]";
+const TRUNCATION_MARKER = `\n\n[Result truncated to ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. Spawn a new child with a narrower request if more is needed.]`;
+// Whole 3-byte characters and, after a 1-byte prefix, whole 4-byte emoji that fit in the byte limit.
+const FITTING_3_BYTE_CHARS = Math.floor(DEFAULT_MAX_BYTES / 3);
+const FITTING_EMOJI = Math.floor((DEFAULT_MAX_BYTES - 1) / 4);
 
 async function executeWithChildText(text: string) {
 	return executeWithEntries(() => [], { result: [{ role: "assistant", content: [{ type: "text", text }] }] });
 }
 
-test("spawn result over 2000 lines keeps the first 2000 lines and names the limits", async () => {
-	const lines = Array.from({ length: 2001 }, (_, i) => `line ${i}`);
+test("spawn result over the line limit keeps the first lines up to the limit and names the limits", async () => {
+	const lines = Array.from({ length: DEFAULT_MAX_LINES + 1 }, (_, i) => `line ${i}`);
+	assert.ok(Buffer.byteLength(lines.slice(0, DEFAULT_MAX_LINES).join("\n")) <= DEFAULT_MAX_BYTES, "kept lines must fit in the byte limit");
 	const result = await executeWithChildText(lines.join("\n"));
 
 	assert.equal(result.details.truncated, true);
-	assert.equal(result.content[0].text, lines.slice(0, 2000).join("\n") + TRUNCATION_MARKER);
+	assert.equal(result.content[0].text, lines.slice(0, DEFAULT_MAX_LINES).join("\n") + TRUNCATION_MARKER);
 });
 
-test("spawn result of 2000 lines is not truncated", async () => {
-	const result = await executeWithChildText(Array(2000).fill("x").join("\n"));
+test("spawn result at the line limit is not truncated", async () => {
+	const text = Array(DEFAULT_MAX_LINES).fill("x").join("\n");
+	assert.ok(Buffer.byteLength(text) <= DEFAULT_MAX_BYTES, "text must fit in the byte limit");
+	const result = await executeWithChildText(text);
 
 	assert.equal(result.details.truncated, false);
 });
 
-test("spawn result at 51200 bytes is not truncated", async () => {
-	const result = await executeWithChildText("a".repeat(51_200));
+test("spawn result at the byte limit is not truncated", async () => {
+	const result = await executeWithChildText("a".repeat(DEFAULT_MAX_BYTES));
 
 	assert.equal(result.details.truncated, false);
-	assert.equal(result.content[0].text, "a".repeat(51_200));
+	assert.equal(result.content[0].text, "a".repeat(DEFAULT_MAX_BYTES));
 });
 
 test("spawn result retains an untruncated lone surrogate", async () => {
@@ -1055,31 +1063,34 @@ test("spawn result retains an untruncated lone surrogate", async () => {
 	assert.equal(result.content[0].text, text);
 });
 
-for (const { name, input, expectedText } of [
+for (const { name, input, precondition, expectedText } of [
 	{
-		name: "spawn result at 51201 bytes is truncated",
-		input: "a".repeat(51_201),
-		expectedText: "a".repeat(51_200) + TRUNCATION_MARKER,
+		name: "spawn result one byte over the byte limit is truncated",
+		input: "a".repeat(DEFAULT_MAX_BYTES + 1),
+		expectedText: "a".repeat(DEFAULT_MAX_BYTES) + TRUNCATION_MARKER,
 	},
 	{
 		name: "spawn result keeps the head of an oversized first line when more lines follow",
-		input: "z".repeat(51_201) + "\nsecond",
-		expectedText: "z".repeat(51_200) + TRUNCATION_MARKER,
+		input: "z".repeat(DEFAULT_MAX_BYTES + 1) + "\nsecond",
+		expectedText: "z".repeat(DEFAULT_MAX_BYTES) + TRUNCATION_MARKER,
 	},
 	{
 		name: "spawn result cuts an oversized line of 3-byte characters on a character boundary",
-		input: "語".repeat(20_000),
-		// 17066 characters are 51198 bytes; a 17067th would end at 51201.
-		expectedText: "語".repeat(17_066) + TRUNCATION_MARKER,
+		input: "語".repeat(FITTING_3_BYTE_CHARS + 1),
+		// The precondition puts the byte limit inside a character, so the cut must back off.
+		precondition: () => assert.notEqual(DEFAULT_MAX_BYTES % 3, 0, "byte limit must not be a multiple of 3"),
+		expectedText: "語".repeat(FITTING_3_BYTE_CHARS) + TRUNCATION_MARKER,
 	},
 	{
 		name: "spawn result cuts an oversized line of surrogate pairs without splitting one",
-		input: "x" + "😀".repeat(13_000),
-		// 1 + 12799 * 4 = 51197 bytes; a 12800th emoji would end at 51201.
-		expectedText: "x" + "😀".repeat(12_799) + TRUNCATION_MARKER,
+		input: "x" + "😀".repeat(FITTING_EMOJI + 1),
+		// The precondition puts the byte limit inside an emoji, so the cut must back off.
+		precondition: () => assert.notEqual((DEFAULT_MAX_BYTES - 1) % 4, 0, "byte limit minus 1 must not be a multiple of 4"),
+		expectedText: "x" + "😀".repeat(FITTING_EMOJI) + TRUNCATION_MARKER,
 	},
 ]) {
 	test(name, async () => {
+		precondition?.();
 		const result = await executeWithChildText(input);
 
 		assert.equal(result.details.truncated, true);
@@ -1088,52 +1099,61 @@ for (const { name, input, expectedText } of [
 }
 
 test("a long prompt failure is truncated at the result byte limit", async () => {
-	const host = await hostWithFailedUsage({ prompt: async () => { throw new Error("a".repeat(51_201)); } });
+	const host = await hostWithFailedUsage({ prompt: async () => { throw new Error("a".repeat(DEFAULT_MAX_BYTES + 1)); } });
 
 	const result = await host.execute("spawn-long-error");
 
 	assert.equal(result.isError, true);
 	assert.equal(result.details.truncated, true);
-	assert.equal(result.content[0].text, "a".repeat(51_200) + TRUNCATION_MARKER);
+	assert.equal(result.content[0].text, "a".repeat(DEFAULT_MAX_BYTES) + TRUNCATION_MARKER);
 });
 
 test("spawn result trims a trailing newline before applying result limits", async () => {
-	const result = await executeWithChildText("x\n".repeat(2000));
+	const expected = Array(DEFAULT_MAX_LINES).fill("x").join("\n");
+	assert.ok(Buffer.byteLength(expected) <= DEFAULT_MAX_BYTES, "trimmed text must fit in the byte limit");
+	const result = await executeWithChildText("x\n".repeat(DEFAULT_MAX_LINES));
 
-	assert.equal(result.content[0].text, Array(2000).fill("x").join("\n"));
+	assert.equal(result.content[0].text, expected);
 });
 
-test("spawn result over 51200 bytes keeps the byte-limited head", async () => {
+test("spawn result over the byte limit keeps the byte-limited head", async () => {
 	const line = "a".repeat(99);
-	const result = await executeWithChildText(Array(600).fill(line).join("\n"));
+	// Each line takes 100 bytes with its newline, so these lines pass the byte limit; the precondition keeps them within the line limit.
+	const lineCount = Math.ceil(DEFAULT_MAX_BYTES / 100) + 1;
+	assert.ok(lineCount <= DEFAULT_MAX_LINES, "lines must stay within the line limit");
+	const result = await executeWithChildText(Array(lineCount).fill(line).join("\n"));
 
 	assert.equal(result.details.truncated, true);
-	assert.equal(Buffer.byteLength(result.content[0].text.slice(0, -TRUNCATION_MARKER.length)), 51_200);
+	assert.equal(Buffer.byteLength(result.content[0].text.slice(0, -TRUNCATION_MARKER.length)), DEFAULT_MAX_BYTES);
 });
 
 test("spawn result keeps a UTF-8-safe head when a multi-byte line straddles the byte limit", async () => {
-	// 51197 bytes + newline + two 3-byte euro signs = 51204 bytes; byte 51200 falls inside the second line.
-	const result = await executeWithChildText("a".repeat(51197) + "\n€€");
+	// DEFAULT_MAX_BYTES - 3 bytes, a newline and two 3-byte euro signs end 4 bytes past the limit, which falls inside the first euro sign.
+	const result = await executeWithChildText("a".repeat(DEFAULT_MAX_BYTES - 3) + "\n€€");
 
 	assert.equal(result.details.truncated, true);
-	assert.equal(result.content[0].text, "a".repeat(51197) + "\n" + TRUNCATION_MARKER);
+	assert.equal(result.content[0].text, "a".repeat(DEFAULT_MAX_BYTES - 3) + "\n" + TRUNCATION_MARKER);
 });
 
 test("spawn result with CRLF lines keeps the exact byte-limited prefix", async () => {
 	// Line 1 is 99 chars + CR = 100 bytes; every later line adds an LF plus 98 chars + CR = 100 bytes.
-	// 512 lines take exactly 51200 bytes; a 513th would take 51300.
-	const text = "c".repeat(99) + "\r\n" + Array(599).fill("b".repeat(98)).join("\r\n");
+	// The preconditions keep the lines within the line limit and put the byte limit between a CR and its LF.
+	// The text is ASCII, so its first DEFAULT_MAX_BYTES characters are its first DEFAULT_MAX_BYTES bytes.
+	const lineCount = Math.ceil(DEFAULT_MAX_BYTES / 100) + 1;
+	assert.ok(lineCount <= DEFAULT_MAX_LINES, "lines must stay within the line limit");
+	assert.equal(DEFAULT_MAX_BYTES % 100, 0, "byte limit must be a multiple of 100");
+	const text = "c".repeat(99) + "\r\n" + Array(lineCount - 1).fill("b".repeat(98)).join("\r\n");
 	const result = await executeWithChildText(text);
 
 	assert.equal(result.details.truncated, true);
-	assert.equal(result.content[0].text, "c".repeat(99) + "\r\n" + ("b".repeat(98) + "\r\n").repeat(510) + "b".repeat(98) + "\r" + TRUNCATION_MARKER);
+	assert.equal(result.content[0].text, text.slice(0, DEFAULT_MAX_BYTES) + TRUNCATION_MARKER);
 });
 
 test("spawn result retains the byte-limited prefix of a long second line", async () => {
-	const result = await executeWithChildText(`short\n${"b".repeat(60_000)}`);
+	const result = await executeWithChildText(`short\n${"b".repeat(DEFAULT_MAX_BYTES)}`);
 	const content = result.content[0].text.slice(0, -TRUNCATION_MARKER.length);
 
-	assert.equal(Buffer.byteLength(content), 51_200);
+	assert.equal(Buffer.byteLength(content), DEFAULT_MAX_BYTES);
 	assert.match(content, /^short\nb+/);
 });
 

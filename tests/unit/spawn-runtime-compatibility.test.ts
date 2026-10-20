@@ -44,6 +44,7 @@ test("real child output is truncated at the public line limit", async () => {
 
 	assert.equal(proof.result.details.truncated, true);
 	assert.match(text, /^line 0/);
+	// Pins Pi's public limits on purpose, so a change to them in Pi fails here.
 	assert.match(text, /\[Result truncated to 2000 lines \/ 50 KiB \(51200 bytes\)\. Spawn a new child with a narrower request if more is needed\.\]/);
 	assert.equal(text.includes("line 2099"), false);
 });
@@ -256,7 +257,7 @@ test("real child publishes the session stats contract shape", async () => {
 });
 
 // 8. Usage parity: the usage spawn returns matches Pi's own session stats on a real child session.
-test("real child usage matches the session stats across assistant, usage, compaction and branch-summary entries", async () => {
+test("real child usage matches the session stats across assistant, tool result, usage, compaction and branch-summary entries", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-schematic-usage-parity-"));
 	const previousPiOffline = process.env.PI_OFFLINE;
 	const faux = fauxProvider();
@@ -291,6 +292,10 @@ test("real child usage matches the session stats across assistant, usage, compac
 					await runPrompt(...args);
 					assistant = session.messages.filter((message) => message.role === "assistant").at(-1)!.usage;
 					const manager = session.sessionManager;
+					manager.appendMessage({
+						role: "toolResult", toolCallId: "parity-tool", toolName: "parity_probe", content: [{ type: "text", text: "ok" }],
+						usage: usageOf(11, 2, 0, 0, 13), isError: false, timestamp: Date.now(),
+					});
 					manager.appendUsage("title", model.provider, model.id, usageOf(30, 3, 1, 0, 34));
 					manager.appendCompaction("summary", null, 500, undefined, false, usageOf(200, 20, 0, 4, 224));
 					manager.branchWithSummary(null, "branch", undefined, false, usageOf(7, 1, 0, 0, 8));
@@ -302,14 +307,14 @@ test("real child usage matches the session stats across assistant, usage, compac
 
 		const stats = result.details.stats;
 		assert.equal((result as any).isError, undefined);
-		// Hand-computed extras on top of the assistant usage: usage entry 30/3/1/0 + compaction 200/20/0/4 + branch summary 7/1/0/0 = 237/24/1/4, cost 266/1024.
-		assert.equal(result.usage.input, assistant.input + 237);
-		assert.equal(result.usage.output, assistant.output + 24);
+		// Hand-computed extras on top of the assistant usage: tool result 11/2/0/0 + usage entry 30/3/1/0 + compaction 200/20/0/4 + branch summary 7/1/0/0 = 248/26/1/4, cost 279/1024.
+		assert.equal(result.usage.input, assistant.input + 248);
+		assert.equal(result.usage.output, assistant.output + 26);
 		assert.equal(result.usage.cacheRead, assistant.cacheRead + 1);
 		assert.equal(result.usage.cacheWrite, assistant.cacheWrite + 4);
-		assert.equal(result.usage.totalTokens, assistant.totalTokens + 266);
+		assert.equal(result.usage.totalTokens, assistant.totalTokens + 279);
 		// The faux provider always reports zero cost for an assistant message, so this covers the extras' cost only.
-		assert.equal(result.usage.cost.total, 0.259765625);
+		assert.equal(result.usage.cost.total, 0.2724609375);
 		assert.deepEqual(stats, {
 			inputTokens: piStats.tokens.input,
 			outputTokens: piStats.tokens.output,
