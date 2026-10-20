@@ -500,16 +500,18 @@ export function executeSpawn(
 	// public session value so child details describe what actually runs. The
 	// fallback keeps intentionally partial session test doubles compatible.
 	const effectiveChildThinking = () => session.thinkingLevel ?? requestedChildThinking;
-	const buildResultDetails = (truncated: boolean, outcome: SpawnOutcome, accounting: ChildAccounting): SpawnResultDetails => {
-		return {
-			model: childModel.id,
-			thinking: effectiveChildThinking(),
-			truncated,
-			outcome,
-			route: routeDetails,
-			...(accounting.stats ? { stats: accounting.stats } : { statsUnavailable: true }),
-		};
-	};
+	const buildBaseDetails = (truncated: boolean, outcome: SpawnOutcome): SpawnResultDetails => ({
+		model: childModel.id,
+		thinking: effectiveChildThinking(),
+		truncated,
+		outcome,
+		route: routeDetails,
+	});
+	const buildResultDetails = (truncated: boolean, outcome: SpawnOutcome, accounting: ChildAccounting): SpawnResultDetails => ({
+		...buildBaseDetails(truncated, outcome),
+		...(accounting.stats ? { stats: accounting.stats } : { statsUnavailable: true }),
+	});
+	type ChildRun = { content: TextContent[]; truncated: boolean; outcome: SpawnOutcome };
 
 	const abortContext = createSpawnAbortContext(state, session, ctx, toolCallId);
 	const { invalidatedError, abortChild, clearChildSession, abortAndInvalidate } = abortContext;
@@ -521,7 +523,7 @@ export function executeSpawn(
 		throw new Error(describeAbort(abortedSignal.reason));
 	};
 
-	const runChild = async (): Promise<{ content: TextContent[]; truncated: boolean; outcome: SpawnOutcome; isError: boolean }> => {
+	const runChild = async (): Promise<ChildRun> => {
 		let primary: { error: unknown } | undefined;
 		try {
 			if (isStale()) {
@@ -547,13 +549,7 @@ export function executeSpawn(
 				signal?.addEventListener("abort", onSignalAbort, { once: true });
 				onUpdate?.({
 					content: [],
-					details: {
-						model: childModel.id,
-						thinking: effectiveChildThinking(),
-						truncated: false,
-						outcome: "running",
-						route: routeDetails,
-					} satisfies SpawnResultDetails,
+					details: buildBaseDetails(false, "running"),
 				});
 
 				if (signal?.aborted) {
@@ -612,7 +608,6 @@ export function executeSpawn(
 				content: [{ type: "text" as const, text: finalText }] as TextContent[],
 				truncated,
 				outcome,
-				isError: outcome !== "success",
 			};
 		} catch (error) {
 			primary = { error };
@@ -637,7 +632,7 @@ export function executeSpawn(
 		}
 	};
 
-	let completed: { content: TextContent[]; truncated: boolean; outcome: SpawnOutcome; isError: boolean };
+	let completed: ChildRun;
 	try {
 		completed = await runChild();
 	} catch (error) {
@@ -656,7 +651,7 @@ export function executeSpawn(
 		content: completed.content,
 		details: buildResultDetails(completed.truncated, completed.outcome, accounting),
 		usage: accounting.usage,
-		...(completed.isError ? { isError: true as const } : {}),
+		...(completed.outcome !== "success" ? { isError: true as const } : {}),
 	};
 	})();
 	return execution;
