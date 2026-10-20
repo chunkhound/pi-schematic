@@ -58,7 +58,7 @@ An error result from a thrown failure shows the error's own message, or its text
 
 The UI shows an aborted result as aborted although it carries `isError`. Once `details.outcome` is final, the renderer prefers it over the child's stop reasons. The collapsed view of a retained child shows the child's stats, or `stats unavailable` when `statsUnavailable` is set, once the final details arrive; the running update carries no stats. The static result view shows no stats.
 
-The result text is cut at the first 2000 lines, then at 51,200 bytes (50 KB) on a UTF-8 character boundary. The marker writes the size as `50 KiB (51200 bytes)`, the form notebook uses, and advises spawning a new child with a narrower request. Error results are cut to the same limits with the same marker.
+The result text is cut at the first 2000 lines, then at 51,200 bytes (50 KiB) on a UTF-8 character boundary. The marker writes the size as `50 KiB (51200 bytes)`, the form notebook uses, and advises spawning a new child with a narrower request. Error results are cut to the same limits with the same marker.
 
 The spawn result returns the child's token and cost usage. It counts toward the parent's session totals and footer, not its context size. The usage is one sum over the child session's entries, built the way Pi sums its own session usage. If the entries cannot be read or summed, the spawn keeps the child's text, reports zero usage, omits `details.stats` and sets `statsUnavailable`; the underlying error is not part of the result. `details.stats` and `statsUnavailable` are never both set.
 
