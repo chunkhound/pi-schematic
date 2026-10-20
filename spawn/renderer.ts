@@ -15,6 +15,7 @@
  *   rate, keeping the main thread responsive.
  */
 
+import type { StopReason } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import {
 	AssistantMessageComponent,
@@ -41,6 +42,7 @@ import {
 } from "../runtime-singletons.js";
 import {
 	getLastAssistantText,
+	getStopReasonOutcome,
 	type SpawnOutcome,
 	type SpawnResultDetails,
 	type SpawnRouteDetails,
@@ -77,7 +79,7 @@ type ToolResultLike = {
 type SpawnChildMessage = {
 	role: string;
 	content?: Array<{ type: string; text?: string; id?: string; name?: string; arguments?: Record<string, unknown> }>;
-	stopReason?: unknown;
+	stopReason?: StopReason;
 	errorMessage?: string;
 	toolCallId?: string;
 	command?: string;
@@ -100,12 +102,6 @@ function asToolResult(value: unknown): ToolResultLike {
 		return value as ToolResultLike;
 	}
 	return { content: [] };
-}
-
-function getStopReasonOutcome(stopReason: unknown): SpawnOutcome | undefined {
-	if (stopReason === "aborted") return "aborted";
-	if (stopReason === "error") return "error";
-	return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -898,12 +894,13 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		this.streamingComponent = undefined;
 		this.liveOutcome = this.details?.outcome ?? "running";
 		this.lastAction = getOutcomeStatusText(this.liveOutcome) ?? "";
+		const finalOutcome = this.details?.outcome !== undefined && this.details.outcome !== "running";
 		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
 
 		for (const message of this.session.messages as SpawnChildMessage[]) {
 			if (message.role === "assistant") {
 				const stopOutcome = getStopReasonOutcome(message.stopReason);
-				if (stopOutcome) {
+				if (stopOutcome && !finalOutcome) {
 					this.liveOutcome = stopOutcome;
 					this.lastAction = getOutcomeStatusText(stopOutcome) ?? this.lastAction;
 				}
@@ -1319,6 +1316,7 @@ function renderSpawnResult(
 	state: SchematicState,
 ): NestedAgentSessionComponent | Text {
 	const details = normalizeSpawnResultDetails(result.details);
+	const forcedError = context.isError && details?.outcome !== "aborted";
 	const component = context.lastComponent instanceof NestedAgentSessionComponent
 		? context.lastComponent
 		: new NestedAgentSessionComponent();
@@ -1331,12 +1329,12 @@ function renderSpawnResult(
 	const child = state.childSessions.get(context.toolCallId);
 	if (child) {
 		component.attachSession(context.toolCallId, child, state);
-		if (context.isError) component.setOutcome("error", theme);
+		if (forcedError) component.setOutcome("error", theme);
 		state.childSessions.delete(context.toolCallId);
 		return component;
 	}
 	if (component.hasSession()) {
-		if (context.isError) component.setOutcome("error", theme);
+		if (forcedError) component.setOutcome("error", theme);
 		return component;
 	}
 
@@ -1348,7 +1346,7 @@ function renderSpawnResult(
 		.join("\n\n")
 		.trim();
 	const summary = output || "(no output)";
-	const outcome = context.isError ? "error" : details?.outcome ?? "running";
+	const outcome = forcedError ? "error" : details?.outcome ?? "running";
 	const meta = details ? `${getOutcomeMarker(outcome)}${formatSpawnIdentity(details)}` : "";
 	const status = getOutcomeStatusText(outcome);
 	const text = [

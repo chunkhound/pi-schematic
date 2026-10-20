@@ -15,11 +15,10 @@ import type {
 	AgentToolUpdateCallback,
 	ExtensionAPI,
 	ExtensionContext,
-	SessionStats,
 	ToolDefinition,
 	ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import { StringEnum, type ModelThinkingLevel, type TextContent } from "@earendil-works/pi-ai";
+import { StringEnum, type AssistantMessage, type ModelThinkingLevel, type TextContent, type Usage } from "@earendil-works/pi-ai";
 import {
 	READONLY_CHILD_AUTHORITY_NOTE,
 	READONLY_NO_SHELL_SUMMARY,
@@ -28,12 +27,14 @@ import {
 import {
 	createAgentSession,
 	createBashToolDefinition,
+	DEFAULT_MAX_BYTES,
+	DEFAULT_MAX_LINES,
 	defineTool,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { abortChildSession, type SchematicState } from "../state.js";
-import { formatPageList } from "../notebook/store.js";
+import { formatByteCap, formatPageList } from "../notebook/store.js";
 import { createNotebookToolDefinitions } from "../notebook/tools.js";
 import { resolveSpawnModelRoute } from "../model-groups/router.js";
 import { productionConstraintRegistry, type ConstraintRegistry } from "../model-groups/constraints/registry.js";
@@ -47,18 +48,15 @@ import {
 } from "./renderer.js";
 import {
 	getLastAssistantText,
+	getStopReasonOutcome,
 	type SpawnOutcome,
 	type SpawnResultDetails,
+	type SpawnToolResult,
 } from "./shared.js";
-
-// ── Constants ─────────────────────────────────────────────────────────
-
-const CHILD_MAX_LINES = 2000;
-const CHILD_MAX_BYTES = 50 * 1024;
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-function getLastAssistantMessage(messages: AgentSession["messages"]): Extract<AgentSession["messages"][number], { role: "assistant" }> | undefined {
+function getLastAssistantMessage(messages: AgentSession["messages"]): AssistantMessage | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
 		if (msg.role === "assistant") return msg;
@@ -66,80 +64,20 @@ function getLastAssistantMessage(messages: AgentSession["messages"]): Extract<Ag
 	return undefined;
 }
 
-function getLastAssistantOutcome(messages: AgentSession["messages"]): SpawnOutcome {
-	const stopReason = getLastAssistantMessage(messages)?.stopReason;
-	if (stopReason === "aborted") return "aborted";
-	if (stopReason === "error") return "error";
-	return "success";
+function failureMessage(error: unknown): string {
+	return error instanceof Error ? error.message || error.name : String(error);
 }
 
-/**
- * Truncates text to stay within maxLines/maxBytes.
- * Line-count limit is applied first, then byte limit.
- * May end mid-line if the byte limit is the tighter constraint.
- */
-export function truncateText(text: string, maxLines: number, maxBytes: number): string {
-	const lines = text.split("\n");
-	let truncated = lines.slice(0, maxLines).join("\n");
-	const encoded = new TextEncoder().encode(truncated);
-	if (encoded.length > maxBytes) {
-		// Shrink byte-by-byte at the boundary until we have valid UTF-8.
-		// This avoids splitting a multi-byte character mid-sequence.
-		// An empty slice (0 bytes) is always valid and decodes to empty string.
-		let slice = encoded.slice(0, maxBytes);
-		for (;;) {
-			try {
-				truncated = new TextDecoder("utf-8", { fatal: true }).decode(slice);
-				break;
-			} catch {
-				if (slice.length === 0) break;
-				slice = slice.slice(0, slice.length - 1);
-			}
-		}
-	}
-	return truncated;
+function describeAbort(reason: unknown): string {
+	return reason === undefined ? "Child agent aborted." : `Child agent aborted: ${failureMessage(reason)}`;
 }
 
-/**
- * Truncates child agent output to CHILD_MAX_LINES lines / CHILD_MAX_BYTES bytes.
- * Appends a "[Result truncated...]" advisory when truncation occurs.
- * Returns { text, truncated }.
- */
 function notifyCleanupFailure(ctx: ExtensionContext, error: unknown): void {
 	if (!ctx.hasUI) return;
-	const message = error instanceof Error ? error.message : String(error);
-	ctx.ui.notify(`Spawn cleanup failed: ${message}`, "error");
+	ctx.ui.notify(`Spawn cleanup failed: ${failureMessage(error)}`, "error");
 }
 
-function truncateResult(text: string): { text: string; truncated: boolean } {
-	const lines = text.split("\n");
-	const bytes = new TextEncoder().encode(text).length;
-
-	if (lines.length <= CHILD_MAX_LINES && bytes <= CHILD_MAX_BYTES) {
-		return { text, truncated: false };
-	}
-
-	const truncated = truncateText(text, CHILD_MAX_LINES, CHILD_MAX_BYTES);
-	return {
-		text:
-			truncated +
-			`\n\n[Result truncated to ${CHILD_MAX_LINES} lines / ${(CHILD_MAX_BYTES / 1024).toFixed(0)}KB. ` +
-			`Ask the child to summarize further if needed.]`,
-		truncated: true,
-	};
-}
-
-
-/**
- * Build the final list of tool names for a child session.
- *
- * Child sessions inherit parent tool names that are both active in the parent
- * and present in Pi's registered tool registry, regardless of source label.
- * Local child custom tools are added separately. Parent-only custom tools are
- * intentionally excluded so the child never advertises a tool it cannot execute.
- *
- * handoff and spawn never carry into children.
- */
+/** Ignore Pi's AbortError only when the current child was cancelled without a reset. */
 function shouldSwallowPromptError(error: unknown, isStale: () => boolean, wasAborted: boolean): boolean {
 	if (isStale()) return false;
 	if (!wasAborted) return false;
@@ -147,24 +85,114 @@ function shouldSwallowPromptError(error: unknown, isStale: () => boolean, wasAbo
 	return (error as Error)?.name === "AbortError";
 }
 
-function toSpawnStats(sessionStats: SessionStats): Record<string, number> {
+type ChildAccounting = {
+	usage: Usage;
+	/** Absent when the child's entries could not be read or summed. */
+	stats?: Record<string, number>;
+};
+
+function emptyChildUsage(): Usage {
 	return {
-		inputTokens: sessionStats.tokens.input,
-		outputTokens: sessionStats.tokens.output,
-		cacheReadTokens: sessionStats.tokens.cacheRead,
-		cacheWriteTokens: sessionStats.tokens.cacheWrite,
-		totalTokens: sessionStats.tokens.total,
-		cost: sessionStats.cost,
-		turns: sessionStats.assistantMessages,
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
 }
 
-function collectSpawnStats(session: Pick<AgentSession, "getSessionStats">): Record<string, number> | undefined {
+/**
+ * Mirrors pi-coding-agent's unexported combineUsage: the optional token splits appear only once some usage reports them.
+ * This copy and the entry walk in collectChildAccounting follow Pi's own session usage sum. A Pi upgrade that changes
+ * the usage fields or the entry kinds that carry usage must update both; the test "real child usage matches the
+ * session stats across assistant, tool result, usage, compaction and branch-summary entries" checks them against Pi.
+ */
+function combineUsage(first: Usage, second: Usage): Usage {
+	return {
+		input: first.input + second.input,
+		output: first.output + second.output,
+		cacheRead: first.cacheRead + second.cacheRead,
+		cacheWrite: first.cacheWrite + second.cacheWrite,
+		...(first.cacheWrite1h !== undefined || second.cacheWrite1h !== undefined
+			? { cacheWrite1h: (first.cacheWrite1h ?? 0) + (second.cacheWrite1h ?? 0) }
+			: {}),
+		...(first.reasoning !== undefined || second.reasoning !== undefined
+			? { reasoning: (first.reasoning ?? 0) + (second.reasoning ?? 0) }
+			: {}),
+		totalTokens: first.totalTokens + second.totalTokens,
+		cost: {
+			input: first.cost.input + second.cost.input,
+			output: first.cost.output + second.cost.output,
+			cacheRead: first.cost.cacheRead + second.cost.cacheRead,
+			cacheWrite: first.cost.cacheWrite + second.cost.cacheWrite,
+			total: first.cost.total + second.cost.total,
+		},
+	};
+}
+
+function statsOf(usage: Usage, turns: number): Record<string, number> {
+	return {
+		inputTokens: usage.input,
+		outputTokens: usage.output,
+		cacheReadTokens: usage.cacheRead,
+		cacheWriteTokens: usage.cacheWrite,
+		// Provider-reported usage.totalTokens may differ from Pi's four-field session-stat projection.
+		totalTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+		cost: usage.cost.total,
+		turns,
+	};
+}
+
+function collectChildAccounting(session: Pick<AgentSession, "sessionManager">): ChildAccounting {
+	// Degraded on purpose: the child's answer or failure text is worth more than its
+	// accounting, so an entry list that cannot be read or summed counts as zero usage
+	// and the result reports statsUnavailable instead of losing that text.
 	try {
-		return toSpawnStats(session.getSessionStats());
+		let usage = emptyChildUsage();
+		let assistantTurns = 0;
+		for (const entry of session.sessionManager.getEntries()) {
+			if (entry.type === "usage") {
+				if (entry.usage) usage = combineUsage(usage, entry.usage);
+			} else if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage) {
+				usage = combineUsage(usage, entry.usage);
+			} else if (entry.type === "message") {
+				const message = entry.message;
+				if (message.role === "assistant") {
+					assistantTurns++;
+					if (message.usage) usage = combineUsage(usage, message.usage);
+				} else if (message.role === "toolResult" && message.usage) {
+					usage = combineUsage(usage, message.usage);
+				}
+			}
+		}
+		return { usage, stats: statsOf(usage, assistantTurns) };
 	} catch {
-		return undefined;
+		return { usage: emptyChildUsage() };
 	}
+}
+
+/**
+ * Pi's truncateHead keeps whole lines only and returns no text when the first line alone exceeds the byte limit,
+ * which would turn a single-line child answer into an empty result. Pi exports no byte-limited cut for one line
+ * (truncateLine counts characters), so cut at the limit and back off to a character boundary.
+ */
+function cutToUtf8Bytes(text: string, maxBytes: number): string {
+	const bytes = Buffer.from(text, "utf8");
+	let end = Math.min(maxBytes, bytes.length);
+	while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+	return bytes.subarray(0, end).toString("utf8");
+}
+
+function limitResultText(text: string): { text: string; truncated: boolean } {
+	const lines = text.split("\n");
+	const lineLimited = lines.length > DEFAULT_MAX_LINES ? lines.slice(0, DEFAULT_MAX_LINES).join("\n") : text;
+	const truncated = lineLimited !== text || Buffer.byteLength(lineLimited, "utf8") > DEFAULT_MAX_BYTES;
+	if (!truncated) return { text, truncated: false };
+	const limitedText = cutToUtf8Bytes(lineLimited, DEFAULT_MAX_BYTES);
+	const marker = `[Result truncated to ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. ` +
+		`Spawn a new child with a narrower request if more is needed.]`;
+	return { text: `${limitedText}\n\n${marker}`, truncated: true };
 }
 
 function clearSpawnSession(state: SchematicState, toolCallId: string, session: AgentSession): void {
@@ -184,31 +212,20 @@ function createSpawnAbortContext(state: SchematicState, session: AgentSession, c
 			reported = p;
 			// Report abort failures via UI. Guard against notify itself throwing
 			// so the detached promise never emits unhandledRejection.
-			// Detached path — the finally(dispose) branch aggregates notify failures
-			// differently; here we intentionally swallow to avoid unhandledRejection.
 			void p.catch((e) => {
 				try { notifyCleanupFailure(ctx, e); } catch { /* reporting must never reject */ }
 			});
 		}
 		return p;
 	};
-	const abortAndInvalidate = async (cause?: unknown): Promise<never> => {
+	const abortAndInvalidate = async (): Promise<never> => {
 		clearChildSession();
-		let abortFailure: unknown;
 		try {
 			await abortChild();
-		} catch (e) {
-			abortFailure = e;
+		} catch {
+			// abortChild already reported the rejection through the UI notice.
+			throw new Error("Spawn invalidated by reset; child abort failed.");
 		}
-		if (abortFailure !== undefined) {
-			const aggregate = new AggregateError(
-				[invalidatedError, abortFailure],
-				"Spawn invalidated by reset; child abort failed.",
-			);
-			if (cause !== undefined) (aggregate as unknown as { cause: unknown }).cause = cause;
-			throw aggregate;
-		}
-		if (cause !== undefined) (invalidatedError as unknown as { cause: unknown }).cause = cause;
 		throw invalidatedError;
 	};
 	return { get wasAborted() { return wasAborted; }, invalidatedError, abortChild, clearChildSession, abortAndInvalidate };
@@ -221,6 +238,16 @@ function getInheritableParentToolNames(parentToolNames: string[], availableTools
 		.map((tool) => tool.name);
 }
 
+/**
+ * Build the final list of tool names for a child session.
+ *
+ * Child sessions inherit parent tool names that are both active in the parent
+ * and present in Pi's registered tool registry, regardless of source label.
+ * Local child custom tools are added separately. Parent-only custom tools are
+ * intentionally excluded so the child never advertises a tool it cannot execute.
+ *
+ * handoff and spawn never carry into children.
+ */
 export function buildChildToolNames(
 	parentToolNames: string[],
 	childTools: ToolDefinition[],
@@ -337,18 +364,6 @@ export function createChildTools(
 
 // ── Shared spawn execution logic ──────────────────────────────────────
 
-/**
- * Creates an isolated child agent session, runs the given prompt, and returns
- * the result with usage stats.
- *
- * Error: "No model configured..." → ctx.model is undefined
- *
- * Side effects on state:
- *   - state.childSessions.set(toolCallId, session) on creation
- *   - state.liveChildSessions.set(toolCallId, session) on creation
- *   - both registries delete(toolCallId) on error and completion paths
- *
- */
 export type SpawnConstraintRequirements = Record<string, unknown>;
 export interface SpawnParameters { prompt: string; group?: string; constraints?: SpawnConstraintRequirements; thinking?: ModelThinkingLevel }
 
@@ -370,6 +385,15 @@ export function normalizeSpawnRequirements(params: Pick<SpawnParameters, "constr
 	return normalized;
 }
 
+/**
+ * Runs a child session for a spawn invocation. Failures before a child session
+ * exists, including "No model configured", route resolution, constraint
+ * validation, and session-factory failures, throw. Every later failure resolves
+ * as an isError result with the child's available usage, including a dispose
+ * failure after a successful child, whose error replaces the child's answer.
+ * Child sessions are registered in childSessions and liveChildSessions before
+ * the prompt, then removed on both completion and failure.
+ */
 export function executeSpawn(
 	toolCallId: string,
 	pi: ExtensionAPI,
@@ -381,8 +405,8 @@ export function executeSpawn(
 	defaultThinking: ModelThinkingLevel,
 	sessionFactory: typeof createAgentSession = createAgentSession,
 	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
-): Promise<{ content: TextContent[]; details: SpawnResultDetails }> {
-	let execution!: Promise<{ content: TextContent[]; details: SpawnResultDetails }>;
+): Promise<SpawnToolResult> {
+	let execution!: Promise<SpawnToolResult>;
 	execution = (async () => {
 		const parentModel = ctx.model;
 		if (!parentModel) {
@@ -472,7 +496,7 @@ export function executeSpawn(
 		`${capabilityNotice}` +
 		`## Task\n\n${params.prompt}${readonlyNotice}\n\n` +
 		`When complete, provide a concise summary of findings. ` +
-		`Keep the result under ${CHILD_MAX_LINES} lines / ${(CHILD_MAX_BYTES / 1024).toFixed(0)}KB.`;
+		`Keep the result under ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}.`;
 
 	const { session } = await sessionFactory({
 		sessionManager: SessionManager.inMemory(ctx.cwd),
@@ -486,148 +510,166 @@ export function executeSpawn(
 	// public session value so child details describe what actually runs. The
 	// fallback keeps intentionally partial session test doubles compatible.
 	const effectiveChildThinking = () => session.thinkingLevel ?? requestedChildThinking;
-
-	const abortContext = createSpawnAbortContext(state, session, ctx, toolCallId);
-	const { invalidatedError, abortChild, clearChildSession, abortAndInvalidate } = abortContext;
-
-	let hasPrimaryError = false;
-	let primaryError: unknown;
-	try {
-		if (isStale()) {
-			await abortAndInvalidate();
-		}
-
-	// liveChildSessions must be set before childSessions so the renderer can
-	// attach with a fully-published live ownership record.
-	state.liveChildSessions.set(toolCallId, session);
-	state.childSessions.set(toolCallId, session);
-
-	try {
-		if (signal?.aborted) {
-			await abortChild();
-			throw signal.reason instanceof Error
-				? signal.reason
-				: new Error("Spawn aborted before child session started.");
-		}
-
-		if (isStale()) {
-			await abortAndInvalidate();
-		}
-
-		// Register before publishing the running update: onUpdate is component code
-		// and may synchronously abort or reset this child.
-		signal?.addEventListener("abort", abortChild, { once: true });
-		onUpdate?.({
-			content: [],
-			details: {
-				model: childModel.id,
-				thinking: effectiveChildThinking(),
-				truncated: false,
-				outcome: "running",
-				route: routeDetails,
-			} satisfies SpawnResultDetails,
-		});
-
-		if (signal?.aborted) {
-			await abortChild();
-			throw signal.reason instanceof Error
-				? signal.reason
-				: new Error("Spawn aborted before child session started.");
-		}
-		if (isStale()) {
-			await abortAndInvalidate();
-		}
-
-		try {
-			await session.prompt(fullPrompt);
-		} catch (error) {
-			if (!shouldSwallowPromptError(error, isStale, abortContext.wasAborted)) throw error;
-		}
-	} catch (error) {
-		clearChildSession();
-		if (isStale()) {
-			await abortAndInvalidate(error);
-		}
-		throw error;
-	} finally {
-		signal?.removeEventListener("abort", abortChild);
-	}
-
-	if (isStale()) {
-		await abortAndInvalidate();
-	}
-
-	const resultText = getLastAssistantText(session.messages);
-	// Aborted children legitimately have no text — empty result is allowed (outcome "aborted"), not "no output" error.
-	if (!resultText && !abortContext.wasAborted) {
-		clearChildSession();
-		throw new Error("Child agent produced no output.");
-	}
-	const outcome = abortContext.wasAborted ? "aborted" : getLastAssistantOutcome(session.messages);
-	const { text: finalText, truncated } = truncateResult(resultText ?? "");
-
-	// Execution should not retain live children after completion. If the TUI
-	// already rendered the child, it still owns the session object itself.
-	// Clearing here intentionally makes the component's dispose() a no-op for
-	// liveChildSessions — the child already completed so there's nothing to abort.
-	clearChildSession();
-
-	const stats = collectSpawnStats(session);
-
-	if (isStale()) {
-		// INVARIANT: live ownership was synchronously cleared before stats collection,
-		// so this reset could not have initiated a child abort to aggregate — plain
-		// invalidatedError is correct. Early stale paths above aggregate via abortAndInvalidate(cause).
-		throw invalidatedError;
-	}
-
-	const details: SpawnResultDetails = {
+	const buildBaseDetails = (truncated: boolean, outcome: SpawnOutcome): SpawnResultDetails => ({
 		model: childModel.id,
 		thinking: effectiveChildThinking(),
 		truncated,
 		outcome,
 		route: routeDetails,
-	};
-	if (stats) {
-		details.stats = stats;
-	} else {
-		details.statsUnavailable = true;
-	}
+	});
+	const buildResultDetails = (truncated: boolean, outcome: SpawnOutcome, accounting: ChildAccounting): SpawnResultDetails => ({
+		...buildBaseDetails(truncated, outcome),
+		...(accounting.stats ? { stats: accounting.stats } : { statsUnavailable: true }),
+	});
+	type ChildRun = { content: TextContent[]; truncated: boolean; outcome: SpawnOutcome };
 
-		return {
-			content: [{ type: "text" as const, text: finalText }] as TextContent[],
-			details,
-		};
-	} catch (error) {
-		hasPrimaryError = true;
-		primaryError = error;
-		throw error;
-	} finally {
-		clearChildSession();
+	const abortContext = createSpawnAbortContext(state, session, ctx, toolCallId);
+	const { invalidatedError, abortChild, clearChildSession, abortAndInvalidate } = abortContext;
+	// Node's EventTarget raises a listener's rejected promise as an uncaught exception;
+	// abortChild already reports the rejection through the UI notice.
+	const onSignalAbort = () => { void abortChild(); };
+	const abortBeforePrompt = async (abortedSignal: AbortSignal): Promise<never> => {
+		await abortChild();
+		throw new Error(describeAbort(abortedSignal.reason));
+	};
+
+	const runChild = async (): Promise<ChildRun> => {
+		let primary: { error: unknown } | undefined;
 		try {
-			// AgentSession always provides dispose(); the guard keeps intentionally
-			// partial test doubles compatible with the public session boundary.
-			if (typeof session.dispose === "function") session.dispose();
-		} catch (cleanupError) {
-			if (!hasPrimaryError) {
-				throw cleanupError;
+			if (isStale()) {
+				await abortAndInvalidate();
 			}
-			// Headless callers get no UI notification, so preserve both failures.
-			if (ctx.hasUI) {
-				try {
-					notifyCleanupFailure(ctx, cleanupError);
-				} catch (notifyError) {
-					// Do not mutate the primary error: its own cause may carry the root failure.
-					throw new AggregateError(
-						[primaryError, cleanupError, notifyError],
-						"Spawn, cleanup, and notification failed.",
-					);
+
+			// liveChildSessions must be set before childSessions so the renderer can
+			// attach with a fully-published live ownership record.
+			state.liveChildSessions.set(toolCallId, session);
+			state.childSessions.set(toolCallId, session);
+
+			try {
+				if (signal?.aborted) {
+					await abortBeforePrompt(signal);
 				}
-			} else {
-				throw new AggregateError([primaryError, cleanupError], "Spawn failed and cleanup failed.");
+
+				if (isStale()) {
+					await abortAndInvalidate();
+				}
+
+				// Register before publishing the running update: onUpdate is component code
+				// and may synchronously abort or reset this child.
+				signal?.addEventListener("abort", onSignalAbort, { once: true });
+				onUpdate?.({
+					content: [],
+					details: buildBaseDetails(false, "running"),
+				});
+
+				if (signal?.aborted) {
+					await abortBeforePrompt(signal);
+				}
+				if (isStale()) {
+					await abortAndInvalidate();
+				}
+
+				try {
+					await session.prompt(fullPrompt);
+				} catch (error) {
+					if (!shouldSwallowPromptError(error, isStale, abortContext.wasAborted)) throw error;
+				}
+			} catch (error) {
+				clearChildSession();
+				if (isStale()) {
+					await abortAndInvalidate();
+				}
+				throw error;
+			} finally {
+				signal?.removeEventListener("abort", onSignalAbort);
+			}
+
+			if (isStale()) {
+				await abortAndInvalidate();
+			}
+
+			const lastAssistant = getLastAssistantMessage(session.messages);
+			const outcome = abortContext.wasAborted ? "aborted" : getStopReasonOutcome(lastAssistant?.stopReason) ?? "success";
+			const resultText = getLastAssistantText(session.messages);
+			if (!resultText && outcome === "success") {
+				throw new Error("Child agent produced no output.");
+			}
+			const errorMessage = lastAssistant?.errorMessage;
+			const failureLine = outcome === "error"
+				? `Child agent failed: ${errorMessage || "no error message"}`
+				: outcome === "aborted"
+					? describeAbort(signal?.aborted ? signal.reason : errorMessage || undefined)
+					: undefined;
+			const fullText = failureLine === undefined ? resultText : `${failureLine}${resultText ? `\n\n${resultText}` : ""}`;
+			const { text: finalText, truncated } = limitResultText(fullText);
+
+			// Execution should not retain live children after completion. If the TUI
+			// already rendered the child, it still owns the session object itself.
+			// Clearing here intentionally makes the component's dispose() a no-op for
+			// liveChildSessions — the child already completed so there's nothing to abort.
+			clearChildSession();
+
+			if (isStale()) {
+				// This late reset has no live child to abort; earlier resets report abort failures.
+				throw invalidatedError;
+			}
+
+			return {
+				content: [{ type: "text" as const, text: finalText }] as TextContent[],
+				truncated,
+				outcome,
+			};
+		} catch (error) {
+			primary = { error };
+			throw error;
+		} finally {
+			clearChildSession();
+			try {
+				// AgentSession always provides dispose(); the guard keeps intentionally
+				// partial test doubles compatible with the public session boundary.
+				if (typeof session.dispose === "function") session.dispose();
+			} catch (cleanupError) {
+				if (!primary) {
+					throw cleanupError;
+				}
+				let notified = false;
+				if (ctx.hasUI) {
+					try {
+						notifyCleanupFailure(ctx, cleanupError);
+						notified = true;
+					} catch {
+						// A throwing notice falls through to the combined text, which keeps both failures.
+					}
+				}
+				if (!notified) {
+					// Without a cleanup notice the result names both failures.
+					throw new Error(`Spawn failed and cleanup failed: ${failureMessage(primary.error)}; ${failureMessage(cleanupError)}`);
+				}
 			}
 		}
+	};
+
+	let completed: ChildRun;
+	try {
+		completed = await runChild();
+	} catch (error) {
+		const accounting = collectChildAccounting(session);
+		const { text, truncated } = limitResultText(failureMessage(error));
+		const outcome = signal?.aborted && !isStale() ? "aborted" : "error";
+		return {
+			content: [{ type: "text" as const, text }] as TextContent[],
+			details: buildResultDetails(truncated, outcome, accounting),
+			usage: accounting.usage,
+			isError: true as const,
+		};
 	}
+	const accounting = collectChildAccounting(session);
+	return {
+		content: completed.content,
+		details: buildResultDetails(completed.truncated, completed.outcome, accounting),
+		usage: accounting.usage,
+		...(completed.outcome !== "success" ? { isError: true as const } : {}),
+	};
 	})();
 	return execution;
 }

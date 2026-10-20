@@ -4,11 +4,11 @@
  * (`real-host-probe.ts`).
  *
  * Both sides import this module: the harness under the node:test loader, the
- * probe inside the pi process under jiti. It imports no pi runtime code and
- * evaluates nothing but one constant, so it loads in either environment.
+ * probe inside the pi process under jiti. It imports no pi runtime code, only
+ * types and the handoff message builder, so it loads in either environment.
  */
 
-import type { ToolCall } from "@earendil-works/pi-ai";
+import type { ToolCall, Usage } from "@earendil-works/pi-ai";
 import { buildNextUserMessage } from "../../handoff/format.js";
 
 /** Provider, API and model the probe registers and the harness selects. */
@@ -17,6 +17,33 @@ export const PROBE_API = "schematic-e2e-api";
 export const PROBE_MODEL_ID = "schematic-e2e-model";
 /** Context window of the probe model, which pi's threshold compaction measures usage against. */
 export const PROBE_CONTEXT_WINDOW = 200000;
+
+/** Cost of a model call the probes report as free. */
+export const ZERO_COST: Usage["cost"] = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+
+/** Provider fields both probes register; each probe adds its models and `streamSimple`. */
+export const PROBE_PROVIDER_FIELDS = { api: PROBE_API, apiKey: "test-key", baseUrl: "http://localhost.invalid" };
+
+/** Model fields both probes register; each probe adds its model `name`. */
+export const PROBE_MODEL_FIELDS = {
+	id: PROBE_MODEL_ID, reasoning: false, input: ["text" as const], cost: ZERO_COST,
+	contextWindow: PROBE_CONTEXT_WINDOW, maxTokens: 1024,
+};
+
+/** Text of every model reply in a spawned child session (`real-host-child-probe.ts`). */
+export const CHILD_REPLY_TEXT = "child reply";
+
+/**
+ * A spawn prompt containing this marker makes every child reply carry no content,
+ * so spawn returns an error result with the text "Child agent produced no output." after the child spent `CHILD_USAGE`.
+ */
+export const CHILD_EMPTY_REPLY_MARKER = "[child-empty-reply]";
+
+/** Usage of every model reply in a spawned child session (`real-host-child-probe.ts`). */
+export const CHILD_USAGE: Usage = {
+	input: 1234, output: 56, cacheRead: 7, cacheWrite: 8, totalTokens: 1305,
+	cost: { input: 0.25, output: 0.5, cacheRead: 0.125, cacheWrite: 0.0625, total: 0.9375 },
+};
 
 /** File the probe appends its JSON records to; the harness reads and validates them. */
 export const PROBE_LOG_ENV_VAR = "PI_SCHEMATIC_E2E_PROBE_LOG";

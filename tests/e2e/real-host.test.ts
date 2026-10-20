@@ -43,6 +43,8 @@ import {
 	type RpcEvent,
 } from "./real-host.js";
 import {
+	CHILD_EMPTY_REPLY_MARKER,
+	CHILD_REPLY_TEXT,
 	NEXT_INSTRUCTION_PREFIX,
 	PROBE_COMMAND,
 	PROBE_CONTEXT_WINDOW,
@@ -193,6 +195,47 @@ describe("pi-schematic real-host E2E", () => {
 			.map((command) => command.name)
 			.sort();
 		assert.deepEqual(names, ["handoff", "model-groups", "notebook", "readonly"]);
+	}));
+
+	it("spawn adds the child's usage to the parent's session stats", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+		await host.script([
+			{ name: "spawn", arguments: { prompt: "child task" } },
+			{ text: "done", inputTokens: 50000 },
+		], 1);
+		const { entries } = await host.entries();
+		const spawn = onlyResult(toolResults(entries, "spawn"), "spawn");
+		assert.equal(spawn.isError, false, spawn.text);
+		assert.equal(spawn.text, CHILD_REPLY_TEXT);
+
+		const stats = await host.client.getSessionStats();
+		// Two parent assistant messages report 50000 input tokens each; the child reports
+		// 1234 input, 56 output, 7 cache-read and 8 cache-write tokens at a cost of 0.9375.
+		assert.deepEqual(
+			{ ...stats.tokens, cost: stats.cost },
+			{ input: 101234, output: 56, cacheRead: 7, cacheWrite: 8, total: 101305, cost: 0.9375 },
+		);
+		// Pi sizes the context from the last assistant message's usage alone: the final reply's
+		// 50000 tokens, not 51305 with the child's 1305.
+		assert.equal(stats.contextUsage?.tokens, 50000);
+	}));
+
+	it("a spawn that fails after its child ran still adds the child's usage to the parent's session stats", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+		await host.script([
+			{ name: "spawn", arguments: { prompt: `child task ${CHILD_EMPTY_REPLY_MARKER}` } },
+			{ text: "done", inputTokens: 50000 },
+		], 1);
+		const { entries } = await host.entries();
+		const spawn = onlyResult(toolResults(entries, "spawn"), "spawn");
+		assert.equal(spawn.isError, true, spawn.text);
+		assert.equal(spawn.text, "Child agent produced no output.");
+
+		const stats = await host.client.getSessionStats();
+		// Two parent assistant messages report 50000 input tokens each; the child's one empty
+		// reply reports 1234 input, 56 output, 7 cache-read and 8 cache-write tokens at a cost of 0.9375.
+		assert.deepEqual(
+			{ ...stats.tokens, cost: stats.cost },
+			{ input: 101234, output: 56, cacheRead: 7, cacheWrite: 8, total: 101305, cost: 0.9375 },
+		);
 	}));
 
 	it("notebook write/read round-trip", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
