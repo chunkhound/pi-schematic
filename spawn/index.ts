@@ -166,7 +166,11 @@ function collectChildAccounting(session: Pick<AgentSession, "sessionManager">): 
 	}
 }
 
-/** Pi exports no byte-limited cut for one line (truncateLine counts characters), so cut at the limit and back off to a character boundary. */
+/**
+ * Pi's truncateHead keeps whole lines only and returns no text when the first line alone exceeds the byte limit,
+ * which would turn a single-line child answer into an empty result. Pi exports no byte-limited cut for one line
+ * (truncateLine counts characters), so cut at the limit and back off to a character boundary.
+ */
 function cutToUtf8Bytes(text: string, maxBytes: number): string {
 	const bytes = Buffer.from(text, "utf8");
 	let end = Math.min(maxBytes, bytes.length);
