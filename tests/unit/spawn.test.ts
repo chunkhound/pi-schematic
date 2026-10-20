@@ -1193,6 +1193,18 @@ test("UI spawn notifies when cleanup also fails after a primary failure", async 
 	assertChildRegistriesCleared(state);
 });
 
+test("UI spawn names both failures when the cleanup notice throws", async () => {
+	let notifyCalls = 0;
+	const { execution, state } = await executeWithFailingCleanup(new Error("prompt failed"), new Error("dispose failed"), {
+		hasUI: true,
+		ui: { notify: () => { notifyCalls++; throw new Error("notify exploded"); } },
+	});
+
+	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", EMPTY_CHILD_USAGE);
+	assert.equal(notifyCalls, 1);
+	assertChildRegistriesCleared(state);
+});
+
 test("spawn execute clears childSessions after successful completion when unrendered", async () => {
 	const state = createState();
 

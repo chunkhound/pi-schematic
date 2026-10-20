@@ -626,10 +626,17 @@ export function executeSpawn(
 				if (!primary) {
 					throw cleanupError;
 				}
+				let notified = false;
 				if (ctx.hasUI) {
-					notifyCleanupFailure(ctx, cleanupError);
-				} else {
-					// Headless callers get no UI notification, so the result names both failures.
+					try {
+						notifyCleanupFailure(ctx, cleanupError);
+						notified = true;
+					} catch {
+						// A throwing notice falls through to the combined text, which keeps both failures.
+					}
+				}
+				if (!notified) {
+					// Without a cleanup notice the result names both failures.
 					throw new Error(`Spawn failed and cleanup failed: ${failureMessage(primary.error)}; ${failureMessage(cleanupError)}`);
 				}
 			}
