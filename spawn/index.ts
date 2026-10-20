@@ -12,12 +12,14 @@
 
 import type {
 	AgentSession,
+	AgentToolUpdateCallback,
 	ExtensionAPI,
 	ExtensionContext,
+	SessionStats,
 	ToolDefinition,
 	ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import { StringEnum, type TextContent } from "@earendil-works/pi-ai";
+import { StringEnum, type ModelThinkingLevel, type TextContent } from "@earendil-works/pi-ai";
 import {
 	READONLY_CHILD_AUTHORITY_NOTE,
 	READONLY_NO_SHELL_SUMMARY,
@@ -37,6 +39,8 @@ import { resolveSpawnModelRoute } from "../model-groups/router.js";
 import { productionConstraintRegistry, type ConstraintRegistry } from "../model-groups/constraints/registry.js";
 import { MODEL_GROUP_MODALITY_PROSE } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
+import { HANDOFF_TOOL_NAME } from "../handoff/tool.js";
+import { THINKING_LEVELS } from "../thinking-levels.js";
 import {
 	renderSpawnCall,
 	renderSpawnResult,
@@ -45,7 +49,6 @@ import {
 	getLastAssistantText,
 	type SpawnOutcome,
 	type SpawnResultDetails,
-	type ThinkingValue,
 } from "./shared.js";
 
 // ── Constants ─────────────────────────────────────────────────────────
@@ -55,15 +58,7 @@ const CHILD_MAX_BYTES = 50 * 1024;
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-// Widen to accept AgentMessage variants from session messages.
-// Functions that read these use runtime type checks.
-type AssistantMessageLike = {
-	role: string;
-	content?: unknown;
-	stopReason?: unknown;
-};
-
-function getLastAssistantMessage(messages: AssistantMessageLike[]): AssistantMessageLike | undefined {
+function getLastAssistantMessage(messages: AgentSession["messages"]): Extract<AgentSession["messages"][number], { role: "assistant" }> | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
 		if (msg.role === "assistant") return msg;
@@ -71,7 +66,7 @@ function getLastAssistantMessage(messages: AssistantMessageLike[]): AssistantMes
 	return undefined;
 }
 
-function getLastAssistantOutcome(messages: AssistantMessageLike[]): SpawnOutcome {
+function getLastAssistantOutcome(messages: AgentSession["messages"]): SpawnOutcome {
 	const stopReason = getLastAssistantMessage(messages)?.stopReason;
 	if (stopReason === "aborted") return "aborted";
 	if (stopReason === "error") return "error";
@@ -152,26 +147,23 @@ function shouldSwallowPromptError(error: unknown, isStale: () => boolean, wasAbo
 	return (error as Error)?.name === "AbortError";
 }
 
-function toSpawnStats(sessionStats: any): Record<string, number> {
+function toSpawnStats(sessionStats: SessionStats): Record<string, number> {
 	return {
-		inputTokens: sessionStats.tokens?.input ?? 0,
-		outputTokens: sessionStats.tokens?.output ?? 0,
-		cacheReadTokens: sessionStats.tokens?.cacheRead ?? 0,
-		cacheWriteTokens: sessionStats.tokens?.cacheWrite ?? 0,
-		totalTokens: sessionStats.tokens?.total ?? 0,
-		cost: sessionStats.cost ?? 0,
-		turns: sessionStats.assistantMessages ?? 0,
+		inputTokens: sessionStats.tokens.input,
+		outputTokens: sessionStats.tokens.output,
+		cacheReadTokens: sessionStats.tokens.cacheRead,
+		cacheWriteTokens: sessionStats.tokens.cacheWrite,
+		totalTokens: sessionStats.tokens.total,
+		cost: sessionStats.cost,
+		turns: sessionStats.assistantMessages,
 	};
 }
 
-function collectSpawnStats(session: { getSessionStats?: () => unknown }): { stats?: Record<string, number>; statsUnavailable: boolean } {
+function collectSpawnStats(session: Pick<AgentSession, "getSessionStats">): Record<string, number> | undefined {
 	try {
-		const sessionStats = (session.getSessionStats as (() => any) | undefined)?.();
-		return sessionStats
-			? { stats: toSpawnStats(sessionStats), statsUnavailable: false }
-			: { statsUnavailable: false };
+		return toSpawnStats(session.getSessionStats());
 	} catch {
-		return { statsUnavailable: true };
+		return undefined;
 	}
 }
 
@@ -237,7 +229,7 @@ export function buildChildToolNames(
 	const inheritableParentToolNames = availableTools
 		? getInheritableParentToolNames(parentToolNames, availableTools)
 		: parentToolNames;
-	const inheritedTools = inheritableParentToolNames.filter((name) => name !== "spawn" && name !== "handoff");
+	const inheritedTools = inheritableParentToolNames.filter((name) => name !== "spawn" && name !== HANDOFF_TOOL_NAME);
 	return [...new Set([...inheritedTools, ...childTools.map((tool) => tool.name)])];
 }
 
@@ -315,7 +307,7 @@ export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
 			description: `Capability requirements for the delegated task — a JSON object keyed by constraint name, not a JSON string and not an array. Keys: ${constraintRegistry.descriptors.map((descriptor) => descriptor.key).join(", ")} — each value must match its key's schema; unknown keys or invalid values are rejected before a child is created.`,
 		})),
 		thinking: Type.Optional(StringEnum(
-			["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
+			THINKING_LEVELS,
 			{
 				description:
 					"Override child thinking level. A routed Model Group entry may override it.",
@@ -358,7 +350,7 @@ export function createChildTools(
  *
  */
 export type SpawnConstraintRequirements = Record<string, unknown>;
-export interface SpawnParameters { prompt: string; group?: string; constraints?: SpawnConstraintRequirements; thinking?: ThinkingValue }
+export interface SpawnParameters { prompt: string; group?: string; constraints?: SpawnConstraintRequirements; thinking?: ModelThinkingLevel }
 
 /** Validate the public constraint envelope once, rejecting unknown keys before routing. */
 export function normalizeSpawnRequirements(params: Pick<SpawnParameters, "constraints">, registry: ConstraintRegistry = productionConstraintRegistry): SpawnConstraintRequirements {
@@ -385,13 +377,8 @@ export function executeSpawn(
 	state: SchematicState,
 	params: SpawnParameters,
 	signal: AbortSignal | undefined,
-	onUpdate:
-		| ((result: {
-				content: TextContent[];
-				details: unknown;
-		  }) => void)
-		| undefined,
-	defaultThinking: ThinkingValue,
+	onUpdate: AgentToolUpdateCallback<SpawnResultDetails> | undefined,
+	defaultThinking: ModelThinkingLevel,
 	sessionFactory: typeof createAgentSession = createAgentSession,
 	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
 ): Promise<{ content: TextContent[]; details: SpawnResultDetails }> {
@@ -402,7 +389,7 @@ export function executeSpawn(
 			throw new Error("No model configured. Cannot spawn child agent.");
 		}
 
-		const inheritedChildThinking: ThinkingValue = params.thinking ?? defaultThinking;
+		const inheritedChildThinking: ModelThinkingLevel = params.thinking ?? defaultThinking;
 		const constraints = normalizeSpawnRequirements(params, constraintRegistry);
 		const route = resolveSpawnModelRoute({
 			requestedGroup: params.group,
@@ -414,7 +401,7 @@ export function executeSpawn(
 			constraintRegistry,
 		});
 		const childModel = route.model;
-		const requestedChildThinking: ThinkingValue = route.thinking;
+		const requestedChildThinking: ModelThinkingLevel = route.thinking;
 		const routeDetails: SpawnResultDetails["route"] = route.status === "routed"
 			? {
 					status: "routed",
@@ -570,13 +557,13 @@ export function executeSpawn(
 		await abortAndInvalidate();
 	}
 
-	const resultText = getLastAssistantText(session.messages as AssistantMessageLike[]);
+	const resultText = getLastAssistantText(session.messages);
 	// Aborted children legitimately have no text — empty result is allowed (outcome "aborted"), not "no output" error.
 	if (!resultText && !abortContext.wasAborted) {
 		clearChildSession();
 		throw new Error("Child agent produced no output.");
 	}
-	const outcome = abortContext.wasAborted ? "aborted" : getLastAssistantOutcome(session.messages as AssistantMessageLike[]);
+	const outcome = abortContext.wasAborted ? "aborted" : getLastAssistantOutcome(session.messages);
 	const { text: finalText, truncated } = truncateResult(resultText ?? "");
 
 	// Execution should not retain live children after completion. If the TUI
@@ -585,7 +572,7 @@ export function executeSpawn(
 	// liveChildSessions — the child already completed so there's nothing to abort.
 	clearChildSession();
 
-	const { stats, statsUnavailable } = collectSpawnStats(session as { getSessionStats?: () => unknown });
+	const stats = collectSpawnStats(session);
 
 	if (isStale()) {
 		// INVARIANT: live ownership was synchronously cleared before stats collection,
@@ -603,7 +590,7 @@ export function executeSpawn(
 	};
 	if (stats) {
 		details.stats = stats;
-	} else if (statsUnavailable) {
+	} else {
 		details.statsUnavailable = true;
 	}
 
@@ -674,15 +661,10 @@ export function registerSpawnTool(
 			_toolCallId: string,
 			params: SpawnParameters,
 			signal: AbortSignal | undefined,
-			onUpdate:
-				| ((result: {
-						content: TextContent[];
-						details: unknown;
-				  }) => void)
-				| undefined,
+			onUpdate: AgentToolUpdateCallback<SpawnResultDetails> | undefined,
 			ctx: ExtensionContext,
 		) {
-			const parentThinking: ThinkingValue = pi.getThinkingLevel();
+			const parentThinking: ModelThinkingLevel = pi.getThinkingLevel();
 			return executeSpawn(
 				_toolCallId,
 				pi,

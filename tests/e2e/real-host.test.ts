@@ -1,6 +1,6 @@
 /**
  * Real-host E2E tests: pi-schematic inside the real pi CLI in RPC mode, driven
- * through `RpcClient` with the scripted probe provider. Handoff delivery,
+ * through `RpcClient` with the scripted probe provider. The turn_end boundary,
  * follow-up handling, compaction, branch lineage and tree navigation are pi's own.
  */
 
@@ -8,9 +8,22 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { HANDOFF_IN_PROGRESS_STATUS, HANDOFF_REQUIRED_STATUS } from "../../handoff/copy.js";
-import { buildNextUserMessage } from "../../handoff/format.js";
+import type { CompactionEntry, CustomMessageEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
+import {
+	HANDOFF_IN_PROGRESS_STATUS,
+	HANDOFF_REQUIRED_STATUS,
+	HANDOFF_NOT_ALONE_REFUSAL,
+	HANDOFF_STAGED_RESULT,
+	REASON_ABORTED,
+	REASON_NOT_PERSISTED,
+	REASON_SUCCESSOR_NOT_PERSISTED,
+} from "../../handoff/copy.js";
+import {
+	HANDOFF_FAILED_CUSTOM_TYPE,
+	HANDOFF_NOTE_CUSTOM_TYPE,
+	HANDOFF_SUCCESSOR_CUSTOM_TYPE,
+	buildNextUserMessage,
+} from "../../handoff/format.js";
 import {
 	READONLY_ACTIVE_SUMMARY,
 	READONLY_HANDOFF_BLOCK_REASON,
@@ -29,7 +42,14 @@ import {
 	type RealHost,
 	type RpcEvent,
 } from "./real-host.js";
-import { PROBE_COMMAND, PROBE_CONTEXT_WINDOW, type ProbeRecord, type ScriptedCall } from "./real-host-protocol.js";
+import {
+	NEXT_INSTRUCTION_PREFIX,
+	PROBE_COMMAND,
+	PROBE_CONTEXT_WINDOW,
+	cutHandoffId,
+	type ProbeRecord,
+	type ScriptedCall,
+} from "./real-host-protocol.js";
 
 const TEST_OPTIONS = { timeout: REAL_HOST_TEST_TIMEOUT_MS };
 
@@ -55,16 +75,24 @@ function userText(entry: SessionEntry): string | null {
 	return messageText(entry.message.content);
 }
 
-function handoffCompactions(entries: SessionEntry[]): SessionEntry[] {
-	return entries.filter((entry) =>
-		entry.type === "compaction" && (entry.details as { handoff?: unknown } | undefined)?.handoff === true
-	);
+function handoffCuts(entries: SessionEntry[]): CompactionEntry[] {
+	return entries.filter((entry): entry is CompactionEntry => cutHandoffId(entry) !== null);
 }
 
-function onlyHandoffCompaction(entries: SessionEntry[]): SessionEntry {
-	const compactions = handoffCompactions(entries);
-	assert.equal(compactions.length, 1, "exactly one handoff compaction entry");
-	return compactions[0];
+function onlyHandoffCut(entries: SessionEntry[]): CompactionEntry {
+	const cuts = handoffCuts(entries);
+	assert.equal(cuts.length, 1, "exactly one handoff cut entry");
+	return cuts[0];
+}
+
+function customMessages(entries: SessionEntry[], customType: string): CustomMessageEntry[] {
+	return entries.filter((entry): entry is CustomMessageEntry => entry.type === "custom_message" && entry.customType === customType);
+}
+
+function onlyCustomMessage(entries: SessionEntry[], customType: string): CustomMessageEntry {
+	const messages = customMessages(entries, customType);
+	assert.equal(messages.length, 1, `exactly one ${customType} entry`);
+	return messages[0];
 }
 
 function userEntriesWithText(entries: SessionEntry[], text: string): SessionEntry[] {
@@ -79,11 +107,18 @@ function firstAssistantAfter(entries: SessionEntry[], entryId: string): SessionE
 	return assistant;
 }
 
-/** Request records logged after the `compact` record of compaction `entryId`. */
-function requestsAfterCompaction(log: ProbeRecord[], entryId: string): RequestRecord[] {
-	const index = log.findIndex((record) => record.kind === "compact" && record.entryId === entryId);
-	assert.notEqual(index, -1, `compact record for ${entryId}`);
+/** Request records logged after the probe saw the kept cut of `handoffId` in its turn_end. */
+function requestsAfterCut(log: ProbeRecord[], handoffId: string): RequestRecord[] {
+	const index = log.findIndex((record) => record.kind === "cut" && record.handoffId === handoffId && !record.dropped);
+	assert.notEqual(index, -1, `cut record for ${handoffId}`);
 	return log.slice(index + 1).filter((record): record is RequestRecord => record.kind === "request");
+}
+
+/** Indexes of the `entry_appended` events in `events` that carry a handoff cut. */
+function cutAppendedIndexes(events: RpcEvent[]): number[] {
+	return events.flatMap((event, index) =>
+		event.type === "entry_appended" && cutHandoffId(event.entry as SessionEntry) !== null ? [index] : []
+	);
 }
 
 /** The first request record whose script deep-equals `calls` at step `step`. */
@@ -222,136 +257,256 @@ describe("pi-schematic real-host E2E", () => {
 	}));
 
 	it("handoff tool rejects a missing instruction", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
-		// The rejection's failure report queues into the same run.
 		await handoff(host, { context: "situational only" }, 1);
 		const { entries } = await host.entries();
 		const result = onlyResult(toolResults(entries, "handoff"), "handoff");
 		assert.equal(result.isError, true);
 		assert.ok(result.text.includes("Empty handoff nextInstruction rejected"), result.text);
+		assert.equal(entries.filter((entry) => userText(entry)?.includes("Handoff failed")).length, 0, "no failure follow-up user message");
+		assert.equal(customMessages(entries, HANDOFF_FAILED_CUSTOM_TYPE).length, 0, "no failure message");
 	}));
 
-	it("handoff queues the successor instruction and re-announces readonly in its turn", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+	it("handoff writes the cut, the successor and the note as one boundary and re-announces readonly in the successor turn", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
 		await host.command("/readonly");
 		await host.say("start", 1);
-		// The handoff run, then the successor's run.
-		await handoffCommand(host, "continue readonly work", { context: "mid-task state" }, 2);
+		const mark = host.events.length;
+		await handoffCommand(host, "continue readonly work", { context: "mid-task state" }, 1);
 
 		const { entries } = await host.entries();
 		const result = onlyResult(toolResults(entries, "handoff"), "handoff");
-		assert.ok(result.text.startsWith("Handoff started."), result.text);
-		const compaction = onlyHandoffCompaction(entries);
-		const successors = userEntriesWithText(entries, buildNextUserMessage({ nextInstruction: "continue readonly work", context: "mid-task state" }));
-		assert.equal(successors.length, 1, "exactly one successor user entry");
-		assert.equal(successors[0].parentId, compaction.id, "successor is the compaction's child");
-		// The delivered text carries both payload parts verbatim, whatever the builder produces.
-		const deliveredText = userText(successors[0]);
-		assert.ok(deliveredText !== null, "the successor entry has user text");
-		assert.ok(deliveredText.includes("continue readonly work"), `successor carries the instruction: ${deliveredText}`);
-		assert.ok(deliveredText.includes("mid-task state"), `successor carries the context: ${deliveredText}`);
+		assert.equal(result.text, HANDOFF_STAGED_RESULT);
+		const cut = onlyHandoffCut(entries);
+		assert.equal(cut.firstKeptEntryId, cut.id, "the cut retains no earlier entry");
+		const successor = onlyCustomMessage(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE);
+		assert.equal(successor.parentId, cut.id, "the successor is the cut's child");
+		assert.equal(successor.content, buildNextUserMessage({ nextInstruction: "continue readonly work", context: "mid-task state" }));
+		assert.equal(successor.display, true, "the successor is shown");
+		const note = onlyCustomMessage(entries, HANDOFF_NOTE_CUSTOM_TYPE);
+		assert.equal(note.parentId, successor.id, "the note follows the successor");
+		assert.equal(note.display, false, "the note is hidden");
+		const handoffRun = host.events.slice(mark);
+		assert.equal(cutAppendedIndexes(handoffRun).length, 1, "the cut arrives as one entry_appended event");
+		assert.equal(eventsOfType(handoffRun, "compaction_end").length, 0, "the cut fires no compaction_end");
 		assert.ok(
-			requestsAfterCompaction(host.probeLog(), compaction.id).some((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
+			requestsAfterCut(host.probeLog(), cutHandoffId(cut)!).some((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
 			"readonly is re-announced after the handoff",
 		);
-		assert.equal(host.events.filter((event) => event.type === "compaction_end").length, 1, "one compaction_end");
 		assert.deepEqual(await host.client.clearQueue(), { steering: [], followUp: [] });
 	}));
 
-	it("persisted successor is not re-delivered by settle or tree navigation", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+	it("the successor turn continues the handoff run without the pre-cut user turn or handoff result", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
 		const payload = { nextInstruction: "do the resumed work", context: "remaining state" };
-		await handoff(host, payload, 2);
+		const mark = host.events.length;
+		await handoff(host, payload, 1);
+
+		const handoffRun = host.events.slice(mark);
+		assert.equal(eventsOfType(handoffRun, "agent_start").length, 1, "the successor turn starts no second pass");
+		assert.equal(eventsOfType(handoffRun, "agent_settled").length, 1, "the run settles once");
+		const cut = onlyHandoffCut((await host.entries()).entries);
+		const [successorRequest] = requestsAfterCut(host.probeLog(), cutHandoffId(cut)!);
+		assert.ok(successorRequest, "the model is called after the cut");
+		assert.deepEqual(
+			successorRequest.texts.filter((text) => text.startsWith(NEXT_INSTRUCTION_PREFIX)),
+			[buildNextUserMessage(payload)],
+			"the successor request carries the successor once",
+		);
+		assert.equal(successorRequest.texts.includes("go"), false, "the pre-cut user turn is gone from the successor request");
+		// The probe records only text blocks, so the handoff toolCall block is not in `texts`.
+		assert.equal(successorRequest.texts.includes(HANDOFF_STAGED_RESULT), false, "the pre-cut handoff result is gone from the successor request");
+	}));
+
+	it("a handoff sharing its message with another call is refused, the other call runs, and a lone handoff then lands the cut", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+		await host.script([
+			{
+				calls: [
+					{ name: "notebook_write", arguments: { name: "kept-page", content: "survives the cut" } },
+					{ name: "handoff", arguments: { nextInstruction: "continue alone" } },
+				],
+			},
+			{ name: "handoff", arguments: { nextInstruction: "continue alone" } },
+			{ name: "notebook_read", arguments: { name: "kept-page" } },
+		], 1);
+
+		const { entries } = await host.entries();
+		const write = onlyResult(toolResults(entries, "notebook_write"), "notebook_write");
+		assert.equal(write.isError, false, "the sibling call ran");
+		assert.equal(entries.filter((entry) => entry.type === "custom" && entry.customType === "notebook-entry").length, 1, "the notebook entry persisted");
+		const handoffResults = toolResults(entries, "handoff");
+		assert.equal(handoffResults.length, 2, "one refused and one landed handoff result");
+		const [refused, landed] = handoffResults;
+		assert.equal(refused.isError, true, "the handoff sharing its message is refused as an error");
+		assert.equal(refused.text, HANDOFF_NOT_ALONE_REFUSAL, "the refusal names the not-alone rule");
+		assert.equal(landed.text, HANDOFF_STAGED_RESULT, "the run continued to the lone handoff");
+		const cut = onlyHandoffCut(entries);
+		const handoffResultIndexes = entries.flatMap((entry, index) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "handoff" ? [index] : []);
+		assert.ok(entries.indexOf(cut) > handoffResultIndexes[1], "the cut follows the lone handoff, not the refused one");
+		onlyCustomMessage(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE);
+		assert.equal(customMessages(entries, HANDOFF_FAILED_CUSTOM_TYPE).length, 0, "the refusal stages nothing, so nothing fails");
+		const read = onlyResult(toolResults(entries, "notebook_read"), "notebook_read");
+		assert.equal(read.isError, false, "the page written before the cut can be read after it");
+		assert.ok(read.text.includes("survives the cut"), read.text);
+		const readIndex = entries.findIndex((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "notebook_read");
+		assert.ok(readIndex > entries.indexOf(cut), "the page is read after the cut");
+	}));
+
+	it("a boundary successor is not re-sent by settle or tree navigation", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+		const payload = { nextInstruction: "do the resumed work", context: "remaining state" };
+		await handoff(host, payload, 1);
 		const before = await host.entries();
-		const [successor] = userEntriesWithText(before.entries, buildNextUserMessage(payload));
-		assert.ok(successor, "successor delivered");
+		const successor = onlyCustomMessage(before.entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE);
 		await host.navigate(firstAssistantAfter(before.entries, successor.id).id, 0);
 		await host.turn("/" + PROBE_COMMAND.turn, 1);
 
-		const sends = host.successorSends();
-		assert.equal(sends.length, 1, "a persisted successor must be delivered exactly once");
-		assert.equal(sends[0].dropped, false);
 		const { entries } = await host.entries();
-		assert.equal(userEntriesWithText(entries, buildNextUserMessage(payload)).length, 1, "one successor user entry");
+		assert.equal(customMessages(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE).length, 1, "one successor entry");
+		assert.equal(userEntriesWithText(entries, buildNextUserMessage(payload)).length, 0, "no successor resent as a user message");
 	}));
 
-	it("editing a persisted successor never re-delivers its original instruction", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+	it("editing a boundary successor never re-delivers its instruction", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
 		const payload = { nextInstruction: "do the resumed work", context: "remaining state" };
-		await handoff(host, payload, 2);
+		await handoff(host, payload, 1);
 		const before = await host.entries();
-		const compaction = onlyHandoffCompaction(before.entries);
-		const [successor] = userEntriesWithText(before.entries, buildNextUserMessage(payload));
-		assert.ok(successor, "successor delivered");
+		const cut = onlyHandoffCut(before.entries);
+		const successor = onlyCustomMessage(before.entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE);
 		await host.navigate(successor.id, 0);
 
 		const { entries, leafId } = await host.entries();
-		assert.equal(leafId, compaction.id, "editing the successor moves the leaf to the compaction");
-		assert.equal(host.successorSends().length, 1, "editing a successor must not requeue its original instruction");
-		assert.equal(userEntriesWithText(entries, buildNextUserMessage(payload)).length, 1, "one successor user entry");
+		assert.equal(leafId, cut.id, "editing the successor moves the leaf to the cut");
+		assert.equal(customMessages(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE).length, 1, "one successor entry");
+		assert.equal(userEntriesWithText(entries, buildNextUserMessage(payload)).length, 0, "no successor resent as a user message");
 	}));
 
-	it("recovery resends a lost successor and stops once it lands", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
-		const payload = { nextInstruction: "do the resumed work", context: "remaining state" };
-		const successorText = buildNextUserMessage(payload);
-		await host.command("/" + PROBE_COMMAND.dropNextSuccessor);
-		// The dropped successor starts no run.
-		await handoff(host, payload, 1);
-		// The tick's run, then the run of the successor recovery resends once it settles.
-		await host.turn("/" + PROBE_COMMAND.turn, 2);
-
-		const sends = host.successorSends();
-		assert.equal(sends.length, 2, "recovery must resend the absent successor");
-		assert.equal(sends[0].dropped, true);
-		assert.equal(sends[1].dropped, false);
-		assert.equal(userEntriesWithText((await host.entries()).entries, successorText).length, 1, "one successor user entry");
-
-		await host.turn("/" + PROBE_COMMAND.turn, 1);
-		assert.equal(host.successorSends().length, 2, "a delivered successor must not be re-sent");
-	}));
-
-	it("recovery never appends a lost handoff after newer user work", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
-		await host.command("/" + PROBE_COMMAND.dropNextSuccessor);
-		await handoff(host, { nextInstruction: "old handoff work" }, 1);
-		await host.say("newer user work", 1);
-
-		const sends = host.successorSends();
-		assert.equal(sends.length, 1, "recovery must not enqueue superseded work");
-		assert.equal(sends[0].dropped, true);
-		const { entries } = await host.entries();
-		assert.equal(userEntriesWithText(entries, buildNextUserMessage({ nextInstruction: "old handoff work" })).length, 0, "no successor user entry");
-	}));
-
-	it("tree navigation never appends a lost handoff after newer user work", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
-		await host.command("/" + PROBE_COMMAND.dropNextSuccessor);
-		await handoff(host, { nextInstruction: "old handoff work" }, 1);
-		await host.say("newer user work", 1);
-		const before = await host.entries();
-		const newer = userEntriesWithText(before.entries, "newer user work");
-		assert.equal(newer.length, 1, "one newer user entry");
-		await host.navigate(firstAssistantAfter(before.entries, newer[0].id).id, 0);
-
-		const sends = host.successorSends();
-		assert.equal(sends.length, 1, "tree recovery must not enqueue superseded work");
-		assert.equal(sends[0].dropped, true);
-		const { entries } = await host.entries();
-		assert.equal(userEntriesWithText(entries, buildNextUserMessage({ nextInstruction: "old handoff work" })).length, 0, "no successor user entry");
-	}));
-
-	it("failed handoff compaction preserves retryability", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
-		await host.command("/" + PROBE_COMMAND.cancelNextCompaction);
-		// The handoff run, then the run of the failure report sent after the cancelled compaction.
-		await handoffCommand(host, "retry after failure", { nextInstruction: "retry after failure" }, 2);
+	it("a dropped handoff cut fails in one run without a follow-up and stays retryable", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+		await host.command("/" + PROBE_COMMAND.dropNextCut);
+		// No run starts for the failure.
+		await handoffCommand(host, "retry after failure", { nextInstruction: "retry after failure" }, 1);
 
 		const failed = await host.entries();
-		assert.equal(handoffCompactions(failed.entries).length, 0, "no handoff compaction after the failed call");
-		assert.ok(host.notifications.some((notification) => notification.message.includes("Handoff compaction failed")), "failure notified");
-		assert.ok(failed.entries.some((entry) => userText(entry)?.includes("Handoff failed") === true), "failure reported to the model");
+		assert.deepEqual(host.cuts().map((cut) => cut.dropped), [true], "the probe dropped the one cut");
+		assert.equal(handoffCuts(failed.entries).length, 0, "no handoff cut after the failed call");
+		assert.equal(customMessages(failed.entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE).length, 0, "no successor after the failed call");
+		assert.ok(
+			host.notifications.some((notification) => notification.message.startsWith(`Handoff failed: ${REASON_NOT_PERSISTED}.`)),
+			"failure notified",
+		);
+		const failure = onlyCustomMessage(failed.entries, HANDOFF_FAILED_CUSTOM_TYPE);
+		assert.equal(typeof failure.content, "string");
+		const failureText = failure.content as string;
+		assert.ok(failureText.includes(REASON_NOT_PERSISTED), "the failure names its reason");
+		assert.ok(failureText.includes("The required handoff remains pending"), "the failure says the handoff stays required");
+		assert.equal(failure.display, true, "the failure is shown");
+		assert.equal(userEntriesWithText(failed.entries, failureText).length, 0, "no follow-up user message");
 		const handoffStatuses = host.statuses.filter((status) => status.statusKey === STATUS_KEY_HANDOFF);
 		assert.equal(handoffStatuses.at(-1)?.statusText, HANDOFF_REQUIRED_STATUS, "the handoff stays required");
 
-		await handoff(host, { nextInstruction: "retry after failure" }, 2);
+		await handoff(host, { nextInstruction: "retry after failure" }, 1);
 		const retried = await host.entries();
 		const results = toolResults(retried.entries, "handoff");
 		assert.equal(results.length, 2, "two handoff results");
-		assert.ok(results[1].text.startsWith("Handoff started."), results[1].text);
-		onlyHandoffCompaction(retried.entries);
+		assert.equal(results[1].text, HANDOFF_STAGED_RESULT);
+		onlyHandoffCut(retried.entries);
+	}));
+
+	for (const variant of [
+		{ name: "another extension drops its successor", command: PROBE_COMMAND.dropNextSuccessor },
+		{ name: "another extension appends a compaction after it", command: PROBE_COMMAND.compactAfterNextCut },
+	]) {
+		it(`a cut that lands without its successor in context fails, aborts the run, and a later handoff still lands (${variant.name})`, TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+			await host.command("/" + variant.command);
+			await handoffCommand(host, "finish the report", { context: "mid-task state" }, 1);
+
+			const failed = await host.entries();
+			const cut = onlyHandoffCut(failed.entries);
+			const handoffId = cutHandoffId(cut)!;
+			assert.deepEqual(requestsAfterCut(host.probeLog(), handoffId), [], "the run is aborted before the model is called after the cut");
+			const failure = onlyCustomMessage(failed.entries, HANDOFF_FAILED_CUSTOM_TYPE);
+			assert.equal(typeof failure.content, "string");
+			assert.ok((failure.content as string).includes("## Next instruction\n\nfinish the report"), "the failure carries the instruction");
+			assert.ok((failure.content as string).includes("mid-task state"), "the failure carries the context");
+			assert.equal(failure.display, true, "the failure is shown");
+			assert.ok(
+				host.notifications.some((notification) => notification.message.startsWith(`Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}.`)),
+				"failure notified",
+			);
+			assert.ok(!host.notifications.some((notification) => notification.message.startsWith("Handoff complete")), "no completion notice");
+			const handoffStatuses = host.statuses.filter((status) => status.statusKey === STATUS_KEY_HANDOFF);
+			assert.equal(handoffStatuses.at(-1)?.statusText, undefined, "no handoff stays required");
+
+			await handoff(host, { nextInstruction: "later work" }, 1);
+			const retried = await host.entries();
+			const results = toolResults(retried.entries, "handoff");
+			assert.equal(results.length, 2, "two handoff results");
+			assert.equal(results[1].text, HANDOFF_STAGED_RESULT, "a later handoff is accepted");
+			const laterCut = handoffCuts(retried.entries).find((entry) => entry.id !== cut.id);
+			assert.ok(laterCut, "the later handoff lands its cut");
+			const [laterRequest] = requestsAfterCut(host.probeLog(), cutHandoffId(laterCut)!);
+			assert.ok(laterRequest, "the model is called after the later cut");
+			assert.deepEqual(
+				laterRequest.texts.filter((text) => text.startsWith(NEXT_INSTRUCTION_PREFIX)),
+				[buildNextUserMessage({ nextInstruction: "later work" })],
+				"only the later successor reaches the model",
+			);
+		}));
+	}
+
+	it("a cut whose notebook rewrite another extension dropped reports the discard from the branch and warns", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+		await host.command("/" + PROBE_COMMAND.dropNotebookRewriteAtNextCut);
+		await host.script([
+			{ name: "notebook_write", arguments: { name: "p1", content: "page one" } },
+			{ name: "notebook_write", arguments: { name: "p2", content: "page two" } },
+			{ name: "notebook_write", arguments: { name: "p3", content: "page three" } },
+			{ name: "handoff", arguments: { nextInstruction: "continue with the pages", discardPages: ["p3"] } },
+			{ name: "notebook_read", arguments: { name: "p3" } },
+		], 1);
+
+		const { entries } = await host.entries();
+		const cut = onlyHandoffCut(entries);
+		const successor = onlyCustomMessage(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE);
+		assert.deepEqual(successor.details, { handoffId: cutHandoffId(cut) }, "the successor details carry no discard report");
+		assert.deepEqual(
+			host.notifications.filter((notification) => notification.message.startsWith("Handoff complete")).map((notification) => notification.message),
+			["Handoff complete. Notebook: 3 pages kept."],
+			"the completion counts follow the branch",
+		);
+		assert.ok(
+			host.notifications.some((notification) => notification.notifyType === "warning" &&
+				notification.message === "The notebook discard was not persisted (another extension's turn_end handler may have dropped it); still in the notebook: p3."),
+			JSON.stringify(host.notifications),
+		);
+		const read = onlyResult(toolResults(entries, "notebook_read"), "notebook_read");
+		assert.equal(read.isError, false, "the page is still in the notebook after the cut");
+		assert.ok(read.text.includes("page three"), read.text);
+	}));
+
+	it("readonly is re-announced in the run after a handoff whose successor was dropped", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+		await host.command("/readonly");
+		await host.say("start", 1);
+		await host.command("/" + PROBE_COMMAND.dropNextSuccessor);
+		await handoffCommand(host, "continue readonly work", { context: "mid-task state" }, 1);
+		await host.turn("/" + PROBE_COMMAND.turn, 1);
+
+		const cut = onlyHandoffCut((await host.entries()).entries);
+		const laterRequests = requestsAfterCut(host.probeLog(), cutHandoffId(cut)!);
+		assert.ok(laterRequests.length > 0, "the later run calls the model");
+		assert.ok(laterRequests.some((record) => containsText(record, READONLY_ACTIVE_SUMMARY)), "readonly is re-announced after the failed handoff");
+	}));
+
+	it("a handoff aborted before its cut persists the failure without starting a run", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+		await host.command("/" + PROBE_COMMAND.abortAfterHandoff);
+		await handoff(host, { nextInstruction: "work after the abort" }, 1);
+
+		const { entries } = await host.entries();
+		assert.equal(handoffCuts(entries).length, 0, "no handoff cut after the abort");
+		assert.deepEqual(host.cuts(), [], "no cut reached the turn_end boundary");
+		const failure = onlyCustomMessage(entries, HANDOFF_FAILED_CUSTOM_TYPE);
+		assert.equal(typeof failure.content, "string");
+		assert.ok((failure.content as string).includes(REASON_ABORTED), "the failure names its reason");
+		assert.ok((failure.content as string).includes("No required handoff remains pending"), "the failure says no handoff stays required");
+		assert.equal(failure.display, true, "the failure is shown");
+		assert.ok(
+			host.notifications.some((notification) => notification.message.startsWith(`Handoff failed: ${REASON_ABORTED}.`)),
+			"failure notified",
+		);
 	}));
 
 	it("a run pi retries counts one required-handoff attempt", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
@@ -399,11 +554,11 @@ describe("pi-schematic real-host E2E", () => {
 		await expectCancellationAtLastAttempt(host);
 	}, { settings: { compaction: { enabled: true, reserveTokens: COMPACTION_RESERVE_TOKENS } } }));
 
-	it("readonly lifecycle: handoff bypass clears after compaction while readonly persists", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+	it("readonly lifecycle: handoff bypass clears after the cut while readonly persists", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
 		const blocked = join(host.projectDir, "blocked.txt");
 		await host.command("/readonly");
 		await host.say("start", 1);
-		await handoffCommand(host, "continue readonly work", { nextInstruction: "continue readonly work" }, 2);
+		await handoffCommand(host, "continue readonly work", { nextInstruction: "continue readonly work" }, 1);
 		await host.script([
 			{ name: "handoff", arguments: { nextInstruction: "direct call" } },
 			{ name: "write", arguments: { path: blocked, content: "x" } },
@@ -412,13 +567,13 @@ describe("pi-schematic real-host E2E", () => {
 		const { entries } = await host.entries();
 		const handoffResults = toolResults(entries, "handoff");
 		assert.equal(handoffResults.length, 2, "two handoff results");
-		assert.ok(handoffResults[0].text.startsWith("Handoff started."), handoffResults[0].text);
-		const compaction = onlyHandoffCompaction(entries);
+		assert.equal(handoffResults[0].text, HANDOFF_STAGED_RESULT);
+		const cut = onlyHandoffCut(entries);
 		assert.ok(
-			requestsAfterCompaction(host.probeLog(), compaction.id).some((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
+			requestsAfterCut(host.probeLog(), cutHandoffId(cut)!).some((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
 			"readonly is re-announced after the handoff",
 		);
-		assert.equal(handoffResults[1].isError, true, "handoff is blocked again after compaction");
+		assert.equal(handoffResults[1].isError, true, "handoff is blocked again after the cut");
 		assert.equal(handoffResults[1].text, READONLY_HANDOFF_BLOCK_REASON);
 		const write = onlyResult(toolResults(entries, "write"), "write");
 		assert.equal(write.isError, true, "write stays blocked");
@@ -432,7 +587,7 @@ describe("pi-schematic real-host E2E", () => {
 		await host.say("start", 1);
 		await host.command("/notebook oauth");
 		await host.command("/notebook billing");
-		await host.script(boundaryCall, 2);
+		await host.script(boundaryCall, 1);
 		// Status reads stop here, so events of the later direct-call run cannot satisfy them.
 		const throughHandoff = host.events.slice();
 		await host.script(handoffCall({ nextInstruction: "direct call" }), 1);
@@ -445,24 +600,24 @@ describe("pi-schematic real-host E2E", () => {
 		const required = handoffStatuses.indexOf(HANDOFF_REQUIRED_STATUS);
 		assert.notEqual(required, -1, "handoff required status shown");
 		assert.notEqual(handoffStatuses.indexOf(HANDOFF_IN_PROGRESS_STATUS, required + 1), -1, "handoff in progress status follows");
-		const compactionEnds = throughHandoff.flatMap((event, index) => event.type === "compaction_end" ? [index] : []);
-		assert.equal(compactionEnds.length, 1, "one compaction ended during the handoff run");
-		const statusesAfterCompaction = projectStatuses(throughHandoff.slice(compactionEnds[0] + 1))
+		const cutsAppended = cutAppendedIndexes(throughHandoff);
+		assert.equal(cutsAppended.length, 1, "one cut appended during the handoff run");
+		const statusesAfterCut = projectStatuses(throughHandoff.slice(cutsAppended[0] + 1))
 			.filter((status) => status.statusKey === STATUS_KEY_HANDOFF);
-		assert.ok(statusesAfterCompaction.length > 0, "a handoff status follows the compaction");
-		assert.equal(statusesAfterCompaction.at(-1)?.statusText, undefined, "handoff status cleared after the compaction");
+		assert.ok(statusesAfterCut.length > 0, "a handoff status follows the cut");
+		assert.equal(statusesAfterCut.at(-1)?.statusText, undefined, "handoff status cleared after the cut");
 		assert.ok(host.notifications.some((notification) => notification.message.includes("Readonly topic boundary detected")), "boundary promotion notified");
 
 		const { entries } = await host.entries();
 		const handoffResults = toolResults(entries, "handoff");
 		assert.equal(handoffResults.length, 2, "two handoff results");
-		assert.ok(handoffResults[0].text.startsWith("Handoff started."), handoffResults[0].text);
-		const compaction = onlyHandoffCompaction(entries);
+		assert.equal(handoffResults[0].text, HANDOFF_STAGED_RESULT);
+		const cut = onlyHandoffCut(entries);
 		assert.ok(
-			requestsAfterCompaction(log, compaction.id).some((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
+			requestsAfterCut(log, cutHandoffId(cut)!).some((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
 			"readonly is re-announced after the handoff",
 		);
-		assert.equal(handoffResults[1].isError, true, "handoff is blocked again after compaction");
+		assert.equal(handoffResults[1].isError, true, "handoff is blocked again after the cut");
 		assert.equal(handoffResults[1].text, READONLY_HANDOFF_BLOCK_REASON);
 	}));
 });

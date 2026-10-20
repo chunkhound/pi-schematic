@@ -9,7 +9,43 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ModelGroupsBootValidation, ResolvedModelGroup } from "./model-groups/types.js";
 import type { FrontmatterEntry, FrontmatterIssue } from "./frontmatter-cache.js";
 import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
-import type { HandoffPayload } from "./handoff/format.js";
+
+/** A handoff accepted by the tool, kept until its turn_end boundary is confirmed or failed. */
+export interface StagedHandoff {
+	/** Written to the cut's and the successor's details; identifies the cut on the branch. */
+	handoffId: string;
+	toolCallId: string;
+	nextInstruction: string;
+	context: string;
+	/** Deduplicated discard request, not yet filtered against the notebook. */
+	discardPages: string[];
+	/**
+	 * Names of the pages the submitted boundary's discard drafts remove, set at
+	 * turn_end. Completion counts a name discarded when the rebuilt notebook lacks it
+	 * and warns about every name still present. Empty until the boundary is submitted.
+	 */
+	discardedPages: string[];
+	phase: "staged" | "submitted" | "declined";
+	/** Non-null exactly when phase is "declined". */
+	declineReason: string | null;
+}
+
+/** A required handoff request; lifecycle on `SchematicState.pendingRequestedHandoff`. */
+export interface RequestedHandoff {
+	/** True only after the current session has actually called the handoff tool. */
+	toolCalled: boolean;
+	/** Settled agent runs counted while the handoff is still owed. */
+	enforcementAttempts: number;
+	/** True once the context hook injected the eligible required-handoff nudge in the current run. */
+	eligibleNudgeDelivered: boolean;
+	/** Human `/handoff <direction>` instruction, or null when the model must supply one. */
+	nextInstruction: string | null;
+}
+
+/** A required handoff request that has not been called, counted or nudged yet. */
+export function newRequestedHandoff(nextInstruction: string | null): RequestedHandoff {
+	return { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction };
+}
 
 export interface SchematicState {
 	/** Compact notebook pages keyed by kebab-case name */
@@ -37,59 +73,27 @@ export interface SchematicState {
 	/** Last context usage percent from getContextUsage() */
 	lastContextPercent: number | null;
 
-	/**
-	 * Generation marker queued by the tool until the matching compaction hook consumes
-	 * it. The successor message is built at tool-call time and carried by the
-	 * completion callback, so no request payload belongs here.
-	 */
-	pendingHandoff: { generation: number } | null;
+	/** The handoff the tool accepted in the current turn, until its boundary is confirmed or failed. */
+	stagedHandoff: StagedHandoff | null;
 
-	/** Monotonically increasing identity used to ignore stale compaction callbacks. */
-	handoffGeneration: number;
+	/** Handoff calls in the current assistant message that must not run; value = refusal reason. */
+	handoffRefusals: Map<string, string>;
 
-	/** Generation of the compaction currently in flight, if any. */
-	handoffCompactionGeneration: number | null;
-
-	/** Exact successor payload and its durable per-cut recovery key retained until direct completion finalizes. */
-	pendingHandoffDelivery: { generation: number; payload: HandoffPayload; recoveryKey: string } | null;
+	/** A handoff failed in the current run; further handoff calls are refused until the run settles or handoff state is invalidated. */
+	handoffFailedInRun: boolean;
 
 	/**
-	 * Successor delivery already requested by recovery in this process.
-	 * Coalesces repeated recovery triggers for one persisted handoff cut while the
-	 * delivery is pending; cleared when a run settles and reset on session_start.
-	 * Deliberately not cleared on branch switch (invalidateHandoffState): the
-	 * durable cut key lets a cut shared across `/tree` branches coalesce instead
-	 * of double-sending. Entries carrying a v1 payload but no recovery key fall
-	 * back to their persisted entry identity; legacy entries without a payload
-	 * are never recovered (recovery.ts stops at the newest unreadable cut).
-	 */
-	recoveryRequestedMessage: { handoffEntryId: string | null; recoveryKey: string | null; message: string } | null;
-
-	/** Prepared notebook discard awaiting the matching successful handoff callback. */
-	pendingNotebookDiscard: { generation: number; nextEpoch: number; deleted: string[] } | null;
-
-	/**
-	 * High-water mark for discard epochs. Advanced in-memory by prepare;
-	 * derived from the branch by reconstruction (max valid observed page/
-	 * generation epoch). Survives failed attempts and restarts so retries
-	 * cannot reuse a staged epoch and resurrect orphaned survivor entries.
+	 * High-water mark for discard epochs, derived from the branch by
+	 * reconstruction (max valid observed page/generation epoch); see
+	 * `reconstructNotebook` in notebook/rehydration.ts.
 	 */
 	discardEpochWatermark: number;
 
 	/**
-	 * Required handoff request that stays alive until a real tool-driven compaction
-	 * succeeds, is explicitly reset, or ages out via watchdog enforcement.
+	 * Required handoff request that stays alive until a handoff cut is confirmed on
+	 * the branch, is explicitly reset, or ages out via watchdog enforcement.
 	 */
-	pendingRequestedHandoff: {
-		/** True only after the current session has actually called the handoff tool. */
-		toolCalled: boolean;
-		/** Settled agent runs counted while the handoff is still owed. */
-		enforcementAttempts: number;
-		/** True once the context hook injected the eligible required-handoff nudge in the current run. */
-		eligibleNudgeDelivered: boolean;
-		/** Human `/handoff <direction>` instruction, or null when the model must supply one. */
-		nextInstruction: string | null;
-	} | null;
+	pendingRequestedHandoff: RequestedHandoff | null;
 
 	/** Boot-time Model Groups validation snapshot used by /model-groups. */
 	modelGroups: {
@@ -129,6 +133,13 @@ export interface SchematicState {
 
 	/** One-shot flag: deliver a readonly ON or OFF nudge via context hook, then clear. */
 	readonlyNudgePending: boolean;
+
+	/**
+	 * Re-arm `readonlyNudgePending` when the run settles. Set when a handoff that
+	 * lost its successor aborts the run at turn_start: the aborted turn still runs
+	 * the context hook, which spends the nudge on a request that is never sent.
+	 */
+	readonlyNudgeRearmAtSettle: boolean;
 
 	/** Session-owned frontmatter cache for loaded skills. */
 	frontmatterSkillCache: Map<string, FrontmatterEntry>;
@@ -179,12 +190,9 @@ export function createState(): SchematicState {
 		activeNotebookTopicSource: null,
 		pendingTopicBoundaryHint: null,
 		lastContextPercent: null,
-		pendingHandoff: null,
-		handoffGeneration: 0,
-		handoffCompactionGeneration: null,
-		pendingHandoffDelivery: null,
-		recoveryRequestedMessage: null,
-		pendingNotebookDiscard: null,
+		stagedHandoff: null,
+		handoffRefusals: new Map(),
+		handoffFailedInRun: false,
 		discardEpochWatermark: 0,
 		pendingRequestedHandoff: null,
 		modelGroups: { groups: [], validation: null },
@@ -194,6 +202,7 @@ export function createState(): SchematicState {
 		childAbortPromises: new WeakMap(),
 		readonlyEnabled: false,
 		readonlyNudgePending: false,
+		readonlyNudgeRearmAtSettle: false,
 		frontmatterSkillCache,
 		frontmatterPromptCache,
 		frontmatterSkillIssues,
@@ -232,10 +241,6 @@ export function resetState(state: SchematicState): void {
 	state.activeNotebookTopicSource = null;
 	state.lastContextPercent = null;
 	invalidateHandoffState(state);
-	// /new abandons the previous session completely; do not carry its in-flight
-	// reservation into the fresh session.
-	state.handoffCompactionGeneration = null;
-	state.recoveryRequestedMessage = null;
 	state.modelGroups.groups = [];
 	state.modelGroups.validation = null;
 	state.readonlyEnabled = false;
@@ -250,26 +255,17 @@ export function resetState(state: SchematicState): void {
 
 /** Invalidate handoff work that belongs to a previous session-tree branch. */
 export function invalidateHandoffState(state: SchematicState): void {
-	state.handoffGeneration++;
-	state.pendingHandoff = null;
-	state.handoffCompactionGeneration = null;
-	state.pendingHandoffDelivery = null;
-	state.pendingNotebookDiscard = null;
+	state.stagedHandoff = null;
+	state.handoffRefusals.clear();
+	state.handoffFailedInRun = false;
+	state.readonlyNudgeRearmAtSettle = false;
 	// The discard watermark is deliberately NOT reset here. A branch change is
 	// immediately followed by reconstruction, which derives the watermark from
 	// the newly active branch (staged survivor epochs included). Resetting early
-	// would let a retry reuse a staged epoch and resurrect orphaned entries.
-	//
-	// An interrupted discard left staged survivors + a stray generation marker in
-	// the branch; reconstruction ignores them (currentEpoch never advances), so
-	// the orphaned entries are harmless.
+	// would let a discard reuse a staged epoch and resurrect orphaned entries.
 	state.pendingRequestedHandoff = null;
 	state.pendingTopicBoundaryHint = null;
 	state.lastWatchdogBand = null;
-	// A branch switch abandons the old compaction path completely. Release the
-	// overlap guard now so the new branch cannot get stuck waiting on callbacks
-	// from work that no longer belongs to the active session tree.
-	// recoveryRequestedMessage is deliberately NOT reset here — see its state doc.
 }
 
 /** Return the session's single shared abort operation, starting it if necessary. */

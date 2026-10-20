@@ -6,7 +6,8 @@ import { registerWatchdog, MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
 import { buildNudge } from "../../watchdog.js";
 import { registerHandoffCommand } from "../../handoff/command.js";
 import { registerHandoffTool } from "../../handoff/tool.js";
-import { emitAll, makeReadonlyUICtx } from "./helpers.js";
+import { registerHandoffBoundary } from "../../handoff/boundary.js";
+import { callHandlers, emitAll, handoffToolResult, makeReadonlyUICtx, registerReadonlyPI, turnEndEvent } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
@@ -292,31 +293,67 @@ test("watchdog stays advisory for a fresh user-requested handoff", async () => {
 	assert.deepEqual(notifications, []);
 });
 
-test("watchdog does not cancel an in-flight handoff", async () => {
+/** Host with the handoff command, tool, boundary and watchdog registered in the extension's order. */
+async function createStagingHost() {
 	const state = createState();
 	const pi = await createTestHost((api) => {
 		registerHandoffCommand(api, state);
 		registerHandoffTool(api, state);
+		registerHandoffBoundary(api, state);
 		registerWatchdog(api, state);
 	});
+	return { state, pi };
+}
+
+async function stageHandoff(pi: TestPI, toolCallId: string): Promise<void> {
+	await pi.tools.get("handoff").execute(toolCallId, { nextInstruction: "continue work" }, undefined, undefined, {
+		hasUI: false,
+		getContextUsage: eligibleUsage,
+	});
+}
+
+/** End the staging turn and return the entries the boundary handler asked pi to commit. */
+async function endStagingTurn(pi: TestPI, toolCallId: string): Promise<any[]> {
+	const results = await callHandlers(
+		pi,
+		"turn_end",
+		turnEndEvent({ toolResults: [handoffToolResult(toolCallId)] }),
+		{ hasUI: false, signal: { aborted: false }, getContextUsage: eligibleUsage },
+	);
+	const boundary = results.find((result: any) => result?.entries) as { entries: any[] } | undefined;
+	assert.ok(boundary, "the staging turn_end must return boundary entries");
+	return boundary.entries;
+}
+
+test("a staged handoff that completes at the settle is neither counted nor cancelled", async () => {
+	const { state, pi } = await createStagingHost();
+	const notifications: string[] = [];
 	await pi.commands.get("handoff").handler("continue work", {
 		...makeReadonlyUICtx(),
 		isIdle: () => true,
 	} as any);
-	let compactOptions: any;
-	await pi.tools.get("handoff").execute("in-flight", { nextInstruction: "continue work" }, undefined, undefined, {
-		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
-		compact: (options: any) => { compactOptions = options; },
+	// Spend all but the last attempt so a miscount would cancel the request.
+	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS - 1; i++) {
+		deliverEligibleNudge(state);
+		await emitAll(pi, "agent_settled", { type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage, sessionManager: { getBranch: () => [] } });
+	}
+	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, MAX_HANDOFF_ATTEMPTS - 1);
+
+	const userMessagesBeforeRun = pi.sentUserMessages.length;
+	deliverEligibleNudge(state);
+	await stageHandoff(pi, "in-flight");
+	const drafts = await endStagingTurn(pi, "in-flight");
+	const branch = drafts.map((draft, index) => ({ ...draft, id: `entry-${index}`, parentId: null }));
+	await emitAll(pi, "agent_settled", { type: "agent_settled" }, {
+		hasUI: true,
+		ui: { ...makeReadonlyUICtx().ui, notify: (message: string) => notifications.push(message) },
+		getContextUsage: eligibleUsage,
+		sessionManager: { getBranch: () => branch },
 	});
 
-	const [handler] = pi.handlers.get("agent_settled")!;
-	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS + 2; i++) {
-		deliverEligibleNudge(state);
-		await handler({}, { hasUI: false, getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }) });
-	}
-	assert.equal(state.pendingRequestedHandoff?.toolCalled, true);
-	compactOptions.onComplete();
-	assert.equal(state.pendingRequestedHandoff, null);
+	assert.equal(state.pendingRequestedHandoff, null, "the confirmed cut clears the request");
+	assert.equal(notifications.some((message) => /Required handoff cancelled/i.test(message)), false);
+	assert.equal(pi.sentUserMessages.length, userMessagesBeforeRun, "a completed handoff sends no failure guidance");
 });
 
 test("watchdog auto-cancels a required handoff after enough unanswered settled runs", async () => {
@@ -355,35 +392,51 @@ test("watchdog auto-cancels a required handoff after enough unanswered settled r
 	assert.doesNotMatch(notifications[0] as string, /user-requested|temporary bypass/i);
 });
 
-test("a nudged run whose handoff call failed synchronously counts one attempt", async () => {
-	const state = createState();
-	const pi = await createTestHost((api) => {
-		registerHandoffCommand(api, state);
-		registerHandoffTool(api, state);
-		registerWatchdog(api, state);
-	});
+test("a nudged run whose staged handoff cut was not persisted counts one attempt", async () => {
+	const { state, pi } = await createStagingHost();
 	await pi.commands.get("handoff").handler("continue work", {
 		...makeReadonlyUICtx(),
 		isIdle: () => true,
 	} as any);
 
 	deliverEligibleNudge(state);
-	let toolCalledAtCompaction: boolean | undefined;
-	await assert.rejects(
-		() => pi.tools.get("handoff").execute("sync-failure", { nextInstruction: "continue work" }, undefined, undefined, {
-			getContextUsage: eligibleUsage,
-			compact: () => {
-				toolCalledAtCompaction = state.pendingRequestedHandoff?.toolCalled;
-				throw new Error("synchronous compact failure");
-			},
-		}),
-		/synchronous compact failure/,
-	);
-	assert.equal(toolCalledAtCompaction, true, "the tool marks the handoff called before compaction");
-	assert.equal(state.pendingRequestedHandoff?.toolCalled, false, "failHandoff resets toolCalled");
+	await stageHandoff(pi, "dropped-cut");
+	assert.equal(state.pendingRequestedHandoff?.toolCalled, true, "staging marks the handoff called");
+	await endStagingTurn(pi, "dropped-cut");
 
-	await emitAll(pi, "agent_settled", { type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage });
+	const userMessagesBeforeSettle = pi.sentUserMessages.length;
+	await emitAll(pi, "agent_settled", { type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage, sessionManager: { getBranch: () => [] } });
+
+	assert.equal(state.pendingRequestedHandoff?.toolCalled, false, "the failure resets toolCalled before the watchdog counts");
 	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 1);
+	assert.equal(pi.sentUserMessages.length, userMessagesBeforeSettle, "a dropped cut starts no run");
+	assert.equal(pi.sentMessages.at(-1)?.message.customType, "pi-schematic-handoff-failed");
+	assert.equal(pi.sentMessages.at(-1)?.options?.triggerTurn, false);
+});
+
+test("a nudged run whose handoff was aborted counts one attempt and starts no run", async () => {
+	const { state, pi } = await createStagingHost();
+	await pi.commands.get("handoff").handler("continue work", {
+		...makeReadonlyUICtx(),
+		isIdle: () => true,
+	} as any);
+
+	deliverEligibleNudge(state);
+	await stageHandoff(pi, "aborted-cut");
+	await callHandlers(
+		pi,
+		"turn_end",
+		turnEndEvent({ toolResults: [handoffToolResult("aborted-cut")] }),
+		{ hasUI: false, signal: { aborted: true }, getContextUsage: eligibleUsage },
+	);
+	const userMessagesBeforeSettle = pi.sentUserMessages.length;
+	await emitAll(pi, "agent_settled", { type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage, sessionManager: { getBranch: () => [] } });
+
+	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
+	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 1);
+	assert.equal(pi.sentUserMessages.length, userMessagesBeforeSettle, "an abort must not start another run");
+	assert.equal(pi.sentMessages.at(-1)?.message.customType, "pi-schematic-handoff-failed");
+	assert.equal(pi.sentMessages.at(-1)?.options?.triggerTurn, false);
 });
 
 test("agent_end events within a run add no attempt", async () => {
@@ -633,7 +686,7 @@ test("readonly toggle nudge aligns with handoff exception in the same turn", asy
 });
 
 test("eligible readonly human topic boundary auto-creates handoff bypass equivalent to /handoff", async () => {
-	const pi = await createTestHost();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const [handler] = pi.handlers.get("context")!;
 
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
@@ -660,11 +713,7 @@ test("eligible readonly human topic boundary auto-creates handoff bypass equival
 	assert.match(watchdogMessage.content, /handoff/i);
 	assert.match(watchdogMessage.content, /temporary handoff exception active/i);
 
-	const [toolCallHandler] = pi.handlers.get("tool_call")!;
-	const blockResult = await toolCallHandler(
-		{ toolName: "handoff", input: {} },
-		{ cwd: "/tmp" } as any,
-	);
+	const blockResult = await toolCall({ toolName: "handoff", input: {} }, { cwd: "/tmp" });
 	assert.equal(blockResult, undefined, "handoff tool should be unblocked after topic boundary creates bypass");
 });
 
