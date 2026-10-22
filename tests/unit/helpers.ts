@@ -2,7 +2,7 @@
 // Imported by other test files via `./helpers.js`
 // Includes the real-API test host (see ./test-host.js), test utilities, theme constants, readonly helpers, etc.
 
-import type { Theme, TurnEndEvent } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, type Theme, type TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import assert from "node:assert/strict";
@@ -37,18 +37,27 @@ export const ansiTheme = {
 
 const HOME_ENV_KEYS = ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"] as const;
 
+// pi resolves its agent directory from PI_CODING_AGENT_DIR before HOME, so the
+// home helpers clear it; otherwise an exported variable redirects global paths
+// away from the temp home.
+const AGENT_DIR_ENV_KEY = "PI_CODING_AGENT_DIR";
+
+function restoreEnv(key: string, value: string | undefined): void {
+	if (value === undefined) delete process.env[key];
+	else process.env[key] = value;
+}
+
 export function setTempHome(home: string): () => void {
 	const snapshot = Object.fromEntries(HOME_ENV_KEYS.map((key) => [key, process.env[key]])) as Record<typeof HOME_ENV_KEYS[number], string | undefined>;
+	const previousAgentDir = process.env[AGENT_DIR_ENV_KEY];
 	process.env.HOME = home;
 	process.env.USERPROFILE = home;
 	delete process.env.HOMEDRIVE;
 	delete process.env.HOMEPATH;
+	delete process.env[AGENT_DIR_ENV_KEY];
 	return () => {
-		for (const key of HOME_ENV_KEYS) {
-			const value = snapshot[key];
-			if (value === undefined) delete process.env[key];
-			else process.env[key] = value;
-		}
+		for (const key of HOME_ENV_KEYS) restoreEnv(key, snapshot[key]);
+		restoreEnv(AGENT_DIR_ENV_KEY, previousAgentDir);
 	};
 }
 
@@ -236,25 +245,26 @@ export async function tmpDir(): Promise<string> {
 }
 
 export async function withTempHome<T>(run: (homeDir: string) => Promise<T>): Promise<T> {
-	const previousHome = process.env.HOME;
-	const previousUserProfile = process.env.USERPROFILE;
 	const homeDir = await tmpDir();
-	process.env.HOME = homeDir;
-	process.env.USERPROFILE = homeDir;
+	const restore = setTempHome(homeDir);
 	try {
 		return await run(homeDir);
 	} finally {
-		if (previousHome === undefined) {
-			delete process.env.HOME;
-		} else {
-			process.env.HOME = previousHome;
-		}
-		if (previousUserProfile === undefined) {
-			delete process.env.USERPROFILE;
-		} else {
-			process.env.USERPROFILE = previousUserProfile;
-		}
+		restore();
 		await rm(homeDir, { recursive: true, force: true });
+	}
+}
+
+/** Nest inside `withTempHome`, not around it: `withTempHome` clears `PI_CODING_AGENT_DIR` for its run. */
+export async function withTempAgentDir<T>(run: (agentDir: string) => Promise<T>): Promise<T> {
+	const previousAgentDir = process.env[AGENT_DIR_ENV_KEY];
+	const agentDir = await tmpDir();
+	process.env[AGENT_DIR_ENV_KEY] = agentDir;
+	try {
+		return await run(agentDir);
+	} finally {
+		restoreEnv(AGENT_DIR_ENV_KEY, previousAgentDir);
+		await rm(agentDir, { recursive: true, force: true });
 	}
 }
 
@@ -326,7 +336,7 @@ export async function runRealChildInvocation(params: {
 		? resolve(os.tmpdir(), "..", `readonly-child-escape-${process.pid}-${Date.now()}`)
 		: "readonly-child-escape";
 	const agentDir = join(tempRoot, "agent");
-	const extensionDir = join(cwd, ".pi", "extensions");
+	const extensionDir = join(cwd, CONFIG_DIR_NAME, "extensions");
 	const sentinel = "AGENTIC_E2E_PROBE_OK";
 	const provider = "agentic-e2e";
 	const modelId = "agentic-e2e-model";
