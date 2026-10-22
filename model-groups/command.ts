@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { SchematicState } from "../state.js";
-import type { ModelGroupsAccess } from "./types.js";
+import { createModelGroupsAccess } from "./store.js";
 import { createModelGroupsComponent } from "./tui.js";
 
 export function registerModelGroupsCommand(pi: ExtensionAPI, state: SchematicState): void {
@@ -15,7 +15,7 @@ export function registerModelGroupsCommand(pi: ExtensionAPI, state: SchematicSta
 				ctx.ui.notify("Cannot manage model groups: missing working directory or model registry", "error");
 				return;
 			}
-			const access: ModelGroupsAccess = { cwd: ctx.cwd, policy: ctx.isProjectTrusted() ? "global-project" : "global-only" };
+			const access = createModelGroupsAccess(ctx.cwd, ctx.isProjectTrusted());
 			await ctx.ui.custom<void>((tui, theme, _keybindings, done) =>
 				createModelGroupsComponent(tui, theme, ctx.modelRegistry, access, done, {
 					initialValidation: state.modelGroups.validation,

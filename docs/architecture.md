@@ -46,7 +46,7 @@ interface SchematicState {
 
 ## Behavioral notes
 
-**Spawn** — Without a Model Group, the child inherits the parent's public model and explicit/default thinking level. An exact known group randomly selects a registry-resolved, authenticated entry. An entry-specific thinking level overrides explicit/inherited thinking and is clamped for the selected model. An unknown group reports fallback and uses the parent model/thinking.
+**Spawn** — Without a Model Group, the child inherits the parent's public model and explicit/default thinking level. An exact known group randomly selects a registry-resolved, authenticated entry. An entry-specific thinking level overrides explicit/inherited thinking and is clamped for the selected model. An unknown group uses the parent model and the explicit or inherited thinking level. The fallback shows in the spawn tool's TUI display, which renders `<group>? fallback → <provider>/<model> • <thinking>`, and in the result's details as `route.status: "unknown-fallback"`; the result text the model receives carries no marker.
 
 A known empty group, or one with no usable authenticated entries, fails before child-session creation. The selected public model enters a child-owned runtime. Children also inherit cwd and active registered tools executable in that session, retain child-local notebook tools, cannot spawn or handoff, and inherit readonly posture.
 

@@ -54,6 +54,7 @@ The suites leave these behaviours unpinned:
 - `findHandoffCut` matching only a compaction whose details carry `handoff: true`. Deliberate: every boundary cut writes that flag, and the unit tests pin the drafts that write it.
 - The refusal of a second handoff in a run that already lost its cut, at e2e level. Deliberate: the unit and real-session tests pin it, and the e2e probe drops the cut with `continue: false`, which ends the run before a second call. An e2e test would need a probe change.
 - A spawn can fail after its child's agent run started, for a reason other than an empty reply. Examples are a failed prompt, a reset, or a dispose failure. Its child usage reaching the parent's totals in a real host is unpinned. Deliberate: the unit tests pin each cause (the error result from the `catch` block, an `error` or `aborted` completion, a dispose failure), and the e2e suite pins the empty-reply path.
+- The trusted project prompt directory and the unit-test spawn probe's extension directory (`runRealChildInvocation`) are built from pi's `CONFIG_DIR_NAME`, not a literal `.pi`. Deliberate: the installed pi declares `.pi` as that name, so no test can tell the two apart. The typechecked import of `CONFIG_DIR_NAME` only catches pi removing or renaming that export; reverting either path to a literal `.pi` passes every gate.
 
 ## CI
 

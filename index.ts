@@ -78,8 +78,7 @@ import { registerModelGroupsCommand } from "./model-groups/command.js";
 import { resolveSpawnModelRoute, SpawnRouteError } from "./model-groups/router.js";
 import { registerModelGroupAutocomplete } from "./model-groups/autocomplete.js";
 import { getEffectiveModelGroupNames } from "./model-groups/router.js";
-import type { ModelGroupsAccess } from "./model-groups/types.js";
-import { loadModelGroups, summarizeBootValidation, validateModelGroups } from "./model-groups/store.js";
+import { createModelGroupsAccess, loadModelGroups, summarizeBootValidation, validateModelGroups } from "./model-groups/store.js";
 import { escapeDisplayLabel } from "./model-groups/display.js";
 import { productionConstraintRegistry } from "./model-groups/constraints/registry.js";
 import { isUsableModel } from "./model-groups/availability.js";
@@ -441,15 +440,11 @@ function blockStreamingFrontmatter(
 	return true;
 }
 
-function modelGroupsAccess(ctx: ExtensionContext): ModelGroupsAccess {
-	return { cwd: ctx.cwd, policy: ctx.isProjectTrusted() ? "global-project" : "global-only" };
-}
-
 function refreshModelGroupsState(state: SchematicState, ctx: ExtensionContext) {
 	state.modelGroups.groups = [];
 	state.modelGroups.validation = null;
 	if (!ctx.cwd || !(ctx as any).modelRegistry) return null;
-	const loadedModelGroups = loadModelGroups(modelGroupsAccess(ctx));
+	const loadedModelGroups = loadModelGroups(createModelGroupsAccess(ctx.cwd, ctx.isProjectTrusted()));
 	const resolvedModelGroups = validateModelGroups(loadedModelGroups, (ctx as any).modelRegistry);
 	state.modelGroups.groups = resolvedModelGroups;
 	state.modelGroups.validation = { groups: resolvedModelGroups, loadIssues: loadedModelGroups.issues };
