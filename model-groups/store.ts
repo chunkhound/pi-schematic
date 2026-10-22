@@ -12,7 +12,7 @@ import { isThinkingLevel } from "../thinking-levels.js";
 import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModalities, type ModelGroupModality, type ModelGroupModel, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsAccessPolicy, type ModelGroupsBootValidation, type ModelGroupsConfig, type ModelGroupsLoadedGroup, type ModelGroupsLoadIssue, type ModelGroupsLoadResult, type ResolvedModelGroup } from "./types.js";
 
 const CURRENT_VERSION = 2;
-type FsOps = Pick<typeof fs, "existsSync" | "mkdirSync" | "readFileSync" | "writeFileSync" | "renameSync" | "copyFileSync" | "unlinkSync">;
+type FsOps = Pick<typeof fs, "existsSync" | "mkdirSync" | "readFileSync" | "writeFileSync" | "renameSync" | "copyFileSync" | "unlinkSync" | "statSync">;
 let fsOps: FsOps = fs;
 export function __setModelGroupsFsForTests(next: Partial<FsOps> | null): void { fsOps = next ? { ...fs, ...next } : fs; }
 export function modelGroupsPath(scope: ModelGroupScope, cwd: string, projectConfigDirName = CONFIG_DIR_NAME): string { return scope === "global" ? path.join(getAgentDir(), "pi-schematic", "model-groups.json") : path.join(cwd, projectConfigDirName, "pi-schematic", "model-groups.json"); }
@@ -29,9 +29,27 @@ function defineGroup(groups: Record<string, ModelGroupDef>, name: string, def: M
 function hasOwnGroup(groups: Record<string, ModelGroupDef>, name: string): boolean { return Object.hasOwn(groups, name); }
 function emptyConfig(): ModelGroupsConfig { return { version: CURRENT_VERSION, groups: ownGroups() }; }
 function isPlainRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
-// A PI_CODING_AGENT_DIR of <cwd>/<config dir> makes the two scopes one file; reading it as both would duplicate every group.
+function statIfExists(dir: string): fs.BigIntStats | undefined {
+	try {
+		return fsOps.statSync(dir, { bigint: true });
+	} catch (cause) {
+		if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw cause;
+	}
+}
+// The directories holding pi-schematic/ are compared, not pi-schematic/ itself: it may not exist before the first save, while its parent decides where that save lands.
+function scopesShareConfigDir(cwd: string): boolean {
+	const globalFile = modelGroupsPath("global", cwd);
+	const projectFile = modelGroupsPath("project", cwd);
+	const globalDir = statIfExists(path.dirname(path.dirname(globalFile)));
+	const projectDir = statIfExists(path.dirname(path.dirname(projectFile)));
+	// Some filesystems (FAT/exFAT) report ino 0 for every entry, so identity is unknown there.
+	if (!globalDir || !projectDir || globalDir.ino === 0n || projectDir.ino === 0n) return path.resolve(globalFile) === path.resolve(projectFile);
+	return globalDir.dev === projectDir.dev && globalDir.ino === projectDir.ino;
+}
+// A PI_CODING_AGENT_DIR that is <cwd>/<config dir>, by path, symlink, or a case-insensitive name, makes the two scopes one file; reading it as both would duplicate every group.
 function effectivePolicy(access: ModelGroupsAccess): ModelGroupsAccessPolicy {
-	if (access.policy === "global-project" && path.resolve(modelGroupsPath("global", access.cwd)) === path.resolve(modelGroupsPath("project", access.cwd))) return "global-only";
+	if (access.policy === "global-project" && scopesShareConfigDir(access.cwd)) return "global-only";
 	return access.policy;
 }
 /** Builds the access for a session; the project scope is unavailable when untrusted or when it resolves to the global file. */
