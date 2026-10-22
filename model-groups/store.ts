@@ -57,7 +57,8 @@ export function createModelGroupsAccess(cwd: string, projectTrusted: boolean): M
 	const access: ModelGroupsAccess = { cwd, policy: projectTrusted ? "global-project" : "global-only" };
 	return { cwd, policy: effectivePolicy(access) };
 }
-function assertScopeAllowed(scope: ModelGroupScope, access: ModelGroupsAccess): void { if (scope === "project" && effectivePolicy(access) === "global-only") throw new Error("Project Model Groups are unavailable in global-only mode"); }
+function projectScopeEnabled(access: ModelGroupsAccess): boolean { return effectivePolicy(access) === "global-project"; }
+function assertScopeAllowed(scope: ModelGroupScope, access: ModelGroupsAccess): void { if (scope === "project" && !projectScopeEnabled(access)) throw new Error("Project Model Groups are unavailable in global-only mode"); }
 function persistenceError(details: ConstructorParameters<typeof ModelGroupsPersistenceError>[0]): ModelGroupsPersistenceError { return new ModelGroupsPersistenceError(details); }
 function validateModelEntry(value: unknown, at: string): { ok: true; model: ModelGroupModel } | { ok: false; message: string } {
 	if (!isPlainRecord(value)) return { ok: false, message: `${at} must be an object` };
@@ -164,7 +165,7 @@ function loadScope(scope: ModelGroupScope, access: ModelGroupsAccess, registry: 
 		? { config: validated.config }
 		: { config: emptyConfig(), issue: backupAndIssue(scope, sourcePath, "schema-invalid", validated.message) };
 }
-function mergeLoaded(configs: Record<ModelGroupScope, ModelGroupsConfig>, access: ModelGroupsAccess): ModelGroupsLoadedGroup[] {
+function mergeLoaded(configs: Record<ModelGroupScope, ModelGroupsConfig>, cwd: string): ModelGroupsLoadedGroup[] {
 	const names = new Set([...Object.keys(configs.global.groups), ...Object.keys(configs.project.groups)]);
 	const out: ModelGroupsLoadedGroup[] = [];
 	for (const name of [...names].sort()) {
@@ -172,15 +173,15 @@ function mergeLoaded(configs: Record<ModelGroupScope, ModelGroupsConfig>, access
 			out.push({
 				name,
 				scope: "global",
-				sourcePath: modelGroupsPath("global", access.cwd),
+				sourcePath: modelGroupsPath("global", cwd),
 				...cloneDef(configs.global.groups[name]),
 			});
 		}
-		if (effectivePolicy(access) === "global-project" && hasOwnGroup(configs.project.groups, name)) {
+		if (hasOwnGroup(configs.project.groups, name)) {
 			out.push({
 				name,
 				scope: "project",
-				sourcePath: modelGroupsPath("project", access.cwd),
+				sourcePath: modelGroupsPath("project", cwd),
 				...cloneDef(configs.project.groups[name]),
 			});
 		}
@@ -189,10 +190,10 @@ function mergeLoaded(configs: Record<ModelGroupScope, ModelGroupsConfig>, access
 }
 export function loadModelGroups(access: ModelGroupsAccess, constraintRegistry: ConstraintRegistry = productionConstraintRegistry): ModelGroupsLoadResult {
 	const global = loadScope("global", access, constraintRegistry);
-	const project = effectivePolicy(access) === "global-project" ? loadScope("project", access, constraintRegistry) : { config: emptyConfig() };
+	const project = projectScopeEnabled(access) ? loadScope("project", access, constraintRegistry) : { config: emptyConfig() };
 	return {
 		configs: { global: global.config, project: project.config },
-		merged: mergeLoaded({ global: global.config, project: project.config }, access),
+		merged: mergeLoaded({ global: global.config, project: project.config }, access.cwd),
 		issues: [global.issue, project.issue].filter((i): i is ModelGroupsLoadIssue => Boolean(i)),
 	};
 }
@@ -327,7 +328,7 @@ export function deleteGroup(scope: ModelGroupScope, access: ModelGroupsAccess, r
 	const name = canonicalName(rawName);
 	if (!hasOwnGroup(config.groups, name)) throw new Error(`Model group '${name}' does not exist in ${scope} scope`);
 	delete config.groups[name];
-	const other = effectivePolicy(access) === "global-only" ? emptyConfig() : loadScopeConfig(scope === "global" ? "project" : "global", access);
+	const other = projectScopeEnabled(access) ? loadScopeConfig(scope === "global" ? "project" : "global", access) : emptyConfig();
 	try {
 		saveModelGroups(scope, access, config);
 	} catch (cause) {
