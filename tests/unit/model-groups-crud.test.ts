@@ -6,6 +6,7 @@ import path from "node:path";
 import {
 	__setModelGroupsFsForTests,
 	createGroup,
+	createModelGroupsAccess,
 	deleteGroup,
 	loadModelGroups,
 	modelGroupsPath,
@@ -19,6 +20,7 @@ import {
 import { ModelGroupsPersistenceError, type ModelGroupScope, type ModelGroupsAccess } from "../../model-groups/types.js";
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import { testMinContext } from "./model-groups-constraints-fixture.js";
+import { withTempAgentDir } from "./helpers.js";
 import { withTemp } from "./model-groups-helpers.js";
 
 function access(cwd: string, policy: ModelGroupsAccess["policy"] = "global-project"): ModelGroupsAccess { return { cwd, policy }; }
@@ -645,4 +647,133 @@ test("model groups direct save canonicalizes unique keys and rejects empty/colli
 		assert.equal(fs.readFileSync(modelGroupsPath("project", cwd), "utf8"), before);
 		__setModelGroupsFsForTests(null);
 	}
+}));
+
+test("global model groups file lives under PI_CODING_AGENT_DIR when it is set", () => withTemp(({ cwd, home }) => withTempAgentDir(async (agentDir) => {
+	const expectedPath = path.join(agentDir, "pi-schematic", "model-groups.json");
+	assert.equal(modelGroupsPath("global", cwd), expectedPath);
+
+	createGroup("global", access(cwd), "relocated", { models: [] }, registry());
+
+	assert.deepEqual(JSON.parse(fs.readFileSync(expectedPath, "utf8")).groups.relocated.models, []);
+	assert.equal(fs.existsSync(path.join(home, ".pi")), false);
+})));
+
+test("global model groups file defaults to the home agent dir when PI_CODING_AGENT_DIR is unset", () => withTemp(({ cwd, home }) => {
+	assert.equal(modelGroupsPath("global", cwd), path.join(home, ".pi", "agent", "pi-schematic", "model-groups.json"));
+}));
+
+test("global model groups path follows a PI_CODING_AGENT_DIR change between resolutions", () => withTemp(async ({ cwd }) => {
+	await withTempAgentDir(async (firstAgentDir) => {
+		assert.equal(modelGroupsPath("global", cwd), path.join(firstAgentDir, "pi-schematic", "model-groups.json"));
+	});
+	await withTempAgentDir(async (secondAgentDir) => {
+		assert.equal(modelGroupsPath("global", cwd), path.join(secondAgentDir, "pi-schematic", "model-groups.json"));
+	});
+}));
+
+function pointAgentDirAtProjectConfig(cwd: string): string {
+	const agentDir = path.join(cwd, ".pi");
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	return path.join(agentDir, "pi-schematic", "model-groups.json");
+}
+
+test("a project config dir that is the agent dir loads its groups once, as global", () => withTemp(({ cwd }) => {
+	const sharedPath = pointAgentDirAtProjectConfig(cwd);
+	fs.mkdirSync(path.dirname(sharedPath), { recursive: true });
+	fs.writeFileSync(sharedPath, JSON.stringify({ version: 2, groups: { shared: { models: [] } } }));
+
+	const loaded = loadModelGroups(access(cwd, "global-project"));
+
+	assert.deepEqual(loaded.merged.map((g) => [g.name, g.scope]), [["shared", "global"]]);
+}));
+
+test("a project config dir that is the agent dir refuses project-scope writes", () => withTemp(({ cwd }) => {
+	const sharedPath = pointAgentDirAtProjectConfig(cwd);
+
+	assert.throws(() => createGroup("project", access(cwd, "global-project"), "local", { models: [] }, registry()), /unavailable in global-only mode/);
+	assert.equal(fs.existsSync(sharedPath), false);
+}));
+
+test("a trusted session whose project config dir is the agent dir gets global-only access", () => withTemp(({ cwd }) => {
+	pointAgentDirAtProjectConfig(cwd);
+
+	assert.equal(createModelGroupsAccess(cwd, true).policy, "global-only");
+}));
+
+function pointAgentDirAtProjectConfigThroughSymlink(cwd: string): void {
+	const configDir = path.join(cwd, ".pi");
+	const link = path.join(path.dirname(cwd), "agent-dir-link");
+	fs.mkdirSync(configDir, { recursive: true });
+	// A junction needs no privilege on Windows; other platforms ignore the type.
+	fs.symlinkSync(configDir, link, "junction");
+	process.env.PI_CODING_AGENT_DIR = link;
+}
+
+/** Points the agent dir at the project config dir spelled in another case; returns false on a case-sensitive filesystem. */
+function pointAgentDirAtProjectConfigInOtherCase(cwd: string): boolean {
+	fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+	const upperCased = path.join(cwd, ".PI");
+	if (!fs.existsSync(upperCased)) return false;
+	process.env.PI_CODING_AGENT_DIR = upperCased;
+	return true;
+}
+
+function writeSharedGroup(cwd: string): void {
+	const sharedPath = path.join(cwd, ".pi", "pi-schematic", "model-groups.json");
+	fs.mkdirSync(path.dirname(sharedPath), { recursive: true });
+	fs.writeFileSync(sharedPath, JSON.stringify({ version: 2, groups: { shared: { models: [] } } }));
+}
+
+test("distinct config dirs on a filesystem reporting inode 0 keep both scopes", () => withTemp(({ cwd, home }) => {
+	const agentDir = path.join(home, "agent");
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	fs.mkdirSync(agentDir, { recursive: true });
+	fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+	saveModelGroups("global", access(cwd), { version: 2, groups: { fromGlobal: { models: [] } } });
+	saveModelGroups("project", access(cwd), { version: 2, groups: { fromProject: { models: [] } } });
+	__setModelGroupsFsForTests({ statSync: (() => ({ dev: 1n, ino: 0n })) as any });
+
+	const trusted = createModelGroupsAccess(cwd, true);
+
+	assert.equal(trusted.policy, "global-project");
+	assert.deepEqual(loadModelGroups(trusted).merged.map((g) => [g.name, g.scope]), [["fromGlobal", "global"], ["fromProject", "project"]]);
+}));
+
+test("an agent dir symlinked to the project config dir loads its groups once, as global", () => withTemp(({ cwd }) => {
+	pointAgentDirAtProjectConfigThroughSymlink(cwd);
+	writeSharedGroup(cwd);
+
+	const loaded = loadModelGroups(access(cwd, "global-project"));
+
+	assert.deepEqual(loaded.merged.map((g) => [g.name, g.scope]), [["shared", "global"]]);
+}));
+
+test("an agent dir symlinked to the project config dir refuses project-scope writes", () => withTemp(({ cwd }) => {
+	pointAgentDirAtProjectConfigThroughSymlink(cwd);
+
+	assert.throws(() => createGroup("project", access(cwd, "global-project"), "local", { models: [] }, registry()), /unavailable in global-only mode/);
+	assert.equal(fs.existsSync(path.join(cwd, ".pi", "pi-schematic", "model-groups.json")), false);
+}));
+
+test("an agent dir naming the project config dir in another case loads its groups once, as global", (t) => withTemp(({ cwd }) => {
+	if (!pointAgentDirAtProjectConfigInOtherCase(cwd)) {
+		t.skip("the temp filesystem is case-sensitive, so the two spellings are different directories");
+		return;
+	}
+	writeSharedGroup(cwd);
+
+	const loaded = loadModelGroups(access(cwd, "global-project"));
+
+	assert.deepEqual(loaded.merged.map((g) => [g.name, g.scope]), [["shared", "global"]]);
+}));
+
+test("an agent dir naming the project config dir in another case refuses project-scope writes", (t) => withTemp(({ cwd }) => {
+	if (!pointAgentDirAtProjectConfigInOtherCase(cwd)) {
+		t.skip("the temp filesystem is case-sensitive, so the two spellings are different directories");
+		return;
+	}
+
+	assert.throws(() => createGroup("project", access(cwd, "global-project"), "local", { models: [] }, registry()), /unavailable in global-only mode/);
+	assert.equal(fs.existsSync(path.join(cwd, ".pi", "pi-schematic", "model-groups.json")), false);
 }));

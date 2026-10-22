@@ -5,7 +5,9 @@
  * Isolation: every path pi and schematic read or write lives under one
  * mkdtemp directory. HOME points into it because schematic's
  * before_agent_start handler reads global model groups from
- * `homedir()/.pi/agent/pi-schematic/model-groups.json`. PI_OFFLINE=1 keeps
+ * `pi-schematic/model-groups.json` under pi's `getAgentDir()`, whose default
+ * is `join(homedir(), CONFIG_DIR_NAME, "agent")`; HOME isolates that default
+ * while PI_CODING_AGENT_DIR is unset, which setTempHome ensures. PI_OFFLINE=1 keeps
  * ModelRuntime from fetching over the network. The faux provider needs no
  * credentials.
  */

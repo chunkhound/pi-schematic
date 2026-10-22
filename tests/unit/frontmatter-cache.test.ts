@@ -6,11 +6,11 @@
  * pattern as readonly-bash-classifier.test.ts.
  */
 
-import test from "node:test";
+import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpDir, withTempHome } from "./helpers.js";
+import { tmpDir, withTempAgentDir, withTempHome } from "./helpers.js";
 import {
 	cacheLookupCommand,
 	cacheLookupCommandExplicitModel,
@@ -30,6 +30,21 @@ import {
 import { createState } from "../../state.js";
 import { THINKING_LEVELS } from "../../thinking-levels.js";
 import type { Skill } from "@earendil-works/pi-coding-agent";
+
+// pi's agent directory holds global prompts; an empty one keeps an exported
+// PI_CODING_AGENT_DIR, or a populated ~/.pi/agent/prompts, out of every test.
+let isolatedAgentDir: string;
+let previousAgentDir: string | undefined;
+before(async () => {
+	previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	isolatedAgentDir = await tmpDir();
+	process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
+});
+after(async () => {
+	if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+	else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	await rm(isolatedAgentDir, { recursive: true, force: true });
+});
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -473,6 +488,62 @@ test("project/global precedence rebinding refreshes the cache for the same promp
 			await rm(workspace, { recursive: true, force: true });
 		}
 	});
+});
+
+test("global prompts are read from PI_CODING_AGENT_DIR when it is set", async () => {
+	await withTempHome(async () => {
+		await withTempAgentDir(async (agentDir) => {
+			const state = createState();
+			const promptsDir = join(agentDir, "prompts");
+			await mkdir(promptsDir, { recursive: true });
+			await writeMd(promptsDir, "relocated-prompt", { readonly: true });
+
+			populatePromptCacheFromResolvedCommandsAndDirs(state, [], "/nonexistent/workspace", false);
+
+			assert.equal(cacheLookupCommand(state, "relocated-prompt"), true);
+		});
+	});
+});
+
+test("global prompts under the home agent dir are ignored when PI_CODING_AGENT_DIR is set", async () => {
+	await withTempHome(async (homeDir) => {
+		await withTempAgentDir(async () => {
+			const state = createState();
+			const homePromptsDir = join(homeDir, ".pi", "agent", "prompts");
+			await mkdir(homePromptsDir, { recursive: true });
+			await writeMd(homePromptsDir, "home-prompt", { readonly: true });
+
+			populatePromptCacheFromResolvedCommandsAndDirs(state, [], "/nonexistent/workspace", false);
+
+			assert.equal(cacheLookupCommand(state, "home-prompt"), null);
+		});
+	});
+});
+
+test("global prompt scan follows a PI_CODING_AGENT_DIR change between rebuilds", async () => {
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	const firstAgentDir = await tmpDir();
+	const secondAgentDir = await tmpDir();
+	try {
+		await mkdir(join(firstAgentDir, "prompts"));
+		await writeMd(join(firstAgentDir, "prompts"), "first-dir-prompt", { readonly: true });
+		await mkdir(join(secondAgentDir, "prompts"));
+		await writeMd(join(secondAgentDir, "prompts"), "second-dir-prompt", { readonly: true });
+		const state = createState();
+		process.env.PI_CODING_AGENT_DIR = firstAgentDir;
+		populatePromptCacheFromResolvedCommandsAndDirs(state, [], "/nonexistent/workspace", false);
+
+		process.env.PI_CODING_AGENT_DIR = secondAgentDir;
+		populatePromptCacheFromResolvedCommandsAndDirs(state, [], "/nonexistent/workspace", false);
+
+		assert.equal(cacheLookupCommand(state, "first-dir-prompt"), null);
+		assert.equal(cacheLookupCommand(state, "second-dir-prompt"), true);
+	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+		await rm(firstAgentDir, { recursive: true, force: true });
+		await rm(secondAgentDir, { recursive: true, force: true });
+	}
 });
 
 test("populateFromSkills reuses the cached entry while mtime is unchanged", async () => {
