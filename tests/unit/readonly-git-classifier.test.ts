@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +7,7 @@ import { TEMP_WRITE_ROOTS_CANONICAL } from "../../temp-dir.js";
 import { classifyBashCommand } from "../../readonly-bash.js";
 import { deriveCloneDirectoryName } from "../../readonly-bash-git.js";
 import { FAIL_CLOSED_HINT } from "../../notifications.js";
-import { capabilityGate, check, fixture, git, hasGit, installGitIsolation, localEnvironment, outside, outsideWritable, outsideWritesRequired, posixHost, quote, repository } from "./readonly-git-helpers.js";
+import { capabilityGate, check, classifyWithWatchdog, fixture, git, hasGit, installGitIsolation, installGitShim, localEnvironment, outside, outsideWritable, outsideWritesRequired, posixHost, quote, repository, writeGitProbeShim } from "./readonly-git-helpers.js";
 import { shellPath } from "./helpers.js";
 
 // Platform-agnostic readonly-git classifier tests: every assertion goes through
@@ -808,6 +807,88 @@ else {
 		});
 	} else capabilityGate("readonly git classifier requires outside-temp writes", "cannot write outside temp");
 
+	// CONTRACT: a probe killed mid-flight (timeout, AV pause, spawn hiccup) is retried once, and
+	// an exhausted probe is reported as unproven — never as a proven outside-temp write.
+	test("Git retries a killed config probe and reports exhausted probes as unproven", (t) => {
+		if (!posixHost) return;
+		const root = fixture(t);
+		const repo = repository(root);
+		const remote = path.join(root, "remote.git");
+		git(root, "init", "--bare", "--quiet", remote);
+		git(repo, "remote", "add", "origin", remote);
+		const shim = writeGitProbeShim(root);
+		installGitShim(t, shim.bin, shim.markerEnvironment);
+		// First probe dies like a timed-out child; the retry execs the real git.
+		writeFileSync(shim.markerFiles.failOnce, "");
+		check('git push "origin" HEAD:refs/heads/x', repo, true);
+		// Every probe dies: the retry also fails, so the verdict is unproven, not "outside temp".
+		writeFileSync(shim.markerFiles.alwaysFail, "");
+		const verdict = classifyBashCommand('git push "origin" HEAD:refs/heads/x', repo);
+		assert.ok(!verdict.ok, "an unretryable probe must fail closed");
+		assert.match(verdict.reason, /cannot prove git write location: git config probe unavailable/);
+		assert.doesNotMatch(verdict.reason, /outside temp|unsupported/);
+	});
+
+	// CONTRACT: a probe that outlives the first budget is still proven by the wider retry, and a
+	// probe that ignores termination is killed, never awaited. The classifier blocks inside
+	// execFileSync, so an outer process watchdog is the only way to enforce these limits.
+	test("Git proves a slow config probe after the first budget expires", (t) => {
+		if (!posixHost) return;
+		const root = fixture(t);
+		const repo = repository(root);
+		const remote = path.join(root, "remote.git");
+		git(root, "init", "--bare", "--quiet", remote);
+		git(repo, "remote", "add", "origin", remote);
+		const shim = writeGitProbeShim(root);
+		// One transient slow probe: the retry succeeds, later probes are healthy.
+		writeFileSync(shim.markerFiles.slowOnce, "");
+		const { verdict } = classifyWithWatchdog('git push "origin" HEAD:refs/heads/x', repo, shim.env, PROBE_TEST_WATCHDOG_MS);
+		assert.equal(verdict.ok, true, verdict.ok ? "" : `slow probe denied: ${verdict.reason}`);
+		// Zero probes would mean the verdict never exercised the retry path.
+		assert.ok(readFileSync(shim.counter, "utf8").length > 0, "slow probe shim did not record a spawn");
+	});
+
+	// CONTRACT: retry time is budgeted per top-level pass, not per probe. A host where every probe
+	// outlives the first budget must fail closed after one bounded stall — even across chained git
+	// commands — instead of paying both attempt budgets for every probe.
+	test("Git bounds probe retries across a chained pass", (t) => {
+		if (!posixHost) return;
+		const root = fixture(t);
+		const repo = repository(root);
+		const remote = path.join(root, "remote.git");
+		git(root, "init", "--bare", "--quiet", remote);
+		git(repo, "remote", "add", "origin", remote);
+		const shim = writeGitProbeShim(root);
+		writeFileSync(shim.markerFiles.slow, "");
+		const command = 'git push "origin" HEAD:refs/heads/a && git push "origin" HEAD:refs/heads/b';
+		const { verdict, elapsedMs } = classifyWithWatchdog(command, repo, shim.env, PROBE_TEST_WATCHDOG_MS);
+		assert.ok(!verdict.ok, "a pass that exhausts its probe budget must fail closed");
+		assert.match(verdict.reason, /cannot prove git write location: git config probe unavailable/);
+		assert.doesNotMatch(verdict.reason, /outside temp|unsupported/);
+		// Per-probe retries paid both budgets for every probe in both commands (16 spawns).
+		const attempts = readFileSync(shim.counter, "utf8").length;
+		assert.ok(attempts <= PROBE_BOUND, `a chained pass spawned ${attempts} > ${PROBE_BOUND} git probes`);
+		assert.ok(elapsedMs < PROBE_EXHAUSTION_LIMIT_MS, `a chained pass took ${elapsedMs} ms`);
+	});
+
+	test("Git kills a TERM-ignoring config probe after exactly two attempts", (t) => {
+		if (!posixHost) return;
+		const root = fixture(t);
+		const repo = repository(root);
+		const remote = path.join(root, "remote.git");
+		git(root, "init", "--bare", "--quiet", remote);
+		git(repo, "remote", "add", "origin", remote);
+		const shim = writeGitProbeShim(root);
+		writeFileSync(shim.markerFiles.stubborn, "");
+		const { verdict, elapsedMs } = classifyWithWatchdog('git push "origin" HEAD:refs/heads/x', repo, shim.env, PROBE_TEST_WATCHDOG_MS);
+		if (verdict.ok) assert.fail("a probe that never exits must fail closed");
+		assert.match(verdict.reason, /cannot prove git write location: git config probe unavailable/);
+		assert.doesNotMatch(verdict.reason, /outside temp|unsupported/);
+		// A third attempt can only stall the synchronous classifier longer with no chance of success.
+		assert.equal(readFileSync(shim.counter, "utf8").length, 2, "an exhausted probe must be attempted exactly twice");
+		assert.ok(elapsedMs < PROBE_EXHAUSTION_LIMIT_MS, `an exhausted probe took ${elapsedMs} ms`);
+	});
+
 	// Measurement, not a behavior oracle: instrumentation (STEP A of the probe audit) counts how
 	// many `git config` subprocesses ONE classification pass spawns. A PATH shim wraps only the
 	// classifier's `git` spawns (fixture builds finish before PATH changes), appends one byte per
@@ -824,34 +905,19 @@ else {
 		// plus the common repository.
 		const linked = path.join(root, "linked");
 		git(repo, "worktree", "add", "--quiet", "--detach", linked);
-		const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
-		const bin = path.join(root, "bin"), counter = path.join(root, "probes");
-		mkdirSync(bin);
-		writeFileSync(path.join(bin, "git"), `#!/bin/sh\nprintf %s x >> "$COUNTER_FILE"\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
-		const savedPath = process.env.PATH;
-		const savedCounter = process.env.COUNTER_FILE;
-		t.after(() => {
-			process.env.PATH = savedPath;
-			if (savedCounter === undefined) delete process.env.COUNTER_FILE;
-			else process.env.COUNTER_FILE = savedCounter;
-		});
-		process.env.PATH = `${bin}${path.delimiter}${savedPath}`;
-		process.env.COUNTER_FILE = counter;
-		// Prove the shim fires with a direct spawn, not with a classifier pass: the classifier
-		// can legitimately spawn zero probes for a command (cache, no config read), so a
-		// probe-count lower bound would be timing-dependent and flaky.
-		execFileSync("git", ["--version"], { stdio: "ignore" });
-		assert.ok(existsSync(counter) && readFileSync(counter, "utf8").length > 0, "git PATH shim did not record a spawn");
-		rmSync(counter, { force: true });
+		// The shim builder warms itself and proves it fires, so the counts below belong to
+		// classification only.
+		const shim = writeGitProbeShim(root);
+		installGitShim(t, shim.bin, shim.markerEnvironment);
 		const observed: Record<string, number> = {};
 		for (const command of [
 			"git log -1",
 			"git push origin HEAD:refs/heads/x",
 			`git -C ${quote(linked)} reset --hard HEAD`,
 		]) {
-			rmSync(counter, { force: true });
+			rmSync(shim.counter, { force: true });
 			classifyBashCommand(command, repo);
-			observed[command] = existsSync(counter) ? readFileSync(counter, "utf8").length : 0;
+			observed[command] = existsSync(shim.counter) ? readFileSync(shim.counter, "utf8").length : 0;
 		}
 		for (const [command, count] of Object.entries(observed)) {
 			assert.ok(count <= PROBE_BOUND, `${command} spawned ${count} > ${PROBE_BOUND} git probes`);
@@ -863,3 +929,9 @@ else {
 // four times depends on the repository fixture, so pinning a minimum would make this test
 // refactor-hostile. Raise PROBE_BOUND only after a deliberate optimization, never by drift.
 const PROBE_BOUND = 4;
+// Above any legitimate probe budget: a classifier child that hangs is killed so the suite fails
+// instead of stalling. The shim outlives the watchdog only on a regression.
+const PROBE_TEST_WATCHDOG_MS = 10_000;
+// Order-of-magnitude cap on the classification's own two-attempt stall, not a timing oracle:
+// CI jitter must pass while an extra attempt or a widened budget fails.
+const PROBE_EXHAUSTION_LIMIT_MS = 2_000;
