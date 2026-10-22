@@ -87,6 +87,7 @@ export function classifyGit(command: string, tokens: string[], cwd: string, shel
 	if (gate) return gate;
 	try { return classifyGitInvocation(tokens, cwd, shellVars); }
 	catch (error) {
+		if (error instanceof GitConfigProbeUnavailable) return `cannot prove git write location: ${error.message}${FAIL_CLOSED_HINT}`;
 		return `unsupported git write location blocked: ${error instanceof Error ? error.message : String(error)}${FAIL_CLOSED_HINT}`;
 	}
 }
@@ -1074,11 +1075,43 @@ function gitEnvironmentRoots(invocation: GitInvocation, vars: ReadonlyMap<string
 }
 
 // Config probes shell out to `git` — the classifier's only synchronous subprocess, on the event
-// loop, re-spawned per pass because the cache clears at classifyGit entry. A pass spawns a few
-// probes at ~7 ms each, so the 100 ms budget below caps a degraded machine's stall while keeping
-// generous headroom. An over-budget probe is "unprovable" and fails closed.
+// loop, re-spawned per pass because the cache clears at classifyGit entry. A healthy probe costs
+// ~7 ms on POSIX but ~50-70 ms on Windows CI, so the 100 ms budget is a fail-closed heuristic, not
+// proof that git is broken. A killed probe therefore gets one retry with a wider ceiling: the read
+// is idempotent and takes no lock. SIGKILL bounds the wait (Node keeps waiting after SIGTERM if the
+// child ignores it) and windowsHide avoids a console allocation per probe.
+//
+// The retry budget is scoped to the top-level classification, so every probe in the command line —
+// including chained git commands and nested classifications — spends from one pool. Per-probe
+// budgets let a degraded host pay both budgets for every probe and freeze the TUI for seconds.
 const GIT_CONFIG_PROBE_TIMEOUT_MS = 100;
+const GIT_CONFIG_PROBE_RETRY_TIMEOUT_MS = 500;
+const GIT_CONFIG_PROBE_PASS_BUDGET_MS = GIT_CONFIG_PROBE_TIMEOUT_MS + GIT_CONFIG_PROBE_RETRY_TIMEOUT_MS;
+const TRANSIENT_PROBE_CODES = new Set(["ETIMEDOUT", "EAGAIN", "EBUSY", "EMFILE", "ENFILE", "ENOBUFS"]);
 const gitConfigurationCache = new Map<string, string[]>();
+
+/** Config ground truth was unobtainable (spawn failure/timeout), as opposed to a proven write. */
+class GitConfigProbeUnavailable extends Error {}
+
+/** Probe time charged by one top-level classification; success and failure both spend it. */
+class GitProbePass {
+	private spentMs = 0;
+	remainingMs(): number { return GIT_CONFIG_PROBE_PASS_BUDGET_MS - this.spentMs; }
+	charge(ms: number): void { this.spentMs += ms; }
+}
+
+let activeProbePass: GitProbePass | null = null;
+
+/** Scope probe budget like the pass directory cache: nested classifications reuse the outer pass. */
+export function runWithPassProbeBudget<T>(fn: () => T): T {
+	if (activeProbePass !== null) return fn();
+	activeProbePass = new GitProbePass();
+	try { return fn(); } finally { activeProbePass = null; }
+}
+
+function probePass(): GitProbePass {
+	return activeProbePass ?? new GitProbePass();
+}
 
 /** Let Git interpret its own config, including linked-worktree and include semantics.
  * Probes use the selected metadata and permitted config-location environment. Relative
@@ -1101,19 +1134,49 @@ function probeGitConfigFile(file: string, args: string[], base: string, vars: Re
 	return runGitConfig(["config", "-z", "--file", file, ...args], base, vars);
 }
 
-/** Run `git config` and split records on NUL. `-z` keeps value bytes exact, so a path ending in a
- * space (or holding a newline) stays the path Git opens; a newline trim would check a different
- * file. `--get-regexp`/`--list` records are `key\nvalue`, plain `--get` records are the value. */
+/** Run `git config`, retrying once when a kill/timeout made ground truth unobtainable. Every attempt
+ * spends the pass budget, so a retry cannot multiply across probes or chained commands. Exhausted
+ * retries surface as `GitConfigProbeUnavailable`, never as a proven outside-temp write. */
 function runGitConfig(argv: string[], base: string, vars: ReadonlyMap<string, string>): string[] {
+	const pass = probePass();
+	for (let attempt = 1; ; attempt++) {
+		const remaining = pass.remainingMs();
+		if (remaining <= 0) throw new GitConfigProbeUnavailable("git config probe unavailable (probe time budget exhausted)");
+		const timeout = Math.min(attempt === 1 ? GIT_CONFIG_PROBE_TIMEOUT_MS : GIT_CONFIG_PROBE_RETRY_TIMEOUT_MS, remaining);
+		const started = Date.now();
+		try { return execGitConfig(argv, base, vars, timeout); }
+		catch (error) {
+			if (attempt > 1 || !isTransientProbeError(error)) throw gitProbeFailure(error);
+		}
+		finally { pass.charge(Date.now() - started); }
+	}
+}
+
+/** A killed child (status null) or a transient spawn/OS error is retryable; a normal exit is not. */
+function isTransientProbeError(error: unknown): boolean {
+	const { status, code } = error as { status?: number | null; code?: string };
+	if (code === "ENOENT") return false;
+	return status === null || TRANSIENT_PROBE_CODES.has(code ?? "");
+}
+
+/** Keep "git binary unavailable" as-is; everything else is unproven ground truth. */
+function gitProbeFailure(error: unknown): Error {
+	if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Error("git binary unavailable");
+	return new GitConfigProbeUnavailable(`git config probe unavailable (${error instanceof Error ? error.message : String(error)})`);
+}
+
+/** One probe. `-z` keeps value bytes exact, so a path ending in a space (or holding a newline)
+ * stays the path Git opens; a newline trim would check a different file. `--get-regexp`/`--list`
+ * records are `key\nvalue`, plain `--get` records are the value. */
+function execGitConfig(argv: string[], base: string, vars: ReadonlyMap<string, string>, timeout: number): string[] {
 	try {
 		// Only config-location overrides enter the probe; command PATH/hooks must never execute.
-		const value = execFileSync("git", argv, { encoding: "utf8", timeout: GIT_CONFIG_PROBE_TIMEOUT_MS, stdio: ["ignore", "pipe", "pipe"], env: gitProbeEnvironment(base, vars), cwd: existingDirectory(base) });
+		const value = execFileSync("git", argv, { encoding: "utf8", timeout, killSignal: "SIGKILL", windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: gitProbeEnvironment(base, vars), cwd: existingDirectory(base) });
 		const records = value.split("\u0000");
 		if (records[records.length - 1] === "") records.pop();
 		return records;
 	} catch (error) {
 		if ((error as { status?: number }).status === 1) return [];
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("git binary unavailable");
 		throw error;
 	}
 }

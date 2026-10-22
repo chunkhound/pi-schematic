@@ -19,6 +19,7 @@ import {
 	deferredCodeReason,
 	runWithPassDirectoryCache, seedTrackedPwd,
 } from "./readonly-bash-dirchange.js";
+import { runWithPassProbeBudget } from "./readonly-bash-git.js";
 
 /** Outcome of classifying one bash command: allowed, or a user-facing reason it is blocked. */
 export type Verdict =
@@ -182,7 +183,8 @@ export function classifyBashWithHeredocs(
 	shellVars: ReadonlyMap<string, string>, inheritedHeredocs: ReadonlyMap<string, HeredocBody>,
 ): Verdict {
 	// One memoized fs view per top-level pass so cd reachability cannot drift mid-command.
-	return runWithPassDirectoryCache(() => {
+	// Probe retries share that pass too, so chained git commands cannot each pay the retry budget.
+	return runWithPassProbeBudget(() => runWithPassDirectoryCache(() => {
 		const prepared = stripHeredocBodies(cmd, inheritedHeredocs);
 		if (prepared === null) return { ok: false, reason: `unsupported stdin code, group heredoc, or unterminated heredoc (e.g. avoid { cat; bash; } <<EOF)${FAIL_CLOSED_HINT}` };
 		const initial: ShellState = { cwd, stack: [], vars: seedTrackedPwd(shellVars, cwd), directories: new Set(), heredocs: prepared.heredocs };
@@ -193,7 +195,7 @@ export function classifyBashWithHeredocs(
 			if (error instanceof ShellStateBudgetError) return { ok: false, reason: `unsupported shell state expansion blocked${FAIL_CLOSED_HINT}` };
 			throw error;
 		}
-	});
+	}));
 }
 
 function classifyShellSequence(cmd: string, initial: ShellState[], depth: number): ShellGroupResult {
