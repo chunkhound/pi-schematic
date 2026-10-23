@@ -162,7 +162,7 @@ When `options.output` is set, `workflow.run` either resolves with a defined `out
 
 The host arms one run-scoped tool, `workflow_output`, for that step. The tool is the primer. It states that it is the only way to complete the run, that it MUST be called exactly once as the final action, and that a rejected call MUST be corrected. pi validates the call against `schema` before execution. An invalid submission becomes an error tool result. The model corrects it inside the same step.
 
-A valid call captures the object and ends the agent's follow-up. A settle that produced no call is an unsatisfied contract: the step rejects. Workflow code may catch the error. Otherwise the host aborts the run as `error`.
+A valid call captures the object and ends the agent's follow-up. A settle that produced no call gets one host nudge: the host sends a message that restates the submission contract, keeps the tool armed, and waits for the next settle. The nudge belongs to the same `workflow.run` step: it adds a model turn, not a step, and it is visible in the transcript. If the nudge also produces no call, the step rejects. Workflow code may catch the error. Otherwise the host aborts the run as `error`.
 
 Without `options.output`, the tool is inactive. After one structured run, pi 1.0.4 exposes no unregister call, so the definition stays registered but inactive (see Host gaps).
 

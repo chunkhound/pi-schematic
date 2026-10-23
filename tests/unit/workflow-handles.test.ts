@@ -292,6 +292,48 @@ test("a dispatch failure keeps buffered previews for the next run", async () => 
 	assert.match(sent[1], /Notebook page "perf" written/);
 });
 
+// WHY: the abort guard is only reachable in the settle-to-nudge gap: every earlier abort path
+// rejects `activeRun`. Abort there must not send a nudge into a cancelled run.
+test("an abort between the first settle and the nudge sends no second message", async () => {
+	const { deps, branch } = fakeRunDeps();
+	const settled = new Set<() => void>();
+	(deps.pi as unknown as { on: unknown }).on = (event: string, handler: () => void) => {
+		if (event === "agent_settled") settled.add(handler);
+		return () => { settled.delete(handler); };
+	};
+	const sent: string[] = [];
+	let seq = 0;
+	const settle = () => { for (const handler of [...settled]) handler(); };
+	(deps.pi as unknown as { sendUserMessage: unknown }).sendUserMessage = (text: string) => {
+		sent.push(text);
+		branch.push({ type: "message", id: `u${++seq}`, parentId: null, message: { role: "user" } });
+		// A second send settles at once, so a missing abort guard fails on the send count, not a hang.
+		if (sent.length > 1) {
+			branch.push({ type: "message", id: `a${seq}`, parentId: null, message: { role: "assistant" } });
+			settle();
+		}
+	};
+	// Output arming needs the tool registry seams; this test exercises dispatch only.
+	Object.assign(deps.pi, { registerTool: () => {}, setActiveTools: () => {} });
+	(deps.getCtx() as unknown as { abort: () => void }).abort = () => {};
+	const host = createWorkflowHost(deps);
+	const runTool = host.globals().find((tool) => tool.name === "workflow.run");
+	assert.ok(runTool, "workflow.run is registered");
+	const run = runTool.execute(["/review", { output: {} }], { signal: host.signal } as never) as Promise<unknown>;
+	for (let i = 0; i < 20 && sent.length === 0; i++) await Promise.resolve();
+	assert.equal(sent.length, 1, "the first dispatch is in flight");
+	// Flush past the dispatch await so the first correlation is already pending when it settles.
+	for (let i = 0; i < 5; i++) await Promise.resolve();
+	branch.push({ type: "message", id: "a1", parentId: null, message: { role: "assistant" } });
+	settle();
+	// The settle queues sendCorrelated's continuation first; this abort then lands after it clears
+	// `activeRun`, leaving only the nudge guard between the cancellation and a second send.
+	queueMicrotask(() => host.abort("cancelled"));
+	await assert.rejects(run, /did not call workflow_output/);
+	assert.equal(sent.length, 1, "a cancelled run gets no nudge");
+	assert.equal(host.abortedReason(), "cancelled");
+});
+
 // WHY: docs/workflows.md's Handles table is the user-facing contract for the handle union;
 // this pins it to the runtime surface so a handle added or removed forces a docs edit.
 test("the docs Handles table lists exactly the runtime handle surface", () => {

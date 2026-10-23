@@ -10,12 +10,20 @@ export const STRUCTURED_OUTPUT_TOOL = "workflow_output";
 // A run that omits a schema still returns an object; the model must submit something structured.
 const ANY_OBJECT = { type: "object", additionalProperties: true } as const;
 
-// Three lines, addressed to the model, so the primer stays the single source of the call contract.
+// Single wording of the call contract, shared verbatim by the tool primer and the nudge.
 const OUTPUT_GUIDELINES = [
 	"Call workflow_output exactly once, as your final action, with the finished result.",
 	"Put the result in the workflow_output arguments; do not repeat it as prose.",
 	"If workflow_output rejects the arguments, fix them and call it again.",
 ];
+
+/** Host text sent once when a structured run settles without a submission. The tool cannot
+ * send it: `execute` runs only when the model calls the tool. The lead states the failure
+ * only; the rules are OUTPUT_GUIDELINES verbatim, so the contract never has a second wording. */
+export const OUTPUT_NUDGE = [
+	"Your result was not submitted through workflow_output.",
+	...OUTPUT_GUIDELINES,
+].join("\n");
 
 /** Live capture for one structured run; `execute` writes `value`, the handle reads it after settle. */
 interface OutputCapture {

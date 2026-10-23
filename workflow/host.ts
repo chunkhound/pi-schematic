@@ -10,7 +10,7 @@ import { messageOf, safeAppendEntry, withRecordStatus } from "./errors.js";
 import { notebookIndex, notebookRead, notebookTopic, notebookWrite } from "./notebook.js";
 import { createRunRegistry, resolveRunTarget, type RunCorrelation, type RunMatch, type RunRegistry } from "./run-registry.js";
 import { createShellRunner } from "./shell.js";
-import { armStructuredOutput, type ArmedStructuredOutput } from "./output.js";
+import { armStructuredOutput, OUTPUT_NUDGE, type ArmedStructuredOutput } from "./output.js";
 import { addModelSpend, assistantCount, collectUsage, mergeModelSpend, spendIdentity, spendRowsTotal, type ModelSpend } from "../usage.js";
 import { armPendingStop, branchSpend, bumpSpendRevision, computeCurrentCost, liveBranch, limitReason, runSpendRows, type SpendState } from "./spend.js";
 import type { ChildUsageSink } from "../state.js";
@@ -834,11 +834,16 @@ async function primeRunTurn(deps: WorkflowHostDeps, prepared: PreparedRun): Prom
 	return { marker: prepared.ctx.sessionManager.getLeafId(), restore };
 }
 
-async function settleRun(deps: WorkflowHostDeps, state: HostState, prepared: PreparedRun, marker: string | null): Promise<Omit<RunResult, "state">> {
-	const match = await sendCorrelated(deps, state, prepared, marker);
-	state.settledRuns += 1;
-	// One settled run may contain many assistant messages (the tool-use loop); each is a model turn.
-	state.turns += assistantCount(match.branch);
+/** The nudge turn belongs to the same step: one span, one step count, both turns' usage. */
+function joinMatches(first: RunMatch, nudged: RunMatch): RunMatch {
+	return {
+		fromEntryId: first.fromEntryId,
+		toEntryId: nudged.toEntryId,
+		branch: [...first.branch, ...nudged.branch],
+	};
+}
+
+function runResultOf(match: RunMatch): Omit<RunResult, "state"> {
 	return {
 		text: lastAssistantText(match.branch),
 		fromEntryId: match.fromEntryId,
@@ -876,7 +881,21 @@ async function runWithStructuredOutput(deps: WorkflowHostDeps, state: HostState,
 		// Arm inside the try: a registration failure (e.g. a malformed output.schema) must still
 		// run the override restore, or this run's model/thinking leak into the next turn.
 		armed = prepared.options.output ? armStructuredOutput(deps.pi, prepared.options.output) : null;
-		result = await settleRun(deps, state, prepared, marker);
+		let match = await sendCorrelated(deps, state, prepared, marker);
+		// Count the first match now: a terminal nudge must not drop its settled turn, or
+		// `turns >= steps` breaks while both turns' cost is still charged.
+		state.settledRuns += 1;
+		state.turns += assistantCount(match.branch);
+		// WHY: a text-only settle is a missed contract, not a finished run. The tool stays
+		// armed and the report stays in context; a second miss rejects. The nudge is one model
+		// turn inside this step, never a loop or a second `workflow.run` count.
+		if (armed && armed.value() === undefined && !state.controller.signal.aborted) {
+			const nudged = await sendCorrelated(deps, state, { ...prepared, text: OUTPUT_NUDGE }, match.toEntryId);
+			// The nudge's assistant messages are more model turns in the same settled step.
+			state.turns += assistantCount(nudged.branch);
+			match = joinMatches(match, nudged);
+		}
+		result = runResultOf(match);
 		// WHY: a requested output with no captured object is an unsatisfied contract. Never
 		// resolve silently: the workflow may catch this, otherwise the run aborts as `error`.
 		if (armed && armed.value() === undefined)

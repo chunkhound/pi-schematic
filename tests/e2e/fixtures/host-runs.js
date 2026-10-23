@@ -4,6 +4,7 @@ return defineWorkflow((workflow) => {
 	const spec = JSON.parse(load("intent") || "{}");
 	const results = [];
 	let last = null;
+	let settledRuns = 0;
 	for (let i = 0; i < (spec.count || 1); i++) {
 		try {
 			const run = workflow.run(spec.prompt || "/review", spec.options);
@@ -12,7 +13,9 @@ return defineWorkflow((workflow) => {
 		} catch (error) {
 			results.push({ ok: false, error: String(error) });
 		}
+		// Expose the run counter after a caught failure, so tests can pin what the workflow sees.
+		settledRuns = workflow.state().settledRuns;
 	}
 	workflow.checkpoint({ phase: "done" });
-	return workflow.exit({ reason: "ok", results, last });
+	return workflow.exit({ reason: "ok", results, last, settledRuns });
 });

@@ -42,7 +42,7 @@ One `/workflow <file> [args]` run. Each step names its owner module.
 | `workflow/host.ts` | Host effects: handle dispatch, limits, exit record, run correlation, metrics. |
 | `workflow/limits-dialog.ts` | Soft-target resolution: flag bypass, interactive budget/time dialogs, headless no-target fallback; emits the `workflow-limits` entry. |
 | `workflow/notebook.ts` | `workflow.notebook*` inspectors and writer. |
-| `workflow/output.ts` | Run-scoped structured-output tool (`workflow_output`). |
+| `workflow/output.ts` | Run-scoped structured-output tool (`workflow_output`) and the single call-contract wording shared by its primer and the one-shot nudge. |
 | `workflow/rebind.ts` | `performNewSession`, `performHandoff`, `rebindRun` + `RebindBundle`/`RebindableDeps`; the per-wait handoff deadline (`HANDOFF_COMPACTION_TIMEOUT_MS`). |
 | `workflow/run-registry.ts` | Correlates sent runs with `agent_settled` boundaries; resolves run targets. |
 | `workflow/sandbox.ts` | Sandbox construction, timeout clamp, hard-deadline factor. |
@@ -86,6 +86,8 @@ One `/workflow <file> [args]` run. Each step names its owner module.
 **Non-overlap.** Compiled workflows are async, so `Promise.all` could interleave two effects. `executeGuarded` sets `state.executing` for the duration of one effect and throws `workflow calls must not overlap` if a second starts. This keeps previews, run markers, and counters consistent.
 
 **Guarded vs inspector split.** Every handle carries a `HandlePolicy`; `HANDLE_POLICY` in `workflow/host.ts` is the single code source, and the doc-contract test in `tests/unit/workflow-handles.test.ts` derives the Guarded/Inspectors/terminal partition from it. `kind` is `guarded`, `inspector`, or `control`. `guardDeferredStop` runs first on a guarded handle, so a crossed target arms a pending stop. `classify` sets `softLifecycle`: lifecycle and escalation failures become a normal aborted `ClassifierResult` instead of a rejection. `counted` defaults to `guarded`; only `checkpoint` overrides it.
+
+**Structured-run nudge.** When a run with `output` settles without a captured submission, the host sends the `OUTPUT_NUDGE` message and correlates a second settle. The two matches join into one span: `steps` counts the `workflow.run` once, `turns` counts both assistant messages, and usage sums both. A terminal error or abort skips the nudge. A second miss rejects the step.
 
 ## Targets, exit, salvage
 

@@ -11,7 +11,11 @@ return defineWorkflow((workflow) => {
 	else if (spec.handle === "entries") result = workflow.entries(spec.options || {});
 	else if (spec.handle === "readonly") result = workflow.readonly(spec.value);
 	else if (spec.handle === "classify") result = workflow.classify(spec.classify);
-	else if (spec.handle === "run") result = workflow.run(spec.prompt, spec.options);
+	else if (spec.handle === "run") {
+		result = workflow.run(spec.prompt, spec.options);
+		// `trace` exposes real branch ids so a test can pin the run span endpoints.
+		if (spec.trace) result.trace = workflow.entries();
+	}
 	else if (spec.handle === "shell") result = workflow.shell(spec.command);
 	else if (spec.handle === "checkpoint") result = workflow.checkpoint(spec.metadata);
 	else if (spec.handle === "exit") return workflow.exit(spec.metadata);

@@ -406,6 +406,7 @@ describe("workflow host E2E — structured output", () => {
 		const options = '{"output":{"schema":{"type":"object","required":["command"],"properties":{"command":{"type":"string"}}}}}';
 		const entries = await runWorkflowArgs(h, ECHO, `{"handle":"run","prompt":"hello","options":${options}}`);
 		assert.deepEqual(exitOf(entries).metadata.result.output, { command: "npm test" });
+		assert.equal((await readSentMessages(h)).length, 1, "a valid first submission gets no nudge");
 		assert.ok(!(await readActiveTools(h)).includes("workflow_output"), "the tool is disarmed after the run");
 		assert.ok(
 			!exitOf(entries).metadata.result.state.activeTools.includes("workflow_output"),
@@ -425,11 +426,60 @@ describe("workflow host E2E — structured output", () => {
 		assert.ok(!(await readTools(h)).includes("workflow_output"), "no output request means no tool");
 	}));
 
+	it("nudges once on a missing call, then captures the submission", async () => withWorkflowChild(async (h) => {
+		await sendOk(h, 'turn {"text":"review report","cost":0.2}');
+		await sendOk(h, 'turn {"output":{"command":"npm test"},"cost":0.3}');
+		const options = '{"output":{"schema":{"type":"object","required":["command"],"properties":{"command":{"type":"string"}}}}}';
+		const entries = await runWorkflowArgs(h, ECHO, `{"handle":"run","prompt":"hello","trace":true,"options":${options}}`);
+		const result = exitOf(entries).metadata.result;
+		assert.deepEqual(result.output, { command: "npm test" });
+		assert.equal(result.usage.cost.total, 0.5, "the nudge turn's usage is part of the step");
+		const trace = result.trace as Array<{ id: string; role: string; text: string }>;
+		const first = trace[0];
+		const last = trace.at(-1);
+		assert.equal(first.role, "user", "the joined span starts at the first dispatch");
+		assert.equal(last?.role, "assistant", "the joined span ends at the nudge settle");
+		assert.equal(result.fromEntryId, first.id, "fromEntryId is the pre-nudge start, not the nudge dispatch");
+		assert.equal(result.toEntryId, last?.id, "toEntryId is the second settle's last entry");
+		const sent = await readSentMessages(h);
+		assert.equal(sent.length, 2, "one dispatch plus one nudge");
+		assert.match(sent[1].content, /workflow_output/, "the nudge restates the tool contract");
+		const summary = summaryOf(entries);
+		assert.equal(summary.steps, 1, "the nudge is not a second workflow.run step");
+		assert.equal(summary.turns, 2, "both assistant messages count as turns");
+	}));
+
 	it("rejects when the model never calls the output tool and disarms it", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, 'turn {"text":"no structured call"}');
+		await sendOk(h, 'turn {"text":"still no structured call"}');
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"run","prompt":"hello","options":{"output":{"schema":{"type":"object"}}}}');
 		assert.match(String(summaryOf(entries).error), /did not call workflow_output/);
+		assert.equal((await readSentMessages(h)).length, 2, "exactly one nudge before the rejection");
 		assert.ok(!(await readActiveTools(h)).includes("workflow_output"), "the tool is disarmed after the failed run");
+	}));
+
+	it("does not nudge a terminal failure", async () => withWorkflowChild(async (h) => {
+		await sendOk(h, 'turn {"stopReason":"error"}');
+		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"run","prompt":"hello","options":{"output":{}}}');
+		assert.match(String(summaryOf(entries).error), /run failed: error/);
+		assert.equal((await readSentMessages(h)).length, 1, "a terminal failure gets no nudge");
+	}));
+
+	it("keeps the first settled turn when the nudge fails", async () => withWorkflowChild(async (h) => {
+		await sendOk(h, 'turn {"text":"review report","cost":0.2}');
+		await sendOk(h, 'turn {"stopReason":"error","cost":0.1}');
+		const entries = await runWorkflowArgs(h, RUNS, '{"prompt":"hello","options":{"output":{}}}');
+		const exit = exitOf(entries);
+		const result = (exit.metadata.results as any[])[0];
+		assert.equal(result.ok, false);
+		assert.match(result.error, /run failed: error/);
+		assert.equal(exit.metadata.settledRuns, 1, "a workflow that catches the error still sees the first turn settle");
+		const summary = summaryOf(entries);
+		assert.equal(summary.reason, "ok");
+		assert.equal(summary.steps, 1);
+		assert.equal(summary.turns, 1, "a terminal nudge keeps the first turn so turns >= steps");
+		assert.ok(Math.abs(summary.costUsd - 0.3) < 1e-9, "both turns remain charged");
+		assert.equal((await readSentMessages(h)).length, 2, "one dispatch plus one nudge");
 	}));
 
 	it("keeps the run error and the restore error when both fail", async () => withWorkflowChild(async (h) => {

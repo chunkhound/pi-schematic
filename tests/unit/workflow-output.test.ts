@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { validateToolCall } from "@earendil-works/pi-ai";
-import { armStructuredOutput, STRUCTURED_OUTPUT_TOOL } from "../../workflow/output.js";
+import { armStructuredOutput, OUTPUT_NUDGE, STRUCTURED_OUTPUT_TOOL } from "../../workflow/output.js";
 import type { StructuredOutputRequest } from "../../workflow/types.js";
 
 interface FakePi {
@@ -84,6 +84,19 @@ test("an omitted schema accepts any JSON object and instructions extend the prim
 	assert.match(tool.description, /only way to complete/);
 	assert.match(tool.description, /Report the test command\./);
 	assert.ok((tool.promptGuidelines as string[]).length > 0);
+});
+
+// The contract must read the same to a model that has just missed once: a second hand-written
+// wording could drift from the tool primer and contradict the rejection it answers.
+test("the primer and the one-shot nudge deliver the same contract lines verbatim", () => {
+	const { tool } = armedTool(fakePi(), {});
+	const contract = tool.promptGuidelines as string[];
+
+	assert.ok(contract.length > 0);
+	for (const line of contract) {
+		assert.ok(tool.description.includes(line), `primer must carry the contract line: ${line}`);
+		assert.ok(OUTPUT_NUDGE.includes(line), `nudge must carry the contract line: ${line}`);
+	}
 });
 
 // docs/workflows.md (Structured output) correction loop: pi validates a model-issued call against the run's schema
