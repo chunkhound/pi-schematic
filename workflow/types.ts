@@ -132,7 +132,7 @@ export interface ExitRecord {
 	partial?: unknown;
 	/** True when the exit was triggered at a checkpoint by a deferred stop, not by `workflow.exit`. */
 	checkpoint?: boolean;
-	/** Host abort message (e.g. the deferred-stop escalation); reaches the exit entry and the summary. docs/workflows.md (Exit). */
+	/** Run error: a workflow-supplied string `metadata.error`, or a host abort message (e.g. the deferred-stop escalation). Reaches the exit entry and the summary. docs/workflows.md (Exit). */
 	error?: string;
 }
 
@@ -145,7 +145,7 @@ export interface ExitOutcome {
 	metadata?: unknown;
 	/** Last checkpoint metadata salvaged by a checkpoint stop or a hard abort. */
 	partial?: unknown;
-	/** Host abort message for a hard abort or an infrastructure failure. */
+	/** Run error: a workflow-supplied string `metadata.error`, a hard abort, or an infrastructure failure. */
 	error?: string;
 	/** True when the run stopped at a checkpoint due to a deferred target stop. */
 	checkpoint?: boolean;

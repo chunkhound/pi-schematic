@@ -490,8 +490,11 @@ function handleExit(deps: WorkflowHostDeps, state: HostState, args: unknown): un
 	const metadata = (args ?? null) as Record<string, unknown> | null;
 	const reason = deriveExitReason(metadata);
 	validateExitReason(reason);
+	// A workflow names its failure cause in `metadata.error`; lift it so the summary's error
+	// row shows the cause, not only the reason. Non-strings stay metadata-only.
+	const error = typeof metadata?.error === "string" ? metadata.error : undefined;
 	// Single wire shape across every exit path: reason first, path payload in a named field.
-	commitExit(deps, state, { reason, metadata }, "error");
+	commitExit(deps, state, { reason, metadata, error }, "error");
 	// `workflow.exit` is terminal: stop the script at this call, unlike a checkpoint's deferral.
 	stopSandbox(state, "workflow exit");
 	return metadata;

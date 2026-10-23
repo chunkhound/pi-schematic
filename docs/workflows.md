@@ -126,7 +126,7 @@ Handles are **two-level only**. A global name has at most one dot. A `workflow.<
 | `workflow.readonly` | `(enabled) → { readonly }` | Toggle the readonly posture through the same path as `/readonly`. Return the new value. |
 | `workflow.new` | `() → void` | Clear the context and start a new session. |
 | `workflow.checkpoint` | `(metadata) → unknown` | Declare a safe exit point. |
-| `workflow.exit` | `(metadata) → unknown` | Record the exit and stop the run immediately. Resolves with the metadata argument. |
+| `workflow.exit` | `(metadata) → unknown` | Record the exit and stop the run immediately. Resolves with the metadata argument. A string `metadata.error` is the run's error in the exit record and summary. |
 
 ### workflow.run
 
@@ -288,7 +288,7 @@ The stop path depends on the mode:
 
 An unhandled handle error and every infrastructure failure are also immediate.
 
-**Salvage.** When a run stops at a checkpoint, or aborts after a checkpoint was reached, the last checkpoint metadata becomes the run's partial result. It enters the `workflow-exit` entry as `partial` and the `workflow-summary` overview as `partial`. `workflow.exit` is terminal and immediate. Its metadata is the final exit record, not a partial. A run that stops before any checkpoint salvages nothing.
+**Salvage.** When a run stops at a checkpoint, or aborts after a checkpoint was reached, the last checkpoint metadata becomes the run's partial result. It enters the `workflow-exit` entry as `partial` and the `workflow-summary` overview as `partial`. `workflow.exit` is terminal and immediate. Its metadata is the final exit record, not a partial. A string `metadata.error` is lifted into the exit record's `error` and the summary's error row; the full metadata still records it. A run that stops before any checkpoint salvages nothing.
 
 Host calls MUST NOT overlap. A second `workflow.*` call while one is running rejects with `workflow calls must not overlap`.
 

@@ -60,3 +60,13 @@ test("workflow.exit keeps user metadata in `metadata` with no `partial`", async 
 	assert.deepEqual(exit?.metadata, { reason: "done" });
 	assert.equal(exit?.partial, undefined, "a plain exit salvages nothing");
 });
+
+test("a non-string metadata.error stays metadata-only", async () => {
+	const host = createWorkflowHost(fakeDeps());
+	const byName = new Map(host.globals().map((tool) => [tool.name, tool]));
+	const context = { signal: new AbortController().signal } as never;
+	await byName.get("workflow.exit")!.execute({ reason: "done", error: { code: 1 } }, context);
+	const exit = host.exitRecord();
+	assert.equal(exit?.error, undefined, "only a string is the run error");
+	assert.deepEqual(exit?.metadata, { reason: "done", error: { code: 1 } }, "the raw payload keeps the value");
+});

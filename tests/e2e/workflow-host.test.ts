@@ -139,6 +139,14 @@ describe("workflow host E2E — run correlation", () => {
 		assert.equal(summaryOf(entries).reason, "approved");
 	}));
 
+	it("surfaces a workflow-supplied exit error on the record and summary", async () => withWorkflowChild(async (h) => {
+		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"exit","metadata":{"reason":"review-failed","error":"no submission"}}');
+		const exit = exitOf(entries);
+		assert.equal(exit.error, "no submission");
+		assert.deepEqual(exit.metadata, { reason: "review-failed", error: "no submission" }, "the raw payload keeps the error");
+		assert.equal(summaryOf(entries).error, "no submission");
+	}));
+
 	it("rejects a reserved abort reason instead of recording it", async () => withWorkflowChild(async (h) => {
 		const entries = await runWorkflowArgs(h, ECHO, '{"handle":"exit","metadata":{"reason":"cost-limit"}}');
 		assert.match(String(summaryOf(entries).error), /is a reserved abort reason/);

@@ -15,6 +15,7 @@ export interface WorkflowRunSummaryData {
 	workflow: string;
 	/** Workflow exit reason, a reserved abort reason, or `returned`. */
 	reason: string;
+	/** Run error: a workflow-supplied string `metadata.error`, or a host abort message. */
 	error?: string;
 	startedAt: string;
 	endedAt: string;

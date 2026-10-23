@@ -107,7 +107,7 @@ All surfaces are CustomEntry or UI only. None enter the LLM context.
 
 | Surface | Owner | Content |
 |---|---|---|
-| `workflow-exit` entry | `workflow/host.ts` | One exit record, always `{ v, reason, ... }`: workflow metadata as `metadata`, a checkpoint stop or hard abort adds `partial` (and `error`), and a script that ends without `workflow.exit` records `returned`. No registered renderer. |
+| `workflow-exit` entry | `workflow/host.ts` | One exit record, always `{ v, reason, ... }`: workflow metadata as `metadata`, a string `metadata.error`, a checkpoint stop, or a hard abort adds `error` (a stop also adds `partial`), and a script that ends without `workflow.exit` records `returned`. No registered renderer. |
 | `workflow-summary` entry | `workflow/summary.ts`, rendered by `workflow/summary-renderer.ts` | Versioned run overview: reason, elapsed, counts, spend rows, effect log. |
 | `workflow-shell` entry | `workflow/activity.ts` | Versioned one shell call: exit status, duration, bounded output tail. |
 | `workflow-log` entry | `workflow/command.ts` | The script's `console`/`text()` output. |
