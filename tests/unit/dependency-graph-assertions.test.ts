@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
-const { assertSynchronizedPackageVersions } = await import(
+const { assertSynchronizedPackageVersions, assertInstalledMatchesDeclared } = await import(
 	new URL("../../scripts/dependency-graph-assertions.mjs", import.meta.url).href,
 );
 
@@ -53,4 +55,53 @@ test("latest assertions reject mixed nested Pi and TypeBox versions", () => {
 	const mixedTypebox = graph() as any;
 	mixedTypebox.dependencies["@earendil-works/pi-ai"].dependencies.typebox.version = "1.9.0";
 	assert.throws(() => assertSynchronizedPackageVersions(mixedTypebox, ["typebox"]), /synchronized.*1\.9\.0.*2\.0\.0/i);
+});
+
+/** A throwaway project whose package.json and node_modules versions the guard can read. */
+function scratchProject(declared: Record<string, string>, installed: Record<string, string | undefined>): string {
+	const root = mkdtempSync(join(tmpdir(), "dep-graph-"));
+	writeFileSync(join(root, "package.json"), JSON.stringify({ devDependencies: declared }));
+	for (const [name, version] of Object.entries(installed)) {
+		if (version === undefined) continue;
+		const directory = join(root, "node_modules", name);
+		mkdirSync(directory, { recursive: true });
+		writeFileSync(join(directory, "package.json"), JSON.stringify({ version }));
+	}
+	return root;
+}
+
+test("the stale-install guard accepts a node_modules that matches package.json", () => {
+	const root = scratchProject(
+		{ "@earendil-works/pi-coding-agent": "0.99.2", typebox: "1.3.27" },
+		{ "@earendil-works/pi-coding-agent": "0.99.2", typebox: "1.3.27" },
+	);
+	try {
+		assert.doesNotThrow(() => assertInstalledMatchesDeclared(root));
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("the stale-install guard rejects a node_modules older than package.json", () => {
+	const root = scratchProject(
+		{ "@earendil-works/pi-coding-agent": "0.99.2" },
+		{ "@earendil-works/pi-coding-agent": "0.84.1" },
+	);
+	try {
+		assert.throws(
+			() => assertInstalledMatchesDeclared(root),
+			/installed 0\.84\.1.*declares 0\.99\.2/i,
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("the stale-install guard rejects a missing installed package", () => {
+	const root = scratchProject({ typebox: "1.3.27" }, { typebox: undefined });
+	try {
+		assert.throws(() => assertInstalledMatchesDeclared(root), /installed missing.*declares 1\.3\.27/i);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });

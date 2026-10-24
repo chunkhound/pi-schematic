@@ -1,9 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertInstalledMatchesDeclared } from "./dependency-graph-assertions.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
+// Guard against a stale node_modules: tests must never run against an older Pi than the
+// repo pins, which is how an old local install silently reshaped the E2E suite once.
+assertInstalledMatchesDeclared(root);
 const args = process.argv.slice(2);
 const updateSnapshots = args.includes("--update-snapshots");
 const patterns = args.filter((arg) => arg !== "--update-snapshots");

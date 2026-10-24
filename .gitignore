@@ -154,6 +154,8 @@ vite.config.ts.timestamp-*
 .chunkhound.json
 .chunkhound/
 .mcp.json
+
+# pi extension local config
 .pi/
 
 # macOS

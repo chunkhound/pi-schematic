@@ -12,7 +12,7 @@ export const READONLY_BASH_SCOPE = "bash writes/deletions outside temp blocked";
 /** Scope of non-temporary mutations blocked while readonly is active. */
 export const READONLY_NON_TEMP_MUTATION_SCOPE = "write, edit, powershell, and non-temp bash filesystem mutations remain blocked";
 /** Message emitted when the OS sandbox rejects a readonly mutation. */
-export const READONLY_SANDBOX_BLOCK_NOTICE = "[readonly mode] The OS sandbox blocked a filesystem write outside the OS temp dir.\nUse /readonly to disable, or write within the OS temp dir.";
+export const READONLY_SANDBOX_BLOCK_NOTICE = "[readonly mode] The OS sandbox blocked a filesystem write outside the writable temp roots (the OS temp directory or /tmp).\nUse /readonly to disable, or write inside a temp directory.";
 /** User-visible shorthand for an explicit handoff request. */
 export const READONLY_EXPLICIT_HANDOFF = "explicit /handoff";
 /** All supported ways to activate the temporary readonly handoff exception. */
@@ -24,6 +24,8 @@ export const READONLY_WRITE_EDIT_BASH = `write/edit/powershell blocked; ${READON
 
 /** Reason for malformed bash tool input at the readonly boundary. */
 export const READONLY_INVALID_BASH_COMMAND_REASON = "bash command input must be a string";
+/** Suffix for fail-closed blocks: a safe over-block differs from a proven outside-temp write. */
+export const FAIL_CLOSED_HINT = " \u2014 fail-closed; retry a simpler form";
 
 /** Build the detailed reason returned when a bash command is blocked. */
 export function buildReadonlyBashBlockReason(reason: string, command: string): string {
