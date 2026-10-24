@@ -387,9 +387,31 @@ export function isCrossDriveRelative(value: string, cwd: string): boolean {
 	return target !== undefined && base !== undefined && target !== base;
 }
 
-/** Basename of the UNKNOWN_CWD sentinel (readonly-bash-dirchange.ts). Structural check
- * avoids an import cycle; a later relative path there is unproven, never outside. */
-const UNKNOWN_CWD_BASENAME = ".pi-readonly-unknown-cwd";
+/** Sentinel basenames for a directory change the tracker cannot resolve. Keeping the
+ * cause in the sentinel path lets one message name a fix that can work; structural
+ * checks avoid an import cycle. */
+export const UNKNOWN_CWD_BASENAMES = Object.freeze({
+	lexical: ".pi-readonly-unknown-cwd",
+	dynamic: ".pi-readonly-unknown-cwd-dynamic",
+	mktemp: ".pi-readonly-unknown-cwd-mktemp",
+	flag: ".pi-readonly-unknown-cwd-flag",
+	cdpath: ".pi-readonly-unknown-cwd-cdpath",
+	glob: ".pi-readonly-unknown-cwd-glob",
+	previous: ".pi-readonly-unknown-cwd-previous",
+});
+export type UnknownCwdKind = keyof typeof UNKNOWN_CWD_BASENAMES;
+
+export function unknownCwdKind(cwd: string): UnknownCwdKind | null {
+	const base = path.basename(cwd);
+	for (const kind of Object.keys(UNKNOWN_CWD_BASENAMES) as UnknownCwdKind[]) {
+		if (UNKNOWN_CWD_BASENAMES[kind] === base) return kind;
+	}
+	return null;
+}
+
+export function isUnknownCwd(cwd: string): boolean {
+	return unknownCwdKind(cwd) !== null;
+}
 
 /** Whether a write target is provably inside the temp roots, provably outside, or unprovable. */
 export type TempPathVerdict = "inside" | "outside" | "unproven";
@@ -407,23 +429,42 @@ export function classifyTempPath(rawPath: string, cwd: string, shellVars: Readon
 	return (globResult ?? isTempLiteralPath(operand.value, cwd)) ? "inside" : "outside";
 }
 
+/** A fix that can work for this cause. Only an unsafe flag is recoverable with `cd -L`. */
+function unknownCwdHint(kind: UnknownCwdKind): string {
+	switch (kind) {
+		case "flag": return " (cwd unknown after cd; use cd -L with a literal path)";
+		case "mktemp": return " (cwd came from an unproven mktemp base; use a base under temp and chain with &&)";
+		case "cdpath": return " (cwd unknown after cd; unset CDPATH or start the path with ./)";
+		case "glob": return " (cwd unknown after cd; use a literal directory path, not a glob)";
+		case "previous": return " (cwd unknown after cd; pass the literal directory path instead of -)";
+		case "lexical": return " (cwd unknown after cd; use a plain literal path under temp)";
+		default: return " (cwd is not provable; use a literal path)";
+	}
+}
+
 /**
  * Block reason for one write target, or null when it is provably inside the temp roots.
  * An unprovable target reports "cannot prove", never a false "outside temp dir" claim —
  * the wrong diagnosis sends users after a fix that cannot help them.
  */
+/** One reason builder for both decoded and raw paths, so hints cannot drift. */
+function pathVerdictBlockReason(subject: string, verdict: Exclude<TempPathVerdict, "inside">, shown: string, cwd: string, relative: boolean): string {
+	const kind = unknownCwdKind(cwd);
+	// An absolute target is proven outside regardless of cwd; a cwd hint would mislead.
+	if (verdict === "outside") {
+		if (kind === null || !relative) return `${subject} blocked outside temp dir: ${shown}`;
+		return `${subject} blocked: cannot prove target stays inside temp: ${shown}${unknownCwdHint(kind)}${FAIL_CLOSED_HINT}`;
+	}
+	// A dynamic target cannot be proven, but a mktemp-derived cwd still names a real fix.
+	if (kind === "mktemp" && relative) return `${subject} blocked: cannot prove target stays inside temp: ${shown}${unknownCwdHint(kind)}${FAIL_CLOSED_HINT}`;
+	return `${subject} blocked: cannot prove target stays inside temp: ${shown}${FAIL_CLOSED_HINT}`;
+}
+
 export function tempPathBlockReason(subject: string, rawPath: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map()): string | null {
 	const verdict = classifyTempPath(rawPath, cwd, shellVars);
 	if (verdict === "inside") return null;
 	const shown = stripMatchingQuotes(rawPath) || "(unknown target)";
-	if (verdict === "outside") {
-		// A relative target at the unknown cwd is unproven, not outside: the tracker
-		// lost the directory (e.g. cd -P), so say so with a fix (cd -L).
-		return path.basename(cwd) === UNKNOWN_CWD_BASENAME
-			? `${subject} blocked: cannot prove target stays inside temp: ${shown} (cwd unknown after cd; use cd -L with a literal path)${FAIL_CLOSED_HINT}`
-			: `${subject} blocked outside temp dir: ${shown}`;
-	}
-	return `${subject} blocked: cannot prove target stays inside temp: ${shown}${FAIL_CLOSED_HINT}`;
+	return pathVerdictBlockReason(subject, verdict, shown, cwd, !path.isAbsolute(stripMatchingQuotes(rawPath)));
 }
 
 /** Check data already decoded by Bash/Git; literal quotes and backslashes are not shell syntax. */

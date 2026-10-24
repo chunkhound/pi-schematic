@@ -9,7 +9,7 @@ import path from "node:path";
 import os from "node:os";
 import { accessSync, constants, statSync } from "node:fs";
 import { FAIL_CLOSED_HINT } from "./notifications.js";
-import { decodeShellPathOperand, decodeShellWord, getCommandTokens, normalizedCommand, unescapeCommandWord, stripMatchingQuotes, stripRedirectTokens, SHELL_WORD_PATTERN, skipLeadingRedirections, STDIN_DATA_CONSUMERS, isWindowsRiskyPathTarget, isCrossDriveRelative } from "./readonly-shell-utils.js";
+import { decodeShellPathOperand, decodeShellWord, getCommandTokens, normalizedCommand, unescapeCommandWord, stripMatchingQuotes, stripRedirectTokens, SHELL_WORD_PATTERN, skipLeadingRedirections, STDIN_DATA_CONSUMERS, isWindowsRiskyPathTarget, isCrossDriveRelative, UNKNOWN_CWD_BASENAMES, isUnknownCwd, type UnknownCwdKind } from "./readonly-shell-utils.js";
 import { splitUnquotedShellSegments } from "./readonly-bash-scanner.js";
 import { parseCommandPrefix, getFilesystemMutationReason } from "./readonly-bash-commands.js";
 import { classifyBashCommand, getStandaloneShellAssignments, redirectMayAbortCommand } from "./readonly-bash.js";
@@ -17,9 +17,22 @@ import type { ShellState, ShellOutcome } from "./readonly-bash.js";
 
 export const DIR_CHANGE_BUILTINS = new Set(["cd", "pushd", "popd"]);
 
-// Sentinel cwd for a directory change the classifier cannot resolve. It resolves
-// outside every temp root, so later relative paths are conservatively blocked.
-export const UNKNOWN_CWD = path.join(path.parse(process.cwd()).root, ".pi-readonly-unknown-cwd");
+// Sentinel cwds for a directory change the classifier cannot resolve. They resolve
+// outside every temp root, so later relative paths are conservatively blocked. The
+// basename carries the cause so the block reason can name a fix that works.
+const UNKNOWN_ROOT = path.parse(process.cwd()).root;
+const unknownCwdPath = (kind: UnknownCwdKind): string => path.join(UNKNOWN_ROOT, UNKNOWN_CWD_BASENAMES[kind]);
+const UNKNOWN_CWD_DYNAMIC = unknownCwdPath("dynamic");
+const UNKNOWN_CWD_FLAG = unknownCwdPath("flag");
+
+/** Why a dynamic target could not become a tracked cwd; a mktemp-derived value names its own fix. */
+function dynamicCwdKind(target: string, commandVars: ReadonlyMap<string, string>): UnknownCwdKind {
+	const operand = stripMatchingQuotes(target);
+	if (!/[$`]/.test(operand)) return "lexical";
+	const name = operand.match(/^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)|([A-Za-z_][A-Za-z0-9_]*))/);
+	const value = name ? commandVars.get(name[1] ?? name[2]!) : undefined;
+	return value?.includes("mktemp") || operand.includes("mktemp") ? "mktemp" : "dynamic";
+}
 
 /**
  * Per-pass memoized view of the live filesystem for cd reachability.
@@ -92,11 +105,11 @@ function directoryTraversalAccessible(rawTarget: string, cwd: string, directorie
 function resolveBuiltinCwd(command: string, target: string | null, state: ShellState, segment: string, stack: string[]): ResolvedCwd {
 	const commandVars = new Map(state.vars);
 	for (const [name, value] of getStandaloneShellAssignments(segment, state.cwd, state.vars).assignments) commandVars.set(name, value);
-	if (command === "popd") return { cwd: stack.pop() ?? UNKNOWN_CWD, traversalOk: true };
-	if (target === null) return { cwd: command === "cd" ? os.homedir() : UNKNOWN_CWD, traversalOk: true };
-	const raw = expandDirectoryTarget(target, state.vars, commandVars);
-	if (raw === null) return { cwd: UNKNOWN_CWD, traversalOk: true };
-	return { cwd: path.resolve(state.cwd, raw), traversalOk: directoryTraversalAccessible(raw, state.cwd, state.directories) };
+	if (command === "popd") return { cwd: stack.pop() ?? UNKNOWN_CWD_DYNAMIC, traversalOk: true };
+	if (target === null) return { cwd: command === "cd" ? os.homedir() : UNKNOWN_CWD_DYNAMIC, traversalOk: true };
+	const expanded = expandDirectoryTarget(target, state.vars, commandVars);
+	if ("unknown" in expanded) return { cwd: unknownCwdPath(expanded.unknown), traversalOk: true };
+	return { cwd: path.resolve(state.cwd, expanded.value), traversalOk: directoryTraversalAccessible(expanded.value, state.cwd, state.directories) };
 }
 
 /** Leading `$VAR`/`${VAR}` command word, matched as a whole word after removing optional double quotes. */
@@ -139,9 +152,9 @@ function withTrackedCwd(state: ShellState, cwd: string, stack: string[] = state.
 	return { ...state, cwd, stack, vars: new Map(state.vars).set("PWD", cwd) };
 }
 
-/** A dynamic command word may move the shell; fork UNKNOWN_CWD so later paths fail closed. */
+/** A dynamic command word may move the shell; fork a dynamic unknown cwd so later paths fail closed. */
 function unknownCwdOutcome(state: ShellState): ShellOutcome {
-	const unknown = withTrackedCwd(state, UNKNOWN_CWD);
+	const unknown = withTrackedCwd(state, UNKNOWN_CWD_DYNAMIC);
 	return { success: [state, unknown], failure: [state, unknown] };
 }
 
@@ -155,11 +168,16 @@ export function applyDirectoryChange(segment: string, state: ShellState): ShellO
 	const command = normalizedCommand(tokens[0]), stack = [...state.stack];
 	const resolved = resolveBuiltinCwd(command, getDirectoryTarget(tokens), state, segment, stack);
 	if (command === "pushd") stack.push(state.cwd);
-	const cwd = directoryArgumentsUncertain(command, tokens) ? UNKNOWN_CWD : resolved.cwd;
+	const uncertain = directoryArgumentsUncertain(command, tokens);
+	// A `-P`/stack change loses the lexical path (cd -L can recover it); a dynamic
+	// operand or mktemp-derived value is not provable by cd -L at all.
+	const cwd = !uncertain ? resolved.cwd
+		: isUnknownCwd(resolved.cwd) ? resolved.cwd
+		: hasUnsafeDirectoryFlag(tokens) ? UNKNOWN_CWD_FLAG : UNKNOWN_CWD_DYNAMIC;
 	const synthetic = state.directories.has(cwd);
 	const reachable = resolved.traversalOk && (synthetic || directoryAccessible(cwd));
 	// Runtime creation/cd can fail; only && may discard the caller-cwd branch.
-	const failure = cwd === UNKNOWN_CWD || synthetic || !reachable || redirectMayAbortCommand(segment) ? [state] : [];
+	const failure = isUnknownCwd(cwd) || synthetic || !reachable || redirectMayAbortCommand(segment) ? [state] : [];
 	return { success: [withTrackedCwd(state, cwd, stack)], failure };
 }
 
@@ -173,7 +191,7 @@ export function nonDirectoryChangeOutcome(segment: string, state: ShellState): S
 	const deferredUncertain = getTrapHandlerCode(segment) !== null
 		|| getAliasDefinitionValues(segment).some(deferredCodeMayChangeDirectory);
 	const uncertain = lead && (CWD_UNCERTAIN_BUILTINS.has(normalizedCommand(lead)) || compoundChangesDirectory(segment) || deferredUncertain)
-		? [withTrackedCwd(state, UNKNOWN_CWD)] : [];
+		? [withTrackedCwd(state, UNKNOWN_CWD_DYNAMIC)] : [];
 	// A failing eval/source may also have moved the shell, so its `||` branch must
 	// classify at UNKNOWN_CWD too; keeping only the caller state let
 	// `eval "cd /etc; false" || touch x` write outside temp.
@@ -269,7 +287,7 @@ export function compoundSegmentReason(segment: string, state: ShellState, depth:
 	if (reason) return reason;
 	// A directory change inside the body may succeed, so inner relative writes are
 	// also checked from the fail-closed unknown cwd (same posture as eval/source).
-	return compoundChangesDirectory(segment) ? compoundMutationReason(commands, UNKNOWN_CWD, depth, state.vars) : null;
+	return compoundChangesDirectory(segment) ? compoundMutationReason(commands, UNKNOWN_CWD_DYNAMIC, depth, state.vars) : null;
 }
 
 function compoundMutationReason(commands: string[], cwd: string, depth: number, vars: ReadonlyMap<string, string>): string | null {
@@ -349,14 +367,19 @@ export function getDirectoryTarget(tokens: string[]): string | null {
 	return null;
 }
 
+type ExpandedDirectoryTarget = { value: string } | { unknown: UnknownCwdKind };
+
 /** Directory operands use path decoding, never the command-name approximation. */
-function expandDirectoryTarget(target: string, shellVars: ReadonlyMap<string, string>, commandVars: ReadonlyMap<string, string>): string | null {
+function expandDirectoryTarget(target: string, shellVars: ReadonlyMap<string, string>, commandVars: ReadonlyMap<string, string>): ExpandedDirectoryTarget {
 	const operand = decodeShellPathOperand(target, shellVars);
-	if (operand === null || operand.value === "-" || (operand.glob && /[*?{}\[\]]/.test(operand.value))) return null;
+	if (operand === null) return { unknown: dynamicCwdKind(target, commandVars) };
+	if (operand.value === "-") return { unknown: "previous" };
+	if (operand.glob && /[*?{}\[\]]/.test(operand.value)) return { unknown: "glob" };
 	// Win32-only syntax is platform-gated: device namespaces always fail closed, drive/UNC only
 	// off win32, cross-drive-relative only on win32 (see isCrossDriveRelative in resolveDirectoryTarget).
-	if (isWindowsRiskyPathTarget(operand.value)) return null;
-	return gateRelativeCdPath(operand.value, commandVars);
+	if (isWindowsRiskyPathTarget(operand.value)) return { unknown: "lexical" };
+	const gated = gateRelativeCdPath(operand.value, commandVars);
+	return gated === null ? { unknown: "cdpath" } : { value: gated };
 }
 
 /** CDPATH can select a directory outside cwd; explicit relative paths bypass it. */
@@ -368,10 +391,10 @@ function gateRelativeCdPath(value: string, commandVars: ReadonlyMap<string, stri
 /** Resolve a directory operand to an absolute path, or null when it is dynamic. */
 export function resolveDirectoryTarget(target: string, cwd: string, shellVars: ReadonlyMap<string, string>, commandVars: ReadonlyMap<string, string> = shellVars): string | null {
 	const expanded = expandDirectoryTarget(target, shellVars, commandVars);
-	if (expanded === null) return null;
+	if ("unknown" in expanded) return null;
 	// Cross-drive-relative resolves against another drive's ambient cwd, not `cwd`: unprovable.
-	if (process.platform === "win32" && isCrossDriveRelative(expanded, cwd)) return null;
-	return path.resolve(cwd, expanded);
+	if (process.platform === "win32" && isCrossDriveRelative(expanded.value, cwd)) return null;
+	return path.resolve(cwd, expanded.value);
 }
 
 // ── Deferred code (trap handlers, alias definitions) ──

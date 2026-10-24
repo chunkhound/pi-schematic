@@ -119,6 +119,47 @@ test("blocks command substitutions that write outside temp", async () => {
 	await assertBlocked(toolCall, `touch $(echo ${outsideTemp})`);
 });
 
+test("unknown-cwd block reasons name a fix for the actual cause", () => {
+	const tmp = shellPath(os.tmpdir());
+	const outside = shellPath(path.join(os.homedir(), "readonly-cwd-hint"));
+
+	const flag = classifyBashCommand(`cd -P ${tmp} && touch f`, "/workspace");
+	assert.equal(flag.ok, false);
+	assert.match(flag.reason, /cd -L with a literal path/);
+
+	const cdpath = classifyBashCommand(`CDPATH=${outside} cd sub && touch f`, tmp);
+	assert.equal(cdpath.ok, false);
+	assert.match(cdpath.reason, /unset CDPATH or start the path with \.\//);
+	assert.doesNotMatch(cdpath.reason, /cd -L/);
+
+	const glob = classifyBashCommand(`cd ${tmp}/* && touch f`, tmp);
+	assert.equal(glob.ok, false);
+	assert.match(glob.reason, /use a literal directory path/);
+	assert.doesNotMatch(glob.reason, /cd -L/);
+
+	const previous = classifyBashCommand("cd - && touch f", tmp);
+	assert.equal(previous.ok, false);
+	assert.match(previous.reason, /pass the literal directory path instead of -/);
+	assert.doesNotMatch(previous.reason, /cd -L/);
+
+	const mktemp = classifyBashCommand(`TMPDIR=${outside} D=$(mktemp -d) && cd "$D" && touch f`, "/workspace");
+	assert.equal(mktemp.ok, false);
+	assert.match(mktemp.reason, /mktemp base/);
+	assert.match(mktemp.reason, /&&/);
+	assert.doesNotMatch(mktemp.reason, /cd -L/);
+
+	const dynamic = classifyBashCommand('cd "$UNKNOWN_CWD" && touch f', "/workspace");
+	assert.equal(dynamic.ok, false);
+	assert.match(dynamic.reason, /cwd is not provable/);
+	assert.doesNotMatch(dynamic.reason, /cd -L/);
+
+	// An absolute target is proven outside independently of the tracked cwd.
+	const absolute = classifyBashCommand(`cd "$UNKNOWN_CWD" && touch ${outside}`, "/workspace");
+	assert.equal(absolute.ok, false);
+	assert.match(absolute.reason, /blocked outside temp dir/);
+	assert.doesNotMatch(absolute.reason, /cd -L|cwd is not provable/);
+});
+
 test("blocks write redirects outside temp dir", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
