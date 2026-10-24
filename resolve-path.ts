@@ -1,6 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 
+/** Join a path operand under a base WITHOUT lexical collapse. The kernel follows each
+ * symlink before it applies a later `..`, so `link/..` is the link target's parent, not
+ * the entry's parent. `path.resolve`/`path.join` erase that difference. */
+export function joinPathFrom(base: string, value: string): string {
+	return path.isAbsolute(value) ? value : `${base}${path.sep}${value}`;
+}
+
+/** Resolve `value` under `base` the way the kernel does: join raw, then follow symlinks. */
+export function resolvePathFrom(base: string, value: string): string {
+	return resolveRealPath(joinPathFrom(base, value));
+}
+
 /**
  * Resolve a path's real location, following symlinks.
  * If the path doesn't exist, walk up to the nearest existing ancestor
@@ -25,5 +37,25 @@ export function resolveRealPath(p: string): string {
 		} catch {
 			return path.join(resolveRealPath(parent), path.basename(p));
 		}
+	}
+}
+
+/** True only for a real directory: a symlink or a missing path is not one. `find -execdir`
+ * uses this to tell a directory search root (runs there) from a file entry (runs in its
+ * parent); `lstat` keeps a symlink root on the parent side, find's default -P behavior. */
+export function isRealDirectory(p: string): boolean {
+	try {
+		return fs.lstatSync(p).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+/** True only for a symlink entry, before any realpath resolution. */
+export function isSymlinkPath(p: string): boolean {
+	try {
+		return fs.lstatSync(p).isSymbolicLink();
+	} catch {
+		return false;
 	}
 }

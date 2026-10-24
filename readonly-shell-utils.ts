@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { globSync } from "node:fs";
-import { resolveRealPath } from "./resolve-path.js";
+import { resolvePathFrom } from "./resolve-path.js";
 import { TEMP_WRITE_ROOTS_CANONICAL } from "./temp-dir.js";
 import { FAIL_CLOSED_HINT } from "./notifications.js";
 
@@ -428,7 +428,9 @@ export function tempPathBlockReason(subject: string, rawPath: string, cwd: strin
 
 /** Check data already decoded by Bash/Git; literal quotes and backslashes are not shell syntax. */
 export function isTempLiteralPath(value: string, cwd: string): boolean {
-	const real = resolveRealPath(path.resolve(cwd, value));
+	// Join raw, then realpath: collapsing `..` first would misjudge `link/../pwn` when
+	// `link` points outside temp (the kernel resolves the link before its parent).
+	const real = resolvePathFrom(cwd, value);
 	return TEMP_WRITE_ROOTS_CANONICAL.some((root) => isWithinPath(root, real));
 }
 

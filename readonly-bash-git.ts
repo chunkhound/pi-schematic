@@ -2,7 +2,7 @@ import path from "node:path";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
 import { accessSync, closeSync, constants, lstatSync, openSync, readFileSync, readlinkSync, readSync, realpathSync, statSync, type Stats } from "node:fs";
-import { resolveRealPath } from "./resolve-path.js";
+import { joinPathFrom, resolvePathFrom, resolveRealPath } from "./resolve-path.js";
 import {
 	stripMatchingQuotes,
 	decodeShellWord,
@@ -195,7 +195,7 @@ function resolveGitPath(value: string, base: string): string | null {
  * without lexical collapse (the gitCommonDirectory approach), then realpath. A not-yet-existing
  * target keeps the nearest-existing-ancestor fallback so new destinations still resolve. */
 function resolveGitTraversalPath(value: string, base: string): string {
-	const raw = path.isAbsolute(value) ? value : `${base}${path.sep}${value}`;
+	const raw = joinPathFrom(base, value);
 	try { return realpathSync.native(raw); }
 	catch (error) {
 		if (absentProbePath(error)) return resolveRealPath(raw);
@@ -390,7 +390,7 @@ function resolveGitDir(value: string, base: string): string | null {
 	if (resolved === null) return null;
 	try {
 		if (statSync(resolved).isDirectory()) return resolved;
-		const pointer = readGitPointer(resolved);
+		const pointer = readGitMetadata(resolved);
 		if (pointer && pointer.startsWith("gitdir: ")) {
 			const target = pointer.slice(8);
 			return resolveGitPath(target, path.dirname(resolved)) ?? path.resolve(path.dirname(resolved), target);
@@ -745,22 +745,17 @@ function readGitText(file: string): string | null {
 	}
 }
 
+/** Git reads metadata path values verbatim: it strips only trailing newline/return bytes, so
+ * a trailing space/tab selects the exact byte string Git opens. Trimming would send the guard
+ * to a harmless path while Git follows the real one (a `gitdir:` pointer or `commondir`). */
 function readGitMetadata(file: string): string | null {
-	return readGitText(file)?.trim() ?? null;
-}
-
-/** Git reads a `gitdir:` pointer pathname verbatim: it strips only trailing newline/return
- * bytes, so a trailing space/tab selects the exact byte string Git opens. Trimming it would
- * send the guard to a harmless path while Git follows a symlink named with the space into an
- * outside repository. */
-function readGitPointer(file: string): string | null {
-	return readGitText(file)?.replace(/[\n\r]+$/, "") ?? null;
+	return readGitText(file)?.replace(/[\r\n]+$/, "") ?? null;
 }
 
 function gitMetadataRoots(directory: string): string[] {
 	directory = resolveRealPath(directory);
 	const common = readGitMetadata(path.join(directory, "commondir"));
-	return common === null ? [directory] : [directory, path.resolve(directory, common)];
+	return common === null ? [directory] : [directory, resolveGitTraversalPath(common, directory)];
 }
 
 /** A linked worktree's .git file and commondir can point outside its visible directory. */
@@ -781,9 +776,9 @@ function dotGitRepository(current: string, dotGit: string): GitRepository | null
 	if (!hasGitEntry) return null;
 	try {
 		if (statSync(dotGit).isDirectory()) return { worktree: current, metadata: gitMetadataRoots(dotGit) };
-		const pointer = readGitPointer(dotGit);
+		const pointer = readGitMetadata(dotGit);
 		if (!pointer?.startsWith("gitdir: ")) throw new Error("not a git repository");
-		return { worktree: current, metadata: gitMetadataRoots(path.resolve(current, pointer.slice(8))) };
+		return { worktree: current, metadata: gitMetadataRoots(resolveGitTraversalPath(pointer.slice(8), current)) };
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 		throw new Error("not a git repository");
@@ -985,18 +980,10 @@ function gitDirectorySignatures(probe: string): boolean {
 }
 
 function gitCommonDirectory(probe: string): string {
-	const common = readCommonDir(path.join(probe, "commondir"));
+	const common = readGitMetadata(path.join(probe, "commondir"));
 	if (common === null || common === "") return probe;
-	// Join with a separator, never path.join/path.resolve: a lexical collapse would erase the
-	// `..` before realpath can resolve a symlinked probe, unlike git's strbuf_add_real_path.
-	return resolveRealPath(path.isAbsolute(common) ? common : `${probe}${path.sep}${common}`);
-}
-
-/** commondir content with only git's trailing `\r`/`\n` strip (get_common_dir_noenv). A trim
- * would drop spaces git keeps, resolving a different common dir. */
-function readCommonDir(file: string): string | null {
-	try { return readFileSync(file, "utf8").replace(/[\r\n]+$/, ""); }
-	catch (error) { if (absentProbePath(error)) return null; throw error; }
+	// One symlink-first resolver: Git's strbuf_add_real_path resolves the link before `..`.
+	return resolvePathFrom(probe, common);
 }
 
 /** git uses access(X_OK), not stat: an unreadable directory is not a repository, and an

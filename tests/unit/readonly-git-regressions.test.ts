@@ -45,6 +45,46 @@ test("broken .git symlink is not treated as a valid repository", (t) => {
 		"broken .git symlink must fail closed");
 });
 
+test("Git metadata resolves symlinks before applying .. and keeps trailing spaces", gitSuiteOptions, (t) => {
+	const foreignCommon = path.join(repository(fixture(t, os.homedir())), ".git");
+	const foreignRefs = path.join(foreignCommon, "refs");
+
+	// commondir `link/..`: the kernel enters the link target, then ..; a lexical
+	// collapse would stop at the temp .git and miss the outside common dir.
+	const commonRepo = repository(fixture(t));
+	symlinkSync(foreignRefs, path.join(commonRepo, ".git", "link"));
+	writeFileSync(path.join(commonRepo, ".git", "commondir"), "link/..");
+	assert.equal(realpathSync(git(commonRepo, "rev-parse", "--git-common-dir")), realpathSync(foreignCommon));
+	for (const command of ["git add -A", "git commit -m x", "git gc"]) check(command, commonRepo, false);
+
+	// `gitdir: link/..` is the pointer-file spelling of the same escape.
+	const pointerRepo = fixture(t);
+	symlinkSync(foreignRefs, path.join(pointerRepo, "link"));
+	writeFileSync(path.join(pointerRepo, ".git"), "gitdir: link/..\n");
+	assert.equal(realpathSync(git(pointerRepo, "rev-parse", "--git-dir")), realpathSync(foreignCommon));
+	check("git add -A", pointerRepo, false);
+
+	// A trailing space is part of the path Git opens; trimming it selected a harmless name.
+	const spacedRepo = repository(fixture(t));
+	symlinkSync(foreignCommon, path.join(spacedRepo, ".git", "link "));
+	writeFileSync(path.join(spacedRepo, ".git", "commondir"), "link ");
+	assert.equal(realpathSync(git(spacedRepo, "rev-parse", "--git-common-dir")), realpathSync(foreignCommon));
+	check("git add -A", spacedRepo, false);
+});
+
+test("temp literal paths resolve symlinks before applying ..", gitSuiteOptions, (t) => {
+	const root = fixture(t);
+	const foreign = fixture(t, os.homedir());
+	symlinkSync(foreign, path.join(root, "link"));
+	symlinkSync(root, path.join(root, "self"));
+	// link/.. is the outside parent; the kernel resolves the link before its parent.
+	check("touch link/../pwn", root, false);
+	check("touch link/pwn", root, false);
+	check("echo hi > link/../pwn", root, false);
+	// self/.. is the temp root, so a symlink-first resolver must still allow it.
+	check("touch self/../allowed", root, true);
+});
+
 test("Git rejects expansions that hide real outside config and log writes", gitSuiteOptions, (t) => {
 	const repo = repository(fixture(t)), external = fixture(t, os.homedir());
 	const config = path.join(external, "config"), output = path.join(external, "log");
