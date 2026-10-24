@@ -14,6 +14,7 @@
  */
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { findPackageJSON } from "node:module";
 import os from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -37,7 +38,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const SCHEMATIC_ENTRY = resolve(HERE, "..", "..", "index.ts");
 const PROBE_ENTRY = resolve(HERE, "real-host-probe.ts");
 const CHILD_PROBE_ENTRY = resolve(HERE, "real-host-child-probe.ts");
-const CLI_PATH = join(dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"))), "cli.js");
+// The CLI is the file pi's manifest declares as `bin.pi`, the one the `pi` command runs.
+const PI_MANIFEST_PATH = findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url);
+if (PI_MANIFEST_PATH === undefined) throw new Error("Cannot find pi's package.json from tests/e2e.");
+const PI_PACKAGE_ROOT = dirname(PI_MANIFEST_PATH);
+const PI_BIN: unknown = JSON.parse(readFileSync(PI_MANIFEST_PATH, "utf8")).bin?.pi;
+if (typeof PI_BIN !== "string") throw new Error(`No string bin.pi in pi's manifest at ${PI_MANIFEST_PATH}.`);
+const CLI_PATH = resolve(PI_PACKAGE_ROOT, PI_BIN);
 const REQUIRED_COMMANDS = ["handoff", "notebook", "readonly", PROBE_COMMAND.barrier];
 
 /** Barrier waits one host may make, its `close()` included; a test that needs more fails. */
