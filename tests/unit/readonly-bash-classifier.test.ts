@@ -1,14 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { registerReadonlyPI, makeReadonlyUICtx, shellPath } from "./helpers.js";
+import { registerReadonlyPI, makeReadonlyUICtx, setTempHome, shellPath } from "./helpers.js";
 import type { ToolCall } from "./helpers.js";
 import type { TestPI } from "./test-host.js";
 import os from "node:os";
 import path from "node:path";
 import { classifyBashCommand } from "../../readonly-bash.js";
+import { PACKAGE_MANAGERS, PACKAGE_MODE_TABLES } from "../../readonly-bash-commands.js";
 import { TEMP_WRITE_ROOTS_CANONICAL } from "../../temp-dir.js";
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
 import { installGitIsolation } from "./readonly-git-helpers.js";
@@ -203,6 +204,209 @@ test("blocks package managers unconditionally", async () => {
 	await assertBlocked(toolCall, "npm install lodash");
 	await assertBlocked(toolCall, "pip install requests");
 	await assertBlocked(toolCall, "yarn add lodash");
+	await assertBlocked(toolCall, "uvx ruff check .");
+
+	// uv/bun/conda write outside the temp roots in their ordinary modes (caches,
+	// `.venv`), so every invocation blocks, even version queries.
+	const alwaysBlocked = [
+		"uv", "uv --version", "uv venv /etc/probe", "uv run build.js", "uv tool run ruff",
+		"uvx ruff check .", "bun", "bun run build", "bunx cowsay hi",
+		"conda", "conda list", "conda run -n base true",
+	];
+	for (const command of alwaysBlocked) assert.equal(classifyBashCommand(command, "/workspace").ok, false, command);
+
+	// Short flags are case-sensitive: mutation verbs block, read-only queries stay allowed.
+	const blocked = [
+		"pacman -S curl", "pacman -Syu", "pacman -Rns pkg", "pacman -Sc", "pacman -U pkg",
+		"dpkg -i pkg.deb", "dpkg --install pkg.deb", "dpkg -P pkg",
+		// dpkg extract/control-extract/build and pacman -F refreshes write outside the cwd.
+		"dpkg -x pkg.deb /etc/x", "dpkg -e pkg.deb /etc/control", "dpkg -b /etc/pkg",
+		"dpkg -X pkg.deb /etc/x", "dpkg --extract pkg.deb /etc/x",
+		"dpkg --vextract pkg.deb /etc/x", "dpkg --control pkg.deb /etc/control",
+		"dpkg --build /etc/pkg", "dpkg --set-selections", "dpkg --update-avail",
+		"dpkg --add-architecture arm64", "dpkg --triggers-only bash", "dpkg -D2 --triggers-only bash",
+		// dpkg-deb writes through the same modes; long-only rpm options mutate its database.
+		"dpkg-deb -x pkg.deb /etc/x", "dpkg-deb --extract pkg.deb /etc/x",
+		"dpkg-deb -b /etc/pkg", "dpkg-deb --build /etc/pkg", "dpkg-deb -R pkg.deb /etc/x",
+		"rpm --import key.pub", "rpm --rebuilddb", "rpm --initdb",
+		"rpm --rebuild /outside/spec.spec", "rpm --recompile /outside/spec.spec",
+		"rpm -bp /outside/spec.spec", "rpm -bc /outside/spec.spec", "rpm -bb /outside/spec.spec",
+		"rpm -tb /outside/spec.spec",
+		"pacman -F", "pacman -Fy", "pacman -Fyy", "pacman --files --refresh",
+		"pacman --sync --refresh",
+		// A write modifier stays a write next to query sub-operations, separate or bundled.
+		"pacman -S -y", "pacman -S -s -y", "pacman -Ss -y", "pacman -F -l -y",
+		"pacman --sync --sea --refresh",
+		"rpm -i pkg.rpm", "rpm -U pkg.rpm", "rpm -e pkg",
+		// getopt_long abbreviations and quoted flags are the same argv spelling.
+		"dpkg --extr pkg.deb /etc/x", "rpm --imp key.pub", "pacman --fil --ref",
+		`dpkg "--extract" pkg.deb /etc/x`, `rpm "-i" pkg.rpm`,
+		"uv add requests", "bun add x", "conda install x",
+	];
+	for (const command of blocked) assert.equal(classifyBashCommand(command, "/workspace").ok, false, command);
+	const allowed = [
+		"pacman -Q curl", "dpkg -l", "dpkg -p bash", "dpkg -c pkg.deb", "dpkg -L pkg",
+		"dpkg --print-avail bash", "dpkg --get-selections", "dpkg-deb --info pkg.deb",
+		"rpm -q bash", "rpm --query bash", "rpm --verify bash", "npm --version",
+		// Query bundles stay reads: rpm's first mode letter is q; pacman's S/F sub-ops
+		// below are query-only, including their long spellings.
+		"rpm -qi bash", "rpm -qif", "rpm -q --info bash",
+		"pacman -Ss", "pacman -Si", "pacman -Sp",
+		"pacman --sync --search curl", "pacman --sync --info curl",
+		"pacman --query curl", "pacman --deptest bash",
+		"pacman -Fl pkg", "pacman -Fs file", "pacman -Fx 'regex'",
+		"pacman --files --list", "pacman --files --search file",
+		// Separate short sub-ops and unique long abbreviations query the same way.
+		"pacman -S -s curl", "pacman -S -i pkg", "pacman -S -s -i curl",
+		"pacman -F -l pkg", "pacman -F -s file",
+		"pacman --sync --sea curl", "pacman --sync --inf pkg", "pacman --files --lis pkg",
+	];
+	for (const command of allowed) assert.equal(classifyBashCommand(command, "/workspace").ok, true, command);
+});
+
+// Independent oracle for package-mode verdicts. It must stay a literal hand-written copy:
+// deriving expected verdicts from PACKAGE_MODE_TABLES made a wrong `writes` flag flip both
+// sides of the assertion. The completeness test below only cross-checks row identity.
+type PackageModeOracleRow = { short: string | null; long: readonly string[]; writes: boolean };
+type PackageModeOracle = { shortModeScan: "first" | "any"; rows: readonly PackageModeOracleRow[] };
+const PACKAGE_MODE_ORACLE: Readonly<Record<string, PackageModeOracle>> = {
+	dpkg: {
+		shortModeScan: "any",
+		rows: [
+			{ short: "i", long: ["--install"], writes: true },
+			{ short: "r", long: ["--remove"], writes: true },
+			{ short: "P", long: ["--purge"], writes: true },
+			{ short: "a", long: ["--pending"], writes: true },
+			{ short: "A", long: ["--record-avail"], writes: true },
+			{ short: "b", long: ["--build"], writes: true },
+			{ short: "x", long: ["--extract"], writes: true },
+			{ short: "X", long: ["--vextract"], writes: true },
+			{ short: "e", long: ["--control"], writes: true },
+			{ short: null, long: ["--unpack", "--configure"], writes: true },
+			{ short: null, long: ["--triggers-only"], writes: true },
+			{ short: null, long: ["--set-selections", "--clear-selections"], writes: true },
+			{ short: null, long: ["--update-avail", "--merge-avail", "--clear-avail", "--forget-old-unavail"], writes: true },
+			{ short: null, long: ["--add-architecture", "--remove-architecture", "--foreign-architecture"], writes: true },
+		],
+	},
+	"dpkg-deb": {
+		shortModeScan: "any",
+		rows: [
+			{ short: "b", long: ["--build"], writes: true },
+			{ short: "x", long: ["--extract"], writes: true },
+			{ short: "X", long: ["--vextract"], writes: true },
+			{ short: "e", long: ["--control"], writes: true },
+			{ short: "R", long: ["--raw-extract"], writes: true },
+		],
+	},
+	rpm: {
+		shortModeScan: "first",
+		rows: [
+			{ short: "i", long: ["--install"], writes: true },
+			{ short: "U", long: ["--upgrade"], writes: true },
+			{ short: "F", long: ["--freshen"], writes: true },
+			{ short: "e", long: ["--erase"], writes: true },
+			{ short: "b", long: [], writes: true },
+			{ short: "t", long: [], writes: true },
+			{ short: null, long: ["--import", "--rebuilddb", "--initdb", "--setperms", "--setugids", "--rebuild", "--recompile"], writes: true },
+			{ short: "q", long: ["--query"], writes: false },
+			{ short: "V", long: ["--verify"], writes: false },
+			{ short: "K", long: ["--checksig"], writes: false },
+		],
+	},
+	pacman: {
+		shortModeScan: "first",
+		rows: [
+			{ short: "S", long: ["--sync"], writes: true },
+			{ short: "R", long: ["--remove"], writes: true },
+			{ short: "U", long: ["--upgrade"], writes: true },
+			{ short: "D", long: ["--database"], writes: true },
+			{ short: "F", long: ["--files"], writes: true },
+			{ short: null, long: ["--refresh", "--sysupgrade", "--clean", "--asdeps", "--asexplicit"], writes: true },
+			{ short: "Q", long: ["--query"], writes: false },
+			{ short: "T", long: ["--deptest"], writes: false },
+		],
+	},
+};
+
+test("package-manager short and long write modes stay in parity", () => {
+	// CONTRACT: a write mode blocks under both spellings; read modes and read-only
+	// sub-operations stay allowed. A table row is the only place a mode is declared.
+	const pairs = [
+		["dpkg -x pkg.deb /etc/x", "dpkg --extract pkg.deb /etc/x"],
+		["dpkg -X pkg.deb /etc/x", "dpkg --vextract pkg.deb /etc/x"],
+		["dpkg -e pkg.deb /etc/c", "dpkg --control pkg.deb /etc/c"],
+		["dpkg -b /etc/pkg", "dpkg --build /etc/pkg"],
+		["dpkg-deb -x pkg.deb /etc/x", "dpkg-deb --extract pkg.deb /etc/x"],
+		["dpkg-deb -R pkg.deb /etc/x", "dpkg-deb --raw-extract pkg.deb /etc/x"],
+		["rpm -i pkg.rpm", "rpm --install pkg.rpm"],
+		["rpm -e pkg", "rpm --erase pkg"],
+		["pacman -S curl", "pacman --sync curl"],
+		["pacman -R pkg", "pacman --remove pkg"],
+		["pacman -F", "pacman --files"],
+		["pacman -Fy", "pacman --files --refresh"],
+		["pacman -S -s -y", "pacman --sync --search --refresh"],
+	];
+	for (const [shortForm, longForm] of pairs) {
+		for (const command of [shortForm!, longForm!]) assert.equal(classifyBashCommand(command, "/workspace").ok, false, command);
+	}
+	const reads = [
+		["pacman -Ss", "pacman --sync --search"],
+		["pacman -S -s curl", "pacman --sync --search curl"],
+		["pacman -Ss curl", "pacman --sync --sea curl"],
+		["pacman -Fl pkg", "pacman --files --list"],
+		["pacman -F -l pkg", "pacman --files --list pkg"],
+		["pacman -Fl pkg", "pacman --files --lis pkg"],
+		["rpm -q bash", "rpm --query bash"],
+		["dpkg -l", "dpkg --list"],
+	];
+	for (const [shortForm, longForm] of reads) {
+		for (const command of [shortForm!, longForm!]) assert.equal(classifyBashCommand(command, "/workspace").ok, true, command);
+	}
+});
+
+test("package modes match independent oracle verdicts", () => {
+	// CONTRACT: every declared mode spelling has the verdict recorded in the literal oracle.
+	for (const [command, oracle] of Object.entries(PACKAGE_MODE_ORACLE)) {
+		for (const row of oracle.rows) {
+			for (const long of row.long) {
+				const spelling = `${command} ${long} probe`;
+				assert.equal(classifyBashCommand(spelling, "/workspace").ok, !row.writes, spelling);
+			}
+			if (row.short === null) continue;
+			const spelling = `${command} -${row.short} probe`;
+			assert.equal(classifyBashCommand(spelling, "/workspace").ok, !row.writes, spelling);
+		}
+	}
+	// Rows the older independent lists missed; keep them named so a regression is readable.
+	const uncovered = [
+		"pacman --clean", "pacman --asdeps", "pacman --sysupgrade",
+		"dpkg --clear-selections", "dpkg --merge-avail", "rpm --setperms",
+	];
+	for (const spelling of uncovered) assert.equal(classifyBashCommand(`${spelling} probe`, "/workspace").ok, false, spelling);
+});
+
+test("rpm build stages and dpkg trigger processing are write modes", () => {
+	// CONTRACT: -b/-t consume the stage as their tail, and the legacy long aliases build too.
+	const blocked = [
+		...["bp", "bc", "bi", "bb", "ba", "bs", "bl", "bt"].map((stage) => `rpm -${stage} /outside/spec.spec`),
+		...["tp", "tc", "ti", "tb", "ta", "ts"].map((stage) => `rpm -${stage} /outside/spec.spec`),
+		"rpm --rebuild /outside/spec.spec", "rpm --recompile /outside/spec.spec",
+		"dpkg --triggers-only bash", "dpkg -D2 --triggers-only bash",
+	];
+	for (const command of blocked) assert.equal(classifyBashCommand(command, "/workspace").ok, false, command);
+});
+
+test("oracle covers every production package-mode row", () => {
+	// Secondary completeness check: the table may only declare rows the oracle already knows.
+	assert.deepEqual(Object.keys(PACKAGE_MODE_ORACLE).sort(), Object.keys(PACKAGE_MODE_TABLES).sort());
+	const rowKey = (row: PackageModeOracleRow) => `${row.short ?? "none"}|${[...row.long].sort().join(",")}|${row.writes}`;
+	for (const [command, grammar] of Object.entries(PACKAGE_MODE_TABLES)) {
+		assert.equal(PACKAGE_MANAGERS.has(command), true, `${command} must be a package manager`);
+		const oracle = PACKAGE_MODE_ORACLE[command]!;
+		assert.equal(oracle.shortModeScan, grammar.shortModeScan, `${command} short mode scan`);
+		assert.deepEqual(grammar.modes.map(rowKey).sort(), oracle.rows.map(rowKey).sort(), command);
+	}
 });
 
 test("blocks archivers that extract outside temp", async () => {
@@ -1321,6 +1525,107 @@ test("git branch and name flags are not misread as paths", async () => {
 
 // ── Quoted redirect targets (readQuotedRedirectTarget coverage gap) ──────────
 
+test("mixed quoted and unquoted redirect spans form one word", { skip: process.platform === "win32" ? "POSIX path separators" : false }, () => {
+	const tmp = shellPath(os.tmpdir());
+	const outsideFile = path.join(path.parse(os.tmpdir()).root, "readonly-mixed-outside", "pwn");
+	const rel = path.relative(os.tmpdir(), outsideFile);
+	assert.ok(rel.startsWith(".."), "fixture must escape the temp root");
+
+	// Before the fix the quoted first span (`tmp`) was the only checked target.
+	assert.equal(classifyBashCommand(`echo hi >"${tmp}"/${rel}`, "/workspace").ok, false);
+	assert.equal(classifyBashCommand(`echo hi >"${tmp}"/allowed.txt`, "/workspace").ok, true);
+	assert.equal(classifyBashCommand(`echo hi >${tmp}"/allowed.txt"`, "/workspace").ok, true);
+	assert.equal(classifyBashCommand(`echo hi >>"${tmp}"/allowed.txt`, "/workspace").ok, true);
+	assert.equal(classifyBashCommand(`D=${quoteShellArgument(tmp)}; echo hi >"$D"/allowed.txt`, "/workspace").ok, true);
+	const outsideDir = path.dirname(outsideFile);
+	assert.equal(classifyBashCommand(`D=${quoteShellArgument(outsideDir)}; echo hi >"$D"/pwn`, "/workspace").ok, false);
+	// A quote boundary ends the variable name. Merging spans as one word turned `$D`+`pwn`
+	// into `$Dpwn`, so an inside-temp Dpwn hid the real outside write.
+	const boundary = [`>"$D"pwn`, `>"$D""pwn"`, `>$D"pwn"`, `>"$D"'pwn'`];
+	for (const redirect of boundary) {
+		assert.equal(classifyBashCommand(`D=/etc; Dpwn=${quoteShellArgument(tmp)}/safe; echo hi ${redirect}`, "/workspace").ok, false, redirect);
+		assert.equal(classifyBashCommand(`D=${quoteShellArgument(tmp)}/safe; echo hi ${redirect}`, "/workspace").ok, true, redirect);
+	}
+	// A single-quoted `$` is literal, not an expansion. It stays under the temp cwd.
+	assert.equal(classifyBashCommand("echo hi >'$HOME'/x", tmp).ok, true);
+	// A quoted span plus an adjacent unquoted suffix is one word; the suffix decides.
+	assert.equal(classifyBashCommand(`echo hi >"${tmp}"x`, "/workspace").ok, false);
+	// Two adjacent quoted spans are one word; checking only the first span hid the rest.
+	assert.equal(classifyBashCommand(`echo hi >"${tmp}""${path.sep}${rel}"`, "/workspace").ok, false);
+	assert.equal(classifyBashCommand(`echo hi >"${tmp}""${path.sep}allowed.txt"`, "/workspace").ok, true);
+	// Single-span boundary: this traversal was already checked before the mixed-span fix.
+	assert.equal(classifyBashCommand(`echo hi >"${tmp}${path.sep}${rel}"`, "/workspace").ok, false);
+	// An unquoted glob in a multi-span word cannot be modeled: fail closed instead of
+	// checking only the quoted prefix.
+	assert.equal(classifyBashCommand(`echo hi >"${tmp}"${path.sep}*.txt`, "/workspace").ok, false);
+});
+
+test("a non-leading tilde in a redirect word stays literal", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "readonly-tilde-fragment-"));
+	const home = path.join(root, "home");
+	await mkdir(home);
+	await mkdir(path.join(root, "~"));
+	const restore = setTempHome(home);
+	try {
+		// Bash expands a tilde only at the start of the complete word. The span decoder used
+		// to expand this mid-word `~` as HOME, which shifted how the later `..` resolved.
+		const depth = root.split(path.sep).length - 1;
+		const escape = `"${root}/"~/${"../".repeat(depth + 1)}etc/hosts`;
+		const blocked = classifyBashCommand(`echo x >${escape}`, root);
+		assert.equal(blocked.ok, false);
+		assert.match(blocked.reason, /\/etc\/hosts$/);
+		// The same fragment grammar with a literal `~` under temp stays writable.
+		assert.equal(classifyBashCommand(`echo x >"${root}/"~/inside.txt`, root).ok, true);
+	} finally {
+		restore();
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("tilde quoting decides between HOME expansion and a literal pathname", async () => {
+	const tmp = shellPath(os.tmpdir());
+	const quotedTo = ['echo pwn >~"/x"', "echo pwn >~'/x'", 'echo pwn >~\\/x', 'touch ~"/pwn"'];
+
+	// HOME outside temp, cwd inside temp: Bash keeps a quoted tilde literal, so the write
+	// lands at cwd/~/… and stays writable. Expanding HOME would block it instead.
+	const outsideHome = path.join(path.parse(tmp).root, "readonly-home-outside");
+	const restoreOutside = setTempHome(outsideHome);
+	try {
+		for (const command of quotedTo) {
+			assert.equal(classifyBashCommand(command, tmp).ok, true, command);
+		}
+	} finally {
+		restoreOutside();
+	}
+
+	// HOME inside temp, cwd outside temp: the literal tilde writes outside; expanding HOME
+	// would approve a different pathname than Bash writes.
+	const home = await mkdtemp(path.join(os.tmpdir(), "readonly-home-"));
+	const restoreHome = setTempHome(home);
+	try {
+		for (const command of quotedTo) {
+			assert.equal(classifyBashCommand(command, "/workspace").ok, false, command);
+		}
+
+		// An unquoted slash after `~` makes Bash expand HOME before the quoted span. Keep HOME
+		// under temp so the target is writable: a normalizer that dropped the tilde would resolve
+		// these under /workspace and block them, while Bash writes them under HOME.
+		for (const command of ['echo pwn >~/"inside.txt"', "echo pwn >~/'inside.txt'", 'echo pwn >~/"sub"/inside.txt']) {
+			assert.equal(classifyBashCommand(command, "/workspace").ok, true, command);
+		}
+		// Expanding home must not launder traversal out of the temp root.
+		assert.equal(classifyBashCommand('echo pwn >~/"../../etc/passwd"', "/workspace").ok, false);
+
+		// `~user` and unquoted globs stay unmodeled: the shared tilde rule fails closed.
+		for (const command of ['echo pwn >~/*.txt', "echo pwn >~root/'/x'"]) {
+			assert.equal(classifyBashCommand(command, tmp).ok, false, command);
+		}
+	} finally {
+		restoreHome();
+		await rm(home, { recursive: true, force: true });
+	}
+});
+
 test("quoted redirect targets resolve identically to unquoted targets", () => {
 	// CONTRACT: readQuotedRedirectTarget (readonly-bash.ts:464) parses quoted
 	// redirect targets the same as unquoted — quotes are shell syntax, not part
@@ -1557,8 +1862,46 @@ test("find mutations block outside temp, allow inside temp, naming real targets"
 		"find /etc -fprint0 /var/log/find.out0",
 		"find /etc -fprintf /var/log/find.out %p\\n",
 		"find /etc -fls /var/log/find.lst",
+		"find /etc/*.conf -delete",
+		"find ~ -name .netrc -delete",
+		"find -L /etc -delete",
+		"find /tmp/{a,../../etc/passwd} -delete",
+		// -L reaches outside temp through a symlink before the payload or -delete runs, so
+		// the checked root proves only where the walk started.
+		`find -L ${tmp}/x -exec rm {} \\;`,
+		`find -L ${tmp}/x -ok rm {} \\;`,
+		`find -L ${tmp}/x -execdir rm {} \\;`,
+		`find -L ${tmp}/x -okdir rm {} \\;`,
+		`find ${tmp}/x -follow -exec rm {} \\;`,
+		`find -L ${tmp}/x -delete`,
+		`find ${tmp}/x -follow -delete`,
+		// Every mutating action contributes a target; a safe first action cannot hide a
+		// later outside output file.
+		`find ${tmp}/root -exec true \\; -fprint /etc/review-out`,
+		`find ${tmp}/root -delete -fprint /etc/review-out`,
+		`find ${tmp}/root -fprint /etc/review-out -delete`,
+		`find ${tmp}/root -fprintf /etc/review-out %p\\n -exec rm {} \\;`,
+		`find ${tmp}/root -fprint ${tmp}/ok -fls /etc/review-out`,
+		// BSD pre-root options must not hide the root behind them. The reported exploit ran
+		// from a temp cwd, where the old cwd fallback passed.
+		"find -X /etc -delete", "find -E /etc -delete", "find -d /etc -delete",
+		"find -s /etc -delete", "find -x /etc -delete", "find -- /etc -delete",
+		"find -f /etc -delete", "find -Q /etc -delete",
+		// BSD keeps its getopt phase open across `-f`, so every `-f` operand is a root and a
+		// later one can point outside temp. Parsing stopped after the first and cleared it.
+		`find -f ${tmp}/a -f /etc -- -delete`,
+		`find -f /etc -f ${tmp}/a -- -delete`,
+		`find -f ${tmp}/a -L -f /etc -- -delete`,
+		`find -L -f ${tmp}/a -f /etc -- -exec rm {} \\;`,
+		// Without `--` the expression is a getopt error on BSD (and -f is unknown to GNU), so
+		// the unmodeled-option guard fails closed instead of guessing where the roots end.
+		`find -f ${tmp}/x -delete`,
 	];
 	for (const cmd of blocked) assert.equal(classifyBashCommand(cmd, "/workspace").ok, false, cmd);
+	// Same options with a temp cwd: the old fallback to "." allowed every one of these.
+	for (const opt of ["-X", "-E", "-d", "-s", "-x", "--"]) {
+		assert.equal(classifyBashCommand(`find ${opt} /etc -delete`, tmp).ok, false, opt);
+	}
 	// The reason must surface the real target path — never the -delete/-exec flag or the exec'd command.
 	const del = classifyBashCommand("find /etc -delete", "/workspace");
 	assert.equal(del.ok, false); assert.match(del.reason, /find blocked outside temp dir: \/etc$/);
@@ -1568,6 +1911,15 @@ test("find mutations block outside temp, allow inside temp, naming real targets"
 	assert.equal(fpr.ok, false); assert.match(fpr.reason, /find blocked outside temp dir: \/var\/log\/find\.out$/);
 	const fls = classifyBashCommand("find /etc -fls /var/log/find.lst", "/workspace");
 	assert.equal(fls.ok, false); assert.match(fls.reason, /find blocked outside temp dir: \/var\/log\/find\.lst$/);
+	// A shell-expanded root is never dropped: glob parents resolve like any write target,
+	// and tilde/brace expansion cannot be proven against the temp roots.
+	const globRoot = classifyBashCommand("find /etc/*.conf -delete", "/workspace");
+	assert.equal(globRoot.ok, false); assert.match(globRoot.reason, /find blocked outside temp dir: \/etc\/\*\.conf$/);
+	const tildeRoot = classifyBashCommand("find ~ -name .netrc -delete", "/workspace");
+	assert.equal(tildeRoot.ok, false); assert.match(tildeRoot.reason, /find blocked: cannot model its write target/);
+	// The later `-f` root is the reported target, never the safe first root.
+	const laterRoot = classifyBashCommand(`find -f ${tmp}/a -f /etc -- -delete`, "/workspace");
+	assert.equal(laterRoot.ok, false); assert.match(laterRoot.reason, /find blocked outside temp dir: \/etc$/);
 	// Inside temp: deletions and result files stay allowed. -fprint/-fls target the output file,
 	// not the "/" search root, so a temp output is allowed even with a non-temp root.
 	const allowed = [
@@ -1580,12 +1932,137 @@ test("find mutations block outside temp, allow inside temp, naming real targets"
 		// they are find syntax, not filesystem targets, so an in-temp root stays allowed.
 		`find ${tmp}/safe \( -name '*.txt' \) -delete`,
 		`find ${tmp}/safe \( -name '*.txt' -o -name '*.md' \) -delete`,
+		`find ${tmp}/safe -name '*.txt' -delete`,
+		// The modeled options keep their real root; every -f operand is a root too, and the
+		// expression needs `--` after them, exactly as BSD find requires.
+		`find -X ${tmp}/x -delete`,
+		`find -f ${tmp}/x -- -delete`,
+		`find -f ${tmp}/a -f ${tmp}/b -- -delete`,
+		// Read-only payloads can use `{}`; a mutating payload cannot be proven contained.
+		`find ${tmp}/x -exec cat {} \\;`,
+		// A `+` not preceded by `{}` is payload, not a terminator, so the payload runs on.
+		`find ${tmp}/x -exec echo BEFORE + AFTER {} \\;`,
+		`find ${tmp}/x -execdir cat {} \\;`,
+		// -L without a runtime pathname substitution cannot move the payload's targets.
+		`find -L ${tmp}/x -exec true \\;`,
+		// Output paths of later actions are checked together with the earlier mutation.
+		`find ${tmp}/root -exec true \\; -fprint ${tmp}/out`,
+		`find ${tmp}/root -delete -fprint ${tmp}/out`,
+		// `-delete` as an -fprintf format is data, not a find action.
+		`find ${tmp}/root -fprintf ${tmp}/out -delete`,
 	];
 	for (const cmd of allowed) assert.equal(classifyBashCommand(cmd, "/workspace").ok, true, cmd);
+	// find substitutes the runtime descendant for `{}`, not the root. A descendant symlink
+	// can leave temp, so a mutating payload is unprovable even from an outside cwd.
+	const touchPlaceholder = classifyBashCommand(`find ${tmp}/x -exec touch {} \\;`, "/workspace");
+	assert.equal(touchPlaceholder.ok, false);
+	assert.match(touchPlaceholder.reason, /descendant symlink/);
+	// The hint must name a fix the classifier honors: -type predicates are never inspected.
+	assert.doesNotMatch(touchPlaceholder.reason, /-type/);
+	assert.equal(classifyBashCommand(`find ${tmp}/x -exec touch {} \\;`, tmp).ok, false);
+	const execdirTouch = classifyBashCommand(`find ${tmp}/x -execdir touch {} \\;`, "/workspace");
+	assert.equal(execdirTouch.ok, false);
+	assert.match(execdirTouch.reason, /descendant symlink/);
+	// A walked entry's -execdir runs in the found file's directory, so a relative target escapes
+	// from the search root; command-line entries also run in the caller cwd (test below).
+	const execdirEscape = classifyBashCommand(`find ${tmp}/review -type f -execdir touch ../../escape \\;`, `${tmp}/review/a/b/c`);
+	assert.equal(execdirEscape.ok, false);
+	assert.match(execdirEscape.reason, /touch blocked outside temp dir: \.\.\/\.\.\/escape$/);
+	assert.equal(classifyBashCommand(`find ${tmp}/review -execdir touch out.txt \\;`, `${tmp}/review/a/b/c`).ok, true);
+	// A shell spelling the raw scanner cannot bind is still a runtime substitution.
+	assert.equal(classifyBashCommand(`find ${tmp}/x -exec touch \\{\\} \\;`, tmp).ok, false);
+	// A non-placeholder payload target is still checked, and execdir's binding cannot prove
+	// containment under symlink-following mode.
+	assert.equal(classifyBashCommand(`find ${tmp}/x -exec rm /etc/y {} \\;`, "/workspace").ok, false);
+	assert.equal(classifyBashCommand(`find -L ${tmp}/x -execdir rm {} \\;`, "/workspace").ok, false);
+	// A bare `+` must not cut the payload, or the write after it is never classified.
+	const afterBarePlus = classifyBashCommand(`find ${tmp}/x -exec rm + {} /etc/passwd \\;`, "/workspace");
+	assert.equal(afterBarePlus.ok, false);
+	// `+ {}` is not a terminator, so this action is unterminated and fails closed.
+	assert.equal(classifyBashCommand(`find ${tmp}/x -exec rm + {}`, "/workspace").ok, false);
+	assert.equal(classifyBashCommand(`find -L ${tmp}/x -exec rm + {} \\;`, "/workspace").ok, false);
+	// The last write target names the block, never the safe search root.
+	const laterPrint = classifyBashCommand(`find ${tmp}/root -exec true \\; -fprint /etc/review-out`, "/workspace");
+	assert.equal(laterPrint.ok, false);
+	assert.match(laterPrint.reason, /find blocked outside temp dir: \/etc\/review-out$/);
+	const followPlaceholder = classifyBashCommand(`find -L ${tmp}/x -exec rm {} \\;`, "/workspace");
+	assert.equal(followPlaceholder.ok, false);
+	assert.match(followPlaceholder.reason, /-L\/-follow can substitute an outside pathname/);
+	const followDelete = classifyBashCommand(`find -L ${tmp}/x -delete`, "/workspace");
+	assert.equal(followDelete.ok, false);
+	assert.match(followDelete.reason, /-L\/-follow can walk symlinks outside temp before -delete/);
 	// The real search root is named, never the grouping operator token.
 	const groupedOutside = classifyBashCommand(`find /etc \( -name '*.txt' \) -delete`, "/workspace");
 	assert.equal(groupedOutside.ok, false);
 	assert.match(groupedOutside.reason, /find blocked outside temp dir: \/etc$/);
+});
+
+// A symlink root is not a directory root: -execdir runs in the link's parent (GNU), the
+// caller cwd (macOS/BSD), or the target (-H). Every candidate must be safe.
+test("find -execdir checks a symlink search root in every runtime directory", { skip: process.platform === "win32" }, async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "readonly-find-link-"));
+	try {
+		const target = path.join(root, "target"), parent = path.join(root, "parent");
+		await mkdir(target); await mkdir(parent);
+		const link = path.join(parent, "link");
+		await symlink(target, link, "dir");
+		const outsideCwd = "/workspace";
+		const escape = classifyBashCommand(`find ${quoteShellArgument(link)} -execdir touch ../escape \\;`, outsideCwd);
+		assert.equal(escape.ok, false);
+		assert.match(escape.reason!, /touch blocked outside temp dir: \.\.\/escape$/);
+		// macOS runs the command-line symlink entry in the caller cwd, so a bare relative
+		// target is outside temp even though the link's parent and target are inside.
+		assert.equal(classifyBashCommand(`find ${quoteShellArgument(link)} -execdir touch marker \\;`, outsideCwd).ok, false);
+		assert.equal(classifyBashCommand(`find ${quoteShellArgument(link)} -execdir touch ${quoteShellArgument(path.join(root, "ok"))} \\;`, outsideCwd).ok, true);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+// BSD runs every command-line entry — directory or file — in the caller cwd, so a relative
+// -execdir payload can write there even when the search root is inside temp. GNU runs such an
+// entry in the entry's directory, so both candidates must be checked.
+test("find -execdir checks the caller cwd for command-line search roots", { skip: process.platform === "win32" }, async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "readonly-find-cwd-"));
+	try {
+		const dir = path.join(root, "dir"), file = path.join(root, "file");
+		await mkdir(dir); await writeFile(file, "data");
+		for (const entry of [dir, file]) {
+			const execdir = `find ${quoteShellArgument(entry)} -execdir touch marker \\;`;
+			const okdir = `find ${quoteShellArgument(entry)} -okdir touch marker \\;`;
+			for (const command of [execdir, okdir]) {
+				const verdict = classifyBashCommand(command, "/workspace");
+				assert.equal(verdict.ok, false, command);
+				assert.match(verdict.reason!, /touch blocked outside temp dir: marker$/);
+			}
+			// A cwd inside temp makes every candidate runtime directory writable temp.
+			assert.equal(classifyBashCommand(execdir, root).ok, true);
+		}
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+// Shells expand positional parameters from argv after `-c` or from `set --`. Either source
+// supplies the runtime command word, so the classifier cannot trace the write and fails closed.
+test("shell -c positional parameters fail closed", () => {
+	const blocked = [
+		`bash -c '"$@"' 0 touch /etc/pwned`,
+		`sh -c '"$1"' _ touch /etc/pwned`,
+		`bash -c 'set -- touch /etc/pwned; "$@"'`,
+		`bash -c 'echo "\${@}"' x y`,
+	];
+	for (const command of blocked) {
+		const verdict = classifyBashCommand(command, "/workspace");
+		assert.equal(verdict.ok, false, command);
+		assert.match(verdict.reason!, /positional parameters supply the runtime command/, command);
+	}
+	const allowed = [
+		`bash -c 'echo "$HOME"'`,
+		`bash -c 'echo hi' name`,
+		'bash -c "awk \'{print \\$1}\' file"',
+	];
+	for (const command of allowed) assert.equal(classifyBashCommand(command, "/workspace").ok, true, command);
 });
 
 // A backslash in a *quoted* assignment value is literal data (decodeShellAssignmentValue
@@ -1612,11 +2089,17 @@ test("a backslash suffix after $VAR is shell source and fails closed", () => {
 test("sed -i mutations block outside temp, allow inside temp, naming file operands", () => {
 	const tmp = shellPath(os.tmpdir());
 	// Contract: `sed -i` edits its file operands in place; the operand is the target. The backup
-	// extension (`-i.bak`) and expression forms (`-e`/`--expression` before or after `-i`)
-	// must all resolve to the file operand.
+	// extension (`-i.bak`, `-i .bak`, `-i ""`) and expression forms (`-e`/`--expression`
+	// before or after `-i`) must all resolve to the file operand.
 	const blocked = [
 		"sed -i 's/x/y/' /etc/passwd",
 		"sed -i.bak 's/x/y/' /etc/passwd",
+		// A suffix consumes exactly one operand, never the file operand itself.
+		"sed -i.bak /etc/passwd",
+		"sed -i .bak /etc/passwd",
+		"sed -i .bak -e 's/x/y/' /etc/passwd",
+		"sed -i \"\" /etc/passwd",
+		"sed -i \"\" -e 's/x/y/' /etc/passwd",
 		"sed -e 's/x/y/' -i /etc/passwd",
 		"sed --expression 's/x/y/' -i /etc/passwd",
 		"sed -i 's/x/y/' /etc/passwd 2>/dev/null",
@@ -1630,11 +2113,23 @@ test("sed -i mutations block outside temp, allow inside temp, naming file operan
 		assert.equal(v.ok, false, cmd);
 		assert.match(v.reason, /sed blocked outside temp dir: \/etc\/passwd$/, cmd);
 	}
+	// With -e, GNU reads a dot-prefixed operand as an input file too. Keep the union of the
+	// GNU and BSD readings instead of discarding it as a suffix.
+	const gnuInput = classifyBashCommand("sed -i -e 's/x/y/' .outside /tmp/in", "/workspace");
+	assert.equal(gnuInput.ok, false);
+	assert.match(gnuInput.reason, /sed blocked outside temp dir: \.outside$/);
+	// BSD would treat `.bak` as the suffix, but GNU edits it as a file, so the union blocks.
+	const ambiguousSuffix = classifyBashCommand(`sed -i .bak -e 's/x/y/' ${tmp}/f`, "/workspace");
+	assert.equal(ambiguousSuffix.ok, false);
+	assert.match(ambiguousSuffix.reason, /sed blocked outside temp dir: \.bak$/);
 	// No -i => sed is a stream filter (stdout), not an in-place mutation.
 	assert.equal(classifyBashCommand("sed 's/x/y/' /etc/passwd", "/workspace").ok, true);
 	// Inside temp: in-place edits are allowed even with a write redirect.
 	assert.equal(classifyBashCommand(`sed -i 's/x/y/' ${tmp}/f > /dev/null`, "/workspace").ok, true);
 	assert.equal(classifyBashCommand(`sed -i 5d ${tmp}/f`, "/workspace").ok, true);
+	assert.equal(classifyBashCommand(`sed -i.bak 's/x/y/' ${tmp}/f`, "/workspace").ok, true);
+	assert.equal(classifyBashCommand(`sed -i .bak 's/x/y/' ${tmp}/f`, "/workspace").ok, true);
+	assert.equal(classifyBashCommand(`sed -i "" 's/x/y/' ${tmp}/f`, "/workspace").ok, true);
 	// The ambiguity between a BSD suffix (`-i bak`) and a GNU script (`-i 5d`) resolves to the
 	// GNU reading: the dot-less word stays a target, so the over-block is the safe direction.
 	assert.equal(classifyBashCommand("sed -i bak s/a/b/ /tmp/ok", "/workspace").ok, false);
@@ -1643,6 +2138,223 @@ test("sed -i mutations block outside temp, allow inside temp, naming file operan
 	assert.equal(redirected.ok, false);
 	assert.match(redirected.reason, /\/etc\/passwd$/);
 	assert.doesNotMatch(redirected.reason, /2>\/dev\/null/);
+});
+
+test("bundled and long options cannot hide write targets", () => {
+	const tmp = shellPath(os.tmpdir());
+	const blocked = [
+		"sed -Ei 's/x/y/' /etc/passwd",
+		"sed --in-place 's/x/y/' /etc/passwd",
+		"chmod -w /etc/passwd",
+		// `--reference` consumes its value; the remaining operand is the write target.
+		`chmod --reference ${tmp}/ref /etc/passwd`,
+		// GNU permutes options, so --reference can follow the operand it would otherwise
+		// expose as MODE; the earlier operand remains a write target.
+		`chmod /etc/passwd --reference=${tmp}/ref`,
+		`chmod /etc/passwd --reference ${tmp}/ref`,
+		"unzip -oqd/outside a.zip",
+		"find . -exec sh -c 'touch /etc/passwd' \\;",
+		// The -exec family needs its terminator; missing/empty payloads fail closed.
+		"find . -exec rm",
+		"find . -ok rm",
+		"find . -execdir rm",
+		"find . -exec \\;",
+		`rsync --backup-dir=/outside/bak src/ ${tmp}/dest`,
+		`rsync --temp-dir=/outside/tmp src/ ${tmp}/dest`,
+	];
+	for (const cmd of blocked) assert.equal(classifyBashCommand(cmd, tmp).ok, false, cmd);
+	// -P consumes a password before any other letters are read as flags. From an outside cwd
+	// extraction targets that cwd, so a password full of read letters must not suppress the block.
+	for (const cmd of ["unzip -Ppassword a.zip", "unzip -P password a.zip", "unzip -P -l a.zip", "unzip -qPplctv a.zip"]) {
+		assert.equal(classifyBashCommand(cmd, "/workspace").ok, false, cmd);
+	}
+	const allowed = [
+		`sed -Ei 's/x/y/' ${tmp}/f`,
+		`sed --in-place 's/x/y/' ${tmp}/f`,
+		`chmod -w ${tmp}/f`,
+		// The reference operand is read, not written; only the target operand matters.
+		`chmod --reference /etc/passwd ${tmp}/f`,
+		`chmod --reference ${tmp}/ref ${tmp}/f`,
+		`chmod ${tmp}/f --reference=${tmp}/ref`,
+		`chmod ${tmp}/f --reference ${tmp}/ref`,
+		// Extraction defaults to the cwd, which is inside temp here.
+		"unzip a.zip",
+		`unzip -oqd${tmp} a.zip`,
+		`unzip -Ppassword a.zip -d ${tmp}`,
+		`unzip -P password a.zip -d ${tmp}`,
+		`find . -exec sh -c 'touch ${tmp}/x' \\;`,
+		`rsync --backup-dir=${tmp}/bak src/ ${tmp}/dest`,
+		`rsync --temp-dir=${tmp}/tmp src/ ${tmp}/dest`,
+	];
+	for (const cmd of allowed) assert.equal(classifyBashCommand(cmd, tmp).ok, true, cmd);
+	const trailingReference = classifyBashCommand(`chmod /etc/passwd --reference=${tmp}/ref`, "/workspace");
+	assert.equal(trailingReference.ok, false);
+	assert.match(trailingReference.reason, /chmod blocked outside temp dir: \/etc\/passwd$/);
+
+	// Read-mode flags suppress extraction, including inside a short bundle (`-lq`).
+	for (const cmd of ["unzip -lq /outside/a.zip", "unzip -ql /outside/a.zip", "unzip -tq /outside/a.zip"]) {
+		assert.equal(classifyBashCommand(cmd, "/workspace").ok, true, cmd);
+	}
+	// Extraction into an outside cwd stays blocked.
+	assert.equal(classifyBashCommand("unzip -q a.zip", "/workspace").ok, false);
+	// Info-ZIP `-` negates the next letter: `-o-t` extracts with overwrite, so a negated
+	// read spelling is extraction, not a read. Decide only after the complete argument list.
+	for (const flag of ["-o-t", "-o-l", "-o-v", "-o-p", "-o-c"]) {
+		assert.equal(classifyBashCommand(`unzip ${flag} /outside/a.zip`, "/workspace").ok, false, flag);
+		assert.equal(classifyBashCommand(`unzip ${flag} a.zip`, tmp).ok, true, flag);
+	}
+	assert.equal(classifyBashCommand("unzip -o-t -d /outside a.zip", "/workspace").ok, false);
+	assert.equal(classifyBashCommand("unzip -t -d /outside -o-t a.zip", "/workspace").ok, false);
+	assert.equal(classifyBashCommand(`unzip -o-t -d${tmp} a.zip`, "/workspace").ok, true);
+	assert.equal(classifyBashCommand("unzip -l -d /outside a.zip", "/workspace").ok, true);
+	assert.equal(classifyBashCommand("unzip -t -o-q /outside/a.zip", "/workspace").ok, true);
+	assert.equal(classifyBashCommand("unzip -t- /outside/a.zip", "/workspace").ok, true);
+	// A negated value letter cannot be modeled, so it fails closed.
+	assert.equal(classifyBashCommand("unzip -o-d/outside a.zip", "/workspace").ok, false);
+	assert.equal(classifyBashCommand("unzip -o-Psecret a.zip", "/workspace").ok, false);
+
+	// An attached -d keeps its raw quoting: single quotes and escapes make `$D` literal, so the
+	// destination is the cwd-relative `$D`, not a temp path. Only double quotes expand it.
+	const literalDestinations = [
+		`D=${tmp}/safe unzip -d'$D' a.zip`,
+		`D=${tmp}/safe unzip -d\\$D a.zip`,
+		`D=${tmp}/safe unzip -oqd'$D' a.zip`,
+		`D=/outside; unzip -d"$D" a.zip`,
+	];
+	for (const cmd of literalDestinations) assert.equal(classifyBashCommand(cmd, "/workspace").ok, false, cmd);
+	assert.equal(classifyBashCommand(`D=${tmp}/safe; unzip -d"$D" a.zip`, "/workspace").ok, true);
+});
+
+test("GNU long-option abbreviations and bundled -T cannot hide sed/rsync writes", () => {
+	const tmp = shellPath(os.tmpdir());
+	// Contract: GNU tools resolve unique long-option prefixes (getopt_long/popt), and rsync
+	// accepts `-T` inside a short bundle, so every equivalent spelling must reach the same
+	// write target. The canonical spellings are covered above; this pins the aliases.
+	const blocked = [
+		`rsync --temp-d=/outside/bak src/ ${tmp}/dest`,
+		`rsync --backup-d=/outside/bak src/ ${tmp}/dest`,
+		`rsync --partial-d=/outside/partial src/ ${tmp}/dest`,
+		`rsync --log-f=/outside/log src/ ${tmp}/dest`,
+		`rsync --write-b=/outside/batch src/ ${tmp}/dest`,
+		`rsync --only-write-b=/outside/batch src/ ${tmp}/dest`,
+		`rsync --temp-d /outside/bak src/ ${tmp}/dest`,
+		`rsync -aT/outside src/ ${tmp}/dest`,
+		`rsync -aT /outside src/ ${tmp}/dest`,
+		`rsync --b src/ ${tmp}/dest`, // ambiguous in rsync's option set: fail closed
+		"sed --in-pl 's/x/y/' /etc/passwd",
+		"sed --in-p=.bak 's/x/y/' /etc/passwd",
+		"sed --i 's/x/y/' /etc/passwd",
+		"sed -i --expr='s/x/y/' /etc/passwd",
+		"sed -i --fil=/tmp/s /etc/passwd",
+	];
+	for (const cmd of blocked) assert.equal(classifyBashCommand(cmd, tmp).ok, false, cmd);
+	for (const cmd of ["sed -i --expr='s/x/y/' /etc/passwd", "sed -i --fil=/tmp/s /etc/passwd"]) {
+		const verdict = classifyBashCommand(cmd, tmp);
+		assert.equal(verdict.ok, false, cmd);
+		assert.match(verdict.reason, /sed blocked outside temp dir: \/etc\/passwd$/, cmd);
+	}
+	const allowed = [
+		`rsync --temp-d=${tmp}/tmp src/ ${tmp}/dest`,
+		`rsync --backup-d=${tmp}/bak src/ ${tmp}/dest`,
+		`rsync -aT${tmp} src/ ${tmp}/dest`,
+		// Exact non-write options that prefix a write option must not consume `src/`.
+		`rsync --backup src/ ${tmp}/dest`,
+		`rsync --partial src/ ${tmp}/dest`,
+		// `T` belongs to the `-e` value here, so it is not --temp-dir.
+		`rsync -eT/outside src/ ${tmp}/dest`,
+		`sed --in-pl 's/x/y/' ${tmp}/f`,
+		`sed --i 's/x/y/' ${tmp}/f`,
+		`sed -i --expr='s/x/y/' ${tmp}/f`,
+		`sed -i --fil=/tmp/s ${tmp}/f`,
+	];
+	for (const cmd of allowed) assert.equal(classifyBashCommand(cmd, tmp).ok, true, cmd);
+});
+
+test("rsync option values cannot hide the destination and relative writes resolve under it", () => {
+	const tmp = shellPath(os.tmpdir());
+	// Contract: popt consumes every option value before positionals are read, so a value
+	// after the destination cannot stand in for it. Two passes let an outside destination
+	// pass when a later write option takes its value from the next word.
+	const hiddenDest = classifyBashCommand(`rsync -a ${tmp}/src/ /outside/dest/ --backup-dir ${tmp}/bak`, "/workspace");
+	assert.equal(hiddenDest.ok, false);
+	assert.match(hiddenDest.reason, /rsync blocked outside temp dir: \/outside\/dest\/$/);
+	const hiddenByExclude = classifyBashCommand(`rsync -a ${tmp}/src/ /outside/dest --exclude ${tmp}/dest`, "/workspace");
+	assert.equal(hiddenByExclude.ok, false);
+	assert.match(hiddenByExclude.reason, /rsync blocked outside temp dir: \/outside\/dest$/);
+	for (const cmd of [
+		`rsync -a ${tmp}/src/ /outside/dest --files-from ${tmp}/list`,
+		`rsync -a ${tmp}/src/ /outside/dest -B ${tmp}/size`,
+		`rsync -a ${tmp}/src/ /outside/dest -@ 5`,
+		`rsync -a ${tmp}/src/ /outside/dest -@5`,
+	]) assert.equal(classifyBashCommand(cmd, "/workspace").ok, false, cmd);
+	// The same values with an in-temp destination stay allowed.
+	assert.equal(classifyBashCommand(`rsync -a ${tmp}/src/ ${tmp}/dest --exclude ${tmp}/skip`, "/workspace").ok, true);
+	assert.equal(classifyBashCommand(`rsync -a ${tmp}/src/ ${tmp}/dest -@ 5`, "/workspace").ok, true);
+	// rsync resolves these write options against the destination, not the caller cwd.
+	const cwd = `${tmp}/review/a/b/c`;
+	for (const option of ["--backup-dir", "--temp-dir", "--partial-dir"]) {
+		const verdict = classifyBashCommand(`rsync -a ${option}=../../../escape ${tmp}/src/ ${tmp}/dest/`, cwd);
+		assert.equal(verdict.ok, false, option);
+		assert.match(verdict.reason, /rsync blocked outside temp dir: \.\.\/\.\.\/\.\.\/escape$/, option);
+	}
+	assert.equal(classifyBashCommand(`rsync -a --backup-dir=../bak ${tmp}/src/ ${tmp}/dest/`, cwd).ok, true);
+	// --log-file stays a caller-cwd file: the same relative escape is still inside temp.
+	assert.equal(classifyBashCommand(`rsync -a --log-file=../../../log ${tmp}/src/ ${tmp}/dest/`, cwd).ok, true);
+	// Without a destination the relative write target cannot be bounded.
+	assert.equal(classifyBashCommand(`rsync -a --backup-dir=../../escape ${tmp}/src/`, cwd).ok, false);
+});
+
+test("rsync batch replay checks its single destination", () => {
+	const tmp = shellPath(os.tmpdir());
+	const batch = `${tmp}/payload.batch`;
+	// A replay has no source operand: one positional is the destination, and an absent
+	// destination means the caller's cwd. Every spelling reaches the same write root.
+	for (const cmd of [
+		`rsync -a --read-batch ${batch} /outside/dest/`,
+		`rsync -a --read-batch=${batch} /outside/dest/`,
+		`rsync -a --read-b=${batch} /outside/dest/`,
+		`rsync -a --read-ba=${batch} /outside/dest/`,
+	]) {
+		const verdict = classifyBashCommand(cmd, "/workspace");
+		assert.equal(verdict.ok, false, cmd);
+		assert.match(verdict.reason, /rsync blocked outside temp dir: \/outside\/dest\/$/, cmd);
+	}
+	assert.equal(classifyBashCommand(`rsync -a --read-batch ${batch}`, "/workspace").ok, false);
+	for (const cmd of [
+		`rsync -a --read-batch ${batch} ${tmp}/dest/`,
+		`rsync -a --read-batch=${batch} ${tmp}/dest/`,
+		`rsync -a --read-b=${batch} ${tmp}/dest/`,
+	]) assert.equal(classifyBashCommand(cmd, "/workspace").ok, true, cmd);
+	assert.equal(classifyBashCommand(`rsync -a --read-batch ${batch}`, tmp).ok, true);
+	// Write options still resolve against the replay destination.
+	const cwd = `${tmp}/review/a/b/c`;
+	const relative = classifyBashCommand(`rsync -a --read-batch=${batch} --backup-dir=../../../escape ${tmp}/dest/`, cwd);
+	assert.equal(relative.ok, false);
+	assert.match(relative.reason, /rsync blocked outside temp dir: \.\.\/\.\.\/\.\.\/escape$/);
+});
+
+test("-- ends option parsing and find '+' terminates only after {}", () => {
+	const tmp = shellPath(os.tmpdir());
+	// CONTRACT: after `--`, option-looking words are operands, so they neither select a
+	// write mode nor consume a value. find's `+` terminator needs a preceding exact `{}`.
+	const blocked = [
+		"chmod -w -- /etc/passwd",
+		"sed -Ei 's/x/y/' -- /etc/passwd",
+		`rsync --temp-dir=/outside src/ ${tmp}/dest`,
+		"unzip -d /outside a.zip",
+		`find ${tmp} -exec touch + /outside/pwned \\;`,
+	];
+	for (const command of blocked) assert.equal(classifyBashCommand(command, tmp).ok, false, command);
+	const allowed = [
+		`chmod -w -- ${tmp}/f`,
+		`chmod -- -w ${tmp}/f`,
+		`sed -i -- ${tmp}/f`,
+		"sed -- -e 's/x/y/' -i /etc/passwd",
+		`rsync -- --temp-dir=/outside src/ ${tmp}/dest`,
+		"unzip -- -d /outside a.zip",
+		`find ${tmp} -exec echo {} +`,
+	];
+	for (const command of allowed) assert.equal(classifyBashCommand(command, tmp).ok, true, command);
 });
 
 test("perl/ruby -i in-place edits block outside temp, allow inside temp, naming the file", () => {

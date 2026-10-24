@@ -144,3 +144,13 @@ test("redirect token stripping has a single source of truth", () => {
 	// operand and a copy destination earlier in the command goes unchecked.
 	assert.deepEqual(stripRedirectTokens(["cp", "src", ">|", "/tmp/log"]), ["cp", "src"]);
 });
+
+test("find exec actions have a single owner", () => {
+	const source = sourceOf("readonly-bash-commands.ts");
+	assert.match(source, /export const FIND_EXEC_ACTIONS = new Set\(/, "action set must be exported");
+	const body = /function scanFindActions[\s\S]*?\n}/.exec(source)?.[0] ?? "";
+	assert.match(body, /FIND_EXEC_ACTIONS\.has/, "action scan must reuse the shared action set");
+	assert.doesNotMatch(body, /"-exec"/, "action scan must not repeat exec actions inline");
+	const targets = /function getFindMutationTargets[\s\S]*?\n}/.exec(source)?.[0] ?? "";
+	assert.match(targets, /scanFindActions\(/, "target extraction must reuse the shared action scan");
+});

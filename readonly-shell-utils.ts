@@ -23,6 +23,20 @@ export const SHELL_SCRIPT_CONSUMERS = new Set(["bash", "sh", "zsh", "dash", "ksh
 /** Bash word tokenizer shared by command-prefix parsing: keeps quoted words whole. */
 export const SHELL_WORD_PATTERN = /(?:"(?:\\.|[^"\\])*"|'[^']*'|\\[\s\S]|[^\s"'\\])+/g;
 
+/** One decoder for command-word unescaping: report each decoded char with the raw index
+ * that produced it, so prefix lookups keep the same quoting rules as the full word. */
+function walkCommandWord(token: string, visit: (ch: string, rawIndex: number) => boolean): void {
+	let quote = "";
+	for (let i = 0; i < token.length; i++) {
+		const ch = token[i]!;
+		if (quote === "'") { if (ch === "'") quote = ""; else if (visit(ch, i)) return; continue; }
+		if (ch === "\\") { if (visit(token[++i] ?? "", i)) return; continue; }
+		if (quote === '"') { if (ch === '"') quote = ""; else if (visit(ch, i)) return; continue; }
+		if (ch === "'" || ch === '"') { quote = ch; continue; }
+		if (visit(ch, i)) return;
+	}
+}
+
 /**
  * Approximate Bash word expansion for command lookup: Bash removes backslash
  * escapes and quote characters before resolving the executable name, so `\rm`,
@@ -31,20 +45,28 @@ export const SHELL_WORD_PATTERN = /(?:"(?:\\.|[^"\\])*"|'[^']*'|\\[\s\S]|[^\s"'\
  * POSIX-shell assumption: a `\` in a command word is an escape, not a path separator.
  */
 export function unescapeCommandWord(token: string): string {
-	let word = "", quote = "";
-	for (let i = 0; i < token.length; i++) {
-		const ch = token[i]!;
-		if (quote === "'") { if (ch === "'") quote = ""; else word += ch; continue; }
-		if (ch === "\\") { word += token[++i] ?? ""; continue; }
-		if (quote === '"') { if (ch === '"') quote = ""; else word += ch; continue; }
-		if (ch === "'" || ch === '"') { quote = ch; continue; }
-		word += ch;
-	}
+	let word = "";
+	walkCommandWord(token, (ch) => { word += ch; return false; });
 	return word;
 }
 
-/** Decode one static Bash word. Dynamic words fail closed; double quotes retain ordinary backslashes. */
-export function decodeShellWord(token: string): string | null {
+/** Raw remainder after a decoded flag prefix, quote context intact. An attached operand
+ * must reach the path decoder raw: unescaping first would turn a literal `$D` into an
+ * expansion. Unknown prefixes fail closed. */
+export function rawOperandAfterDecodedFlag(token: string, prefix: string): string {
+	let decoded = "", end = -1;
+	walkCommandWord(token, (ch, rawIndex) => {
+		decoded += ch;
+		if (decoded === prefix) { end = rawIndex; return true; }
+		return !prefix.startsWith(decoded);
+	});
+	return end === -1 ? "$(unproven-attached-operand)" : token.slice(end + 1);
+}
+
+/** Decode one static Bash word. Dynamic words fail closed; double quotes retain ordinary backslashes.
+ * `wordStart` gates the leading `~` rejection: Bash can expand a tilde only at the start of a
+ * complete word, so a fragment's leading `~` is literal data. */
+function decodeWord(token: string, wordStart: boolean): string | null {
 	let word = "", quote = "";
 	for (let i = 0; i < token.length; i++) {
 		const ch = token[i]!;
@@ -57,10 +79,26 @@ export function decodeShellWord(token: string): string | null {
 		}
 		if (ch === quote) { quote = ""; continue; }
 		if (!quote && (ch === "'" || ch === '"')) { quote = ch; continue; }
-		if (ch === "$" || ch === "`" || (!quote && (/[\s*?{}\[\]<>]/.test(ch) || (i === 0 && ch === "~")))) return null;
+		if (ch === "$" || ch === "`" || (!quote && (/[\s*?{}\[\]<>]/.test(ch) || (wordStart && i === 0 && ch === "~")))) return null;
 		word += ch;
 	}
 	return quote ? null : word;
+}
+
+export function decodeShellWord(token: string): string | null {
+	return decodeWord(token, true);
+}
+
+/** Bash tilde expansion depends on quoting: a tilde-prefix with a quote or escape stays
+ * literal data. `~name`, `~+`, and `~-` name directories no host-independent rule can
+ * prove, so they fail closed. One owner for operand and redirect decoding. */
+export type TildePrefixMode = "expand" | "literal" | "unproven";
+
+export function tildePrefixMode(token: string): TildePrefixMode | null {
+	if (!token.startsWith("~")) return null;
+	if (token === "~" || token.startsWith("~/")) return "expand";
+	const next = token[1];
+	return next === "'" || next === '"' || next === "\\" ? "literal" : "unproven";
 }
 
 /** Chars that make a dynamic value unprovable as a path: shell syntax and globs. One
@@ -87,7 +125,13 @@ export function decodeShellOperand(token: string, vars: ReadonlyMap<string, stri
 		// fails closed when it carries an escape, because Bash would decode it.
 		return expanded === null || hasUnprovableValueChars(expanded) || (!token.startsWith('"') && /\s/.test(expanded)) ? null : expanded;
 	}
-	if (token === "~" || token.startsWith("~/")) return decodeShellWord(os.homedir() + token.slice(1));
+	const tilde = tildePrefixMode(token);
+	if (tilde === "unproven") return null;
+	if (tilde !== null) {
+		const rest = decodeShellWord(token.slice(1));
+		// Expansion is trusted home data; a literal tilde stays part of the pathname.
+		return rest === null ? null : (tilde === "expand" ? os.homedir() : "~") + rest;
+	}
 	return decodeShellWord(token);
 }
 
@@ -316,25 +360,43 @@ function isInertPath(normalized: string): boolean {
 		|| /^\/dev\/(?:stdout|stderr|tty|fd\/\d+)$/.test(normalized);
 }
 
+/** Expand a leading variable in a path operand. Dynamic values cannot prove safety. */
+function decodeVariablePathOperand(token: string, vars: ReadonlyMap<string, string>, quoted: boolean): { value: string; glob: boolean } | null {
+	const raw = stripMatchingQuotes(token);
+	// Unsupported suffix syntax must not be concatenated as literal data.
+	if (!/^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*(?::[-=][^$`\\"'{}]*)?\})[^$`\\"']*$/.test(raw)) return null;
+	const value = expandShellVariable(raw, vars);
+	// The raw-token regex above already excludes glob/quote and source-escape syntax; the
+	// value's own backslashes are literal data (a Windows separator). Source-fragment escapes
+	// fail closed inside expandShellVariable.
+	if (value === null || /[$`]/.test(value) || (!quoted && /[\s"'{}]/.test(value))) return null;
+	return { value, glob: !quoted && /[*?{}\[\]]/.test(value) };
+}
+
+/** Only plain glob syntax is modeled; mixed quotes/escapes fail closed. */
+function finishPathOperand(token: string, value: string | null): { value: string; glob: boolean } | null {
+	if (value !== null) return { value, glob: false };
+	if (/[*?{}\[\]]/.test(token) && !/[\s$`\\"'~<>]/.test(token)) return { value: token, glob: true };
+	return null;
+}
+
 /** Resolve path syntax once; expanded values and glob matches remain filesystem data. */
 export function decodeShellPathOperand(token: string, vars: ReadonlyMap<string, string> = new Map()): { value: string; glob: boolean } | null {
 	const raw = stripMatchingQuotes(token);
 	const quoted = token.startsWith('"') && token.endsWith('"');
-	if (!token.startsWith("'") && raw.startsWith("$")) {
-		// Unsupported suffix syntax must not be concatenated as literal data.
-		if (!/^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*(?::[-=][^$`\\"'{}]*)?\})[^$`\\"']*$/.test(raw)) return null;
-		const value = expandShellVariable(raw, vars);
-		// Dynamic values cannot prove safety. The raw-token regex above already excludes glob/quote
-		// and source-escape syntax; the value's own backslashes are literal data (a Windows
-		// separator). Source-fragment escapes fail closed inside expandShellVariable.
-		if (value === null || /[$`]/.test(value) || (!quoted && /[\s"'{}]/.test(value))) return null;
-		return { value, glob: !quoted && /[*?{}\[\]]/.test(value) };
-	}
-	const value = decodeShellOperand(token, vars);
-	if (value !== null) return { value, glob: false };
-	// Only plain glob syntax is modeled; mixed quotes/escapes fail closed.
-	if (/[*?{}\[\]]/.test(token) && !/[\s$`\\"'~<>]/.test(token)) return { value: token, glob: true };
-	return null;
+	if (!token.startsWith("'") && raw.startsWith("$")) return decodeVariablePathOperand(token, vars, quoted);
+	return finishPathOperand(token, decodeShellOperand(token, vars));
+}
+
+/** Decode one fragment of a complete shell word. Bash expands a tilde only at the start of
+ * the complete word, so a later fragment's leading `~` is literal data. Callers that already
+ * decoded the word prefix (redirect span assembly) must not use the whole-operand decoder,
+ * which would expand the fragment's `~` and check a different pathname than Bash opens. */
+export function decodeShellFragmentOperand(token: string, vars: ReadonlyMap<string, string> = new Map()): { value: string; glob: boolean } | null {
+	const raw = stripMatchingQuotes(token);
+	const quoted = token.startsWith('"') && token.endsWith('"');
+	if (!token.startsWith("'") && raw.startsWith("$")) return decodeVariablePathOperand(token, vars, quoted);
+	return finishPathOperand(token, decodeWord(token, false));
 }
 
 /** Glob patterns: resolve against cwd and check each match; unmatched falls through to literal. */
@@ -416,17 +478,21 @@ export function isUnknownCwd(cwd: string): boolean {
 /** Whether a write target is provably inside the temp roots, provably outside, or unprovable. */
 export type TempPathVerdict = "inside" | "outside" | "unproven";
 
+/** Verdict for a decoded path value; `glob` marks an unexpanded glob pattern. */
+function decodedValueVerdict(value: string, glob: boolean, cwd: string): TempPathVerdict {
+	if (isWindowsRiskyPathTarget(value)) return "unproven";
+	// Cross-drive-relative resolves against another drive's ambient cwd: unprovable on win32.
+	if (process.platform === "win32" && isCrossDriveRelative(value, cwd)) return "unproven";
+	if (isInertPath(value)) return "inside";
+	const globResult = glob ? isTempGlobPath(value, cwd) : null;
+	if (globResult === "unproven") return "unproven";
+	return (globResult ?? isTempLiteralPath(value, cwd)) ? "inside" : "outside";
+}
+
 export function classifyTempPath(rawPath: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map()): TempPathVerdict {
 	const operand = decodeShellPathOperand(rawPath, shellVars);
 	// Dynamic values (unknown vars, substitutions) prove nothing — callers must fail closed.
-	if (operand === null) return "unproven";
-	if (isWindowsRiskyPathTarget(operand.value)) return "unproven";
-	// Cross-drive-relative resolves against another drive's ambient cwd: unprovable on win32.
-	if (process.platform === "win32" && isCrossDriveRelative(operand.value, cwd)) return "unproven";
-	if (isInertPath(operand.value)) return "inside";
-	const globResult = operand.glob ? isTempGlobPath(operand.value, cwd) : null;
-	if (globResult === "unproven") return "unproven";
-	return (globResult ?? isTempLiteralPath(operand.value, cwd)) ? "inside" : "outside";
+	return operand === null ? "unproven" : decodedValueVerdict(operand.value, operand.glob, cwd);
 }
 
 /** A fix that can work for this cause. Only an unsafe flag is recoverable with `cd -L`. */
@@ -465,6 +531,25 @@ export function tempPathBlockReason(subject: string, rawPath: string, cwd: strin
 	if (verdict === "inside") return null;
 	const shown = stripMatchingQuotes(rawPath) || "(unknown target)";
 	return pathVerdictBlockReason(subject, verdict, shown, cwd, !path.isAbsolute(stripMatchingQuotes(rawPath)));
+}
+
+/** Block reason for a target whose tool resolves a relative path against another operand
+ * rather than the caller cwd (rsync's destination-relative write options). An unprovable
+ * base is the base's own check failure, so this stays silent instead of inventing a
+ * diagnosis; an absolute target ignores the base and is checked directly. */
+export function relativeTempPathBlockReason(subject: string, rawPath: string, rawBase: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map()): string | null {
+	if (path.isAbsolute(stripMatchingQuotes(rawPath))) return tempPathBlockReason(subject, rawPath, cwd, shellVars);
+	const base = decodeShellPathOperand(rawBase, shellVars);
+	if (base === null || decodedValueVerdict(base.value, base.glob, cwd) !== "inside") return null;
+	return tempPathBlockReason(subject, rawPath, resolvePathFrom(cwd, base.value), shellVars);
+}
+
+/** Block reason for a value a word-span decoder already expanded (mixed redirect spans).
+ * A decoded value is filesystem data, so no shell expansion runs here. */
+export function decodedPathBlockReason(subject: string, value: string, cwd: string): string | null {
+	const verdict = decodedValueVerdict(value, false, cwd);
+	if (verdict === "inside") return null;
+	return pathVerdictBlockReason(subject, verdict, value || "(unknown target)", cwd, !path.isAbsolute(value));
 }
 
 /** Check data already decoded by Bash/Git; literal quotes and backslashes are not shell syntax. */

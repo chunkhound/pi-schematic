@@ -1,3 +1,4 @@
+import os from "node:os";
 import { canUseOsSandbox, wrapCommandWithOsSandbox } from "./os-sandbox.js";
 import {
 	buildReadonlyBashBlockReason,
@@ -5,8 +6,8 @@ import {
 	READONLY_INVALID_BASH_COMMAND_REASON,
 } from "./notifications.js";
 import {
-	decodeShellAssignmentValue, tempPathBlockReason, getCommandTokens,
-	normalizedCommand, unescapeCommandWord, matchRedirectToken,
+	decodeShellFragmentOperand, decodeShellAssignmentValue, decodedPathBlockReason, tempPathBlockReason, getCommandTokens,
+	normalizedCommand, unescapeCommandWord, matchRedirectToken, tildePrefixMode,
 } from "./readonly-shell-utils.js";
 import { consumeShellCharacter, splitUnquotedShellSegments, extractCommandSubstitutions } from "./readonly-bash-scanner.js";
 import type { ShellScan, ShellPart } from "./readonly-bash-scanner.js";
@@ -605,36 +606,136 @@ function skipWhitespace(cmd: string, start: number): number {
 	return i;
 }
 
-function readQuotedRedirectTarget(cmd: string, start: number): { target: string; end: number } {
-	const quote = cmd[start];
-	let target = quote, i = start + 1;
-	while (i < cmd.length) {
-		const ch = cmd[i];
-		target += ch;
-		if (ch === "\\" && quote === '"' && i + 1 < cmd.length) { i++; target += cmd[i]; continue; }
-		if (ch === quote) { i++; break; }
-		i++;
-	}
-	return { target, end: i };
+type RedirectTarget = { target: string; end: number; single: boolean };
+type RedirectSpan = { text: string; end: number };
+
+/** One backslash escape, including a trailing backslash at end of input. */
+function readEscapedRedirectSpan(cmd: string, start: number): RedirectSpan {
+	const next = start + 1 < cmd.length ? cmd[start + 1]! : "";
+	return { text: cmd[start]! + next, end: start + 1 + next.length };
 }
 
-function readUnquotedRedirectTarget(cmd: string, start: number): { target: string; end: number } {
-	let target = "", i = start;
-	while (i < cmd.length) {
-		const ch = cmd[i];
-		if (/\s/.test(ch) || ch === ";" || ch === "|" || ch === "\n") break;
-		if (ch === "&" && target !== "") break;
-		target += ch;
-		i++;
+/** One quoted span. Backslash escapes only inside double quotes, matching Bash. */
+function readQuotedRedirectSpan(cmd: string, start: number, quote: string): RedirectSpan {
+	let text = quote, end = start + 1;
+	while (end < cmd.length) {
+		const inner = cmd[end]!;
+		text += inner;
+		if (inner === "\\" && quote === '"' && end + 1 < cmd.length) {
+			text += cmd[end + 1];
+			end += 2;
+			continue;
+		}
+		end++;
+		if (inner === quote) break;
 	}
-	return { target, end: i };
+	return { text, end };
 }
 
-function readRedirectTarget(cmd: string, start: number): { target: string; end: number } {
+/** A `&` ends the target only after content; a leading one is part of the word. */
+function isRedirectWordEnd(ch: string, target: string): boolean {
+	return /\s/.test(ch) || ch === ";" || ch === "|" || ch === "\n" || (ch === "&" && target !== "");
+}
+
+/** One shell word after a redirect operator. Adjacent quoted and unquoted spans are one
+ * word (`>"/tmp"/../x`), so the whole word is consumed; returning only its first span
+ * let the rest of the target escape the check. `single` marks a word with one span, which
+ * the existing operand decoder already handles exactly. */
+function readRedirectTarget(cmd: string, start: number): RedirectTarget {
 	const i = skipWhitespace(cmd, start);
-	if (i >= cmd.length) return { target: "", end: i };
-	const first = cmd[i];
-	return (first === '"' || first === "'") ? readQuotedRedirectTarget(cmd, i) : readUnquotedRedirectTarget(cmd, i);
+	let target = "", end = i, spans = 0, inUnquoted = false;
+	while (end < cmd.length) {
+		const ch = cmd[end]!;
+		if (ch === "\\" || ch === "'" || ch === '"') {
+			if (ch === "\\") { if (!inUnquoted) { spans++; inUnquoted = true; } }
+			else { inUnquoted = false; spans++; }
+			const span = ch === "\\" ? readEscapedRedirectSpan(cmd, end) : readQuotedRedirectSpan(cmd, end, ch);
+			target += span.text;
+			end = span.end;
+			continue;
+		}
+		if (isRedirectWordEnd(ch, target)) break;
+		if (!inUnquoted) { spans++; inUnquoted = true; }
+		target += ch; end++;
+	}
+	return { target, end, single: spans <= 1 };
+}
+
+type RedirectPrefix = { out: string; start: number; spans: number };
+
+/** Tilde prefix shared by the mixed-word decoder; `unproven` cannot be expanded safely. */
+function redirectTildePrefix(raw: string): RedirectPrefix | "unproven" | null {
+	const tilde = tildePrefixMode(raw);
+	if (tilde === "unproven") return "unproven";
+	if (tilde === null) return null;
+	return { out: tilde === "expand" ? os.homedir() : "~", start: 1, spans: 1 };
+}
+
+/** End of one quoted span, or null when the quote is unterminated. */
+function quotedRedirectSpanEnd(raw: string, start: number, quote: string): number | null {
+	let i = start + 1;
+	while (i < raw.length) {
+		const c = raw[i]!;
+		if (c === "\\" && quote === '"') {
+			if (i + 1 >= raw.length) return null;
+			i += 2;
+			continue;
+		}
+		i++;
+		if (c === quote) return i;
+	}
+	return null;
+}
+
+/** End of one unquoted span, or null for a glob or trailing escape. */
+function unquotedRedirectSpanEnd(raw: string, start: number): number | null {
+	let i = start;
+	while (i < raw.length && raw[i] !== "'" && raw[i] !== '"') {
+		const c = raw[i]!;
+		if (c === "\\") { if (i + 1 >= raw.length) return null; i += 2; continue; }
+		if (/[*?{}\[\]]/.test(c)) return null;
+		i++;
+	}
+	return i;
+}
+
+function redirectSpanEnd(raw: string, start: number): number | null {
+	const ch = raw[start]!;
+	return ch === "'" || ch === '"' ? quotedRedirectSpanEnd(raw, start, ch) : unquotedRedirectSpanEnd(raw, start);
+}
+
+function decodeRedirectSpan(raw: string, start: number, end: number, shellVars: ReadonlyMap<string, string>): string | null {
+	// A span is a fragment, not a word: only `redirectTildePrefix` may expand a tilde.
+	const decoded = decodeShellFragmentOperand(raw.slice(start, end), shellVars);
+	return decoded === null || decoded.glob ? null : decoded.value;
+}
+
+/** Decode a multi-span redirect word span by span, then concatenate the decoded values.
+ * Bash ends a variable name at a quote boundary, so decoding the whole word at once merged
+ * `"$D"pwn` into `$Dpwn` and checked a different file than Bash writes. Unquoted globs stay
+ * on the fail-closed path; tilde quoting follows the shared `tildePrefixMode` rule, so a
+ * literal `~` is data and cannot be re-expanded by the span decoder. Only the complete
+ * word's prefix can expand: a later fragment's `~` stays literal, as Bash keeps it. */
+function decodeMixedRedirectTarget(raw: string, shellVars: ReadonlyMap<string, string>): string | null {
+	let out = "", i = 0, spans = 0;
+	const prefix = redirectTildePrefix(raw);
+	if (prefix === "unproven") return null;
+	if (prefix !== null) { out = prefix.out; i = prefix.start; spans = prefix.spans; }
+	while (i < raw.length) {
+		const start = i, end = redirectSpanEnd(raw, start);
+		if (end === null) return null;
+		const value = decodeRedirectSpan(raw, start, end, shellVars);
+		if (value === null) return null;
+		spans++; out += value; i = end;
+	}
+	return spans > 1 ? out : null;
+}
+
+function mixedRedirectBlockReason(subject: string, raw: string, cwd: string, shellVars: ReadonlyMap<string, string>): string | null {
+	const decoded = decodeMixedRedirectTarget(raw, shellVars);
+	return decoded === null
+		? tempPathBlockReason(subject, raw, cwd, shellVars)
+		: decodedPathBlockReason(subject, decoded, cwd);
 }
 
 /** Is the `>` at position `i` a non-file redirect (fd redirect or comparison)? */
@@ -653,8 +754,10 @@ function writeRedirectBlockReason(cmd: string, cwd: string, shellVars: ReadonlyM
 		const ch = cmd[i];
 		if (ch !== ">" || isNonFileRedirect(cmd, i)) continue;
 		const opLen = ">|&".includes(cmd[i + 1] ?? "") ? 2 : 1;
-		const { target, end } = readRedirectTarget(cmd, i + opLen);
-		const reason = tempPathBlockReason("write redirect", target, cwd, shellVars);
+		const { target, single } = readRedirectTarget(cmd, i + opLen);
+		const reason = single
+			? tempPathBlockReason("write redirect", target, cwd, shellVars)
+			: mixedRedirectBlockReason("write redirect", target, cwd, shellVars);
 		if (reason) return reason;
 	}
 	return null;

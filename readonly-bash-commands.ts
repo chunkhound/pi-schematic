@@ -6,7 +6,9 @@
  * them; the first matching reason wins. Target extractors (getRmTargets, etc.)
  * pull filesystem paths from command arguments for temp-dir checking.
  */
-import { decodeShellAssignmentValue, decodeShellWord, tempPathBlockReason, rawAttachedFlagValue, stripMatchingQuotes, stripRedirectTokens, expandShellVariable, splitFlagValue, normalizedCommand, unescapeCommandWord, getCommandTokens, SHELL_WORD_PATTERN, SHELL_SCRIPT_CONSUMERS, skipLeadingRedirections } from "./readonly-shell-utils.js";
+import path from "node:path";
+import { decodeShellAssignmentValue, decodeShellWord, tempPathBlockReason, relativeTempPathBlockReason, rawAttachedFlagValue, rawOperandAfterDecodedFlag, stripMatchingQuotes, stripRedirectTokens, expandShellVariable, splitFlagValue, normalizedCommand, unescapeCommandWord, getCommandTokens, SHELL_WORD_PATTERN, SHELL_SCRIPT_CONSUMERS, skipLeadingRedirections } from "./readonly-shell-utils.js";
+import { isRealDirectory, isSymlinkPath, joinPathFrom, resolveRealPath } from "./resolve-path.js";
 import { matchingParenIndex, extractProcessSubstitutions } from "./readonly-bash-scanner.js";
 import { classifyGit } from "./readonly-bash-git.js";
 import { resolveDirectoryTarget } from "./readonly-bash-dirchange.js";
@@ -32,10 +34,193 @@ export const INTERPRETERS = new Set(Object.keys(INTERPRETER_EXEC_FLAGS));
 // Node rejects attached scripts; treating one as code only over-blocks, never misses code.
 const ATTACHED_SCRIPT_INTERPRETERS = new Set(["node", "python", "python3", "perl", "ruby"]);
 
-// Package managers are blocked unconditionally — they mutate system state
-// outside any single directory (npm install writes to node_modules, pip
-// installs to site-packages, etc.). Temp-dir path checking is not meaningful.
-export const PACKAGE_MANAGERS = new Set(["npm", "yarn", "pnpm", "pip", "pip3", "pipx", "apt", "apt-get", "brew", "cargo", "gem", "yum", "dnf", "pacman", "choco"]);
+// uv/bun/conda block on every invocation: their ordinary modes write outside
+// the temp roots even with an in-temp operand. uv run/venv materialize `.venv`
+// and touch ~/.cache/uv, uvx/bunx install before running, and conda resolves
+// packages through its own store. No verb list can prove such a call a read.
+const ALWAYS_BLOCKED_PACKAGE_MANAGERS = new Set(["uv", "uvx", "bun", "bunx", "conda"]);
+
+// Managers with an explicit write-mode grammar live in PACKAGE_MODE_TABLES below.
+// The rest block on a shared mutation verb: they write outside any single directory
+// (npm install writes node_modules, pip installs to site-packages), so temp-dir path
+// checking is not meaningful.
+
+/** One package-manager mode. Short and long spellings share the row, so a mode cannot
+ * enter one grammar without the other. `writes: false` rows only stop the short-bundle
+ * scan (rpm/pacman select one mode from the bundle). */
+type PackageModeRow = {
+	short: string | null;
+	long: readonly string[];
+	writes: boolean;
+	/** Query sub-operations that keep a writing mode read-only (`pacman -Ss`, `-Fl`). */
+	shortReadSubops?: RegExp;
+	longReadSubops?: readonly string[];
+};
+
+type PackageGrammar = {
+	/** `first`: the first mode letter selects the mode and later letters are its options
+	 * (rpm, pacman). `any`: every write letter is an action (dpkg bundles one action). */
+	shortModeScan: "first" | "any";
+	modes: readonly PackageModeRow[];
+};
+
+export const PACKAGE_MODE_TABLES: Readonly<Record<string, PackageGrammar>> = {
+	dpkg: {
+		shortModeScan: "any",
+		modes: [
+			{ short: "i", long: ["--install"], writes: true },
+			{ short: "r", long: ["--remove"], writes: true },
+			{ short: "P", long: ["--purge"], writes: true },
+			// -a/--pending is a modifier used with --configure/--unpack; both block.
+			{ short: "a", long: ["--pending"], writes: true },
+			{ short: "A", long: ["--record-avail"], writes: true },
+			{ short: "b", long: ["--build"], writes: true },
+			{ short: "x", long: ["--extract"], writes: true },
+			{ short: "X", long: ["--vextract"], writes: true },
+			{ short: "e", long: ["--control"], writes: true },
+			{ short: null, long: ["--unpack", "--configure"], writes: true },
+			{ short: null, long: ["--triggers-only"], writes: true },
+			{ short: null, long: ["--set-selections", "--clear-selections"], writes: true },
+			{ short: null, long: ["--update-avail", "--merge-avail", "--clear-avail", "--forget-old-unavail"], writes: true },
+			{ short: null, long: ["--add-architecture", "--remove-architecture", "--foreign-architecture"], writes: true },
+		],
+	},
+	"dpkg-deb": {
+		shortModeScan: "any",
+		modes: [
+			{ short: "b", long: ["--build"], writes: true },
+			{ short: "x", long: ["--extract"], writes: true },
+			{ short: "X", long: ["--vextract"], writes: true },
+			{ short: "e", long: ["--control"], writes: true },
+			{ short: "R", long: ["--raw-extract"], writes: true },
+		],
+	},
+	rpm: {
+		shortModeScan: "first",
+		modes: [
+			{ short: "i", long: ["--install"], writes: true },
+			{ short: "U", long: ["--upgrade"], writes: true },
+			{ short: "F", long: ["--freshen"], writes: true },
+			{ short: "e", long: ["--erase"], writes: true },
+			// -b<stage> and -t<stage> build into the rpmbuild tree; the stage is their tail.
+			{ short: "b", long: [], writes: true },
+			{ short: "t", long: [], writes: true },
+			{ short: null, long: ["--import", "--rebuilddb", "--initdb", "--setperms", "--setugids", "--rebuild", "--recompile"], writes: true },
+			{ short: "q", long: ["--query"], writes: false },
+			{ short: "V", long: ["--verify"], writes: false },
+			{ short: "K", long: ["--checksig"], writes: false },
+		],
+	},
+	pacman: {
+		shortModeScan: "first",
+		modes: [
+			{ short: "S", long: ["--sync"], writes: true, shortReadSubops: /^[silgp]+$/, longReadSubops: ["--search", "--info", "--list", "--print", "--groups"] },
+			{ short: "R", long: ["--remove"], writes: true },
+			{ short: "U", long: ["--upgrade"], writes: true },
+			{ short: "D", long: ["--database"], writes: true },
+			{ short: "F", long: ["--files"], writes: true, shortReadSubops: /^[lsx]+$/, longReadSubops: ["--list", "--search", "--regex"] },
+			{ short: null, long: ["--refresh", "--sysupgrade", "--clean", "--asdeps", "--asexplicit"], writes: true },
+			{ short: "Q", long: ["--query"], writes: false },
+			{ short: "T", long: ["--deptest"], writes: false },
+		],
+	},
+};
+
+export const PACKAGE_MANAGERS = new Set([
+	...ALWAYS_BLOCKED_PACKAGE_MANAGERS,
+	...Object.keys(PACKAGE_MODE_TABLES),
+	"npm", "yarn", "pnpm", "pip", "pip3", "pipx", "apt", "apt-get", "brew", "cargo", "gem", "yum", "dnf", "choco",
+]);
+
+// Mutation words cover managers without a mode grammar; table managers use their own
+// grammar, so a read sub-operation (`pacman --sync --search`) is not mistaken for a verb.
+const PACKAGE_MUTATION_WORDS = new Set([
+	"install", "uninstall", "update", "upgrade", "ci", "link", "publish", "add", "remove", "reinstall",
+	"tap", "untap", "download", "build-dep", "i", "un", "ad", "rm", "up", "in", "rb",
+	"create", "sync", "purge", "erase", "unpack", "configure", "freshen",
+	"--install", "--remove", "--upgrade", "--purge", "--unpack", "--configure", "--erase",
+	"--freshen", "--sync", "--database",
+]);
+
+/** Long option name without `=value`; null for `--`, short flags, and operands. */
+function longOptionName(word: string): string | null {
+	const name = unescapeCommandWord(word).split("=", 1)[0]!.toLowerCase();
+	return name.startsWith("--") && name.length > 2 ? name : null;
+}
+
+/** getopt_long accepts any unambiguous prefix, so a prefix of a write spelling can
+ * select that write. Ambiguous prefixes fail inside getopt; blocking them is safe. */
+function matchesLongOption(name: string, option: string): boolean {
+	return option.startsWith(name);
+}
+
+/** Mode row and the bundle letters after it; null outside a short flag. */
+function shortModeOf(grammar: PackageGrammar, word: string): { row: PackageModeRow; subops: string } | null {
+	const raw = unescapeCommandWord(word);
+	if (!raw.startsWith("-") || raw.startsWith("--")) return null;
+	const letters = raw.slice(1);
+	for (let i = 0; i < letters.length; i++) {
+		const row = grammar.modes.find((candidate) => candidate.short === letters[i]);
+		if (!row) continue;
+		if (grammar.shortModeScan === "first") return { row, subops: letters.slice(i + 1).replace(/[^a-z]/g, "") };
+		if (row.writes) return { row, subops: "" };
+	}
+	return null;
+}
+
+/** Letters of a short-flag token; long options and operands carry none. */
+function shortFlagLetters(word: string): string {
+	const raw = unescapeCommandWord(word);
+	return raw.startsWith("-") && !raw.startsWith("--") ? raw.slice(1) : "";
+}
+
+/** Only query sub-operations keep a writing mode read-only, whether bundled in the
+ * mode token or split across short tokens (`-Ss` ≡ `-S -s`). */
+function shortSubopsReadOnly(row: PackageModeRow, subops: string): boolean {
+	return row.shortReadSubops !== undefined && row.shortReadSubops.test(subops);
+}
+
+function shortBundleMutates(grammar: PackageGrammar, args: string[]): boolean {
+	return args.some((arg, index) => {
+		const mode = shortModeOf(grammar, arg);
+		if (mode === null || !mode.row.writes) return false;
+		const others = args.filter((_, other) => other !== index).map(shortFlagLetters).join("");
+		return !shortSubopsReadOnly(mode.row, mode.subops + others);
+	});
+}
+
+/** Long option names present in argv; operands and `--` are not options. */
+function longOptionNames(args: string[]): string[] {
+	return args.map(longOptionName).filter((name): name is string => name !== null);
+}
+
+/** Long sub-operations resolve like getopt_long, so `--sea` is a read when `--search`
+ * is the only option it can name; ambiguous or unknown names fail closed. */
+function longSubopsAreRead(subops: readonly string[], names: string[]): boolean {
+	return names.every((name) => {
+		const match = matchLongOption(name, subops);
+		return match !== null && match !== "ambiguous";
+	});
+}
+
+/** A long mode is read-only only when every other long option is one of its query
+ * sub-operations; an unrecognized option fails closed as a write. */
+function longModeMutates(row: PackageModeRow, names: string[]): boolean {
+	if (row.longReadSubops === undefined) return true;
+	const others = names.filter((name) => !row.long.some((option) => matchesLongOption(name, option)));
+	// No sub-operation means the mode's default action (install/refresh), a write.
+	return others.length === 0 || !longSubopsAreRead(row.longReadSubops, others);
+}
+
+function packageGrammarMutates(grammar: PackageGrammar, args: string[]): boolean {
+	if (shortBundleMutates(grammar, args)) return true;
+	const names = longOptionNames(args);
+	return grammar.modes.some((row) =>
+		row.writes
+		&& row.long.some((option) => names.some((name) => matchesLongOption(name, option)))
+		&& longModeMutates(row, names),
+	);
+}
 
 // Shells whose command strings this classifier cannot parse are blocked
 // unconditionally. Matched on the basename so Windows paths such as
@@ -171,6 +356,24 @@ function classifyInlineScript(command: string, flag: string, rawScript: string, 
 	return nested.ok ? null : `${command} ${flag} blocked: ${nested.reason}`;
 }
 
+/** Positional parameters supply words at runtime, either from argv after `-c` or from `set --`.
+ * The classifier cannot resolve either source, so the script's command word is unknowable. */
+const POSITIONAL_PARAMETER_PATTERN = /^\$(?:[@*]|[0-9]|\{[@*]|[0-9])/;
+
+/** Scan shell source for an expanding positional parameter. Single-quoted spans are literal
+ * data (`awk '{print $1}'`), so only unquoted and double-quoted references count. */
+function expandsPositionalParameter(script: string): boolean {
+	let quote: "'" | '"' | null = null;
+	for (let i = 0; i < script.length; i++) {
+		const ch = script[i]!;
+		if (ch === "\\") { i++; continue; }
+		if (ch === "'" && quote !== '"') { quote = quote === "'" ? null : "'"; continue; }
+		if (ch === '"' && quote !== "'") { quote = quote === '"' ? null : '"'; continue; }
+		if (ch === "$" && quote !== "'" && POSITIONAL_PARAMETER_PATTERN.test(script.slice(i, i + 4))) return true;
+	}
+	return false;
+}
+
 /** Interpreters with inline-execution flags — classify inline code recursively. */
 export function classifyInterpreter(command: string, tokens: string[], cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
 	if (!INTERPRETERS.has(command)) return null;
@@ -183,6 +386,9 @@ export function classifyInterpreter(command: string, tokens: string[], cwd: stri
 			if (script === null) continue;
 			const reason = classifyInlineScript(command, flag, script, cwd, depth, shellVars);
 			if (reason) return reason;
+			if (SHELL_SCRIPT_CONSUMERS.has(command) && expandsPositionalParameter(demangleNestedArgument(script))) {
+				return `${command} ${flag} blocked: positional parameters supply the runtime command; pass the command text literally${FAIL_CLOSED_HINT}`;
+			}
 			break;
 		}
 	}
@@ -276,7 +482,9 @@ const XARGS_LONG_ARITY: Record<string, XargsOptionArity> = {
 
 /** Tokens consumed by one short `xargs` option, the replacement token it selects, and
  * mode resets: GNU xargs lets the last of replace/max-lines/max-args win. */
-type XargsShortScan = { readonly size: number; readonly replaceToken: string | null; readonly clearsReplacement?: boolean; readonly maxArgsValue?: string; readonly unsafeJ?: boolean } | { readonly reason: string };
+type XargsShortOption = { readonly size: number; readonly replaceToken: string | null; readonly clearsReplacement?: boolean; readonly maxArgsValue?: string; readonly unsafeJ?: boolean };
+type XargsShortScan = XargsShortOption | { readonly reason: string };
+type XargsMode = { readonly replaceToken: string | null; readonly unsafeJ: boolean };
 
 /** Decode the token xargs receives. A dynamic value cannot be compared to the wrapped
  * command, so it fails closed; a null return means the shell hides its value. `{}` is the
@@ -294,6 +502,35 @@ function replacementReason(raw: string | undefined): { reason: string } {
 	return { reason: `xargs replacement token blocked: cannot model ${raw ?? "(missing)"}${FAIL_CLOSED_HINT}` };
 }
 
+function replacementMode(raw: string | undefined): XargsMode | { reason: string } {
+	const token = decodedReplacement(raw);
+	return token === null ? replacementReason(raw) : { replaceToken: token, unsafeJ: false };
+}
+
+/** Value-taking short letters. `J` is resettable but unsafe; `n` records max-args. */
+function xargsShortValueScan(raw: string, args: string[], index: number, letters: string, i: number): XargsShortScan {
+	const letter = letters[i]!, attached = letters.slice(i + 1), size = attached ? 1 : 2;
+	if (letter === "L") return { size, replaceToken: null, clearsReplacement: true };
+	if (letter === "J") return { size, replaceToken: null, clearsReplacement: true, unsafeJ: true };
+	if (letter === "n") {
+		const value = attached ? rawAttachedFlagValue(raw, `-${letters.slice(0, i + 1)}`) : args[index + 1] ?? "";
+		return { size, replaceToken: null, maxArgsValue: decodeShellWord(value) ?? value };
+	}
+	if (letter !== "I") return { size, replaceToken: null };
+	const value = attached ? rawAttachedFlagValue(raw, `-${letters.slice(0, i + 1)}`) : args[index + 1];
+	const mode = replacementMode(value);
+	return "reason" in mode ? mode : { size, replaceToken: mode.replaceToken };
+}
+
+/** Optional values bind only when attached; bare `-i` still selects the default `{}`. */
+function xargsShortOptionalScan(raw: string, letters: string, i: number): XargsShortScan {
+	const letter = letters[i]!;
+	if (letter === "l") return { size: 1, replaceToken: null, clearsReplacement: true };
+	if (letter !== "i") return { size: 1, replaceToken: null };
+	const mode = replacementMode(rawAttachedFlagValue(raw, `-${letters.slice(0, i + 1)}`));
+	return "reason" in mode ? mode : { size: 1, replaceToken: mode.replaceToken };
+}
+
 /** `I`/`J` take a replacement token; `i` defaults to `{}` when bare. Other values are
  * consumed so they cannot become the wrapped command word. `J` is not a safe replacement
  * mode: BSD xargs appends stdin when its token is absent. */
@@ -301,31 +538,10 @@ function xargsShortOptionScan(raw: string, args: string[], index: number, word: 
 	const letters = word.slice(1);
 	let clearsReplacement = false;
 	for (let i = 0; i < letters.length; i++) {
-		const letter = letters[i]!;
-		const arity = XARGS_SHORT_ARITY[letter];
+		const letter = letters[i]!, arity = XARGS_SHORT_ARITY[letter];
 		if (arity === undefined) return null;
-		const attached = letters.slice(i + 1);
-		if (arity === "value") {
-			const size = attached ? 1 : 2;
-			if (letter === "L") return { size, replaceToken: null, clearsReplacement: true };
-			if (letter === "n") {
-				const rawValue = attached ? rawAttachedFlagValue(raw, `-${letters.slice(0, i + 1)}`) : args[index + 1] ?? "";
-				return { size, replaceToken: null, maxArgsValue: decodeShellWord(rawValue) ?? rawValue };
-			}
-			if (letter === "J") return { size, replaceToken: null, clearsReplacement: true, unsafeJ: true };
-			if (letter !== "I") return { size, replaceToken: null };
-			const rawValue = attached ? rawAttachedFlagValue(raw, `-${letters.slice(0, i + 1)}`) : args[index + 1];
-			const replaceToken = decodedReplacement(rawValue);
-			return replaceToken === null ? replacementReason(rawValue) : { size, replaceToken };
-		}
-		// Optional values bind only when attached; bare `-i` still selects the default `{}`.
-		if (arity === "optional" && attached) {
-			if (letter === "l") return { size: 1, replaceToken: null, clearsReplacement: true };
-			if (letter !== "i") return { size: 1, replaceToken: null };
-			const rawValue = rawAttachedFlagValue(raw, `-${letters.slice(0, i + 1)}`);
-			const replaceToken = decodedReplacement(rawValue);
-			return replaceToken === null ? replacementReason(rawValue) : { size: 1, replaceToken };
-		}
+		if (arity === "value") return xargsShortValueScan(raw, args, index, letters, i);
+		if (arity === "optional" && i < letters.length - 1) return xargsShortOptionalScan(raw, letters, i);
 		if (letter === "l") clearsReplacement = true;
 		if (letter === "i") return { size: 1, replaceToken: "{}" };
 	}
@@ -333,52 +549,57 @@ function xargsShortOptionScan(raw: string, args: string[], index: number, word: 
 }
 
 /** Wrapped-command start, the active replacement token, and whether BSD `-J` mode is active. */
-type XargsOptionScan = { readonly start: number; readonly replaceToken: string | null; readonly unsafeJ: boolean };
+type XargsOptionScan = XargsMode & { readonly start: number };
+
+function xargsLongModeScan(name: string, inline: string | undefined, args: string[], index: number, mode: XargsMode): XargsMode | { reason: string } {
+	if (name === "--replace") return inline === undefined ? { replaceToken: "{}", unsafeJ: false } : replacementMode(inline);
+	if (name === "--max-lines") return { replaceToken: null, unsafeJ: false };
+	if (name === "--max-args") {
+		const value = inline ?? args[index + 1] ?? "";
+		return (decodeShellWord(value) ?? value) !== "1" ? { replaceToken: null, unsafeJ: false } : mode;
+	}
+	return mode;
+}
+
+function xargsLongOptionScan(word: string, args: string[], index: number, mode: XargsMode): { size: number; mode: XargsMode } | { reason: string } {
+	const [name, inline] = splitFlagValue(word), arity = XARGS_LONG_ARITY[name];
+	if (arity === undefined) return { reason: `xargs option blocked: cannot model "${name}"${FAIL_CLOSED_HINT}` };
+	const next = xargsLongModeScan(name, inline, args, index, mode);
+	if ("reason" in next) return next;
+	return { size: arity === "value" && inline === undefined ? 2 : 1, mode: next };
+}
+
+function applyXargsShortScan(scan: XargsShortOption, mode: XargsMode): XargsMode {
+	if (scan.clearsReplacement || (scan.maxArgsValue !== undefined && scan.maxArgsValue !== "1")) mode = { replaceToken: null, unsafeJ: false };
+	if (scan.replaceToken !== null) mode = { replaceToken: scan.replaceToken, unsafeJ: false };
+	if (scan.unsafeJ) mode = { replaceToken: null, unsafeJ: true };
+	return mode;
+}
+
+type XargsStep = { readonly mode: XargsMode; readonly size: number } | { readonly reason: string };
+
+function xargsOptionScan(word: string, args: string[], index: number, mode: XargsMode): XargsStep {
+	if (word.startsWith("--")) {
+		const scan = xargsLongOptionScan(word, args, index, mode);
+		return "reason" in scan ? scan : { mode: scan.mode, size: scan.size };
+	}
+	const scan = xargsShortOptionScan(args[index]!, args, index, word);
+	if (scan === null) return { reason: `xargs option blocked: cannot model "${word}"${FAIL_CLOSED_HINT}` };
+	if ("reason" in scan) return scan;
+	return { mode: applyXargsShortScan(scan, mode), size: scan.size };
+}
 
 function xargsCommandStart(args: string[]): XargsOptionScan | { reason: string } {
-	let i = 0;
-	let replaceToken: string | null = null;
-	let unsafeJ = false;
+	let i = 0, mode: XargsMode = { replaceToken: null, unsafeJ: false };
 	while (i < args.length) {
 		const word = unescapeCommandWord(args[i]!);
-		if (word === "--") return { start: i + 1, replaceToken, unsafeJ };
-		if (!word.startsWith("-") || word === "-") return { start: i, replaceToken, unsafeJ };
-		if (word.startsWith("--")) {
-			const [name, inline] = splitFlagValue(word);
-			const arity = XARGS_LONG_ARITY[name];
-			if (arity === undefined) return { reason: `xargs option blocked: cannot model "${name}"${FAIL_CLOSED_HINT}` };
-			if (name === "--replace") {
-				const token = inline === undefined ? "{}" : decodedReplacement(inline);
-				if (token === null) return replacementReason(inline);
-				replaceToken = token;
-				unsafeJ = false;
-			}
-			if (name === "--max-lines") { replaceToken = null; unsafeJ = false; }
-			if (name === "--max-args") {
-				const rawValue = inline ?? args[i + 1] ?? "";
-				if ((decodeShellWord(rawValue) ?? rawValue) !== "1") { replaceToken = null; unsafeJ = false; }
-			}
-			i += arity === "value" && inline === undefined ? 2 : 1;
-			continue;
-		}
-		const scan = xargsShortOptionScan(args[i]!, args, i, word);
-		if (scan === null) return { reason: `xargs option blocked: cannot model "${word}"${FAIL_CLOSED_HINT}` };
-		if ("reason" in scan) return scan;
-		if (scan.clearsReplacement || (scan.maxArgsValue !== undefined && scan.maxArgsValue !== "1")) {
-			replaceToken = null;
-			unsafeJ = false;
-		}
-		if (scan.replaceToken !== null) {
-			replaceToken = scan.replaceToken;
-			unsafeJ = false;
-		}
-		if (scan.unsafeJ) {
-			replaceToken = null;
-			unsafeJ = true;
-		}
-		i += scan.size;
+		if (word === "--") return { start: i + 1, ...mode };
+		if (!word.startsWith("-") || word === "-") return { start: i, ...mode };
+		const step = xargsOptionScan(word, args, i, mode);
+		if ("reason" in step) return step;
+		mode = step.mode; i += step.size;
 	}
-	return { start: i, replaceToken, unsafeJ };
+	return { start: i, ...mode };
 }
 
 /** True when the word xargs receives can contain the replacement token. A token the
@@ -474,15 +695,196 @@ export function classifyXargs(command: string, tokens: string[], cwd: string, de
 	return xargsMutationReason(xTokens, parsed.replaceToken, parsed.unsafeJ);
 }
 
+export const FIND_EXEC_ACTIONS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
+const FIND_OUTPUT_ACTIONS = new Set(["-fprintf", "-fprint", "-fprint0", "-fls"]);
+
+function findFollowsSymlinks(args: string[]): boolean {
+	return args.some((arg) => {
+		const word = unescapeCommandWord(arg);
+		return word === "-L" || word === "-follow";
+	});
+}
+
+/** Index of an `-exec`-family terminator, or `args.length` when unterminated. POSIX
+ * ends the primary at `;` or at a `+` that follows an argument of exactly `{}`; a bare
+ * `+` elsewhere is payload, and cutting there would leave the rest unclassified. */
+function findExecPayloadEnd(args: string[], start: number): number {
+	let end = start;
+	for (; end < args.length; end++) {
+		const word = unescapeCommandWord(args[end]!);
+		if (word === ";") break;
+		if (word === "+" && end > start && unescapeCommandWord(args[end - 1]!) === "{}") break;
+	}
+	return end;
+}
+
+/** Walk find actions once. An `-exec` payload is opaque command text, so skip to its
+ * terminator; output actions consume their file (and `-fprintf` its format) so a path
+ * spelled like an action cannot be misread. */
+function scanFindActions(args: string[]): { mutatesPaths: boolean; deletesPaths: boolean; outputs: string[] } {
+	let mutatesPaths = false, deletesPaths = false;
+	const outputs: string[] = [];
+	for (let i = 0; i < args.length; i++) {
+		const arg = unescapeCommandWord(args[i]!);
+		if (FIND_EXEC_ACTIONS.has(arg)) {
+			mutatesPaths = true;
+			i = findExecPayloadEnd(args, i + 1);
+			continue;
+		}
+		if (arg === "-delete") { mutatesPaths = true; deletesPaths = true; continue; }
+		if (!FIND_OUTPUT_ACTIONS.has(arg)) continue;
+		const output = args[i + 1];
+		outputs.push(output ?? ".");
+		if (output !== undefined) i += arg === "-fprintf" ? 2 : 1;
+	}
+	return { mutatesPaths, deletesPaths, outputs };
+}
+
+/** One find -exec action plus the facts the payload checks need. */
+type FindExecGuard = {
+	action: string;
+	followsSymlinks: boolean;
+	roots: string[];
+	cwd: string;
+	depth: number;
+	shellVars: ReadonlyMap<string, string>;
+};
+
+/** An absolute path no entry can name: a write there proves the payload mutated `{}`. */
+const FIND_EXEC_DESCENDANT_BASENAME = "\u0000find-exec-descendant";
+
+/** Classify the payload after binding every literal `{}` to `substitute`. `runtimeCwd` is
+ * where the action runs: -execdir does not inherit the caller cwd. */
+function findExecScriptReason(payload: string[], substitute: string, guard: FindExecGuard, runtimeCwd = guard.cwd): string | null {
+	const script = payload.map((word) => word.split("{}").join(substitute)).join(" ");
+	const nested = classifyBashCommand(script, runtimeCwd, guard.depth + 1, guard.shellVars);
+	return nested.ok ? null : nested.reason;
+}
+
+/** `{}` reached find, and whether the raw shell word preserves it for substitution. */
+function findExecPlaceholder(payload: string[]): "none" | "modeled" | "unmodeled" {
+	let seen = false;
+	for (const word of payload) {
+		if (!unescapeCommandWord(word).includes("{}")) continue;
+		if (!word.includes("{}")) return "unmodeled";
+		seen = true;
+	}
+	return seen ? "modeled" : "none";
+}
+
+/** Probe path on cwd's drive root: outside every temp root, and NUL keeps it nonexistent. */
+function findExecProbePath(cwd: string): string {
+	return path.join(path.parse(path.resolve(cwd)).root, FIND_EXEC_DESCENDANT_BASENAME);
+}
+
+/** Directories -execdir can run in for one search root. A real directory root is the
+ * shallowest directory that can hold a match (deeper matches escape less), so it bounds a
+ * relative `..` target. A non-symlink entry runs in its parent. BSD/macOS also runs every
+ * command-line entry (directory or file) in the caller cwd, so that cwd is always a
+ * candidate. For a symlink root, implementations disagree: GNU runs in the link's parent,
+ * BSD/macOS in the caller cwd, and a followed root (-H) in the target. The raw join keeps a
+ * later `..` after the kernel's symlink resolution. */
+function findExecRuntimeDirs(root: string, cwd: string): string[] {
+	const joined = joinPathFrom(cwd, unescapeCommandWord(root));
+	const caller = resolveRealPath(cwd);
+	if (isRealDirectory(joined)) return [...new Set([resolveRealPath(joined), caller])];
+	const parent = resolveRealPath(path.dirname(joined));
+	if (!isSymlinkPath(joined)) return [...new Set([parent, caller])];
+	return [...new Set([parent, caller, resolveRealPath(joined)])];
+}
+
+/** Check the payload once per search root and possible runtime directory. */
+function findExecBoundReason(payload: string[], dirBinding: boolean, guard: FindExecGuard): string | null {
+	for (const root of guard.roots.length > 0 ? guard.roots : ["."]) {
+		const bound = dirBinding ? path.dirname(root) : root;
+		const runtimeDirs = dirBinding ? findExecRuntimeDirs(root, guard.cwd) : [guard.cwd];
+		for (const runtimeCwd of runtimeDirs) {
+			const reason = findExecScriptReason(payload, bound, guard, runtimeCwd);
+			if (reason) return reason;
+		}
+	}
+	return null;
+}
+
+/** find substitutes a runtime descendant for `{}`, not the root. A descendant symlink can
+ * leave temp, so a mutating payload using `{}` is never proven contained. */
+function findExecPlaceholderReason(payload: string[], guard: FindExecGuard): string | null {
+	if (!findExecScriptReason(payload, findExecProbePath(guard.cwd), guard)) return null;
+	return `{} can name a descendant symlink outside temp; use a literal path${FAIL_CLOSED_HINT}`;
+}
+
+/** Structural failures that need no runtime path: an absent terminator or payload, and
+ * -execdir under -L whose walk can reach outside temp before the payload runs. */
+function findExecBasicReason(payload: string[], unterminated: boolean, dirBinding: boolean, guard: FindExecGuard): string | null {
+	const { action } = guard;
+	if (unterminated) return `find ${action} blocked: unterminated command${FAIL_CLOSED_HINT}`;
+	if (payload.length === 0) return `find ${action} blocked: empty command${FAIL_CLOSED_HINT}`;
+	if (dirBinding && guard.followsSymlinks) return `find ${action} blocked: symlink-following mode can leave temp before the payload runs; drop -L/-follow${FAIL_CLOSED_HINT}`;
+	return null;
+}
+
+function findExecPlaceholderGuardReason(placeholders: "none" | "modeled" | "unmodeled", guard: FindExecGuard): string | null {
+	const { action } = guard;
+	if (guard.followsSymlinks && placeholders !== "none") return `find ${action} blocked: -L/-follow can substitute an outside pathname for {}; drop -L/-follow or avoid {}${FAIL_CLOSED_HINT}`;
+	if (placeholders === "unmodeled") return `find ${action} blocked: cannot model the {} substitution; spell it literally or avoid {}${FAIL_CLOSED_HINT}`;
+	return null;
+}
+
+function findExecActionReason(payload: string[], unterminated: boolean, guard: FindExecGuard): string | null {
+	const { action } = guard;
+	const dirBinding = action === "-execdir" || action === "-okdir";
+	const basic = findExecBasicReason(payload, unterminated, dirBinding, guard);
+	if (basic) return basic;
+	const placeholders = findExecPlaceholder(payload);
+	const placeholderGuard = findExecPlaceholderGuardReason(placeholders, guard);
+	if (placeholderGuard) return placeholderGuard;
+	const bound = findExecBoundReason(payload, dirBinding, guard);
+	if (bound) return `find ${action} blocked: ${bound}`;
+	if (placeholders === "none") return null;
+	const probe = findExecPlaceholderReason(payload, guard);
+	return probe ? `find ${action} blocked: ${probe}` : null;
+}
+
+/** find's `-exec` family runs a command the root check never sees. Classify the payload
+ * (`-exec sh -c 'touch /etc/x' \;`) as shell code; an unterminated action fails closed.
+ * `-execdir` runs in the matched file's directory. */
+function findExecReason(tokens: string[], cwd: string, depth: number, shellVars: ReadonlyMap<string, string>, roots: string[]): string | null {
+	const args = tokens.slice(1);
+	const followsSymlinks = findFollowsSymlinks(args);
+	for (let i = 0; i < args.length; i++) {
+		const action = unescapeCommandWord(args[i]!);
+		if (!FIND_EXEC_ACTIONS.has(action)) continue;
+		const end = findExecPayloadEnd(args, i + 1);
+		const payload = args.slice(i + 1, end);
+		const reason = findExecActionReason(payload, end === args.length, { action, followsSymlinks, roots, cwd, depth, shellVars });
+		if (reason) return reason;
+		i = end;
+	}
+	return null;
+}
+
+/** `-delete` removes every visited pathname, so -L can reach outside temp through a
+ * symlink even when the search root is inside. */
+function findDeleteSymlinkReason(tokens: string[]): string | null {
+	const args = tokens.slice(1);
+	if (!findFollowsSymlinks(args) || !scanFindActions(args).deletesPaths) return null;
+	return `find blocked: -L/-follow can walk symlinks outside temp before -delete; drop -L/-follow${FAIL_CLOSED_HINT}`;
+}
+
 /** Generic mutation: extract targets via getMutationTargets, block non-temp paths. */
-export function classifyGenericMutation(command: string, tokens: string[], cwd: string, shellVars: ReadonlyMap<string, string>): string | null {
+export function classifyGenericMutation(command: string, tokens: string[], cwd: string, shellVars: ReadonlyMap<string, string>, depth = 0): string | null {
+	// Roots first: an outside search root is the real reason, and its path is more useful
+	// than the `{}` placeholder the payload sees. Only then inspect an in-temp -exec payload.
 	const paths = getMutationTargets(command, tokens);
-	if (!paths) return null;
-	for (const target of paths) {
+	for (const { path: target, base } of paths ?? []) {
+		if (target === UNMODELED_FIND_OPTION) return `find blocked: cannot model its leading option; remove it or pass an explicit search root${FAIL_CLOSED_HINT}`;
 		if (target === UNPROVABLE_TARGET) return `${command} blocked: cannot model its write target${FAIL_CLOSED_HINT}`;
-		const reason = tempPathBlockReason(command, target, cwd, shellVars);
+		const reason = base === undefined
+			? tempPathBlockReason(command, target, cwd, shellVars)
+			: relativeTempPathBlockReason(command, target, base, cwd, shellVars);
 		if (reason) return reason;
 	}
+	if (command === "find") return findDeleteSymlinkReason(tokens) ?? findExecReason(tokens, cwd, depth, shellVars, findRoots(tokens.slice(1)).roots);
 	return null;
 }
 
@@ -517,13 +919,13 @@ export function dispatchMutationReason(command: string, tokens: string[], segmen
 		?? classifyWget(command, tokens, cwd, shellVars)
 		?? classifyCurl(command, tokens, cwd, shellVars)
 		?? classifyXargs(command, tokens, cwd, depth, shellVars)
-		?? classifyGenericMutation(command, tokens, cwd, shellVars);
+		?? classifyGenericMutation(command, tokens, cwd, shellVars, depth);
 }
 
-/** Package manager mutation: block unconditionally regardless of target path. */
+/** Package manager mutation: block regardless of target path. */
 export function classifyPackageManager(command: string, tokens: string[]): string | null {
 	if (!PACKAGE_MANAGERS.has(command)) return null;
-	if (!isPackageMutation(tokens.slice(1))) return null;
+	if (!ALWAYS_BLOCKED_PACKAGE_MANAGERS.has(command) && !isPackageMutation(command, tokens.slice(1))) return null;
 	const args = tokens.slice(1).join(" ");
 	return buildReadonlyPackageManagerBlockReason(command, args);
 }
@@ -637,15 +1039,52 @@ function getTouchTargets(tokens: string[]): string[] {
 	return nonOptionArgs(skipFlagValues(tokens.slice(1), new Set(["-t", "-d", "-r"])));
 }
 
+/** Flags that consume a separate value. `--reference` replaces MODE, so its presence
+ * makes every operand a target. */
+const CHMOD_VALUE_OPTIONS = new Set(["--reference"]);
+const CHMOD_VALUE_PREFIXES = ["--reference="] as const;
+/** Short flags that are options, not a symbolic MODE. A dash token made only of mode
+ * letters (`-w`, `-rwx`) is the MODE operand; chmod accepts that spelling. */
+const CHMOD_OPTION_LETTERS = new Set(["R", "H", "L", "P", "f", "v", "c", "h"]);
+const CHMOD_LONG_OPTIONS = new Set(["--recursive", "--silent", "--quiet", "--verbose", "--changes", "--no-preserve-root", "--preserve-root", "--help", "--version"]);
+
+function isChmodOptionWord(word: string): boolean {
+	if (word.startsWith("--")) return CHMOD_LONG_OPTIONS.has(word.split("=")[0]!);
+	if (!word.startsWith("-") || word === "-") return false;
+	return [...word.slice(1)].every((flag) => CHMOD_OPTION_LETTERS.has(flag));
+}
+
+/** `--reference` replaces MODE and GNU permutes options, so it can follow the operand it
+ * would otherwise expose as MODE. Detect it before the operand walk. */
+function chmodHasReference(args: string[]): boolean {
+	for (const arg of args) {
+		const word = unescapeCommandWord(arg);
+		if (word === "--") return false;
+		if (CHMOD_VALUE_OPTIONS.has(word)) return true;
+		if (CHMOD_VALUE_PREFIXES.some((prefix) => word.startsWith(prefix))) return true;
+	}
+	return false;
+}
+
 function getChmodTargets(tokens: string[]): string[] {
 	const args = tokens.slice(1);
-	const hasReference = args.some((arg) => {
-		const word = unescapeCommandWord(arg);
-		return word === "--reference" || word.startsWith("--reference=");
-	});
-	// `--reference` replaces the MODE operand, so every non-option word is a target.
-	const operands = nonOptionArgs(skipFlagValues(args, new Set(["--reference"])));
-	return operands.slice(hasReference ? 0 : 1);
+	const targets: string[] = [];
+	const hasReference = chmodHasReference(args);
+	let modeSeen = false, optionsEnded = false;
+	for (let i = 0; i < args.length; i++) {
+		const raw = args[i]!;
+		const word = unescapeCommandWord(raw);
+		if (!optionsEnded) {
+			if (word === "--") { optionsEnded = true; continue; }
+			if (CHMOD_VALUE_OPTIONS.has(word)) { i++; continue; }
+			if (CHMOD_VALUE_PREFIXES.some((prefix) => word.startsWith(prefix))) continue;
+			if (isChmodOptionWord(word)) continue;
+		}
+		// `--reference` has no MODE operand; otherwise only the first operand is MODE.
+		if (!hasReference && !modeSeen) { modeSeen = true; continue; }
+		targets.push(raw);
+	}
+	return targets;
 }
 
 type CpFamilyOptionSpec = { readonly boolean: ReadonlySet<string>; readonly value: ReadonlySet<string> };
@@ -732,23 +1171,35 @@ const CP_FAMILY_LONG_OPTIONS: Record<string, CpLongOptionSpec> = {
 	},
 };
 
+/** GNU/popt long-option resolution, shared by every prefix-aware guard: an exact name wins,
+ * a unique prefix resolves, and `ambiguous` names a spelling the tool rejects. */
+type LongOptionMatch = { readonly name: string } | "ambiguous" | null;
+
+function matchLongOption(name: string, options: readonly string[]): LongOptionMatch {
+	if (options.includes(name)) return { name };
+	const matches = options.filter((option) => option.startsWith(name));
+	if (matches.length > 1) return "ambiguous";
+	return matches.length === 1 ? { name: matches[0]! } : null;
+}
+
 type CpLongOptionResolution = { readonly name: string; readonly arity: CpLongOptionArity };
 
 /** Resolve an exact GNU long option or a unique prefix, as getopt_long does. */
 function resolveCpLongOption(command: string, name: string): CpLongOptionResolution | null {
 	const spec = CP_FAMILY_LONG_OPTIONS[command];
 	if (!spec) return null;
-	const exact = spec[name];
-	if (exact !== undefined) return { name, arity: exact };
-	const matches = Object.keys(spec).filter((option) => option.startsWith(name));
-	if (matches.length !== 1) return null;
-	const matched = matches[0]!;
-	return { name: matched, arity: spec[matched]! };
+	const match = matchLongOption(name, Object.keys(spec));
+	if (match === null || match === "ambiguous") return null;
+	return { name: match.name, arity: spec[match.name]! };
 }
 
 /** Unique fail-closed sentinel. It is not a path, so a real `/` operand keeps its
  * truthful "outside temp" reason; classifyGenericMutation turns it into a clear block. */
 const UNPROVABLE_TARGET = "\u0000unprovable-target";
+
+/** One write target, plus the raw operand that supplies its resolution base when the tool
+ * resolves a relative path against another operand (rsync destination-relative writes). */
+type MutationTarget = { readonly path: string; readonly base?: string };
 
 /** Effect of one cp-family option word: a destination, a consumed next token, or a
  * side-write target (macOS `install -M metalog`). */
@@ -772,64 +1223,61 @@ function scanCpLongOption(command: string, raw: string, word: string, tokens: st
 	return { target: null, skipNext: false, extraTargets: [], unprovable: false, flags: resolved.name === "--directory" ? ["directory"] : [] };
 }
 
+function cpOptionScan(fields: Partial<CpOptionScan> = {}): CpOptionScan {
+	return { target: null, skipNext: false, extraTargets: [], unprovable: false, ...fields };
+}
+
+/** `t` names the destination; a missing value is unprovable rather than empty. */
+function cpShortTargetScan(raw: string, letters: string, j: number, tokens: string[], index: number, flags: string[]): CpOptionScan {
+	const attached = letters.slice(j + 1), next = tokens[index + 1];
+	const target = attached ? rawAttachedFlagValue(raw, `-${letters.slice(0, j + 1)}`) : next ? stripMatchingQuotes(next) : UNPROVABLE_TARGET;
+	return cpOptionScan({ target, skipNext: !attached && Boolean(next), flags });
+}
+
+/** A value letter consumes the cluster tail or the next token; `install -M` adds a write. */
+function cpShortValueScan(command: string, raw: string, letters: string, j: number, tokens: string[], index: number, flags: string[]): CpOptionScan {
+	const letter = letters[j]!, attached = letters.slice(j + 1), next = tokens[index + 1];
+	const value = attached ? rawAttachedFlagValue(raw, `-${letters.slice(0, j + 1)}`) : next ? stripMatchingQuotes(next) : null;
+	const extraTargets = command === "install" && letter === "M" && value !== null ? [value] : [];
+	return cpOptionScan({ skipNext: !attached && Boolean(next), extraTargets, flags });
+}
+
 /** One short cluster: `t` names the destination; a value letter consumes the cluster tail
  * or the next token. An unknown letter makes the destination unprovable. */
 function scanCpShortOption(command: string, raw: string, word: string, tokens: string[], index: number, spec: CpFamilyOptionSpec): CpOptionScan {
-	const letters = word.slice(1);
-	const flags: string[] = [];
+	const letters = word.slice(1), flags: string[] = [];
 	for (let j = 0; j < letters.length; j++) {
 		const letter = letters[j]!;
-		if (letter === "t") {
-			const attached = letters.slice(j + 1);
-			const next = tokens[index + 1];
-			const target = attached
-				? rawAttachedFlagValue(raw, `-${letters.slice(0, j + 1)}`)
-				: next ? stripMatchingQuotes(next) : UNPROVABLE_TARGET;
-			return { target, skipNext: !attached && Boolean(next), extraTargets: [], unprovable: false, flags };
-		}
-		if (spec.value.has(letter)) {
-			const attached = letters.slice(j + 1);
-			const next = tokens[index + 1];
-			const value = attached
-				? rawAttachedFlagValue(raw, `-${letters.slice(0, j + 1)}`)
-				: next ? stripMatchingQuotes(next) : null;
-			const extraTargets = command === "install" && letter === "M" && value !== null ? [value] : [];
-			return { target: null, skipNext: !attached && Boolean(next), extraTargets, unprovable: false, flags };
-		}
-		if (!spec.boolean.has(letter)) return { target: null, skipNext: false, extraTargets: [], unprovable: true, flags };
+		if (letter === "t") return cpShortTargetScan(raw, letters, j, tokens, index, flags);
+		if (spec.value.has(letter)) return cpShortValueScan(command, raw, letters, j, tokens, index, flags);
+		if (!spec.boolean.has(letter)) return cpOptionScan({ unprovable: true, flags });
 		flags.push(letter);
 	}
-	return { target: null, skipNext: false, extraTargets: [], unprovable: false, flags };
+	return cpOptionScan({ flags });
 }
 
 /** One pass over a cp-family segment: destination, operands, flags, side writes, unprovable. */
 type CpFamilyScan = { target: string | null; operands: string[]; extraTargets: string[]; unprovable: boolean; flags: Set<string> };
+
+function mergeCpOptionScan(result: CpFamilyScan, scan: CpOptionScan): void {
+	for (const flag of scan.flags ?? []) result.flags.add(flag);
+	if (scan.target !== null) result.target = scan.target; // last `-t` wins, like getopt
+	result.extraTargets.push(...scan.extraTargets);
+}
 
 function scanCpFamily(command: string, tokens: string[]): CpFamilyScan {
 	const result: CpFamilyScan = { target: null, operands: [], extraTargets: [], unprovable: false, flags: new Set() };
 	const spec = cpFamilyOptionSpec(command);
 	if (!spec) return result;
 	for (let i = 1; i < tokens.length; i++) {
-		const raw = tokens[i]!;
-		const word = unescapeCommandWord(raw);
-		if (word === "--") {
-			result.operands.push(...tokens.slice(i + 1));
-			break;
-		}
-		if (!word.startsWith("-") || word === "-") {
-			result.operands.push(raw);
-			continue;
-		}
+		const raw = tokens[i]!, word = unescapeCommandWord(raw);
+		if (word === "--") { result.operands.push(...tokens.slice(i + 1)); break; }
+		if (!word.startsWith("-") || word === "-") { result.operands.push(raw); continue; }
 		const scan = word.startsWith("--")
 			? scanCpLongOption(command, raw, word, tokens, i)
 			: scanCpShortOption(command, raw, word, tokens, i, spec);
-		if (scan.unprovable) {
-			result.unprovable = true;
-			return result;
-		}
-		for (const flag of scan.flags ?? []) result.flags.add(flag);
-		if (scan.target !== null) result.target = scan.target; // last `-t` wins, like getopt
-		result.extraTargets.push(...scan.extraTargets);
+		if (scan.unprovable) { result.unprovable = true; return result; }
+		mergeCpOptionScan(result, scan);
 		if (scan.skipNext) i++;
 	}
 	return result;
@@ -868,38 +1316,98 @@ function getPerlRubyTargets(tokens: string[]): string[] | null {
 	return nonOptionArgs(stripped);
 }
 
-/** Strip -e/--expression flag-value pairs from sed tokens, tracking if any were found. */
-function filterSedExpressionTokens(sedTokens: string[]): { filtered: string[]; hasExpression: boolean } {
-	const filtered: string[] = [];
-	let hasExpression = false;
-	let ti = 0;
-	while (ti < sedTokens.length) {
-		if (sedTokens[ti] === "-e" || sedTokens[ti] === "--expression") {
-			ti += 2; hasExpression = true;
-		} else if (sedTokens[ti].startsWith("-e")) {
-			ti += 1; hasExpression = true; // -e'expr' concatenated form
-		} else if (sedTokens[ti].startsWith("--expression=")) {
-			ti += 1; hasExpression = true;
-		} else {
-			filtered.push(sedTokens[ti]); ti++;
+/** GNU sed long options (manual, 4.9). Used only to prove a prefix is unambiguous; a
+ * spelling that matches none or several is one sed rejects, so ambiguity fails closed. */
+const SED_LONG_OPTIONS = [
+	"--binary", "--debug", "--expression", "--file", "--follow-symlinks", "--in-place",
+	"--line-length", "--null-data", "--posix", "--quiet", "--regexp-extended", "--sandbox",
+	"--separate", "--silent", "--unbuffered", "--help", "--version",
+];
+
+type SedScanState = { inPlace: boolean; filtered: string[]; hasExpression: boolean; suffixAttached: boolean };
+
+/** Long option: return 1 when its separate value must be skipped. A unique-prefix match
+ * consumes the same value as the exact spelling; an ambiguous prefix fails closed. */
+function scanSedLongOption(raw: string, word: string, state: SedScanState): number {
+	const [name, inline] = splitFlagValue(word);
+	const match = matchLongOption(name, SED_LONG_OPTIONS);
+	if (match === "ambiguous" || (match !== null && match.name === "--in-place")) {
+		state.inPlace = true;
+		if (inline !== undefined) state.suffixAttached = true;
+		return 0;
+	}
+	if (match !== null && (match.name === "--expression" || match.name === "--file")) {
+		state.hasExpression = true;
+		return inline === undefined ? 1 : 0;
+	}
+	state.filtered.push(raw);
+	return 0;
+}
+
+/** Short bundle: `i` starts the backup suffix, `e`/`f` consume the bundle tail or the
+ * next token. Return 1 when a separate value must be skipped. */
+function scanSedShortOption(raw: string, word: string, state: SedScanState): number {
+	let consumedValue = false, skip = 0;
+	for (let j = 1; j < word.length; j++) {
+		const ch = word[j]!;
+		if (ch === "i") {
+			state.inPlace = true;
+			state.suffixAttached = j < word.length - 1; // rest is the backup suffix
+			break;
+		}
+		if (ch === "e" || ch === "f") {
+			state.hasExpression = true;
+			if (j === word.length - 1) skip = 1; // separate value
+			consumedValue = true;
+			break;
 		}
 	}
-	return { filtered, hasExpression };
+	if (!consumedValue) state.filtered.push(raw);
+	return skip;
+}
+
+/** Walk sed options once: detect `-i` inside a short bundle (`-Ei`, `-ni`) and the long
+ * `--in-place`, while removing expression/file values from the operand list. A bundle
+ * letter that takes a value ends the bundle (`-i.bak`, `-e'expr'`). */
+function scanSedOptions(sedTokens: string[]): SedScanState {
+	const state: SedScanState = { inPlace: false, filtered: [], hasExpression: false, suffixAttached: false };
+	for (let i = 0; i < sedTokens.length; i++) {
+		const raw = sedTokens[i]!, word = unescapeCommandWord(raw);
+		if (word === "--") { state.filtered.push(...sedTokens.slice(i)); break; }
+		if (word.startsWith("--")) { i += scanSedLongOption(raw, word, state); continue; }
+		if (word.startsWith("-") && word.length > 1) { i += scanSedShortOption(raw, word, state); continue; }
+		state.filtered.push(raw);
+	}
+	return state;
+}
+
+/** Empty or dot-prefixed operand is the BSD backup suffix; GNU reads the same word as
+ * the script. */
+function isSedBackupSuffix(word: string): boolean {
+	return /^$|^\.[a-zA-Z0-9._-]{0,9}$/.test(stripMatchingQuotes(word));
 }
 
 /** sed -i target extraction with -e/--expression and backup-extension handling. */
 function getSedTargets(tokens: string[]): string[] | null {
-	if (!tokens.slice(1).some((arg) => arg === "-i" || arg.startsWith("-i"))) return null;
-	const { filtered, hasExpression } = filterSedExpressionTokens(tokens.slice(1));
+	const { inPlace, filtered, hasExpression, suffixAttached } = scanSedOptions(tokens.slice(1));
+	if (!inPlace) return null;
 	const args = nonOptionArgs(filtered);
-	// A separate suffix arg is only confirmed when it is empty (BSD `sed -i ""`) or dot-prefixed
-	// (`sed -i .bak`). Anything else — `sed -i 5d /etc/hosts` — is GNU's script, and dropping it
-	// as a suffix dropped the file operand entirely (a verified write outside temp). Reading a
-	// short word as the script over-targets instead: the safe direction.
-	const extArg = args.length > 0 ? stripMatchingQuotes(args[0]) : "";
-	const hasBackupExt = args.length > 0 && /^$|^\.[a-zA-Z0-9._-]{0,9}$/.test(extArg);
-	if (hasBackupExt) return hasExpression ? (extArg === "" ? args.slice(1) : args) : args.slice(2);
-	return hasExpression ? args : args.slice(1);
+	const suffix = !suffixAttached && args.length > 1 && isSedBackupSuffix(args[0]!) ? args[0]! : null;
+	// An empty operand cannot name a GNU input file, so it is only a BSD suffix.
+	const emptySuffix = suffix !== null && stripMatchingQuotes(suffix) === "";
+	let targets: string[];
+	if (hasExpression) {
+		// GNU reads every operand as an input file; BSD reads a leading separate suffix as
+		// the backup extension. Validate the union, keeping the ambiguous suffix last so a
+		// concrete file names the block reason. Empty stays dropped (no GNU file possible).
+		targets = suffix !== null && !emptySuffix ? [...args.slice(1), suffix] : emptySuffix ? args.slice(1) : args;
+	} else {
+		// BSD takes the next operand as the backup suffix; GNU reads it as the script. Skip
+		// one suffix only when a file operand remains, so the file never empties the list.
+		const operands = suffix !== null ? args.slice(1) : args;
+		targets = operands.length <= 1 ? operands : operands.slice(1);
+	}
+	return targets.length > 0 ? targets : ["."]; // safety net — mutation with no provable operand
 }
 
 /** wget target extraction from -O/--output-document flags. */
@@ -1048,56 +1556,102 @@ function scanTarBundle(word: string, next: string | undefined, scan: TarScan, da
 	return consumed;
 }
 
+/** Long archive/directory destinations, including extraction under a selected directory. */
+function scanTarLongPathOption(word: string, tokens: string[], index: number, scan: TarScan): number | null {
+	if (word === "--file") { const v = tokens[index + 1]; if (v) { scan.archive = v; return 1; } return 0; }
+	if (word.startsWith("--file=")) { scan.archive = word.slice("--file=".length); return 0; }
+	if (word === "--directory") { const v = tokens[index + 1]; if (v) { scan.dirs.push(v); return 1; } return 0; }
+	if (word.startsWith("--directory=")) { scan.dirs.push(word.slice("--directory=".length)); return 0; }
+	if (word.startsWith("--one-top-level=")) { scan.dirs.push(word.slice("--one-top-level=".length)); return 0; }
+	if (word === "--one-top-level") { scan.unparseable = true; return 0; }
+	return null;
+}
+
+/** Exec/side-write options fail closed even when stdout is selected. */
+function scanTarLongExecOption(word: string, tokens: string[], index: number, scan: TarScan): number | null {
+	if (!TAR_EXEC_OPTIONS.has(word) && !(word.includes("=") && TAR_EXEC_OPTIONS.has(word.slice(0, word.indexOf("="))))) return null;
+	scan.exec = true;
+	return TAR_EXEC_OPTIONS.has(word) && tokens[index + 1] !== undefined ? 1 : 0;
+}
+
+/** Other value options skip one token so their value cannot read as a flag. */
+function scanTarLongValueOption(word: string, tokens: string[], index: number): number | null {
+	if (!TAR_LONG_VALUE_OPTIONS.has(word)) return null;
+	return tokens[index + 1] === undefined ? 0 : 1;
+}
+
+function scanTarLongOption(word: string, tokens: string[], index: number, scan: TarScan, precededByUnmodeled: boolean): { consumed: number; pendingValue: boolean } {
+	const mode = TAR_LONG_MODES[word];
+	if (mode) { scan[mode] = true; return { consumed: 0, pendingValue: false }; }
+	if (word === "--to-stdout") {
+		if (precededByUnmodeled) scan.unparseable = true;
+		else scan.stdout = true;
+		return { consumed: 0, pendingValue: false };
+	}
+	const path = scanTarLongPathOption(word, tokens, index, scan);
+	if (path !== null) return { consumed: path, pendingValue: false };
+	const exec = scanTarLongExecOption(word, tokens, index, scan);
+	if (exec !== null) return { consumed: exec, pendingValue: false };
+	const value = scanTarLongValueOption(word, tokens, index);
+	if (value !== null) return { consumed: value, pendingValue: false };
+	return { consumed: 0, pendingValue: !TAR_LONG_FLAGS.has(word) && !word.includes("=") };
+}
+
+function scanTarShortOption(word: string, tokens: string[], index: number, scan: TarScan, precededByUnmodeled: boolean): { consumed: number; stop: boolean } {
+	const stdoutBefore = scan.stdout;
+	const consumed = scanTarBundle(word, tokens[index + 1], scan, !word.startsWith("-"));
+	// The bundle is the previous long option's value when it sets stdout: trusting it
+	// would allow a real extraction (`tar -xf a.tar --quote-chars -O`).
+	const stop = precededByUnmodeled && scan.stdout && !stdoutBefore;
+	if (stop) scan.unparseable = true;
+	return { consumed, stop };
+}
+
+function scanTarAttachedShortOption(word: string, scan: TarScan): boolean {
+	if (word.startsWith("-C") && word.length > 2) { scan.dirs.push(rawAttachedFlagValue(word, "-C")); return true; }
+	if (word.startsWith("-f") && word.length > 2) { scan.archive = word.slice(2); return true; }
+	return false;
+}
+
+/** A bundle with a non-letter tail consumed its value ambiguously; fail closed. */
+function isTarMalformedWord(word: string, index: number): boolean {
+	return /^-[a-zA-Z]+[^a-zA-Z]/.test(word) || (index === 1 && /^[a-zA-Z]+[^a-zA-Z]/.test(word));
+}
+
+function isTarShortWord(word: string, index: number): boolean {
+	return /^-[a-zA-Z]+$/.test(word) || (index === 1 && /^[a-zA-Z]+$/.test(word));
+}
+
+/** Handle one non-long word: a short bundle, an attached `-C`/`-f`, or a malformed tail. */
+function scanTarShortWord(word: string, tokens: string[], index: number, scan: TarScan, precededByUnmodeled: boolean): { consumed: number; stop: boolean } | null {
+	if (isTarShortWord(word, index)) return scanTarShortOption(word, tokens, index, scan, precededByUnmodeled);
+	if (scanTarAttachedShortOption(word, scan)) return { consumed: 0, stop: false };
+	if (isTarMalformedWord(word, index)) scan.unparseable = true;
+	return null;
+}
+
 /** Scan leading options (operands are skipped, tar permutes flags) for modes, archive, dirs. */
 function scanTarOptions(tokens: string[]): TarScan {
 	const scan: TarScan = { write: false, extract: false, list: false, stdout: false, exec: false, archive: null, dirs: [], unparseable: false };
-	// A long option we do not model may still consume the next token as its value. If that token
-	// spells `-O`/`--to-stdout`, trusting it would let a real extraction read as stdout
-	// (`tar -xf a.tar --quote-chars -O`), so fail closed instead of guessing.
+	// An unmodeled long option may consume the next token as its value. If that token
+	// spells `-O`/`--to-stdout`, trusting it would let a real extraction read as stdout.
 	let pendingValue = false;
 	for (let i = 1; i < tokens.length; i++) {
-		const word = unescapeCommandWord(tokens[i]!);
-		const precededByUnmodeled = pendingValue;
+		const word = unescapeCommandWord(tokens[i]!), precededByUnmodeled = pendingValue;
 		pendingValue = false;
 		if (word === "--") break;
 		if (word.startsWith("--")) {
-			const mode = TAR_LONG_MODES[word];
-			if (mode) scan[mode] = true;
-			else if (word === "--to-stdout") { if (precededByUnmodeled) { scan.unparseable = true; break; } scan.stdout = true; }
-			else if (word === "--file") { const v = tokens[i + 1]; if (v) { scan.archive = v; i++; } }
-			else if (word.startsWith("--file=")) scan.archive = word.slice("--file=".length);
-			else if (word === "--directory") { const v = tokens[i + 1]; if (v) { scan.dirs.push(v); i++; } }
-			else if (word.startsWith("--directory=")) scan.dirs.push(word.slice("--directory=".length));
-			// `--one-top-level=<dir>` redirects extraction under <dir>, so it is an extraction
-			// destination like `-C`. The bare form derives the directory from the archive name,
-			// which cannot be proven — fail closed.
-			else if (word.startsWith("--one-top-level=")) scan.dirs.push(word.slice("--one-top-level=".length));
-			else if (word === "--one-top-level") scan.unparseable = true;
-			// Exec/side-write options fail closed even with stdout (`-O` streams members but
-			// `--to-command` still runs per member). Check before the stdout carve-out.
-			else if (TAR_EXEC_OPTIONS.has(word)) { scan.exec = true; if (tokens[i + 1] !== undefined) i++; }
-			else if (word.includes("=") && TAR_EXEC_OPTIONS.has(word.slice(0, word.indexOf("=")))) { scan.exec = true; }
-			// Other value options only need their value skipped: without this, an operand
-			// like `-O` reads as the stdout flag (`tar -xf a.tar --exclude -O`).
-			else if (TAR_LONG_VALUE_OPTIONS.has(word)) { if (tokens[i + 1] !== undefined) i++; }
-			else if (!TAR_LONG_FLAGS.has(word) && !word.includes("=")) pendingValue = true;
+			const long = scanTarLongOption(word, tokens, i, scan, precededByUnmodeled);
+			i += long.consumed; pendingValue = long.pendingValue;
+			if (scan.unparseable) break;
 			continue;
 		}
-		if (/^-[a-zA-Z]+$/.test(word) || (i === 1 && /^[a-zA-Z]+$/.test(word))) {
-			const stdoutBefore = scan.stdout;
-			i += scanTarBundle(word, tokens[i + 1], scan, !word.startsWith("-"));
-			// The bundle is the previous long option's value when it sets stdout: trusting it
-			// would allow a real extraction (`tar -xf a.tar --quote-chars -O`).
-			if (precededByUnmodeled && scan.stdout && !stdoutBefore) { scan.unparseable = true; break; }
+		const short = scanTarShortWord(word, tokens, i, scan, precededByUnmodeled);
+		if (short !== null) {
+			i += short.consumed;
+			if (short.stop) break;
 			continue;
 		}
-		if (word.startsWith("-C") && word.length > 2) { scan.dirs.push(rawAttachedFlagValue(word, "-C")); continue; }
-		if (word.startsWith("-f") && word.length > 2) { scan.archive = word.slice(2); continue; }
-		// A bundle with a non-letter tail means some option letter consumed the rest of
-		// the word as its value (GNU attaches it to the first value-taking letter).
-		// Unmodeled letters (b, B, …) can also take that value, so the archive path
-		// cannot be attributed — fail closed instead of guessing a safe target.
-		if (/^-[a-zA-Z]+[^a-zA-Z]/.test(word) || (i === 1 && /^[a-zA-Z]+[^a-zA-Z]/.test(word))) scan.unparseable = true;
 	}
 	return scan;
 }
@@ -1126,29 +1680,206 @@ function getTarTargets(tokens: string[]): string[] | null {
 	return scan.dirs.length > 0 ? scan.dirs : ["."];
 }
 
-function getRsyncTargets(tokens: string[]): string[] | null {
-	// rsync destination is the last positional arg when there are two or more.
-	const args = nonOptionArgs(tokens.slice(1));
-	return args.length >= 2 ? [args[args.length - 1]!] : null;
+/** One rsync long option: whether popt consumes a value, and when that value names a write
+ * target, the directory rsync resolves a relative value against. The value set is rsync
+ * `options.c` `long_options[]` (client and daemon) plus the exact flags that prefix a value
+ * option, because a missed value can hide the real destination. Unknown names are flags and
+ * any ambiguous prefix fails closed. */
+type RsyncLongOptionSpec = { readonly value?: true; readonly write?: "cwd" | "destination"; readonly replay?: true };
+
+const RSYNC_LONG_OPTIONS: Readonly<Record<string, RsyncLongOptionSpec>> = {
+	// Exact flags that are strict prefixes of value options: popt prefers the exact name.
+	"--backup": {}, "--partial": {}, "--compress": {}, "--checksum": {},
+	// Write targets. The receiver chdirs into the destination, so --backup-dir/--temp-dir and
+	// the relative --partial-dir land under it; log/batch files stay in the caller's cwd.
+	"--backup-dir": { value: true, write: "destination" },
+	"--temp-dir": { value: true, write: "destination" },
+	"--partial-dir": { value: true, write: "destination" },
+	"--log-file": { value: true, write: "cwd" },
+	"--write-batch": { value: true, write: "cwd" },
+	"--only-write-batch": { value: true, write: "cwd" },
+	// Value options that select no write target the classifier tracks.
+	"--info": { value: true }, "--debug": { value: true }, "--stderr": { value: true },
+	"--confine-root": { value: true }, "--chmod": { value: true }, "--modify-window": { value: true },
+	"--max-size": { value: true }, "--min-size": { value: true }, "--max-alloc": { value: true },
+	"--max-delete": { value: true }, "--filter": { value: true }, "--exclude": { value: true },
+	"--include": { value: true }, "--exclude-from": { value: true }, "--include-from": { value: true },
+	"--checksum-choice": { value: true }, "--cc": { value: true }, "--checksum-seed": { value: true },
+	"--block-size": { value: true }, "--compare-dest": { value: true }, "--copy-dest": { value: true },
+	"--link-dest": { value: true }, "--compress-choice": { value: true }, "--zc": { value: true },
+	"--compress-level": { value: true }, "--zl": { value: true }, "--compress-threads": { value: true },
+	"--zt": { value: true }, "--skip-compress": { value: true }, "--log-file-format": { value: true },
+	"--out-format": { value: true }, "--log-format": { value: true }, "--bwlimit": { value: true },
+	"--suffix": { value: true }, "--read-batch": { value: true, replay: true }, "--files-from": { value: true },
+	"--usermap": { value: true }, "--groupmap": { value: true }, "--chown": { value: true },
+	"--stop-after": { value: true }, "--time-limit": { value: true }, "--stop-at": { value: true },
+	"--rsh": { value: true }, "--rsync-path": { value: true }, "--iconv": { value: true },
+	"--copy-as": { value: true }, "--address": { value: true }, "--sockopts": { value: true },
+	"--password-file": { value: true }, "--early-input": { value: true }, "--outbuf": { value: true },
+	"--remote-option": { value: true }, "--timeout": { value: true }, "--contimeout": { value: true },
+	"--protocol": { value: true }, "--port": { value: true }, "--config": { value: true },
+	"--dparam": { value: true },
+};
+
+/** rsync short options that consume the bundle tail (or the next word) as a value.
+ * `@` is --modify-window: rsync requires an argument for the short form too.
+ * `T` also names a write target resolved under the destination. */
+const RSYNC_SHORT_VALUE_OPTIONS: Readonly<Record<string, { readonly write?: "destination" }>> = {
+	e: {}, f: {}, B: {}, T: { write: "destination" }, M: {}, "@": {},
+};
+
+/** Exact-name-first option resolution; an ambiguous prefix is a spelling rsync rejects. */
+function resolveRsyncLongOption(name: string): RsyncLongOptionSpec | "ambiguous" | null {
+	const exact = RSYNC_LONG_OPTIONS[name];
+	if (exact) return exact;
+	const matches = Object.keys(RSYNC_LONG_OPTIONS).filter((option) => option.startsWith(name));
+	if (matches.length > 1) return "ambiguous";
+	return matches.length === 1 ? RSYNC_LONG_OPTIONS[matches[0]!]! : null;
+}
+
+/** One rsync write option value. `destination` means the tool resolves a relative value
+ * against the destination operand, not the caller cwd. */
+type RsyncWriteScan = { readonly target: string; readonly write: NonNullable<RsyncLongOptionSpec["write"]> };
+
+/** One-pass rsync argv state: replay mode changes the positional grammar. */
+type RsyncScan = { readonly positionals: string[]; readonly targets: RsyncWriteScan[]; replay: boolean; unprovable: boolean };
+
+/** Consume one long option word; the return value is the index of its last argv word. */
+function scanRsyncLongOption(raw: string, word: string, args: string[], index: number, scan: RsyncScan): number | "ambiguous" {
+	const [name, inline] = splitFlagValue(word);
+	const option = resolveRsyncLongOption(name);
+	if (option === null) return index;
+	if (option === "ambiguous") return "ambiguous";
+	if (option.value !== true) return index;
+	if (option.replay) scan.replay = true;
+	const target = inline !== undefined ? rawAttachedFlagValue(raw, `${name}=`) : args[index + 1];
+	if (target === undefined) return index; // missing value: rsync rejects the command
+	if (option.write) scan.targets.push({ target, write: option.write });
+	return inline === undefined ? index + 1 : index;
+}
+
+/** Consume a short bundle: the first value letter takes the remaining letters or the next
+ * word, so letters after it are data and never become positionals. */
+function scanRsyncShortOption(raw: string, word: string, args: string[], index: number, scan: RsyncScan): number {
+	const letters = word.slice(1);
+	for (let j = 0; j < letters.length; j++) {
+		const spec = RSYNC_SHORT_VALUE_OPTIONS[letters[j]!];
+		if (!spec) continue;
+		if (j < letters.length - 1) {
+			if (spec.write) scan.targets.push({ target: rawAttachedFlagValue(raw, `-${letters.slice(0, j + 1)}`), write: spec.write });
+			return index;
+		}
+		const next = args[index + 1];
+		if (next === undefined) return index;
+		if (spec.write) scan.targets.push({ target: next, write: spec.write });
+		return index + 1;
+	}
+	return index;
+}
+
+/** One-pass rsync argv scan, so option values are removed before the positional list is
+ * read. Two passes let a separate option value masquerade as the destination. */
+function scanRsyncArgs(args: string[]): RsyncScan {
+	const scan: RsyncScan = { positionals: [], targets: [], replay: false, unprovable: false };
+	for (let i = 0; i < args.length; i++) {
+		const raw = args[i]!;
+		const word = unescapeCommandWord(raw);
+		if (word === "--") { scan.positionals.push(...args.slice(i + 1)); break; }
+		if (word.startsWith("--")) {
+			const consumed = scanRsyncLongOption(raw, word, args, i, scan);
+			if (consumed === "ambiguous") scan.unprovable = true;
+			else i = consumed;
+			continue;
+		}
+		if (!word.startsWith("-") || word === "-") { scan.positionals.push(raw); continue; }
+		i = scanRsyncShortOption(raw, word, args, i, scan);
+	}
+	return scan;
+}
+
+/** rsync writes into the last positional. A batch replay has no source operand, so one
+ * positional is already the destination and no positional means the caller's cwd. */
+function rsyncDestination(scan: RsyncScan): string | null {
+	if (scan.replay) return scan.positionals[scan.positionals.length - 1] ?? ".";
+	return scan.positionals.length >= 2 ? scan.positionals[scan.positionals.length - 1]! : null;
+}
+
+function getRsyncTargets(tokens: string[]): MutationTarget[] | null {
+	const scan = scanRsyncArgs(tokens.slice(1));
+	const destination = rsyncDestination(scan);
+	// Destination first: it is the real write root, and a relative option only proves
+	// containment once that root is proven inside temp.
+	const targets: MutationTarget[] = scan.unprovable ? [{ path: UNPROVABLE_TARGET }] : [];
+	if (destination !== null) targets.push({ path: destination });
+	for (const { target, write } of scan.targets) {
+		if (write === "destination" && destination === null) targets.push({ path: UNPROVABLE_TARGET });
+		else targets.push(write === "destination" ? { path: target, base: destination! } : { path: target });
+	}
+	return targets.length > 0 ? targets : null;
 }
 
 /** unzip flags that read the archive without extracting. */
-const UNZIP_READ_FLAGS = new Set(["-l", "-t", "-Z", "-v", "-p", "-c", "--list", "--test", "--info"]);
+const UNZIP_READ_LETTERS = new Set(["l", "t", "Z", "v", "p", "c"]);
+const UNZIP_READ_LONG_FLAGS = new Set(["--list", "--test", "--info"]);
+
+/** Info-ZIP option state for one unzip command line. */
+type UnzipScan = { readOnly: boolean; negatedRead: boolean; unmodeled: boolean; dirs: string[] };
+
+/** `-` inside an Info-ZIP bundle negates the next letter: `-o-t` is overwrite + not-test. */
+function negateUnzipLetter(next: string | undefined, scan: UnzipScan): void {
+	if (next === undefined) return; // trailing dash is a no-op
+	if (UNZIP_READ_LETTERS.has(next)) { scan.negatedRead = true; return; }
+	// A negated value letter has no modeled meaning; fail closed instead of guessing.
+	if (next === "d" || next === "P") scan.unmodeled = true;
+}
+
+/** Consume one short bundle; `P` data and `d` values are not option letters. */
+function scanUnzipBundle(raw: string, word: string, tokens: string[], index: number, scan: UnzipScan): number {
+	for (let j = 1; j < word.length; j++) {
+		const ch = word[j]!;
+		if (ch === "-") { negateUnzipLetter(word[j + 1], scan); j++; continue; }
+		if (ch === "P") return index + (j === word.length - 1 ? 2 : 1);
+		if (ch === "d") {
+			const attached = j === word.length - 1 ? "" : rawOperandAfterDecodedFlag(raw, word.slice(0, j + 1));
+			scan.dirs.push(attached || tokens[index + 1] || ".");
+			return index + (attached ? 1 : 2);
+		}
+		if (UNZIP_READ_LETTERS.has(ch)) scan.readOnly = true;
+	}
+	return index + 1;
+}
 
 function getUnzipTargets(tokens: string[]): string[] | null {
 	// `-d <dir>` chooses the extraction directory; otherwise unzip writes into the cwd, so the
-	// cwd itself is the target — tracking only classifies writes reached through a tracked cd.
-	for (let i = 1; i < tokens.length; i++) {
-		const word = unescapeCommandWord(tokens[i]!);
+	// cwd itself is the target. Combined flags (`-oqd/outside`) hide `-d` from a prefix check,
+	// so walk the bundle and decide read-only only after the complete argument list: a negated
+	// read letter (`-o-t`) leaves extraction active even when another read letter appears.
+	const scan: UnzipScan = { readOnly: false, negatedRead: false, unmodeled: false, dirs: [] };
+	for (let i = 1; i < tokens.length;) {
+		const raw = tokens[i]!;
+		const word = unescapeCommandWord(raw);
 		if (word === "--") break;
-		if (UNZIP_READ_FLAGS.has(word)) return null;
-		if (word === "-d") return tokens[i + 1] ? [tokens[i + 1]!] : ["."];
-		if (word.startsWith("-d") && word.length > 2) return [rawAttachedFlagValue(tokens[i]!, "-d")];
+		if (UNZIP_READ_LONG_FLAGS.has(word)) { scan.readOnly = true; i++; continue; }
+		if (!word.startsWith("-") || word === "-") { i++; continue; }
+		i = scanUnzipBundle(raw, word, tokens, i, scan);
 	}
-	return ["."];
+	if (scan.unmodeled) return [UNPROVABLE_TARGET];
+	if (scan.readOnly && !scan.negatedRead) return null;
+	return scan.dirs.length > 0 ? scan.dirs : ["."];
 }
 
-export function getMutationTargets(command: string, tokens: string[]): string[] | null {
+/** Wrap a plain target list so every command shares one target shape. */
+function asMutationTargets(paths: string[] | null): MutationTarget[] | null {
+	return paths?.map((path) => ({ path })) ?? null;
+}
+
+export function getMutationTargets(command: string, tokens: string[]): MutationTarget[] | null {
+	// rsync resolves some write options against the destination, so it builds its own shape.
+	if (command === "rsync") return getRsyncTargets(tokens);
+	return asMutationTargets(plainMutationTargets(command, tokens));
+}
+
+function plainMutationTargets(command: string, tokens: string[]): string[] | null {
 	switch (command) {
 		case "rm": case "rmdir": case "unlink": case "mkdir": return getRmTargets(tokens);
 		case "truncate": return getTruncateTargets(tokens);
@@ -1162,40 +1893,73 @@ export function getMutationTargets(command: string, tokens: string[]): string[] 
 		case "wget": return getWgetTargets(tokens);
 		case "curl": return getCurlTargets(tokens);
 		case "tar": return getTarTargets(tokens);
-		case "rsync": return getRsyncTargets(tokens);
 		case "unzip": return getUnzipTargets(tokens);
 		default: return null;
 	}
 }
 
-function getFindMutationTargets(args: string[]): string[] | null {
-	// Skip flags, home expansion (`~user`), glob patterns (e.g., -name '*.txt'), and find's own
-	// grouping tokens (bare `(`/`)` or escaped `\(`/`\)`) — none can be a filesystem root.
-	// A `~` or `()` inside a name is literal data (Windows `Program Files (x86)`), so the grouping
-	// check operates on the decoded token and never touches embedded parentheses.
-	const isFindGroupOperator = (arg: string): boolean => {
-		const decoded = unescapeCommandWord(arg);
-		return decoded === "(" || decoded === ")";
-	};
-	const roots = args.filter((arg) => arg && !arg.startsWith("-") && !arg.startsWith("~") && !/[*?{}\[\]]/.test(arg) && !isFindGroupOperator(arg));
-	for (let i = 0; i < args.length; i++) {
-		const arg = args[i];
-		if (arg === "-delete") return roots.length > 0 ? roots : ["."];
-		if (["-exec", "-execdir", "-ok", "-okdir"].includes(arg)) return roots.length > 0 ? roots : ["."];
-		if (["-fprintf", "-fprint", "-fprint0", "-fls"].includes(arg)) {
-			const output = args[i + 1];
-			return output ? [output] : ["."];
+const FIND_PREROOT_FLAGS = new Set(["-H", "-L", "-P", "-E", "-X", "-d", "-s", "-x"]);
+const UNMODELED_FIND_OPTION = "\u0000find-unmodeled-option";
+
+/** Roots are the operands before the expression, after every BSD/GNU pre-root option.
+ * `-f <path>` adds a root (BSD semantics) and its getopt phase continues, so a repeated `-f`
+ * adds another root; `-D`/`-O` take non-root values. An unmodeled leading option may consume
+ * the next word, so the cwd default is never trusted for it: the parse reports the option and
+ * the caller fails closed. */
+function findRoots(args: string[]): { roots: string[]; unmodeled: string | null } {
+	const roots: string[] = [];
+	let options = true;
+	for (let i = 0; i < args.length;) {
+		const word = unescapeCommandWord(args[i]!);
+		if (options) {
+			if (word === "--") { options = false; i++; continue; }
+			if (FIND_PREROOT_FLAGS.has(word)) { i++; continue; }
+			if (word === "-f" || word === "-D") {
+				const value = args[i + 1];
+				if (value === undefined) return { roots, unmodeled: word };
+				if (word === "-f") roots.push(findRootTarget(value));
+				i += 2; continue;
+			}
+			if (/^-D./.test(word) || /^-O/.test(word)) { i++; continue; }
 		}
+		if (word === "(" || word === ")" || word === "!" || word === ",") break;
+		if (word.startsWith("-")) {
+			// Known options were consumed above. A dash token before any root is ambiguous:
+			// it may take the following path as its value, hiding the real root.
+			if (options || roots.length === 0) return { roots, unmodeled: word };
+			break;
+		}
+		roots.push(findRootTarget(args[i]!));
+		options = false;
+		i++;
 	}
-	return null;
+	return { roots, unmodeled: null };
 }
 
-export function isPackageMutation(args: string[]): boolean {
-	// Match individual tokens against known package-mutation verbs.
-	// Token-level matching (vs. substring-on-joined-string) avoids false
-	// positives when a path or argument contains a verb word (install-sh, etc.).
-	const VERBS = new Set(["install", "uninstall", "update", "upgrade", "ci", "link", "publish", "add", "remove", "reinstall", "tap", "untap", "download", "build-dep", "i", "un", "ad", "rm", "up", "in", "rb"]);
-	return args.some((a) => VERBS.has(a.toLowerCase()));
+/** Never drop a root the classifier cannot model: tilde/glob roots reach the path checker,
+ * and brace alternation (not expanded by the glob model) and home expansion fail closed. */
+function findRootTarget(root: string): string {
+	return /[{}]/.test(root) || root.startsWith("~") ? UNPROVABLE_TARGET : root;
+}
+
+function getFindMutationTargets(args: string[]): string[] | null {
+	const { roots, unmodeled } = findRoots(args);
+	const { mutatesPaths, outputs } = scanFindActions(args);
+	if (!mutatesPaths && outputs.length === 0) return null;
+	const targets: string[] = [];
+	// Roots are write targets only for delete/exec; output-only actions read the search tree.
+	if (mutatesPaths) targets.push(...(unmodeled ? [UNMODELED_FIND_OPTION] : roots.length > 0 ? roots : ["."]));
+	targets.push(...outputs);
+	return targets;
+}
+
+export function isPackageMutation(command: string, args: string[]): boolean {
+	// Token-level matching (vs. substring-on-joined-string) avoids false positives
+	// when a path or argument contains a verb word (install-sh, etc.). Quoted and
+	// escaped spellings are the same argv word to the invoked program.
+	const grammar = PACKAGE_MODE_TABLES[command];
+	if (grammar) return packageGrammarMutates(grammar, args);
+	return args.some((arg) => PACKAGE_MUTATION_WORDS.has(unescapeCommandWord(arg).toLowerCase()));
 }
 
 export function findSudoCommandIndex(tokens: string[]): number {
