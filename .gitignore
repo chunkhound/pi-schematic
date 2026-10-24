@@ -154,6 +154,8 @@ vite.config.ts.timestamp-*
 .chunkhound.json
 .chunkhound/
 .mcp.json
+
+# pi extension local config
 .pi/
 
 # macOS
@@ -162,6 +164,3 @@ vite.config.ts.timestamp-*
 # PR review artifacts
 AGENT_REVIEW.md
 HUMAN_REVIEW.md
-
-# pi extension local config
-.pi/
