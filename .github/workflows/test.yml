@@ -64,12 +64,20 @@ jobs:
       - name: Security audit
         run: npx audit-ci --config audit-ci.jsonc
 
+      # Real-tool differentials need GNU tooling that macOS does not ship. Linux owns the
+      # required lane; other runners skip those tests by capability, not by failure.
+      - name: Provision differential tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y dpkg rsync zip unzip
+
       # Unit suite (unit tests + snapshot tests + property-based tests). This lane has no
       # OS sandbox, so the outside-temp regression suites must really run: fail rather than
-      # silently skip if a runner cannot write outside temp.
+      # silently skip if a runner cannot write outside temp. The Linux lane also requires
+      # the real-tool differentials to execute.
       - name: Unit tests
         env:
           REQUIRE_OUTSIDE_TEMP_WRITES: "1"
+          REQUIRE_REAL_TOOLS: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: npm test
 
       # Readonly coverage gate. Linux only: the Windows job skips POSIX differential
@@ -78,6 +86,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           REQUIRE_OUTSIDE_TEMP_WRITES: "1"
+          REQUIRE_REAL_TOOLS: "1"
         run: npm run test:coverage
 
       # E2E tests — two suites: the real-host suite runs the pi CLI in RPC mode, and the

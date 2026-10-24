@@ -157,6 +157,17 @@ export function hasBash(): boolean {
 	}
 }
 
+/** Tool presence via the shell's own lookup: a tool's `-v` flag is not a presence probe
+ * (chmod -v fails without an operand, rsync -v without a source). */
+export function hasCommand(name: string): boolean {
+	try {
+		execFileSync("/bin/sh", ["-c", 'command -v "$1" >/dev/null 2>&1', "sh", name], { timeout: 2000, stdio: "ignore" });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 // Outside-temp fixtures are the point of these suites, so they cannot run under the
 // extension's own readonly sandbox. Probe once and skip locally;
 // REQUIRE_OUTSIDE_TEMP_WRITES=1 (CI) turns an unexpectedly sandboxed runner into a hard
@@ -171,6 +182,11 @@ export function canWriteOutsideTemp(dir: string = os.homedir()): boolean {
 export const outsideWritable = canWriteOutsideTemp();
 export const outsideWritesRequired = process.env.REQUIRE_OUTSIDE_TEMP_WRITES === "1";
 
+// Real-tool differentials need tools only the provisioned Linux lane installs. Separate
+// from REQUIRE_OUTSIDE_TEMP_WRITES: macOS CI has the filesystem capability but not GNU
+// sed or dpkg-deb, so tool absence must skip there instead of failing.
+export const realToolsRequired = process.env.REQUIRE_REAL_TOOLS === "1";
+
 // POSIX bash semantics and literal POSIX temp paths exist only off Windows.
 export const posixHost = process.platform !== "win32";
 
@@ -178,9 +194,12 @@ export const posixHost = process.platform !== "win32";
 // CI lane that demands these tests really ran, exactly like the sandbox case above.
 // `posixOnly` keeps the POSIX-scoped REQUIRE condition: a Windows runner skips even when
 // CI demands outside-temp fixtures really run, since it has neither bash nor POSIX paths.
+export function capabilityRequired(posixOnly = false): boolean {
+	return posixOnly ? outsideWritesRequired && posixHost : outsideWritesRequired;
+}
+
 export function capabilityGate(name: string, reason: string, posixOnly = false): void {
-	const required = posixOnly ? outsideWritesRequired && posixHost : outsideWritesRequired;
-	if (required) test(name, () => assert.fail(`${reason}; REQUIRE_OUTSIDE_TEMP_WRITES=1 forbids skipping`));
+	if (capabilityRequired(posixOnly)) test(name, () => assert.fail(`${reason}; REQUIRE_OUTSIDE_TEMP_WRITES=1 forbids skipping`));
 	else test(name, { skip: reason }, () => {});
 }
 

@@ -184,6 +184,18 @@ test("workflow keeps the enforcement gate env vars on their lanes", () => {
 		/\n?\s*env:\n\s*REQUIRE_OUTSIDE_TEMP_WRITES: "1"/,
 		"the unit-test lane must keep REQUIRE_OUTSIDE_TEMP_WRITES so outside-temp regressions fail loudly instead of skipping",
 	);
+	// Linux owns the real-tool lane. macOS lacks GNU sed and dpkg-deb, so the switch must
+	// stay Linux-scoped; otherwise the differential can turn tool absence into a CI failure.
+	assert.match(
+		stepBlock(workflow, "Unit tests"),
+		/REQUIRE_REAL_TOOLS:.*runner\.os == 'Linux'.*'1'/,
+		"the unit-test lane must require real tools on Linux only",
+	);
+	assert.match(
+		stepBlock(workflow, "Provision differential tools"),
+		/apt-get install -y dpkg rsync zip unzip/,
+		"the provisioned Linux lane must install the tools its required differentials execute",
+	);
 	const laneStart = workflow.indexOf("  sandbox-enforcement:");
 	assert.notEqual(laneStart, -1, "missing sandbox-enforcement lane");
 	const laneEnd = workflow.indexOf("\n  current-pi:", laneStart);
