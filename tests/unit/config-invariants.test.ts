@@ -51,13 +51,16 @@ const EXPECTED_MATRIX = new Set([
 	"macos-latest@24",
 	"windows-latest@24",
 ]);
-// Transitive brace-expansion advisories in the pinned test host
+// Transitive brace-expansion and undici advisories in the pinned test host
 // @earendil-works/pi-coding-agent@0.99.2 (devDependency). Remove them when a
-// pinned host ships a patched brace-expansion; the expiry forces periodic re-review.
+// pinned host ships patched versions; the expiry forces periodic re-review.
 const EXPECTED_ALLOWLIST_KEYS = new Set<string>([
 	"GHSA-6j4f-fj2g-mc7p",
 	"GHSA-qhr7-859c-m2p7",
 	"GHSA-q2hr-2g5m-vwhr",
+	"GHSA-xjj6-f33q-929c",
+	"GHSA-4qv8-2p9j-2685",
+	"GHSA-f72v-6w45-q472",
 ]);
 
 function readText(url: URL): string {
