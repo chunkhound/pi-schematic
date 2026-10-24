@@ -191,8 +191,8 @@ export const SANDBOX_DENIAL_NEEDLES = [
  * EPERM ("Operation not permitted") is how Seatbelt reports a denied write; EROFS
  * ("Read-only file system") is how bwrap's read-only bind reports one. The raw output is
  * re-emitted on either path, so no signal is lost.
- * Pinned by tests/unit/os-sandbox.test.ts assertSandboxBlocked, which imports
- * SANDBOX_DENIAL_NEEDLES so its oracle cannot drift from this matcher.
+ * Pinned by tests/unit/os-sandbox.test.ts: the test asserts this list equals its own
+ * literal and builds the denial oracle from that literal, so a removed needle fails.
  */
 function sandboxResultReport(): string {
 	const denialCases = SANDBOX_DENIAL_NEEDLES.map((needle) => `*"${needle}"*`).join("|");

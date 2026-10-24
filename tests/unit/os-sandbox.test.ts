@@ -60,11 +60,17 @@ function runSandbox(command: string, wrapper = wrapCommandWithOsSandbox): string
 	return runBash(wrapper(command));
 }
 
+/** Independent oracle: a removed or reworded production needle must fail this literal. */
+const EXPECTED_SANDBOX_DENIAL_NEEDLES = ["Operation not permitted", "Read-only file system", "denying file-write"] as const;
+
+test("sandbox denial needles stay pinned", () => {
+	assert.deepEqual([...SANDBOX_DENIAL_NEEDLES], [...EXPECTED_SANDBOX_DENIAL_NEEDLES]);
+});
+
 function assertSandboxBlocked(command: string): void {
-	// Built from the production needles so the oracle cannot drift. EACCES
-	// ("Permission denied") is never matched: an ordinary command can fail that way
+	// EACCES ("Permission denied") is never matched: an ordinary command can fail that way
 	// for its own reasons, and the oracle must not be looser than the matcher.
-	const denial = new RegExp(SANDBOX_DENIAL_NEEDLES.join("|"));
+	const denial = new RegExp(EXPECTED_SANDBOX_DENIAL_NEEDLES.join("|"));
 	assert.throws(() => runSandbox(command), denial);
 }
 
