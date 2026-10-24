@@ -261,7 +261,13 @@ let agentDir: string | undefined;
 function testAgentDir(): string {
 	if (agentDir === undefined) {
 		const dir = mkdtempSync(join(tmpdir(), "pi-schematic-test-agent-"));
-		process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
+		process.once("exit", () => {
+			try {
+				rmSync(dir, { recursive: true, force: true });
+			} catch {
+				// A throw here would fail a run whose tests passed; a directory left behind costs nothing.
+			}
+		});
 		agentDir = dir;
 	}
 	return agentDir;
