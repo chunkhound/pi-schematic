@@ -37,7 +37,6 @@ async function main() {
       "tests/unit/spawn-lifecycle.test.ts",
       "tests/unit/spawn-event.test.ts",
       "tests/unit/spawn-render.test.ts",
-      "tests/unit/dependency-graph-assertions.test.ts",
       "tests/unit/frontmatter-cache.test.ts",
       "tests/unit/spawn.test.ts",
       "tests/unit/readonly-spawn.test.ts",
@@ -53,6 +52,10 @@ async function main() {
       "tests/unit/readonly-frontmatter.test.ts",
       "tests/unit/readonly-mode.test.ts",
       "tests/unit/system-prompt.test.ts",
+    ], { cwd: copy });
+    runChecked(process.execPath, ["./node_modules/vitest/vitest.mjs", "run", "--project", "unit",
+      "tests/unit/dependency-graph-assertions.test.ts",
+      "tests/unit/pi-module-identity.test.ts",
     ], { cwd: copy });
     runChecked(process.execPath, ["./scripts/run-node-test.mjs", "tests/e2e/basic.test.ts"], { cwd: copy });
     runChecked(process.execPath, ["./scripts/run-node-test.mjs", "tests/e2e/real-host.test.ts"], { cwd: copy });
