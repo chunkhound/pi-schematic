@@ -438,12 +438,7 @@ export class SpawnFrameScheduler {
  *
  * Registered into the RuntimeSingletons container at module evaluation time.
  * Test harnesses overwrite this with a fresh SpawnFrameScheduler via
- * createTestHarness().  ESM guarantees all static imports resolve before any
- * module body runs, so the harness always wins.
- *
- * IMPORTANT: never use dynamic import() to load this module *after* a
- * createTestHarness() call, or the production scheduler will overwrite the
- * test one.
+ * createTestHarness().
  */
 const spawnFrameScheduler = new SpawnFrameScheduler();
 __setSingletons({ ...getSingletons(), frameScheduler: spawnFrameScheduler });

@@ -8,7 +8,6 @@ Welcome! This project welcomes focused, well-validated contributions. Use coding
 - **Make minimal changes** — prefer targeted edits that reuse existing mechanisms.
 - **Match existing patterns** — keep naming, lifecycle hooks, tool contracts, and TUI behavior consistent with the current code.
 - **Preserve context-management semantics** — changes to `spawn`, `notebook`, or `handoff` should keep the agent workflow predictable across session resets and compaction.
-- **Use static imports only for `spawn/renderer.ts`** — it registers the frame scheduler into the singleton container at module evaluation time. Switching to `await import()` will silently break test isolation because the test harness cannot overwrite the singleton before registration.
 - **AI-agent generated contributions are welcome** — include enough human intent and validation context in the PR for reviewers to trust the result.
 
 ## Suggested Workflow

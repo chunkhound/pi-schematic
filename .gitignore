@@ -52,6 +52,8 @@ web_modules/
 *.d.ts
 *.d.cts
 *.d.mts
+# Hand-written declarations for committed .mjs helpers
+!/pi-packages.d.mts
 
 # Optional npm cache directory
 .npm
