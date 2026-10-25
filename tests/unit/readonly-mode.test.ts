@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import { READONLY_POWERSHELL_BLOCK_REASON } from "../../notifications.js";
-import { registerReadonlyPI, makeReadonlyUICtx } from "./helpers.js";
+import { registerReadonlyPI, makeReadonlyUICtx, shellPath } from "./helpers.js";
 import { createBeforeAgentStartEvent } from "./test-host.js";
 
 test("readonly toggle on blocks write, edit, powershell, handoff, and bash mutations", async () => {
@@ -18,7 +18,7 @@ test("readonly toggle on blocks write, edit, powershell, handoff, and bash mutat
 	assert.equal(powershell.reason, READONLY_POWERSHELL_BLOCK_REASON);
 	assert.equal((await toolCall({ toolName: "handoff", input: { task: "pivot" } }, {})).block, true);
 	assert.equal((await toolCall({ toolName: "bash", input: { command: "rm -rf /" } }, { cwd: "/workspace" })).block, true);
-	assert.equal(await toolCall({ toolName: "bash", input: { command: `rm ${os.tmpdir()}/x` } }, { cwd: "/workspace" }), undefined);
+	assert.equal(await toolCall({ toolName: "bash", input: { command: `rm ${shellPath(os.tmpdir())}/x` } }, { cwd: "/workspace" }), undefined);
 	assert.equal(await toolCall({ toolName: "read", input: { path: "/tmp/x" } }, {}), undefined);
 });
 

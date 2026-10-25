@@ -34,3 +34,52 @@ test("resolveRealPath follows symlinks", () => {
 		fs.rmSync(target, { force: true, recursive: true });
 	}
 });
+
+test("resolveRealPath: deep non-existent path under symlinked dir keeps suffix", () => {
+	const target = path.join(os.tmpdir(), `pi-test-real-${Date.now()}`);
+	const link = path.join(os.tmpdir(), `pi-test-link-${Date.now()}`);
+	fs.mkdirSync(target);
+	try {
+		fs.symlinkSync(target, link);
+		const deep = path.join(link, ...DEEP_PATH_PARTS);
+		const resolved = resolveRealPath(deep);
+		const suffix = path.join(...DEEP_PATH_PARTS);
+		assert.ok(resolved.endsWith(suffix), `suffix kept — "${suffix}" in "${resolved}"`);
+		assert.ok(
+			resolved.startsWith(resolveRealPath(target)),
+			`prefix must be the resolved target — "${resolved}"`,
+		);
+	} finally {
+		fs.rmSync(link, { force: true });
+		fs.rmSync(target, { force: true, recursive: true });
+	}
+});
+
+test("resolveRealPath: dangling or looping symlink returns without throw", () => {
+	const base = fs.mkdtempSync(path.join(os.tmpdir(), "pi-resolve-edge-"));
+	try {
+		const dangling = path.join(base, "dangling");
+		fs.symlinkSync(path.join(base, "missing-target"), dangling);
+		assert.equal(typeof resolveRealPath(dangling), "string");
+		const loop = path.join(base, "loop");
+		fs.symlinkSync(loop, loop);
+		assert.equal(typeof resolveRealPath(loop), "string");
+	} finally {
+		fs.rmSync(base, { force: true, recursive: true });
+	}
+});
+
+test("resolveRealPath: resolution is idempotent (macOS /var alias handled)", () => {
+	const cases = [os.tmpdir(), path.join(os.tmpdir(), "pi-idem-missing", "child")];
+	for (const p of cases) {
+		const once = resolveRealPath(p);
+		assert.equal(resolveRealPath(once), once, `idempotent — ${p}`);
+	}
+	if (process.platform === "darwin" && os.tmpdir().startsWith("/var/")) {
+		// macOS exposes tmpdir under the /var alias; realpath must escape to /private/var.
+		assert.ok(
+			resolveRealPath(os.tmpdir()).startsWith("/private/var/"),
+			`expected /private/var prefix — ${resolveRealPath(os.tmpdir())}`,
+		);
+	}
+});

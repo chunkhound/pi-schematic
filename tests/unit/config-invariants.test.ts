@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -27,6 +27,7 @@ type PackageJson = {
 	engines: { node: string };
 	peerDependencies: Record<string, string>;
 	devDependencies: Record<string, string>;
+	scripts: Record<string, string>;
 };
 
 const AUDIT_SCHEMA = "https://github.com/IBM/audit-ci/raw/main/docs/schema.json";
@@ -64,7 +65,9 @@ const EXPECTED_ALLOWLIST_KEYS = new Set<string>([
 ]);
 
 function readText(url: URL): string {
-	return readFileSync(url, "utf8");
+	// Normalize CRLF so the workflow regexes hold on Windows, where core.autocrlf=true
+	// rewrites LF to CRLF at checkout (the repo only pins tests/snapshots/**/*.txt to LF).
+	return readFileSync(url, "utf8").replaceAll("\r\n", "\n");
 }
 
 function parseAuditConfig(): AuditConfig {
@@ -116,23 +119,6 @@ function minimumNodeVersion(value: string): string {
 	const match = value.match(/^>=(?<version>\d+\.\d+\.\d+)$/);
 	assert.ok(match?.groups?.version, `unsupported engines.node format: ${value}`);
 	return match.groups.version;
-}
-
-function runAuditCi(): void {
-	const command = "npx audit-ci --config audit-ci.jsonc";
-	const result = spawnSync(command, { cwd: REPO_ROOT, encoding: "utf8", shell: true });
-	const diagnostics = [
-		`command: ${command}`,
-		`error.stack: ${result.error?.stack ?? "none"}`,
-		`status: ${String(result.status)}`,
-		`signal: ${String(result.signal)}`,
-		`stdout:\n${result.stdout}`,
-		`stderr:\n${result.stderr}`,
-	].join("\n");
-
-	assert.equal(result.error, undefined, diagnostics);
-	assert.equal(result.signal, null, diagnostics);
-	assert.equal(result.status, 0, diagnostics);
 }
 
 test("pinned Pi compatibility metadata and source boundaries stay exact", () => {
@@ -191,12 +177,110 @@ test("workflow keeps the expected matrix and audit/test order", () => {
 });
 
 
+// The REQUIRE_* env vars are the switches that make the enforcement suites fail loudly
+// instead of silently skipping on a runner that lost the capability they assert, so a
+// deleted env line must fail here before CI can go green with skipped enforcement.
+test("workflow keeps the enforcement gate env vars on their lanes", () => {
+	const workflow = readText(WORKFLOW_PATH);
+	assert.match(
+		stepBlock(workflow, "Unit tests"),
+		/\n?\s*env:\n\s*REQUIRE_OUTSIDE_TEMP_WRITES: "1"/,
+		"the unit-test lane must keep REQUIRE_OUTSIDE_TEMP_WRITES so outside-temp regressions fail loudly instead of skipping",
+	);
+	// Linux owns the real-tool lane. macOS lacks GNU sed and dpkg-deb, so the switch must
+	// stay Linux-scoped; otherwise the differential can turn tool absence into a CI failure.
+	assert.match(
+		stepBlock(workflow, "Unit tests"),
+		/REQUIRE_REAL_TOOLS:.*runner\.os == 'Linux'.*'1'/,
+		"the unit-test lane must require real tools on Linux only",
+	);
+	assert.match(
+		stepBlock(workflow, "Provision differential tools"),
+		/apt-get install -y dpkg rsync zip unzip/,
+		"the provisioned Linux lane must install the tools its required differentials execute",
+	);
+	const laneStart = workflow.indexOf("  sandbox-enforcement:");
+	assert.notEqual(laneStart, -1, "missing sandbox-enforcement lane");
+	const laneEnd = workflow.indexOf("\n  current-pi:", laneStart);
+	const lane = workflow.slice(laneStart, laneEnd === -1 ? workflow.length : laneEnd);
+	assert.match(
+		lane,
+		/\n?\s*env:\n\s*REQUIRE_OS_SANDBOX: "1"/,
+		"the sandbox-enforcement lane must keep REQUIRE_OS_SANDBOX so kernel enforcement is exercised, never skipped",
+	);
+	assert.match(
+		lane,
+		/run-node-test\.mjs tests\/unit\/os-sandbox\.test\.ts/,
+		"the sandbox-enforcement lane must actually run the OS-sandbox suite, or its gate guards nothing",
+	);
+});
+
 test("Windows current-Pi step runs after packed-host failure but not on cancellation", () => {
 	const workflow = readText(WORKFLOW_PATH);
 	const block = stepBlock(workflow, "Synchronized current Pi compatibility on Windows");
 	assert.match(block, /if:\s*matrix\.os == 'windows-latest' && !cancelled\(\)/);
 });
 
-test("audit-ci config matches the CI audit command", () => {
-	runAuditCi();
+// The live audit is network-dependent and its verdict changes with every upstream advisory,
+// so it never runs inside `npm test`: CI runs it as its own "Security audit" step. This guard
+// keeps that step honest offline — it must audit exactly the config these tests parse, from the
+// repo root where package-lock.json lives.
+test("CI audit step audits the same config these tests validate", () => {
+	const block = stepBlock(readText(WORKFLOW_PATH), "Security audit");
+	assert.match(block, /(?:^|\s)npx audit-ci\b/, "the Security audit step must invoke audit-ci");
+	const configs = [...block.matchAll(/--config\s+(\S+)/g)].map((match) => match[1]!);
+	assert.deepEqual(
+		configs,
+		[path.relative(REPO_ROOT, fileURLToPath(AUDIT_CONFIG_PATH))],
+		"CI must audit the config validated by these tests — keep the workflow command and AUDIT_CONFIG_PATH in sync",
+	);
+	assert.doesNotMatch(block, /working-directory:/, "audit-ci finds package-lock.json at the repo root");
+	assert.ok(parseAuditConfig().moderate, "the config CI loads must still parse and enforce moderate advisories");
+});
+
+// The test:coverage script is the only thing standing between a silent coverage regression
+// and a green CI lane, so these thresholds must be present and on the real Node flags
+// (--test-coverage-lines / --test-coverage-branches — Node rejects the "enforce-*" spelling).
+// The workflow must actually execute the script on Linux, otherwise the contract is dead:
+// Windows skips POSIX differential cases and would under-count the threshold.
+test("test:coverage thresholds run in CI on Linux", () => {
+	const coverageScript = parsePackageJson().scripts["test:coverage"];
+	assert.ok(coverageScript, "test:coverage script must exist");
+	assert.match(
+		coverageScript,
+		/--test-coverage-lines=90/,
+		"test:coverage must enforce a 90% line threshold on the readonly modules",
+	);
+	assert.match(
+		coverageScript,
+		/--test-coverage-branches=85/,
+		"test:coverage must enforce an 85% branch threshold on the readonly modules",
+	);
+	assert.match(
+		coverageScript,
+		/--test-coverage-include='readonly-\*\.ts'/,
+		"test:coverage must cover the readonly modules, including readonly-shell-utils.ts (critical classification path)",
+	);
+	// os-sandbox.ts needs a kernel sandbox the coverage lane does not provision; the
+	// sandbox-enforcement lane owns that enforcement, so counting it here only lets
+	// the gate stay green while the suite skips.
+	assert.doesNotMatch(
+		coverageScript,
+		/--test-coverage-include='os-sandbox\.ts'/,
+		"test:coverage must not count os-sandbox.ts — its kernel enforcement runs in the sandbox-enforcement lane",
+	);
+	const coverageStep = stepBlock(readText(WORKFLOW_PATH), "Readonly coverage");
+	assert.match(coverageStep, /(?:^|\s)npm run test:coverage\b/, "CI must execute npm run test:coverage");
+	assert.match(
+		coverageStep,
+		/if:\s*runner\.os == 'Linux'/,
+		"coverage runs on Linux only — Windows skips POSIX cases and would under-count",
+	);
+	// Without this flag the POSIX differential suites can silently skip and the gate
+	// stays green with no real coverage.
+	assert.match(
+		coverageStep,
+		/REQUIRE_OUTSIDE_TEMP_WRITES:\s*["']1["']/,
+		"the Readonly coverage step must set REQUIRE_OUTSIDE_TEMP_WRITES=1 so POSIX suites cannot skip",
+	);
 });

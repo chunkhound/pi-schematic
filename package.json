@@ -23,13 +23,14 @@
   "scripts": {
     "prepare": "husky",
     "test": "node ./scripts/run-node-test.mjs tests/unit/**/*.test.ts",
+    "test:coverage": "node --import ./register-loader.mjs --experimental-test-coverage --test-coverage-include='readonly-*.ts' --test-coverage-include='temp-dir.ts' --test-coverage-include='resolve-path.ts' --test-coverage-exclude='**/node_modules/**' --test-coverage-lines=90 --test-coverage-branches=85 --test 'tests/unit/readonly-*.test.ts' tests/unit/temp-dir.test.ts tests/unit/resolve-path.test.ts",
     "test:e2e": "node ./scripts/run-node-test.mjs tests/e2e/**/*.test.ts",
     "test:all": "npm run test && npm run test:e2e",
     "test:snapshots:check": "node ./scripts/run-node-test.mjs tests/unit/render-snapshots.test.ts",
     "test:snapshots:update": "node ./scripts/run-node-test.mjs --update-snapshots tests/unit/render-snapshots.test.ts",
     "test:compat:current": "node ./scripts/test-compat-current.mjs",
     "test:package-host": "node ./scripts/test-package-host.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node ./scripts/dependency-graph-assertions.mjs && tsc --noEmit"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.99.2",

@@ -7,7 +7,7 @@ import path from "node:path";
 import { createState } from "../../state.js";
 import { canPromoteBoundary, discardNonHumanBoundary } from "../../readonly-boundary.js";
 import { setActiveNotebookTopic } from "../../notebook/topic.js";
-import { callHandlers, emitAll, handoffToolResult, makeReadonlyUICtx, registerReadonlyPI, turnEndEvent, type ToolCall } from "./helpers.js";
+import { callHandlers, emitAll, handoffToolResult, makeReadonlyUICtx, registerReadonlyPI, shellPath, turnEndEvent, type ToolCall } from "./helpers.js";
 import type { TestPI } from "./test-host.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
@@ -116,7 +116,7 @@ async function handoffCutAcrossReadonlyToggle(readonlyAfterCut: boolean) {
 }
 
 async function assertNonTempBashBlocked(toolCall: (event: any, ctx: any) => Promise<any>): Promise<void> {
-	const target = path.join(os.homedir(), `readonly-handoff-test-${process.pid}-${Date.now()}`);
+	const target = shellPath(path.join(os.homedir(), `readonly-handoff-test-${process.pid}-${Date.now()}`));
 	const command = `touch "${target}"`;
 	await rm(target, { force: true });
 	try {

@@ -8,7 +8,7 @@ import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import os from "node:os";
 import { createState, resetState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
@@ -239,6 +239,21 @@ export function makeReadonlyUICtx(overrides: Record<string, unknown> = {}) {
 }
 
 // ── Temp directory helpers ──────────────────────────────────────────
+
+/**
+ * Render a host path for a bash command string.
+ *
+ * Windows runs Git Bash, where `\` is an escape character, so a native
+ * `C:\Users\...` loses its separators before any program sees it. `/` is valid in
+ * Git Bash and on Win32 APIs, and it keeps glob/`$VAR` parsing intact. Identity on POSIX.
+ */
+export function shellPathFor(value: string, separator: string): string {
+	return separator === "/" ? value : value.split(separator).join("/");
+}
+
+export function shellPath(value: string): string {
+	return shellPathFor(value, sep);
+}
 
 export async function tmpDir(): Promise<string> {
 	return mkdtemp(join(os.tmpdir(), "pi-test-"));
