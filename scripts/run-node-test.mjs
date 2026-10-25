@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, globSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { VITEST_FILES } from "../tests/vitest-files.mjs";
 
@@ -37,9 +37,12 @@ if (files.length === 0) {
 }
 
 const loader = pathToFileURL(resolve(root, "register-loader.mjs")).href;
+// node --test reads each argument as a glob pattern, so a path containing glob characters such as
+// `[ab]` matches nothing; relative paths keep the checkout's directory names out of the pattern.
+const testFiles = files.map((file) => relative(root, file).split(sep).join("/"));
 const result = spawnSync(
   process.execPath,
-  ["--import", loader, "--test", ...flags, ...files],
+  ["--import", loader, "--test", ...flags, ...testFiles],
   {
     cwd: root,
     stdio: "inherit",

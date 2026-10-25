@@ -14,21 +14,3 @@ export function assertDefined<T>(value: T, message?: string): asserts value is E
 export function assertPresent<T>(value: T, message?: string): asserts value is NonNullable<T> {
 	expect(value, message).not.toBeNullable();
 }
-
-/**
- * Asserts `actual` is `expected` (`Object.is`) and narrows `actual` to that literal. Passed a
- * discriminant such as `entry.type`, it also narrows `entry` to the union members with that
- * discriminant, as an `entry.type === "..."` check would.
- */
-export function assertEqual<T, const V extends T>(actual: T, expected: V, message?: string): asserts actual is V {
-	expect(actual, message).toBe(expected);
-}
-
-/** Asserts `value` is an instance of `ctor`. */
-export function assertInstanceOf<C extends abstract new (...args: never[]) => unknown>(
-	value: unknown,
-	ctor: C,
-	message?: string,
-): asserts value is InstanceType<C> {
-	expect(value, message).toBeInstanceOf(ctor);
-}

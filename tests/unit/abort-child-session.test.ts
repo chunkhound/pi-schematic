@@ -25,10 +25,7 @@ test("abortChildSession handles synchronous abort() throw", async () => {
 	
 	const promise = abortChildSession(state, session);
 	
-	await expect(promise).rejects.toSatisfy((error: unknown) => {
-		expect(error).toBe(syncError);
-		return true;
-	});
+	await expect(promise).rejects.toBe(syncError);
 });
 
 test("abortChildSession returns different promises for different sessions", async () => {
@@ -63,8 +60,5 @@ test("abortChildSession promise rejects when abort rejects", async () => {
 	
 	const promise = abortChildSession(state, session);
 	
-	await expect(promise).rejects.toSatisfy((error: unknown) => {
-		expect(error).toBe(abortError);
-		return true;
-	});
+	await expect(promise).rejects.toBe(abortError);
 });

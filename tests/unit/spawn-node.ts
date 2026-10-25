@@ -17,8 +17,8 @@ export interface SpawnNodeOptions {
 
 /**
  * Run `node ...args` to completion and return the result. NODE_OPTIONS is cleared so the runner's
- * own flags stay out of the child. Throws when the child outlives the deadline or dies from a
- * signal, since neither leaves an exit status to assert on.
+ * own flags stay out of the child. Throws when the child outlives the deadline, dies from a signal,
+ * or fails to spawn, since none of those leaves an exit status to assert on.
  */
 export function spawnNode(args: readonly string[], options: SpawnNodeOptions): SpawnSyncReturns<string> {
 	const timeoutMs = options.timeoutMs ?? CHILD_TIMEOUT_MS;
@@ -28,6 +28,8 @@ export function spawnNode(args: readonly string[], options: SpawnNodeOptions): S
 		encoding: "utf8",
 		env: { ...process.env, NODE_OPTIONS: "", ...options.env },
 		timeout: timeoutMs,
+		// The timeout otherwise sends SIGTERM and waits, so a child that handles SIGTERM outlives it.
+		killSignal: "SIGKILL",
 	});
 	const spawnError = result.error as NodeJS.ErrnoException | undefined;
 	if (spawnError?.code === "ETIMEDOUT") {
@@ -36,5 +38,6 @@ export function spawnNode(args: readonly string[], options: SpawnNodeOptions): S
 	if (result.signal !== null) {
 		throw new Error(`Node child process was killed by ${result.signal}${spawnError ? ` (${spawnError.message})` : ""}`);
 	}
+	if (spawnError) throw spawnError;
 	return result;
 }

@@ -8,7 +8,6 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { assertDefined, assertPresent } from "../assertions.js";
 import { REPO_ROOT_URL } from "../paths.js";
@@ -49,7 +48,6 @@ function pathFills(svg: string): string[] {
 function piImage(): { url: string; repoPath: string } {
 	const packageJson = JSON.parse(readText(PACKAGE_JSON_URL)) as { pi?: { image?: string } };
 	const url = packageJson.pi?.image;
-	expect(url, "pi.image must be set for the pi.dev gallery").toBeTruthy();
 	assertDefined(url);
 	const path = url.match(PI_IMAGE_PATTERN)?.groups?.path;
 	assertPresent(path, `pi.image must be a raw main-branch brand asset URL: ${url}`);
