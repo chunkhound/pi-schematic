@@ -5,11 +5,6 @@
 
 import { expect } from "vitest";
 
-/** Asserts `value` is not `undefined`; `null` passes. */
-export function assertDefined<T>(value: T, message?: string): asserts value is Exclude<T, undefined> {
-	expect(value, message).not.toBeUndefined();
-}
-
 /** Asserts `value` is neither `null` nor `undefined`. */
 export function assertPresent<T>(value: T, message?: string): asserts value is NonNullable<T> {
 	expect(value, message).not.toBeNullable();

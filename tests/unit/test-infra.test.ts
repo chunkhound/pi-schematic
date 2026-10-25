@@ -1,5 +1,5 @@
-// Tests for the test infrastructure itself: the shared Node child runner, and the run-wide config
-// that keeps parameterized test titles whole.
+// Tests for the test infrastructure itself: the shared Node child runner, the node:test runner
+// script, and the run-wide config that keeps parameterized test titles whole.
 
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -33,6 +33,18 @@ describe("spawnNode", () => {
 	test("throws the spawn error for a working directory that does not exist", () => {
 		const missingCwd = join(REPO_ROOT, "missing-directory-for-spawn-node");
 		expect(() => spawnNode(["--version"], { cwd: missingCwd })).toThrow(/ENOENT/);
+	});
+});
+
+describe("run-node-test", () => {
+	// A Vitest file named next to node:test files would otherwise be dropped from the node:test run
+	// while the other files keep the run green.
+	test("refuses a Vitest file named by its path", () => {
+		const result = spawnNode(
+			["scripts/run-node-test.mjs", "tests/unit/thinking-levels.test.ts", "tests/unit/time-format.test.ts"],
+			{ cwd: REPO_ROOT },
+		);
+		expect(result.stderr).toMatch(/tests\/unit\/thinking-levels\.test\.ts runs on Vitest/);
 	});
 });
 

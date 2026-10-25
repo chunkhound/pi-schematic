@@ -16,7 +16,8 @@ if (patterns.length === 0) {
 }
 
 // The files listed in tests/vitest-files.mjs run on Vitest, so this runner drops them from the
-// files its patterns match. The exclusion is temporary while the suite moves to Vitest.
+// files its patterns match, and refuses one named by its path instead of matched by a glob, which
+// would otherwise run in neither runner. The exclusion is temporary while the suite moves to Vitest.
 const vitestFiles = new Set(VITEST_FILES.map((file) => resolve(root, file)));
 for (const file of vitestFiles) {
   if (!existsSync(file)) throw new Error(`tests/vitest-files.mjs lists ${file}, which does not exist.`);
@@ -24,10 +25,14 @@ for (const file of vitestFiles) {
 
 const files = [];
 for (const pattern of patterns) {
-  const matches = globSync(pattern, { cwd: root });
+  // node --test skips node_modules on its own; the runner matches the files itself, so it must too.
+  const matches = globSync(pattern, { cwd: root, exclude: ["**/node_modules/**"] });
   if (matches.length === 0) throw new Error(`No test file matches ${pattern}.`);
   for (const match of matches) {
     const file = resolve(root, match);
+    if (vitestFiles.has(file) && file === resolve(root, pattern)) {
+      throw new Error(`${pattern} runs on Vitest; run it with vitest instead.`);
+    }
     if (!vitestFiles.has(file) && !files.includes(file)) files.push(file);
   }
 }
