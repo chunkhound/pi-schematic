@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { findPackageJSON } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { piManifestPath } from "../../pi-packages.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..", "..");
@@ -56,7 +58,7 @@ test("register-loader errors when entry file does not exist", () => {
 	}
 });
 
-test("register-loader resolves typebox exports from the project dependency tree", () => {
+test("register-loader resolves typebox exports from pi's dependency tree", () => {
 	const cwd = mkdtempSync(resolve(tmpdir(), "pi-schematic-loader-typebox-"));
 	try {
 		const result = spawnSync(
@@ -85,6 +87,15 @@ test("register-loader resolves typebox exports from the project dependency tree"
 		const [rootSpecifier, ...subpathSpecifiers] = Object.keys(resolved);
 		const typeboxRoot = resolved[rootSpecifier].replace(/(?:build\/)?index\.m?js$/, "");
 		assert.match(typeboxRoot, /^file:/);
+		// The copy pi itself loads, not the project's top-level one, which can be another version.
+		const piTypeboxManifest = findPackageJSON("typebox", pathToFileURL(piManifestPath));
+		assert.ok(piTypeboxManifest, "pi's dependency tree should contain typebox");
+		// Node's resolver returns real paths, so compare against the real path of pi's copy.
+		assert.equal(
+			typeboxRoot,
+			pathToFileURL(realpathSync(dirname(piTypeboxManifest))).href + "/",
+			"typebox should resolve from pi's dependency tree",
+		);
 		for (const specifier of Object.keys(resolved)) {
 			assert.match(resolved[specifier], /^file:/);
 			assert.ok(
@@ -98,7 +109,7 @@ test("register-loader resolves typebox exports from the project dependency tree"
 	}
 });
 
-test("register-loader surfaces a clear error for missing typebox exports", () => {
+test("register-loader leaves an unknown typebox subpath to Node's export check", () => {
 	const cwd = mkdtempSync(resolve(tmpdir(), "pi-schematic-loader-typebox-missing-"));
 	try {
 		const result = spawnSync(
@@ -118,7 +129,8 @@ test("register-loader surfaces a clear error for missing typebox exports", () =>
 		);
 
 		assert.notEqual(result.status, 0, "should exit non-zero for missing typebox export");
-		assert.match(result.stderr, /Cannot find typebox\/not-real export/);
+		assert.match(result.stderr, /ERR_PACKAGE_PATH_NOT_EXPORTED/);
+		assert.match(result.stderr, /Package subpath '\.\/not-real' is not defined by "exports" in .*typebox[\\/]package\.json/);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}

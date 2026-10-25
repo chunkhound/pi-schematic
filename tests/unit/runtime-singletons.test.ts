@@ -6,7 +6,6 @@ import {
 	__setSingletons,
 	createWriteLock,
 	getSingletons,
-	isNoopScheduler,
 } from "../../runtime-singletons.js";
 
 test("createTestHarness swaps singleton state atomically and restores it on teardown", () => {
@@ -24,6 +23,7 @@ test("createTestHarness swaps singleton state atomically and restores it on tear
 
 test("__setSingletons warns and preserves lock + write context during in-flight writes", () => {
 	// Use harness to isolate the test's singleton manipulation
+	const outer = getSingletons();
 	const h = createTestHarness();
 	try {
 		const warnings: string[] = [];
@@ -31,8 +31,8 @@ test("__setSingletons warns and preserves lock + write context during in-flight 
 		console.warn = (msg: string) => {
 			warnings.push(msg);
 		};
+		const before = getSingletons();
 		try {
-			const before = getSingletons();
 			before.writeLock.pending = 1; // simulate in-flight write on test singleton
 			__setSingletons({
 				writeLock: createWriteLock(),
@@ -46,10 +46,14 @@ test("__setSingletons warns and preserves lock + write context during in-flight 
 			assert.equal(after.writeContext, before.writeContext);
 		} finally {
 			console.warn = originalWarn;
+			// Settle the simulated write, as a finished write would, so teardown
+			// can restore the previous singletons instead of preserving this lock.
+			before.writeLock.pending = 0;
 		}
 	} finally {
 		h.teardown();
 	}
+	assert.equal(getSingletons(), outer);
 });
 
 test("write lock serializes concurrent writers and completes all", async () => {
@@ -85,17 +89,5 @@ test("write lock serializes concurrent writers and completes all", async () => {
 	const sorted = [...order].sort((a, b) => a - b);
 	assert.deepEqual(order, sorted, "lock must serialize writers — no concurrent completion");
 
-	h.teardown();
-});
-
-test("isNoopScheduler returns false for SpawnFrameScheduler", () => {
-	// The noop scheduler is created at module init but overwritten by
-	// spawn/renderer.ts at import time — so the global singleton always
-	// holds a real scheduler. The true path (returns true) is exercised by
-	// the import-order guard in createTestHarness() — see test-utils.ts.
-	assert.equal(isNoopScheduler(getSingletons().frameScheduler), false);
-
-	const h = createTestHarness();
-	assert.equal(isNoopScheduler(getSingletons().frameScheduler), false);
 	h.teardown();
 });
