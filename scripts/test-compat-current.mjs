@@ -53,6 +53,7 @@ async function main() {
       "tests/unit/readonly-frontmatter.test.ts",
       "tests/unit/readonly-mode.test.ts",
       "tests/unit/system-prompt.test.ts",
+      "tests/unit/test-host.test.ts",
     ], { cwd: copy });
     runChecked(process.execPath, ["./scripts/run-node-test.mjs", "tests/e2e/basic.test.ts"], { cwd: copy });
     runChecked(process.execPath, ["./scripts/run-node-test.mjs", "tests/e2e/real-host.test.ts"], { cwd: copy });
