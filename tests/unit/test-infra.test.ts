@@ -1,10 +1,15 @@
 // Tests for the test infrastructure itself: the shared Node child runner, the node:test runner
-// script, and the run-wide config that keeps parameterized test titles whole.
+// script, the compat lane's test lists, and the run-wide config that keeps parameterized test
+// titles whole.
 
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { REPO_ROOT } from "../paths.js";
+import { REPO_ROOT, REPO_ROOT_URL } from "../paths.js";
 import { spawnNode } from "./spawn-node.js";
+
+const { assertCompatTestLists, COMPAT_NODE_TEST_FILES, COMPAT_VITEST_FILES } = await import(
+	new URL("scripts/test-compat-current.mjs", REPO_ROOT_URL).href,
+);
 
 describe("spawnNode", () => {
 	test("throws a timeout error for a child that outlives its deadline", () => {
@@ -37,14 +42,22 @@ describe("spawnNode", () => {
 });
 
 describe("run-node-test", () => {
-	// A Vitest file named next to node:test files would otherwise be dropped from the node:test run
-	// while the other files keep the run green.
-	test("refuses a Vitest file named by its path", () => {
-		const result = spawnNode(
-			["scripts/run-node-test.mjs", "tests/unit/thinking-levels.test.ts", "tests/unit/time-format.test.ts"],
-			{ cwd: REPO_ROOT },
-		);
-		expect(result.stderr).toMatch(/tests\/unit\/thinking-levels\.test\.ts runs on Vitest/);
+	test("fails when every file it is given runs on Vitest", () => {
+		const result = spawnNode(["scripts/run-node-test.mjs", "tests/unit/thinking-levels.test.ts"], { cwd: REPO_ROOT });
+		expect(result.status).not.toBe(0);
+		expect(result.stderr).toMatch(/Every file matching tests\/unit\/thinking-levels\.test\.ts runs on Vitest/);
+	});
+});
+
+describe("compat lane test lists", () => {
+	test("put every file on the runner tests/vitest-files.mjs assigns it", () => {
+		expect(() => assertCompatTestLists(COMPAT_NODE_TEST_FILES, COMPAT_VITEST_FILES)).not.toThrow();
+	});
+
+	test("reject a Vitest file on the node:test list and a node:test file on the Vitest list", () => {
+		expect(() =>
+			assertCompatTestLists(["tests/unit/thinking-levels.test.ts"], ["tests/unit/time-format.test.ts"]),
+		).toThrow(/lists tests\/unit\/thinking-levels\.test\.ts, tests\/unit\/time-format\.test\.ts for the wrong runner/);
 	});
 });
 

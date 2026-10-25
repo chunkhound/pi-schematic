@@ -4,12 +4,55 @@ import { pathToFileURL } from "node:url";
 import { createCompatCopy, latestPiDependencies, prepareCompatCopy, resolveLatestPi, writeCompatArtifacts, writeCompatDiagnostics } from "./compat-fixture.mjs";
 import { repoRootFromScript, runChecked, runNpmWithRetry } from "./compat-process.mjs";
 import { assertSynchronizedPackageVersions } from "./dependency-graph-assertions.mjs";
+import { VITEST_FILES } from "../tests/vitest-files.mjs";
 
 const PI_SYNC_PACKAGES = ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"];
+
+// The unit tests the compat lane runs on each runner.
+export const COMPAT_NODE_TEST_FILES = [
+  "tests/unit/spawn-runtime-compatibility.test.ts",
+  "tests/unit/spawn-lifecycle.test.ts",
+  "tests/unit/spawn-event.test.ts",
+  "tests/unit/spawn-render.test.ts",
+  "tests/unit/frontmatter-cache.test.ts",
+  "tests/unit/spawn.test.ts",
+  "tests/unit/readonly-spawn.test.ts",
+  "tests/unit/compat-process.test.ts",
+  "tests/unit/model-group-frontmatter.test.ts",
+  "tests/unit/model-groups-crud.test.ts",
+  "tests/unit/model-groups-integration.test.ts",
+  "tests/unit/module-evaluation-order.test.ts",
+  "tests/unit/handoff.test.ts",
+  "tests/unit/handoff-boundary-session.test.ts",
+  "tests/unit/notebook.test.ts",
+  "tests/unit/prompt-sections.test.ts",
+  "tests/unit/readonly-frontmatter.test.ts",
+  "tests/unit/readonly-mode.test.ts",
+  "tests/unit/system-prompt.test.ts",
+];
+export const COMPAT_VITEST_FILES = [
+  "tests/unit/dependency-graph-assertions.test.ts",
+  "tests/unit/pi-module-identity.test.ts",
+];
+
+// tests/vitest-files.mjs decides each file's runner. run-node-test.mjs drops a file that runs on
+// Vitest, and Vitest ignores a file filter that matches none of its files, so a file on the wrong
+// list here would run in neither runner while the lane passes.
+export function assertCompatTestLists(nodeTestFiles, vitestTestFiles) {
+  const onVitest = new Set(VITEST_FILES);
+  const misplaced = [
+    ...nodeTestFiles.filter((file) => onVitest.has(file)),
+    ...vitestTestFiles.filter((file) => !onVitest.has(file)),
+  ];
+  if (misplaced.length > 0) {
+    throw new Error(`The compat lane lists ${misplaced.join(", ")} for the wrong runner; tests/vitest-files.mjs decides it.`);
+  }
+}
 
 const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
 
 async function main() {
+  assertCompatTestLists(COMPAT_NODE_TEST_FILES, COMPAT_VITEST_FILES);
   const root = repoRootFromScript(import.meta.url);
   const artifactDir = process.env.COMPAT_ARTIFACT_DIR;
   const { temp, copy } = createCompatCopy(root, "pi-schematic-current-");
@@ -32,31 +75,8 @@ async function main() {
 
     await runNpmWithRetry(copy, ["run", "typecheck"]);
     await runNpmWithRetry(copy, ["exec", "audit-ci", "--", "--config", "audit-ci.jsonc"]);
-    runChecked(process.execPath, ["./scripts/run-node-test.mjs",
-      "tests/unit/spawn-runtime-compatibility.test.ts",
-      "tests/unit/spawn-lifecycle.test.ts",
-      "tests/unit/spawn-event.test.ts",
-      "tests/unit/spawn-render.test.ts",
-      "tests/unit/frontmatter-cache.test.ts",
-      "tests/unit/spawn.test.ts",
-      "tests/unit/readonly-spawn.test.ts",
-      "tests/unit/compat-process.test.ts",
-      "tests/unit/model-group-frontmatter.test.ts",
-      "tests/unit/model-groups-crud.test.ts",
-      "tests/unit/model-groups-integration.test.ts",
-      "tests/unit/module-evaluation-order.test.ts",
-      "tests/unit/handoff.test.ts",
-      "tests/unit/handoff-boundary-session.test.ts",
-      "tests/unit/notebook.test.ts",
-      "tests/unit/prompt-sections.test.ts",
-      "tests/unit/readonly-frontmatter.test.ts",
-      "tests/unit/readonly-mode.test.ts",
-      "tests/unit/system-prompt.test.ts",
-    ], { cwd: copy });
-    runChecked(process.execPath, ["./node_modules/vitest/vitest.mjs", "run", "--project", "unit",
-      "tests/unit/dependency-graph-assertions.test.ts",
-      "tests/unit/pi-module-identity.test.ts",
-    ], { cwd: copy });
+    runChecked(process.execPath, ["./scripts/run-node-test.mjs", ...COMPAT_NODE_TEST_FILES], { cwd: copy });
+    runChecked(process.execPath, ["./node_modules/vitest/vitest.mjs", "run", "--project", "unit", ...COMPAT_VITEST_FILES], { cwd: copy });
     runChecked(process.execPath, ["./scripts/run-node-test.mjs", "tests/e2e/basic.test.ts"], { cwd: copy });
     runChecked(process.execPath, ["./scripts/run-node-test.mjs", "tests/e2e/real-host.test.ts"], { cwd: copy });
     writeCompatArtifacts(artifactDir, copy, { piVersion, typeboxVersion: latestPi.typeboxVersion });
