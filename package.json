@@ -22,7 +22,7 @@
   },
   "scripts": {
     "prepare": "husky",
-    "test": "node ./scripts/run-node-test.mjs tests/unit/**/*.test.ts",
+    "test": "node ./scripts/run-node-test.mjs tests/unit/**/*.test.ts && vitest run --project unit",
     "test:e2e": "node ./scripts/run-node-test.mjs tests/e2e/**/*.test.ts",
     "test:all": "npm run test && npm run test:e2e",
     "test:snapshots:check": "node ./scripts/run-node-test.mjs tests/unit/render-snapshots.test.ts",
@@ -40,7 +40,9 @@
     "fast-check": "^4.8.0",
     "husky": "^9.1.7",
     "typebox": "1.3.27",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
   },
   "pi": {
     "image": "https://raw.githubusercontent.com/chunkhound/pi-schematic/main/assets/logo-animated.gif",

@@ -12,6 +12,7 @@ import { join, resolve } from "node:path";
 import os from "node:os";
 import { createState, resetState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
+import { AGENT_DIR_ENV_KEY } from "../paths.js";
 import { createTestHost, type TestPI } from "./test-host.js";
 
 export const theme = {
@@ -37,16 +38,13 @@ export const ansiTheme = {
 
 const HOME_ENV_KEYS = ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"] as const;
 
-// pi resolves its agent directory from PI_CODING_AGENT_DIR before HOME, so the
-// home helpers clear it; otherwise an exported variable redirects global paths
-// away from the temp home.
-const AGENT_DIR_ENV_KEY = "PI_CODING_AGENT_DIR";
-
 function restoreEnv(key: string, value: string | undefined): void {
 	if (value === undefined) delete process.env[key];
 	else process.env[key] = value;
 }
 
+// pi resolves its agent directory from PI_CODING_AGENT_DIR before HOME, so the home helpers clear
+// it; otherwise an exported variable redirects global paths away from the temp home.
 export function setTempHome(home: string): () => void {
 	const snapshot = Object.fromEntries(HOME_ENV_KEYS.map((key) => [key, process.env[key]])) as Record<typeof HOME_ENV_KEYS[number], string | undefined>;
 	const previousAgentDir = process.env[AGENT_DIR_ENV_KEY];
