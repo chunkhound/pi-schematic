@@ -145,7 +145,7 @@ test("spawn forwards requested thinking and reports the session effective thinki
 	assert.equal(seenConfig.thinkingLevel, "max", "requested thinking is forwarded unchanged");
 	assert.equal(updates[0].details.thinking, "off", "running details report Pi's effective thinking");
 	assert.equal(result.details.thinking, "off", "final details report Pi's effective thinking");
-	assert.deepEqual(result.details.route, { status: "inherited" });
+	assert.deepEqual(result.details.route, { status: "inherited", provider: "", modelId: "non-reasoning-model" });
 });
 
 test("spawn execute composes Model Group routing with readonly child guards", async () => {
@@ -560,7 +560,7 @@ test("spawn execute derives result stats from the child entries", async () => {
 
 	assert.deepEqual(updates, [{
 		content: [],
-		details: { model: "mock-model", thinking: "high", truncated: false, outcome: "running", route: { status: "inherited" } },
+		details: { model: "mock-model", thinking: "high", truncated: false, outcome: "running", route: { status: "inherited", provider: "", modelId: "mock-model" } },
 	}]);
 	assert.equal(result.content[0].text, "child result");
 	assert.equal(result.details.outcome, "success");
@@ -918,7 +918,7 @@ function failedSpawnResult(text: string) {
 			thinking: "high",
 			truncated: false,
 			outcome: "error",
-			route: { status: "inherited" },
+			route: { status: "inherited", provider: "", modelId: "mock-model" },
 			stats: { inputTokens: 80, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 1, totalTokens: 95, cost: 13, turns: 2 },
 		},
 		usage: FAILED_CHILD_USAGE,
@@ -1011,7 +1011,7 @@ test("a parent abort between child creation and the prompt returns an aborted re
 		thinking: "high",
 		truncated: false,
 		outcome: "aborted",
-		route: { status: "inherited" },
+		route: { status: "inherited", provider: "", modelId: "mock-model" },
 		stats: { inputTokens: 80, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 1, totalTokens: 95, cost: 13, turns: 2 },
 	});
 	assert.equal(result.content[0].text, "Child agent aborted: aborted before start");
@@ -1463,7 +1463,7 @@ test("executeSpawn forwards inherited constraints to routing and succeeds when s
 		modelRegistry: { find: (_p: string, id: string) => ({ provider: "openai", id, input: ["text", "image"], reasoning: false }), hasConfiguredAuth: () => true },
 	} as any, state, { prompt: "Do the task", constraints: { modalities: { required: ["text", "image"] } } }, undefined, undefined, "medium", async () => { factoryCalls++; return { session: session as any, extensionsResult: undefined as any }; });
 	assert.equal(result.details.outcome, "success");
-	assert.deepEqual(result.details.route, { status: "inherited" });
+	assert.deepEqual(result.details.route, { status: "inherited", provider: "openai", modelId: "parent" });
 	assert.equal(factoryCalls, 1, "inherited route with satisfied requirements creates one child");
 });
 
