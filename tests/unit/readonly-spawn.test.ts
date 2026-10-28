@@ -11,6 +11,7 @@ import {
 import { buildChildToolNames, createReadonlyChildBashTool, filterReadonlyToolNames } from "../../spawn/index.js";
 import { expectSuffix, isRecord } from "../assertions.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
+import { STRUCTURED_OUTPUT_TOOL } from "../../workflow/output.js";
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
 import { createToolContext, runRealChildInvocation, SANDBOX_DENIAL_PHRASES, textOf, tmpDir } from "./helpers.js";
 
@@ -74,11 +75,12 @@ test("filterReadonlyToolNames preserves all tools when readonly is off", () => {
 
 // ── Child tool names ─────────────────────────────────────────────────
 
-test("buildChildToolNames excludes spawn and handoff from inherited tools", () => {
-	const parentTools = ["read", "bash", "write", "edit", "spawn", "handoff"];
+test("buildChildToolNames excludes spawn, handoff, and the run-scoped output tool from inherited tools", () => {
+	const parentTools = ["read", "bash", "write", "edit", "spawn", "handoff", STRUCTURED_OUTPUT_TOOL];
 	const result = buildChildToolNames(parentTools, []);
 	expect(result).not.toContain("spawn");
 	expect(result).not.toContain("handoff");
+	expect(result).not.toContain(STRUCTURED_OUTPUT_TOOL);
 	expect(result).toContain("read");
 	expect(result).toContain("bash");
 	expect(result).toContain("write");
