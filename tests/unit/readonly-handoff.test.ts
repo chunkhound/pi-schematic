@@ -671,6 +671,7 @@ test("session tree drops a staged handoff, releases the overlap guard, and a sta
 			theme: { fg: (_name: string, text: string) => text },
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
 			setWidget: () => {},
+			addAutocompleteProvider: () => {},
 		},
 		getContextUsage: () => null,
 	} as any);
