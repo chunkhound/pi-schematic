@@ -137,6 +137,7 @@ test("parent readonly tool-call consumer uses centralized block copy", async () 
 			notify: () => {},
 			setStatus: () => {},
 			setWidget: () => {},
+			addAutocompleteProvider: () => {},
 		},
 	} as any);
 	const result = await toolCall({ toolName: "write", input: {} }, {});

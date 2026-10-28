@@ -17,7 +17,7 @@
 
 ## Quick start
 
-Requires [Pi](https://pi.dev) 0.99.2 or later and Node.js 22.19.0 or later.
+Requires [Pi](https://pi.dev) 1.0.4 or later and Node.js 22.19.0 or later.
 
 ```bash
 pi install npm:pi-schematic
@@ -31,7 +31,9 @@ To let **handoff** own deliberate restarts, disable Pi's built-in compaction in 
 }
 ```
 
-You now have `spawn`, notebook, and `handoff` tools; `/model-groups`, `/readonly`, `/notebook`, and `/handoff` commands; and status indicators for context pressure, notebook state, topic, and readonly posture.
+You now have `spawn`, notebook, and `handoff` tools; `/model-groups`, `/readonly`, `/notebook`, `/handoff`, and `/workflow` commands; and status indicators for notebook state, topic, readonly posture, and a running workflow, with a warning when context pressure is high.
+
+`/workflow` runs a user-authored JavaScript workflow in a sandbox: serial model turns on this conversation, a guarded shell, and soft cost/time targets, with the workflow script owning the control flow and the exit condition. See [docs/workflows.md](docs/workflows.md) for the author contract and [examples/workflows/](examples/workflows/) for example workflow scripts.
 
 ## Repeat the workflow, not the steering
 
@@ -44,7 +46,7 @@ pi-schematic moves that procedure into saved prompts or skills. Model Groups kee
 Save a readonly review procedure as `.pi/prompts/review.md`, so every changeset receives the same evidence requirements, review dimensions, and scope discipline.
 
 <details>
-<summary><strong>View the complete critical-review workflow</strong></summary>
+<summary><strong>View the complete critical-review prompt</strong></summary>
 
 ``````text
 ---
@@ -103,7 +105,7 @@ If you spawned agents, wait until all agents complete. Finally, spawn a final ag
 
 </details>
 
-Configure the `review` role once with `/model-groups`, then invoke the workflow with the intended change:
+Configure the `review` role once with `/model-groups`, then invoke the review prompt with the intended change:
 
 ```text
 /review parser refactor and test cleanup
@@ -118,10 +120,11 @@ Pi expands `$@` into the supplied intent and starts the parent reviewer with the
 | Part | Role in the workflow |
 |---|---|
 | **Saved prompts and skills** | Define reusable procedures and frontmatter policy for review, migration, debugging, research, or project-specific work. |
-| **Spawn** | Runs focused sub-agents in clean contexts without adding their full transcripts to the parent. Children inherit cwd, readonly posture, active registered parent tools executable in the child session, including MCP/extension tools such as ChunkHound, and child-local notebook tools; they cannot spawn grandchildren or handoff. |
+| **Spawn** | Runs focused sub-agents in clean contexts without adding their full transcripts to the parent. Children inherit cwd, readonly posture, active registered parent tools executable in the child session, including MCP/extension tools such as ChunkHound, and child-local notebook tools; they cannot spawn grandchildren or handoff. Their usage is reported on the spawn result, so parent-session and workflow cost totals include child work. |
 | **Model Groups** | Map semantic roles to replaceable provider/model pools, globally or per project. |
 | **Notebook** | Carries canonical decisions and constraints across parent, children, and handoffs, then disappears with the work stream. |
 | **Handoff** | Starts the next phase with a directed prompt instead of a noisy transcript. |
+| **Workflow** | Runs saved workflow scripts in a sandbox — see [docs/workflows.md](docs/workflows.md) and [examples/workflows/](examples/workflows/). |
 
 This pattern scales from critical review to separate research, implementation, migration, and debugging passes.
 
@@ -144,7 +147,7 @@ When you delegate a task with `spawn`, you can declare which capabilities it nee
 
 | Area | Current behavior |
 |---|---|
-| **Runtime** | Requires Pi 0.99.2+ and Node.js 22.19.0+. Spawn passes the selected public model into a child-owned runtime. Persisted, environment-based, and extension-rediscoverable provider/auth configuration is available; parent-only transient credentials, inline provider factories, and in-memory catalog changes may not be. Resolution failures are explicit and never silently select another model. |
+| **Runtime** | Requires Pi 1.0.4+ and Node.js 22.19.0+. Spawn passes the selected public model into a child-owned runtime. Persisted, environment-based, and extension-rediscoverable provider/auth configuration is available; parent-only transient credentials, inline provider factories, and in-memory catalog changes may not be. Resolution failures are explicit and never silently select another model. |
 | **Frontmatter** | `model: <provider>/<model-id>` overrides `model-group`; `thinking: off|minimal|low|medium|high|xhigh|max` is capability-clamped and overrides group thinking; `readonly` is boolean. Interactive model selection runs at idle input, while readonly is deferred to `before_agent_start`. Model/thinking changes are sticky. Failed or streaming selection blocks expansion; headless/RPC invocations ignore this policy. |
 | **Group routing** | A known group samples uniformly **with replacement** from authenticated, usable entries, so repeated calls may select the same model. Unknown spawn groups fall back to the parent's model; the spawn tool's TUI display and the result's `details.route` (status `unknown-fallback`) show the fallback, and the result text the model receives carries no marker; known groups with no usable entries fail before child creation. There is no weighting, no-repeat selection, health routing, retry/failover, or optimizer. |
 | **Model Groups files** | Global groups live in `pi-schematic/model-groups.json` inside pi's agent directory (`~/.pi/agent/` by default, or the directory `PI_CODING_AGENT_DIR` names); project groups live in `.pi/pi-schematic/model-groups.json` under the project and are read only in a trusted project. A missing file is no configuration, with no warning. An SDK host that passes its own `agentDir` to pi does not move these files or the global prompt scan: pi loads prompts from that `agentDir/prompts`, while schematic resolves both from `PI_CODING_AGENT_DIR` or the home default, because pi passes no agent directory to extensions. |
@@ -161,7 +164,10 @@ Toggle it with `/readonly`, `Ctrl+Shift+R`, `--readonly`, or workflow frontmatte
 
 ## Documentation and help
 
+- [Documentation index](docs/README.md)
 - [Why agent-managed context](docs/why.md)
+- [Workflow author contract](docs/workflows.md)
+- [Workflow engine internals](docs/workflow-engine.md)
 - [Architecture and exact lifecycle behavior](docs/architecture.md)
 - [Changelog](CHANGELOG.md)
 - [Questions, bugs, and feature requests](https://github.com/chunkhound/pi-schematic/issues)

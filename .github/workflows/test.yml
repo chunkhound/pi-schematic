@@ -64,9 +64,9 @@ jobs:
       - name: Security audit
         run: npx audit-ci --config audit-ci.jsonc
 
-      # Unit suite (unit tests + snapshot tests + property-based tests)
-      - name: Unit tests
-        run: npm test
+      # Unit suite under c8. Thresholds, reporters, and includes live in .c8rc.json.
+      - name: Coverage
+        run: npm run test:coverage
 
       # E2E tests — two suites: the real-host suite runs the pi CLI in RPC mode, and the
       # line-host harness runs a child process over stdin/stdout (no PTY). The workflow

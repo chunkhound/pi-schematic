@@ -95,6 +95,8 @@ test("isValidNpmExecpath rejects a directory named like an npm CLI", () => {
 });
 
 test("npmInvocation resolves a relative npm_execpath to an absolute path", () => {
+	// The stub must share a drive with process.cwd() so `relative()` can produce a
+	// relative path (a cross-drive relative() returns the absolute target on Windows).
 	const tmpDir = mkdtempSync(join(process.cwd(), "npm-rel-test-"));
 	const stubCli = join(tmpDir, "npm-cli.js");
 	writeFileSync(stubCli, "// npm CLI stub");
