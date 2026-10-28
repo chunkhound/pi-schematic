@@ -31,7 +31,9 @@ To let **handoff** own deliberate restarts, disable Pi's built-in compaction in 
 }
 ```
 
-You now have `spawn`, notebook, and `handoff` tools; `/model-groups`, `/readonly`, `/notebook`, and `/handoff` commands; and status indicators for context pressure, notebook state, topic, and readonly posture.
+You now have `spawn`, notebook, and `handoff` tools; `/model-groups`, `/readonly`, `/notebook`, `/handoff`, and `/workflow` commands; and status indicators for notebook state, topic, readonly posture, and a running workflow, with a warning when context pressure is high.
+
+`/workflow` runs a user-authored JavaScript workflow in a sandbox: serial model turns on this conversation, a guarded shell, and soft cost/time targets, with the workflow script owning the control flow and the exit condition. See [docs/workflows.md](docs/workflows.md) for the author contract and [examples/workflows/](examples/workflows/) for example workflow scripts.
 
 ## Repeat the workflow, not the steering
 
@@ -44,7 +46,7 @@ pi-schematic moves that procedure into saved prompts or skills. Model Groups kee
 Save a readonly review procedure as `.pi/prompts/review.md`, so every changeset receives the same evidence requirements, review dimensions, and scope discipline.
 
 <details>
-<summary><strong>View the complete critical-review workflow</strong></summary>
+<summary><strong>View the complete critical-review prompt</strong></summary>
 
 ``````text
 ---
@@ -103,7 +105,7 @@ If you spawned agents, wait until all agents complete. Finally, spawn a final ag
 
 </details>
 
-Configure the `review` role once with `/model-groups`, then invoke the workflow with the intended change:
+Configure the `review` role once with `/model-groups`, then invoke the review prompt with the intended change:
 
 ```text
 /review parser refactor and test cleanup
@@ -122,6 +124,7 @@ Pi expands `$@` into the supplied intent and starts the parent reviewer with the
 | **Model Groups**             | Map semantic roles to replaceable provider/model pools, globally or per project.                                                                                                                                                                                                                                                     |
 | **Notebook**                 | Carries canonical decisions and constraints across parent, children, and handoffs, then disappears with the work stream.                                                                                                                                                                                                             |
 | **Handoff**                  | Starts the next phase with a directed prompt instead of a noisy transcript.                                                                                                                                                                                                                                                          |
+| **Workflow**                 | Runs saved workflow scripts in a sandbox — see [docs/workflows.md](docs/workflows.md) and [examples/workflows/](examples/workflows/).                                                                                                                                                                                                |
 
 This pattern scales from critical review to separate research, implementation, migration, and debugging passes.
 
@@ -162,7 +165,10 @@ Toggle it with `/readonly`, `Ctrl+Shift+R`, `--readonly`, or workflow frontmatte
 
 ## Documentation and help
 
+- [Documentation index](docs/README.md)
 - [Why agent-managed context](docs/why.md)
+- [Workflow author contract](docs/workflows.md)
+- [Workflow engine internals](docs/workflow-engine.md)
 - [Architecture and exact lifecycle behavior](docs/architecture.md)
 - [Changelog](CHANGELOG.md)
 - [Questions, bugs, and feature requests](https://github.com/chunkhound/pi-schematic/issues)

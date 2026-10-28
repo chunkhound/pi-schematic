@@ -7,37 +7,38 @@
 // boundary at all, pi's own capacity compactions stay allowed, and a finished run releases
 // the guard.
 // Rule: docs/workflows.md (Constraints: session boundaries; Host gaps: residual windows).
-import assert from "node:assert/strict";
-import { test } from "vitest";
-import type { CodemodeResult, CodemodeSandbox, CodemodeTool } from "@earendil-works/pi-codemode";
-import type { ExtensionCommandContext, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import { expect, test } from "vitest";
+import { CodemodeSandbox, type CodemodeResult, type CodemodeTool } from "@earendil-works/pi-codemode";
+import { SessionManager, type ExtensionCommandContext, type ExtensionContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { createState, type SchematicState } from "../../state.js";
 import { registerWorkflowCommand, type WorkflowCommandDeps } from "../../workflow/command.js";
 import { publishWorkflowRuntime } from "../../workflow/coordinator.js";
-import { emitAll } from "./helpers.js";
+import { createCommandContext, createExtensionContext, createModelRegistry, createTheme, createUIContext } from "./helpers.js";
 import { createTestHost, type TestPI } from "./test-host.js";
 
 /** One-shot promise with an external resolve, so the harness can park and release one effect. */
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 	let resolve!: (value: T) => void;
-	const promise = new Promise<T>((finish) => { resolve = finish; });
+	const promise = new Promise<T>((finish) => {
+		resolve = finish;
+	});
 	return { promise, resolve };
 }
 
 /** Checkpoint-less fixture: no budget dialog, so the command reaches the sandbox at once. */
 const UNBOUNDED = "tests/e2e/fixtures/command-no-checkpoint.js";
-const OK_RESULT = { ok: true, value: undefined, output: [], calls: [], storeWrites: { set: {}, delete: [] } } as unknown as CodemodeResult;
+const OK_RESULT: CodemodeResult = { ok: true, value: undefined, output: [], calls: [], storeWrites: { set: {}, delete: [] } };
 
 /** Verdict of one boundary dispatch: `{ cancel: true }` when the guard stopped it. */
 type Verdict = { cancel: true } | undefined;
 
-/** Every boundary the guard owns, with the phrase its notice must show. */
-const BOUNDARIES: { type: string; event: Record<string, unknown>; label: RegExp }[] = [
-	{ type: "session_before_switch", event: { reason: "new" }, label: /start a new session/ },
-	{ type: "session_before_switch", event: { reason: "resume" }, label: /switch session/ },
-	{ type: "session_before_fork", event: {}, label: /fork this session/ },
-	{ type: "session_before_tree", event: {}, label: /move in the session tree/ },
-	{ type: "session_before_compact", event: { reason: "manual" }, label: /compact this session/ },
+/** Every boundary the guard owns, with the phrase its notice must show and a title fragment. */
+const BOUNDARIES: { type: string; event: Record<string, unknown>; label: RegExp; name: string }[] = [
+	{ type: "session_before_switch", event: { reason: "new" }, label: /start a new session/, name: "new session" },
+	{ type: "session_before_switch", event: { reason: "resume" }, label: /switch session/, name: "resume" },
+	{ type: "session_before_fork", event: {}, label: /fork this session/, name: "fork" },
+	{ type: "session_before_tree", event: {}, label: /move in the session tree/, name: "session tree" },
+	{ type: "session_before_compact", event: { reason: "manual" }, label: /compact this session/, name: "manual compact" },
 ];
 
 /** Recorders the session seams of one parked run write into. */
@@ -76,10 +77,27 @@ interface ParkedRun extends RunRecord {
  */
 async function boundary(pi: TestPI, type: string, event: Record<string, unknown>, record: RunRecord, notifyThrows = false): Promise<Verdict> {
 	const handlers = pi.handlers.get(type);
-	assert.ok(handlers?.length, `no handler is registered for ${type}`);
+	requirePresent(handlers, `no handler is registered for ${type}`);
 	for (const handler of handlers) {
-		const verdict = (await handler({ type, ...event }, boundaryCtx(record.notices, notifyThrows))) as Verdict;
-		if (verdict?.cancel) {return verdict;}
+		const verdict = toVerdict(await handler({ type, ...event }, boundaryCtx(record.notices, notifyThrows)));
+		if (verdict?.cancel) {
+			return verdict;
+		}
+	}
+	return undefined;
+}
+
+/** `value` as its non-null type; throws `message` when it is null or undefined. */
+function requirePresent<T>(value: T | null | undefined, message: string): asserts value is T {
+	if (value === null || value === undefined) {
+		throw new Error(message);
+	}
+}
+
+/** Narrow an untyped handler result to a `Verdict`; only a truthy `{ cancel: true }` is one. */
+function toVerdict(value: unknown): Verdict {
+	if (value !== null && typeof value === "object" && "cancel" in value && value.cancel === true) {
+		return { cancel: true };
 	}
 	return undefined;
 }
@@ -87,15 +105,59 @@ async function boundary(pi: TestPI, type: string, event: Record<string, unknown>
 /** Boundary handler context: pi builds it from the live session, never from the command context
  * that started the run, so the operator's notice lands here. */
 function boundaryCtx(notices: string[], notifyThrows = false): ExtensionContext {
-	return {
+	return createExtensionContext({
 		hasUI: true,
-		ui: {
+		ui: createUIContext({
 			notify: (message: string) => {
-				if (notifyThrows) {throw new Error("the UI is gone");}
+				if (notifyThrows) {
+					throw new Error("the UI is gone");
+				}
 				notices.push(message);
 			},
+		}),
+	});
+}
+
+// The methods `SessionManager` declares.
+const SESSION_MANAGER_METHODS = new Set(Object.getOwnPropertyNames(SessionManager.prototype).filter((name) => name !== "constructor"));
+
+/** A session manager whose session seams read `branch` and `sessionId`; any other method throws naming it. */
+function parkedSessionManager(branch: SessionEntry[], sessionId = "guard-test"): SessionManager {
+	return new Proxy(SessionManager.inMemory(), {
+		get(_manager, property, receiver) {
+			if (property === "getSessionId") {
+				return () => sessionId;
+			}
+			if (property === "getLeafId") {
+				return () => branch.at(-1)?.id ?? null;
+			}
+			if (property === "getBranch") {
+				return () => branch;
+			}
+			if (property === "getEntries") {
+				return () => branch;
+			}
+			if (property === "getSessionName") {
+				return () => undefined;
+			}
+			if (typeof property === "string" && SESSION_MANAGER_METHODS.has(property)) {
+				return () => {
+					throw new Error(`ctx.sessionManager.${property} is not stubbed in this test context; only the parked-run seams are.`);
+				};
+			}
+			const value: unknown = Reflect.get(SessionManager.inMemory(), property, receiver);
+			return value;
 		},
-	} as unknown as ExtensionContext;
+	});
+}
+
+/** A `CodemodeSandbox` whose `members` are its own; any other member throws naming it. */
+function stubSandbox(members: Partial<CodemodeSandbox>): CodemodeSandbox {
+	const candidate: unknown = Object.create(CodemodeSandbox.prototype);
+	if (!(candidate instanceof CodemodeSandbox)) {
+		throw new Error("could not build a sandbox stub");
+	}
+	return Object.assign(candidate, members);
 }
 
 /** Headless command context for the parked run, plus the `workflow.new` seam: mirror pi's order
@@ -104,171 +166,232 @@ function boundaryCtx(notices: string[], notifyThrows = false): ExtensionContext 
  * rebuilding a whole session; an admitted switch rebinds to the published replacement runtime. */
 function runCtx(pi: TestPI, record: RunRecord, deps: WorkflowCommandDeps, replacement?: Replacement): ExtensionCommandContext {
 	const branch: SessionEntry[] = [];
-	const noop = (): void => {};
-	return {
+	const noop = (): void => undefined;
+	return createCommandContext({
 		hasUI: false,
 		mode: "rpc",
 		cwd: process.cwd(),
-		ui: { notify: noop, setStatus: noop, setWidget: noop, setFooter: noop, setWorkingMessage: noop, theme: { fg: (_name: string, text: string) => text } },
-		sessionManager: {
-			getSessionId: () => "guard-test",
-			getLeafId: () => branch.at(-1)?.id ?? null,
-			getBranch: () => branch,
-			getEntries: () => branch,
-			getSessionName: () => undefined,
-		},
-		modelRegistry: { getModelsOfType: () => [], getModelOfType: () => undefined },
-		getContextUsage: () => null,
+		ui: createUIContext({
+			notify: noop,
+			setStatus: noop,
+			setWidget: noop,
+			setFooter: noop,
+			setWorkingMessage: noop,
+			theme: createTheme({ fg: (_name: string, text: string) => text }),
+		}),
+		sessionManager: parkedSessionManager(branch),
+		modelRegistry: createModelRegistry({ getModelsOfType: () => [], getModelOfType: () => undefined }),
+		getContextUsage: () => undefined,
 		isIdle: () => true,
 		abort: noop,
 		newSession: async (options: Parameters<ExtensionCommandContext["newSession"]>[0]) => {
 			// A competing `/resume` has no grant, so it must cancel without spending the `new` one.
-			if (replacement?.competingResume) {record.grants.push(await boundary(pi, "session_before_switch", { reason: "resume" }, record));}
+			if (replacement?.competingResume === true) {
+				record.grants.push(await boundary(pi, "session_before_switch", { reason: "resume" }, record));
+			}
 			const verdict = await boundary(pi, "session_before_switch", { reason: "new" }, record);
 			record.grants.push(verdict);
-			if (verdict?.cancel || !replacement) {return { cancelled: true };}
+			if (verdict?.cancel || !replacement) {
+				return { cancelled: true };
+			}
 			publishWorkflowRuntime(replacement.ctx.sessionManager.getSessionId(), {
 				pi: replacement.pi,
 				state: replacement.state,
 				rebindDeps: (current) => ({
 					...current,
-					setReadonly: deps.setReadonly,
-					requestHandoff: deps.requestHandoff,
-					watchHandoffSettlement: () => ({ done: new Promise<never>(() => {}), dispose: () => {} }),
-					prepareRunFrontmatter: deps.prepareRunFrontmatter,
+					setReadonly: (enabled) => deps.setReadonly(enabled),
+					requestHandoff: (direction, ctx) => deps.requestHandoff(direction, ctx),
+					watchHandoffSettlement: () => ({ done: new Promise<never>(() => undefined), dispose: () => undefined }),
+					prepareRunFrontmatter: (text, ctx) => deps.prepareRunFrontmatter(text, ctx),
 				}),
 			});
 			await options?.withSession?.(replacement.ctx);
 			return { cancelled: false };
 		},
-	} as unknown as ExtensionCommandContext;
+	});
 }
 
 /**
  * Start a real run and park it inside its sandbox call, so the run owns the session while the
- * test drives boundaries. `handoffCompactions` repeats the requested compaction inside one
- * handoff grant window, which stays open until the handle ends.
+ * test drives boundaries.
  */
 async function parkRun(replacementSpec?: { competingResume?: boolean }): Promise<ParkedRun> {
 	const state = createState();
 	const record: RunRecord = { notices: [], grants: [] };
 	const parked = deferred<CodemodeResult>();
 	const armed = deferred<CodemodeTool[]>();
-	let pi!: TestPI;
 	const deps: WorkflowCommandDeps = {
 		setReadonly: () => false,
-		prepareRunFrontmatter: async () => {},
+		prepareRunFrontmatter: () => Promise.resolve(),
 		handoffTimeoutMs: 5_000,
 		// `workflow.handoff` seam: the boundary crosses no session boundary, so it records no
 		// grant and the settlement resolves complete.
-		requestHandoff: async () => {},
-		watchHandoffSettlement: () => ({ done: Promise.resolve({ status: "complete" as const, handoffId: "handoff-1", reason: null }), dispose: () => {} }),
+		requestHandoff: () => Promise.resolve(),
+		watchHandoffSettlement: () => ({ done: Promise.resolve({ status: "complete" as const, handoffId: "handoff-1", reason: null }), dispose: () => undefined }),
 		sandboxFactory: (sandboxOptions) => {
 			armed.resolve(sandboxOptions.globals ?? []);
-			return { execute: () => parked.promise, close: async () => {} } as unknown as CodemodeSandbox;
+			return stubSandbox({ execute: () => parked.promise, close: () => Promise.resolve() });
 		},
 	};
 	let replacement: Replacement | undefined;
 	if (replacementSpec) {
 		const replacementState = createState();
-		const replacementPi = await createTestHost((api) => { registerWorkflowCommand(api, replacementState, deps); });
-		const replacementCtx = {
-			hasUI: false,
-			mode: "rpc",
-			cwd: process.cwd(),
-			ui: { notify: () => {}, setStatus: () => {}, setWidget: () => {}, setFooter: () => {}, setWorkingMessage: () => {}, theme: { fg: (_name: string, text: string) => text } },
-			sessionManager: { getSessionId: () => "guard-rebound", getLeafId: () => null, getBranch: () => [], getEntries: () => [], getSessionName: () => undefined },
-			getContextUsage: () => null,
-			sendMessage: () => {},
-			sendUserMessage: () => {},
-		} as unknown as ReplacedCtx;
+		const replacementPi = await createTestHost((api) => {
+			registerWorkflowCommand(api, replacementState, deps);
+		});
+		const replacementCtx: ReplacedCtx = Object.assign(
+			createCommandContext({
+				hasUI: false,
+				mode: "rpc",
+				cwd: process.cwd(),
+				ui: createUIContext({
+					notify: () => undefined,
+					setStatus: () => undefined,
+					setWidget: () => undefined,
+					setFooter: () => undefined,
+					setWorkingMessage: () => undefined,
+					theme: createTheme({ fg: (_name: string, text: string) => text }),
+				}),
+				sessionManager: parkedSessionManager([], "guard-rebound"),
+				getContextUsage: () => undefined,
+			}),
+			{ sendMessage: () => Promise.resolve(), sendUserMessage: () => Promise.resolve() },
+		);
 		replacement = { pi: replacementPi, state: replacementState, ctx: replacementCtx, competingResume: replacementSpec.competingResume ?? false };
 	}
-	pi = await createTestHost((api) => { registerWorkflowCommand(api, state, deps); });
-	const finished = pi.commands.get("workflow")!.handler(UNBOUNDED, runCtx(pi, record, deps, replacement));
+	const pi = await createTestHost((api) => {
+		registerWorkflowCommand(api, state, deps);
+	});
+	const workflowCommand = pi.commands.get("workflow");
+	requirePresent(workflowCommand, "the workflow command is registered");
+	const finished = workflowCommand.handler(UNBOUNDED, runCtx(pi, record, deps, replacement));
 	// The sandbox factory runs after the armed suppression, so this await proves the run owns the session.
 	const globals = await armed.promise;
-	assert.equal(state.inputSuppressed, true, "the parked run owns the session");
+	expect(state.inputSuppressed, "the parked run owns the session").toBe(true);
 	return {
-		pi, ...record, state, replacement, finished,
-		handle: async (name, args = []) => {
+		pi,
+		...record,
+		state,
+		replacement,
+		finished,
+		handle: (name, args = []) => {
 			const tool = globals.find((candidate) => candidate.name === name);
-			assert.ok(tool, `no handle ${name}`);
-			return tool.execute(args, { signal: new AbortController().signal });
+			requirePresent(tool, `no handle ${name}`);
+			return Promise.resolve(tool.execute(args, { signal: new AbortController().signal }));
 		},
-		release: () => { parked.resolve(OK_RESULT); },
+		release: () => {
+			parked.resolve(OK_RESULT);
+		},
 	};
 }
 
-/** Run one guard test with a parked run. `t.after` finishes the run even when an assertion fails,
- * so a guard regression cannot leak the run ticker and hang the test process. */
-function parkedRunTest(name: string, body: (run: ParkedRun) => Promise<void>, replacementSpec?: { competingResume?: boolean }): void {
-	test(name, async (t) => {
-		const run = await parkRun(replacementSpec);
-		t.onTestFinished(async () => {
-			run.release();
-			await run.finished;
-		});
-		await body(run);
+/** End a parked run after the test, even when an assertion fails, so a guard regression cannot
+ * leak the run ticker and hang the test process. */
+function releaseAfter(t: { onTestFinished(fn: () => void | Promise<void>): void }, run: ParkedRun): void {
+	t.onTestFinished(async () => {
+		run.release();
+		await run.finished;
 	});
 }
 
-parkedRunTest("every session boundary cancels while a run owns the session", async (run) => {
-	for (const { type, event, label } of BOUNDARIES) {
-		assert.deepEqual(await boundary(run.pi, type, event, run), { cancel: true }, type);
-		assert.match(run.notices.at(-1) ?? "", label, type);
-		assert.match(run.notices.at(-1) ?? "", /Escape or Ctrl\+C twice/, type);
-	}
-	assert.equal(run.grants.length, 0, "nothing the workflow asked for was admitted here");
+for (const { type, event, label, name } of BOUNDARIES) {
+	test(`while a run owns the session, the ${name} boundary cancels`, async (t) => {
+		const run = await parkRun();
+		releaseAfter(t, run);
+		expect(await boundary(run.pi, type, event, run)).toStrictEqual({ cancel: true });
+		expect(run.notices.at(-1) ?? "").toMatch(label);
+		expect(run.notices.at(-1) ?? "").toMatch(/Escape or Ctrl\+C twice/);
+	});
+}
+
+test("nothing the workflow asked for is admitted while a run owns the session", async (t) => {
+	const run = await parkRun();
+	releaseAfter(t, run);
+	expect(run.grants.length, "nothing the workflow asked for was admitted here").toBe(0);
 });
 
-parkedRunTest("pi's own threshold and overflow compactions stay allowed during a run", async (run) => {
+test("pi's own threshold and overflow compactions stay allowed during a run", async (t) => {
+	const run = await parkRun();
+	releaseAfter(t, run);
 	for (const reason of ["threshold", "overflow"]) {
-		assert.equal(await boundary(run.pi, "session_before_compact", { reason }, run), undefined, reason);
+		expect(await boundary(run.pi, "session_before_compact", { reason }, run)).toBeUndefined();
 	}
-	assert.equal(run.notices.length, 0, "an admitted compaction notifies nothing");
+	expect(run.notices.length, "an admitted compaction notifies nothing").toBe(0);
 });
 
-parkedRunTest("an unrecognised compaction reason fails closed during a run", async (run) => {
-	assert.deepEqual(await boundary(run.pi, "session_before_compact", {}, run), { cancel: true });
+test("an unrecognised compaction reason fails closed during a run", async (t) => {
+	const run = await parkRun();
+	releaseAfter(t, run);
+	expect(await boundary(run.pi, "session_before_compact", {}, run)).toStrictEqual({ cancel: true });
 });
 
-parkedRunTest("a failing notice cannot let the boundary through", async (run) => {
-	assert.deepEqual(await boundary(run.pi, "session_before_switch", { reason: "new" }, run, true), { cancel: true });
+test("a failing notice cannot let the boundary through", async (t) => {
+	const run = await parkRun();
+	releaseAfter(t, run);
+	expect(await boundary(run.pi, "session_before_switch", { reason: "new" }, run, true)).toStrictEqual({ cancel: true });
 });
 
-parkedRunTest("workflow.new is admitted by the guard and spends its grant", async (run) => {
-	await assert.rejects(run.handle("workflow.new"), /new session was cancelled/);
-	assert.deepEqual(run.grants, [undefined], "the run's own switch passed the guard");
-	assert.deepEqual(await boundary(run.pi, "session_before_compact", { reason: "manual" }, run), { cancel: true }, "the spent grant cannot be reused");
+test("workflow.new is admitted by the guard and spends its grant", async (t) => {
+	const run = await parkRun();
+	releaseAfter(t, run);
+	await expect(run.handle("workflow.new")).rejects.toThrow(/new session was cancelled/);
+	expect(run.grants, "the run's own switch passed the guard").toStrictEqual([undefined]);
+	expect(await boundary(run.pi, "session_before_compact", { reason: "manual" }, run), "the spent grant cannot be reused").toStrictEqual({ cancel: true });
 });
 
-parkedRunTest("workflow.handoff crosses no session boundary and spends no grant", async (run) => {
+test("workflow.handoff crosses no session boundary and spends no grant", async (t) => {
+	const run = await parkRun();
+	releaseAfter(t, run);
 	await run.handle("workflow.handoff", "next");
-	assert.deepEqual(run.grants, [], "the turn_end boundary writes its entries without a session change");
-	assert.deepEqual(await boundary(run.pi, "session_before_compact", { reason: "manual" }, run), { cancel: true }, "a manual compaction during the run still cancels");
+	expect(run.grants, "the turn_end boundary writes its entries without a session change").toStrictEqual([]);
+	expect(await boundary(run.pi, "session_before_compact", { reason: "manual" }, run), "a manual compaction during the run still cancels").toStrictEqual({
+		cancel: true,
+	});
 });
 
-parkedRunTest("a successful workflow.new re-arms the guard and a competing /resume cannot spend its grant", async (run) => {
-	assert.ok(run.replacement);
+test("a successful workflow.new re-arms the guard and admits the replacement state", async (t) => {
+	const run = await parkRun({ competingResume: true });
+	releaseAfter(t, run);
+	requirePresent(run.replacement, "expected a replacement run");
 	await run.handle("workflow.new");
-	assert.deepEqual(run.grants, [{ cancel: true }, undefined], "the competing resume cancels; the workflow's own new passes");
-	assert.equal(run.replacement.state.inputSuppressed, true, "the replacement state owns the session");
-	assert.equal(run.state.inputSuppressed, false, "the old state was released");
-	assert.deepEqual(await boundary(run.replacement.pi, "session_before_fork", {}, run), { cancel: true }, "the replacement guard cancels");
-	assert.match(run.notices.at(-1) ?? "", /fork this session/);
-}, { competingResume: true });
+	expect(run.grants, "the competing resume cancels; the workflow's own new passes").toStrictEqual([{ cancel: true }, undefined]);
+	expect(run.replacement.state.inputSuppressed, "the replacement state owns the session").toBe(true);
+	expect(run.state.inputSuppressed, "the old state was released").toBe(false);
+});
 
-parkedRunTest("a finished run releases the guard", async (run) => {
+test("a successful workflow.new re-arms the guard against later boundaries", async (t) => {
+	const run = await parkRun({ competingResume: true });
+	releaseAfter(t, run);
+	requirePresent(run.replacement, "expected a replacement run");
+	await run.handle("workflow.new");
+	expect(await boundary(run.replacement.pi, "session_before_fork", {}, run), "the replacement guard cancels").toStrictEqual({ cancel: true });
+	expect(run.notices.at(-1) ?? "").toMatch(/fork this session/);
+});
+
+test("a finished run releases the guard", async (t) => {
+	const run = await parkRun();
+	releaseAfter(t, run);
 	run.release();
 	await run.finished;
-	assert.equal(run.state.inputSuppressed, false, "the run released the session");
-	for (const { type, event } of BOUNDARIES) {
-		assert.equal(await boundary(run.pi, type, event, run), undefined, type);
+	expect(run.state.inputSuppressed, "the run released the session").toBe(false);
+	for (const { type, event } of BOUNDARIES.slice(0, 3)) {
+		expect(await boundary(run.pi, type, event, run)).toBeUndefined();
 	}
 });
 
-parkedRunTest("a cancelled boundary leaves the session state unchanged", async (run) => {
+test("a finished run leaves every boundary open", async (t) => {
+	const run = await parkRun();
+	releaseAfter(t, run);
+	run.release();
+	await run.finished;
+	for (const { type, event } of BOUNDARIES.slice(3)) {
+		expect(await boundary(run.pi, type, event, run)).toBeUndefined();
+	}
+});
+
+test("a cancelled boundary leaves the session state unchanged", async (t) => {
+	const run = await parkRun();
+	releaseAfter(t, run);
 	// Record session state before the boundary
 	const stateBefore = {
 		inputSuppressed: run.state.inputSuppressed,
@@ -278,9 +401,9 @@ parkedRunTest("a cancelled boundary leaves the session state unchanged", async (
 	// Dispatch a boundary that should be cancelled
 	await boundary(run.pi, "session_before_fork", {}, run);
 	// Verify session state is unchanged
-	assert.equal(run.state.inputSuppressed, stateBefore.inputSuppressed, "inputSuppressed unchanged");
-	assert.equal(run.state.readonlyEnabled, stateBefore.readonlyEnabled, "readonlyEnabled unchanged");
-	assert.equal(run.state.activeNotebookTopic, stateBefore.activeNotebookTopic, "activeNotebookTopic unchanged");
+	expect(run.state.inputSuppressed, "inputSuppressed unchanged").toBe(stateBefore.inputSuppressed);
+	expect(run.state.readonlyEnabled, "readonlyEnabled unchanged").toBe(stateBefore.readonlyEnabled);
+	expect(run.state.activeNotebookTopic, "activeNotebookTopic unchanged").toBe(stateBefore.activeNotebookTopic);
 });
 
 test("boundaries stay open while no workflow runs", async () => {
@@ -288,13 +411,29 @@ test("boundaries stay open while no workflow runs", async () => {
 	const pi = await createTestHost((api) => {
 		registerWorkflowCommand(api, createState(), {
 			setReadonly: () => false,
-			requestHandoff: async () => {},
-			watchHandoffSettlement: () => ({ done: new Promise<never>(() => {}), dispose: () => {} }),
-			prepareRunFrontmatter: async () => {},
+			requestHandoff: () => Promise.resolve(),
+			watchHandoffSettlement: () => ({ done: new Promise<never>(() => undefined), dispose: () => undefined }),
+			prepareRunFrontmatter: () => Promise.resolve(),
 		} satisfies WorkflowCommandDeps);
 	});
-	for (const { type, event } of BOUNDARIES) {
-		assert.equal(await boundary(pi, type, event, record), undefined, type);
+	for (const { type, event } of BOUNDARIES.slice(0, 3)) {
+		expect(await boundary(pi, type, event, record)).toBeUndefined();
 	}
-	assert.equal(record.notices.length, 0, "an idle session is never interrupted by the guard");
+	expect(record.notices.length, "an idle session is never interrupted by the guard").toBe(0);
+});
+
+test("the remaining boundaries stay open while no workflow runs", async () => {
+	const record: RunRecord = { notices: [], grants: [] };
+	const pi = await createTestHost((api) => {
+		registerWorkflowCommand(api, createState(), {
+			setReadonly: () => false,
+			requestHandoff: () => Promise.resolve(),
+			watchHandoffSettlement: () => ({ done: new Promise<never>(() => undefined), dispose: () => undefined }),
+			prepareRunFrontmatter: () => Promise.resolve(),
+		} satisfies WorkflowCommandDeps);
+	});
+	for (const { type, event } of BOUNDARIES.slice(3)) {
+		expect(await boundary(pi, type, event, record)).toBeUndefined();
+	}
+	expect(record.notices.length, "an idle session is never interrupted by the guard").toBe(0);
 });

@@ -1,13 +1,25 @@
 // WHY: the real CodemodeSandbox (QuickJS WASM + worker) must load under the
 // node:test custom loader, and the host's own timeout clamp must prevent Node's
 // timer overflow. This is the only test that touches the real sandbox.
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
+import type { CodemodeResult } from "@earendil-works/pi-codemode";
 import { createWorkflowSandbox, clampTimeoutMs, hardDeadlineMs, MAX_TIMEOUT_MS } from "../../workflow/sandbox.js";
 import { compileWorkflow, WorkflowCompileError } from "../../workflow/compile.js";
 import { composeWorkflow } from "../../workflow/driver.js";
 import { mapSandboxError } from "../../workflow/host.js";
 import type { WorkflowSandboxFactory } from "../../workflow/types.js";
+
+function assertOk(result: CodemodeResult): asserts result is Extract<CodemodeResult, { ok: true }> {
+	if (!result.ok) {
+		throw new Error("expected an ok sandbox result");
+	}
+}
+
+function assertError(result: CodemodeResult): asserts result is Extract<CodemodeResult, { ok: false }> {
+	if (result.ok) {
+		throw new Error("expected an errored sandbox result");
+	}
+}
 
 test("sandbox loads wasm+worker under node:test and runs host globals", async () => {
 	let calls = 0;
@@ -29,21 +41,17 @@ test("sandbox loads wasm+worker under node:test and runs host globals", async ()
 		store: { intent: JSON.stringify("hello") },
 	});
 	await sandbox.close();
-	assert.equal(result.ok, true);
-	if (result.ok) {
-		assert.deepEqual(result.value, ["x", 2]);
-	}
-	assert.equal(calls, 1);
+	assertOk(result);
+	expect(result.value).toStrictEqual(["x", 2]);
+	expect(calls).toBe(1);
 });
 
 test("sandbox reports a timeout kind when the deadline expires", async () => {
 	const sandbox = createWorkflowSandbox({ timeoutMs: 200 });
 	const result = await sandbox.execute(`while (true) {}`);
 	await sandbox.close();
-	assert.equal(result.ok, false);
-	if (!result.ok) {
-		assert.equal(result.error.kind, "timeout");
-	}
+	assertError(result);
+	expect(result.error.kind).toBe("timeout");
 });
 
 test("createWorkflowSandbox clamps an overflowing explicit deadline to the timer max", () => {
@@ -53,30 +61,36 @@ test("createWorkflowSandbox clamps an overflowing explicit deadline to the timer
 		return {} as never;
 	};
 	createWorkflowSandbox({ timeoutMs: MAX_TIMEOUT_MS + 1 }, factory);
-	assert.equal(captured[0].timeoutMs, MAX_TIMEOUT_MS);
+	expect(captured[0].timeoutMs).toBe(MAX_TIMEOUT_MS);
 });
 
-test("clampTimeoutMs clamps finite values to the timer max; only explicit no-limit disables the deadline", () => {
-	assert.equal(clampTimeoutMs(1), 1);
-	assert.equal(clampTimeoutMs(MAX_TIMEOUT_MS), MAX_TIMEOUT_MS);
-	assert.equal(clampTimeoutMs(MAX_TIMEOUT_MS + 1), MAX_TIMEOUT_MS);
-	assert.equal(clampTimeoutMs(Number.MAX_SAFE_INTEGER), MAX_TIMEOUT_MS);
-	assert.equal(clampTimeoutMs(0), Number.POSITIVE_INFINITY);
-	assert.equal(clampTimeoutMs(-5), Number.POSITIVE_INFINITY);
-	assert.equal(clampTimeoutMs(Number.POSITIVE_INFINITY), Number.POSITIVE_INFINITY);
-	assert.equal(clampTimeoutMs(Number.NaN), Number.POSITIVE_INFINITY);
+test("clampTimeoutMs clamps finite values to the timer max", () => {
+	expect(clampTimeoutMs(1)).toBe(1);
+	expect(clampTimeoutMs(MAX_TIMEOUT_MS)).toBe(MAX_TIMEOUT_MS);
+	expect(clampTimeoutMs(MAX_TIMEOUT_MS + 1)).toBe(MAX_TIMEOUT_MS);
+	expect(clampTimeoutMs(Number.MAX_SAFE_INTEGER)).toBe(MAX_TIMEOUT_MS);
 });
 
-test("hardDeadlineMs prefers an explicit deadline, else doubles the budget; unlimited disables it", () => {
-	assert.equal(hardDeadlineMs({ timeBudgetMs: 1_000 }), 2_000, "the soft budget derives a doubled deadline");
-	assert.equal(hardDeadlineMs({ timeBudgetMs: 1_000, hardDeadlineMs: 5_000 }), 5_000, "an explicit hard deadline wins over the derived one");
-	assert.equal(hardDeadlineMs({ timeBudgetMs: 1_000, hardDeadlineMs: MAX_TIMEOUT_MS + 1 }), MAX_TIMEOUT_MS, "overflow clamps to the timer max");
-	assert.equal(hardDeadlineMs({ timeBudgetMs: Number.MAX_SAFE_INTEGER }), MAX_TIMEOUT_MS, "overflow clamps to the timer max");
-	assert.equal(hardDeadlineMs({ timeBudgetMs: null }), Number.POSITIVE_INFINITY);
-	assert.equal(hardDeadlineMs({ timeBudgetMs: null, hardDeadlineMs: null }), Number.POSITIVE_INFINITY);
-	assert.equal(hardDeadlineMs({ timeBudgetMs: 0 }), Number.POSITIVE_INFINITY);
-	assert.equal(hardDeadlineMs({ timeBudgetMs: -1 }), Number.POSITIVE_INFINITY);
-	assert.equal(hardDeadlineMs({ timeBudgetMs: 1_000, hardDeadlineMs: -1 }), 2_000, "an invalid explicit deadline falls back to the derived one");
+test("clampTimeoutMs treats non-positive and non-finite input as no-limit", () => {
+	expect(clampTimeoutMs(0)).toBe(Number.POSITIVE_INFINITY);
+	expect(clampTimeoutMs(-5)).toBe(Number.POSITIVE_INFINITY);
+	expect(clampTimeoutMs(Number.POSITIVE_INFINITY)).toBe(Number.POSITIVE_INFINITY);
+	expect(clampTimeoutMs(Number.NaN)).toBe(Number.POSITIVE_INFINITY);
+});
+
+test("hardDeadlineMs prefers an explicit deadline, else doubles the budget", () => {
+	expect(hardDeadlineMs({ timeBudgetMs: 1_000 }), "the soft budget derives a doubled deadline").toBe(2_000);
+	expect(hardDeadlineMs({ timeBudgetMs: 1_000, hardDeadlineMs: 5_000 }), "an explicit hard deadline wins over the derived one").toBe(5_000);
+	expect(hardDeadlineMs({ timeBudgetMs: 1_000, hardDeadlineMs: MAX_TIMEOUT_MS + 1 }), "overflow clamps to the timer max").toBe(MAX_TIMEOUT_MS);
+	expect(hardDeadlineMs({ timeBudgetMs: Number.MAX_SAFE_INTEGER }), "overflow clamps to the timer max").toBe(MAX_TIMEOUT_MS);
+});
+
+test("hardDeadlineMs treats unlimited budgets as no deadline", () => {
+	expect(hardDeadlineMs({ timeBudgetMs: null })).toBe(Number.POSITIVE_INFINITY);
+	expect(hardDeadlineMs({ timeBudgetMs: null, hardDeadlineMs: null })).toBe(Number.POSITIVE_INFINITY);
+	expect(hardDeadlineMs({ timeBudgetMs: 0 })).toBe(Number.POSITIVE_INFINITY);
+	expect(hardDeadlineMs({ timeBudgetMs: -1 })).toBe(Number.POSITIVE_INFINITY);
+	expect(hardDeadlineMs({ timeBudgetMs: 1_000, hardDeadlineMs: -1 }), "an invalid explicit deadline falls back to the derived one").toBe(2_000);
 });
 
 test("a memory-limit OOM maps to error and surfaces its message", async () => {
@@ -93,11 +107,9 @@ test("a memory-limit OOM maps to error and surfaces its message", async () => {
 	);
 	const result = await sandbox.execute("code");
 	await sandbox.close();
-	assert.equal(result.ok, false);
-	if (!result.ok) {
-		assert.deepEqual(result.error, oomResult.error);
-	}
-	assert.equal(mapSandboxError(result.error, null), "error");
+	assertError(result);
+	expect(result.error).toStrictEqual(oomResult.error);
+	expect(mapSandboxError(result.error, null)).toBe("error");
 });
 
 test("compile gate rejects globalThis/alias bypasses before runtime; direct calls still run", async () => {
@@ -109,7 +121,7 @@ test("compile gate rejects globalThis/alias bypasses before runtime; direct call
 		`workflow.checkpoint(null); globalThis.workflow.checkpoint(null);`,
 		`workflow.checkpoint(null); const w = workflow; w.checkpoint(null);`,
 	]) {
-		assert.throws(() => compileWorkflow(`return defineWorkflow((workflow) => {\n${body}\n});\n`), WorkflowCompileError);
+		expect(() => compileWorkflow(`return defineWorkflow((workflow) => {\n${body}\n});\n`)).toThrow(WorkflowCompileError);
 	}
 	// Control: the gated direct-call shape still executes in the real sandbox.
 	let calls = 0;
@@ -131,19 +143,22 @@ test("compile gate rejects globalThis/alias bypasses before runtime; direct call
 		store: { intent: JSON.stringify("hello") },
 	});
 	await sandbox.close();
-	assert.equal(result.ok, true);
-	assert.equal(calls, 1);
+	expect(result.ok).toBe(true);
+	expect(calls).toBe(1);
 });
 
-test("abort maps to cancelled; timeout, memory, and unknown kinds keep their mapping", () => {
-	assert.equal(mapSandboxError({ kind: "aborted" }, null), "cancelled");
-	assert.equal(mapSandboxError({ kind: "aborted" }, "cost-limit"), "cost-limit");
-	assert.equal(mapSandboxError({ kind: "timeout" }, null), "time-limit");
-	assert.equal(mapSandboxError({ kind: "timeout" }, "error"), "time-limit", "a pending stop never relabels a timeout");
-	assert.equal(mapSandboxError({ kind: "script" }, null), "error");
-	assert.equal(mapSandboxError({ kind: "memory" }, null), "error", "an OOM aborts as a reserved error");
-	assert.equal(mapSandboxError({ kind: "memory" }, "time-limit"), "time-limit", "a pending stop wins over a later failure");
-	assert.equal(mapSandboxError({ kind: "unknown-kind" }, null), "error", "unrecognized failures abort as errors");
+test("sandbox aborts and timeouts map to cancelled and time-limit", () => {
+	expect(mapSandboxError({ kind: "aborted" }, null)).toBe("cancelled");
+	expect(mapSandboxError({ kind: "aborted" }, "cost-limit")).toBe("cost-limit");
+	expect(mapSandboxError({ kind: "timeout" }, null)).toBe("time-limit");
+	expect(mapSandboxError({ kind: "timeout" }, "error"), "a pending stop never relabels a timeout").toBe("time-limit");
+});
+
+test("sandbox script, memory, and unknown kinds map to error", () => {
+	expect(mapSandboxError({ kind: "script" }, null)).toBe("error");
+	expect(mapSandboxError({ kind: "memory" }, null), "an OOM aborts as a reserved error").toBe("error");
+	expect(mapSandboxError({ kind: "memory" }, "time-limit"), "a pending stop wins over a later failure").toBe("time-limit");
+	expect(mapSandboxError({ kind: "unknown-kind" }, null), "unrecognized failures abort as errors").toBe("error");
 });
 
 // Regression guard for the codemode wrapper contract (worker.js wraps the script body in
@@ -173,11 +188,8 @@ test("a returned workflow runs every effect through the wrapper; a bare statemen
 	const source = 'return defineWorkflow((workflow) => {\n  workflow.run("a");\n  workflow.run("b");\n  workflow.checkpoint(null);\n});\n';
 	const result = await sandbox.execute(composeWorkflow(compileWorkflow(source).code), { store: { intent: "x", args: "x" } });
 	await sandbox.close();
-	assert.equal(result.ok, true, "a returned workflow settles the wrapper only after the workflow completes");
-	assert.equal(calls, 2, "both effects observe through the wrapper");
+	expect(result.ok, "a returned workflow settles the wrapper only after the workflow completes").toBe(true);
+	expect(calls, "both effects observe through the wrapper").toBe(2);
 	// The bare (non-return) form must be rejected at compile time, never silently truncated.
-	assert.throws(
-		() => compileWorkflow("defineWorkflow((workflow) => {\n  workflow.checkpoint(null);\n});\n"),
-		(error) => error instanceof WorkflowCompileError,
-	);
+	expect(() => compileWorkflow("defineWorkflow((workflow) => {\n  workflow.checkpoint(null);\n});\n")).toThrow(WorkflowCompileError);
 });

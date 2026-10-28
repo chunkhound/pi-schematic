@@ -1,8 +1,7 @@
 // State/entry digests exercised through the public `workflow.state` and `workflow.entries`
 // globals (createWorkflowHost seam); no workflow-internal imports. The pure usage math
 // (addUsage/collectUsage) lives with its own module's suite in usage.test.ts.
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Usage } from "@earendil-works/pi-ai";
 import { createState } from "../../state.js";
@@ -64,7 +63,7 @@ function handle(host: WorkflowHost, name: string): { execute: (args?: unknown, c
 	return { execute: (args, context = {}) => execute(args, context) };
 }
 
-test("workflow.entries filters after an id, caps the newest, and names tool calls", async () => {
+test("workflow.entries filters after an id and names tool calls", async () => {
 	const entries: SessionEntry[] = [
 		message("u0", "user", "start"),
 		message("a1", "assistant", [
@@ -75,34 +74,46 @@ test("workflow.entries filters after an id, caps the newest, and names tool call
 	];
 	const { host } = digestHost(entries);
 	const all = (await handle(host, "workflow.entries").execute({ after: "u0" })) as Record<string, unknown>[];
-	assert.equal(all.length, 2);
-	assert.deepEqual(all[0].toolNames, ["bash"]);
-	assert.equal(all[0].text, "done");
-	assert.deepEqual(all[1].toolNames, ["bash"]);
+	expect(all.length).toBe(2);
+	expect(all[0].toolNames).toStrictEqual(["bash"]);
+	expect(all[0].text).toBe("done");
+	expect(all[1].toolNames).toStrictEqual(["bash"]);
+});
+
+test("workflow.entries caps the returned window", async () => {
+	const entries: SessionEntry[] = [
+		message("u0", "user", "start"),
+		message("a1", "assistant", [
+			{ type: "toolCall", name: "bash" },
+			{ type: "text", text: "done" },
+		]),
+		message("t1", "toolResult", [{ type: "text", text: "ok" }], { toolName: "bash" }),
+	];
+	const { host } = digestHost(entries);
 	const limited = (await handle(host, "workflow.entries").execute({ after: "u0", limit: 1 })) as Record<string, unknown>[];
-	assert.equal(limited.length, 1);
-	assert.equal(limited[0].id, "t1");
-	assert.deepEqual(await handle(host, "workflow.entries").execute({ after: "u0", limit: 0 }), []);
+	expect(limited.length).toBe(1);
+	expect(limited[0].id).toBe("t1");
+	expect(await handle(host, "workflow.entries").execute({ after: "u0", limit: 0 })).toStrictEqual([]);
 });
 
 // An absent `after` id reports the whole branch; an unknown one fails loudly.
 test("workflow.entries returns the whole branch when the after id is absent", async () => {
 	const entries = [message("u0", "user", "start"), message("a1", "assistant", [{ type: "text", text: "hi" }])];
 	const { host } = digestHost(entries);
-	assert.equal(((await handle(host, "workflow.entries").execute({})) as unknown[]).length, 2);
+	expect(((await handle(host, "workflow.entries").execute({})) as unknown[]).length).toBe(2);
 });
 
 test("workflow.entries rejects an unknown after id by name", async () => {
 	const entries = [message("u0", "user", "start"), message("a1", "assistant", [{ type: "text", text: "hi" }])];
 	const { host } = digestHost(entries);
-	await assert.rejects(handle(host, "workflow.entries").execute({ after: "missing" }), /unknown after id "missing"/);
+	await expect(handle(host, "workflow.entries").execute({ after: "missing" })).rejects.toThrow(/unknown after id "missing"/);
 });
 
 test("workflow.entries rejects a limit that is not a finite non-negative integer", async () => {
 	const entries = [message("u0", "user", "start"), message("a1", "assistant", [{ type: "text", text: "hi" }])];
 	const { host } = digestHost(entries);
 	for (const limit of [Number.NaN, -1, 1.5, Number.POSITIVE_INFINITY, null, "2"]) {
-		await assert.rejects(handle(host, "workflow.entries").execute({ limit }), /limit must be a non-negative integer/, `limit ${String(limit)}`);
+		await expect(handle(host, "workflow.entries").execute({ limit })).rejects.toThrow(/limit must be a non-negative integer/);
 	}
 });
 
@@ -117,10 +128,10 @@ test("workflow.state reports the newest assistant text across content blocks", a
 	];
 	const { host } = digestHost(entries);
 	const digest = (await handle(host, "workflow.state").execute()) as Record<string, unknown>;
-	assert.equal(digest.lastResponse, "second");
+	expect(digest.lastResponse).toBe("second");
 });
 
-test("workflow.state reports the host-composed view of the session", async () => {
+async function makeSessionDigest(): Promise<Record<string, unknown>> {
 	// `cost` is the host's run-scoped spend projection (workflow/spend.ts composes the
 	// live-branch scan with baseline, child-ledger, and classifier rows). The host freezes
 	// the pre-run branch by id, so usage appended after host creation is the run's.
@@ -131,17 +142,29 @@ test("workflow.state reports the host-composed view of the session", async () =>
 	state.readonlyEnabled = true;
 	const { host } = digestHost(entries, state);
 	entries.push(message("a1", "assistant", [{ type: "text", text: "answer" }], { usage: usd(0.4) }));
-	const digest = (await handle(host, "workflow.state").execute()) as Record<string, unknown>;
-	assert.equal(digest.sessionId, "s1");
-	assert.equal(digest.leafId, "a1");
-	assert.equal(digest.messageCount, 2);
-	assert.equal(digest.contextPercent, 42);
-	assert.equal(digest.cost, 0.4);
-	assert.equal(digest.lastResponse, "answer");
-	assert.equal(digest.readonly, true);
-	assert.deepEqual(digest.activeTools, ["bash", "read"]);
-	assert.equal(digest.notebookTopic, "runtime");
-	assert.equal(digest.settledRuns, 0, "the digest reports settled runs; none have settled in a fresh host");
+	return (await handle(host, "workflow.state").execute()) as Record<string, unknown>;
+}
+
+test("workflow.state reports the session identity and message count", async () => {
+	const digest = await makeSessionDigest();
+	expect(digest.sessionId).toBe("s1");
+	expect(digest.leafId).toBe("a1");
+	expect(digest.messageCount).toBe(2);
+	expect(digest.contextPercent).toBe(42);
+});
+
+test("workflow.state reports the run's committed usage", async () => {
+	const digest = await makeSessionDigest();
+	expect(digest.cost).toBe(0.4);
+	expect(digest.lastResponse).toBe("answer");
+});
+
+test("workflow.state reports posture and settled-run accounting", async () => {
+	const digest = await makeSessionDigest();
+	expect(digest.readonly).toBe(true);
+	expect(digest.activeTools).toStrictEqual(["bash", "read"]);
+	expect(digest.notebookTopic).toBe("runtime");
+	expect(digest.settledRuns, "the digest reports settled runs; none have settled in a fresh host").toBe(0);
 });
 
 // WHY: the digest crosses into the sandbox as JSON, so the sandbox
@@ -157,7 +180,7 @@ test("the serialized digest never carries the conversation's message text", asyn
 	];
 	const { host } = digestHost(entries);
 	const digest = (await handle(host, "workflow.state").execute()) as Record<string, unknown>;
-	assert.equal(digest.lastResponse, "final answer", "the final assistant text is the digest's only message text");
+	expect(digest.lastResponse, "the final assistant text is the digest's only message text").toBe("final answer");
 	const json = JSON.stringify(digest);
-	assert.equal(json.includes(MARKER), false, "no other conversation text crosses into the sandbox");
+	expect(json, "no other conversation text crosses into the sandbox").not.toContain(MARKER);
 });

@@ -1,7 +1,6 @@
 // Contract: the persisted overview carries the run's identity, exit reason, elapsed
 // time, and the spend rows exactly as the host derived them.
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import type { WorkflowRunMetrics } from "../../workflow/types.js";
 import { WORKFLOW_SUMMARY_ENTRY_TYPE, buildWorkflowSummary } from "../../workflow/summary.js";
 
@@ -37,47 +36,63 @@ function metrics(overrides: Partial<WorkflowRunMetrics> = {}): WorkflowRunMetric
 	};
 }
 
-test("buildWorkflowSummary derives ISO bounds from the start and elapsed time", () => {
+function makeSummary() {
 	const input = metrics();
-	const data = buildWorkflowSummary("review", "approved", undefined, input);
-	assert.equal(WORKFLOW_SUMMARY_ENTRY_TYPE, "workflow-summary");
-	assert.equal(data.workflow, "review");
-	assert.equal(data.reason, "approved");
-	assert.equal(data.startedAt, new Date(input.startedAt).toISOString());
-	assert.equal(data.endedAt, new Date(input.startedAt + input.elapsedMs).toISOString());
-	assert.equal(data.elapsedMs, 65_000);
-	assert.equal(data.checkpoints, 3);
-	assert.equal(data.steps, 7);
-	assert.equal(data.turns, 14);
-	assert.equal(data.classifySteps, 2);
-	assert.deepEqual(data.activity, { run: 7, checkpoint: 3, classify: 2 });
-	assert.equal(data.costUsd, 1.25);
-	assert.deepEqual(data.spend, input.spend);
+	return { data: buildWorkflowSummary("review", "approved", undefined, input), input };
+}
+
+test("buildWorkflowSummary identifies the run and its exit reason", () => {
+	const { data } = makeSummary();
+	expect(WORKFLOW_SUMMARY_ENTRY_TYPE).toBe("workflow-summary");
+	expect(data.workflow).toBe("review");
+	expect(data.reason).toBe("approved");
+});
+
+test("buildWorkflowSummary derives ISO bounds from the start and elapsed time", () => {
+	const { data, input } = makeSummary();
+	expect(data.startedAt).toBe(new Date(input.startedAt).toISOString());
+	expect(data.endedAt).toBe(new Date(input.startedAt + input.elapsedMs).toISOString());
+	expect(data.elapsedMs).toBe(65_000);
+});
+
+test("buildWorkflowSummary reports the run's progress counts", () => {
+	const { data } = makeSummary();
+	expect(data.checkpoints).toBe(3);
+	expect(data.steps).toBe(7);
+	expect(data.turns).toBe(14);
+	expect(data.classifySteps).toBe(2);
+});
+
+test("buildWorkflowSummary reports activity, cost, and spend", () => {
+	const { data, input } = makeSummary();
+	expect(data.activity).toStrictEqual({ run: 7, checkpoint: 3, classify: 2 });
+	expect(data.costUsd).toBe(1.25);
+	expect(data.spend).toStrictEqual(input.spend);
 });
 
 test("buildWorkflowSummary carries the error only when one exists", () => {
 	const input = metrics();
-	assert.equal("error" in buildWorkflowSummary("wf", "error", undefined, input), false);
-	assert.equal(buildWorkflowSummary("wf", "error", "boom", input).error, "boom");
+	expect("error" in buildWorkflowSummary("wf", "error", undefined, input)).toBe(false);
+	expect(buildWorkflowSummary("wf", "error", "boom", input).error).toBe("boom");
 });
 
 test("buildWorkflowSummary carries the soft targets and the crossing snapshot", () => {
 	const input = metrics({ limits: { costLimit: 5, timeBudgetMs: null }, crossedAt: { costUsd: 5.2, elapsedMs: 1_000 }, costUsd: 6.4 });
 	const data = buildWorkflowSummary("wf", "cost-limit", undefined, input);
-	assert.deepEqual(data.limits, { costLimit: 5, timeBudgetMs: null });
-	assert.deepEqual(data.crossedAt, { costUsd: 5.2, elapsedMs: 1_000 });
+	expect(data.limits).toStrictEqual({ costLimit: 5, timeBudgetMs: null });
+	expect(data.crossedAt).toStrictEqual({ costUsd: 5.2, elapsedMs: 1_000 });
 });
 
 test("buildWorkflowSummary carries the salvaged partial only when one exists", () => {
 	const input = metrics();
-	assert.equal("partial" in buildWorkflowSummary("wf", "cost-limit", undefined, input), false);
-	assert.deepEqual(buildWorkflowSummary("wf", "cost-limit", undefined, input, { round: 3 }).partial, { round: 3 });
+	expect("partial" in buildWorkflowSummary("wf", "cost-limit", undefined, input)).toBe(false);
+	expect(buildWorkflowSummary("wf", "cost-limit", undefined, input, { round: 3 }).partial).toStrictEqual({ round: 3 });
 });
 
 test("buildWorkflowSummary carries the unbounded flag through from metrics", () => {
 	const bounded = buildWorkflowSummary("wf", "approved", undefined, metrics({ unbounded: false }));
-	assert.equal(bounded.unbounded, false, "a checkpointed run reports bounded");
+	expect(bounded.unbounded, "a checkpointed run reports bounded").toBe(false);
 	const unbounded = buildWorkflowSummary("wf", "returned", undefined, metrics({ unbounded: true }));
-	assert.equal(unbounded.unbounded, true, "a checkpoint-less run reports unbounded");
-	assert.deepEqual(unbounded.limits, { costLimit: null, timeBudgetMs: null }, "an unbounded run carries null targets");
+	expect(unbounded.unbounded, "a checkpoint-less run reports unbounded").toBe(true);
+	expect(unbounded.limits, "an unbounded run carries null targets").toStrictEqual({ costLimit: null, timeBudgetMs: null });
 });

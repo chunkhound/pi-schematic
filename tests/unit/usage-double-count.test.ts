@@ -1,10 +1,10 @@
 // SSOT contract: baseline (replaced sessions) + the current branch (pre-run conversation
 // excluded, child-owned tool results skipped) + the child ledger + classifier spend sum
 // exactly once in the run metrics, and a cancelled workflow.new never double-counts.
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import { assertPresent } from "../assertions.js";
 import { createState, type SchematicState } from "../../state.js";
 import { createWorkflowHost } from "../../workflow/host.js";
 import type { WorkflowHost, WorkflowHostDeps, WorkflowLimits } from "../../workflow/types.js";
@@ -117,7 +117,7 @@ function createEnv(limits: WorkflowLimits = { costLimit: null, timeBudgetMs: nul
 
 async function call(host: WorkflowHost, member: string, args: unknown): Promise<unknown> {
 	const tool = host.globals().find((candidate) => candidate.name === `workflow.${member}`);
-	assert.ok(tool, `missing handle workflow.${member}`);
+	assertPresent(tool, `missing handle workflow.${member}`);
 	return tool.execute(args, { signal: host.signal });
 }
 
@@ -125,7 +125,7 @@ function spendSum(host: WorkflowHost): number {
 	return host.metrics().spend.reduce((total, row) => total + row.costUsd, 0);
 }
 
-test("baseline + branch + child ledger + classifier spend sums exactly once", async () => {
+async function ledgerFixture(): Promise<{ host: WorkflowHost; metrics: ReturnType<WorkflowHost["metrics"]> }> {
 	const env = createEnv();
 	const host = createWorkflowHost(env.deps);
 	// The host freezes the pre-run branch by id, so entries appended after it are run spend.
@@ -136,17 +136,22 @@ test("baseline + branch + child ledger + classifier spend sums exactly once", as
 	env.branch.push(childToolResult("tr1", "c1", "anthropic", "widget", 0.3));
 	await call(host, "classify", { model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} });
 	await call(host, "new", undefined);
-	const metrics = host.metrics();
-	assert.ok(Math.abs(metrics.costUsd - 1.05) < 1e-9, "baseline 0.5 + child 0.3 + classifier 0.25");
-	assert.ok(Math.abs(spendSum(host) - metrics.costUsd) < 1e-9, "spend rows sum to the total once");
-	assert.equal(
-		metrics.costUsd,
-		metrics.spend.reduce((total, row) => total + row.costUsd, 0),
-	);
+	return { host, metrics: host.metrics() };
+}
+
+test("baseline + branch + child ledger + classifier spend sums exactly once", async () => {
+	const { host, metrics } = await ledgerFixture();
+	expect(Math.abs(metrics.costUsd - 1.05) < 1e-9, "baseline 0.5 + child 0.3 + classifier 0.25").toBe(true);
+	expect(Math.abs(spendSum(host) - metrics.costUsd) < 1e-9, "spend rows sum to the total once").toBe(true);
+	expect(metrics.costUsd).toBe(metrics.spend.reduce((total, row) => total + row.costUsd, 0));
+});
+
+test("each spend source lands in its own row", async () => {
+	const { metrics } = await ledgerFixture();
 	const byKey = Object.fromEntries(metrics.spend.map((row) => [row.key, row.costUsd]));
-	assert.equal(byKey["anthropic/opus"], 0.5);
-	assert.equal(byKey["anthropic/widget"], 0.3, "child ledger owns the child's spend");
-	assert.equal(byKey["typesafe/jev"], 0.25);
+	expect(byKey["anthropic/opus"]).toBe(0.5);
+	expect(byKey["anthropic/widget"], "child ledger owns the child's spend").toBe(0.3);
+	expect(byKey["typesafe/jev"]).toBe(0.25);
 });
 
 test("a cancelled workflow.new counts the unchanged branch and child once", async () => {
@@ -157,15 +162,12 @@ test("a cancelled workflow.new counts the unchanged branch and child once", asyn
 	env.branch.push(childToolResult("tr1", "c1", "anthropic", "widget", 0.3));
 	await call(host, "classify", { model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} });
 	env.failNew = true;
-	await assert.rejects(() => call(host, "new", undefined), /cancelled/);
+	await expect(() => call(host, "new", undefined)).rejects.toThrow(/cancelled/);
 	const metrics = host.metrics();
-	assert.ok(Math.abs(metrics.costUsd - 1.05) < 1e-9, "no baseline committed on top of the unchanged branch");
-	assert.ok(Math.abs(spendSum(host) - metrics.costUsd) < 1e-9, "spend rows sum to the total once");
-	assert.equal(
-		metrics.costUsd,
-		metrics.spend.reduce((total, row) => total + row.costUsd, 0),
-	);
-	assert.deepEqual(metrics.spend.map((row) => row.key).sort(), ["anthropic/opus", "anthropic/widget", "typesafe/jev"].sort());
+	expect(Math.abs(metrics.costUsd - 1.05) < 1e-9, "no baseline committed on top of the unchanged branch").toBe(true);
+	expect(Math.abs(spendSum(host) - metrics.costUsd) < 1e-9, "spend rows sum to the total once").toBe(true);
+	expect(metrics.costUsd).toBe(metrics.spend.reduce((total, row) => total + row.costUsd, 0));
+	expect(metrics.spend.map((row) => row.key).sort()).toStrictEqual(["anthropic/opus", "anthropic/widget", "typesafe/jev"].sort());
 });
 
 test("run spend starts at the run: pre-run conversation spend is excluded and cannot trip the target", async () => {
@@ -176,9 +178,9 @@ test("run spend starts at the run: pre-run conversation spend is excluded and ca
 	env.branch.push(assistant("run1", "anthropic", "opus", 0.2));
 	await call(host, "classify", { model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} });
 	const budget = (await call(host, "budget", undefined)) as { cost: number; costRemaining: number | null };
-	assert.ok(Math.abs(budget.cost - 0.45) < 1e-9, "budget cost counts only run entries: 0.2 branch + 0.25 classifier");
-	assert.ok(Math.abs((budget.costRemaining ?? 0) - 0.55) < 1e-9, "the target measures from run start");
-	assert.equal(host.metrics().crossedAt, null, "prior conversation spend arms no soft stop");
+	expect(Math.abs(budget.cost - 0.45) < 1e-9, "budget cost counts only run entries: 0.2 branch + 0.25 classifier").toBe(true);
+	expect(Math.abs((budget.costRemaining ?? 0) - 0.55) < 1e-9, "the target measures from run start").toBe(true);
+	expect(host.metrics().crossedAt, "prior conversation spend arms no soft stop").toBeNull();
 });
 
 test("an entry retained across a replacement is counted by one source only", async () => {
@@ -190,6 +192,6 @@ test("an entry retained across a replacement is counted by one source only", asy
 	env.branch.push(assistant("a0", "anthropic", "opus", 0.5));
 	await call(host, "new", undefined);
 	const metrics = host.metrics();
-	assert.ok(Math.abs(metrics.costUsd - 0.5) < 1e-9, "baseline and branch cannot both count the same entry");
-	assert.ok(Math.abs(spendSum(host) - metrics.costUsd) < 1e-9, "the spend rows still sum to the total once");
+	expect(Math.abs(metrics.costUsd - 0.5) < 1e-9, "baseline and branch cannot both count the same entry").toBe(true);
+	expect(Math.abs(spendSum(host) - metrics.costUsd) < 1e-9, "the spend rows still sum to the total once").toBe(true);
 });

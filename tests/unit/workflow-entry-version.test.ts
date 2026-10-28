@@ -1,8 +1,7 @@
 // Contract: persisted workflow entries carry a schema version. Missing `v` is the legacy
 // v1 shape; a newer version must render a safe fallback, never throw inside a process-wide
 // renderer or an external consumer.
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import type { CustomEntry, Theme } from "@earendil-works/pi-coding-agent";
 import { renderWorkflowShellEntry } from "../../workflow/activity.js";
 import { WORKFLOW_ENTRY_VERSION, WORKFLOW_EXIT_ENTRY_TYPE, readWorkflowExitEntry, type WorkflowExitEntry } from "../../workflow/types.js";
@@ -36,36 +35,36 @@ function summaryData(): WorkflowRunSummaryData {
 
 test("workflow-exit reads the legacy shape and the current shape", () => {
 	const legacy = { reason: "returned" };
-	assert.deepEqual(readWorkflowExitEntry(legacy), { v: WORKFLOW_ENTRY_VERSION, reason: "returned" });
+	expect(readWorkflowExitEntry(legacy)).toStrictEqual({ v: WORKFLOW_ENTRY_VERSION, reason: "returned" });
 	const current = { v: WORKFLOW_ENTRY_VERSION, reason: "approved", metadata: { round: 2 } } satisfies WorkflowExitEntry;
-	assert.deepEqual(readWorkflowExitEntry(current), current);
+	expect(readWorkflowExitEntry(current)).toStrictEqual(current);
 });
 
 test("workflow-exit refuses malformed and newer entries", () => {
-	assert.equal(readWorkflowExitEntry({ reason: 7 }), null);
-	assert.equal(readWorkflowExitEntry({ v: WORKFLOW_ENTRY_VERSION + 1, reason: "approved" }), null);
-	assert.equal(readWorkflowExitEntry(null), null);
+	expect(readWorkflowExitEntry({ reason: 7 })).toBeNull();
+	expect(readWorkflowExitEntry({ v: WORKFLOW_ENTRY_VERSION + 1, reason: "approved" })).toBeNull();
+	expect(readWorkflowExitEntry(null)).toBeNull();
 });
 
 test("workflow-summary reads legacy data and round-trips current data", () => {
 	const current = summaryData();
-	assert.equal(current.v, WORKFLOW_ENTRY_VERSION);
-	assert.deepEqual(readWorkflowSummaryData(current), current);
+	expect(current.v).toBe(WORKFLOW_ENTRY_VERSION);
+	expect(readWorkflowSummaryData(current)).toStrictEqual(current);
 	const { v: _v, ...legacy } = current;
-	assert.deepEqual(readWorkflowSummaryData(legacy), current);
+	expect(readWorkflowSummaryData(legacy)).toStrictEqual(current);
 });
 
 test("workflow-summary refuses malformed and newer entries", () => {
-	assert.equal(readWorkflowSummaryData({ workflow: "wf" }), null);
+	expect(readWorkflowSummaryData({ workflow: "wf" })).toBeNull();
 	const newer = { ...summaryData(), v: WORKFLOW_ENTRY_VERSION + 1 };
-	assert.equal(readWorkflowSummaryData(newer), null);
+	expect(readWorkflowSummaryData(newer)).toBeNull();
 });
 
 test("summary renderer shows a safe fallback for a newer entry", () => {
 	const newer = { ...summaryData(), v: WORKFLOW_ENTRY_VERSION + 1 };
 	const text = renderWorkflowSummary(newer, false, identityTheme).render(80).join("\n");
-	assert.match(text, /newer schematic version/);
-	assert.doesNotMatch(text, /TypeError|undefined/);
+	expect(text).toMatch(/newer schematic version/);
+	expect(text).not.toMatch(/TypeError|undefined/);
 });
 
 test("shell renderer shows a safe fallback for a newer entry", () => {
@@ -78,9 +77,9 @@ test("shell renderer shows a safe fallback for a newer entry", () => {
 		data: { v: WORKFLOW_ENTRY_VERSION + 1, id: 1, name: "shell", detail: "echo hi", ok: true, durationMs: 2 },
 	} as unknown as CustomEntry;
 	const text = renderWorkflowShellEntry(entry, false, identityTheme).render(80).join("\n");
-	assert.match(text, /newer schematic version/);
+	expect(text).toMatch(/newer schematic version/);
 });
 
 test("entry type constant stays the persisted wire name", () => {
-	assert.equal(WORKFLOW_EXIT_ENTRY_TYPE, "workflow-exit");
+	expect(WORKFLOW_EXIT_ENTRY_TYPE).toBe("workflow-exit");
 });

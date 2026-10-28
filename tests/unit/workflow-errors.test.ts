@@ -1,16 +1,15 @@
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import { messageOf, safeAppendEntry } from "../../workflow/errors.js";
 
 test("messageOf returns Error.message for Error instances", () => {
 	const error = new Error("boom");
-	assert.equal(messageOf(error), "boom");
+	expect(messageOf(error)).toBe("boom");
 });
 
 test("messageOf stringifies non-Error values", () => {
-	assert.equal(messageOf("string"), "string");
-	assert.equal(messageOf(42), "42");
-	assert.equal(messageOf(null), "null");
+	expect(messageOf("string")).toBe("string");
+	expect(messageOf(42)).toBe("42");
+	expect(messageOf(null)).toBe("null");
 });
 
 test("safeAppendEntry returns true on success", () => {
@@ -21,8 +20,8 @@ test("safeAppendEntry returns true on success", () => {
 			return true;
 		},
 	} as any;
-	assert.equal(safeAppendEntry(pi, "test", { a: 1 }), true);
-	assert.deepEqual(entries, [{ type: "test", data: { a: 1 } }]);
+	expect(safeAppendEntry(pi, "test", { a: 1 })).toBe(true);
+	expect(entries).toStrictEqual([{ type: "test", data: { a: 1 } }]);
 });
 
 test("safeAppendEntry returns false when append throws", () => {
@@ -31,5 +30,5 @@ test("safeAppendEntry returns false when append throws", () => {
 			throw new Error("append failed");
 		},
 	} as any;
-	assert.equal(safeAppendEntry(pi, "test"), false);
+	expect(safeAppendEntry(pi, "test")).toBe(false);
 });

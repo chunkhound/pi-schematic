@@ -1,9 +1,9 @@
 // Overlap-guard contract (workflow/host.ts): workflow.* calls are serial. Compiled
 // workflows are async, so two handles can interleave across an await; the second
 // overlapping call must reject with the guard message while the first still completes.
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { assertPresent } from "../assertions.js";
 import { createState } from "../../state.js";
 import { createWorkflowHost } from "../../workflow/host.js";
 import type { WorkflowHostDeps } from "../../workflow/types.js";
@@ -58,14 +58,10 @@ test("a second overlapping handle call rejects while the first still completes",
 	const shell = createWorkflowHost(deps)
 		.globals()
 		.find((tool) => tool.name === "workflow.shell");
-	assert.ok(shell, "workflow.shell is registered");
+	assertPresent(shell, "workflow.shell is registered");
 	const context = { signal: new AbortController().signal } as never;
 	const first = shell.execute(["echo one"], context) as Promise<unknown>;
-	await assert.rejects(
-		shell.execute(["echo two"], context) as Promise<unknown>,
-		/workflow calls must not overlap/,
-		"the overlapping call must reject with the guard message",
-	);
+	await expect(shell.execute(["echo two"], context) as Promise<unknown>).rejects.toThrow(/workflow calls must not overlap/);
 	openGate();
 	await first; // the rejected overlap leaves the in-flight call untouched
 	// A serial loop stays legal: once the previous call settled, the next one runs.

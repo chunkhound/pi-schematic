@@ -2,8 +2,7 @@
 // fresh post-replacement runtime. These tests pin the reservation semantics
 // (single exclusive claim, idempotent release) and the per-session binding isolation
 // that let a still-running workflow rebind after a session replacement.
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import type { WorkflowRuntimeBinding } from "../../workflow/coordinator.js";
 import { discardWorkflowRuntime, publishWorkflowRuntime, releaseWorkflow, reserveWorkflow, takeWorkflowRuntime } from "../../workflow/coordinator.js";
 
@@ -27,17 +26,17 @@ function resetRegistry(): void {
 
 test("reserveWorkflow claims the single workflow reservation", () => {
 	resetRegistry();
-	assert.equal(reserveWorkflow(), true);
+	expect(reserveWorkflow()).toBe(true);
 	releaseWorkflow();
 });
 
 test("reserveWorkflow returns false when already reserved (reservation race)", () => {
 	resetRegistry();
-	assert.equal(reserveWorkflow(), true);
-	assert.equal(reserveWorkflow(), false, "second claim must fail while the first is live");
-	assert.equal(reserveWorkflow(), false, "a third claim is just as rejected");
+	expect(reserveWorkflow()).toBe(true);
+	expect(reserveWorkflow(), "second claim must fail while the first is live").toBe(false);
+	expect(reserveWorkflow(), "a third claim is just as rejected").toBe(false);
 	releaseWorkflow();
-	assert.equal(reserveWorkflow(), true, "claimable again after release");
+	expect(reserveWorkflow(), "claimable again after release").toBe(true);
 	releaseWorkflow();
 });
 
@@ -45,10 +44,10 @@ test("releaseWorkflow is idempotent: double-release is a no-op, not an error", (
 	resetRegistry();
 	reserveWorkflow();
 	releaseWorkflow();
-	assert.doesNotThrow(() => {
+	expect(() => {
 		releaseWorkflow();
-	}, "second release must not throw");
-	assert.equal(reserveWorkflow(), true, "reservation is available after double-release");
+	}).not.toThrow();
+	expect(reserveWorkflow(), "reservation is available after double-release").toBe(true);
 	releaseWorkflow();
 });
 
@@ -59,28 +58,28 @@ test("runtime bindings are isolated per session id (cross-session isolation)", (
 	publishWorkflowRuntime("session-a", bindingA);
 	publishWorkflowRuntime("session-b", bindingB);
 	// Each session sees only its own binding.
-	assert.equal(takeWorkflowRuntime("session-a"), bindingA);
-	assert.equal(takeWorkflowRuntime("session-b"), bindingB);
+	expect(takeWorkflowRuntime("session-a")).toBe(bindingA);
+	expect(takeWorkflowRuntime("session-b")).toBe(bindingB);
 	// Already-taken sessions return null on a second take.
-	assert.equal(takeWorkflowRuntime("session-a"), null);
-	assert.equal(takeWorkflowRuntime("session-b"), null);
+	expect(takeWorkflowRuntime("session-a")).toBeNull();
+	expect(takeWorkflowRuntime("session-b")).toBeNull();
 	// Unknown sessions have nothing.
-	assert.equal(takeWorkflowRuntime("session-c"), null);
+	expect(takeWorkflowRuntime("session-c")).toBeNull();
 });
 
 test("takeWorkflowRuntime is consume-once: a second take returns null", () => {
 	resetRegistry();
 	const binding = fakeBinding();
 	publishWorkflowRuntime("session-x", binding);
-	assert.equal(takeWorkflowRuntime("session-x"), binding);
-	assert.equal(takeWorkflowRuntime("session-x"), null, "binding must be consumed");
+	expect(takeWorkflowRuntime("session-x")).toBe(binding);
+	expect(takeWorkflowRuntime("session-x"), "binding must be consumed").toBeNull();
 });
 
 test("discardWorkflowRuntime removes a binding without consuming it for take", () => {
 	resetRegistry();
 	publishWorkflowRuntime("session-z", fakeBinding());
 	discardWorkflowRuntime("session-z");
-	assert.equal(takeWorkflowRuntime("session-z"), null, "discarded session has no binding");
+	expect(takeWorkflowRuntime("session-z"), "discarded session has no binding").toBeNull();
 });
 
 test("discarding one session does not affect another session's binding", () => {
@@ -89,16 +88,16 @@ test("discarding one session does not affect another session's binding", () => {
 	publishWorkflowRuntime("keep-session", keep);
 	publishWorkflowRuntime("drop-session", fakeBinding());
 	discardWorkflowRuntime("drop-session");
-	assert.equal(takeWorkflowRuntime("keep-session"), keep, "untouched session still has its binding");
-	assert.equal(takeWorkflowRuntime("drop-session"), null, "dropped session is gone");
+	expect(takeWorkflowRuntime("keep-session"), "untouched session still has its binding").toBe(keep);
+	expect(takeWorkflowRuntime("drop-session"), "dropped session is gone").toBeNull();
 });
 
 test("workflow reservation and runtime bindings are independent", () => {
 	resetRegistry();
 	const binding = fakeBinding();
 	publishWorkflowRuntime("indep", binding);
-	assert.equal(reserveWorkflow(), true, "reserving the workflow does not consume a runtime binding");
-	assert.equal(takeWorkflowRuntime("indep"), binding, "binding still present while reserved");
+	expect(reserveWorkflow(), "reserving the workflow does not consume a runtime binding").toBe(true);
+	expect(takeWorkflowRuntime("indep"), "binding still present while reserved").toBe(binding);
 	releaseWorkflow();
-	assert.equal(takeWorkflowRuntime("indep"), null, "binding consumed after release (consume-once)");
+	expect(takeWorkflowRuntime("indep"), "binding consumed after release (consume-once)").toBeNull();
 });

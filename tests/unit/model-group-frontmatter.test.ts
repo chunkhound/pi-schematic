@@ -1152,7 +1152,7 @@ test("suppressed input causes no frontmatter side effects; release restores them
 				await handler({ reason: "startup" }, ctx);
 			}
 			const binding = takeWorkflowRuntime(sessionId);
-			expect(binding).toBe(true); // "session_start publishes the live runtime";
+			expect(binding).not.toBeNull(); // "session_start publishes the live runtime";
 			const live = binding!.state;
 
 			// While a run suppresses input the flag stands in for its installed handler

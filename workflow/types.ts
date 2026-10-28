@@ -114,9 +114,8 @@ export function readWorkflowExitEntry(data: unknown): WorkflowExitEntry | null {
  * `phase` literal written into that entry. Run-scoped phases come from the command and the
  * limits dialog; `abort`/`effect`/`progress` come from the host's advisory reporters. */
 export type WorkflowErrorPhase = "start" | "reserve" | "exit-record" | "summary" | "cleanup" | "abort" | "effect" | "progress";
-/** Ordered runtime form of the union. Nothing reads it yet; it exists so the compile guard
- * below fails when a member is added without updating this list. */
-const WORKFLOW_ERROR_PHASES = [
+/** Runtime form of the union; the single source every phase-write path validates against. */
+export const WORKFLOW_ERROR_PHASES = [
 	"start",
 	"reserve",
 	"exit-record",

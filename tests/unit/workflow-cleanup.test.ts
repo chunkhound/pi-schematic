@@ -1,7 +1,8 @@
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import { CodemodeSandbox, type CodemodeResult, type CodemodeTool } from "@earendil-works/pi-codemode";
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { assertPresent } from "../assertions.js";
+import { createCommandContext, createModelRegistry, createTheme, createUIContext, recordOf } from "./helpers.js";
 import { createState } from "../../state.js";
 import { READONLY_ENABLED_STATUS } from "../../notifications.js";
 import { releaseWorkflow, reserveWorkflow } from "../../workflow/coordinator.js";
@@ -23,7 +24,67 @@ import { createTestHost } from "./test-host.js";
 const TICK_MS = 5;
 /** Committed workflow fixture: the command reads and compiles it; the sandbox seam never runs it. */
 const CLEANUP_WORKFLOW = "tests/e2e/fixtures/command-return.js";
-const OK_RESULT = { ok: true, value: undefined, output: [], calls: [], storeWrites: { set: {}, delete: [] } } as unknown as CodemodeResult;
+const OK_RESULT: CodemodeResult = { ok: true, value: undefined, output: [], calls: [], storeWrites: { set: {}, delete: [] } };
+
+/** A recorded appended entry: known fields typed, the rest opaque. */
+interface CleanupEntry {
+	v?: number;
+	reason?: string;
+	phase?: string;
+	error?: string;
+	[key: string]: unknown;
+}
+
+function toCleanupEntry(data: unknown): CleanupEntry {
+	return { ...recordOf(data, "an appended entry") };
+}
+
+/** A `CodemodeSandbox` whose `members` are its own; any other member throws naming it. */
+function stubSandbox(members: Partial<CodemodeSandbox>): CodemodeSandbox {
+	const candidate: unknown = Object.create(CodemodeSandbox.prototype);
+	if (!(candidate instanceof CodemodeSandbox)) {
+		throw new Error("could not build a sandbox stub");
+	}
+	return Object.assign(candidate, members);
+}
+
+// The methods `SessionManager` declares.
+const SESSION_MANAGER_METHODS = new Set(Object.getOwnPropertyNames(SessionManager.prototype).filter((name) => name !== "constructor"));
+
+/** A session manager whose session seams read the cleanup branch; any other method throws naming it. */
+function cleanupSessionManager(faults: CleanupFaults): SessionManager {
+	return new Proxy(SessionManager.inMemory(), {
+		get(_manager, property, receiver) {
+			if (property === "getSessionId") {
+				return () => "cleanup-test";
+			}
+			if (property === "getLeafId") {
+				return () => null;
+			}
+			if (property === "getBranch") {
+				return () => {
+					if (faults.branch?.() === true) {
+						throw new Error("branch read down");
+					}
+					return [];
+				};
+			}
+			if (property === "getEntries") {
+				return () => [];
+			}
+			if (property === "getSessionName") {
+				return () => undefined;
+			}
+			if (typeof property === "string" && SESSION_MANAGER_METHODS.has(property)) {
+				return () => {
+					throw new Error(`ctx.sessionManager.${property} is not stubbed in this test context; only the cleanup seams are.`);
+				};
+			}
+			const value: unknown = Reflect.get(SessionManager.inMemory(), property, receiver);
+			return value;
+		},
+	});
+}
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -57,18 +118,20 @@ interface CleanupHarness {
 	/** Real throws per seam, so each test proves its fault actually fired. */
 	thrown: { paint: number; footer: number; notify: number; append: number };
 	run: () => Promise<void>;
-	entries: (customType: string) => Record<string, any>[];
+	entries: (customType: string) => CleanupEntry[];
 	/** The run-owned resources every completed run must hand back. */
 	assertReleased: () => void;
 }
 
-async function createCleanupHarness(spec: {
-	headless?: boolean;
-	/** Vary the reported context percent per call: the ticker then has a real change to repaint. */
-	varyingContext?: boolean;
-	/** Runs inside the sandbox call, so a test controls exactly when its fault is live. */
-	body?: (window: RunWindow) => Promise<CodemodeResult | undefined>;
-} = {}): Promise<CleanupHarness> {
+async function createCleanupHarness(
+	spec: {
+		headless?: boolean;
+		/** Vary the reported context percent per call: the ticker then has a real change to repaint. */
+		varyingContext?: boolean;
+		/** Runs inside the sandbox call, so a test controls exactly when its fault is live. */
+		body?: (window: RunWindow) => Promise<CodemodeResult | undefined>;
+	} = {},
+): Promise<CleanupHarness> {
 	const state = createState();
 	let usageCalls = 0;
 	const faults: CleanupFaults = {};
@@ -81,7 +144,7 @@ async function createCleanupHarness(spec: {
 
 	/** One chrome write: fault first (counted and logged), then log the write it stands for. */
 	function paint(key: string): void {
-		if (faults.paint?.(key)) {
+		if (faults.paint?.(key) === true) {
 			thrown.paint += 1;
 			log.push(`paint:throw:${key}`);
 			throw new Error("paint down");
@@ -89,32 +152,27 @@ async function createCleanupHarness(spec: {
 		log.push(`paint:${key}`);
 	}
 
-	const ctx = {
-		hasUI: !spec.headless,
-		mode: spec.headless ? "rpc" : "tui",
+	const ctx = createCommandContext({
+		hasUI: spec.headless !== true,
+		mode: spec.headless === true ? "rpc" : "tui",
 		cwd: process.cwd(),
-		abort: () => {},
-		newSession: async () => ({ cancelled: false }),
+		abort: () => undefined,
+		newSession: () => Promise.resolve({ cancelled: false }),
 		isIdle: () => true,
-		modelRegistry: { getModelsOfType: () => [], getModelOfType: () => undefined },
-		getContextUsage: () => ({ percent: spec.varyingContext ? 40 + (usageCalls++ % 25) : 40, tokens: 40_000, contextWindow: 100_000 }),
-		sessionManager: {
-			getSessionId: () => "cleanup-test",
-			getLeafId: () => null,
-			getBranch: () => {
-				if (faults.branch?.()) {throw new Error("branch read down");}
-				return [];
+		modelRegistry: createModelRegistry({ getModelsOfType: () => [], getModelOfType: () => undefined }),
+		getContextUsage: () => ({ percent: spec.varyingContext === true ? 40 + (usageCalls++ % 25) : 40, tokens: 40_000, contextWindow: 100_000 }),
+		sessionManager: cleanupSessionManager(faults),
+		ui: createUIContext({
+			theme: createTheme({ fg: (name: string, text: string) => `[${name}:${text}]` }),
+			setStatus: (key: string) => {
+				paint(key);
 			},
-			getEntries: () => [],
-			getSessionName: () => undefined,
-		},
-		ui: {
-			theme: { fg: (name: string, text: string) => `[${name}:${text}]` },
-			setStatus: (key: string) => { paint(key); },
-			setWidget: (key: string) => { paint(key); },
-			setWorkingMessage: () => {},
+			setWidget: (key: string) => {
+				paint(key);
+			},
+			setWorkingMessage: () => undefined,
 			setFooter: (factory: unknown) => {
-				if (faults.footer?.(factory)) {
+				if (faults.footer?.(factory) === true) {
 					thrown.footer += 1;
 					log.push("footer:throw");
 					throw new Error("footer down");
@@ -122,16 +180,16 @@ async function createCleanupHarness(spec: {
 				log.push(factory === undefined ? "footer:restore" : "footer:install");
 			},
 			notify: (message: string) => {
-				if (faults.notify?.(message)) {
+				if (faults.notify?.(message) === true) {
 					thrown.notify += 1;
 					log.push("notify:throw");
 					throw new Error("notice down");
 				}
 				notes.push(message);
 			},
-			onTerminalInput: () => () => {},
-		},
-	} as unknown as ExtensionCommandContext;
+			onTerminalInput: () => () => undefined,
+		}),
+	});
 
 	const deps: WorkflowCommandDeps = {
 		// Mirrors index.ts `setReadonly`: the posture is state, then the return value.
@@ -139,41 +197,58 @@ async function createCleanupHarness(spec: {
 			state.readonlyEnabled = enabled;
 			return enabled;
 		},
-		requestHandoff: async () => {},
-		watchHandoffSettlement: () => ({ done: new Promise<never>(() => {}), dispose: () => {} }),
-		prepareRunFrontmatter: async () => {},
+		requestHandoff: () => Promise.resolve(),
+		watchHandoffSettlement: () => ({ done: new Promise<never>(() => undefined), dispose: () => undefined }),
+		prepareRunFrontmatter: () => Promise.resolve(),
 		progressTickMs: TICK_MS,
 		// A fake bash that holds the effect open, so a test can observe the ticker mid-run.
 		shellRun: async () => {
 			await sleep(TICK_MS * 20);
-			return { content: [{ type: "text", text: "ok" }], isError: false, structuredContent: { output: "ok", truncated: false, exit_code: 0, wall_time_seconds: 0 } };
+			return {
+				content: [{ type: "text", text: "ok" }],
+				isError: false,
+				structuredContent: { output: "ok", truncated: false, exit_code: 0, wall_time_seconds: 0 },
+			};
 		},
 		sandboxFactory: (options) => {
-			for (const tool of options.globals ?? []) {tools.set(tool.name, tool);}
-			return {
+			for (const tool of options.globals ?? []) {
+				tools.set(tool.name, tool);
+			}
+			return stubSandbox({
 				execute: async (_source: string, runOptions: { signal: AbortSignal }) => {
 					currentSignal = runOptions.signal;
-					return (await spec.body?.({ tools, get signal() { return currentSignal; }, faults })) ?? OK_RESULT;
+					return (
+						(await spec.body?.({
+							tools,
+							get signal() {
+								return currentSignal;
+							},
+							faults,
+						})) ?? OK_RESULT
+					);
 				},
-				close: async () => {
+				close: () => {
 					closed = true;
+					return Promise.resolve();
 				},
-			} as unknown as CodemodeSandbox;
+			});
 		},
 	};
-	const pi = await createTestHost((api) => { registerWorkflowCommand(api, state, deps); });
+	const pi = await createTestHost((api) => {
+		registerWorkflowCommand(api, state, deps);
+	});
 	// Flags bypass the budget dialog: the run starts with a limit no empty branch can cross.
 	pi.setFlag("workflow-cost", "10");
-	const appendEntry = pi.appendEntry;
-	pi.appendEntry = ((customType: string, data?: unknown) => {
-		if (faults.append?.(customType)) {
+	const appendEntry = pi.appendEntry.bind(pi);
+	pi.appendEntry = (customType: string, data?: unknown) => {
+		if (faults.append?.(customType) === true) {
 			thrown.append += 1;
 			log.push(`append:throw:${customType}`);
 			throw new Error("append down");
 		}
 		log.push(`append:${customType}`);
 		appendEntry(customType, data);
-	});
+	};
 
 	return {
 		state,
@@ -181,22 +256,24 @@ async function createCleanupHarness(spec: {
 		notes,
 		log,
 		thrown,
-		entries: (customType) => pi.appendedEntries.filter((record) => record.customType === customType).map((record) => record.data as Record<string, any>),
+		entries: (customType) => pi.appendedEntries.filter((record) => record.customType === customType).map((record) => toCleanupEntry(record.data)),
 		run: async () => {
 			// Precondition that is itself an invariant: a finished run always releases the
 			// process-wide reservation, so one failing run cannot silently poison the next test.
-			assert.equal(reserveWorkflow(), true, "the previous run released the process-wide workflow reservation");
+			expect(reserveWorkflow(), "the previous run released the process-wide workflow reservation").toBe(true);
 			releaseWorkflow();
-			await pi.commands.get("workflow")!.handler(CLEANUP_WORKFLOW, ctx);
+			const workflowCommand = pi.commands.get("workflow");
+			assertPresent(workflowCommand, "the workflow command is registered");
+			await workflowCommand.handler(CLEANUP_WORKFLOW, ctx);
 		},
 		assertReleased: () => {
-			assert.equal(state.inputSuppressed, false, "input is usable again");
+			expect(state.inputSuppressed, "input is usable again").toBe(false);
 			// Secondary check only: the host clears the sink it installed, so a null sink proves the
 			// sink step ran. Registry disposal is an independent step in `disposeHost` and is proved
 			// directly in tests/unit/workflow-run-registry.test.ts, not here.
-			assert.equal(state.childUsageSink, null, "the run's child-usage sink is uninstalled");
-			assert.equal(pi.handlers.get("input")?.length ?? 0, 0, "the input subscription is removed");
-			assert.equal(closed, true, "the sandbox closed");
+			expect(state.childUsageSink, "the run's child-usage sink is uninstalled").toBeNull();
+			expect(pi.handlers.get("input")?.length ?? 0, "the input subscription is removed").toBe(0);
+			expect(closed, "the sandbox closed").toBe(true);
 		},
 	};
 }
@@ -209,17 +286,25 @@ test("a throwing ticker paint stays inside the timer and the run still releases"
 		varyingContext: true, // a changing indicator makes each tick repaint
 		body: async (window) => {
 			// An in-flight effect keeps the progress view non-idle, so the ticker really repaints.
-			const running = Promise.resolve(window.tools.get("workflow.shell")!.execute(["sleep 1"], { signal: window.signal }));
+			const shellTool = window.tools.get("workflow.shell");
+			assertPresent(shellTool, "the workflow.shell handle is registered");
+			const running = Promise.resolve(shellTool.execute(["sleep 1"], { signal: window.signal }));
 			// Hold the fault until one timer paint throws (bounded by the held shell), so a stalled
 			// CI runner cannot miss the window; then clear it to restore the tick.
-			let threw = false;
+			const state = { threw: false };
 			window.faults.paint = (key) => {
-				if (!key.startsWith("pi-schematic")) {return false;}
-				threw = true;
+				if (!key.startsWith("pi-schematic")) {
+					return false;
+				}
+				state.threw = true;
 				return true;
 			};
-			running.finally(() => { threw = true; });
-			while (!threw) {await sleep(TICK_MS);}
+			void running.finally(() => {
+				state.threw = true;
+			});
+			while (!state.threw) {
+				await sleep(TICK_MS);
+			}
 			delete window.faults.paint;
 			await running;
 		},
@@ -232,36 +317,54 @@ test("a throwing ticker paint stays inside the timer and the run still releases"
 	} finally {
 		process.off("uncaughtException", capture);
 	}
-	assert.ok(h.thrown.paint > 0, "the ticker paint really threw");
-	assert.deepEqual(escaped, [], "a throwing paint must never escape the interval callback");
+	expect(h.thrown.paint > 0, "the ticker paint really threw").toBe(true);
+	expect(escaped, "a throwing paint must never escape the interval callback").toStrictEqual([]);
 	h.assertReleased();
-	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ v: 1, reason: "returned" }], "the run records its own outcome");
-	assert.equal(h.entries(WORKFLOW_SUMMARY_ENTRY_TYPE).length, 1, "the overview still lands");
-	assert.ok(h.log.includes("footer:restore"), "chrome is restored after the paint fault");
+	expect(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), "the run records its own outcome").toStrictEqual([{ v: 1, reason: "returned" }]);
+	expect(h.entries(WORKFLOW_SUMMARY_ENTRY_TYPE).length, "the overview still lands").toBe(1);
+	expect(h.log, "chrome is restored after the paint fault").toContain("footer:restore");
 });
 
 // WHY: `openRun` binds the run inside the try so a throwing seam there cannot bypass the
 // finally. The fault is a throwing session-branch read during host construction, which fails
 // the first binding step before the run owns anything. A failed start must be reported, never
 // thrown at pi, and the backstop must clear the poisoned prior-run state so the next run works.
-test("a throwing openRun binding reports a failed start and never poisons the next run", async () => {
+test("a throwing openRun binding reports a failed start in the transcript", async () => {
 	const h = await createCleanupHarness({ headless: true });
 	h.state.inputSuppressed = true;
-	h.state.childUsageSink = () => {};
+	h.state.childUsageSink = () => undefined;
 	h.faults.branch = () => true;
 	await h.run();
 
-	assert.deepEqual(h.entries(WORKFLOW_ERROR_ENTRY_TYPE), [{ phase: "start", error: "workflow failed to start: branch read down" }], "the failed start is visible in the transcript");
-	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [], "a run that never started records no exit");
-	assert.equal(h.log.filter((entry) => entry.startsWith("footer")).length, 0, "a failed start paints no chrome");
-	assert.equal(h.state.inputSuppressed, false, "the poisoned suppression flag is cleared");
-	assert.equal(h.state.childUsageSink, null, "the poisoned sink is cleared");
-	assert.equal(reserveWorkflow(), true, "the failed start released the process reservation");
-	releaseWorkflow();
+	expect(h.entries(WORKFLOW_ERROR_ENTRY_TYPE), "the failed start is visible in the transcript").toStrictEqual([
+		{ phase: "start", error: "workflow failed to start: branch read down" },
+	]);
+	expect(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), "a run that never started records no exit").toStrictEqual([]);
+	expect(h.log.filter((entry) => entry.startsWith("footer")).length, "a failed start paints no chrome").toBe(0);
+});
 
+test("a throwing openRun binding clears the poisoned run state and releases the reservation", async () => {
+	const h = await createCleanupHarness({ headless: true });
+	h.state.inputSuppressed = true;
+	h.state.childUsageSink = () => undefined;
+	h.faults.branch = () => true;
+	await h.run();
+
+	expect(h.state.inputSuppressed, "the poisoned suppression flag is cleared").toBe(false);
+	expect(h.state.childUsageSink, "the poisoned sink is cleared").toBeNull();
+	expect(reserveWorkflow(), "the failed start released the process reservation").toBe(true);
+	releaseWorkflow();
+});
+
+test("a run after a failed start completes", async () => {
+	const h = await createCleanupHarness({ headless: true });
+	h.state.inputSuppressed = true;
+	h.state.childUsageSink = () => undefined;
+	h.faults.branch = () => true;
+	await h.run();
 	delete h.faults.branch;
 	await h.run();
-	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ v: 1, reason: "returned" }], "the next run completes");
+	expect(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), "the next run completes").toStrictEqual([{ v: 1, reason: "returned" }]);
 	h.assertReleased();
 });
 
@@ -275,7 +378,9 @@ test("release disposes the host before chrome and keeps going when a chrome rest
 	const h = await createCleanupHarness({ varyingContext: true });
 	const releasedAtChrome: { sink: boolean; input: boolean }[] = [];
 	h.faults.footer = (factory) => {
-		if (factory !== undefined) {return false;}
+		if (factory !== undefined) {
+			return false;
+		}
 		releasedAtChrome.push({
 			sink: h.state.childUsageSink === null,
 			input: !h.state.inputSuppressed,
@@ -284,11 +389,14 @@ test("release disposes the host before chrome and keeps going when a chrome rest
 		return true;
 	};
 	await h.run();
-	assert.deepEqual(releasedAtChrome, [{ sink: true, input: true }], "host-owned resources and input are released before chrome is restored");
-	assert.ok(h.log.slice(h.log.indexOf("footer:throw")).some((entry) => entry.startsWith("paint:")), "the indicator refresh still ran after the throwing footer restore");
+	expect(releasedAtChrome, "host-owned resources and input are released before chrome is restored").toStrictEqual([{ sink: true, input: true }]);
+	expect(
+		h.log.slice(h.log.indexOf("footer:throw")).some((entry) => entry.startsWith("paint:")),
+		"the indicator refresh still ran after the throwing footer restore",
+	).toBe(true);
 	h.assertReleased();
-	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ v: 1, reason: "returned" }]);
-	assert.equal(h.entries(WORKFLOW_SUMMARY_ENTRY_TYPE).length, 1);
+	expect(h.entries(WORKFLOW_EXIT_ENTRY_TYPE)).toStrictEqual([{ v: 1, reason: "returned" }]);
+	expect(h.entries(WORKFLOW_SUMMARY_ENTRY_TYPE).length).toBe(1);
 });
 
 // WHY: `workflow.readonly` is a posture switch whose repaint is advisory. Without the guard
@@ -298,23 +406,26 @@ test("a throwing readonly notice leaves the posture applied and the run alive", 
 	const h = await createCleanupHarness({
 		body: async (window) => {
 			window.faults.notify = (message) => message === READONLY_ENABLED_STATUS;
+			const readonlyTool = window.tools.get("workflow.readonly");
+			assertPresent(readonlyTool, "the workflow.readonly handle is registered");
 			try {
-				await window.tools.get("workflow.readonly")!.execute(true, { signal: window.signal });
+				await readonlyTool.execute(true, { signal: window.signal });
 				return undefined;
 			} catch (error) {
 				// A real sandbox surfaces a rejected handle as a failed script run.
-				return { ok: false, error: { kind: "error", message: String(error) }, output: [], calls: [] } as unknown as CodemodeResult;
+				const failed: CodemodeResult = { ok: false, error: { kind: "script", message: String(error) }, output: [], calls: [] };
+				return failed;
 			} finally {
 				delete window.faults.notify;
 			}
 		},
 	});
 	await h.run();
-	assert.equal(h.thrown.notify, 1, "the readonly notice really threw");
-	assert.equal(h.state.readonlyEnabled, true, "the posture is applied even when the notice fails");
-	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ v: 1, reason: "returned" }], "an advisory paint failure never aborts the run");
-	assert.equal(h.entries(WORKFLOW_SUMMARY_ENTRY_TYPE)[0]?.reason, "returned");
-	assert.ok(h.notes.includes("returned"), "the run outcome is still noticed");
+	expect(h.thrown.notify, "the readonly notice really threw").toBe(1);
+	expect(h.state.readonlyEnabled, "the posture is applied even when the notice fails").toBe(true);
+	expect(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), "an advisory paint failure never aborts the run").toStrictEqual([{ v: 1, reason: "returned" }]);
+	expect(h.entries(WORKFLOW_SUMMARY_ENTRY_TYPE)[0]?.reason).toBe("returned");
+	expect(h.notes, "the run outcome is still noticed").toContain("returned");
 	h.assertReleased();
 });
 
@@ -326,11 +437,11 @@ test("a throwing summary-fallback notice still releases every run resource", asy
 	h.faults.append = (customType) => customType === WORKFLOW_SUMMARY_ENTRY_TYPE || customType === WORKFLOW_ERROR_ENTRY_TYPE;
 	h.faults.notify = (message) => message.startsWith("workflow overview could not be persisted");
 	await h.run();
-	assert.equal(h.thrown.notify, 1, "the fallback notice really threw");
-	assert.deepEqual(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), [{ v: 1, reason: "returned" }], "the exit record stands on its own");
-	assert.equal(h.entries(WORKFLOW_SUMMARY_ENTRY_TYPE).length, 0, "the failed overview is not recorded");
+	expect(h.thrown.notify, "the fallback notice really threw").toBe(1);
+	expect(h.entries(WORKFLOW_EXIT_ENTRY_TYPE), "the exit record stands on its own").toStrictEqual([{ v: 1, reason: "returned" }]);
+	expect(h.entries(WORKFLOW_SUMMARY_ENTRY_TYPE).length, "the failed overview is not recorded").toBe(0);
 	h.assertReleased();
-	assert.ok(h.log.includes("footer:restore"), "chrome is restored even when every record path fails");
+	expect(h.log, "chrome is restored even when every record path fails").toContain("footer:restore");
 });
 
 // WHY: an effect can outlive `releaseRun` (its promise resolves after the sandbox stops
@@ -338,18 +449,20 @@ test("a throwing summary-fallback notice still releases every run resource", asy
 // chrome: `ctl.ctx` is nulled before the chrome restore and the activity channel is disposed.
 test("an effect that outlives the run leaves no late audit row and reinstalls no chrome", async () => {
 	const h = await createCleanupHarness({
-		body: async (window) => {
+		body: (window) => {
 			// Fire-and-forget: the sandbox returns before this shell resolves.
-			void window.tools.get("workflow.shell")!.execute(["sleep 1"], { signal: window.signal });
-			return OK_RESULT;
+			const shellTool = window.tools.get("workflow.shell");
+			assertPresent(shellTool, "the workflow.shell handle is registered");
+			void shellTool.execute(["sleep 1"], { signal: window.signal });
+			return Promise.resolve(OK_RESULT);
 		},
 	});
 	await h.run();
-	assert.ok(h.log.includes("footer:restore"), "chrome is restored on release");
+	expect(h.log, "chrome is restored on release").toContain("footer:restore");
 	const rowsAtRelease = h.entries(WORKFLOW_SHELL_ENTRY_TYPE).length;
 	const logAtRelease = h.log.length;
 	await sleep(TICK_MS * 40);
-	assert.equal(h.entries(WORKFLOW_SHELL_ENTRY_TYPE).length, rowsAtRelease, "no late audit row after dispose");
-	assert.deepEqual(h.log.slice(logAtRelease), [], "no chrome write after release");
+	expect(h.entries(WORKFLOW_SHELL_ENTRY_TYPE).length, "no late audit row after dispose").toBe(rowsAtRelease);
+	expect(h.log.slice(logAtRelease), "no chrome write after release").toStrictEqual([]);
 	h.assertReleased();
 });

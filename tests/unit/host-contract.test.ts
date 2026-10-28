@@ -3,10 +3,9 @@
 // missing bind throws "Extension runtime not initialized" only at call time, deep inside an
 // unrelated suite — so this file scans the engine's call sites and probes each runtime action
 // the host must answer. Registration methods live on the real loader api and are not probed.
-import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import { createTestHost, type TestPI } from "./test-host.js";
 
 const WORKFLOW_DIR = fileURLToPath(new URL("../../workflow/", import.meta.url));
@@ -71,7 +70,7 @@ test("every pi action the workflow engine calls exists on the host", async () =>
 	const missing = [...calledPiMethods()]
 		.filter(([method]) => typeof (pi as unknown as Record<string, unknown>)[method] !== "function")
 		.map(([method, files]) => `${method} (${files.join(", ")})`);
-	assert.deepEqual(missing, [], `host is missing pi actions: ${missing.join("; ")}`);
+	expect(missing, `host is missing pi actions: ${missing.join("; ")}`).toStrictEqual([]);
 });
 
 test("every runtime action the engine calls answers without the notInitialized sentinel", async () => {
@@ -89,15 +88,15 @@ test("every runtime action the engine calls answers without the notInitialized s
 		try {
 			await probe(pi);
 		} catch (error) {
-			assert.fail(`${method} is unbound in the host: ${error instanceof Error ? error.message : String(error)}`);
+			throw new Error(`${method} is unbound in the host: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 		}
 	}
-	assert.deepEqual(uncovered, [], `add a safe host probe for: ${uncovered.join(", ")}`);
+	expect(uncovered, `add a safe host probe for: ${uncovered.join(", ")}`).toStrictEqual([]);
 });
 
 test("seeded shellPath reaches the engine through getSettings", async () => {
 	const pi = await createTestHost(undefined, { shellPath: "/bin/zsh" });
-	assert.equal(pi.getSettings().shellPath, "/bin/zsh");
+	expect(pi.getSettings().shellPath).toBe("/bin/zsh");
 });
 
 test("the test flag store round-trips through the real getFlag reader", async () => {
@@ -105,5 +104,5 @@ test("the test flag store round-trips through the real getFlag reader", async ()
 		api.registerFlag("host-contract-probe", { type: "string", description: "host-contract probe" });
 	});
 	pi.setFlag("host-contract-probe", "5");
-	assert.equal(pi.getFlag("host-contract-probe"), "5");
+	expect(pi.getFlag("host-contract-probe")).toBe("5");
 });
