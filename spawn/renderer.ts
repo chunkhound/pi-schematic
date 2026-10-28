@@ -109,7 +109,13 @@ function normalizeRoute(value: unknown): SpawnRouteDetails | undefined {
 		return undefined;
 	}
 	if (value.status === "inherited") {
-		return { status: "inherited" };
+		// Accept both the persisted `{status:"inherited"}` and the current shape with
+		// provider/modelId; the extra identity is preserved when present.
+		return {
+			status: "inherited",
+			...(typeof value.provider === "string" ? { provider: value.provider } : {}),
+			...(typeof value.modelId === "string" ? { modelId: value.modelId } : {}),
+		};
 	}
 	if (value.status === "routed" && typeof value.group === "string" && typeof value.provider === "string" && typeof value.modelId === "string") {
 		return { status: "routed", group: value.group, provider: value.provider, modelId: value.modelId };
