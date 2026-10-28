@@ -43,8 +43,8 @@ import {
 import { isHandoffEligible, normalizeContextPercent } from "./handoff/eligibility.js";
 import { getReadonlyFromBranch } from "./readonly-rehydration.js";
 import { HANDOFF_REQUIRED_STATUS } from "./handoff/copy.js";
-import { registerHandoffCommand } from "./handoff/command.js";
-import { registerHandoffBoundary } from "./handoff/boundary.js";
+import { registerHandoffCommand, requestHandoff } from "./handoff/command.js";
+import { registerHandoffBoundary, watchHandoffSettlement } from "./handoff/boundary.js";
 import {
 	READONLY_ACTIVE_SUMMARY,
 	READONLY_COMMAND_DESCRIPTION,
@@ -74,6 +74,9 @@ import {
 } from "./notifications.js";
 import { clampThinkingLevel, type Api, type Model, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { registerSpawnTool } from "./spawn/index.js";
+import { registerWorkflowCommand } from "./workflow/command.js";
+import { registerWorkflowSummaryRenderer } from "./workflow/summary-renderer.js";
+import { registerWorkflowShellRenderer } from "./workflow/activity.js";
 import { registerModelGroupsCommand } from "./model-groups/command.js";
 import { resolveSpawnModelRoute, SpawnRouteError } from "./model-groups/router.js";
 import { registerModelGroupAutocomplete } from "./model-groups/autocomplete.js";
@@ -181,6 +184,31 @@ function resolveReadonlySelection(state: SchematicState, pending: PendingCommand
 
 function formatCommandRef(command: PendingCommand): string {
 	return command.type === "skill" ? `/skill:${command.name}` : `/${command.name}`;
+}
+
+/**
+ * Shared frontmatter gate for both resolution paths (interactive `input` hook and the
+ * workflow-run bridge), so the two can never drift apart. Null means plain text or a
+ * command whose frontmatter must stay untouched: builtin readonly-bypass commands own
+ * their own state transitions, and commands whose source is not a prompt template carry
+ * no resolvable frontmatter. Plain prompts parse to null, which is exactly what lets
+ * workflow runs dispatch free-form prompts.
+ */
+function pendingFrontmatterCommand(text: string, pi: ExtensionAPI): PendingCommand | null {
+	const pending = parsePendingCommand(text);
+	if (!pending) return null;
+	if (pending.type !== "command") return pending;
+	if (isBuiltinReadonlyBypassCommand(pending.name)) return null;
+	// Commands whose source is not a prompt template carry no resolvable frontmatter.
+	return pi.getCommands().some((command) => command.name === pending.name && command.source !== "prompt") ? null : pending;
+}
+
+/** Extract the leading slash-command invocation. Returns null for plain text. */
+function parsePendingCommand(text: string): PendingCommand | null {
+	const skillName = text.match(/^\/skill:([^\s]+)/)?.[1];
+	if (skillName) return { type: "skill", name: skillName };
+	const commandName = text.match(/^\/([^\s]+)/)?.[1];
+	return commandName ? { type: "command", name: commandName } : null;
 }
 
 function recordFrontmatterIssue(
@@ -451,6 +479,31 @@ function refreshModelGroupsState(state: SchematicState, ctx: ExtensionContext) {
 	return state.modelGroups.validation;
 }
 
+/**
+ * Apply skill/prompt frontmatter for a `workflow.run` turn. Workflow turns are
+ * extension-sourced, so the `input` hook cannot resolve them; the workflow host
+ * calls this before dispatch instead. Throws when model routing blocks the turn
+ * so the workflow sees an explicit failure instead of a silent no-op.
+ */
+export async function prepareWorkflowRunFrontmatter(
+	state: SchematicState,
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	text: string,
+): Promise<void> {
+	const pending = pendingFrontmatterCommand(text, pi);
+	if (!pending) return;
+	// Same order as the interactive input gate: populate the cache, refresh Model
+	// Groups, then resolve one selection against both.
+	populateFrontmatterCache(state, ctx, pi);
+	refreshModelGroupsState(state, ctx);
+	const selection = resolveModelSelection(state, pending);
+	if (await preflightModelSelection(state, ctx, pi, pending, selection)) {
+		throw new Error(`workflow.run: frontmatter model selection failed for ${formatCommandRef(pending)}`);
+	}
+	state.pendingReadonlyCommands.push(pending);
+}
+
 export default function (pi: ExtensionAPI): void {
 	const state: SchematicState = createState();
 
@@ -459,6 +512,10 @@ export default function (pi: ExtensionAPI): void {
 	registerNotebookTopicTool(pi, state);
 	registerHandoffTool(pi, state);
 	registerSpawnTool(pi, state);
+
+	// ── Register renderers ──────────────────────────────────────────
+	registerWorkflowSummaryRenderer(pi);
+	registerWorkflowShellRenderer(pi);
 
 	// ── Register event handlers ─────────────────────────────────────
 	// Handoff boundary first. Its failure path resets toolCalled before the
@@ -472,6 +529,12 @@ export default function (pi: ExtensionAPI): void {
 	// ── Register commands ───────────────────────────────────────────
 	registerHandoffCommand(pi, state);
 	registerModelGroupsCommand(pi, state);
+	registerWorkflowCommand(pi, state, {
+		setReadonly,
+		requestHandoff: (direction, ctx) => requestHandoff(pi, state, direction, ctx),
+		watchHandoffSettlement: () => watchHandoffSettlement(state),
+		prepareRunFrontmatter: (text, ctx) => prepareWorkflowRunFrontmatter(state, ctx, pi, text),
+	});
 
 	// ── Register prompt sections (render order = registration order) ──
 	const promptSections = createPromptSectionRegistry();
@@ -489,9 +552,18 @@ export default function (pi: ExtensionAPI): void {
 		default: false,
 	});
 
+	/** Set the readonly posture and persist it; returns the new value. Shared with `workflow.readonly`. */
+	function setReadonly(enabled: boolean): boolean {
+		if (state.readonlyEnabled === enabled) return enabled;
+		state.readonlyEnabled = enabled;
+		state.readonlyNudgePending = true;
+		pi.appendEntry("pi-schematic-readonly", { enabled: state.readonlyEnabled });
+		return state.readonlyEnabled;
+	}
+
 	function toggleReadonly(ctx: ExtensionContext): void {
 		if (!ctx.hasUI) return; // Toggle is a UI-only command, no-op in headless.
-		state.readonlyEnabled = !state.readonlyEnabled;
+		setReadonly(!state.readonlyEnabled);
 		// A pendingRequestedHandoff is a promise to perform a real handoff later; tell
 		// the user which mode the fresh context will follow, then nudge the model.
 		if (state.pendingRequestedHandoff) {
@@ -589,19 +661,14 @@ export default function (pi: ExtensionAPI): void {
 		// Extension-sourced steer/followUp text and headless sessions must not
 		// mutate the interactive frontmatter state.
 		if (!ctx.hasUI || event.source === "extension") return { action: "continue" };
+		// Suppressed input is dropped by the workflow handler later in dispatch order;
+		// it must not mutate model/readonly state first.
+		if (state.inputSuppressed) return { action: "continue" };
 
-		const skillName = event.text.match(/^\/skill:([^\s]+)/)?.[1];
-		const commandName = event.text.match(/^\/([^\s]+)/)?.[1];
-		if (!skillName && !commandName) return { action: "continue" };
-
-		const commands = pi.getCommands();
-		const pending = skillName
-			? { type: "skill" as const, name: skillName }
-			: { type: "command" as const, name: commandName! };
-		if (!skillName && isBuiltinReadonlyBypassCommand(pending.name)) return { action: "continue" };
-		if (!skillName && commands.some((command) => command.name === pending.name && command.source !== "prompt")) {
-			return { action: "continue" };
-		}
+		// The extension-source and input-suppression skips above are hook-specific: a
+		// workflow.run turn is extension-sourced by definition and must still resolve.
+		const pending = pendingFrontmatterCommand(event.text, pi);
+		if (!pending) return { action: "continue" };
 
 		// Command metadata is already available at input time. This prevents a
 		// failed selection from reaching Pi's expansion/agent-start lifecycle.
