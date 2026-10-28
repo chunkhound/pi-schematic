@@ -109,6 +109,16 @@ export interface TruncationReport {
 	outputBytes: number;
 }
 
+/** Single source of truth for the write-time truncation notice: the interactive notebook tool
+ * and the workflow notebook handle must report clipping identically. */
+export function formatTruncationReport(report: TruncationReport): string {
+	return `TRUNCATED by ${report.truncatedBy}: kept ${report.outputLines} of ${report.totalLines} lines (${report.outputBytes} of ${report.totalBytes} bytes); tail dropped. Split this page into smaller pages.`;
+}
+
+/** Single source of truth for the read-time clip notice: both readers must report a page that
+ * was clipped at write time identically. */
+export const CLIPPED_PAGE_NOTICE = "Notice: This page was clipped at write time; its stored body is incomplete.";
+
 export async function saveNotebookPage(
 	pi: ExtensionAPI,
 	state: SchematicState,
