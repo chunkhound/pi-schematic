@@ -42,6 +42,8 @@ import { MODEL_GROUP_MODALITY_PROSE } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
 import { HANDOFF_TOOL_NAME } from "../handoff/tool.js";
 import { THINKING_LEVELS } from "../thinking-levels.js";
+import { safeAppendEntry } from "../workflow/errors.js";
+import { STRUCTURED_OUTPUT_TOOL } from "../workflow/output.js";
 import {
 	renderSpawnCall,
 	renderSpawnResult,
@@ -49,6 +51,7 @@ import {
 import {
 	getLastAssistantText,
 	getStopReasonOutcome,
+	SPAWN_NOTICE_ENTRY_TYPE,
 	type SpawnOutcome,
 	type SpawnResultDetails,
 	type SpawnToolResult,
@@ -246,7 +249,7 @@ function getInheritableParentToolNames(parentToolNames: string[], availableTools
  * Local child custom tools are added separately. Parent-only custom tools are
  * intentionally excluded so the child never advertises a tool it cannot execute.
  *
- * handoff and spawn never carry into children.
+ * handoff, spawn and the run-scoped workflow_output never carry into children.
  */
 export function buildChildToolNames(
 	parentToolNames: string[],
@@ -256,7 +259,8 @@ export function buildChildToolNames(
 	const inheritableParentToolNames = availableTools
 		? getInheritableParentToolNames(parentToolNames, availableTools)
 		: parentToolNames;
-	const inheritedTools = inheritableParentToolNames.filter((name) => name !== "spawn" && name !== HANDOFF_TOOL_NAME);
+	const excluded = new Set(["spawn", HANDOFF_TOOL_NAME, STRUCTURED_OUTPUT_TOOL]);
+	const inheritedTools = inheritableParentToolNames.filter((name) => !excluded.has(name));
 	return [...new Set([...inheritedTools, ...childTools.map((tool) => tool.name)])];
 }
 
@@ -440,7 +444,12 @@ export function executeSpawn(
 						provider: route.provider,
 						modelId: route.modelId,
 					}
-				: { status: "inherited" };
+				: { status: "inherited", provider: route.provider, modelId: route.modelId };
+
+	// WHY: capture the run-owned sink before any await. A late flush after this run ends
+	// must write to the run that spawned the child, never the next run's sink.
+	const childUsageSink = state.childUsageSink;
+	const childProvider = route.provider;
 
 	const childSessionEpoch = state.childSessionEpoch;
 	const isStale = () => state.childSessionEpoch !== childSessionEpoch;
@@ -510,6 +519,15 @@ export function executeSpawn(
 	// public session value so child details describe what actually runs. The
 	// fallback keeps intentionally partial session test doubles compatible.
 	const effectiveChildThinking = () => session.thinkingLevel ?? requestedChildThinking;
+	// Child spend belongs to the run ledger from the moment it is incurred. Flushing
+	// cumulative usage on every message_end keeps live cost attributed to the child's
+	// model, so an aborted run cannot leave a model-less residual; cumulative (not
+	// delta) makes the settle flush idempotent.
+	const flushChildSpend = () => {
+		if (!childUsageSink) return;
+		childUsageSink(toolCallId, childProvider, childModel.id, collectChildAccounting(session).usage);
+	};
+	let unsubscribeChildEvents: (() => void) | undefined;
 	const buildBaseDetails = (truncated: boolean, outcome: SpawnOutcome): SpawnResultDetails => ({
 		model: childModel.id,
 		thinking: effectiveChildThinking(),
@@ -544,6 +562,20 @@ export function executeSpawn(
 			// attach with a fully-published live ownership record.
 			state.liveChildSessions.set(toolCallId, session);
 			state.childSessions.set(toolCallId, session);
+
+			// The subscription is UI-independent; a failure loses live flushes only, and
+			// the settle flush below still runs, so it never fails the spawn.
+			if (typeof session.subscribe === "function") {
+				try {
+					unsubscribeChildEvents = session.subscribe((event) => {
+						if (event.type === "message_end") flushChildSpend();
+					});
+				} catch (error) {
+					const issue = `Spawn event subscription failed: ${failureMessage(error)}`;
+					if (ctx.hasUI) ctx.ui.notify(issue, "warning");
+					safeAppendEntry(pi, SPAWN_NOTICE_ENTRY_TYPE, { phase: "spawn-event-subscribe-failed", message: issue });
+				}
+			}
 
 			try {
 				if (signal?.aborted) {
@@ -623,6 +655,10 @@ export function executeSpawn(
 			primary = { error };
 			throw error;
 		} finally {
+			unsubscribeChildEvents?.();
+			// Last flush before dispose: covers headless runs, missed message_end events
+			// and abort paths.
+			flushChildSpend();
 			clearChildSession();
 			try {
 				// AgentSession always provides dispose(); the guard keeps intentionally

@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { __setModelGroupsFsForTests, modelGroupsPath } from "../../model-groups/store.js";
 import { makeReadonlyUICtx, tmpDir, theme } from "./helpers.js";
 import { createBeforeAgentStartEvent, createTestHost } from "./test-host.js";
+import { takeWorkflowRuntime } from "../../workflow/coordinator.js";
 import { withTemp } from "./model-groups-helpers.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -56,6 +57,7 @@ function makeNotifyCtx(overrides: Record<string, unknown> = {}) {
 				theme,
 				setStatus: () => {},
 				setWidget: () => {},
+				addAutocompleteProvider: () => {},
 			},
 		}),
 		cwd: process.cwd(),
@@ -994,6 +996,58 @@ test("model-group commands are applied during their input preflight", async () =
 		assert.equal(setModelCalls.length, 2, "each command is selected before its agent turn");
 		assert.equal(setModelCalls[0].id, "gpt-4o");
 		assert.equal(setModelCalls[1].id, "claude-sonnet");
+	} finally {
+		await rm(skillDir, { recursive: true, force: true });
+	}
+}));
+
+test("suppressed input causes no frontmatter side effects; release restores them", async () => withTemp(async ({ cwd }) => {
+	const skillDir = await tmpDir();
+	try {
+		const quietPath = await writeSkillMd(skillDir, "quiet", { readonly: true });
+		const loudPath = await writeSkillMd(skillDir, "loud", { model: "openai/gpt-4o" });
+		const pi = await createTestHost();
+		const setModelCalls: any[] = [];
+		(pi as any).setModel = async (model: any) => { setModelCalls.push(model); return true; };
+
+		const [inputHandler] = pi.handlers.get("input")!;
+		const sessionId = "suppression-contract";
+		const { ctx, notifications } = makeNotifyCtx({
+			cwd,
+			model: mockModel("openai", "gpt-parent"),
+			modelRegistry: mockRegistry(),
+			sessionManager: {
+				getSessionId: () => sessionId,
+				getBranch: () => [],
+				getLeafId: () => null,
+				getEntries: () => [],
+			},
+		});
+		pi.setCommands([makeSkillCommand("quiet", quietPath), makeSkillCommand("loud", loudPath)]);
+		// Real dispatch order: every session_start handler runs, and the workflow
+		// publisher exposes the extension's live state for the assertions below.
+		for (const handler of pi.handlers.get("session_start") ?? []) await handler({ reason: "startup" }, ctx);
+		const binding = takeWorkflowRuntime(sessionId);
+		assert.ok(binding, "session_start publishes the live runtime");
+		const live = binding.state;
+
+		// While a run suppresses input the flag stands in for its installed handler
+		// (the subscribe path raising it is pinned in tests/e2e/workflow-command.test.ts).
+		live.inputSuppressed = true;
+		const baseline = notifications.length;
+		assert.deepEqual(await inputHandler({ text: "/skill:quiet", source: "interactive" }, ctx), { action: "continue" });
+		assert.deepEqual(await inputHandler({ text: "/skill:loud", source: "interactive" }, ctx), { action: "continue" });
+		assert.equal(live.pendingReadonlyCommands.length, 0, "suppressed input queues no readonly toggle");
+		assert.equal(setModelCalls.length, 0, "suppressed input switches no model");
+		assert.equal(notifications.length, baseline, "suppressed input notifies nothing");
+
+		// After the run releases suppression the same submissions apply again.
+		live.inputSuppressed = false;
+		await inputHandler({ text: "/skill:quiet", source: "interactive" }, ctx);
+		assert.deepEqual(live.pendingReadonlyCommands, [{ type: "skill", name: "quiet" }]);
+		await inputHandler({ text: "/skill:loud", source: "interactive" }, ctx);
+		assert.equal(setModelCalls.length, 1, "released input routes the model again");
+		assert.equal(setModelCalls[0].id, "gpt-4o");
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
