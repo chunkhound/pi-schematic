@@ -12,11 +12,16 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, vi } from "vitest";
 
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { createState, type SchematicState } from "../../state.js";
 import { renderSpawnCall, renderSpawnResult } from "../../spawn/renderer.js";
 import { updateIndicators } from "../../tui.js";
 import { useTestHarness } from "../test-utils.js";
 import { createSession, makeTUICtx, theme } from "./helpers.js";
+import { renderWorkflowSummary, MAX_EFFECT_ROWS } from "../../workflow/summary-renderer.js";
+import type { WorkflowRunSummaryData } from "../../workflow/summary.js";
+import { UNATTRIBUTED_MODEL, type ModelSpend } from "../../usage.js";
 
 // ── Paths ─────────────────────────────────────────────────────────────
 
@@ -36,6 +41,14 @@ class RenderTestBackend {
 	}
 }
 
+// ── Theme: identity (no styling tokens, clean golden files) ───────────
+
+const identityTheme: Theme = {
+	fg: (_name: string, text: string) => text,
+	bold: (text: string) => text,
+	bg: (_name: string, text: string) => text,
+	italic: (text: string) => text,
+} as unknown as Theme;
 // ── Snapshot helpers ──────────────────────────────────────────────────
 
 /** Strip OSC terminal escape sequences for portable snapshot comparison. */
@@ -259,4 +272,97 @@ test.for([30, 50, 70])("context indicator at %i% matches snapshot", async (perce
 	updateIndicators(ctx, state);
 	const status = record.statuses.get("pi-schematic-ctx") ?? "";
 	await expectGoldenFile(`indicator-${percent}`, status);
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// 12–13: Workflow run overview card
+// ═══════════════════════════════════════════════════════════════════════
+
+function spendRow(key: string, model: string, costUsd: number, tokens: number, calls: number): ModelSpend {
+	return {
+		key,
+		provider: model === UNATTRIBUTED_MODEL ? null : key.split("/")[0],
+		model,
+		costUsd,
+		totalTokens: tokens,
+		inputTokens: Math.round(tokens * 0.6),
+		outputTokens: Math.round(tokens * 0.3),
+		cacheReadTokens: Math.round(tokens * 0.09),
+		cacheWriteTokens: Math.round(tokens * 0.01),
+		calls,
+	};
+}
+
+function overviewData(): WorkflowRunSummaryData {
+	const startedAt = Date.UTC(2026, 0, 2, 3, 0, 0);
+	return {
+		v: 1,
+		workflow: "review-worktree",
+		reason: "approved",
+		startedAt: new Date(startedAt).toISOString(),
+		endedAt: new Date(startedAt + 5_025_000).toISOString(),
+		elapsedMs: 5_025_000,
+		checkpoints: 3,
+		steps: 5,
+		turns: 14,
+		classifySteps: 2,
+		activity: { run: 5, checkpoint: 3, classify: 2, shell: 4, handoff: 1, notebookWrite: 6, new: 1 },
+		costUsd: 1.87,
+		spend: [
+			spendRow("anthropic/claude-opus-4-5", "claude-opus-4-5", 1.5, 1_200_000, 8),
+			spendRow("anthropic/claude-haiku-4", "claude-haiku-4", 0.3, 200_000, 4),
+			spendRow("typesafe/jev", "jev", 0.07, 12_000, 2),
+		],
+		limits: { costLimit: null, timeBudgetMs: null },
+		unbounded: false,
+		crossedAt: null,
+	};
+}
+
+test("workflow overview collapsed matches snapshot", async () => {
+	const component = renderWorkflowSummary(overviewData(), false, identityTheme);
+	const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
+	await expectGoldenFile("workflow-overview-collapsed", rtb.toSnapshot());
+});
+
+test("workflow overview expanded matches snapshot", async () => {
+	const component = renderWorkflowSummary(overviewData(), true, identityTheme);
+	const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
+	await expectGoldenFile("workflow-overview-expanded", rtb.toSnapshot());
+});
+
+test("workflow overview with a salvaged checkpoint payload matches snapshot", async () => {
+	const component = renderWorkflowSummary({ ...overviewData(), reason: "time-limit", partial: { round: 3, approved: true } }, false, identityTheme);
+	const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
+	await expectGoldenFile("workflow-overview-salvaged", rtb.toSnapshot());
+});
+
+test("workflow overview never renders a line wider than the viewport", () => {
+	for (const width of [1, 2, 5, 12, 40, SNAP_WIDTH]) {
+		for (const data of [overviewData(), { ...overviewData(), spend: [] }]) {
+			const lines = renderWorkflowSummary(data, false, identityTheme).render(width);
+			for (const line of lines) {
+				expect(visibleWidth(line) <= width, `width ${width}: line is ${visibleWidth(line)} wide`).toBeTruthy();
+			}
+		}
+	}
+});
+
+test("workflow overview trims the expanded effect log to MAX_EFFECT_ROWS with an earlier count", () => {
+	// summary-renderer.ts slices the expanded card to the last MAX_EFFECT_ROWS effects
+	// (host caps the stored log at MAX_EFFECTS=100). This pins the renderer cap so a
+	// regression cannot render an unbounded log or drop the wrong end.
+	const extra = 5;
+	const effects = Array.from({ length: MAX_EFFECT_ROWS + extra }, (_, i) => ({
+		id: i,
+		name: "shell" as const,
+		detail: `echo ${i}`,
+		ok: true,
+		durationMs: 10,
+	}));
+	const data: WorkflowRunSummaryData = { ...overviewData(), effects };
+	const rendered = new RenderTestBackend().render(renderWorkflowSummary(data, true, identityTheme), SNAP_WIDTH).toSnapshot();
+	expect(rendered.includes(`… ${extra} earlier`), "older effects are summarized, not rendered individually").toBeTruthy();
+	expect(rendered.includes("echo 0"), "the oldest effect is trimmed").toBe(false);
+	expect(rendered.includes(`echo ${MAX_EFFECT_ROWS + extra - 1}`), "the newest effect is kept").toBe(true);
 });
