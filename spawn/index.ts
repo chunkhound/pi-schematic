@@ -42,6 +42,8 @@ import { MODEL_GROUP_MODALITY_PROSE } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
 import { HANDOFF_TOOL_NAME } from "../handoff/tool.js";
 import { THINKING_LEVELS } from "../thinking-levels.js";
+import { safeAppendEntry } from "../workflow/errors.js";
+import { STRUCTURED_OUTPUT_TOOL } from "../workflow/output.js";
 import {
 	renderSpawnCall,
 	renderSpawnResult,
@@ -49,6 +51,7 @@ import {
 import {
 	getLastAssistantText,
 	getStopReasonOutcome,
+	SPAWN_NOTICE_ENTRY_TYPE,
 	type SpawnOutcome,
 	type SpawnResultDetails,
 	type SpawnToolResult,
@@ -256,7 +259,8 @@ export function buildChildToolNames(
 	const inheritableParentToolNames = availableTools
 		? getInheritableParentToolNames(parentToolNames, availableTools)
 		: parentToolNames;
-	const inheritedTools = inheritableParentToolNames.filter((name) => name !== "spawn" && name !== HANDOFF_TOOL_NAME);
+	const excluded = new Set(["spawn", HANDOFF_TOOL_NAME, STRUCTURED_OUTPUT_TOOL]);
+	const inheritedTools = inheritableParentToolNames.filter((name) => !excluded.has(name));
 	return [...new Set([...inheritedTools, ...childTools.map((tool) => tool.name)])];
 }
 
@@ -569,6 +573,7 @@ export function executeSpawn(
 				} catch (error) {
 					const issue = `Spawn event subscription failed: ${failureMessage(error)}`;
 					if (ctx.hasUI) ctx.ui.notify(issue, "warning");
+					safeAppendEntry(pi, SPAWN_NOTICE_ENTRY_TYPE, { phase: "spawn-event-subscribe-failed", message: issue });
 				}
 			}
 
