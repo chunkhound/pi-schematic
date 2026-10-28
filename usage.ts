@@ -68,6 +68,16 @@ export function addModelSpend(map: Map<string, ModelSpend>, provider: string | n
 	map.set(key, { key, provider, model, ...usageDelta(usage) });
 }
 
+/** Single de-dup identity for a usage-bearing entry: the entry id when pi assigned one, else
+ * the tool-call id a tool result carries. Sources that do not hold the entry (the child
+ * ledger) key by tool-call id, so both sides address the same spend. */
+export function spendIdentity(entry: SessionEntry): string | null {
+	if (entry.id) {
+		return entry.id;
+	}
+	return entry.type === "message" && entry.message.role === "toolResult" ? entry.message.toolCallId || null : null;
+}
+
 /** Whether `skip` already owns this entry. Checks the entry id and the tool-call id: the
  * child ledger is keyed by the latter, and a tool result may carry a distinct pi id. An
  * empty entry id is never matched, preserving the fallback to the tool-call id. */
@@ -102,16 +112,20 @@ export function usageByModel(entries: readonly SessionEntry[], options?: { skip?
 		if (entry.type === "message") {
 			const message = entry.message;
 			if (message.role === "assistant") {
-				// pi's assistant message type always carries provider/model, so no fallback is needed.
-				addModelSpend(map, message.provider, message.model, message.usage);
+				// The type says assistant messages always carry usage/provider/model, but fixtures may
+				// omit them; read them through a tolerant shape so the guard stays honest.
+				const tolerant = message as { usage?: Usage; provider?: string; model?: string };
+				if (tolerant.usage) {
+					addModelSpend(map, tolerant.provider ?? null, tolerant.model ?? UNATTRIBUTED_MODEL, tolerant.usage);
+				}
 			} else if (message.role === "toolResult") {
-				const usage = message.usage;
-				if (usage) {
+				const tolerant = message as { usage?: Usage };
+				if (tolerant.usage) {
 					const details = isRecord(message.details) ? message.details : undefined;
 					const child = typeof details?.model === "string" ? details.model : undefined;
 					const route = isRecord(details?.route) ? details.route : undefined;
 					const provider = typeof route?.provider === "string" ? route.provider : undefined;
-					addModelSpend(map, provider ?? null, child ?? UNATTRIBUTED_MODEL, usage);
+					addModelSpend(map, provider ?? null, child ?? UNATTRIBUTED_MODEL, tolerant.usage);
 				}
 			}
 			continue;
@@ -155,6 +169,14 @@ export function mergeModelSpend(...maps: ReadonlyMap<string, ModelSpend>[]): Map
 		}
 	}
 	return merged;
+}
+
+/** One child's cumulative spend, owned by the run ledger. Cumulative (not delta) so a
+ * repeated message_end flush and the settle flush overwrite, never double-count. */
+export interface ChildSpend {
+	provider: string | null;
+	model: string;
+	usage: Usage;
 }
 
 /** Total USD of a spend map. The run's cost is always this sum, never a parallel snapshot. */
