@@ -40,7 +40,7 @@ const SPAWN_SOURCE_PATH = new URL("spawn/index.ts", REPO_ROOT_URL);
 const RENDERER_SOURCE_PATH = new URL("spawn/renderer.ts", REPO_ROOT_URL);
 // Pinned versions verified against package.json + lockfile.
 // Update when Pi devDependencies are bumped.
-const EXPECTED_PI_VERSION = "0.99.2";
+const EXPECTED_PI_VERSION = "1.0.4";
 const EXPECTED_TYPEBOX_VERSION = "1.3.27";
 // Approved peer floors — must track the pinned devDependency versions above.
 const EXPECTED_PI_PEER = `>=${EXPECTED_PI_VERSION}`;
@@ -51,16 +51,18 @@ const EXPECTED_MATRIX = new Set([
 	"macos-latest@24",
 	"windows-latest@24",
 ]);
-// Transitive brace-expansion and undici advisories in the pinned test host
-// @earendil-works/pi-coding-agent@0.99.2 (devDependency). Remove them when a
-// pinned host ships patched versions; the expiry forces periodic re-review.
+// Transitive undici advisories in the pinned test host
+// @earendil-works/pi-coding-agent@1.0.4 (devDependency). Remove an entry when a
+// pinned host ships a patched version; the expiry forces periodic re-review.
 const EXPECTED_ALLOWLIST_KEYS = new Set<string>([
-	"GHSA-6j4f-fj2g-mc7p",
-	"GHSA-qhr7-859c-m2p7",
-	"GHSA-q2hr-2g5m-vwhr",
 	"GHSA-xjj6-f33q-929c",
 	"GHSA-4qv8-2p9j-2685",
 	"GHSA-f72v-6w45-q472",
+	"GHSA-2m5v-pch6-74hx",
+	"GHSA-4w7w-5xrc-9h26",
+	"GHSA-55wc-3pg8-jfw6",
+	"GHSA-9fm3-97px-rjf6",
+	"GHSA-qrxm-fqhp-jwvm",
 ]);
 
 function readText(url: URL): string {
@@ -184,6 +186,7 @@ test("workflow keeps the expected matrix and audit/test order", () => {
 	const packageJson = parsePackageJson();
 	assert.match(workflow, /fail-fast:\s+false/);
 	assert.deepEqual(parseMatrixEntries(workflow), EXPECTED_MATRIX);
+	assert.ok(stepIndex(workflow, "Type check") < stepIndex(workflow, "Security audit"));
 	assert.ok(stepIndex(workflow, "Security audit") < stepIndex(workflow, "Unit tests"));
 	assert.ok(stepIndex(workflow, "Unit tests") < stepIndex(workflow, "E2E tests"));
 	assert.match(workflow, /run: npx audit-ci --config audit-ci\.jsonc/);

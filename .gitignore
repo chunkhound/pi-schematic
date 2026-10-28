@@ -52,6 +52,10 @@ web_modules/
 *.d.ts
 *.d.cts
 *.d.mts
+# Authored JavaScript, not compile output: workflow examples, project workflows, e2e fixtures.
+!examples/workflows/*.js
+!tests/e2e/fixtures/*.js
+!.pi/workflows/*.js
 # Hand-written declarations for committed .mjs helpers
 !/pi-packages.d.mts
 
@@ -150,13 +154,13 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 
-# package-lock.json committed for reproducible CI installs (excluded from publish)
-
 # pi-schematic local config (credentials, API keys)
 .chunkhound.json
 .chunkhound/
 .mcp.json
-.pi/
+# Local pi state is ignored, except authored project workflows (see exception above).
+.pi/*
+!.pi/workflows/
 
 # macOS
 .DS_Store
