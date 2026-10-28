@@ -8,9 +8,10 @@ pi-schematic is a Pi extension. It registers tools and hooks into the agent life
 |---|---|
 | `before_agent_start` | Resolves deferred readonly frontmatter, refreshes Model Groups, then writes schematic's prompt sections, including a per-run current-date anchor (see **Prompt sections** and **Date anchor** under Behavioral notes) |
 | `context` | Advisory watchdog reminders when context is elevated; a handoff nudge before every LLM call while a requested handoff is pending; readonly toggle nudges |
-| `input` | Resolves model-selection frontmatter during idle input; blocks it during streaming; queues readonly resolution |
+| `input` | Resolves model-selection frontmatter during idle input; blocks it during streaming; queues readonly resolution; `/workflow` marks input handled for the workflow run's duration |
 | `tool_call` | Refuses every `handoff` call after the first in a message of only `handoff` calls, `handoff` calls that share an assistant message with other tool calls (the other calls go to their own handlers), and `handoff` calls after a failed cut in the same run (an error result, the call does not run), before any readonly check; readonly then blocks write/edit/powershell/unguarded bash and blocks handoff unless a requested bypass is active |
 | `session_start` | Reconstructs notebook pages/epoch/watermark from the active branch, rehydrates readonly state; loads and validates Model Groups, registers group autocomplete, reports config issues, and resets session state on `/new` |
+| `session_shutdown` | Drops the per-session workflow binding (`discardWorkflowRuntime`, called from `workflow/command.ts`). The run releases the process-global reservation in `finally`, not this hook. |
 | `session_tree` | Invalidates branch-local handoff work (a handoff staged on the abandoned branch is dropped), reconstructs notebook pages/epoch/watermark from the newly active branch, rehydrates readonly state, refreshes indicators |
 | `message_end` | Records which `handoff` calls of an assistant message to refuse (every one when other tool calls share the message, all but the first otherwise), for `tool_call` |
 | `turn_end` | Returns a staged handoff as one boundary of drafts and asks Pi to continue the run (see **Handoff**); also updates TUI indicators (context %, notebook count, topic, readonly) |
@@ -23,54 +24,60 @@ pi-schematic is a Pi extension. It registers tools and hooks into the agent life
 ```typescript
 interface SchematicState {
   notebookPages: Map<string, string>
+  clippedPages: Set<string>
+  epoch: number
   activeNotebookTopic: string | null
   activeNotebookTopicSource: "human" | "agent" | null
-  pendingTopicBoundaryHint: { from, to } | null
-  readonlyEnabled: boolean
-  modelGroups: {
-    groups: ResolvedModelGroup[]
-    validation: ModelGroupsBootValidation | null
-  }
-  epoch: number
-  discardEpochWatermark: number
+  pendingTopicBoundaryHint: NotebookTopicBoundaryHint | null
   lastContextPercent: number | null
   stagedHandoff: StagedHandoff | null
   handoffFailedInRun: boolean
   handoffRefusals: Map<string, string>
-  pendingRequestedHandoff: { toolCalled, enforcementAttempts, eligibleNudgeDelivered, nextInstruction } | null
+  discardEpochWatermark: number
+  pendingRequestedHandoff: { nextInstruction: string | null; toolCalled: boolean; enforcementAttempts: number; eligibleNudgeDelivered: boolean } | null
+  modelGroups: {
+    groups: ResolvedModelGroup[]
+    validation: ModelGroupsBootValidation | null
+  }
   childSessions: Map<string, AgentSession>
+  // NEVER replaced — only .clear(); renderer ownership checks depend on stable identity (state.ts)
   liveChildSessions: Map<string, AgentSession>
+  // installed by the active workflow host; flushed on message_end and at settle
+  childUsageSink: ((toolCallId: string, provider: string | null, model: string, usage: Usage) => void) | null
+  // raised/lowered by the workflow run's suppression unsubscribe; NOT cleared by resetState
+  inputSuppressed: boolean
   childSessionEpoch: number
+  childAbortPromises: WeakMap<AgentSession, Promise<void>>
+  readonlyEnabled: boolean
+  readonlyNudgePending: boolean
+  // re-arms readonlyNudgePending when the run settles (see Handoff, lost successor)
+  readonlyNudgeRearmAtSettle: boolean
+  frontmatterSkillCache: Map<string, FrontmatterEntry>
+  frontmatterPromptCache: Map<string, FrontmatterEntry>
+  frontmatterSkillIssues: Map<string, FrontmatterIssue>
+  frontmatterPromptIssues: Map<string, FrontmatterIssue>
+  // FIFO slash-command intents queued in `input`, drained at before_agent_start
+  pendingReadonlyCommands: Array<{ type: "skill" | "command"; name: string }>
+  // null (<30), 0 (30-49), 1 (50-69), 2 (70+); null = never nudged
+  lastWatchdogBand: number | null
 }
 ```
 
 ## Behavioral notes
 
-**Spawn** — Without a Model Group, the child inherits the parent's public model and explicit/default thinking level. An exact known group randomly selects a registry-resolved, authenticated entry. An entry-specific thinking level overrides explicit/inherited thinking and is clamped for the selected model. An unknown group uses the parent model and the explicit or inherited thinking level. The fallback shows in the spawn tool's TUI display, which renders `<group>? fallback → <provider>/<model> • <thinking>`, and in the result's details as `route.status: "unknown-fallback"`; the result text the model receives carries no marker.
+**Spawn** — Routing rules:
+- Without a Model Group, the child inherits the parent's public model and explicit or default thinking level.
+- An exact known group selects a registry-resolved, authenticated entry at random. An entry-specific thinking level overrides the explicit or inherited level and is clamped for the selected model.
+- An unknown group uses the parent model and the explicit or inherited thinking level. The fallback shows in the spawn tool's TUI display (`<group>? fallback → <provider>/<model> • <thinking>`) and in the result's details as `route.status: "unknown-fallback"`; the result text the model receives carries no marker.
+- A known empty group, or one with no usable authenticated entries, fails before child-session creation.
+- The selected public model enters a child-owned runtime.
+- Children inherit cwd, the active registered tools they can run in that session, and readonly posture. They keep child-local notebook tools. They cannot spawn or handoff, and they never inherit the run-scoped `workflow_output` tool: a child call would satisfy the parent's structured-output contract.
 
-A known empty group, or one with no usable authenticated entries, fails before child-session creation. The selected public model enters a child-owned runtime. Children also inherit cwd and active registered tools executable in that session, retain child-local notebook tools, cannot spawn or handoff, and inherit readonly posture.
+Only a failure before the child session exists throws: model or route resolution, constraint validation, or the session factory rejecting. Once the session exists, a failure returns as an error result carrying the child's usage, zero when nothing ran, unless the thrown value cannot be turned into text. A child run that Pi resolves with stop reason `error` or `aborted` also returns an error result with `isError` set, and `details.outcome` stays `error` or `aborted`. The UI shows an aborted result as aborted although it carries `isError`; once `details.outcome` is final, the renderer prefers it over the child's stop reasons.
 
-Only a failure before the child session exists throws: model or route resolution, constraint validation, or the session factory rejecting. Once the session exists, a failure returns as an error result carrying the child's usage, zero when nothing ran, unless the thrown value cannot be turned into text (see the limitations below). This includes Pi's prompt pre-checks and a reset invalidation. A throw before the session exists carries no usage.
+The result text is cut at `DEFAULT_MAX_LINES` lines, then at `DEFAULT_MAX_BYTES` bytes on a UTF-8 character boundary, and the marker renders the size through `formatByteCap` (the form notebook uses). Error results are cut to the same limits with the same marker.
 
-A child run that Pi resolves with stop reason `error` or `aborted` also returns an error result with the child's usage. `details.outcome` stays `error` or `aborted`. When the parent aborted, the outcome is `aborted` and the text reads `Child agent aborted: ` followed by the parent signal's reason, whatever stop reason the child ended with. A prompt failure thrown under an aborted parent signal also reads as aborted, unless a reset made the run stale; a reset gives `error`. Without a parent abort, stop reason `error` reads `Child agent failed: ` and Pi's `errorMessage`, or `no error message` when Pi set none. Stop reason `aborted` reads `Child agent aborted: ` and Pi's `errorMessage`, or `Child agent aborted.` when Pi set none. The child's last partial output follows after a blank line, if any.
-
-An error result from a thrown failure shows the error's own message, or its text form when the thrown value is not an `Error`; an `Error` with an empty message shows its name. A reset reads `Spawn invalidated by reset.` A failure to dispose the child after a run that returned normally (a success, or an `error` or `aborted` completion) becomes the error result, with the dispose error's message as its text. After a thrown failure with a UI, the dispose failure goes to an error notice and the result keeps the primary error. After a thrown failure without a UI, or when that notice itself throws, the result text names both failures. A child abort that rejects goes to an error notice when there is a UI. Before the prompt, the abort error is the result text; during a reset, the text is `Spawn invalidated by reset; child abort failed.` A rejection from the parent-signal listener is not part of the result.
-
-The UI shows an aborted result as aborted although it carries `isError`. Once `details.outcome` is final, the renderer prefers it over the child's stop reasons. The collapsed view of a retained child shows the child's stats, or `stats unavailable` when `statsUnavailable` is set, once the final details arrive; the running update carries no stats. The static result view shows no stats.
-
-The result text is cut at the first 2000 lines, then at 51,200 bytes (50 KiB) on a UTF-8 character boundary. The marker writes the size as `50 KiB (51200 bytes)`, the form notebook uses, and advises spawning a new child with a narrower request. Error results are cut to the same limits with the same marker.
-
-The spawn result returns the child's token and cost usage. It counts toward the parent's session totals and footer, not its context size. The usage is one sum over the child session's entries, built the way Pi sums its own session usage. If the entries cannot be read or summed, the spawn keeps the child's text, reports zero usage, omits `details.stats` and sets `statsUnavailable`; the underlying error is not part of the result. `details.stats` and `statsUnavailable` are never both set.
-
-Spawn limitations:
-
-- Usage values outside Pi's types are summed as Pi sums them. An unreadable or unsummable entry list counts the child as zero usage and sets `statsUnavailable`.
-- A dispose failure after a run that returned normally (a success, or an `error` or `aborted` completion) replaces the result with the dispose error.
-- A parent abort after the child's final answer returns the answer behind the abort line.
-- A prompt failure under an aborted parent signal reads as aborted.
-- Error texts show only the error's own message, except two combined texts: `Spawn invalidated by reset; child abort failed.` and, without a UI or when the cleanup notice throws, `Spawn failed and cleanup failed: <primary>; <cleanup>`.
-- A thrown value that cannot be turned into text makes the spawn reject instead of resolving.
-- A child abort that rejects after the prompt started is reported only as a notice, and only when there is a UI. Pi's own abort does not reject, so only another session implementation reaches this.
+The spawn result returns the child's token and cost usage, one sum over the child session's entries, built the way Pi sums its own session usage. It counts toward the parent's session totals and footer, not its context size. If the entries cannot be read or summed, the spawn keeps the child's text, reports zero usage and sets `statsUnavailable`. Inside a workflow run the run-scoped `childUsageSink` (`state.ts`) also receives each child's cumulative spend on every `message_end` and at settle, so the workflow cost total prices child work live.
 
 **Model Groups** — `/model-groups` manages versioned global and trusted-project JSON configuration. Project groups shadow same-named global groups. Configuration is loaded and validated against Pi's model registry into the `modelGroups` snapshot; only group names and their effective modalities reach the agent prompt (see **Prompt sections**). Routing uses the parent registry only to select configured/authenticated entries—the registry/auth objects are not passed into the child runtime.
 
@@ -79,6 +86,8 @@ Spawn limitations:
 **Date anchor** — The `schematic_date` prompt section holds a `## Current date` block (`time/format.ts`: ISO date, weekday, IANA zone, UTC offset, plus a resolve-relative-references directive). `index.ts` registers it directly after the `schematic` primer section and before the topic, Model Groups and notebook sections. It is rendered once per user prompt, in `before_agent_start`, and stays fixed for the whole run, so it is never per-turn. While the host zone stays fixed, the block is byte-stable within a calendar day; the UTC offset can also change once on a DST transition day. When the date is unchanged since the previous prompt, Pi adds no update for `schematic_date`. When it has changed, Pi appends a section-update message for `schematic_date` and leaves the leading system message unchanged. A run that crosses midnight keeps the prior day's anchor until the next prompt renders it again. Every field — date, weekday, and offset — comes from one `Intl.DateTimeFormat` call for the rendered zone, so the anchor never mixes a host-local day with another zone's offset; `formatCurrentDate(date, zone?)` accepts an explicit zone, which is what makes DST and day-boundary behaviour testable. Any zone Intl cannot render — a host with a bogus `TZ`, or an explicit argument — falls back to `UTC` rather than rendering `undefined` or throwing out of the hook; zone aliases (`US/Eastern`) are kept verbatim. `time/format.ts` is the single source of truth for the anchor text.
 
 **Notebook** — Agent-curated named pages **scoped to the active session branch**, not a long-lived memory product. Stored as session custom entries so pages survive handoff and resume of the same work stream; `/new` (fresh session) clears them with the conversation. The visible pages and the committed generation epoch follow the branch the user navigated to: `/tree` reconstruction rehydrates from the newly active branch, so branches diverge without cross-contamination and returning to an earlier branch restores its state; writes land on the current branch's generation. Discard is transactional — survivors and both generation markers are written in the handoff's boundary pass together with the cut, and a declined boundary, or one that another extension drops whole, writes nothing; if another extension drops only the cut and keeps the notebook drafts, the discard markers persist and the notebook is rebuilt from them; if it keeps the cut and drops the notebook drafts, the pages stay, the completion notice counts them as kept, and a session with a UI also shows a warning naming them — and the epoch high-water mark is derived from the branch during reconstruction, so a failed attempt can never resurrect discarded pages after a restart. Active topic (`notebook_topic_set` or `/notebook <topic>`) frames spawn-vs-handoff preference; human-set topics are authoritative. Topic clears after a successful handoff. The interactive `/notebook` list pipes the selected page into an external pager (`$PI_PAGER`, else `$PAGER`, else an installed `less` except on Windows) while Pi's TUI is suspended; with no pager or a `cat` or `more` pager it shows a truncated inline preview, and either way the user returns to the list.
+
+Human topic-boundary cues under readonly that arrive below the context-eligibility threshold queue on the `pendingTopicBoundaryHint` field (`state.ts`) and promote to a handoff bypass once context usage crosses the threshold (resolved in the `before_agent_start` hook, `index.ts`).
 
 **Handoff** — Requires a real instruction and a meaningful context load (rejects empty instructions, very small sessions, or missing usage). Splits the next instruction (extension-carried, delivered verbatim; a human `/handoff` direction wins, otherwise the model supplies it) from preparation (model-owned: `context` plus notebook curation). `/handoff <direction>` queues the direction as the instruction; otherwise the model supplies `nextInstruction` to the handoff tool. The instruction is never started in the current context — that context is discarded at the cut.
 
@@ -102,6 +111,14 @@ Readonly is not frozen into the summary: a pending nudge re-announces the ON pos
 
 Compaction replaces the prior transcript with the fixed continuation frame: the next turns see a small context again (quality), and providers start a new input prefix for billing/cache (the dropped history is no longer in that prefix). Spawn runs children in separate context so their token use does not permanently inflate the parent. This extension does not configure provider cache TTLs or breakpoints.
 
+**Workflow** — `/workflow <workflow> [args]` runs a user-authored synchronous JavaScript file in a codemode sandbox.
+- The script owns control flow and the exit condition.
+- The host supplies serial model turns on the user-facing conversation, a guarded shell, and soft cost and time targets. A crossed target stops the run at its next checkpoint.
+- Child sessions come only from the model-invoked `spawn` tool. Usage attribution is the **Spawn** note above.
+- The serial-run invariant (process-global reservation plus input suppression) is specified once in [workflows.md](workflows.md) (Constraints). `inputSuppressed` (field in `state.ts`) carries it.
+- The host installs a run-scoped `childUsageSink` (field in `state.ts`). It attributes each spawned child's cumulative spend to its model on every `message_end` and at settle (`flushChildSpend` in `spawn/index.ts`). Like suppression, it is re-seeded on rebind and not cleared by `resetState`.
+- See [workflows.md](workflows.md) for the author contract and [workflow-engine.md](workflow-engine.md) for the engine internals.
+
 **Skill and prompt frontmatter** — Interactive TUI invocations resolve model selection during idle `input`; headless/RPC invocations ignore it. `readonly: true|false` alone is deferred to `before_agent_start`, where complete skill metadata is available.
 
 - `model: <provider>/<model-id>` selects a configured, authenticated model. Only the first slash separates the provider, so model IDs may contain slashes.
@@ -109,6 +126,8 @@ Compaction replaces the prior transcript with the fixed continuation frame: the 
 - `thinking: off|minimal|low|medium|high|xhigh|max` is capability-clamped for the selected or current model and overrides group thinking.
 
 A failed model change visibly blocks command expansion and records no success entry. During streaming steer/follow-up, commands with model-selection frontmatter are visibly blocked without model or thinking mutation; commands without it continue. Invalid frontmatter is ignored with a TUI warning.
+
+The interactive `input` hook queues slash-command intents into the FIFO `pendingReadonlyCommands` field (`state.ts`), drained at `before_agent_start` where the frontmatter cache is populated; it skips frontmatter resolution entirely when `inputSuppressed` is set, so a user input dropped by workflow-owned suppression cannot mutate model/readonly state ahead of the drop; the workflow's own extension-sourced sends pass suppression.
 
 **Readonly** — Session-persisted research posture. Toggle via `/readonly`, Ctrl+Shift+R, or `--readonly`. Write/edit and powershell always blocked at the tool boundary (powershell is blocked outright; there is no PowerShell command classifier). Bash uses a two-layer guard, and its classifier blocks launching PowerShell or cmd through bash:
 
@@ -132,6 +151,8 @@ Coding-agent guardrail on every OS — not a hardened security boundary. Stronge
 | `model-groups/` | Persistence, boot validation, CRUD TUI/autocomplete, spawn routing, prompt section |
 | `notebook/` | Page store, tools, topic, rehydration, external pager, prompt sections |
 | `handoff/` | Verbatim next-instruction delivery, model-owned context prep, the turn_end boundary (cut, successor, note), live readonly nudge |
+| `workflow/` | `/workflow` command: workflow compiler, sandbox host, handles, soft cost/time targets, exit record |
+| `usage.ts` / `process-state.ts` | Spend attribution shared by the workflow cost total, the run overview, and spawn; module-copy-safe process state |
 | `readonly-*.ts` / `os-sandbox.ts` | Readonly posture, bash policy, sandbox |
 | `watchdog.ts` / `tui.ts` / `state.ts` | Pressure advisories and required-handoff enforcement, status UI, shared state |
 
