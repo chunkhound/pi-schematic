@@ -13,7 +13,7 @@ import type { ShellOptions, ShellResult } from "./types.js";
 
 /** The subset of pi's bash tool result the runner maps; structural so tests inject easily. */
 export interface ShellToolResult {
-	content?: ReadonlyArray<{ type?: string; text?: string }>;
+	content?: readonly { type?: string; text?: string }[];
 	isError?: boolean;
 	structuredContent?: {
 		output: string;
@@ -24,7 +24,7 @@ export interface ShellToolResult {
 	};
 }
 
-export interface ShellRunOptions {
+interface ShellRunOptions {
 	signal: AbortSignal;
 	/** Timeout in seconds, matching pi's bash tool. */
 	timeout?: number;
@@ -54,9 +54,7 @@ export function blockedShellResult(reason: string): ShellResult {
 }
 
 function displayOf(outcome: ShellToolResult): string {
-	return (outcome.content ?? [])
-		.map((part) => (part.type === "text" && typeof part.text === "string" ? part.text : ""))
-		.join("\n");
+	return (outcome.content ?? []).map((part) => (part.type === "text" && typeof part.text === "string" ? part.text : "")).join("\n");
 }
 
 /** Map pi's bash tool result onto the workflow's wire contract. */
@@ -87,9 +85,11 @@ function piBashRun(deps: ShellRunnerDeps): ShellRun {
 			{ command, ...(options.timeout !== undefined ? { timeout: options.timeout } : {}) },
 			options.signal,
 			options.onUpdate
-				? (partial: { content?: ReadonlyArray<{ type?: string; text?: string }> }) => {
+				? (partial: { content?: readonly { type?: string; text?: string }[] }) => {
 						const text = partial.content?.[0]?.text;
-						if (typeof text === "string") options.onUpdate?.(text);
+						if (typeof text === "string") {
+							options.onUpdate?.(text);
+						}
 					}
 				: undefined,
 			// The bash tool only reads ExtensionContext fields (cwd, model, sessionManager,
@@ -130,12 +130,13 @@ async function executeShell(deps: ShellRunnerDeps, command: string, options: She
 }
 
 async function runShell(deps: ShellRunnerDeps, command: unknown, options: ShellOptions): Promise<ShellResult> {
-	if (typeof command !== "string" || !command.trim()) throw new Error("workflow.shell requires a non-empty command");
-	const guard =
-		deps.isReadonly() || options.readonly
-			? applyReadonlyBashGuard(command, deps.cwd)
-			: ({ action: "allow" } as const);
-	if (guard.action === "block") return blockedShellResult(guard.reason);
+	if (typeof command !== "string" || !command.trim()) {
+		throw new Error("workflow.shell requires a non-empty command");
+	}
+	const guard = deps.isReadonly() || options.readonly ? applyReadonlyBashGuard(command, deps.cwd) : ({ action: "allow" } as const);
+	if (guard.action === "block") {
+		return blockedShellResult(guard.reason);
+	}
 	const effective = guard.action === "sandbox" ? guard.sandboxedCommand : command;
 	return executeShell(deps, effective, options);
 }

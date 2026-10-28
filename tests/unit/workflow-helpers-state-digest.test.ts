@@ -1,7 +1,7 @@
 // Pure digest helpers exercised directly on realistic session branches. The host-level
 // suite (workflow-state-digest.test.ts) covers the sandbox seam; this suite pins the math.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
 	buildEntryDigests,
@@ -32,7 +32,7 @@ function compaction(id: string, summary: string): SessionEntry {
 		summary,
 		firstKeptEntryId: "a1",
 		tokensBefore: 100,
-	} as SessionEntry;
+	};
 }
 
 function branchFixture(): SessionEntry[] {
@@ -59,7 +59,7 @@ test("buildEntryDigests keeps text and names tool calls on assistant and tool-re
 		text: "Looking",
 		toolNames: ["bash", "read"],
 	});
-	assert.deepEqual(rows[2]!.toolNames, ["bash"]);
+	assert.deepEqual(rows[2].toolNames, ["bash"]);
 });
 
 test("buildEntryDigests reports summaries as text and other entry types as empty rows", () => {
@@ -82,18 +82,21 @@ test("buildEntryDigests drops non-text blocks and keeps text blocks in order", (
 		{ type: "image", data: "..." },
 		{ type: "text", text: "second" },
 	]);
-	assert.equal(buildEntryDigests([entry], {})[0]!.text, "firstsecond");
+	assert.equal(buildEntryDigests([entry], {})[0].text, "firstsecond");
 });
 
 test("buildEntryDigests accepts plain string content on user messages", () => {
-	assert.equal(buildEntryDigests([message("u1", "user", "plain prompt")], {})[0]!.text, "plain prompt");
+	assert.equal(buildEntryDigests([message("u1", "user", "plain prompt")], {})[0].text, "plain prompt");
 });
 
 test("buildEntryDigests returns every entry when after is null, undefined, or empty", () => {
 	const entries = branchFixture();
 	for (const after of [null, undefined, ""]) {
 		const rows = buildEntryDigests(entries, { after: after as string | undefined });
-		assert.deepEqual(rows.map((row) => row.id), entries.map((entry) => entry.id));
+		assert.deepEqual(
+			rows.map((row) => row.id),
+			entries.map((entry) => entry.id),
+		);
 	}
 });
 
@@ -150,10 +153,7 @@ test("lastAssistantText returns the newest assistant text, skipping user and too
 });
 
 test("lastAssistantText returns empty when the newest assistant turn carries only tool calls", () => {
-	const entries = [
-		message("a1", "assistant", [{ type: "text", text: "earlier" }]),
-		message("a2", "assistant", [{ type: "toolCall", name: "bash" }]),
-	];
+	const entries = [message("a1", "assistant", [{ type: "text", text: "earlier" }]), message("a2", "assistant", [{ type: "toolCall", name: "bash" }])];
 	assert.equal(lastAssistantText(entries), "");
 });
 
@@ -173,7 +173,13 @@ test("lastAssistantModel reports the newest assistant turn's model and thinking 
 
 test("lastAssistantModel reports the answering model when the provider fell back to a different one", () => {
 	// pi sets responseModel only on a fallback: model names the request, responseModel the answer.
-	const entries = [message("a1", "assistant", [{ type: "text", text: "x" }], { provider: "anthropic", model: "claude-sonnet-4-5", responseModel: "claude-sonnet-4-5-20260101" })];
+	const entries = [
+		message("a1", "assistant", [{ type: "text", text: "x" }], {
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
+			responseModel: "claude-sonnet-4-5-20260101",
+		}),
+	];
 	assert.deepEqual(lastAssistantModel(entries), { provider: "anthropic", model: "claude-sonnet-4-5-20260101" });
 });
 

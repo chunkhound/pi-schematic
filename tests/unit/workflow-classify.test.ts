@@ -1,7 +1,7 @@
 // Classifier contract exercised through the public `workflow.classify` handle
 // (createWorkflowHost seam); no workflow-internal imports.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { ClassifierApi, ClassifierModel, ClassifierResult } from "@earendil-works/pi-ai";
 import { createState } from "../../state.js";
 import { createWorkflowHost } from "../../workflow/host.js";
@@ -32,7 +32,14 @@ function makeResult(overrides: Partial<ClassifierResult> = {}): ClassifierResult
 }
 
 /** Fake registry boundary: the workflow only ever sees ctx.modelRegistry, never our internals. */
-function classifyHost(classify: (model: ClassifierModel<ClassifierApi>, context: unknown, options: { signal?: AbortSignal }) => Promise<ClassifierResult>, models: ClassifierModel<ClassifierApi>[] = [model]): { host: WorkflowHost; call: (request: unknown, signal?: AbortSignal) => Promise<ClassifierResult>; seen: { model: unknown; context: unknown; signal: unknown } } {
+function classifyHost(
+	classify: (model: ClassifierModel<ClassifierApi>, context: unknown, options: { signal?: AbortSignal }) => Promise<ClassifierResult>,
+	models: ClassifierModel<ClassifierApi>[] = [model],
+): {
+	host: WorkflowHost;
+	call: (request: unknown, signal?: AbortSignal) => Promise<ClassifierResult>;
+	seen: { model: unknown; context: unknown; signal: unknown };
+} {
 	const seen: { model: unknown; context: unknown; signal: unknown } = { model: undefined, context: undefined, signal: undefined };
 	const ctx = {
 		cwd: "/workspace",
@@ -61,7 +68,9 @@ function classifyHost(classify: (model: ClassifierModel<ClassifierApi>, context:
 	};
 	const host = createWorkflowHost(deps);
 	const tool = host.globals().find((candidate) => candidate.name === "workflow.classify");
-	if (!tool) throw new Error("missing handle: workflow.classify");
+	if (!tool) {
+		throw new Error("missing handle: workflow.classify");
+	}
 	const execute = tool.execute.bind(tool) as (args: unknown, context: unknown) => Promise<ClassifierResult>;
 	// The signal rides the execute context, exactly as the sandbox supplies it.
 	return { host, call: (request: unknown, signal?: AbortSignal) => execute(request, { signal }), seen };
@@ -80,7 +89,10 @@ test("workflow.classify routes the requested model ref and passes state plus que
 // error result, so the workflow sees which classifier it asked for and never got.
 test("workflow.classify reports a missing classifier model as an error result carrying the requested ref", async () => {
 	const { call } = classifyHost(async () => makeResult(), []);
-	for (const ref of [{ provider: "typesafe", id: "other" }, { provider: "other", id: "jev" }]) {
+	for (const ref of [
+		{ provider: "typesafe", id: "other" },
+		{ provider: "other", id: "jev" },
+	]) {
 		const result = await call({ model: ref, state: {}, questions: {} });
 		assert.equal(result.stopReason, "error");
 		assert.equal(result.provider, ref.provider);
@@ -213,10 +225,7 @@ test("classify after run end returns stopReason aborted, does not throw, run sur
 	const host = createWorkflowHost(hostDeps(() => null));
 	host.dispose();
 	const tool = host.globals().find((candidate) => candidate.name === "workflow.classify")!;
-	const result = (await tool.execute(
-		{ model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} },
-		{ signal: host.signal },
-	)) as ClassifierResult;
+	const result = (await tool.execute({ model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} }, { signal: host.signal })) as ClassifierResult;
 	assert.equal(result.stopReason, "aborted");
 	assert.deepEqual(result.answers, {});
 	assert.match(result.errorMessage ?? "", /disposed/);
@@ -228,10 +237,7 @@ test("classify after run end returns stopReason aborted, does not throw, run sur
 test("classify with no live session context returns stopReason aborted instead of throwing", async () => {
 	const host = createWorkflowHost(hostDeps(() => null));
 	const tool = host.globals().find((candidate) => candidate.name === "workflow.classify")!;
-	const result = (await tool.execute(
-		{ model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} },
-		{ signal: host.signal },
-	)) as ClassifierResult;
+	const result = (await tool.execute({ model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} }, { signal: host.signal })) as ClassifierResult;
 	assert.equal(result.stopReason, "aborted");
 	assert.deepEqual(result.answers, {});
 	assert.match(result.errorMessage ?? "", /no live session context/);

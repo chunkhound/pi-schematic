@@ -142,7 +142,13 @@ const UNPARSABLE_SHELLS = new Set(["pwsh", "pwsh.exe", "powershell", "powershell
  * @returns {ok: true} if allowed, or {ok: false, reason} with explanation
  */
 
-export function classifyBashCommand(cmd: string, cwd: string = process.cwd(), depth = 0, shellVars: ReadonlyMap<string, string> = new Map(), interpreterPayload = false): Verdict {
+export function classifyBashCommand(
+	cmd: string,
+	cwd: string = process.cwd(),
+	depth = 0,
+	shellVars: ReadonlyMap<string, string> = new Map(),
+	interpreterPayload = false,
+): Verdict {
 	if (depth > 10) {
 		return { ok: false, reason: "recursion depth exceeded in command classification" };
 	}
@@ -1259,7 +1265,7 @@ function readRedirectTarget(cmd: string, start: number): { target: string; end: 
  * Heredoc redirect targets (<<EOF) are stdin, not file writes, and are not checked.
  * This is a best-effort inspection layer, not a security sandbox.
  */
-function getUnsafeWriteRedirectTarget(cmd: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map(), interpreterPayload: boolean = false): string | null {
+function getUnsafeWriteRedirectTarget(cmd: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map(), interpreterPayload = false): string | null {
 	let quote: '"' | "'" | null = null;
 	let escaped = false;
 
@@ -1300,8 +1306,12 @@ function getUnsafeWriteRedirectTarget(cmd: string, cwd: string, shellVars: Reado
 		// for a node payload: a top-level `a=>file` is still a real redirect and stays blocked.
 		if (interpreterPayload) {
 			let j = i - 1;
-			while (j >= 0 && /\s/.test(cmd[j])) j--;
-			if (j >= 0 && cmd[j] === "=") continue;
+			while (j >= 0 && /\s/.test(cmd[j])) {
+				j--;
+			}
+			if (j >= 0 && cmd[j] === "=") {
+				continue;
+			}
 		}
 		// >& = combined stdout+stderr redirect to a file, treat as 2-char operator
 		const opLen = next === ">" || next === "|" || next === "&" ? 2 : 1;

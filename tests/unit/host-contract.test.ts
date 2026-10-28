@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import { test } from "vitest";
 import { createTestHost, type TestPI } from "./test-host.js";
 
 const WORKFLOW_DIR = fileURLToPath(new URL("../../workflow/", import.meta.url));
@@ -23,7 +23,9 @@ function calledPiMethods(): Map<string, string[]> {
 		const code = stripComments(readFileSync(WORKFLOW_DIR + name, "utf8"));
 		for (const match of code.matchAll(/\bpi\.([A-Za-z_][A-Za-z0-9_]*)\(/g)) {
 			const files = found.get(match[1]) ?? [];
-			if (!files.includes(name)) files.push(name);
+			if (!files.includes(name)) {
+				files.push(name);
+			}
 			found.set(match[1], files);
 		}
 	}
@@ -43,12 +45,24 @@ const PROBES: Record<string, (pi: TestPI) => unknown> = {
 	getThinkingLevel: (pi) => pi.getThinkingLevel(),
 	getSessionName: (pi) => pi.getSessionName(),
 	getFlag: (pi) => pi.getFlag("host-contract-probe"),
-	appendEntry: (pi) => pi.appendEntry("host-contract-probe"),
-	sendUserMessage: (pi) => pi.sendUserMessage("host-contract-probe"),
-	setSessionName: (pi) => pi.setSessionName("host-contract-probe"),
-	setLabel: (pi) => pi.setLabel("host-contract-probe", undefined),
-	setActiveTools: (pi) => pi.setActiveTools([]),
-	setThinkingLevel: (pi) => pi.setThinkingLevel("medium"),
+	appendEntry: (pi) => {
+		pi.appendEntry("host-contract-probe");
+	},
+	sendUserMessage: (pi) => {
+		pi.sendUserMessage("host-contract-probe");
+	},
+	setSessionName: (pi) => {
+		pi.setSessionName("host-contract-probe");
+	},
+	setLabel: (pi) => {
+		pi.setLabel("host-contract-probe", undefined);
+	},
+	setActiveTools: (pi) => {
+		pi.setActiveTools([]);
+	},
+	setThinkingLevel: (pi) => {
+		pi.setThinkingLevel("medium");
+	},
 	setModel: (pi) => pi.setModel(undefined as never),
 };
 
@@ -64,7 +78,9 @@ test("every runtime action the engine calls answers without the notInitialized s
 	const pi = await createTestHost();
 	const uncovered: string[] = [];
 	for (const [method] of calledPiMethods()) {
-		if (REGISTRATION_PREFIXES.some((prefix) => method.startsWith(prefix))) continue;
+		if (REGISTRATION_PREFIXES.some((prefix) => method.startsWith(prefix))) {
+			continue;
+		}
 		const probe = PROBES[method];
 		if (!probe) {
 			uncovered.push(method);

@@ -105,13 +105,19 @@ interface PreparedRun {
 
 /** Host decided the reserved reason after a failed execute; script/unknown errors are "error". */
 export function mapSandboxError(error: { kind: string }, aborted: ReservedReason | null): ReservedReason {
-	if (error.kind === "timeout") return "time-limit";
-	if (error.kind === "aborted") return aborted ?? "cancelled";
+	if (error.kind === "timeout") {
+		return "time-limit";
+	}
+	if (error.kind === "aborted") {
+		return aborted ?? "cancelled";
+	}
 	return aborted ?? "error";
 }
 
 function abortHost(deps: WorkflowHostDeps, state: HostState, reason: ReservedReason, message?: string): void {
-	if (state.abortReason) return;
+	if (state.abortReason) {
+		return;
+	}
 	state.abortReason = reason;
 	const error = new Error(message ?? reason);
 	state.controller.abort(error);
@@ -127,15 +133,23 @@ function abortHost(deps: WorkflowHostDeps, state: HostState, reason: ReservedRea
 }
 
 function ensureActive(state: HostState): void {
-	if (state.disposed) throw new Error("workflow host disposed");
-	if (state.abortReason) throw new Error(`workflow aborted: ${state.abortReason}`);
-	if (state.exited) throw new Error("workflow has exited");
+	if (state.disposed) {
+		throw new Error("workflow host disposed");
+	}
+	if (state.abortReason) {
+		throw new Error(`workflow aborted: ${state.abortReason}`);
+	}
+	if (state.exited) {
+		throw new Error("workflow has exited");
+	}
 }
 
 /** Effect handlers run only between replacements, so a missing ctx here is a real bug. */
 function requireCtx(deps: WorkflowHostDeps): ExtensionCommandContext {
 	const ctx = deps.getCtx();
-	if (!ctx) throw new Error("workflow has no live session context");
+	if (!ctx) {
+		throw new Error("workflow has no live session context");
+	}
 	return ctx;
 }
 
@@ -169,7 +183,9 @@ function exitRecordOf(outcome: ExitOutcome): ExitRecord {
  * A call after a recorded exit is a no-op, so every stop seam stays single-record.
  */
 function commitExit(deps: WorkflowHostDeps, state: HostState, outcome: ExitOutcome, abortReason: ReservedReason, messagePrefix?: string): void {
-	if (state.exit) return;
+	if (state.exit) {
+		return;
+	}
 	try {
 		deps.pi.appendEntry(WORKFLOW_EXIT_ENTRY_TYPE, exitEntryOf(outcome));
 	} catch (error) {
@@ -182,15 +198,22 @@ function commitExit(deps: WorkflowHostDeps, state: HostState, outcome: ExitOutco
 
 /** Hard-abort exit: salvage the last checkpoint (null when none) as the single exit record. The escalation message is part of the record (docs/workflows.md, Exit: reserved reason plus the error message). */
 function recordHardAbortExit(deps: WorkflowHostDeps, state: HostState, error: string): void {
-	if (state.exit) return;
+	if (state.exit) {
+		return;
+	}
 	const checkpoint = state.checkpoint;
 	const reason = state.pendingStop ?? "error";
-	commitExit(deps, state, {
+	commitExit(
+		deps,
+		state,
+		{
+			reason,
+			partial: checkpoint?.metadata ?? null,
+			error,
+			checkpoint: checkpoint !== null,
+		},
 		reason,
-		partial: checkpoint?.metadata ?? null,
-		error,
-		checkpoint: checkpoint !== null,
-	}, reason);
+	);
 }
 
 /**
@@ -257,7 +280,9 @@ function buildEntries(deps: WorkflowHostDeps, args: unknown): WorkflowEntry[] {
 }
 
 function handleHandoff(deps: WorkflowHostDeps, state: HostState, args: unknown): Promise<null> {
-	if (typeof args !== "string" || !args.trim()) throw new Error("workflow.handoff requires a non-empty direction");
+	if (typeof args !== "string" || !args.trim()) {
+		throw new Error("workflow.handoff requires a non-empty direction");
+	}
 	return deps.handoff(args).then(() => {
 		state.settledRuns += 1;
 		return null;
@@ -295,7 +320,9 @@ async function classifyViaRegistry(deps: WorkflowHostDeps, state: HostState, arg
 		args as ClassifierRequest,
 		signal,
 	);
-	if (result.usage) recordClassifierSpend(state, result.provider, result.model, result.usage);
+	if (result.usage) {
+		recordClassifierSpend(state, result.provider, result.model, result.usage);
+	}
 	return result;
 }
 
@@ -365,7 +392,9 @@ function endEffect(deps: WorkflowHostDeps, state: HostState, effect: WorkflowEff
 	// The overview keeps only the row; the per-call output lives in the workflow-shell
 	// CustomEntry, so the summary entry cannot duplicate up to MAX_EFFECTS large outputs.
 	state.effects.push({ ...done, output: undefined });
-	if (state.effects.length > MAX_EFFECTS) state.effects.splice(0, state.effects.length - MAX_EFFECTS);
+	if (state.effects.length > MAX_EFFECTS) {
+		state.effects.splice(0, state.effects.length - MAX_EFFECTS);
+	}
 	safeOnEffect(deps, { phase: "end", effect: done });
 }
 
@@ -376,7 +405,7 @@ async function handleShell(deps: WorkflowHostDeps, state: HostState, args: unkno
 	const startedAt = Date.now();
 	const runner = buildShellRunner(deps, state, ctx, effect, contextSignal);
 	try {
-		const result = await runner(command, (options ?? {}) as ShellOptions);
+		const result = await runner(command, options ?? {});
 		endEffect(deps, state, effect, shellEndPatch(result, Date.now() - startedAt));
 		return result;
 	} catch (error) {
@@ -387,14 +416,22 @@ async function handleShell(deps: WorkflowHostDeps, state: HostState, args: unkno
 
 /** Build the runner for one shell effect: host+context abort signals combined, live ctx,
  * and advisory output fan-out (a throwing UI is reported, never fails the shell). */
-function buildShellRunner(deps: WorkflowHostDeps, state: HostState, ctx: ExtensionCommandContext, effect: WorkflowEffect, contextSignal: AbortSignal): (command: unknown, options?: ShellOptions) => Promise<ShellResult> {
+function buildShellRunner(
+	deps: WorkflowHostDeps,
+	state: HostState,
+	ctx: ExtensionCommandContext,
+	effect: WorkflowEffect,
+	contextSignal: AbortSignal,
+): (command: unknown, options?: ShellOptions) => Promise<ShellResult> {
 	return createShellRunner({
 		cwd: ctx.cwd,
 		signal: AbortSignal.any([state.controller.signal, contextSignal]),
 		isReadonly: () => deps.state.readonlyEnabled,
 		shellPath: shellPathOf(deps),
 		ctx,
-		onOutput: (display) => safeOnEffect(deps, { phase: "update", effect, display }),
+		onOutput: (display) => {
+			safeOnEffect(deps, { phase: "update", effect, display });
+		},
 		run: deps.shellRun,
 	});
 }
@@ -416,13 +453,17 @@ function handleReadonly(deps: WorkflowHostDeps, state: HostState, args: unknown)
 	ensureActive(state);
 	requireCtx(deps);
 	// Strict: a coerced value such as "false" would silently enable readonly.
-	if (typeof args !== "boolean") throw new Error(`workflow.readonly takes a boolean, got ${typeof args}`);
+	if (typeof args !== "boolean") {
+		throw new Error(`workflow.readonly takes a boolean, got ${typeof args}`);
+	}
 	const before = deps.state.readonlyEnabled;
 	const enabled = deps.setReadonly(args);
 	// Mirror `/readonly`'s observable effect (indicator refresh + notice) through the
 	// command-owned UI channel, so the posture is visible mid-run. Skip when unchanged: a
 	// redundant `workflow.readonly(false)` must not re-notify or queue a stale hidden message.
-	if (before !== enabled) deps.onReadonlyToggled?.(enabled);
+	if (before !== enabled) {
+		deps.onReadonlyToggled?.(enabled);
+	}
 	return { readonly: enabled };
 }
 
@@ -435,7 +476,9 @@ async function handleNew(deps: WorkflowHostDeps, state: HostState): Promise<null
 	const spend = branchSpend(deps, state);
 	// Claim the committed entries by identity so a replacement that keeps history cannot let
 	// the baseline source and the live-branch source count the same entry twice.
-	const committed = liveBranch(deps).map(spendIdentity).filter((id): id is string => id !== null);
+	const committed = liveBranch(deps)
+		.map(spendIdentity)
+		.filter((id): id is string => id !== null);
 	// Commit on EVERY outcome, including a failed or cancelled replacement: the run must still
 	// report the spend it already produced, and claiming the same ids keeps a replacement that
 	// retains history from counting those rows twice.
@@ -468,7 +511,7 @@ function buildMetrics(deps: WorkflowHostDeps, state: HostState): WorkflowRunMetr
 		steps: state.counts.get("run") ?? 0,
 		turns: state.turns,
 		classifySteps: state.counts.get("classify") ?? 0,
-		activity: Object.fromEntries(state.counts) as Partial<Record<WorkflowHandleName, number>>,
+		activity: Object.fromEntries(state.counts),
 		costUsd: spendRowsTotal(rows),
 		spend: [...rows.values()].sort((a, b) => b.costUsd - a.costUsd),
 		limits: deps.limits,
@@ -510,15 +553,25 @@ function handleCheckpoint(deps: WorkflowHostDeps, state: HostState, args: unknow
 	const metadata = args ?? null;
 	state.checkpoint = { metadata, at: Date.now() };
 	const reason = limitReason(deps, state);
-	if (reason && !state.pendingStop) armPendingStop(deps, state, reason);
-	if (!state.pendingStop) return metadata;
+	if (reason && !state.pendingStop) {
+		armPendingStop(deps, state, reason);
+	}
+	if (!state.pendingStop) {
+		return metadata;
+	}
 	// Aborting with the pending-stop reason (first-wins) keeps the infra retry from re-labelling
 	// the stop as a generic "error".
-	commitExit(deps, state, {
-		reason: state.pendingStop,
-		partial: metadata,
-		checkpoint: true,
-	}, state.pendingStop, "checkpoint exit append failed: ");
+	commitExit(
+		deps,
+		state,
+		{
+			reason: state.pendingStop,
+			partial: metadata,
+			checkpoint: true,
+		},
+		state.pendingStop,
+		"checkpoint exit append failed: ",
+	);
 	stopSandbox(state, `workflow stopped at checkpoint: ${state.pendingStop}`);
 	return metadata;
 }
@@ -576,7 +629,8 @@ function buildHandle(name: WorkflowHandleName, spec: HandlePolicy, run: AnyRun, 
 }
 
 // Serial-effects invariant; the overlap guard test matches this message.
-const OVERLAP_ERROR = "workflow calls must not overlap: workflow effects are serial — never run workflow.* calls in Promise.all; await each call in turn (a serial loop) instead";
+const OVERLAP_ERROR =
+	"workflow calls must not overlap: workflow effects are serial — never run workflow.* calls in Promise.all; await each call in turn (a serial loop) instead";
 
 /** Deferred-stop gate for one guarded call. Returns a normal aborted result when a
  * soft-lifecycle handle is blocked by escalation (classify never rejects); rethrows otherwise. */
@@ -586,7 +640,9 @@ function gateRun(deps: WorkflowHostDeps, state: HostState, spec: HandlePolicy): 
 	} catch (error) {
 		// Escalation already aborted the host and wrote the single exit record, but a
 		// soft-lifecycle handle must still return a normal result: classify never rejects.
-		if (!spec.softLifecycle) throw error;
+		if (!spec.softLifecycle) {
+			throw error;
+		}
 		return abortedClassifyResult(error);
 	}
 	return undefined;
@@ -595,11 +651,17 @@ function gateRun(deps: WorkflowHostDeps, state: HostState, spec: HandlePolicy): 
 async function executeGuarded(name: WorkflowHandleName, spec: HandlePolicy, run: () => unknown, state: HostState, deps: WorkflowHostDeps): Promise<unknown> {
 	// Classify never rejects: it self-gates lifecycle failures (see handleClassify) so a
 	// run ended before classify gets a normal aborted result, not a workflow error.
-	if (!spec.softLifecycle) ensureActive(state);
-	if (state.executing) throw new Error(OVERLAP_ERROR);
+	if (!spec.softLifecycle) {
+		ensureActive(state);
+	}
+	if (state.executing) {
+		throw new Error(OVERLAP_ERROR);
+	}
 	if (spec.kind === "guarded") {
 		const blocked = gateRun(deps, state, spec);
-		if (blocked !== undefined) return blocked;
+		if (blocked !== undefined) {
+			return blocked;
+		}
 	}
 	state.executing = true;
 	try {
@@ -608,7 +670,9 @@ async function executeGuarded(name: WorkflowHandleName, spec: HandlePolicy, run:
 		state.executing = false;
 		// Count only accounted handles: inspectors must not inflate the metrics a human reads
 		// as real progress. Blocked effects (rejected gate or overlap) never reach this finally.
-		if (isCountedHandle(spec)) state.counts.set(name, (state.counts.get(name) ?? 0) + 1);
+		if (isCountedHandle(spec)) {
+			state.counts.set(name, (state.counts.get(name) ?? 0) + 1);
+		}
 		safeEmitProgress(deps, state);
 	}
 }
@@ -626,10 +690,17 @@ function currentProgress(deps: WorkflowHostDeps, state: HostState): WorkflowProg
 	};
 }
 
-function buildNotebookDeps(deps: WorkflowHostDeps, state: HostState): { pi: typeof deps.pi; state: typeof deps.state; bufferPreview: (preview: string) => void } {
+function buildNotebookDeps(
+	deps: WorkflowHostDeps,
+	state: HostState,
+): { pi: typeof deps.pi; state: typeof deps.state; bufferPreview: (preview: string) => void } {
 	return {
-		get pi() { return deps.pi; },
-		get state() { return deps.state; },
+		get pi() {
+			return deps.pi;
+		},
+		get state() {
+			return deps.state;
+		},
 		bufferPreview: (preview: string) => state.previews.push(preview),
 	};
 }
@@ -670,14 +741,21 @@ function buildHandleRuns(deps: WorkflowHostDeps, state: HostState, notebookDeps:
 
 /** Apply the explicit `workflow.run` model for this turn; an unknown or unauthenticated model fails the run. */
 async function applyModelOverride(deps: WorkflowHostDeps, ctx: ExtensionCommandContext, options: RunOptions): Promise<void> {
-	if (!options.model) return;
+	if (!options.model) {
+		return;
+	}
 	// Without a current model there is nothing to restore, so the override would leak into
 	// the rest of the session; reject before any registry lookup or setModel.
-	if (!ctx.model) throw new Error("workflow.run cannot override the model: the session has no current model to restore");
+	if (!ctx.model) {
+		throw new Error("workflow.run cannot override the model: the session has no current model to restore");
+	}
 	const model = ctx.modelRegistry.getModelOfType("chat", options.model.provider, options.model.id);
-	if (!model) throw new Error(`model not found: ${options.model.provider}/${options.model.id}`);
-	if (!(await deps.pi.setModel(model)))
+	if (!model) {
+		throw new Error(`model not found: ${options.model.provider}/${options.model.id}`);
+	}
+	if (!(await deps.pi.setModel(model))) {
 		throw new Error(`cannot authenticate model: ${options.model.provider}/${options.model.id}`);
+	}
 }
 
 /** Captures the pre-override values BEFORE any mutation, so a setThinkingLevel throw after a
@@ -703,8 +781,9 @@ function buildOverrideRestore(deps: WorkflowHostDeps, ctx: ExtensionCommandConte
 				failures.push(error);
 			}
 		}
-		if (failures.length > 0)
+		if (failures.length > 0) {
 			throw new Error(`workflow.run override restore failed: ${failures.map(messageOf).join("; ")}`);
+		}
 	};
 }
 
@@ -712,7 +791,9 @@ async function applyOverrides(deps: WorkflowHostDeps, ctx: ExtensionCommandConte
 	const restore = buildOverrideRestore(deps, ctx, options);
 	try {
 		await applyModelOverride(deps, ctx, options);
-		if (options.thinking) deps.pi.setThinkingLevel(options.thinking as ThinkingLevel);
+		if (options.thinking) {
+			deps.pi.setThinkingLevel(options.thinking as ThinkingLevel);
+		}
 	} catch (error) {
 		throw await joinRestoreFailure(error, restore);
 	}
@@ -731,7 +812,9 @@ async function joinRestoreFailure(error: unknown, restore: () => Promise<void>):
 
 function composeInput(previewsForRun: readonly string[], input: unknown): string {
 	const blocks = [...previewsForRun];
-	if (input !== undefined) blocks.push(typeof input === "string" ? input : JSON.stringify(input));
+	if (input !== undefined) {
+		blocks.push(typeof input === "string" ? input : JSON.stringify(input));
+	}
 	return blocks.filter((block) => block.length > 0).join("\n");
 }
 
@@ -746,9 +829,7 @@ function dispatchMessage(deps: WorkflowHostDeps, ctx: ExtensionCommandContext, t
 	// The command rejects a busy start, so idle is the normal dispatch point. pi >= 1.2.0 rejects
 	// a send while busy without `deliverAs`; request the safe option only across platform busy
 	// windows we do not own. `followUp` never interrupts, and pi ignores it while idle.
-	const options = ctx.isIdle()
-		? { expandPromptTemplates: true }
-		: { expandPromptTemplates: true, deliverAs: "followUp" as const };
+	const options = ctx.isIdle() ? { expandPromptTemplates: true } : { expandPromptTemplates: true, deliverAs: "followUp" as const };
 	return replaced.sendUserMessage ? replaced.sendUserMessage(text, options) : deps.pi.sendUserMessage(text, options);
 }
 
@@ -775,14 +856,16 @@ async function sendCorrelated(deps: WorkflowHostDeps, state: HostState, prepared
 // Reject the run if the final assistant has error/aborted stopReason; allow retries otherwise.
 function rejectIfTerminalFailure(branch: readonly import("@earendil-works/pi-coding-agent").SessionEntry[]): void {
 	const stopReason = lastAssistant(branch)?.message.stopReason;
-	if (stopReason === "error" || stopReason === "aborted") throw new Error(`run failed: ${stopReason}`);
+	if (stopReason === "error" || stopReason === "aborted") {
+		throw new Error(`run failed: ${stopReason}`);
+	}
 }
 
 const RUN_THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies readonly ThinkingLevel[];
 // Compile guard: a ThinkingLevel member missing from RUN_THINKING_LEVELS fails here.
 type RunThinkingExhaustive = Exclude<ThinkingLevel, (typeof RUN_THINKING_LEVELS)[number]> extends never ? true : never;
 const RUN_THINKING_EXHAUSTIVE: RunThinkingExhaustive = true;
-void RUN_THINKING_EXHAUSTIVE;
+RUN_THINKING_EXHAUSTIVE;
 
 function isModelRef(value: unknown): value is NonNullable<RunOptions["model"]> {
 	const ref = value as Partial<Record<"provider" | "id", unknown>> | null;
@@ -792,12 +875,17 @@ function isModelRef(value: unknown): value is NonNullable<RunOptions["model"]> {
 /** Run options arrive untyped from workflow JS: reject a bad field by name before any state changes. */
 function parseRunOptions(raw: unknown): RunOptions {
 	const options = raw ?? {};
-	if (typeof options !== "object" || Array.isArray(options)) throw new Error("workflow.run: options must be an object");
+	if (typeof options !== "object" || Array.isArray(options)) {
+		throw new Error("workflow.run: options must be an object");
+	}
 	const { model, thinking } = options as RunOptions;
-	if (model !== undefined && !isModelRef(model)) throw new Error("workflow.run: options.model must be { provider: string, id: string }");
-	if (thinking !== undefined && !(RUN_THINKING_LEVELS as readonly unknown[]).includes(thinking))
+	if (model !== undefined && !isModelRef(model)) {
+		throw new Error("workflow.run: options.model must be { provider: string, id: string }");
+	}
+	if (thinking !== undefined && !(RUN_THINKING_LEVELS as readonly unknown[]).includes(thinking)) {
 		throw new Error(`workflow.run: options.thinking must be one of ${RUN_THINKING_LEVELS.join(", ")}`);
-	return options as RunOptions;
+	}
+	return options;
 }
 
 function prepareRun(deps: WorkflowHostDeps, state: HostState, args: unknown[]): PreparedRun {
@@ -812,7 +900,14 @@ function prepareRun(deps: WorkflowHostDeps, state: HostState, args: unknown[]): 
 	// touched, so the previews stay buffered for the next run instead of being dropped.
 	const ctx = requireCtx(deps);
 	const previewsForRun = state.previews.splice(0);
-	return { ctx, options, text: buildRunMessage(target.text, options, previewsForRun), previewsForRun, readonlyDepth: deps.state.pendingReadonlyCommands.length, dispatched: false };
+	return {
+		ctx,
+		options,
+		text: buildRunMessage(target.text, options, previewsForRun),
+		previewsForRun,
+		readonlyDepth: deps.state.pendingReadonlyCommands.length,
+		dispatched: false,
+	};
 }
 
 /** A run that failed before dispatch leaves no trace in shared state: the buffered previews
@@ -823,7 +918,9 @@ function restoreUnsentRun(deps: WorkflowHostDeps, state: HostState, prepared: Pr
 	state.previews.unshift(...prepared.previewsForRun);
 	const queue = deps.state.pendingReadonlyCommands;
 	// Guard against a shrink: only roll back what this run's frontmatter pushed.
-	if (queue.length > prepared.readonlyDepth) queue.length = prepared.readonlyDepth;
+	if (queue.length > prepared.readonlyDepth) {
+		queue.length = prepared.readonlyDepth;
+	}
 }
 
 /** Frontmatter resolves before overrides: explicit RunOptions win for the turn, while a
@@ -867,7 +964,9 @@ async function handleRun(deps: WorkflowHostDeps, state: HostState, args: unknown
 	} catch (error) {
 		// WHY (preview-buffer invariant): prepareRun took the buffered previews out of the shared
 		// buffer; a failure before the dispatch restores them, after it must not (they went out).
-		if (!prepared.dispatched) restoreUnsentRun(deps, state, prepared);
+		if (!prepared.dispatched) {
+			restoreUnsentRun(deps, state, prepared);
+		}
 		throw error;
 	} finally {
 		state.currentEffect = null;
@@ -876,7 +975,13 @@ async function handleRun(deps: WorkflowHostDeps, state: HostState, args: unknown
 }
 
 /** One run with `output` armed for this run only; the tool is inert otherwise. */
-async function runWithStructuredOutput(deps: WorkflowHostDeps, state: HostState, prepared: PreparedRun, marker: string | null, restore: () => Promise<void>): Promise<RunResult> {
+async function runWithStructuredOutput(
+	deps: WorkflowHostDeps,
+	state: HostState,
+	prepared: PreparedRun,
+	marker: string | null,
+	restore: () => Promise<void>,
+): Promise<RunResult> {
 	let armed: ArmedStructuredOutput | null = null;
 	const release = (): Promise<void> => releaseStructuredRun(armed, restore);
 	let result: Omit<RunResult, "state">;
@@ -901,8 +1006,9 @@ async function runWithStructuredOutput(deps: WorkflowHostDeps, state: HostState,
 		result = runResultOf(match);
 		// WHY: a requested output with no captured object is an unsatisfied contract. Never
 		// resolve silently: the workflow may catch this, otherwise the run aborts as `error`.
-		if (armed && armed.value() === undefined)
+		if (armed && armed.value() === undefined) {
 			throw new Error("workflow.run: output was requested but the model did not call workflow_output");
+		}
 	} catch (error) {
 		// WHY: a failed run keeps its error even when the release also fails (joinRestoreFailure).
 		throw await joinRestoreFailure(error, release);
@@ -973,7 +1079,9 @@ function createHostState(deps: WorkflowHostDeps): HostState {
 
 /** Reject pending correlations and clear the child-usage sink only while still current. */
 function disposeHost(deps: WorkflowHostDeps, state: HostState): void {
-	if (deps.state.childUsageSink === state.installedSink) deps.state.childUsageSink = null;
+	if (deps.state.childUsageSink === state.installedSink) {
+		deps.state.childUsageSink = null;
+	}
 	state.disposed = true;
 	state.registry.dispose();
 	state.activeRun?.reject(new Error("host disposed"));
@@ -984,7 +1092,9 @@ function disposeHost(deps: WorkflowHostDeps, state: HostState): void {
  * Baseline spend keeps its own map; only branch-scan claims are pruned. */
 function pruneExclusions(state: HostState, branchIds: ReadonlySet<string>): void {
 	const next = new Set([...state.excludedEntryIds].filter((id) => branchIds.has(id)));
-	if (next.size === state.excludedEntryIds.size) return;
+	if (next.size === state.excludedEntryIds.size) {
+		return;
+	}
 	state.excludedEntryIds = next;
 	bumpSpendRevision(state);
 }
@@ -995,8 +1105,12 @@ function buildHostInterface(deps: WorkflowHostDeps, state: HostState): WorkflowH
 	deps.state.childUsageSink = state.installedSink;
 	return {
 		signal: state.controller.signal,
-		abort: (reason, message) => abortHost(deps, state, reason, message),
-		recordExit: (outcome, abortReason, messagePrefix) => commitExit(deps, state, outcome, abortReason, messagePrefix),
+		abort: (reason, message) => {
+			abortHost(deps, state, reason, message);
+		},
+		recordExit: (outcome, abortReason, messagePrefix) => {
+			commitExit(deps, state, outcome, abortReason, messagePrefix);
+		},
 		globals: () => buildGlobals(deps, state),
 		exitRecord: () => state.exit,
 		checkpointRecord: () => state.checkpoint,
@@ -1004,8 +1118,12 @@ function buildHostInterface(deps: WorkflowHostDeps, state: HostState): WorkflowH
 		progress: () => currentProgress(deps, state),
 		metrics: () => buildMetrics(deps, state),
 		installedSink: state.installedSink,
-		pruneExclusions: (branchIds) => pruneExclusions(state, branchIds),
-		dispose: () => disposeHost(deps, state),
+		pruneExclusions: (branchIds) => {
+			pruneExclusions(state, branchIds);
+		},
+		dispose: () => {
+			disposeHost(deps, state);
+		},
 		registry: state.registry,
 	};
 }

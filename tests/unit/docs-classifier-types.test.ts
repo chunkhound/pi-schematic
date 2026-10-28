@@ -3,12 +3,8 @@
 // the documentation check.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import test from "node:test";
-import {
-	CLASSIFIER_ANSWER_TYPES,
-	CLASSIFIER_QUESTION_TYPES,
-	CLASSIFIER_STOP_REASONS,
-} from "../../workflow/classify.js";
+import { test } from "vitest";
+import { CLASSIFIER_ANSWER_TYPES, CLASSIFIER_QUESTION_TYPES, CLASSIFIER_STOP_REASONS } from "../../workflow/classify.js";
 
 const DOC = new URL("../../docs/workflows.md", import.meta.url);
 

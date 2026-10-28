@@ -19,6 +19,9 @@
     "@typescript-eslint/no-unnecessary-condition": {
       "count": 1
     },
+    "@typescript-eslint/require-await": {
+      "count": 1
+    },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
     }
@@ -39,14 +42,23 @@
       "count": 2
     },
     "@typescript-eslint/strict-boolean-expressions": {
-      "count": 2
+      "count": 4
     }
   },
   "model-groups/autocomplete.ts": {
-    "@typescript-eslint/no-unnecessary-condition": {
+    "@typescript-eslint/no-explicit-any": {
       "count": 1
     },
-    "@typescript-eslint/strict-boolean-expressions": {
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 3
+    },
+    "@typescript-eslint/require-await": {
       "count": 1
     }
   },
@@ -135,6 +147,11 @@
       "count": 1
     }
   },
+  "process-state.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 1
+    }
+  },
   "readonly-bash.ts": {
     "n/no-unsupported-features/node-builtins": {
       "count": 1
@@ -212,6 +229,12 @@
     }
   },
   "tests/e2e/real-host.test.ts": {
+    "@typescript-eslint/await-thenable": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/unbound-method": {
       "count": 2
     },
@@ -235,6 +258,14 @@
       "count": 1
     }
   },
+  "tests/unit/docs-classifier-types.test.ts": {
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 2
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
   "tests/unit/frontmatter-cache.test.ts": {
     "vitest/max-expects": {
       "count": 112
@@ -251,6 +282,9 @@
     }
   },
   "tests/unit/handoff.test.ts": {
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 1
+    },
     "vitest/max-expects": {
       "count": 38
     },
@@ -264,13 +298,34 @@
   "tests/unit/helpers.test.ts": {
     "@typescript-eslint/no-dynamic-delete": {
       "count": 2
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 4
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 1
     }
   },
   "tests/unit/helpers.ts": {
     "@typescript-eslint/no-dynamic-delete": {
       "count": 2
     },
+    "@typescript-eslint/no-empty-function": {
+      "count": 7
+    },
+    "@typescript-eslint/no-explicit-any": {
+      "count": 2
+    },
     "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 3
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
       "count": 2
     },
     "ban/wall-clock": {
@@ -280,9 +335,65 @@
       "count": 1
     }
   },
+  "tests/unit/host-contract.test.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 4
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 1
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
   "tests/unit/model-group-frontmatter.test.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 4
+    },
+    "@typescript-eslint/no-explicit-any": {
+      "count": 78
+    },
+    "@typescript-eslint/no-non-null-assertion": {
+      "count": 81
+    },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 5
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 6
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 43
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 4
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 13
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 4
+    },
+    "@typescript-eslint/require-await": {
+      "count": 27
+    },
+    "@typescript-eslint/restrict-template-expressions": {
+      "count": 4
+    },
+    "no-useless-escape": {
+      "count": 2
+    },
     "vitest/max-expects": {
-      "count": 9
+      "count": 16
     }
   },
   "tests/unit/model-groups-autocomplete.test.ts": {
@@ -337,6 +448,15 @@
     }
   },
   "tests/unit/notebook.test.ts": {
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 1
+    },
     "vitest/max-expects": {
       "count": 54
     }
@@ -368,6 +488,22 @@
       "count": 1
     }
   },
+  "tests/unit/process-state.test.ts": {
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 1
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/prompt-sections.test.ts": {
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 8
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 2
+    }
+  },
   "tests/unit/readonly-frontmatter.test.ts": {
     "vitest/max-expects": {
       "count": 69
@@ -394,7 +530,7 @@
       "count": 1
     },
     "vitest/max-expects": {
-      "count": 7
+      "count": 8
     }
   },
   "tests/unit/register-loader.test.ts": {
@@ -406,6 +542,15 @@
     }
   },
   "tests/unit/render-snapshots.test.ts": {
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 1
+    },
     "no-control-regex": {
       "count": 1
     }
@@ -436,14 +581,26 @@
     }
   },
   "tests/unit/spawn.test.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    },
+    "@typescript-eslint/no-invalid-void-type": {
+      "count": 2
+    },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 2
     },
     "@typescript-eslint/only-throw-error": {
+      "count": 2
+    },
+    "@typescript-eslint/require-await": {
       "count": 1
     },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 3
+    },
     "vitest/max-expects": {
-      "count": 56
+      "count": 58
     }
   },
   "tests/unit/state-invariants.test.ts": {
@@ -455,6 +612,12 @@
     }
   },
   "tests/unit/system-prompt.test.ts": {
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 7
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 5
+    },
     "vitest/max-expects": {
       "count": 31
     }
@@ -474,6 +637,49 @@
       "count": 3
     }
   },
+  "tests/unit/tui-indicators.test.ts": {
+    "@typescript-eslint/no-non-null-assertion": {
+      "count": 8
+    },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 24
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 19
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 4
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 2
+    }
+  },
+  "tests/unit/usage-double-count.test.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 8
+    },
+    "@typescript-eslint/no-non-null-assertion": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 4
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 6
+    },
+    "@typescript-eslint/require-await": {
+      "count": 5
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
   "tests/unit/watchdog.test.ts": {
     "vitest/max-expects": {
       "count": 15
@@ -482,9 +688,734 @@
       "count": 4
     }
   },
+  "tests/unit/workflow-activity.test.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 4
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 5
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-autocomplete.test.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 50
+    },
+    "@typescript-eslint/no-non-null-assertion": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 17
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 9
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 10
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 25
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 11
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 16
+    },
+    "@typescript-eslint/require-await": {
+      "count": 7
+    },
+    "vitest/max-expects": {
+      "count": 7
+    }
+  },
+  "tests/unit/workflow-classify.test.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 8
+    },
+    "@typescript-eslint/no-non-null-assertion": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 9
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 9
+    },
+    "@typescript-eslint/require-await": {
+      "count": 7
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 1
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-command-busy.test.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 8
+    },
+    "@typescript-eslint/no-non-null-assertion": {
+      "count": 4
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 6
+    },
+    "@typescript-eslint/require-await": {
+      "count": 2
+    },
+    "vitest/max-expects": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-compile.test.ts": {
+    "@typescript-eslint/no-implied-eval": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 46
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 3
+    },
+    "@typescript-eslint/require-await": {
+      "count": 5
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-coordinator.test.ts": {
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 8
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-entry-version.test.ts": {
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 7
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-errors.test.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 4
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-examples.test.ts": {
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 4
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-exit-partial.test.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 4
+    },
+    "@typescript-eslint/no-non-null-assertion": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 4
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 5
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-file.test.ts": {
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 11
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-frontmatter.test.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 4
+    },
+    "@typescript-eslint/no-explicit-any": {
+      "count": 13
+    },
+    "@typescript-eslint/no-non-null-assertion": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 7
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 10
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 6
+    },
+    "@typescript-eslint/require-await": {
+      "count": 1
+    },
+    "@typescript-eslint/restrict-template-expressions": {
+      "count": 4
+    }
+  },
+  "tests/unit/workflow-handles.test.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 11
+    },
+    "@typescript-eslint/no-non-null-assertion": {
+      "count": 21
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 23
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 47
+    },
+    "@typescript-eslint/require-await": {
+      "count": 10
+    },
+    "@typescript-eslint/restrict-template-expressions": {
+      "count": 2
+    },
+    "@typescript-eslint/switch-exhaustiveness-check": {
+      "count": 1
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-helpers-classify.test.ts": {
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 10
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 5
+    },
+    "@typescript-eslint/require-await": {
+      "count": 4
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-helpers-notebook.test.ts": {
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 5
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-helpers-state-digest.test.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 25
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 3
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-limits.test.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 10
+    },
+    "vitest/max-expects": {
+      "count": 3
+    }
+  },
+  "tests/unit/workflow-notebook.test.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 6
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 3
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-output.test.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 5
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 11
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 7
+    },
+    "@typescript-eslint/require-await": {
+      "count": 1
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 1
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-overlap.test.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 7
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 5
+    },
+    "@typescript-eslint/require-await": {
+      "count": 2
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-rebind.test.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 27
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 18
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 26
+    },
+    "@typescript-eslint/require-await": {
+      "count": 2
+    },
+    "@typescript-eslint/unbound-method": {
+      "count": 2
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-run-registry.test.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 6
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 11
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 3
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-sandbox.test.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 9
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    },
+    "@typescript-eslint/require-await": {
+      "count": 3
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-shell.test.ts": {
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 10
+    },
+    "@typescript-eslint/require-await": {
+      "count": 7
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-spend-cache.test.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 7
+    },
+    "@typescript-eslint/no-non-null-assertion": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 5
+    },
+    "@typescript-eslint/require-await": {
+      "count": 4
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-spend.test.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 6
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    },
+    "ban/wall-clock": {
+      "count": 3
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-state-digest.test.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 4
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 7
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 10
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-summary-renderer.test.ts": {
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 20
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 3
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 2
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "tests/unit/workflow-summary.test.ts": {
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 5
+    },
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
   "thinking-levels.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
+    }
+  },
+  "tui.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 1
+    },
+    "@typescript-eslint/prefer-optional-chain": {
+      "count": 1
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 7
+    }
+  },
+  "usage.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 1
+    }
+  },
+  "workflow/activity.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 8
+    }
+  },
+  "workflow/autocomplete.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 3
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 3
+    }
+  },
+  "workflow/classify.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 3
+    }
+  },
+  "workflow/command.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 5
+    },
+    "@typescript-eslint/no-non-null-assertion": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 3
+    },
+    "@typescript-eslint/unbound-method": {
+      "count": 4
+    }
+  },
+  "workflow/compile.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 13
+    },
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 8
+    },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 28
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 5
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 28
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 4
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 7
+    },
+    "@typescript-eslint/restrict-template-expressions": {
+      "count": 3
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 10
+    }
+  },
+  "workflow/file.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 1
+    },
+    "no-restricted-syntax": {
+      "count": 2
+    }
+  },
+  "workflow/host.ts": {
+    "@typescript-eslint/no-confusing-void-expression": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unnecessary-type-conversion": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 8
+    },
+    "@typescript-eslint/no-unused-expressions": {
+      "count": 1
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 7
+    }
+  },
+  "workflow/limits-dialog.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 1
+    },
+    "@typescript-eslint/restrict-template-expressions": {
+      "count": 2
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 2
+    }
+  },
+  "workflow/notebook.ts": {
+    "@typescript-eslint/no-non-null-assertion": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 1
+    }
+  },
+  "workflow/output.ts": {
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 1
+    }
+  },
+  "workflow/rebind.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unnecessary-type-parameters": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    },
+    "@typescript-eslint/prefer-promise-reject-errors": {
+      "count": 1
+    },
+    "@typescript-eslint/require-await": {
+      "count": 1
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 1
+    },
+    "@typescript-eslint/use-unknown-in-catch-callback-variable": {
+      "count": 1
+    }
+  },
+  "workflow/run-registry.ts": {
+    "@typescript-eslint/no-empty-function": {
+      "count": 1
+    },
+    "@typescript-eslint/prefer-nullish-coalescing": {
+      "count": 1
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 2
+    }
+  },
+  "workflow/shell.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 5
+    }
+  },
+  "workflow/spend.ts": {
+    "@typescript-eslint/prefer-optional-chain": {
+      "count": 1
+    }
+  },
+  "workflow/state-digest.ts": {
+    "@typescript-eslint/no-non-null-assertion": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 4
+    }
+  },
+  "workflow/summary-renderer.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 3
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 6
+    }
+  },
+  "workflow/summary.ts": {
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 2
+    }
+  },
+  "workflow/types.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unused-expressions": {
+      "count": 3
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 2
     }
   }
 }

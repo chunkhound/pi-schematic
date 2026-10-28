@@ -12,18 +12,25 @@ export interface RunTarget {
 
 // Extension commands own their turns and expose no completion signal, so the workflow rejects them.
 export function resolveRunTarget(commands: readonly SlashCommandInfo[], prompt: string): RunTarget {
-	if (typeof prompt !== "string" || !prompt.trim()) throw new Error("workflow.run requires a non-empty prompt");
+	if (typeof prompt !== "string" || !prompt.trim()) {
+		throw new Error("workflow.run requires a non-empty prompt");
+	}
 	const trimmed = prompt.trim();
 	const hadSlash = trimmed.startsWith("/");
 	const slashless = hadSlash ? trimmed.slice(1) : trimmed;
 	const [, head = "", rest = ""] = /^(\S+)(?:\s+([\s\S]*))?$/.exec(slashless) ?? [];
 	// A slashless prompt with arguments is prose (`run("review the diff")`), not a command:
 	// only an explicit `/name` or a bare name selects the command/skill target.
-	if (!hadSlash && rest) return { text: trimmed, source: "plain" };
+	if (!hadSlash && rest) {
+		return { text: trimmed, source: "plain" };
+	}
 	const match = commands.find((command) => command.name === head) ?? commands.find((command) => command.name === `skill:${head}`);
-	if (!match) return { text: trimmed, source: "plain" };
-	if (match.source === "extension")
+	if (!match) {
+		return { text: trimmed, source: "plain" };
+	}
+	if (match.source === "extension") {
 		throw new Error(`workflow.run cannot run extension command "${head}"; use a prompt template or skill`);
+	}
 	const canonical = match.source === "skill" ? match.name : head;
 	return { text: `/${canonical}${rest ? ` ${rest}` : ""}`, source: match.source };
 }
@@ -53,14 +60,18 @@ interface PendingRun {
 
 function assistantIndexAfter(entries: readonly SessionEntry[], marker: string | null): number | null {
 	const at = marker ? entries.findIndex((entry) => entry.id === marker) : -1;
-	if (marker !== null && at < 0) return null;
+	if (marker !== null && at < 0) {
+		return null;
+	}
 	return lastAssistant(entries, at)?.index ?? null;
 }
 
 /** Correlate one sent run. Null when the branch has no assistant entry after the marker yet. */
 export function matchRun(entries: readonly SessionEntry[], marker: string | null): RunMatch | null {
 	const index = assistantIndexAfter(entries, marker);
-	if (index === null) return null;
+	if (index === null) {
+		return null;
+	}
 	const at = marker ? entries.findIndex((entry) => entry.id === marker) : -1;
 	const start = at + 1;
 	return {
@@ -76,7 +87,9 @@ interface RegistryState {
 }
 
 function release(state: RegistryState): void {
-	if (state.pending.size > 0 || !state.unsubscribe) return;
+	if (state.pending.size > 0 || !state.unsubscribe) {
+		return;
+	}
 	state.unsubscribe();
 	state.unsubscribe = null;
 }
@@ -85,7 +98,9 @@ function checkPending(state: RegistryState, getBranch: () => readonly SessionEnt
 	const branch = getBranch();
 	for (const run of [...state.pending]) {
 		const match = matchRun(branch, run.marker);
-		if (!match) continue;
+		if (!match) {
+			continue;
+		}
 		state.pending.delete(run);
 		run.resolve(match);
 	}
@@ -107,9 +122,13 @@ function correlate(
 	state: RegistryState,
 	onSettled: (listener: () => void) => () => void,
 	getBranch: () => readonly SessionEntry[],
-	marker: string | null
+	marker: string | null,
 ): RunCorrelation {
-	if (!state.unsubscribe) state.unsubscribe = onSettled(() => checkPending(state, getBranch));
+	if (!state.unsubscribe) {
+		state.unsubscribe = onSettled(() => {
+			checkPending(state, getBranch);
+		});
+	}
 	const { run, promise } = createPendingRun(marker);
 	state.pending.add(run);
 	// Synchronous send errors can reject before the caller starts awaiting.
@@ -134,13 +153,12 @@ function dispose(state: RegistryState): void {
 }
 
 /** Turn `agent_settled` notifications into correlated run matches. One settle may resolve several. */
-export function createRunRegistry(deps: {
-	onSettled: (listener: () => void) => () => void;
-	getBranch: () => readonly SessionEntry[];
-}): RunRegistry {
+export function createRunRegistry(deps: { onSettled: (listener: () => void) => () => void; getBranch: () => readonly SessionEntry[] }): RunRegistry {
 	const state: RegistryState = { pending: new Set(), unsubscribe: null };
 	return {
 		correlate: (marker) => correlate(state, deps.onSettled, deps.getBranch, marker),
-		dispose: () => dispose(state),
+		dispose: () => {
+			dispose(state);
+		},
 	};
 }

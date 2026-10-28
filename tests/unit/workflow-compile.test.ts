@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import fc from "fast-check";
 import { compileWorkflow, WorkflowCompileError } from "../../workflow/compile.js";
@@ -16,7 +16,9 @@ function rejects(source: string, match?: RegExp): void {
 		() => compileWorkflow(source),
 		(error: unknown) => {
 			assert.ok(error instanceof WorkflowCompileError, `expected WorkflowCompileError, got ${String(error)}`);
-			if (match) assert.match((error as Error).message, match);
+			if (match) {
+				assert.match(error.message, match);
+			}
 			return true;
 		},
 		`expected rejection for:\n${source}`,
@@ -28,7 +30,7 @@ function countNewlines(text: string): number {
 }
 
 // Each builder stays syntactically valid when combined, and gives every local a unique name.
-const STATEMENT_BUILDERS: Array<(i: number) => string> = [
+const STATEMENT_BUILDERS: ((i: number) => string)[] = [
 	(i) => `const v${i} = workflow.run("x");`,
 	(i) => `const v${i} = workflow.shell("ls");`,
 	() => `workflow.handoff("d");`,
@@ -70,9 +72,18 @@ test("composed driver plus compiled body executes as real JS", async () => {
 	const source = 'return defineWorkflow((workflow) => {\n  const r = workflow.run("x");\n  workflow.checkpoint({ r });\n  return workflow.exit(r);\n});\n';
 	const effects: string[] = [];
 	const workflow = {
-		run: async (text: string) => { effects.push(`run:${text}`); return `result-of-${text}`; },
-		checkpoint: async (metadata: unknown) => { effects.push("checkpoint"); return metadata; },
-		exit: async (value: unknown) => { effects.push("exit"); return value; },
+		run: async (text: string) => {
+			effects.push(`run:${text}`);
+			return `result-of-${text}`;
+		},
+		checkpoint: async (metadata: unknown) => {
+			effects.push("checkpoint");
+			return metadata;
+		},
+		exit: async (value: unknown) => {
+			effects.push("exit");
+			return value;
+		},
 	};
 	// `workflow` is the single free name the driver reads: the host scope the sandbox builds.
 	const invoke = new Function("workflow", composeWorkflow(compileWorkflow(source).code)) as (w: typeof workflow) => Promise<unknown>;
@@ -86,12 +97,17 @@ test("composed driver plus compiled body executes as real JS", async () => {
 test("adds ASI barriers to statement-start calls in lists and branches", async () => {
 	const source = `return defineWorkflow((workflow) => {\n  const r = workflow.run("a")\n  workflow.run("b")\n  switch (r) { case 1: workflow.run("c")\n  }\n  if (r) workflow.run("d")\n  else workflow.run("e")\n});\n`;
 	const code = compileWorkflow(source).code;
-	assert.match(code, /const r = \(await workflow\.run\("a"\)\)\n  ;\(await workflow\.run\("b"\)\)/);
+	assert.match(code, /const r = \(await workflow\.run\("a"\)\)\n {2};\(await workflow\.run\("b"\)\)/);
 	assert.match(code, /case 1: ;\(await workflow\.run\("c"\)\)/);
-	assert.match(code, /if \(r\) \(await workflow\.run\("d"\)\)\n  else \(await workflow\.run\("e"\)\)/);
+	assert.match(code, /if \(r\) \(await workflow\.run\("d"\)\)\n {2}else \(await workflow\.run\("e"\)\)/);
 	const calls: string[] = [];
 	const invoke = new Function("workflow", composeWorkflow(code)) as (w: { run: (s: string) => Promise<string> }) => Promise<unknown>;
-	await invoke({ run: async (s) => { calls.push(s); return s; } });
+	await invoke({
+		run: async (s) => {
+			calls.push(s);
+			return s;
+		},
+	});
 	assert.deepEqual(calls, ["a", "b", "d"]);
 });
 
@@ -107,7 +123,6 @@ test("wraps direct calls and marks the workflow lambda async", () => {
 	assert.ok(out.includes("async (workflow) =>"), "arrow made async");
 	assert.ok(out.includes("(await workflow.run("), "await inserted on run");
 	assert.ok(out.includes("(await workflow.checkpoint("), "await inserted on checkpoint");
-
 });
 
 test("a workflow without a checkpoint compiles and reports hasCheckpoint: false", () => {
@@ -161,7 +176,8 @@ test("rejects a bare workflow(...) expression statement (docs/workflows.md File 
 });
 
 test("wraps computed string keys and optional chains", () => {
-	const source = 'return defineWorkflow((workflow) => {\n  workflow["state"]();\n  workflow?.budget();\n  workflow.run?.();\n  workflow.checkpoint(null);\n});\n';
+	const source =
+		'return defineWorkflow((workflow) => {\n  workflow["state"]();\n  workflow?.budget();\n  workflow.run?.();\n  workflow.checkpoint(null);\n});\n';
 	assert.equal(
 		compileWorkflow(source).code,
 		'return defineWorkflow(async (workflow) => {\n  ;(await workflow["state"]());\n  ;(await workflow?.budget());\n  ;(await workflow.run?.());\n  ;(await workflow.checkpoint(null));\n});\n',
@@ -239,37 +255,37 @@ test("rejects a sloppy `await` binding that the injected async would reserve", (
 });
 
 test("rejects `with` statements, which are outside docs/workflows.md (Accepted control flow)", () => {
-	rejects(wrapBody('with (Math) { workflow.checkpoint(null); }'), /with is not allowed/);
+	rejects(wrapBody("with (Math) { workflow.checkpoint(null); }"), /with is not allowed/);
 });
 
 test("rejects eval/Function, which can hide a workflow call from the compile checks", () => {
 	rejects(wrapBody('eval("workflow.run(\\"x\\")");'), /eval is not allowed/);
 	rejects(wrapBody('Function("workflow.run(\\"x\\")")();'), /Function is not allowed/);
-	rejects(wrapBody('const f = eval;'), /eval is not allowed/);
+	rejects(wrapBody("const f = eval;"), /eval is not allowed/);
 });
 
 test("rejects constructor and __proto__ member access, which reaches Function without a banned identifier", () => {
-	rejects(wrapBody('({}).constructor.constructor("return workflow.shell(\'x\')")();'), /constructor member access is not allowed/);
+	rejects(wrapBody("({}).constructor.constructor(\"return workflow.shell('x')\")();"), /constructor member access is not allowed/);
 	rejects(wrapBody('const c = ({})["constructor"];'), /constructor member access is not allowed/);
-	rejects(wrapBody('const p = workflow.run.__proto__;'), /__proto__ member access is not allowed/);
-	rejects(wrapBody('const p = ({}).__proto__;'), /__proto__ member access is not allowed/);
+	rejects(wrapBody("const p = workflow.run.__proto__;"), /__proto__ member access is not allowed/);
+	rejects(wrapBody("const p = ({}).__proto__;"), /__proto__ member access is not allowed/);
 	rejects(wrapBody('const p = ({}["__proto__"]);'), /__proto__ member access is not allowed/);
 });
 
 test("rejects computed member keys that cannot be statically resolved", () => {
 	rejects(wrapBody('const k = "constructor"; const c = ({}[k][k]);'), /computed member keys must be a literal or constant template string/);
 	rejects(wrapBody('const c = ({}["const" + "ructor"]);'), /computed member keys must be a literal or constant template string/);
-	rejects(wrapBody('const c = ({}[`con${1}structor`]);'), /computed member keys must be a literal or constant template string/);
+	rejects(wrapBody("const c = ({}[`con${1}structor`]);"), /computed member keys must be a literal or constant template string/);
 });
 
 test("rejects constant template and dot forms of the prototype-escape names", () => {
-	rejects(wrapBody('const c = ({}[`constructor`]);'), /constructor member access is not allowed/);
-	rejects(wrapBody('const p = ({}[`__proto__`]);'), /__proto__ member access is not allowed/);
+	rejects(wrapBody("const c = ({}[`constructor`]);"), /constructor member access is not allowed/);
+	rejects(wrapBody("const p = ({}[`__proto__`]);"), /__proto__ member access is not allowed/);
 });
 
 test("rejects reflection that reads a member by a runtime string", () => {
 	rejects(wrapBody('const c = Reflect.get(({}), "constructor");'), /Reflect is not allowed/);
-	rejects(wrapBody('const { get } = Reflect;'), /Reflect is not allowed/);
+	rejects(wrapBody("const { get } = Reflect;"), /Reflect is not allowed/);
 	rejects(wrapBody('const d = Object.getOwnPropertyDescriptor(Object, "constructor");'), /getOwnPropertyDescriptor member access is not allowed/);
 	rejects(wrapBody('const d = Object?.getOwnPropertyDescriptor(Object, "constructor");'), /getOwnPropertyDescriptor member access is not allowed/);
 	rejects(wrapBody('const d = Object[`getOwnPropertyDescriptor`](Object, "constructor");'), /getOwnPropertyDescriptor member access is not allowed/);
@@ -277,30 +293,30 @@ test("rejects reflection that reads a member by a runtime string", () => {
 });
 
 test("rejects prototype/reflection names in destructuring patterns", () => {
-	rejects(wrapBody('const { constructor } = Object;'), /constructor destructuring is not allowed/);
-	rejects(wrapBody('const { constructor: F } = ({});'), /constructor destructuring is not allowed/);
+	rejects(wrapBody("const { constructor } = Object;"), /constructor destructuring is not allowed/);
+	rejects(wrapBody("const { constructor: F } = ({});"), /constructor destructuring is not allowed/);
 	rejects(wrapBody('const { ["constructor"]: F } = ({});'), /constructor destructuring is not allowed/);
 	// WHY: a non-computed string-literal key is parsed as computed:false, so it must be resolved too.
 	rejects(wrapBody('const { "constructor": F } = (()=>{});'), /constructor destructuring is not allowed/);
 	rejects(wrapBody('const { "__proto__": p } = ({});'), /__proto__ destructuring is not allowed/);
 	rejects(wrapBody('const { "getOwnPropertyDescriptor": g } = Object;'), /getOwnPropertyDescriptor destructuring is not allowed/);
 	rejects(wrapBody('const { "getOwnPropertyDescriptors": g } = Object;'), /getOwnPropertyDescriptors destructuring is not allowed/);
-	rejects(wrapBody('const { getOwnPropertyDescriptor: g } = Object;'), /getOwnPropertyDescriptor destructuring is not allowed/);
+	rejects(wrapBody("const { getOwnPropertyDescriptor: g } = Object;"), /getOwnPropertyDescriptor destructuring is not allowed/);
 	rejects(wrapBody('let F; ({ "constructor": F } = (()=>{}));'), /constructor destructuring is not allowed/);
 	rejects(wrapBody('for (const { "constructor": F } of []) {}'), /constructor destructuring is not allowed/);
 	rejects(wrapBody('try {} catch ({ "constructor": F }) {}'), /constructor destructuring is not allowed/);
-	rejects(wrapBody('const { [k]: c } = ({});'), /computed destructuring keys must be a literal or constant template string/);
+	rejects(wrapBody("const { [k]: c } = ({});"), /computed destructuring keys must be a literal or constant template string/);
 });
 
 test("accepts ordinary member access, numeric keys, and safe reflection-free reads", () => {
 	const source = wrapBody(
-		'const o = { constructorName: 1 };\n' +
-		'const a = [1, 2];\n' +
-		'const n = o.constructorName + o["constructorName"] + o.constructorName;\n' +
-		'const first = a[0];\n' +
-		'const p = Object.getPrototypeOf(o);\n' +
-		'const keys = Object.keys(o);\n' +
-		'const t = o[`constructorName`];',
+		"const o = { constructorName: 1 };\n" +
+			"const a = [1, 2];\n" +
+			'const n = o.constructorName + o["constructorName"] + o.constructorName;\n' +
+			"const first = a[0];\n" +
+			"const p = Object.getPrototypeOf(o);\n" +
+			"const keys = Object.keys(o);\n" +
+			"const t = o[`constructorName`];",
 	);
 	assert.doesNotThrow(() => compileWorkflow(source));
 });
@@ -374,11 +390,7 @@ test("rejects workflow bindings in every remaining binding position, including n
 });
 
 test("labels and class members named workflow compile (acorn-walk never visits them as references)", () => {
-	const source = wrapBody(
-		"workflow: for (;;) { break workflow; }\n" +
-		"class C { workflow() {} static workflow = 1; }\n" +
-		"workflow.checkpoint(null);",
-	);
+	const source = wrapBody("workflow: for (;;) { break workflow; }\n" + "class C { workflow() {} static workflow = 1; }\n" + "workflow.checkpoint(null);");
 	assert.doesNotThrow(() => compileWorkflow(source));
 });
 
@@ -397,7 +409,12 @@ test("compiled calls execute correctly at statement boundaries (ASI hazard cover
 		const code = compileWorkflow(source).code;
 		const calls: string[] = [];
 		const invoke = new Function("workflow", composeWorkflow(code)) as (w: { run: (s: string) => Promise<string> }) => Promise<unknown>;
-		await invoke({ run: async (s) => { calls.push(s); return s; } });
+		await invoke({
+			run: async (s) => {
+				calls.push(s);
+				return s;
+			},
+		});
 		assert.deepEqual(calls, expected, `execution mismatch for:\n${body}`);
 	}
 });

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import { messageOf, safeAppendEntry } from "../../workflow/errors.js";
 
 test("messageOf returns Error.message for Error instances", () => {
@@ -14,7 +14,7 @@ test("messageOf stringifies non-Error values", () => {
 });
 
 test("safeAppendEntry returns true on success", () => {
-	const entries: Array<{ type: string; data?: unknown }> = [];
+	const entries: { type: string; data?: unknown }[] = [];
 	const pi = {
 		appendEntry: (type: string, data?: unknown) => {
 			entries.push({ type, data });
@@ -27,7 +27,9 @@ test("safeAppendEntry returns true on success", () => {
 
 test("safeAppendEntry returns false when append throws", () => {
 	const pi = {
-		appendEntry: () => { throw new Error("append failed"); },
+		appendEntry: () => {
+			throw new Error("append failed");
+		},
 	} as any;
 	assert.equal(safeAppendEntry(pi, "test"), false);
 });

@@ -5,7 +5,7 @@
  */
 
 import { ChildProcess } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi, type TestContext } from "vitest";
@@ -166,6 +166,19 @@ const ELIGIBLE_HANDOFF_NUDGE = buildNudge(
 /** Threshold compaction reserve: pi compacts once a reply reports more than the window minus this. */
 const COMPACTION_RESERVE_TOKENS = PROBE_CONTEXT_WINDOW / 2;
 
+/**
+ * Two `workflow.run` turns around a checkpoint: each run must dispatch only after the prior
+ * one settled, and both texts reach the exit envelope. `--workflow-cost` keeps the real host's
+ * interactive budget dialog out of the run, which the RPC harness cannot answer.
+ */
+const TWO_STEP_WORKFLOW = `return defineWorkflow((workflow) => {
+  const one = workflow.run("step one");
+  workflow.checkpoint({ one: one.text });
+  const two = workflow.run("step two");
+  return workflow.exit({ reason: "done", one: one.text, two: two.text });
+});
+`;
+
 function eventsOfType(events: RpcEvent[], type: string): RpcEvent[] {
 	return events.filter((event) => event.type === type);
 }
@@ -305,8 +318,34 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 				.filter((command) => command.source === "extension" && resolve(command.sourceInfo.path) === SCHEMATIC_ENTRY)
 				.map((command) => command.name)
 				.sort();
-			expect(names).toStrictEqual(["handoff", "model-groups", "notebook", "readonly"]);
+			expect(names).toStrictEqual(["handoff", "model-groups", "notebook", "readonly", "workflow"]);
 		}));
+
+	it("a two-step workflow dispatches each run after the previous one settles", async (t) =>
+		withRealHost(
+			t,
+			async (host) => {
+				await mkdirSync(join(host.projectDir, ".pi", "workflows"), { recursive: true });
+				writeFileSync(join(host.projectDir, ".pi", "workflows", "two-step.js"), TWO_STEP_WORKFLOW);
+				// The probe scripts one run at a time, so only the first run's reply is scripted; low usage
+				// keeps the handoff watchdog out.
+				await host.arm([{ text: "one", inputTokens: 1_000 }]);
+				await host.turn("/workflow two-step", 2);
+				await host.settle(0);
+
+				const { entries } = await host.entries();
+				const prompts = entries.map(userText).filter((text): text is string => text !== null);
+				expect(prompts).toStrictEqual(["step one", "step two"]);
+				const exits = entries
+					.filter((entry): entry is Extract<SessionEntry, { type: "custom" }> => entry.type === "custom" && entry.customType === "workflow-exit")
+					.map((entry) => entry.data as { reason: string; metadata: Record<string, unknown> });
+				expect(exits).toHaveLength(1);
+				expect(exits[0].reason).toBe("done");
+				expect(exits[0].metadata.one).toBe("one");
+				expect(typeof exits[0].metadata.two).toBe("string");
+			},
+			{ args: ["--workflow-cost", "1"] },
+		));
 
 	it("spawn adds the child's usage to the parent's session stats", async (t) =>
 		withRealHost(t, async (host) => {

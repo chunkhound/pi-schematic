@@ -91,7 +91,9 @@ function restoreRuntime<B extends RebindBundle>(bundle: B, ctl: RunCtl, snapshot
  */
 export async function performNewSession<B extends RebindBundle>(bundle: B, ctl: RunCtl, hooks: RebindHooks<B>): Promise<void> {
 	const from = ctl.ctx;
-	if (!from) throw new Error("workflow.new: no live session context");
+	if (!from) {
+		throw new Error("workflow.new: no live session context");
+	}
 	const previous = snapshotRuntime(bundle);
 	// WHY: the replacement's session_start runs resetState, which clears readonlyEnabled to
 	// false on the shared singleton state (state persists across sessions; resetState mutates
@@ -103,7 +105,11 @@ export async function performNewSession<B extends RebindBundle>(bundle: B, ctl: 
 	ctl.ctx = null;
 	let result: { cancelled: boolean };
 	try {
-		result = await from.newSession({ withSession: async (next) => rebindRun(bundle, ctl, next, hooks, readonlyEnabled) });
+		result = await from.newSession({
+			withSession: async (next) => {
+				rebindRun(bundle, ctl, next, hooks, readonlyEnabled);
+			},
+		});
 	} catch (error) {
 		// Any throw once teardown started leaves `from` dead; the replacement, when built, is the
 		// live runtime. Restoring either would bind the run to a dead session, so fail loudly on
@@ -111,7 +117,9 @@ export async function performNewSession<B extends RebindBundle>(bundle: B, ctl: 
 		failNewSession(bundle, ctl, error);
 		throw error;
 	}
-	if (!result.cancelled) return;
+	if (!result.cancelled) {
+		return;
+	}
 	// Cancelled BEFORE teardown: `from` is still live, so put the run back on it and re-arm.
 	const cancelled = new Error("workflow.new: new session was cancelled");
 	try {
@@ -132,7 +140,13 @@ function failNewSession<B extends RebindBundle>(bundle: B, ctl: RunCtl, error: u
 }
 
 /** Put the run back on the pre-replacement runtime and re-arm the subscriptions the teardown dropped. */
-function restorePreReplacement<B extends RebindBundle>(bundle: B, ctl: RunCtl, previous: RuntimeSnapshot<B>, from: ExtensionCommandContext, hooks: RebindHooks<B>): void {
+function restorePreReplacement<B extends RebindBundle>(
+	bundle: B,
+	ctl: RunCtl,
+	previous: RuntimeSnapshot<B>,
+	from: ExtensionCommandContext,
+	hooks: RebindHooks<B>,
+): void {
 	restoreRuntime(bundle, ctl, previous, from);
 	// WHY: the teardown dropped this run's input-suppression/cancel subscriptions; re-arm
 	// them on the restored session (idempotent).
@@ -140,13 +154,21 @@ function restorePreReplacement<B extends RebindBundle>(bundle: B, ctl: RunCtl, p
 }
 
 /** Rebind the run to the replacement session's published runtime and subscriptions. */
-export function rebindRun<B extends RebindBundle>(bundle: B, ctl: RunCtl, next: ExtensionCommandContext, hooks: RebindHooks<B>, readonlyEnabled: boolean): void {
+export function rebindRun<B extends RebindBundle>(
+	bundle: B,
+	ctl: RunCtl,
+	next: ExtensionCommandContext,
+	hooks: RebindHooks<B>,
+	readonlyEnabled: boolean,
+): void {
 	const sessionId = next.sessionManager.getSessionId();
 	// takeWorkflowRuntime consumes the binding (it deletes the map entry): a replacement
 	// session publishes exactly one runtime, so rebind is single-use. A later failure does
 	// not put it back — the replacement's own session_start publishes afresh, never a retry.
 	const binding = takeWorkflowRuntime(sessionId);
-	if (!binding) throw new Error(`workflow.new: no runtime was published for replacement session ${sessionId}`);
+	if (!binding) {
+		throw new Error(`workflow.new: no runtime was published for replacement session ${sessionId}`);
+	}
 	bundle.pi = binding.pi;
 	bundle.state = binding.state;
 	// Rebind the child-usage sink so children spawned after the replacement
@@ -171,7 +193,9 @@ export function rebindRun<B extends RebindBundle>(bundle: B, ctl: RunCtl, next: 
 function getSignal(ctl: RunCtl): AbortSignal {
 	// The host is built before execute; every handoff runs through it. Fail loudly if a
 	// future rebind ever drops it, instead of silently passing a never-aborting signal.
-	if (!ctl.host) throw new Error("workflow host missing during handoff");
+	if (!ctl.host) {
+		throw new Error("workflow host missing during handoff");
+	}
 	return ctl.host.signal;
 }
 
@@ -194,7 +218,9 @@ const HANDOFF_IDLE_TIMEOUT_MSG = "handoff successor did not settle; the successo
 export async function performHandoff(bundle: RebindBundle, ctl: RunCtl, direction: string): Promise<void> {
 	// Handoff continues in place; the ctx stays valid for the whole wait.
 	const ctx = ctl.ctx;
-	if (!ctx) throw new Error("workflow.handoff: no live session context");
+	if (!ctx) {
+		throw new Error("workflow.handoff: no live session context");
+	}
 	const watch = bundle.deps.watchHandoffSettlement();
 	let idle: { done: Promise<void>; dispose: () => void } | undefined;
 	try {
@@ -223,13 +249,18 @@ export async function performHandoff(bundle: RebindBundle, ctl: RunCtl, directio
  * would pin the event loop for up to the full deadline, blocking headless process exit.
  * `onTimeout` runs before the deadline rejection, so the abort wins even if the caller catches. */
 function withDeadline<T>(promise: Promise<T>, ms: number, message: string, signal?: AbortSignal, onTimeout?: () => void): Promise<T> {
-	if (!Number.isFinite(ms)) return promise;
+	if (!Number.isFinite(ms)) {
+		return promise;
+	}
 	if (signal?.aborted) {
 		promise.catch(() => {});
 		return Promise.reject(new Error("cancelled"));
 	}
 	return new Promise<T>((resolve, reject) => {
-		const onAbort = () => { clearTimeout(timer); reject(new Error("cancelled")); };
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(new Error("cancelled"));
+		};
 		const timer = setTimeout(() => {
 			signal?.removeEventListener("abort", onAbort);
 			onTimeout?.();
@@ -237,8 +268,16 @@ function withDeadline<T>(promise: Promise<T>, ms: number, message: string, signa
 		}, ms);
 		signal?.addEventListener("abort", onAbort, { once: true });
 		promise.then(
-			(value) => { signal?.removeEventListener("abort", onAbort); clearTimeout(timer); resolve(value); },
-			(error) => { signal?.removeEventListener("abort", onAbort); clearTimeout(timer); reject(error); },
+			(value) => {
+				signal?.removeEventListener("abort", onAbort);
+				clearTimeout(timer);
+				resolve(value);
+			},
+			(error) => {
+				signal?.removeEventListener("abort", onAbort);
+				clearTimeout(timer);
+				reject(error);
+			},
 		);
 	});
 }
@@ -257,12 +296,19 @@ function waitForIdle(pi: ExtensionAPI, ctx: ExtensionCommandContext): { done: Pr
 			return;
 		}
 		off = pi.on("agent_settled", () => {
-			if (!ctx.isIdle()) return;
+			if (!ctx.isIdle()) {
+				return;
+			}
 			off?.();
 			off = undefined;
 			resolve();
 		});
 	});
-	return { done, dispose: () => { off?.(); off = undefined; } };
+	return {
+		done,
+		dispose: () => {
+			off?.();
+			off = undefined;
+		},
+	};
 }
-

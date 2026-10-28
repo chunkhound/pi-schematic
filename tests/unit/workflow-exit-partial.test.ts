@@ -2,7 +2,7 @@
 // `ExitRecord.metadata`, so the summary (which reads `partial`) lost it. The exit
 // record now carries `partial` as its own field; this pins both directions.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
 import { createWorkflowHost } from "../../workflow/host.js";
@@ -40,10 +40,7 @@ test("checkpoint then sandbox abort: the command-recorded exit keeps the salvage
 	// Mirror workflow/command.ts reportResult: abort on the sandbox failure, then the
 	// run's single write salvages the last checkpoint.
 	host.abort("cancelled", "sandbox aborted");
-	host.recordExit(
-		{ reason: "cancelled", error: "sandbox aborted", partial: host.checkpointRecord()?.metadata },
-		"error",
-	);
+	host.recordExit({ reason: "cancelled", error: "sandbox aborted", partial: host.checkpointRecord()?.metadata }, "error");
 	const exit = host.exitRecord();
 	assert.deepEqual(exit?.partial, { round: 3 }, "the salvage survives on its own field");
 	// Mirror workflow/command.ts finalizeRun: the summary reads `partial` directly.

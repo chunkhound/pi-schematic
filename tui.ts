@@ -55,8 +55,12 @@ export function workflowLabel(name: string): string {
 
 /** Human label for a reserved soft-stop reason; every other reason passes through unchanged. */
 export function reasonLabel(reason: string): string {
-	if (reason === "cost-limit") return "cost target reached";
-	if (reason === "time-limit") return "time target reached";
+	if (reason === "cost-limit") {
+		return "cost target reached";
+	}
+	if (reason === "time-limit") {
+		return "time target reached";
+	}
 	return reason;
 }
 
@@ -148,14 +152,20 @@ export function workflowSegments(view: WorkflowProgressView, theme: Theme): BarS
 /** Conversation cells, all below every run cell: ctx › topic › readonly › notebook. */
 function conversationSegments(ctx: ExtensionContext, state: SchematicState, theme: Theme): BarSegment[] {
 	const percent = normalizeContextPercent(ctx.getContextUsage()?.percent);
-	const ctxText = percent === null
-		? theme.fg("dim", "ctx --%")
-		: theme.fg("dim", "ctx ") + theme.fg(contextTone(Math.round(percent)), `${Math.round(percent)}%`);
+	const ctxText =
+		percent === null ? theme.fg("dim", "ctx --%") : theme.fg("dim", "ctx ") + theme.fg(contextTone(Math.round(percent)), `${Math.round(percent)}%`);
 	const count = state.notebookPages.size;
 	return [
 		{ key: STATUS_KEY_CTX, text: ctxText, priority: 4, zone: "conversation" },
-		{ key: STATUS_KEY_TOPIC, text: state.activeNotebookTopic ? `\u{1F9ED} ${state.activeNotebookTopic}` : theme.fg("dim", "\u{1F9ED} -"), priority: 5, zone: "conversation" },
-		...(state.readonlyEnabled ? [{ key: STATUS_KEY_READONLY, text: theme.fg("warning", "\u{1F512} readonly"), priority: 6, zone: "conversation" as const }] : []),
+		{
+			key: STATUS_KEY_TOPIC,
+			text: state.activeNotebookTopic ? `\u{1F9ED} ${state.activeNotebookTopic}` : theme.fg("dim", "\u{1F9ED} -"),
+			priority: 5,
+			zone: "conversation",
+		},
+		...(state.readonlyEnabled
+			? [{ key: STATUS_KEY_READONLY, text: theme.fg("warning", "\u{1F512} readonly"), priority: 6, zone: "conversation" as const }]
+			: []),
 		{ key: STATUS_KEY_NOTEBOOK, text: count > 0 ? `\u{1F4D2} ${count}` : theme.fg("dim", "\u{1F4D2} 0"), priority: 7, zone: "conversation" },
 	];
 }
@@ -164,11 +174,17 @@ function conversationSegments(ctx: ExtensionContext, state: SchematicState, them
  * Lay out one bar line, never wider than `width`; the elide ladder lives in {@link fitBarLine}.
  */
 export function renderUnifiedBar(segments: readonly BarSegment[], width: number): string {
-	const workflow = segments.filter(s => s.zone === "workflow").sort((a, b) => a.priority - b.priority).map(s => ({ ...s }));
-	const conversation = segments.filter(s => s.zone === "conversation").sort((a, b) => a.priority - b.priority).map(s => ({ ...s }));
+	const workflow = segments
+		.filter((s) => s.zone === "workflow")
+		.sort((a, b) => a.priority - b.priority)
+		.map((s) => ({ ...s }));
+	const conversation = segments
+		.filter((s) => s.zone === "conversation")
+		.sort((a, b) => a.priority - b.priority)
+		.map((s) => ({ ...s }));
 	const build = () => {
-		const run = workflow.map(s => s.text).join(" \u00B7 ");
-		const chat = conversation.map(s => s.text).join(" \u00B7 ");
+		const run = workflow.map((s) => s.text).join(" \u00B7 ");
+		const chat = conversation.map((s) => s.text).join(" \u00B7 ");
 		return [run, chat].filter(Boolean).join(" \u2502 ");
 	};
 	return fitBarLine(build, conversation, workflow, width);
@@ -181,7 +197,7 @@ function sanitizeFooterCell(text: string): string {
 	return text.replace(/[\r\n\t]+/g, " ");
 }
 
-function fitBarLine(build: () => string, conversation: Array<{ text: string }>, workflow: Array<{ text: string }>, width: number): string {
+function fitBarLine(build: () => string, conversation: { text: string }[], workflow: { text: string }[], width: number): string {
 	let line = build();
 	while (visibleWidth(line) > width && conversation.length > 0) {
 		conversation.pop();
@@ -202,16 +218,24 @@ function fitBarLine(build: () => string, conversation: Array<{ text: string }>, 
 
 /** Footer tiers mirror pi's own compaction. Only pi's decimal-k and whole-M tiers live here; the rest defer to {@link formatCompactTokens}. */
 function formatTokens(count: number): string {
-	if (count >= 10_000_000) return `${Math.round(count / 1_000_000)}M`;
-	if (count >= 1000 && count < 10000) return `${(count / 1000).toFixed(1)}k`;
+	if (count >= 10_000_000) {
+		return `${Math.round(count / 1_000_000)}M`;
+	}
+	if (count >= 1000 && count < 10000) {
+		return `${(count / 1000).toFixed(1)}k`;
+	}
 	return formatCompactTokens(count);
 }
 
 /** Compact token count for summary cards: `1.2M` / `2k` / `150`. The caller supplies the
  * unit so `in`/`out`/`cache` read at a glance. Single source shared by every summary surface. */
 export function formatCompactTokens(tokens: number): string {
-	if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
-	if (tokens >= 1_000) return `${Math.round(tokens / 1000)}k`;
+	if (tokens >= 1_000_000) {
+		return `${(tokens / 1_000_000).toFixed(1)}M`;
+	}
+	if (tokens >= 1_000) {
+		return `${Math.round(tokens / 1000)}k`;
+	}
 	return `${tokens}`;
 }
 
@@ -220,11 +244,17 @@ function formatCwdForFooter(cwd: string): string {
 	const home = homedir();
 	const resolvedCwd = resolve(cwd);
 	const resolvedHome = resolve(home);
-	if (resolvedCwd === resolvedHome) return "~";
+	if (resolvedCwd === resolvedHome) {
+		return "~";
+	}
 	return resolvedCwd.startsWith(resolvedHome + sep) ? `~${resolvedCwd.slice(resolvedHome.length)}` : cwd;
 }
 
-interface UsageCache { sessionId: string; leafId: string | null; usage: ReturnType<typeof collectUsage> }
+interface UsageCache {
+	sessionId: string;
+	leafId: string | null;
+	usage: ReturnType<typeof collectUsage>;
+}
 const usageCaches = new WeakMap<ExtensionContext, UsageCache>();
 
 /**
@@ -237,7 +267,9 @@ function sessionUsage(ctx: ExtensionContext): UsageCache["usage"] {
 	const sessionId = manager.getSessionId();
 	const leafId = manager.getLeafId();
 	const cached = usageCaches.get(ctx);
-	if (cached && cached.sessionId === sessionId && cached.leafId === leafId) return cached.usage;
+	if (cached && cached.sessionId === sessionId && cached.leafId === leafId) {
+		return cached.usage;
+	}
 	const usage = collectUsage(manager.getEntries());
 	usageCaches.set(ctx, { sessionId, leafId, usage });
 	return usage;
@@ -283,10 +315,14 @@ const schematicStatusKeys = new Set([STATUS_KEY_HANDOFF, STATUS_KEY_CTX, STATUS_
  * context because `applyWorkflowProgress` runs again on rebind.
  */
 export function installWorkflowFooter(ctx: ExtensionContext, read: () => WorkflowBarView): void {
-	if (!ctx.hasUI || ctx.mode !== "tui" || installedFooters.has(ctx)) return;
+	if (!ctx.hasUI || ctx.mode !== "tui" || installedFooters.has(ctx)) {
+		return;
+	}
 	installedFooters.add(ctx);
 	ctx.ui.setFooter((tui, theme, footerData) => {
-		const unsubscribe = footerData.onBranchChange(() => tui.requestRender());
+		const unsubscribe = footerData.onBranchChange(() => {
+			tui.requestRender();
+		});
 		return {
 			dispose: unsubscribe,
 			invalidate() {},
@@ -294,11 +330,15 @@ export function installWorkflowFooter(ctx: ExtensionContext, read: () => Workflo
 				const { state, progress } = read();
 				const segments = [...workflowSegments(progress, theme), ...conversationSegments(ctx, state, theme)];
 				for (const [key, value] of footerData.getExtensionStatuses()) {
-					if (value === undefined || schematicStatusKeys.has(key)) continue;
+					if (value === undefined || schematicStatusKeys.has(key)) {
+						continue;
+					}
 					segments.push({ key, text: sanitizeFooterCell(value), priority: 8, zone: "conversation" });
 				}
 				const handoff = footerData.getExtensionStatuses().get(STATUS_KEY_HANDOFF);
-				if (handoff) segments.push({ key: STATUS_KEY_HANDOFF, text: sanitizeFooterCell(handoff), priority: 6, zone: "conversation" });
+				if (handoff) {
+					segments.push({ key: STATUS_KEY_HANDOFF, text: sanitizeFooterCell(handoff), priority: 6, zone: "conversation" });
+				}
 				return [renderUnifiedBar(segments, width), renderDimStatsLine(ctx, theme, footerData, width)];
 			},
 		};
@@ -308,7 +348,9 @@ export function installWorkflowFooter(ctx: ExtensionContext, read: () => Workflo
 /** Restore pi's built-in footer when the run ends. Membership in `installedFooters`
  * implies `hasUI` and tui mode (install only adds under both), so no re-check here. */
 export function uninstallWorkflowFooter(ctx: ExtensionContext): void {
-	if (!installedFooters.delete(ctx)) return;
+	if (!installedFooters.delete(ctx)) {
+		return;
+	}
 	ctx.ui.setFooter(undefined);
 }
 
@@ -321,7 +363,9 @@ const sentIndicators = new WeakMap<ExtensionContext, Map<string, string | undefi
 
 /** Send one surface only when its value changed since the last call for this `ctx`. */
 function sendOnce(sent: Map<string, string | undefined>, key: string, value: string | undefined, send: () => void): void {
-	if (sent.has(key) && sent.get(key) === value) return;
+	if (sent.has(key) && sent.get(key) === value) {
+		return;
+	}
 	send();
 	sent.set(key, value);
 }
@@ -338,17 +382,20 @@ export function updateIndicators(ctx: ExtensionContext, state: SchematicState): 
 	const theme = ctx.ui.theme;
 
 	// One producer for the conversation cells; the built-in footer shows each by key.
-	const byKey = new Map(conversationSegments(ctx, state, theme).map(segment => [segment.key, segment.text]));
+	const byKey = new Map(conversationSegments(ctx, state, theme).map((segment) => [segment.key, segment.text]));
 	for (const key of [STATUS_KEY_CTX, STATUS_KEY_NOTEBOOK, STATUS_KEY_TOPIC, STATUS_KEY_READONLY]) {
 		const value = byKey.get(key);
-		sendOnce(sent, key, value, () => ctx.ui.setStatus(key, value));
+		sendOnce(sent, key, value, () => {
+			ctx.ui.setStatus(key, value);
+		});
 	}
 
 	// High-context warning widget (above editor)
 	const percent = normalizeContextPercent(ctx.getContextUsage()?.percent);
 	const warning = percent !== null && percent >= 70 ? warningLine(theme, state, Math.round(percent)) : undefined;
-	sendOnce(sent, WIDGET_KEY_WARNING, warning, () =>
-		ctx.ui.setWidget(WIDGET_KEY_WARNING, warning === undefined ? undefined : [warning]));
+	sendOnce(sent, WIDGET_KEY_WARNING, warning, () => {
+		ctx.ui.setWidget(WIDGET_KEY_WARNING, warning === undefined ? undefined : [warning]);
+	});
 }
 
 /** The single-line warning shown above the editor past the context threshold. */

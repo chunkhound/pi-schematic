@@ -3,7 +3,15 @@
 // builder; `summary-renderer.ts` owns the TUI component. Keeping the builder free
 // of TUI imports lets tests assert the persisted contract without a terminal.
 import type { ModelSpend } from "../usage.js";
-import { WORKFLOW_ENTRY_VERSION, isNewerWorkflowEntry, workflowEntryVersion, type WorkflowEffect, type WorkflowHandleName, type WorkflowLimits, type WorkflowRunMetrics } from "./types.js";
+import {
+	WORKFLOW_ENTRY_VERSION,
+	isNewerWorkflowEntry,
+	workflowEntryVersion,
+	type WorkflowEffect,
+	type WorkflowHandleName,
+	type WorkflowLimits,
+	type WorkflowRunMetrics,
+} from "./types.js";
 
 /** Custom-entry type of the end-of-run overview; the renderer registers the same name. */
 export const WORKFLOW_SUMMARY_ENTRY_TYPE = "workflow-summary";
@@ -78,11 +86,19 @@ export function buildWorkflowSummary(
 /** Read a persisted summary, accepting legacy entries without `v`. Returns null for a
  * malformed or newer entry so the renderer can show a safe fallback instead of throwing. */
 export function readWorkflowSummaryData(data: unknown): WorkflowRunSummaryData | null {
-	if (!data || typeof data !== "object" || isNewerWorkflowEntry(data)) return null;
+	if (!data || typeof data !== "object" || isNewerWorkflowEntry(data)) {
+		return null;
+	}
 	const entry = data as Partial<WorkflowRunSummaryData>;
-	if (typeof entry.workflow !== "string" || typeof entry.reason !== "string") return null;
-	if (typeof entry.startedAt !== "string" || typeof entry.elapsedMs !== "number") return null;
-	if (!Array.isArray(entry.spend) || !entry.limits || typeof entry.limits !== "object") return null;
+	if (typeof entry.workflow !== "string" || typeof entry.reason !== "string") {
+		return null;
+	}
+	if (typeof entry.startedAt !== "string" || typeof entry.elapsedMs !== "number") {
+		return null;
+	}
+	if (!Array.isArray(entry.spend) || !entry.limits || typeof entry.limits !== "object") {
+		return null;
+	}
 	return {
 		v: workflowEntryVersion(data) ?? WORKFLOW_ENTRY_VERSION,
 		workflow: entry.workflow,

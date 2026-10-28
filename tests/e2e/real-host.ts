@@ -128,6 +128,8 @@ interface RealHostSettings {
 
 export interface RealHostOptions {
 	settings?: RealHostSettings;
+	/** Extra pi CLI args, e.g. a registered extension flag a test must set before the session starts. */
+	args?: string[];
 }
 
 function pathEnv(): Record<string, string> {
@@ -292,6 +294,7 @@ export class RealHost {
 					SCHEMATIC_ENTRY,
 					"-e",
 					PROBE_ENTRY,
+					...(options.args ?? []),
 				];
 				const clientOptions: RpcClientOptions = {
 					cliPath: CLI_PATH,

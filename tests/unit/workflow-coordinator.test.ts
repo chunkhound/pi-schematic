@@ -3,15 +3,9 @@
 // (single exclusive claim, idempotent release) and the per-session binding isolation
 // that let a still-running workflow rebind after a session replacement.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { WorkflowRuntimeBinding } from "../../workflow/coordinator.js";
-import {
-	discardWorkflowRuntime,
-	publishWorkflowRuntime,
-	releaseWorkflow,
-	reserveWorkflow,
-	takeWorkflowRuntime,
-} from "../../workflow/coordinator.js";
+import { discardWorkflowRuntime, publishWorkflowRuntime, releaseWorkflow, reserveWorkflow, takeWorkflowRuntime } from "../../workflow/coordinator.js";
 
 /** Minimal binding — tests only assert registry identity, never invoke these. */
 function fakeBinding(): WorkflowRuntimeBinding {
@@ -26,7 +20,9 @@ function fakeBinding(): WorkflowRuntimeBinding {
 function resetRegistry(): void {
 	releaseWorkflow();
 	// Drain any sessions published by prior tests.
-	for (const session of ["a", "b", "x", "z"]) discardWorkflowRuntime(session);
+	for (const session of ["a", "b", "x", "z"]) {
+		discardWorkflowRuntime(session);
+	}
 }
 
 test("reserveWorkflow claims the single workflow reservation", () => {
@@ -49,7 +45,9 @@ test("releaseWorkflow is idempotent: double-release is a no-op, not an error", (
 	resetRegistry();
 	reserveWorkflow();
 	releaseWorkflow();
-	assert.doesNotThrow(() => releaseWorkflow(), "second release must not throw");
+	assert.doesNotThrow(() => {
+		releaseWorkflow();
+	}, "second release must not throw");
 	assert.equal(reserveWorkflow(), true, "reservation is available after double-release");
 	releaseWorkflow();
 });

@@ -43,14 +43,18 @@ export function discardWorkflowRuntime(sessionId: string): void {
 export function takeWorkflowRuntime(sessionId: string): WorkflowRuntimeBinding | null {
 	const registry = workflowGlobal();
 	const binding = registry.runtimes.get(sessionId) ?? null;
-	if (binding) registry.runtimes.delete(sessionId);
+	if (binding) {
+		registry.runtimes.delete(sessionId);
+	}
 	return binding;
 }
 
 /** Claim the single active workflow before any await; false when one is already running. */
 export function reserveWorkflow(): boolean {
 	const registry = workflowGlobal();
-	if (registry.workflowReserved) return false;
+	if (registry.workflowReserved) {
+		return false;
+	}
 	registry.workflowReserved = true;
 	return true;
 }

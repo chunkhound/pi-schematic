@@ -342,7 +342,7 @@ test("workflow overview never renders a line wider than the viewport", () => {
 		for (const data of [overviewData(), { ...overviewData(), spend: [] }]) {
 			const lines = renderWorkflowSummary(data, false, identityTheme).render(width);
 			for (const line of lines) {
-				expect(visibleWidth(line) <= width, `width ${width}: line is ${visibleWidth(line)} wide`).toBeTruthy();
+				expect(visibleWidth(line) <= width, `width ${width}: line is ${visibleWidth(line)} wide`).toBe(true);
 			}
 		}
 	}
@@ -362,7 +362,7 @@ test("workflow overview trims the expanded effect log to MAX_EFFECT_ROWS with an
 	}));
 	const data: WorkflowRunSummaryData = { ...overviewData(), effects };
 	const rendered = new RenderTestBackend().render(renderWorkflowSummary(data, true, identityTheme), SNAP_WIDTH).toSnapshot();
-	expect(rendered.includes(`… ${extra} earlier`), "older effects are summarized, not rendered individually").toBeTruthy();
-	expect(rendered.includes("echo 0"), "the oldest effect is trimmed").toBe(false);
-	expect(rendered.includes(`echo ${MAX_EFFECT_ROWS + extra - 1}`), "the newest effect is kept").toBe(true);
+	expect(rendered, "older effects are summarized, not rendered individually").toContain(`… ${extra} earlier`);
+	expect(rendered, "the oldest effect is trimmed").not.toContain("echo 0");
+	expect(rendered, "the newest effect is kept").toContain(`echo ${MAX_EFFECT_ROWS + extra - 1}`);
 });

@@ -28,7 +28,9 @@ export function withRecordStatus(message: string, recorded: boolean): string {
 
 /** UI notice when present, silent headless; transcript entries cover the silent path. */
 export function notify(ctx: ExtensionCommandContext, message: string, level: "info" | "warning" | "error"): void {
-	if (ctx.hasUI) ctx.ui.notify(message, level);
+	if (ctx.hasUI) {
+		ctx.ui.notify(message, level);
+	}
 }
 
 /** Single-owner rejection: exactly one interactive notice + exactly one headless transcript
@@ -37,5 +39,7 @@ export function reportRejectedStart(pi: ExtensionAPI, ctx: ExtensionCommandConte
 	notify(ctx, message, "error");
 	// Visibility-only: the rejected start never owns run resources, so a failed transcript
 	// append (the only headless surface) must not turn a clean rejection into a crash.
-	if (!ctx.hasUI) safeAppendEntry(pi, WORKFLOW_ERROR_ENTRY_TYPE, { phase, error: message });
+	if (!ctx.hasUI) {
+		safeAppendEntry(pi, WORKFLOW_ERROR_ENTRY_TYPE, { phase, error: message });
+	}
 }

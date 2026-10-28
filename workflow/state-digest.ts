@@ -6,23 +6,41 @@ import type { EntriesOptions, WorkflowEntry, StateDigest, RunModel } from "./typ
 // AgentMessage widens to custom roles; the digest reads only these optional fields.
 // Assistant entries record the model that answered; see pi's docs/session-format.md
 // (ships in @earendil-works/pi-coding-agent, not this repo).
-export type AnyMessage = { role?: string; content?: unknown; toolName?: string; provider?: string; model?: string; responseModel?: string; thinkingLevel?: string; stopReason?: string };
-type ContentBlock = { type?: string; text?: string; name?: string };
+export interface AnyMessage {
+	role?: string;
+	content?: unknown;
+	toolName?: string;
+	provider?: string;
+	model?: string;
+	responseModel?: string;
+	thinkingLevel?: string;
+	stopReason?: string;
+}
+interface ContentBlock {
+	type?: string;
+	text?: string;
+	name?: string;
+}
 
 /** Newest assistant message at an index strictly after `after` (default: whole branch).
  * Single owner for the backward assistant scan; host and run-registry call it. */
 export function lastAssistant(entries: readonly SessionEntry[], after = -1): { index: number; message: AnyMessage } | null {
 	for (let i = entries.length - 1; i > after; i--) {
 		const entry = entries[i];
-		if (entry.type === "message" && (entry.message as AnyMessage).role === "assistant")
-			return { index: i, message: entry.message as AnyMessage };
+		if (entry.type === "message" && (entry.message as AnyMessage).role === "assistant") {
+			return { index: i, message: entry.message };
+		}
 	}
 	return null;
 }
 
 function contentText(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
+	if (typeof content === "string") {
+		return content;
+	}
+	if (!Array.isArray(content)) {
+		return "";
+	}
 	return (content as ContentBlock[])
 		.filter((block) => block?.type === "text" && typeof block.text === "string")
 		.map((block) => block.text!)
@@ -30,20 +48,26 @@ function contentText(content: unknown): string {
 }
 
 function contentToolNames(content: unknown): string[] {
-	if (!Array.isArray(content)) return [];
-	return (content as ContentBlock[])
-		.filter((block) => block?.type === "toolCall" && typeof block.name === "string")
-		.map((block) => block.name!);
+	if (!Array.isArray(content)) {
+		return [];
+	}
+	return (content as ContentBlock[]).filter((block) => block?.type === "toolCall" && typeof block.name === "string").map((block) => block.name!);
 }
 
 function messageToolNames(message: AnyMessage): string[] {
-	if (message.role === "assistant") return contentToolNames(message.content);
-	if (message.role === "toolResult" && message.toolName) return [message.toolName];
+	if (message.role === "assistant") {
+		return contentToolNames(message.content);
+	}
+	if (message.role === "toolResult" && message.toolName) {
+		return [message.toolName];
+	}
 	return [];
 }
 
 function entryText(entry: SessionEntry): string {
-	if (entry.type === "compaction" || entry.type === "branch_summary") return entry.summary;
+	if (entry.type === "compaction" || entry.type === "branch_summary") {
+		return entry.summary;
+	}
 	return "";
 }
 
@@ -62,23 +86,23 @@ function buildEntryDigest(entry: SessionEntry): WorkflowEntry {
 	return { id: entry.id, role: entry.type, type: entry.type, text: entryText(entry), toolNames: [] };
 }
 
-export function buildEntryDigests(
-	entries: readonly SessionEntry[],
-	options: EntriesOptions,
-): WorkflowEntry[] {
+export function buildEntryDigests(entries: readonly SessionEntry[], options: EntriesOptions): WorkflowEntry[] {
 	// An unknown id throws: a typo must never read as the whole branch.
 	let tail: readonly SessionEntry[];
 	if (!options.after) {
 		tail = entries;
 	} else {
 		const index = entries.findIndex((entry) => entry.id === options.after);
-		if (index < 0) throw new Error(`workflow.entries: unknown after id "${options.after}"`);
+		if (index < 0) {
+			throw new Error(`workflow.entries: unknown after id "${options.after}"`);
+		}
 		tail = entries.slice(index + 1);
 	}
 	// A cap must be a finite non-negative integer: NaN or a fraction would silently read as "no cap".
 	const limit = options.limit;
-	if (limit !== undefined && (!Number.isInteger(limit) || limit < 0))
+	if (limit !== undefined && (!Number.isInteger(limit) || limit < 0)) {
 		throw new Error(`workflow.entries: limit must be a non-negative integer, got ${String(limit)}`);
+	}
 	const capped = limit === undefined || limit >= tail.length ? tail : tail.slice(Math.max(0, tail.length - limit));
 	return capped.map(buildEntryDigest);
 }
@@ -95,9 +119,13 @@ export function lastAssistantText(entries: readonly SessionEntry[]): string {
  * than the requested one (a fallback), and it names the model that actually wrote the turn. */
 export function lastAssistantModel(branch: readonly SessionEntry[]): RunModel | null {
 	const found = lastAssistant(branch);
-	if (!found) return null;
+	if (!found) {
+		return null;
+	}
 	const model = found.message.responseModel ?? found.message.model;
-	if (!model) return null;
+	if (!model) {
+		return null;
+	}
 	return {
 		provider: found.message.provider ?? null,
 		model,

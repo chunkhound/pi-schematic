@@ -43,7 +43,9 @@ export function bumpSpendRevision(state: Pick<SpendState, "spendRevision">): voi
 // (baseline + child ledger + classifier) still stands.
 export function liveBranch(deps: WorkflowHostDeps): readonly SessionEntry[] {
 	const ctx = deps.getCtx();
-	if (ctx) return ctx.sessionManager.getBranch();
+	if (ctx) {
+		return ctx.sessionManager.getBranch();
+	}
 	return [];
 }
 
@@ -73,8 +75,9 @@ export function runSpendRows(deps: WorkflowHostDeps, state: SpendState): Map<str
 	const sessionId = ctx?.sessionManager.getSessionId() ?? null;
 	const leafId = ctx?.sessionManager.getLeafId() ?? null;
 	const cached = state.spendCache;
-	if (cached && cached.sessionId === sessionId && cached.leafId === leafId && cached.revision === state.spendRevision)
+	if (cached && cached.sessionId === sessionId && cached.leafId === leafId && cached.revision === state.spendRevision) {
 		return cached.rows;
+	}
 	const rows = projectRunSpend(deps, state);
 	state.spendCache = { sessionId, leafId, revision: state.spendRevision, rows };
 	return rows;
@@ -86,7 +89,9 @@ export function runSpendRows(deps: WorkflowHostDeps, state: SpendState): Map<str
  * classifier merge would reorder accumulation and shift rounding. */
 function projectRunSpend(deps: WorkflowHostDeps, state: SpendState): Map<string, ModelSpend> {
 	const rows = mergeModelSpend(state.baselineSpend, branchSpend(deps, state));
-	for (const child of state.childSpend.values()) addModelSpend(rows, child.provider, child.model, child.usage);
+	for (const child of state.childSpend.values()) {
+		addModelSpend(rows, child.provider, child.model, child.usage);
+	}
 	return mergeModelSpend(rows, state.classifierSpend);
 }
 
@@ -98,9 +103,13 @@ export function computeCurrentCost(deps: WorkflowHostDeps, state: SpendState): n
  * No finite guard on either side: every producer (limits-dialog flags, presets, custom input) emits a finite positive. */
 export function limitReason(deps: WorkflowHostDeps, state: SpendState): ReservedReason | null {
 	const costLimit = deps.limits.costLimit;
-	if (costLimit !== null && computeCurrentCost(deps, state) >= costLimit) return "cost-limit";
+	if (costLimit !== null && computeCurrentCost(deps, state) >= costLimit) {
+		return "cost-limit";
+	}
 	const budget = deps.limits.timeBudgetMs;
-	if (budget !== null && Date.now() - state.startedAt >= budget) return "time-limit";
+	if (budget !== null && Date.now() - state.startedAt >= budget) {
+		return "time-limit";
+	}
 	return null;
 }
 

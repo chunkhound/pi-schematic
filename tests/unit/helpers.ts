@@ -6,7 +6,6 @@ import {
 	CONFIG_DIR_NAME,
 	ModelRegistry,
 	SessionManager,
-	type SessionEntry,
 	Theme,
 	type AgentToolResult,
 	type ExtensionCommandContext,
@@ -1078,58 +1077,85 @@ export function renderFooterAt(record: TUIRecord, width: number): string[] | und
 	};
 	return factory({ requestRender: () => {} }, TEST_TUI_THEME, footerData).render(width);
 }
+// ── TUI context factory ───────────────────────────────────────────────
+
+// The theme of `makeTUICtx`: `fg` marks the color as `[name:text]`; reading any other `Theme` member throws, naming it.
+const tuiTheme = guardedInstance(
+	Theme.prototype,
+	{ fg: (name: string, text: string) => `[${name}:${text}]` },
+	(property) => new Error(`theme.${property} is not stubbed in the makeTUICtx theme; it stubs only fg.`),
+);
+
+function isOptionalStringArray(value: unknown): value is string[] | undefined {
+	return value === undefined || isStringArray(value);
+}
+
+/**
+ * A TUI command and tool context: UI on (mode `tui`) unless `hasUI` is false (mode
+ * `print`), `tuiTheme` as the theme, `setStatus` and `setWidget` recorded into
+ * `record`, `notify` a no-op, every other UI member as `createUIContext` builds it,
+ * `ui` over those, and context usage at `percent` (none when `percent` is null, the
+ * default). It has no model registry, so code that refreshes model groups skips
+ * them. `setWidget` throws for a component widget, which `record` cannot hold.
+ */
 export function makeTUICtx(
 	overrides: Partial<{
 		percent: number | null;
 		hasUI: boolean;
-		mode: string;
-		record: TUIRecord;
-		branch: SessionEntry[];
-		notify: (message: string, level: string) => void;
-		custom: (build: any) => Promise<unknown>;
-		ui?: Partial<ExtensionUIContext>;
+		mode: ExtensionCommandContext["mode"];
+		record: { statuses: Map<string, string | undefined>; widgets: Map<string, string[] | undefined> };
+		ui: Partial<ExtensionUIContext>;
 	}> = {},
-): any {
+): ExtensionCommandContext & ExtensionToolContext {
 	const record: TUIRecord = overrides.record ?? { statuses: new Map(), widgets: new Map() };
-	record.workingMessages ??= [];
 	const hasUI = overrides.hasUI ?? true;
+	const mode = overrides.mode ?? (hasUI ? "tui" : "print");
 	const percent = overrides.percent !== undefined ? overrides.percent : null;
-	const branch = overrides.branch ?? [];
+	const ui = createUIContext({
+		theme: tuiTheme,
+		notify: vi.fn(),
+		setStatus: (key, status) => {
+			record.statuses.set(key, status);
+		},
+		setWidget: (key: string, content: unknown) => {
+			if (!isOptionalStringArray(content)) {
+				throw new Error(`makeTUICtx records only string widgets; "${key}" got a component.`);
+			}
+			record.widgets.set(key, content);
+		},
+		setFooter: (factory: unknown) => {
+			record.footer = factory;
+			if (factory) {
+				record.footerInstalls = (record.footerInstalls ?? 0) + 1;
+			} else {
+				record.footerRestores = (record.footerRestores ?? 0) + 1;
+			}
+		},
+		...definedOverrides(overrides.ui ?? {}),
+	});
+	return Object.assign(
+		createCommandContext({
+			hasUI,
+			mode,
+			ui,
+			modelRegistry: undefined,
+			getContextUsage: () => (percent !== null ? { tokens: null, contextWindow: 0, percent } : undefined),
+		}),
+		{ tools: [], executeTool: unstubbedAsync("ctx.executeTool") },
+	);
+}
+
+/** A minimal UI-bearing `ExtensionContext` for tests that only notify or read the theme. */
+export function makeReadonlyUICtx(overrides: Record<string, unknown> = {}) {
 	return {
-		hasUI,
-		mode: overrides.mode ?? "tui",
+		hasUI: true,
 		ui: {
-			theme: TEST_TUI_THEME,
-			notify: overrides.notify ?? (() => {}),
-			setStatus: (key: string, status: string | undefined) => {
-				record.statuses.set(key, status);
-			},
-			setWorkingMessage: (message?: string) => {
-				(record.workingMessages ??= []).push(message);
-			},
-			setWidget: (key: string, content: string[] | undefined) => {
-				record.widgets.set(key, content);
-			},
-			addAutocompleteProvider: () => {},
-			setFooter: (factory: unknown) => {
-				record.footer = factory;
-				if (factory) {
-					record.footerInstalls = (record.footerInstalls ?? 0) + 1;
-				} else {
-					record.footerRestores = (record.footerRestores ?? 0) + 1;
-				}
-			},
-			...(overrides.custom !== undefined ? { custom: overrides.custom } : {}),
-			...(overrides.ui ?? {}),
+			notify: (_message: string, _level?: string) => {},
+			theme: { fg: (_name: string, text: string) => text },
+			setStatus: (_key: string, _status?: string) => {},
+			setWidget: (_key: string, _content?: unknown) => {},
 		},
-		sessionManager: {
-			getBranch: () => branch,
-			getEntries: () => branch,
-			getSessionId: () => "test-session",
-			getLeafId: () => branch.at(-1)?.id ?? null,
-			getSessionName: () => undefined,
-		},
-		cwd: process.cwd(),
-		getContextUsage: () => (percent !== null ? { percent } : null),
+		getContextUsage: () => null,
+		...overrides,
 	};
 }

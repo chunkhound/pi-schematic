@@ -2,7 +2,7 @@
 // globals (createWorkflowHost seam); no workflow-internal imports. The pure usage math
 // (addUsage/collectUsage) lives with its own module's suite in usage.test.ts.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Usage } from "@earendil-works/pi-ai";
 import { createState } from "../../state.js";
@@ -56,7 +56,9 @@ function digestHost(branch: SessionEntry[], state = createState()): { host: Work
 
 function handle(host: WorkflowHost, name: string): { execute: (args?: unknown, context?: unknown) => Promise<unknown> } {
 	const tool = host.globals().find((candidate) => candidate.name === name);
-	if (!tool) throw new Error(`missing handle: ${name}`);
+	if (!tool) {
+		throw new Error(`missing handle: ${name}`);
+	}
 	const execute = tool.execute.bind(tool) as (args: unknown, context: unknown) => Promise<unknown>;
 	// Default context: inspectors need no signal; the sandbox always supplies one.
 	return { execute: (args, context = {}) => execute(args, context) };
@@ -65,16 +67,19 @@ function handle(host: WorkflowHost, name: string): { execute: (args?: unknown, c
 test("workflow.entries filters after an id, caps the newest, and names tool calls", async () => {
 	const entries: SessionEntry[] = [
 		message("u0", "user", "start"),
-		message("a1", "assistant", [{ type: "toolCall", name: "bash" }, { type: "text", text: "done" }]),
+		message("a1", "assistant", [
+			{ type: "toolCall", name: "bash" },
+			{ type: "text", text: "done" },
+		]),
 		message("t1", "toolResult", [{ type: "text", text: "ok" }], { toolName: "bash" }),
 	];
 	const { host } = digestHost(entries);
-	const all = (await handle(host, "workflow.entries").execute({ after: "u0" })) as Array<Record<string, unknown>>;
+	const all = (await handle(host, "workflow.entries").execute({ after: "u0" })) as Record<string, unknown>[];
 	assert.equal(all.length, 2);
 	assert.deepEqual(all[0].toolNames, ["bash"]);
 	assert.equal(all[0].text, "done");
 	assert.deepEqual(all[1].toolNames, ["bash"]);
-	const limited = (await handle(host, "workflow.entries").execute({ after: "u0", limit: 1 })) as Array<Record<string, unknown>>;
+	const limited = (await handle(host, "workflow.entries").execute({ after: "u0", limit: 1 })) as Record<string, unknown>[];
 	assert.equal(limited.length, 1);
 	assert.equal(limited[0].id, "t1");
 	assert.deepEqual(await handle(host, "workflow.entries").execute({ after: "u0", limit: 0 }), []);
@@ -105,7 +110,10 @@ test("workflow.state reports the newest assistant text across content blocks", a
 	const entries: SessionEntry[] = [
 		message("a1", "assistant", [{ type: "text", text: "first" }]),
 		message("u1", "user", "note"),
-		message("a2", "assistant", [{ type: "thinking", thinking: "x" }, { type: "text", text: "second" }]),
+		message("a2", "assistant", [
+			{ type: "thinking", thinking: "x" },
+			{ type: "text", text: "second" },
+		]),
 	];
 	const { host } = digestHost(entries);
 	const digest = (await handle(host, "workflow.state").execute()) as Record<string, unknown>;

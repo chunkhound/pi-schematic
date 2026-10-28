@@ -1,7 +1,7 @@
 // WHY: one spend projection feeds the cost limit and the run overview, so these
 // tests pin the merge, the exact-threshold crossing, and the overshoot snapshot.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { ChildSpend, ModelSpend } from "../../usage.js";
@@ -80,7 +80,17 @@ test("a pre-run spend does not trip the run cost limit", () => {
 
 test("limitReason fires exactly at the time threshold, not below", () => {
 	const now = Date.now();
-	const at: SpendState = { baselineSpend: new Map(), childSpend: new Map(), classifierSpend: new Map(), excludedEntryIds: new Set(), spendRevision: 0, spendCache: null, startedAt: now - 1_000, pendingStop: null, crossedAt: null };
+	const at: SpendState = {
+		baselineSpend: new Map(),
+		childSpend: new Map(),
+		classifierSpend: new Map(),
+		excludedEntryIds: new Set(),
+		spendRevision: 0,
+		spendCache: null,
+		startedAt: now - 1_000,
+		pendingStop: null,
+		crossedAt: null,
+	};
 	assert.equal(limitReason(stubDeps([], null, 1_000), at), "time-limit");
 	const fresh: SpendState = { ...at, startedAt: now };
 	assert.equal(limitReason(stubDeps([], null, 60_000), fresh), null);

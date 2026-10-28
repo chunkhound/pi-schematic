@@ -2,7 +2,7 @@
 // tests move each spend source through its real host path (branch, child ledger, classifier,
 // baseline commit) and prove the projection follows every move.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { createState, type SchematicState } from "../../state.js";
@@ -90,7 +90,9 @@ function call(host: WorkflowHost, member: string, args: unknown): Promise<unknow
 }
 
 const cost = (host: WorkflowHost): number => host.metrics().costUsd;
-const close = (actual: number, expected: number, message: string): void => assert.ok(Math.abs(actual - expected) < 1e-9, `${message}: got ${actual}, want ${expected}`);
+const close = (actual: number, expected: number, message: string): void => {
+	assert.ok(Math.abs(actual - expected) < 1e-9, `${message}: got ${actual}, want ${expected}`);
+};
 
 test("the cached run projection follows every spend source move", async () => {
 	const env = createEnv();
@@ -117,7 +119,13 @@ test("the cached run projection follows every spend source move", async () => {
 	// (d) a baseline commit via workflow.new replaces the branch source
 	await call(host, "new", undefined);
 	close(cost(host), 1.5, "baseline commit carries the committed spend after the branch clears");
-	assert.deepEqual(host.metrics().spend.map((row) => row.key).sort(), ["anthropic/opus", "anthropic/widget", "typesafe/jev"].sort());
+	assert.deepEqual(
+		host
+			.metrics()
+			.spend.map((row) => row.key)
+			.sort(),
+		["anthropic/opus", "anthropic/widget", "typesafe/jev"].sort(),
+	);
 });
 
 // WHY: the child ledger is keyed per tool call; same-model children must merge into one row

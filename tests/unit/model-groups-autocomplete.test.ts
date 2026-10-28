@@ -146,7 +146,7 @@ test("#group autocomplete prepends colored effective modal letters when a colori
 	expect(delegated).toBe(0);
 });
 
-test("registerModelGroupAutocomplete uses ctx.ui.addAutocompleteProvider once", () => {
+test("registerModelGroupAutocomplete installs one model-groups provider per UI", () => {
 	const state = createState();
 	const providers: AutocompleteProviderFactory[] = [];
 	const ctx = createExtensionContext({
@@ -160,6 +160,22 @@ test("registerModelGroupAutocomplete uses ctx.ui.addAutocompleteProvider once", 
 	});
 	registerModelGroupAutocomplete(ctx, state);
 	registerModelGroupAutocomplete(ctx, state);
+	expect(providers.length).toBe(1);
+	// A replacement UI gets its own install.
+	const next: AutocompleteProviderFactory[] = [];
+	const fresh = createExtensionContext({
+		hasUI: true,
+		mode: "tui",
+		ui: createUIContext({
+			addAutocompleteProvider: (factory) => {
+				next.push(factory);
+			},
+		}),
+	});
+	registerModelGroupAutocomplete(fresh, state);
+	expect(next.length).toBe(1);
+	// Headless contexts install nothing.
+	registerModelGroupAutocomplete(createExtensionContext(), state);
 	expect(providers.length).toBe(1);
 });
 

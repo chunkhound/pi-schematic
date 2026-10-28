@@ -1,13 +1,13 @@
 // Notebook handles exercised through the public `workflow.notebook*` globals
 // (createWorkflowHost seam); no workflow-internal imports.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import { createState } from "../../state.js";
 import { createWorkflowHost } from "../../workflow/host.js";
 import type { WorkflowHost, WorkflowHostDeps } from "../../workflow/types.js";
 
-function notebookHost(state = createState()): { host: WorkflowHost; state: ReturnType<typeof createState>; appended: Array<{ customType: string; data: unknown }> } {
-	const appended: Array<{ customType: string; data: unknown }> = [];
+function notebookHost(state = createState()): { host: WorkflowHost; state: ReturnType<typeof createState>; appended: { customType: string; data: unknown }[] } {
+	const appended: { customType: string; data: unknown }[] = [];
 	const deps: WorkflowHostDeps = {
 		pi: {
 			appendEntry: (customType: string, data?: unknown) => {
@@ -28,7 +28,9 @@ function notebookHost(state = createState()): { host: WorkflowHost; state: Retur
 
 function handle(host: WorkflowHost, name: string): { execute: (args?: unknown, context?: unknown) => Promise<unknown> } {
 	const tool = host.globals().find((candidate) => candidate.name === name);
-	if (!tool) throw new Error(`missing handle: ${name}`);
+	if (!tool) {
+		throw new Error(`missing handle: ${name}`);
+	}
 	const execute = tool.execute.bind(tool) as (args: unknown, context: unknown) => Promise<unknown>;
 	// Default context: inspectors need no signal; the sandbox always supplies one.
 	return { execute: (args, context = {}) => execute(args, context) };
@@ -67,8 +69,12 @@ test("workflow.notebookWrite persists the page and appends the notebook entry", 
 
 test("workflow.notebookWrite rejects malformed arguments without persisting", async () => {
 	const { host, state } = notebookHost();
-	await assert.rejects(async () => { await handle(host, "workflow.notebookWrite").execute({ name: "x" }); }, /name, content/);
-	await assert.rejects(async () => { await handle(host, "workflow.notebookWrite").execute(null); }, /name, content/);
+	await assert.rejects(async () => {
+		await handle(host, "workflow.notebookWrite").execute({ name: "x" });
+	}, /name, content/);
+	await assert.rejects(async () => {
+		await handle(host, "workflow.notebookWrite").execute(null);
+	}, /name, content/);
 	assert.equal(state.notebookPages.size, 0);
 });
 
@@ -88,7 +94,7 @@ test("workflow.notebookRead surfaces a page that was clipped at write time", asy
 	state.notebookPages.set("big", "kept");
 	state.clippedPages.add("big");
 	const { host } = notebookHost(state);
-	const body = await handle(host, "workflow.notebookRead").execute("big") as string;
+	const body = (await handle(host, "workflow.notebookRead").execute("big")) as string;
 	assert.match(body, /^kept/);
 	assert.match(body, /clipped at write time/);
 });
