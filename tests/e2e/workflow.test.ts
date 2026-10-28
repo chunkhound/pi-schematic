@@ -105,7 +105,7 @@ describe("workflow E2E", () => {
 		await h.waitForText('OK:{"action":"continue"}');
 	}));
 
-	it("workflow.handoff compacts, settles the successor, and the run continues", async () => withHarness(async (h) => {
+	it("workflow.handoff writes one boundary, settles the successor, and the run continues", async () => withHarness(async (h) => {
 		h.write("cmd-bg workflow examples/workflows/handoff.js");
 		await h.waitForText("OK:started");
 		// The handoff request lands async; poll the outbox until the prep message proves it.
@@ -113,14 +113,14 @@ describe("workflow E2E", () => {
 		h.write('usage {"tokens":50000,"percent":25,"contextWindow":200000}');
 		await h.waitForText("OK");
 		h.write('tool handoff {"nextInstruction":"do the resumed work","context":"remaining state"}');
-		await h.waitForText("OK:Handoff started.");
-		h.write("compact-success");
-		await h.waitForText("queuedFollowUp");
-		h.write("successor-turn");
-		await h.waitForText("## Next instruction");
-		h.write("successor-assistant resumed work done");
+		await h.waitForText("OK:Handoff staged.");
+		// The turn_end boundary commits the cut and the successor in one pass and asks pi
+		// to continue the run; turn_start is the confirmation point the workflow watches.
+		h.write("turn-end");
+		await h.waitForText('"continue":true');
+		h.write("turn-start");
 		await h.waitForText("OK");
-		// Every settle subscriber must fire: the handoff gate armed mid-run is not first.
+		// Every settle subscriber must fire: the idle wait armed mid-run is not first.
 		h.write("agent-settled-all");
 		await h.waitForText("OK");
 		h.write("cmd-wait");

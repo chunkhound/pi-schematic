@@ -87,6 +87,7 @@ export interface TestAccessors {
 	commands: Map<string, any>;
 	shortcuts: Map<string, any>;
 	sentUserMessages: Array<{ content: any; options?: any }>;
+	sentMessages: Array<{ message: any; options?: any }>;
 	appendedEntries: Array<{ customType: string; data: any }>;
 	activeTools: string[];
 	setCommands(commands: any[]): void;
@@ -114,6 +115,7 @@ interface HostState {
 	thinkingLevel: ThinkingLevel;
 	shellPath: string | undefined;
 	sentUserMessages: Array<{ content: any; options?: any }>;
+	sentMessages: Array<{ message: any; options?: any }>;
 	appendedEntries: Array<{ customType: string; data: any }>;
 }
 
@@ -165,6 +167,7 @@ function createHostState(seed: TestHostSeed): HostState {
 		thinkingLevel: seed.thinkingLevel ?? "medium",
 		shellPath: seed.shellPath,
 		sentUserMessages: [],
+		sentMessages: [],
 		appendedEntries: [],
 	};
 	for (const [name, source] of Object.entries(seed.toolSources ?? {})) state.toolSources.set(name, source);
@@ -184,7 +187,9 @@ function bindHostActions(runtime: ExtensionRuntime, state: HostState): void {
 // Conversation/entry side effects tests assert on.
 function bindConversationActions(runtime: ExtensionRuntime, state: HostState): void {
 	Object.assign(runtime, {
-		sendMessage: () => {},
+		sendMessage: (message: any, options?: any) => {
+			state.sentMessages.push({ message, options });
+		},
 		sendUserMessage: (content: any, options?: any) => {
 			state.sentUserMessages.push({ content, options });
 		},
@@ -233,6 +238,7 @@ function stampAccessors(api: ExtensionAPI, extension: Extension, state: HostStat
 	pi.commands = extension.commands as unknown as Map<string, any>;
 	pi.shortcuts = extension.shortcuts as unknown as Map<string, any>;
 	pi.sentUserMessages = state.sentUserMessages;
+	pi.sentMessages = state.sentMessages;
 	pi.appendedEntries = state.appendedEntries;
 	Object.defineProperty(pi, "tools", { get: () => deriveTools(extension), configurable: true });
 	Object.defineProperty(pi, "activeTools", {

@@ -140,6 +140,7 @@ async function createCleanupHarness(spec: {
 			return enabled;
 		},
 		requestHandoff: async () => {},
+		watchHandoffSettlement: () => ({ done: new Promise<never>(() => {}), dispose: () => {} }),
 		prepareRunFrontmatter: async () => {},
 		progressTickMs: TICK_MS,
 		// A fake bash that holds the effect open, so a test can observe the ticker mid-run.

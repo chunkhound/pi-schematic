@@ -5,7 +5,7 @@
  *   input queue → before_agent_start → consumePendingReadonlyCommands
  */
 
-import test from "node:test";
+import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,6 +13,21 @@ import { registerReadonlyPI, makeReadonlyUICtx, tmpDir, withTempHome } from "./h
 import type { ToolCall } from "./helpers.js";
 import { createBeforeAgentStartEvent } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
+
+// pi's agent directory holds global prompts; an empty one keeps an exported
+// PI_CODING_AGENT_DIR, or a populated ~/.pi/agent/prompts, out of every test.
+let isolatedAgentDir: string;
+let previousAgentDir: string | undefined;
+before(async () => {
+	previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	isolatedAgentDir = await tmpDir();
+	process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
+});
+after(async () => {
+	if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+	else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	await rm(isolatedAgentDir, { recursive: true, force: true });
+});
 
 async function writePrompt(dir: string, name: string, readonly: boolean): Promise<string> {
 	const filePath = join(dir, `${name}.md`);

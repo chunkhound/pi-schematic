@@ -13,7 +13,7 @@ import test from "node:test";
 import { createWorkflowAutocompleteProvider } from "../../workflow/autocomplete.js";
 import { CANCEL_CONFIRM_MS } from "../../workflow/command.js";
 import { MAX_DEFERRED_EFFECTS, MAX_EFFECTS } from "../../workflow/host.js";
-import { HANDOFF_COMPACTION_TIMEOUT_MS } from "../../workflow/rebind.js";
+import { HANDOFF_TIMEOUT_MS } from "../../workflow/rebind.js";
 import { HARD_DEADLINE_FACTOR, MAX_TIMEOUT_MS } from "../../workflow/sandbox.js";
 import { TIME_PRESET_MS, TIME_PRESETS } from "../../workflow/limits-dialog.js";
 import { MAX_EFFECT_ROWS, MAX_MODELS_COLLAPSED } from "../../workflow/summary-renderer.js";
@@ -48,6 +48,7 @@ const LOCK_PATH = new URL("package-lock.json", REPO_ROOT_URL);
 const SPAWN_SOURCE_PATH = new URL("spawn/index.ts", REPO_ROOT_URL);
 const RENDERER_SOURCE_PATH = new URL("spawn/renderer.ts", REPO_ROOT_URL);
 const README_PATH = new URL("README.md", REPO_ROOT_URL);
+const ARCHITECTURE_DOC_PATH = new URL("docs/architecture.md", REPO_ROOT_URL);
 const WORKFLOWS_DOC_PATH = new URL("docs/workflows.md", REPO_ROOT_URL);
 const WORKFLOW_ENGINE_DOC_PATH = new URL("docs/workflow-engine.md", REPO_ROOT_URL);
 // Pinned versions verified against package.json + lockfile.
@@ -64,13 +65,20 @@ const EXPECTED_MATRIX = new Set([
 	"macos-latest@24",
 	"windows-latest@24",
 ]);
-// Transitive brace-expansion advisories in the pinned test host
-// @earendil-works/pi-coding-agent@1.0.4 (devDependency). Remove them when a
-// pinned host ships a patched brace-expansion; the expiry forces periodic re-review.
+// Transitive undici advisories in the pinned test host
+// @earendil-works/pi-coding-agent@1.0.4 (devDependency). The brace-expansion
+// advisories are patched in the 1.0.4 tree, so they carry no allowlist entry.
+// Remove an undici entry when a pinned host ships a patched version; the expiry
+// forces periodic re-review.
 const EXPECTED_ALLOWLIST_KEYS = new Set<string>([
-	"GHSA-6j4f-fj2g-mc7p",
-	"GHSA-qhr7-859c-m2p7",
-	"GHSA-q2hr-2g5m-vwhr",
+	"GHSA-xjj6-f33q-929c",
+	"GHSA-4qv8-2p9j-2685",
+	"GHSA-f72v-6w45-q472",
+	"GHSA-2m5v-pch6-74hx",
+	"GHSA-4w7w-5xrc-9h26",
+	"GHSA-55wc-3pg8-jfw6",
+	"GHSA-9fm3-97px-rjf6",
+	"GHSA-qrxm-fqhp-jwvm",
 ]);
 
 function readText(url: URL): string {
@@ -206,7 +214,7 @@ test("workflow keeps the expected matrix and audit/test order", () => {
 // Author-visible rule values are stated once in docs/workflows.md; pinned below to the code.
 const CONTRACT_CONSTANT_ROWS: Array<[name: string, owner: string]> = [
 	["CANCEL_CONFIRM_MS", "workflow/command.ts"],
-	["HANDOFF_COMPACTION_TIMEOUT_MS", "workflow/rebind.ts"],
+	["HANDOFF_TIMEOUT_MS", "workflow/rebind.ts"],
 	["MAX_DEFERRED_EFFECTS", "workflow/host.ts"],
 	["HARD_DEADLINE_FACTOR", "workflow/sandbox.ts"],
 ];
@@ -227,7 +235,7 @@ test("workflow engine constants stay pinned to the code and the docs name them",
 	// Exported knobs: the imported value must equal the reviewed pin.
 	const exported: Array<[name: string, actual: unknown, expected: unknown]> = [
 		["CANCEL_CONFIRM_MS", CANCEL_CONFIRM_MS, 500],
-		["HANDOFF_COMPACTION_TIMEOUT_MS", HANDOFF_COMPACTION_TIMEOUT_MS, 15 * 60 * 1000],
+		["HANDOFF_TIMEOUT_MS", HANDOFF_TIMEOUT_MS, 15 * 60 * 1000],
 		["MAX_DEFERRED_EFFECTS", MAX_DEFERRED_EFFECTS, 16],
 		["MAX_EFFECTS", MAX_EFFECTS, 100],
 		["MAX_TIMEOUT_MS", MAX_TIMEOUT_MS, 2147483647],
@@ -300,6 +308,21 @@ test("workflow docs keep one owner per shared rule", () => {
 	assert.match(workflowsDoc, /`MAX_EFFECT_ROWS`[^\n]*workflow-engine\.md/);
 	// workflow-limits: the engine-doc surfaces table lists it; the e2e run pins the entry.
 	assert.match(engineDoc, /\| `workflow-limits` entry \| `workflow\/limits-dialog\.ts` \|/);
+});
+
+test("the handoff cut lives at the turn_end boundary, not the deleted compaction modules", () => {
+	// Deleted with the compaction model: they must stay gone, and no doc may name them.
+	const deleted = ["handoff/compact.ts", "handoff/recovery.ts", "follow-up.ts"];
+	for (const file of deleted) {
+		assert.equal(existsSync(new URL(file, REPO_ROOT_URL)), false, `${file} must stay deleted`);
+	}
+	assert.match(readText(new URL("handoff/boundary.ts", REPO_ROOT_URL)), /export function watchHandoffSettlement\(/);
+	for (const doc of [ARCHITECTURE_DOC_PATH, WORKFLOWS_DOC_PATH, WORKFLOW_ENGINE_DOC_PATH]) {
+		const text = readText(doc);
+		for (const stale of [...deleted, "HandoffPayload", "HANDOFF_COMPACTION_TIMEOUT_MS"]) {
+			assert.equal(text.includes(stale), false, `${doc.pathname} still names ${stale}`);
+		}
+	}
 });
 
 test("the Node floor has one source across CI and package metadata", () => {

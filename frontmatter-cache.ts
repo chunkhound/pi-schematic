@@ -5,7 +5,8 @@
  *   - In the `input` handler from resolved commands (`pi.getCommands()`) for model preflight.
  *   - In `before_agent_start` from loaded skills (`systemPromptOptions.skills`) for readonly resolution.
  *   - Also from standard prompt directories as a partial fallback:
- *      `~/.pi/agent/prompts/` and trusted `cwd/.pi/prompts/`.
+ *      `prompts/` under pi's agent directory (`getAgentDir()`) and, when the
+ *      project is trusted, `prompts/` under `cwd/<CONFIG_DIR_NAME>/`.
  *
  * All production prompt-resolution happens through
  * `populatePromptCacheFromResolvedCommandsAndDirs`. The narrower
@@ -18,10 +19,10 @@
 
 import { readFileSync, statSync, readdirSync } from "node:fs";
 import { join, extname, basename } from "node:path";
-import { homedir } from "node:os";
-import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import type { Skill, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+import { isThinkingLevel, THINKING_LEVELS } from "./thinking-levels.js";
 
 export interface FrontmatterEntry {
 	readonly: boolean | null;
@@ -49,8 +50,6 @@ interface CacheReadResult {
 	issue: FrontmatterIssue | null;
 }
 
-const THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-
 function parseExplicitModel(raw: unknown): string | null {
 	if (typeof raw !== "string" || raw.trim().length === 0) return null;
 	const trimmed = raw.trim();
@@ -62,8 +61,8 @@ function parseExplicitModel(raw: unknown): string | null {
 
 function parseExplicitThinking(raw: unknown): ModelThinkingLevel | null {
 	if (typeof raw !== "string") return null;
-	const trimmed = raw.trim().toLowerCase() as ModelThinkingLevel;
-	return THINKING_LEVELS.includes(trimmed) ? trimmed : null;
+	const trimmed = raw.trim().toLowerCase();
+	return isThinkingLevel(trimmed) ? trimmed : null;
 }
 
 function readCacheEntry(
@@ -208,7 +207,7 @@ export function formatFrontmatterIssue(commandRef: string, issue: FrontmatterIss
 		: issue.kind === "invalid-explicit-model-value"
 			? "`model` frontmatter must be in `<provider>/<model-id>` format"
 		: issue.kind === "invalid-thinking-value"
-			? "`thinking` frontmatter must be one of: off, minimal, low, medium, high, xhigh, max"
+			? `\`thinking\` frontmatter must be one of: ${THINKING_LEVELS.join(", ")}`
 		: issue.kind === "malformed-frontmatter"
 			? "frontmatter could not be parsed"
 			: "prompt/skill file could not be read";
@@ -270,8 +269,8 @@ function collectPromptFilesFromDir(
  *
  * Priority for duplicate names:
  *   1. Resolved prompt commands from `pi.getCommands()`.
- *   2. Trusted project prompts in `cwd/.pi/prompts/`.
- *   3. Global prompts in `~/.pi/agent/prompts/`.
+ *   2. Trusted project prompts in `join(cwd, CONFIG_DIR_NAME, "prompts")`.
+ *   3. Global prompts in `join(getAgentDir(), "prompts")`, resolved on every call.
  *
  * This is intentionally not a full prompt-source resolver. Anything outside
  * those standard dirs must already be surfaced by `pi.getCommands()`.
@@ -302,9 +301,9 @@ export function populatePromptCacheFromResolvedCommandsAndDirs(
 	}
 
 	if (projectTrusted) {
-		collectPromptFilesFromDir(store, join(cwd, ".pi", "prompts"), nextCache, nextIssues, blockedNames);
+		collectPromptFilesFromDir(store, join(cwd, CONFIG_DIR_NAME, "prompts"), nextCache, nextIssues, blockedNames);
 	}
-	collectPromptFilesFromDir(store, join(homedir(), ".pi", "agent", "prompts"), nextCache, nextIssues, blockedNames);
+	collectPromptFilesFromDir(store, join(getAgentDir(), "prompts"), nextCache, nextIssues, blockedNames);
 
 	replaceCache(store.frontmatterPromptCache, nextCache);
 	replaceIssues(store.frontmatterPromptIssues, nextIssues);

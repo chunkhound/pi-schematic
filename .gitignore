@@ -56,6 +56,8 @@ web_modules/
 !examples/workflows/*.js
 !tests/e2e/fixtures/*.js
 !.pi/workflows/*.js
+# Hand-written declarations for committed .mjs helpers
+!/pi-packages.d.mts
 
 # Optional npm cache directory
 .npm

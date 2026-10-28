@@ -80,13 +80,13 @@ async function cancelWith(h: ProcessHarness, key: "escape" | "ctrl+c"): Promise<
 	await h.waitForText('OK:{"consume":true}');
 }
 
-async function runHandoffToCompaction(h: ProcessHarness): Promise<void> {
+async function stageHandoff(h: ProcessHarness): Promise<void> {
 	h.write(`cmd-bg workflow ${HANDOFF}`);
 	await h.waitForText("OK:started");
 	await waitForSent(h, "Handoff requested.");
 	await sendOk(h, 'usage {"tokens":50000,"percent":25,"contextWindow":200000}');
 	await sendOk(h, 'tool handoff {"nextInstruction":"do the resumed work","context":"remaining state"}');
-	await h.waitForText("OK:Handoff started.");
+	await h.waitForText("OK:Handoff staged.");
 }
 
 describe("workflow command E2E — budget dialog and flags", () => {
@@ -703,21 +703,22 @@ describe("workflow command E2E — session replacement", () => {
 });
 
 describe("workflow command E2E — handoff", () => {
-	it("workflow.handoff surfaces a failed compaction as a workflow error", () => withWorkflowChild(async (h) => {
-		await runHandoffToCompaction(h);
-		await sendOk(h, "compact-fail boom");
+	it("workflow.handoff surfaces a failed boundary as a workflow error", () => withWorkflowChild(async (h) => {
+		await stageHandoff(h);
+		await sendOk(h, "turn-end fail");
+		await sendOk(h, "turn-start");
 		await sendOk(h, "cmd-wait");
 		const entries = await readAppended(h);
-		assert.equal(lastExit(entries)?.reason, "error", "aborted handoff records the reserved error reason");
+		assert.equal(lastExit(entries)?.reason, "error", "a failed handoff records the reserved error reason");
 		const events = await readUiEvents(h);
 		assert.ok(events.notifications.some((entry) => entry.level === "error"));
 	}));
 
-	it("cancelling a handoff before the compaction ends the wait as cancelled", () => withWorkflowChild(async (h) => {
+	it("cancelling a handoff before the settlement ends the wait as cancelled", () => withWorkflowChild(async (h) => {
 		await sendOk(h, "tui");
 		h.write(`cmd-bg workflow ${HANDOFF}`);
 		await h.waitForText("OK:started");
-		await waitForSent(h, "Handoff requested."); // the compaction wait stays pending
+		await waitForSent(h, "Handoff requested."); // the settlement wait stays pending
 		await cancelWith(h, "escape");
 		await sendOk(h, "cmd-wait");
 		const entries = await readAppended(h);
@@ -726,34 +727,15 @@ describe("workflow command E2E — handoff", () => {
 		assert.equal(list[0].reason, "cancelled", "cancellation ends the pending handoff");
 	}));
 
-	it("the preparing turn's post-compaction tail does not pass for the successor", () => withWorkflowChild(async (h) => {
-		await runHandoffToCompaction(h);
-		await sendOk(h, "compact-success");
-		await h.waitForText("queuedFollowUp");
-		await sendOk(h, "successor-assistant prep done");
-		await sendOk(h, "agent-settled-all");
-		assert.equal(exits(await readAppended(h)).length, 0, "the preparing turn's tail never resolved the wait");
-		await sendOk(h, "successor-turn");
-		await h.waitForText("## Next instruction");
-		await sendOk(h, "successor-assistant successor done");
+	it("a completed boundary continues the run to its own exit", () => withWorkflowChild(async (h) => {
+		await stageHandoff(h);
+		await sendOk(h, "turn-end");
+		await h.waitForText('"continue":true');
+		await sendOk(h, "turn-start");
 		await sendOk(h, "agent-settled-all");
 		await sendOk(h, "cmd-wait");
 		const entries = await readAppended(h);
-		assert.equal(lastExit(entries)?.reason, "ok", "the actual successor settle unblocks the handoff");
-	}));
-
-	it("a delivered successor prompt without a successor settle does not unblock the handoff", () => withWorkflowChild(async (h) => {
-		await runHandoffToCompaction(h);
-		await sendOk(h, "compact-success");
-		await h.waitForText("queuedFollowUp");
-		await sendOk(h, "successor-turn");
-		await h.waitForText("## Next instruction");
-		await sendOk(h, "agent-settled-all"); // only the user turn landed
-		assert.equal(exits(await readAppended(h)).length, 0, "the handoff waits for the successor's own settle");
-		await sendOk(h, "successor-assistant successor done");
-		await sendOk(h, "agent-settled-all");
-		await sendOk(h, "cmd-wait");
-		const entries = await readAppended(h);
-		assert.equal(lastExit(entries)?.reason, "ok");
+		assert.equal(lastExit(entries)?.reason, "ok", "the boundary's continuation reaches the workflow's exit");
+		assert.equal(exits(entries).length, 1, "one exit record for the continued run");
 	}));
 });

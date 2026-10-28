@@ -44,7 +44,7 @@ export interface WorkflowCommandDeps extends RebindableDeps {
 	sandboxFactory?: WorkflowSandboxFactory;
 	/** Test seam: overrides the cancel arm-then-confirm window (default {@link CANCEL_CONFIRM_MS}). */
 	cancelConfirmMs?: number;
-	/** Test seam: overrides the total handoff deadline for compaction + successor settle (default {@link HANDOFF_COMPACTION_TIMEOUT_MS}). */
+	/** Test seam: overrides each handoff wait's deadline (default {@link HANDOFF_TIMEOUT_MS}). */
 	handoffTimeoutMs?: number;
 	/** Test seam: progress tick period; production uses {@link WORKFLOW_PROGRESS_TICK_MS}. */
 	progressTickMs?: number;
@@ -87,6 +87,7 @@ function publishRuntimeOnSessionStart(pi: ExtensionAPI, state: SchematicState, d
 				...current,
 				setReadonly: deps.setReadonly,
 				requestHandoff: deps.requestHandoff,
+				watchHandoffSettlement: deps.watchHandoffSettlement,
 				prepareRunFrontmatter: deps.prepareRunFrontmatter,
 			}),
 		});
@@ -267,7 +268,7 @@ function hostDeps(bundle: RunBundle, ctl: RunCtl, onEffect: WorkflowHostDeps["on
 		getCtx: () => ctl.ctx,
 		setReadonly: (enabled) => bundle.deps.setReadonly(enabled),
 		prepareRunFrontmatter: (text, ctx) => bundle.deps.prepareRunFrontmatter(text, ctx),
-		handoff: (direction) => admitted("compact", () => performHandoff(bundle, ctl, direction)),
+		handoff: (direction) => performHandoff(bundle, ctl, direction),
 		newSession: () => admitted("new", () => performNewSession(bundle, ctl, rebindHooksFor(ctl))),
 		onProgress: (progress) => publishProgress(ctl, bundle, progress),
 		onEffect,
@@ -570,14 +571,15 @@ async function closeSandbox(sandbox: CodemodeSandbox, pi: ExtensionAPI, ctx: Ext
 	}
 }
 
-/** The only session changes a workflow can own: `workflow.new` starts a new session (pi's
- * `reason: "new"` switch), `workflow.handoff` compacts. Admission is this token, never a
- * blocklist of commands, so a fork, a tree move, or a `/resume` has no grant and always cancels. */
-type AdmittedChange = "new" | "compact";
+/** The only session change a workflow can own: `workflow.new` starts a new session (pi's
+ * `reason: "new"` switch). Admission is this token, never a blocklist of commands, so a
+ * fork, a tree move, or a `/resume` has no grant and always cancels. `workflow.handoff`
+ * needs no admission: the turn_end boundary writes its entries without a session change. */
+type AdmittedChange = "new";
 
 /** pi's own capacity compactions: blocking one only defers the same shift into the run's next
- * turn and can fail it outright (overflow recovery). Any other reason replaced context on
- * request — `/compact`, RPC, or the handoff tool — so it is a boundary the run owns. */
+ * turn and can fail it outright (overflow recovery), so they always pass. Every other reason is
+ * a session change the run does not own: a handoff no longer requests one. */
 const HOST_MANAGED_COMPACTIONS: readonly string[] = ["threshold", "overflow"];
 
 /** Notice text per switch reason, so the operator learns which command to retry. */
@@ -597,7 +599,7 @@ function registerSessionGuard(pi: ExtensionAPI, state: SchematicState): void {
 	pi.on("session_before_fork", (_event, ctx) => rejectBoundary(state, ctx, null, "fork this session"));
 	pi.on("session_before_tree", (_event, ctx) => rejectBoundary(state, ctx, null, "move in the session tree"));
 	pi.on("session_before_compact", (event, ctx) =>
-		HOST_MANAGED_COMPACTIONS.includes(event.reason) ? undefined : rejectBoundary(state, ctx, "compact", "compact this session"));
+		HOST_MANAGED_COMPACTIONS.includes(event.reason) ? undefined : rejectBoundary(state, ctx, null, "compact this session"));
 }
 
 /** Decide one boundary: pass when no run owns the session, or when this run asked for it.

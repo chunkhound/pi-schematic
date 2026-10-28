@@ -3,8 +3,9 @@
 // running workflow (PR #72 review 4288158717: `new_session` over RPC replaced the session under
 // a live run and left it with no exit record). These tests pin the session-boundary guard
 // through the real extension API: every boundary cancels while a run owns the session, only the
-// run's own `workflow.new` and `workflow.handoff` pass on their admission grant, pi's own
-// capacity compactions stay allowed, and a finished run releases the guard.
+// run's own `workflow.new` passes on its admission grant, `workflow.handoff` crosses no
+// boundary at all, pi's own capacity compactions stay allowed, and a finished run releases
+// the guard.
 // Rule: docs/workflows.md (Constraints: session boundaries; Host gaps: residual windows).
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -133,6 +134,7 @@ function runCtx(pi: TestPI, record: RunRecord, deps: WorkflowCommandDeps, replac
 					...current,
 					setReadonly: deps.setReadonly,
 					requestHandoff: deps.requestHandoff,
+					watchHandoffSettlement: () => ({ done: new Promise<never>(() => {}), dispose: () => {} }),
 					prepareRunFrontmatter: deps.prepareRunFrontmatter,
 				}),
 			});
@@ -147,7 +149,7 @@ function runCtx(pi: TestPI, record: RunRecord, deps: WorkflowCommandDeps, replac
  * test drives boundaries. `handoffCompactions` repeats the requested compaction inside one
  * handoff grant window, which stays open until the handle ends.
  */
-async function parkRun(handoffCompactions = 1, replacementSpec?: { competingResume?: boolean }): Promise<ParkedRun> {
+async function parkRun(replacementSpec?: { competingResume?: boolean }): Promise<ParkedRun> {
 	const state = createState();
 	const record: RunRecord = { notices: [], grants: [] };
 	const parked = deferred<CodemodeResult>();
@@ -157,14 +159,10 @@ async function parkRun(handoffCompactions = 1, replacementSpec?: { competingResu
 		setReadonly: () => false,
 		prepareRunFrontmatter: async () => {},
 		handoffTimeoutMs: 5_000,
-		// `workflow.handoff` seam: dispatch the requested compaction(s) through the guard, then
-		// report the compaction failed, so the handle ends and its grant window closes.
-		requestHandoff: async () => {
-			for (let index = 0; index < handoffCompactions; index += 1) {
-				record.grants.push(await boundary(pi, "session_before_compact", { reason: "manual" }, record));
-			}
-			await emitAll(pi, "session_compact_failed", { reason: "manual", aborted: false, fromExtension: true, errorMessage: "scripted compaction failure" }, boundaryCtx(record.notices));
-		},
+		// `workflow.handoff` seam: the boundary crosses no session boundary, so it records no
+		// grant and the settlement resolves complete.
+		requestHandoff: async () => {},
+		watchHandoffSettlement: () => ({ done: Promise.resolve({ status: "complete" as const, handoffId: "handoff-1", reason: null }), dispose: () => {} }),
 		sandboxFactory: (sandboxOptions) => {
 			armed.resolve(sandboxOptions.globals ?? []);
 			return { execute: () => parked.promise, close: async () => {} } as unknown as CodemodeSandbox;
@@ -204,9 +202,9 @@ async function parkRun(handoffCompactions = 1, replacementSpec?: { competingResu
 
 /** Run one guard test with a parked run. `t.after` finishes the run even when an assertion fails,
  * so a guard regression cannot leak the run ticker and hang the test process. */
-function parkedRunTest(name: string, body: (run: ParkedRun) => Promise<void>, handoffCompactions = 1, replacementSpec?: { competingResume?: boolean }): void {
+function parkedRunTest(name: string, body: (run: ParkedRun) => Promise<void>, replacementSpec?: { competingResume?: boolean }): void {
 	test(name, async (t) => {
-		const run = await parkRun(handoffCompactions, replacementSpec);
+		const run = await parkRun(replacementSpec);
 		t.after(async () => {
 			run.release();
 			await run.finished;
@@ -245,16 +243,11 @@ parkedRunTest("workflow.new is admitted by the guard and spends its grant", asyn
 	assert.deepEqual(await boundary(run.pi, "session_before_compact", { reason: "manual" }, run), { cancel: true }, "the spent grant cannot be reused");
 });
 
-parkedRunTest("workflow.handoff is admitted by the guard for exactly one compaction", async (run) => {
-	await assert.rejects(run.handle("workflow.handoff", "next"), /scripted compaction failure/);
-	assert.deepEqual(run.grants, [undefined], "the run's own compaction passed the guard");
-	assert.deepEqual(await boundary(run.pi, "session_before_switch", { reason: "new" }, run), { cancel: true }, "a closed grant blocks again");
+parkedRunTest("workflow.handoff crosses no session boundary and spends no grant", async (run) => {
+	await run.handle("workflow.handoff", "next");
+	assert.deepEqual(run.grants, [], "the turn_end boundary writes its entries without a session change");
+	assert.deepEqual(await boundary(run.pi, "session_before_compact", { reason: "manual" }, run), { cancel: true }, "a manual compaction during the run still cancels");
 });
-
-parkedRunTest("a second compaction inside one handoff grant is a boundary, not the workflow's own", async (run) => {
-	await assert.rejects(run.handle("workflow.handoff", "next"), /scripted compaction failure/);
-	assert.deepEqual(run.grants, [undefined, { cancel: true }], "one grant admits one change");
-}, 2);
 
 parkedRunTest("a successful workflow.new re-arms the guard and a competing /resume cannot spend its grant", async (run) => {
 	assert.ok(run.replacement);
@@ -264,7 +257,7 @@ parkedRunTest("a successful workflow.new re-arms the guard and a competing /resu
 	assert.equal(run.state.inputSuppressed, false, "the old state was released");
 	assert.deepEqual(await boundary(run.replacement.pi, "session_before_fork", {}, run), { cancel: true }, "the replacement guard cancels");
 	assert.match(run.notices.at(-1) ?? "", /fork this session/);
-}, 1, { competingResume: true });
+}, { competingResume: true });
 
 parkedRunTest("a finished run releases the guard", async (run) => {
 	run.release();
@@ -296,6 +289,7 @@ test("boundaries stay open while no workflow runs", async () => {
 		registerWorkflowCommand(api, createState(), {
 			setReadonly: () => false,
 			requestHandoff: async () => {},
+			watchHandoffSettlement: () => ({ done: new Promise<never>(() => {}), dispose: () => {} }),
 			prepareRunFrontmatter: async () => {},
 		} satisfies WorkflowCommandDeps);
 	});

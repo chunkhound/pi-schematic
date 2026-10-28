@@ -9,7 +9,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { SchematicState } from "./state.js";
+import type { RequestedHandoff, SchematicState } from "./state.js";
 import { normalizeContextPercent } from "./handoff/eligibility.js";
 import {
 	READONLY_HANDOFF_RETRY_ADVICE,
@@ -20,10 +20,18 @@ import { STATUS_KEY_HANDOFF } from "./tui.js";
 
 /** Max settled runs in which the eligible handoff nudge was sent before a
  * required handoff auto-clears. 5 gives the model several response
- * cycles to supply the instruction and context, including the async compaction
- * failure path where handoff/tool.ts resets toolCalled=false so enforcement
- * resumes. */
+ * cycles to supply the instruction and context. */
 export const MAX_HANDOFF_ATTEMPTS = 5;
+
+/** Whether the settle of the current run counts it against the enforcement budget. */
+function settleCountsAttempt(request: RequestedHandoff): boolean {
+	return !request.toolCalled && request.eligibleNudgeDelivered;
+}
+
+/** Whether the settle of the current run counts the attempt that exhausts the budget. */
+export function settleExhaustsHandoffBudget(request: RequestedHandoff): boolean {
+	return settleCountsAttempt(request) && request.enforcementAttempts + 1 >= MAX_HANDOFF_ATTEMPTS;
+}
 
 type NudgeState = Pick<SchematicState, "activeNotebookTopic" | "pendingTopicBoundaryHint" | "readonlyEnabled" | "pendingRequestedHandoff">;
 
@@ -133,23 +141,22 @@ export function registerWatchdog(pi: ExtensionAPI, state: SchematicState): void 
 	pi.on("agent_settled", async (_event: unknown, ctx: ExtensionContext) => {
 		// ── Enforcement counter: cap nudged runs of an unanswered handoff ──
 		// pendingRequestedHandoff is the sticky "user still expects a real
-		// handoff" contract. It survives normal turns and even compaction-prep
-		// failure recovery; only a successful handoff completion, reset, or
+		// handoff" contract. It survives normal turns and even a failed handoff
+		// cut; only a successful handoff completion, reset, or
 		// exhausted enforcement attempts should clear it. A run counts only when
 		// the context hook sent the hand-off-now nudge; the flag is per run.
 		const requestedHandoff = state.pendingRequestedHandoff;
 		if (!requestedHandoff) return;
-		const nudged = requestedHandoff.eligibleNudgeDelivered;
+		const counts = settleCountsAttempt(requestedHandoff);
+		const exhausted = settleExhaustsHandoffBudget(requestedHandoff);
 		requestedHandoff.eligibleNudgeDelivered = false;
-		if (!requestedHandoff.toolCalled && nudged) {
-			requestedHandoff.enforcementAttempts += 1;
-			if (requestedHandoff.enforcementAttempts >= MAX_HANDOFF_ATTEMPTS) {
-				const notice = buildHandoffCancellationNotice(state.readonlyEnabled);
-				state.pendingRequestedHandoff = null;
-				if (ctx.hasUI) {
-					ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
-					ctx.ui.notify(notice, "warning");
-				}
+		if (counts) requestedHandoff.enforcementAttempts += 1;
+		if (exhausted) {
+			const notice = buildHandoffCancellationNotice(state.readonlyEnabled);
+			state.pendingRequestedHandoff = null;
+			if (ctx.hasUI) {
+				ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
+				ctx.ui.notify(notice, "warning");
 			}
 		}
 	});

@@ -2,25 +2,33 @@
 // workflow must rebind to the replacement's live pieces. Effects are serial, so no run
 // correlation is pending across a rebind: the registry's lazy subscribe re-attaches to
 // the new pi on the next correlate through the live bundle getter — no Proxy needed.
-import type { ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { SchematicState } from "../state.js";
+import type { HandoffWatch } from "../handoff/boundary.js";
 import type { WorkflowProgressView } from "../tui.js";
 import { takeWorkflowRuntime } from "./coordinator.js";
 import { messageOf } from "./errors.js";
-import { matchRun, type RunRegistry } from "./run-registry.js";
+import type { RunRegistry } from "./run-registry.js";
 import { clampTimeoutMs } from "./sandbox.js";
 import type { WorkflowHost, WorkflowLimits, WorkflowProgress } from "./types.js";
 
 /** Deadline per handoff wait: a handoff the model never completes must not hang the run. docs/workflows.md (workflow.handoff) pins the value. */
-export const HANDOFF_COMPACTION_TIMEOUT_MS = 15 * 60 * 1000;
+export const HANDOFF_TIMEOUT_MS = 15 * 60 * 1000;
 
 /** Minimal deps a rebound run needs; command.ts extends this with its test seams. */
 export interface RebindableDeps {
 	setReadonly(enabled: boolean): boolean;
 	requestHandoff(direction: string, ctx: ExtensionCommandContext): Promise<void>;
+	/**
+	 * Watch the next handoff settlement. The handoff boundary owns cut identity and
+	 * success/failure, so the workflow never re-derives either; this is a dep, not an
+	 * import, because the settling handlers may live in another module copy after a
+	 * `workflow.new` rebind.
+	 */
+	watchHandoffSettlement(): HandoffWatch;
 	/** Apply skill/prompt frontmatter (model routing + readonly) for one `workflow.run` turn before dispatch. */
 	prepareRunFrontmatter(text: string, ctx: ExtensionCommandContext): Promise<void>;
-	/** Test seam: overrides each handoff wait's deadline (compaction and successor settle each get the full budget; default {@link HANDOFF_COMPACTION_TIMEOUT_MS}). */
+	/** Test seam: overrides each handoff wait's deadline (settlement and idle each get the full budget; default {@link HANDOFF_TIMEOUT_MS}). */
 	handoffTimeoutMs?: number;
 }
 
@@ -174,35 +182,38 @@ function abortOnTimeout(ctl: RunCtl, message: string): () => void {
 }
 
 /** Rejection messages for the two handoff waits; each expiry aborts the run as `error`. */
-const COMPACTION_TIMEOUT_MSG = "handoff compaction did not start; the model did not call the handoff tool";
-const SUCCESSOR_SETTLE_TIMEOUT_MSG = "handoff successor did not settle; the successor run never finished";
+const HANDOFF_SETTLE_TIMEOUT_MSG = "handoff did not complete; the model did not call the handoff tool";
+const HANDOFF_IDLE_TIMEOUT_MSG = "handoff successor did not settle; the successor run never finished";
 
 /**
- * `workflow.handoff`: arm settle tracking BEFORE the request (a successor that settles
- * immediately after the compaction must still be observed), await the compaction,
- * then await the successor run so the next `workflow.run` cannot overtake the shifted
- * context. docs/workflows.md (workflow.handoff): each wait carries its own full deadline.
- * One shared deadline would starve the settle wait when compaction consumes the budget,
- * so a near-deadline compaction would reject instantly instead of waiting for the successor.
+ * `workflow.handoff`: arm the settlement watch BEFORE the request (a boundary that
+ * completes immediately must still be observed), await the boundary outcome, then
+ * await the run so the next `workflow.run` cannot overtake the shifted context.
+ * docs/workflows.md (workflow.handoff): each wait carries its own full deadline.
  */
 export async function performHandoff(bundle: RebindBundle, ctl: RunCtl, direction: string): Promise<void> {
-	// Handoff compacts in place; the ctx stays valid for the whole wait.
+	// Handoff continues in place; the ctx stays valid for the whole wait.
 	const ctx = ctl.ctx;
 	if (!ctx) throw new Error("workflow.handoff: no live session context");
-	const gate = armSettleGate(bundle.pi, () => ctx.sessionManager.getBranch());
-	const compaction = waitForCompaction(bundle.pi);
+	const watch = bundle.deps.watchHandoffSettlement();
+	let idle: { done: Promise<void>; dispose: () => void } | undefined;
 	try {
 		await bundle.deps.requestHandoff(direction, ctx);
 		// Clamp stops a huge test-seam value overflowing the Node timer and firing at once.
-		const budgetMs = clampTimeoutMs(bundle.deps.handoffTimeoutMs ?? HANDOFF_COMPACTION_TIMEOUT_MS);
+		const budgetMs = clampTimeoutMs(bundle.deps.handoffTimeoutMs ?? HANDOFF_TIMEOUT_MS);
 		const signal = getSignal(ctl);
 		// Both waits abort the host before their deadline rejects: a workflow that catches the
-		// timeout must not leave the compaction or the successor turn running outside the run.
-		const marker = await withDeadline(compaction.done, budgetMs, COMPACTION_TIMEOUT_MSG, signal, abortOnTimeout(ctl, COMPACTION_TIMEOUT_MSG));
-		await withDeadline(gate.wait(marker), budgetMs, SUCCESSOR_SETTLE_TIMEOUT_MSG, signal, abortOnTimeout(ctl, SUCCESSOR_SETTLE_TIMEOUT_MSG));
+		// timeout must not leave the successor turn running outside the run.
+		const settlement = await withDeadline(watch.done, budgetMs, HANDOFF_SETTLE_TIMEOUT_MSG, signal, abortOnTimeout(ctl, HANDOFF_SETTLE_TIMEOUT_MSG));
+		if (settlement.status === "failed") {
+			throw new Error(`workflow.handoff failed: ${settlement.reason ?? "unknown reason"}`);
+		}
+		idle = waitForIdle(bundle.pi, ctx);
+		await withDeadline(idle.done, budgetMs, HANDOFF_IDLE_TIMEOUT_MSG, signal, abortOnTimeout(ctl, HANDOFF_IDLE_TIMEOUT_MSG));
 	} finally {
-		compaction.dispose();
-		gate.dispose();
+		// A deadline or abort must not leave the settle listener attached to a dead run.
+		idle?.dispose();
+		watch.dispose();
 	}
 }
 
@@ -232,87 +243,26 @@ function withDeadline<T>(promise: Promise<T>, ms: number, message: string, signa
 	});
 }
 
-/** Resolve with the compaction entry id; reject on a failed compaction. */
-function waitForCompaction(pi: ExtensionAPI): { done: Promise<string>; dispose: () => void } {
-	let resolve!: (id: string) => void;
-	let reject!: (error: Error) => void;
-	const done = new Promise<string>((res, rej) => { resolve = res; reject = rej; });
-	done.catch(() => {});
-	const offOk = pi.on("session_compact", (event) => {
-		if (event.fromExtension) resolve(event.compactionEntry.id);
-	});
-	const offFail = pi.on("session_compact_failed", (event) => {
-		// The handoff cut is extension-authored. A threshold/overflow compaction failure
-		// during the wait must not reject the requested handoff.
-		if (event.fromExtension) reject(new Error(event.errorMessage ?? "handoff compaction failed"));
-	});
-	return { done, dispose: () => { offOk(); offFail(); } };
-}
-
-/** The successor run follows a delivered user message; the preparing turn's own tail (tool
- * result, closing text) also lands after the compaction entry and must not pass for it. */
-function hasSuccessorRun(entries: readonly SessionEntry[], marker: string): boolean {
-	const at = entries.findIndex((entry) => entry.id === marker);
-	if (at < 0) return false;
-	const delivered = entries.slice(at + 1).find((entry) =>
-		entry.type === "message" && (entry.message as { role?: string }).role === "user",
-	);
-	return delivered ? matchRun(entries, delivered.id) !== null : false;
-}
-
-interface PendingSettle {
-	marker: string;
-	resolve: () => void;
-	reject: (error: Error) => void;
-}
-
-interface SettleGate {
-	wait(marker: string): Promise<void>;
-	dispose(): void;
-}
-
-interface GateState {
-	buffered: Array<readonly SessionEntry[]>;
-	pending: PendingSettle | null;
-}
-
 /**
- * Tracks `agent_settled` boundaries from before the handoff request, so a successor
- * that settles before the caller resumes still resolves; the compaction marker only
- * exists later, so snapshots are buffered until the marker is known.
+ * Resolve once no agent run is active. The boundary can finalize at `turn_start`
+ * (successor turn continues this run) or at `agent_settled` (run already done), so
+ * check idleness first and only then wait for the next settle. pi clears its run
+ * flag before emitting `agent_settled`, which makes the check at settle authoritative.
  */
-function armSettleGate(pi: ExtensionAPI, getBranch: () => readonly SessionEntry[]): SettleGate {
-	const state: GateState = { buffered: [], pending: null };
-	const off = pi.on("agent_settled", () => absorbSettle(state, getBranch()));
-	return {
-		wait: (marker) => awaitSettle(state, marker),
-		dispose: () => {
-			off();
-			disposeGate(state);
-		},
-	};
-}
-
-/** Future settles either satisfy the waiter or buffer for a later marker scan. */
-function absorbSettle(state: GateState, branch: readonly SessionEntry[]): void {
-	const waiting = state.pending;
-	if (waiting && hasSuccessorRun(branch, waiting.marker)) {
-		state.pending = null;
-		waiting.resolve();
-		return;
-	}
-	state.buffered.push([...branch]);
-}
-
-function awaitSettle(state: GateState, marker: string): Promise<void> {
-	// Buffer scan and waiter registration are synchronous: no settle can slip between.
-	if (state.buffered.some((branch) => hasSuccessorRun(branch, marker))) return Promise.resolve();
-	return new Promise<void>((resolve, reject) => {
-		state.pending = { marker, resolve, reject };
+function waitForIdle(pi: ExtensionAPI, ctx: ExtensionCommandContext): { done: Promise<void>; dispose: () => void } {
+	let off: (() => void) | undefined;
+	const done = new Promise<void>((resolve) => {
+		if (ctx.isIdle()) {
+			resolve();
+			return;
+		}
+		off = pi.on("agent_settled", () => {
+			if (!ctx.isIdle()) return;
+			off?.();
+			off = undefined;
+			resolve();
+		});
 	});
+	return { done, dispose: () => { off?.(); off = undefined; } };
 }
 
-function disposeGate(state: GateState): void {
-	state.pending?.reject(new Error("successor settle tracking disposed"));
-	state.pending = null;
-}

@@ -33,7 +33,7 @@ import { registerNotebookTopicTool } from "./notebook/topic-tool.js";
 import { setActiveNotebookTopic } from "./notebook/topic.js";
 import { formatPageTuiPreview } from "./notebook/store.js";
 import { openInPager, pagerRuntime, type ResolvedPager } from "./notebook/pager.js";
-import { registerHandoffTool } from "./handoff/tool.js";
+import { HANDOFF_TOOL_NAME, registerHandoffTool } from "./handoff/tool.js";
 import {
 	canPromoteBoundary,
 	discardNonHumanBoundary,
@@ -44,9 +44,7 @@ import { isHandoffEligible, normalizeContextPercent } from "./handoff/eligibilit
 import { getReadonlyFromBranch } from "./readonly-rehydration.js";
 import { HANDOFF_REQUIRED_STATUS } from "./handoff/copy.js";
 import { registerHandoffCommand, requestHandoff } from "./handoff/command.js";
-import { registerHandoffCompaction } from "./handoff/compact.js";
-import { getUndeliveredHandoffMessage } from "./handoff/recovery.js";
-import { sendFollowUp } from "./follow-up.js";
+import { registerHandoffBoundary, watchHandoffSettlement } from "./handoff/boundary.js";
 import {
 	READONLY_ACTIVE_SUMMARY,
 	READONLY_COMMAND_DESCRIPTION,
@@ -76,15 +74,14 @@ import {
 } from "./notifications.js";
 import { clampThinkingLevel, type Api, type Model, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { registerSpawnTool } from "./spawn/index.js";
-import { registerModelGroupsCommand } from "./model-groups/command.js";
 import { registerWorkflowCommand } from "./workflow/command.js";
 import { registerWorkflowSummaryRenderer } from "./workflow/summary-renderer.js";
 import { registerWorkflowShellRenderer } from "./workflow/activity.js";
+import { registerModelGroupsCommand } from "./model-groups/command.js";
 import { resolveSpawnModelRoute, SpawnRouteError } from "./model-groups/router.js";
 import { registerModelGroupAutocomplete } from "./model-groups/autocomplete.js";
 import { getEffectiveModelGroupNames } from "./model-groups/router.js";
-import type { ModelGroupsAccess } from "./model-groups/types.js";
-import { loadModelGroups, summarizeBootValidation, validateModelGroups } from "./model-groups/store.js";
+import { createModelGroupsAccess, loadModelGroups, summarizeBootValidation, validateModelGroups } from "./model-groups/store.js";
 import { escapeDisplayLabel } from "./model-groups/display.js";
 import { productionConstraintRegistry } from "./model-groups/constraints/registry.js";
 import { isUsableModel } from "./model-groups/availability.js";
@@ -107,6 +104,8 @@ import {
 } from "./frontmatter-cache.js";
 import {
 	STATUS_KEY_HANDOFF,
+	STATUS_KEY_READONLY,
+	STATUS_KEY_TOPIC,
 	WIDGET_KEY_WARNING,
 	updateIndicators,
 } from "./tui.js";
@@ -469,36 +468,15 @@ function blockStreamingFrontmatter(
 	return true;
 }
 
-/** Populate caches and resolve both frontmatter channels for one command. */
-function loadCommandFrontmatter(
-	state: SchematicState,
-	ctx: ExtensionContext,
-	pi: ExtensionAPI,
-	pending: PendingCommand,
-): { selection: ModelSelection; readonly: boolean | null } {
-	populateFrontmatterCache(state, ctx, pi);
-	refreshModelGroupsState(state, ctx);
-	return {
-		selection: resolveModelSelection(state, pending),
-		readonly: resolveReadonlySelection(state, pending),
-	};
-}
-
-/**
- * Apply model routing for one command and queue its readonly decision. Readonly
- * stays deferred so before_agent_start can resolve it with Pi's final skill
- * metadata. Returns true when model routing blocked the turn.
- */
-async function commitCommandFrontmatter(
-	state: SchematicState,
-	ctx: ExtensionContext,
-	pi: ExtensionAPI,
-	pending: PendingCommand,
-	selection: ModelSelection,
-): Promise<boolean> {
-	if (await preflightModelSelection(state, ctx, pi, pending, selection)) return true;
-	state.pendingReadonlyCommands.push(pending);
-	return false;
+function refreshModelGroupsState(state: SchematicState, ctx: ExtensionContext) {
+	state.modelGroups.groups = [];
+	state.modelGroups.validation = null;
+	if (!ctx.cwd || !(ctx as any).modelRegistry) return null;
+	const loadedModelGroups = loadModelGroups(createModelGroupsAccess(ctx.cwd, ctx.isProjectTrusted()));
+	const resolvedModelGroups = validateModelGroups(loadedModelGroups, (ctx as any).modelRegistry);
+	state.modelGroups.groups = resolvedModelGroups;
+	state.modelGroups.validation = { groups: resolvedModelGroups, loadIssues: loadedModelGroups.issues };
+	return state.modelGroups.validation;
 }
 
 /**
@@ -515,25 +493,15 @@ export async function prepareWorkflowRunFrontmatter(
 ): Promise<void> {
 	const pending = pendingFrontmatterCommand(text, pi);
 	if (!pending) return;
-	const { selection } = loadCommandFrontmatter(state, ctx, pi, pending);
-	if (await commitCommandFrontmatter(state, ctx, pi, pending, selection)) {
+	// Same order as the interactive input gate: populate the cache, refresh Model
+	// Groups, then resolve one selection against both.
+	populateFrontmatterCache(state, ctx, pi);
+	refreshModelGroupsState(state, ctx);
+	const selection = resolveModelSelection(state, pending);
+	if (await preflightModelSelection(state, ctx, pi, pending, selection)) {
 		throw new Error(`workflow.run: frontmatter model selection failed for ${formatCommandRef(pending)}`);
 	}
-}
-
-function modelGroupsAccess(ctx: ExtensionContext): ModelGroupsAccess {
-	return { cwd: ctx.cwd, policy: ctx.isProjectTrusted() ? "global-project" : "global-only" };
-}
-
-function refreshModelGroupsState(state: SchematicState, ctx: ExtensionContext) {
-	state.modelGroups.groups = [];
-	state.modelGroups.validation = null;
-	if (!ctx.cwd || !(ctx as any).modelRegistry) return null;
-	const loadedModelGroups = loadModelGroups(modelGroupsAccess(ctx));
-	const resolvedModelGroups = validateModelGroups(loadedModelGroups, (ctx as any).modelRegistry);
-	state.modelGroups.groups = resolvedModelGroups;
-	state.modelGroups.validation = { groups: resolvedModelGroups, loadIssues: loadedModelGroups.issues };
-	return state.modelGroups.validation;
+	state.pendingReadonlyCommands.push(pending);
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -550,13 +518,23 @@ export default function (pi: ExtensionAPI): void {
 	registerWorkflowShellRenderer(pi);
 
 	// ── Register event handlers ─────────────────────────────────────
+	// Handoff boundary first. Its failure path resets toolCalled before the
+	// watchdog's agent_settled handler counts the attempt, and the watchdog counts
+	// only once toolCalled is reset. Its tool_call refusal of a handoff that
+	// shares a message with other calls precedes the readonly block.
+	registerHandoffBoundary(pi, state);
 	registerWatchdog(pi, state);
 	registerNotebookRehydration(pi, state);
-	registerHandoffCompaction(pi, state);
 
 	// ── Register commands ───────────────────────────────────────────
 	registerHandoffCommand(pi, state);
 	registerModelGroupsCommand(pi, state);
+	registerWorkflowCommand(pi, state, {
+		setReadonly,
+		requestHandoff: (direction, ctx) => requestHandoff(pi, state, direction, ctx),
+		watchHandoffSettlement: () => watchHandoffSettlement(state),
+		prepareRunFrontmatter: (text, ctx) => prepareWorkflowRunFrontmatter(state, ctx, pi, text),
+	});
 
 	// ── Register prompt sections (render order = registration order) ──
 	const promptSections = createPromptSectionRegistry();
@@ -595,6 +573,8 @@ export default function (pi: ExtensionAPI): void {
 				ctx.ui.notify(READONLY_PENDING_HANDOFF_READONLY_OFF_NOTIFICATION, "info");
 			}
 		}
+		state.readonlyNudgePending = true;
+		pi.appendEntry("pi-schematic-readonly", { enabled: state.readonlyEnabled });
 		updateIndicators(ctx, state);
 		ctx.ui.notify(
 			state.readonlyEnabled
@@ -615,44 +595,6 @@ export default function (pi: ExtensionAPI): void {
 			if (ctx.isIdle()) toggleReadonly(ctx);
 		},
 	});
-
-	registerWorkflowCommand(pi, state, {
-		setReadonly,
-		requestHandoff: (direction, ctx) => requestHandoff(pi, state, direction, ctx),
-		prepareRunFrontmatter: (text, ctx) => prepareWorkflowRunFrontmatter(state, ctx, pi, text),
-	});
-
-	function recoverHandoffMessage(ctx: ExtensionContext): void {
-		// Never fight an in-flight cut: the compaction hook owns the reservation and
-		// will deliver its own payload on completion.
-		if (state.handoffCompactionGeneration !== null) return;
-		// A queued follow-up may be the successor message itself, not yet persisted;
-		// resending now would double-deliver once the queue drains.
-		if (ctx.hasPendingMessages?.()) return;
-		const branch = ctx.sessionManager?.getBranch?.() ?? [];
-		const candidate = getUndeliveredHandoffMessage(branch, ctx.sessionManager?.getEntries?.() ?? branch);
-		// The latch coalesces repeated triggers for one persisted cut. New cuts carry a
-		// durable recovery key; legacy cuts fall back to their persisted entry identity.
-		if (!candidate) return;
-		const requested = state.recoveryRequestedMessage;
-		if (requested?.message === candidate.message &&
-			((candidate.recoveryKey !== null && requested.recoveryKey === candidate.recoveryKey) ||
-				(candidate.recoveryKey === null && requested.handoffEntryId === candidate.handoffEntryId))) {
-			requested.handoffEntryId = candidate.handoffEntryId;
-			return;
-		}
-		state.recoveryRequestedMessage = candidate;
-		try {
-			sendFollowUp(pi, candidate.message);
-		} catch (error) {
-			state.recoveryRequestedMessage = null;
-			if (ctx.hasUI) {
-				const message = error instanceof Error ? error.message : String(error);
-				ctx.ui.notify(`Handoff recovery delivery failed: ${message}. It will retry when the session settles.`, "error");
-			}
-			throw error;
-		}
-	}
 
 	function rehydrateReadonlyState(ctx: ExtensionContext): void {
 		const wasEnabled = state.readonlyEnabled;
@@ -694,7 +636,7 @@ export default function (pi: ExtensionAPI): void {
 			};
 		}
 
-		if (event.toolName === "handoff" && !state.pendingRequestedHandoff) {
+		if (event.toolName === HANDOFF_TOOL_NAME && !state.pendingRequestedHandoff) {
 			return {
 				block: true as const,
 				reason: READONLY_HANDOFF_BLOCK_REASON,
@@ -730,11 +672,19 @@ export default function (pi: ExtensionAPI): void {
 
 		// Command metadata is already available at input time. This prevents a
 		// failed selection from reaching Pi's expansion/agent-start lifecycle.
-		const { selection, readonly } = loadCommandFrontmatter(state, ctx, pi, pending);
+		populateFrontmatterCache(state, ctx, pi);
+		refreshModelGroupsState(state, ctx);
+
+		const selection = resolveModelSelection(state, pending);
+		const readonly = resolveReadonlySelection(state, pending);
 		if (blockStreamingFrontmatter(ctx, pending, selection, readonly, event.streamingBehavior)) {
 			return { action: "handled" };
 		}
-		if (await commitCommandFrontmatter(state, ctx, pi, pending, selection)) return { action: "handled" };
+		if (await preflightModelSelection(state, ctx, pi, pending, selection)) return { action: "handled" };
+
+		// Readonly intentionally remains deferred: its authority is resolved with
+		// Pi's final skill metadata in before_agent_start.
+		state.pendingReadonlyCommands.push(pending);
 		return { action: "continue" };
 	});
 
@@ -810,7 +760,7 @@ export default function (pi: ExtensionAPI): void {
 						}
 						selectList.onSelect = ({ value }) => {
 							const body = state.notebookPages.get(value);
-							// A handoff discard can commit while the list is open (its compaction finishes in the background).
+							// A handoff discard can apply while the list is open (the cut completes during the agent run).
 							if (body === undefined) {
 								finished = true;
 								done({ action: "reopen", name: value });
@@ -1016,11 +966,11 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("session_start", async (event, ctx: ExtensionContext) => {
 		if (event.reason === "new") {
 			resetState(state);
-			// Clear stale transient UI from the previous session. updateIndicators
-			// below refreshes the four footer statuses, so only the handoff status
-			// and the warning widget need an explicit clear here.
+			// Clear any stale TUI indicators from the previous session
 			if (ctx.hasUI) {
 				ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
+				ctx.ui.setStatus(STATUS_KEY_TOPIC, undefined);
+				ctx.ui.setStatus(STATUS_KEY_READONLY, undefined);
 				ctx.ui.setWidget(WIDGET_KEY_WARNING, undefined);
 			}
 		}
@@ -1042,10 +992,6 @@ export default function (pi: ExtensionAPI): void {
 		}
 
 		rehydrateReadonlyState(ctx);
-		// A session start is a fresh delivery scope; drop any latch carried over from
-		// an in-process resume before scanning the newly active branch.
-		state.recoveryRequestedMessage = null;
-		recoverHandoffMessage(ctx);
 		updateIndicators(ctx, state);
 	});
 
@@ -1062,20 +1008,7 @@ export default function (pi: ExtensionAPI): void {
 		reconstructNotebook(state, ctx.sessionManager?.getBranch?.() ?? []);
 		ensureNotebookToolsActive(pi);
 		rehydrateReadonlyState(ctx);
-		recoverHandoffMessage(ctx);
 		updateIndicators(ctx, state);
-	});
-
-	// A failed fire-and-forget successor follow-up has no extension-visible error or
-	// acknowledgement. Once a later agent run settles with no queued messages, inspect
-	// the persisted branch and resend only when no user turn follows the cut (a
-	// delivered successor or newer user input ends recovery).
-	pi.on("agent_settled", async (_event, ctx: ExtensionContext) => {
-		// A settle is the retry boundary: the earlier request either landed (the branch
-		// now shows it) or failed silently (still absent). Clear the latch so an absent
-		// successor is retried, while repeats before the run settles stay coalesced.
-		state.recoveryRequestedMessage = null;
-		recoverHandoffMessage(ctx);
 	});
 
 	// ── update TUI indicators after each turn ───────────────────────

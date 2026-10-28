@@ -75,6 +75,7 @@ test("/workflow runs the real sandbox against a real model turn and attributes i
 	const deps: WorkflowCommandDeps = {
 		setReadonly: () => false,
 		requestHandoff: async () => {},
+		watchHandoffSettlement: () => ({ done: new Promise<never>(() => {}), dispose: () => {} }),
 		prepareRunFrontmatter: async (text) => { frontmatterPrepared.push(text); },
 	};
 	const pi = await createTestHost((api) => registerWorkflowCommand(api, state, deps));
@@ -147,6 +148,7 @@ test("a poisoned prior run never blocks the next run", { timeout: 60_000 }, asyn
 	const deps: WorkflowCommandDeps = {
 		setReadonly: () => false,
 		requestHandoff: async () => {},
+		watchHandoffSettlement: () => ({ done: new Promise<never>(() => {}), dispose: () => {} }),
 		prepareRunFrontmatter: async () => {},
 	};
 	state.inputSuppressed = true;

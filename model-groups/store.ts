@@ -1,8 +1,6 @@
-import { homedir } from "node:os";
 import path from "node:path";
 import * as fs from "node:fs";
-import { CONFIG_DIR_NAME, type ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+import { CONFIG_DIR_NAME, getAgentDir, type ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { modalitiesConstraint } from "./constraints/modalities.js";
 import { evaluateConstraint, evaluateConstraints } from "./constraints/engine.js";
 import { presentConstraintDiagnosticRecords } from "./constraints/presentation.js";
@@ -10,14 +8,14 @@ import { productionConstraintRegistry, type ConstraintRegistry } from "./constra
 import { resolveConstraintMembers } from "./constraints/resolution.js";
 import { canonicalizeModelGroupName } from "./names.js";
 import { isModelUsable } from "./availability.js";
-import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModalities, type ModelGroupModality, type ModelGroupModel, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ModelGroupsConfig, type ModelGroupsLoadedGroup, type ModelGroupsLoadIssue, type ModelGroupsLoadResult, type ResolvedModelGroup } from "./types.js";
+import { isThinkingLevel } from "../thinking-levels.js";
+import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModalities, type ModelGroupModality, type ModelGroupModel, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsAccessPolicy, type ModelGroupsBootValidation, type ModelGroupsConfig, type ModelGroupsLoadedGroup, type ModelGroupsLoadIssue, type ModelGroupsLoadResult, type ResolvedModelGroup } from "./types.js";
 
 const CURRENT_VERSION = 2;
-const VALID_THINKING = new Set<ModelThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
-type FsOps = Pick<typeof fs, "existsSync" | "mkdirSync" | "readFileSync" | "writeFileSync" | "renameSync" | "copyFileSync" | "unlinkSync">;
+type FsOps = Pick<typeof fs, "existsSync" | "mkdirSync" | "readFileSync" | "writeFileSync" | "renameSync" | "copyFileSync" | "unlinkSync" | "statSync">;
 let fsOps: FsOps = fs;
 export function __setModelGroupsFsForTests(next: Partial<FsOps> | null): void { fsOps = next ? { ...fs, ...next } : fs; }
-export function modelGroupsPath(scope: ModelGroupScope, cwd: string, projectConfigDirName = CONFIG_DIR_NAME): string { return scope === "global" ? path.join(homedir(), ".pi", "agent", "pi-schematic", "model-groups.json") : path.join(cwd, projectConfigDirName, "pi-schematic", "model-groups.json"); }
+export function modelGroupsPath(scope: ModelGroupScope, cwd: string, projectConfigDirName = CONFIG_DIR_NAME): string { return scope === "global" ? path.join(getAgentDir(), "pi-schematic", "model-groups.json") : path.join(cwd, projectConfigDirName, "pi-schematic", "model-groups.json"); }
 function ownGroups(): Record<string, ModelGroupDef> { return Object.create(null) as Record<string, ModelGroupDef>; }
 function cloneDef(def: ModelGroupDef): ModelGroupDef {
 	// Deep-clone the constraint envelope: persisted constraint values are
@@ -31,13 +29,42 @@ function defineGroup(groups: Record<string, ModelGroupDef>, name: string, def: M
 function hasOwnGroup(groups: Record<string, ModelGroupDef>, name: string): boolean { return Object.hasOwn(groups, name); }
 function emptyConfig(): ModelGroupsConfig { return { version: CURRENT_VERSION, groups: ownGroups() }; }
 function isPlainRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
-function assertScopeAllowed(scope: ModelGroupScope, access: ModelGroupsAccess): void { if (scope === "project" && access.policy === "global-only") throw new Error("Project Model Groups are unavailable in global-only mode"); }
+function statIfExists(dir: string): fs.BigIntStats | undefined {
+	try {
+		return fsOps.statSync(dir, { bigint: true });
+	} catch (cause) {
+		if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw cause;
+	}
+}
+// The directories holding pi-schematic/ are compared, not pi-schematic/ itself: it may not exist before the first save, while its parent decides where that save lands.
+function scopesShareConfigDir(cwd: string): boolean {
+	const globalFile = modelGroupsPath("global", cwd);
+	const projectFile = modelGroupsPath("project", cwd);
+	const globalDir = statIfExists(path.dirname(path.dirname(globalFile)));
+	const projectDir = statIfExists(path.dirname(path.dirname(projectFile)));
+	// Some filesystems (FAT/exFAT) report ino 0 for every entry, so identity is unknown there.
+	if (!globalDir || !projectDir || globalDir.ino === 0n || projectDir.ino === 0n) return path.resolve(globalFile) === path.resolve(projectFile);
+	return globalDir.dev === projectDir.dev && globalDir.ino === projectDir.ino;
+}
+// A PI_CODING_AGENT_DIR that is <cwd>/<config dir>, by path, symlink, or a case-insensitive name, makes the two scopes one file; reading it as both would duplicate every group.
+function effectivePolicy(access: ModelGroupsAccess): ModelGroupsAccessPolicy {
+	if (access.policy === "global-project" && scopesShareConfigDir(access.cwd)) return "global-only";
+	return access.policy;
+}
+/** Builds the access for a session; the project scope is unavailable when untrusted or when it resolves to the global file. */
+export function createModelGroupsAccess(cwd: string, projectTrusted: boolean): ModelGroupsAccess {
+	const access: ModelGroupsAccess = { cwd, policy: projectTrusted ? "global-project" : "global-only" };
+	return { cwd, policy: effectivePolicy(access) };
+}
+function projectScopeEnabled(access: ModelGroupsAccess): boolean { return effectivePolicy(access) === "global-project"; }
+function assertScopeAllowed(scope: ModelGroupScope, access: ModelGroupsAccess): void { if (scope === "project" && !projectScopeEnabled(access)) throw new Error("Project Model Groups are unavailable in global-only mode"); }
 function persistenceError(details: ConstructorParameters<typeof ModelGroupsPersistenceError>[0]): ModelGroupsPersistenceError { return new ModelGroupsPersistenceError(details); }
 function validateModelEntry(value: unknown, at: string): { ok: true; model: ModelGroupModel } | { ok: false; message: string } {
 	if (!isPlainRecord(value)) return { ok: false, message: `${at} must be an object` };
 	if (typeof value.provider !== "string" || !value.provider) return { ok: false, message: `${at}.provider must be a non-empty string` };
 	if (typeof value.modelId !== "string" || !value.modelId) return { ok: false, message: `${at}.modelId must be a non-empty string` };
-	if (value.thinkingLevel !== undefined && !VALID_THINKING.has(value.thinkingLevel as ModelThinkingLevel)) return { ok: false, message: `${at}.thinkingLevel is invalid` };
+	if (value.thinkingLevel !== undefined && !isThinkingLevel(value.thinkingLevel)) return { ok: false, message: `${at}.thinkingLevel is invalid` };
 	const model = { ...value, provider: value.provider, modelId: value.modelId } as ModelGroupModel;
 	if (value.thinkingLevel === undefined) delete (model as any).thinkingLevel;
 	return { ok: true, model };
@@ -138,7 +165,7 @@ function loadScope(scope: ModelGroupScope, access: ModelGroupsAccess, registry: 
 		? { config: validated.config }
 		: { config: emptyConfig(), issue: backupAndIssue(scope, sourcePath, "schema-invalid", validated.message) };
 }
-function mergeLoaded(configs: Record<ModelGroupScope, ModelGroupsConfig>, access: ModelGroupsAccess): ModelGroupsLoadedGroup[] {
+function mergeLoaded(configs: Record<ModelGroupScope, ModelGroupsConfig>, cwd: string): ModelGroupsLoadedGroup[] {
 	const names = new Set([...Object.keys(configs.global.groups), ...Object.keys(configs.project.groups)]);
 	const out: ModelGroupsLoadedGroup[] = [];
 	for (const name of [...names].sort()) {
@@ -146,15 +173,15 @@ function mergeLoaded(configs: Record<ModelGroupScope, ModelGroupsConfig>, access
 			out.push({
 				name,
 				scope: "global",
-				sourcePath: modelGroupsPath("global", access.cwd),
+				sourcePath: modelGroupsPath("global", cwd),
 				...cloneDef(configs.global.groups[name]),
 			});
 		}
-		if (access.policy === "global-project" && hasOwnGroup(configs.project.groups, name)) {
+		if (hasOwnGroup(configs.project.groups, name)) {
 			out.push({
 				name,
 				scope: "project",
-				sourcePath: modelGroupsPath("project", access.cwd),
+				sourcePath: modelGroupsPath("project", cwd),
 				...cloneDef(configs.project.groups[name]),
 			});
 		}
@@ -163,10 +190,10 @@ function mergeLoaded(configs: Record<ModelGroupScope, ModelGroupsConfig>, access
 }
 export function loadModelGroups(access: ModelGroupsAccess, constraintRegistry: ConstraintRegistry = productionConstraintRegistry): ModelGroupsLoadResult {
 	const global = loadScope("global", access, constraintRegistry);
-	const project = access.policy === "global-project" ? loadScope("project", access, constraintRegistry) : { config: emptyConfig() };
+	const project = projectScopeEnabled(access) ? loadScope("project", access, constraintRegistry) : { config: emptyConfig() };
 	return {
 		configs: { global: global.config, project: project.config },
-		merged: mergeLoaded({ global: global.config, project: project.config }, access),
+		merged: mergeLoaded({ global: global.config, project: project.config }, access.cwd),
 		issues: [global.issue, project.issue].filter((i): i is ModelGroupsLoadIssue => Boolean(i)),
 	};
 }
@@ -301,7 +328,7 @@ export function deleteGroup(scope: ModelGroupScope, access: ModelGroupsAccess, r
 	const name = canonicalName(rawName);
 	if (!hasOwnGroup(config.groups, name)) throw new Error(`Model group '${name}' does not exist in ${scope} scope`);
 	delete config.groups[name];
-	const other = access.policy === "global-only" ? emptyConfig() : loadScopeConfig(scope === "global" ? "project" : "global", access);
+	const other = projectScopeEnabled(access) ? loadScopeConfig(scope === "global" ? "project" : "global", access) : emptyConfig();
 	try {
 		saveModelGroups(scope, access, config);
 	} catch (cause) {

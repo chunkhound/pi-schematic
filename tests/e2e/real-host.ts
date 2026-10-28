@@ -4,20 +4,22 @@
  * `real-host-probe.ts`.
  *
  * Every helper that starts a run or navigates the tree is a step: it returns only
- * once `/e2e-barrier` reports no outstanding work, so tests never issue a
- * non-command prompt while a run or compaction is active, and it fails unless the
- * step started exactly the runs its caller expected. A step that has counted fewer
- * runs than it expects barriers again — a run a command, session_tree or agent_settled
- * handler starts is first visible to the probe at its "input" event — within one
- * barrier's budget. `close()` fails on any run that started outside every step.
+ * once `/e2e-barrier` reports no outstanding work (CONTRIBUTING.md `## Tests` names
+ * the work it waits for), so tests never issue a non-command prompt while work is
+ * outstanding. A step fails unless it started exactly the runs its caller expected.
+ * A step that has counted fewer runs than it expects barriers again — a run a
+ * command handler starts (schematic's /handoff) is first visible to the probe at
+ * its "input" event — within one barrier's budget. `close()` fails on any
+ * run that started outside every step.
  */
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { TestContext } from "node:test";
-import { RpcClient, SessionManager, type RpcClientOptions, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { RpcClient, type RpcClientOptions, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import {
 	parseBarrierReport,
 	parseProbeRecord,
@@ -34,6 +36,7 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const SCHEMATIC_ENTRY = resolve(HERE, "..", "..", "index.ts");
 const PROBE_ENTRY = resolve(HERE, "real-host-probe.ts");
+const CHILD_PROBE_ENTRY = resolve(HERE, "real-host-child-probe.ts");
 const CLI_PATH = join(dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"))), "cli.js");
 const REQUIRED_COMMANDS = ["handoff", "notebook", "readonly", PROBE_COMMAND.barrier];
 
@@ -88,9 +91,8 @@ export const REAL_HOST_TEST_TIMEOUT_MS = testTimeoutFor(REAL_HOST_TIMEOUT_MS);
  */
 const STEP_BUDGET_MS = REAL_HOST_TIMEOUT_MS + BARRIER_REPORT_MARGIN_MS;
 
-/** Same expressions as tests/unit/helpers.ts; this harness imports nothing from tests/unit/. */
 export function stripAnsi(text: string): string {
-	return text.replace(/\u001b\[[0-9;]*m/g, "").replace(/\u001b\][^\u0007]*\u0007/g, "");
+	return stripTerminalSequences(text);
 }
 
 export type RpcEvent = { type: string; [key: string]: unknown };
@@ -105,7 +107,6 @@ export interface RealHostSettings {
 }
 
 export interface RealHostOptions {
-	seedSession?: (session: SessionManager) => void;
 	settings?: RealHostSettings;
 	/** Extra pi CLI args, e.g. a registered extension flag a test must set before the session starts. */
 	args?: string[];
@@ -238,6 +239,13 @@ export class RealHost {
 			const logPath = join(root, "probe.jsonl");
 			for (const dir of [agentDir, homeDir, projectDir, sessionsDir]) mkdirSync(dir);
 			writeFileSync(logPath, "");
+			// Spawned child sessions discover extensions in the agent directory; the parent
+			// runs with --no-extensions and loads only the -e entries below.
+			mkdirSync(join(agentDir, "extensions"));
+			writeFileSync(
+				join(agentDir, "extensions", "child-probe.ts"),
+				`export { default } from ${JSON.stringify(pathToFileURL(CHILD_PROBE_ENTRY).href)};\n`,
+			);
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({
 				compaction: { enabled: false, keepRecentTokens: 1, ...options.settings?.compaction },
 				retry: { enabled: false, ...options.settings?.retry },
@@ -250,15 +258,6 @@ export class RealHost {
 				"-e", PROBE_ENTRY,
 				...(options.args ?? []),
 			];
-			if (options.seedSession) {
-				const session = SessionManager.create(projectDir, sessionsDir);
-				options.seedSession(session);
-				const sessionFile = session.getSessionFile();
-				if (!sessionFile || !existsSync(sessionFile)) {
-					throw new Error(`Seeded session file was not written (${sessionFile}); the seed must append a user or assistant message`);
-				}
-				args.push("--session", sessionFile);
-			}
 			const clientOptions: RpcClientOptions = {
 				cliPath: CLI_PATH,
 				cwd: projectDir,
@@ -346,8 +345,9 @@ export class RealHost {
 			.map((line) => parseProbeRecord(line));
 	}
 
-	successorSends(): Array<Extract<ProbeRecord, { kind: "successor-send" }>> {
-		return this.probeLog().filter((record): record is Extract<ProbeRecord, { kind: "successor-send" }> => record.kind === "successor-send");
+	/** Handoff cuts the probe saw in turn_end boundaries, in order, with whether it dropped each one. */
+	cuts(): Array<Extract<ProbeRecord, { kind: "cut" }>> {
+		return this.probeLog().filter((record): record is Extract<ProbeRecord, { kind: "cut" }> => record.kind === "cut");
 	}
 
 	/** Navigate the tree to `entryId`; a step that starts `runs` runs. */
@@ -423,7 +423,7 @@ export class RealHost {
 	 * since `mark`, then require exactly `runs` runs started since `mark`, counted by `countRuns`
 	 * (the passes of one run up to its agent_settled are one run).
 	 *
-	 * A run a command, session_tree or agent_settled handler starts is first visible to the probe at
+	 * A run a command handler starts (schematic's /handoff) is first visible to the probe at
 	 * its "input" event, so a barrier can report quiet before that run has started. A step that has
 	 * counted fewer runs than it expects therefore barriers again after the next observed event,
 	 * inside the step's one `STEP_BUDGET_MS`; every round spends what is left of it, so a run that

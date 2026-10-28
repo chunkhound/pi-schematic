@@ -15,6 +15,7 @@
  *   rate, keeping the main thread responsive.
  */
 
+import type { StopReason } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import {
 	AssistantMessageComponent,
@@ -30,9 +31,10 @@ import {
 
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
-import { Container, Spacer, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, Spacer, stripTerminalSequences, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
 import { escapeDisplayLabel } from "../model-groups/display.js";
+import { isThinkingLevel } from "../thinking-levels.js";
 import { abortChildSession, type SchematicState } from "../state.js";
 import {
 	__setSingletons,
@@ -40,10 +42,10 @@ import {
 } from "../runtime-singletons.js";
 import {
 	getLastAssistantText,
+	getStopReasonOutcome,
 	type SpawnOutcome,
 	type SpawnResultDetails,
 	type SpawnRouteDetails,
-	type ThinkingValue,
 } from "./shared.js";
 
 // ── Render-only constants ────────────────────────────────────────────
@@ -77,7 +79,7 @@ type ToolResultLike = {
 type SpawnChildMessage = {
 	role: string;
 	content?: Array<{ type: string; text?: string; id?: string; name?: string; arguments?: Record<string, unknown> }>;
-	stopReason?: unknown;
+	stopReason?: StopReason;
 	errorMessage?: string;
 	toolCallId?: string;
 	command?: string;
@@ -100,12 +102,6 @@ function asToolResult(value: unknown): ToolResultLike {
 		return value as ToolResultLike;
 	}
 	return { content: [] };
-}
-
-function getStopReasonOutcome(stopReason: unknown): SpawnOutcome | undefined {
-	if (stopReason === "aborted") return "aborted";
-	if (stopReason === "error") return "error";
-	return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -149,8 +145,7 @@ function normalizeRoute(value: unknown): SpawnRouteDetails | undefined {
 
 function normalizeSpawnResultDetails(value: unknown): SpawnResultDetails | undefined {
 	if (!isRecord(value) || typeof value.model !== "string") return undefined;
-	const thinkingValues: ThinkingValue[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-	if (!thinkingValues.includes(value.thinking as ThinkingValue)) return undefined;
+	if (!isThinkingLevel(value.thinking)) return undefined;
 
 	const outcome: SpawnOutcome = value.outcome === "success"
 		|| value.outcome === "aborted"
@@ -160,7 +155,7 @@ function normalizeSpawnResultDetails(value: unknown): SpawnResultDetails | undef
 		: "running";
 	const details: SpawnResultDetails = {
 		model: value.model,
-		thinking: value.thinking as ThinkingValue,
+		thinking: value.thinking,
 		truncated: typeof value.truncated === "boolean" ? value.truncated : false,
 		outcome,
 	};
@@ -266,17 +261,13 @@ function padVisibleWidth(text: string, width: number): string {
 }
 
 function getShellBackground(theme: Theme | undefined, outcome: SpawnOutcome): ((text: string) => string) | undefined {
-	// Theme.bg() is a TUI extension API available on runtime themes beyond the
-	// base Theme type. The typeof guard prevents crashes in tests or headless
-	// mode where bg may not exist. The (theme as any) cast is unavoidable
-	// without extending the Theme interface.
-	if (!theme || typeof (theme as any).bg !== "function") return undefined;
+	if (!theme || typeof theme.bg !== "function") return undefined;
 	const bgName = outcome === "success"
 		? "toolSuccessBg"
 		: outcome === "error" || outcome === "aborted"
 			? "toolErrorBg"
 			: "toolPendingBg";
-	return (text: string) => (theme as any).bg(bgName, text);
+	return (text: string) => theme.bg(bgName, text);
 }
 
 function wrapSpawnShell(lines: string[], width: number, theme: Theme | undefined, outcome: SpawnOutcome, expanded: boolean): string[] {
@@ -299,7 +290,7 @@ function wrapSpawnShell(lines: string[], width: number, theme: Theme | undefined
 function truncatePlainText(text: string, width: number): string {
 	// truncateToWidth() may inject ANSI resets even when truncating plain
 	// unicode text. Strip them here so outer shell/background styling stays intact.
-	return truncateToWidth(text, width).replace(/\u001b\[[0-9;]*m/g, "");
+	return stripTerminalSequences(truncateToWidth(text, width));
 }
 
 function truncateAndColor(text: string, width: number, color: (name: ThemeColor, text: string) => string, colorName: ThemeColor): string {
@@ -455,12 +446,7 @@ export class SpawnFrameScheduler {
  *
  * Registered into the RuntimeSingletons container at module evaluation time.
  * Test harnesses overwrite this with a fresh SpawnFrameScheduler via
- * createTestHarness().  ESM guarantees all static imports resolve before any
- * module body runs, so the harness always wins.
- *
- * IMPORTANT: never use dynamic import() to load this module *after* a
- * createTestHarness() call, or the production scheduler will overwrite the
- * test one.
+ * createTestHarness().
  */
 const spawnFrameScheduler = new SpawnFrameScheduler();
 __setSingletons({ ...getSingletons(), frameScheduler: spawnFrameScheduler });
@@ -911,12 +897,13 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		this.streamingComponent = undefined;
 		this.liveOutcome = this.details?.outcome ?? "running";
 		this.lastAction = getOutcomeStatusText(this.liveOutcome) ?? "";
+		const finalOutcome = this.details?.outcome !== undefined && this.details.outcome !== "running";
 		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
 
 		for (const message of this.session.messages as SpawnChildMessage[]) {
 			if (message.role === "assistant") {
 				const stopOutcome = getStopReasonOutcome(message.stopReason);
-				if (stopOutcome) {
+				if (stopOutcome && !finalOutcome) {
 					this.liveOutcome = stopOutcome;
 					this.lastAction = getOutcomeStatusText(stopOutcome) ?? this.lastAction;
 				}
@@ -1332,6 +1319,7 @@ function renderSpawnResult(
 	state: SchematicState,
 ): NestedAgentSessionComponent | Text {
 	const details = normalizeSpawnResultDetails(result.details);
+	const forcedError = context.isError && details?.outcome !== "aborted";
 	const component = context.lastComponent instanceof NestedAgentSessionComponent
 		? context.lastComponent
 		: new NestedAgentSessionComponent();
@@ -1344,12 +1332,12 @@ function renderSpawnResult(
 	const child = state.childSessions.get(context.toolCallId);
 	if (child) {
 		component.attachSession(context.toolCallId, child, state);
-		if (context.isError) component.setOutcome("error", theme);
+		if (forcedError) component.setOutcome("error", theme);
 		state.childSessions.delete(context.toolCallId);
 		return component;
 	}
 	if (component.hasSession()) {
-		if (context.isError) component.setOutcome("error", theme);
+		if (forcedError) component.setOutcome("error", theme);
 		return component;
 	}
 
@@ -1361,7 +1349,7 @@ function renderSpawnResult(
 		.join("\n\n")
 		.trim();
 	const summary = output || "(no output)";
-	const outcome = context.isError ? "error" : details?.outcome ?? "running";
+	const outcome = forcedError ? "error" : details?.outcome ?? "running";
 	const meta = details ? `${getOutcomeMarker(outcome)}${formatSpawnIdentity(details)}` : "";
 	const status = getOutcomeStatusText(outcome);
 	const text = [

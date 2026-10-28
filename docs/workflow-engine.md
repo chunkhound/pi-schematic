@@ -43,7 +43,7 @@ One `/workflow <file> [args]` run. Each step names its owner module.
 | `workflow/limits-dialog.ts` | Soft-target resolution: flag bypass, interactive budget/time dialogs, headless no-target fallback; emits the `workflow-limits` entry. |
 | `workflow/notebook.ts` | `workflow.notebook*` inspectors and writer. |
 | `workflow/output.ts` | Run-scoped structured-output tool (`workflow_output`) and the single call-contract wording shared by its primer and the one-shot nudge. |
-| `workflow/rebind.ts` | `performNewSession`, `performHandoff`, `rebindRun` + `RebindBundle`/`RebindableDeps`; the per-wait handoff deadline (`HANDOFF_COMPACTION_TIMEOUT_MS`). |
+| `workflow/rebind.ts` | `performNewSession`, `performHandoff`, `rebindRun` + `RebindBundle`/`RebindableDeps`; `performHandoff` arms the boundary settlement watch, then waits for the successor run to go idle; the per-wait handoff deadline (`HANDOFF_TIMEOUT_MS`). |
 | `workflow/run-registry.ts` | Correlates sent runs with `agent_settled` boundaries; resolves run targets. |
 | `workflow/sandbox.ts` | Sandbox construction, timeout clamp, hard-deadline factor. |
 | `workflow/shell.ts` | `workflow.shell` through pi's bash tool plus the readonly guard. |
@@ -138,7 +138,7 @@ Contract-visible knobs shape behavior the author contract states:
 | Constant | Owner | Rule |
 |---|---|---|
 | `CANCEL_CONFIRM_MS` | `workflow/command.ts` | [Targets, exit, cancellation, salvage](workflows.md#targets-exit-cancellation-salvage) |
-| `HANDOFF_COMPACTION_TIMEOUT_MS` | `workflow/rebind.ts` | [workflow.handoff](workflows.md#workflowhandoff) |
+| `HANDOFF_TIMEOUT_MS` | `workflow/rebind.ts` | [workflow.handoff](workflows.md#workflowhandoff) |
 | `MAX_DEFERRED_EFFECTS` | `workflow/host.ts` | [Targets, exit, cancellation, salvage](workflows.md#targets-exit-cancellation-salvage) |
 | `HARD_DEADLINE_FACTOR` | `workflow/sandbox.ts` | [Targets, exit, cancellation, salvage](workflows.md#targets-exit-cancellation-salvage) |
 

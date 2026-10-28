@@ -76,8 +76,8 @@ describe("workflow host E2E — run correlation", () => {
 		assert.equal(summaryOf(entries).turns, 3, "each assistant is one model turn");
 	}));
 
-	// `turns >= steps`, and a handoff step contributes no preparation turn. The session
-	// holds four assistant messages (run, prep tail, successor, run); only the two runs count.
+	// `turns >= steps`, and the turn_end boundary contributes no assistant turn of its own:
+	// only the two dispatched workflow.run turns count.
 	it("counts run assistant messages and excludes the handoff preparation turn", async () => withWorkflowChild(async (h) => {
 		await sendOk(h, 'turn {"text":"before handoff"}');
 		await sendOk(h, 'turn {"text":"after handoff"}');
@@ -86,15 +86,10 @@ describe("workflow host E2E — run correlation", () => {
 		await waitForSent(h, "Handoff requested.");
 		await sendOk(h, 'usage {"tokens":50000,"percent":25,"contextWindow":200000}');
 		await sendOk(h, 'tool handoff {"nextInstruction":"do the resumed work","context":"remaining state"}');
-		await h.waitForText("OK:Handoff started.");
-		await sendOk(h, "compact-success");
-		await h.waitForText("queuedFollowUp");
-		// The prep tail settles unblocked: it is neither a run nor a counted turn.
-		await sendOk(h, "successor-assistant prep done");
-		await sendOk(h, "agent-settled-all");
-		await sendOk(h, "successor-turn");
-		await h.waitForText("## Next instruction");
-		await sendOk(h, "successor-assistant successor done");
+		await h.waitForText("OK:Handoff staged.");
+		await sendOk(h, "turn-end");
+		await h.waitForText('"continue":true');
+		await sendOk(h, "turn-start");
 		await sendOk(h, "agent-settled-all");
 		await sendOk(h, "cmd-wait");
 		const summary = summaryOf(await readAppended(h));

@@ -2,7 +2,9 @@
 // Imported by other test files via `./helpers.js`
 // Includes the real-API test host (see ./test-host.js), test utilities, theme constants, readonly helpers, etc.
 
-import type { SessionEntry, Theme } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, type SessionEntry, type Theme, type TurnEndEvent } from "@earendil-works/pi-coding-agent";
+import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -17,6 +19,16 @@ export const theme = {
 	bold: (text: string) => text,
 } as unknown as Theme;
 
+export const EMPTY_CHILD_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+
+/** A failure after the child session exists is returned as an error result, not thrown. */
+export function assertErrorResult(result: any, text: string, usage: unknown): void {
+	assert.equal(result.isError, true);
+	assert.deepEqual(result.content, [{ type: "text", text }]);
+	assert.equal(result.details.outcome, "error");
+	assert.deepEqual(result.usage, usage);
+}
+
 export const ansiTheme = {
 	fg: (_name: string, text: string) => `\u001b[38;5;245m${text}\u001b[39m`,
 	bg: (_name: string, text: string) => `\u001b[48;5;236m${text}\u001b[49m`,
@@ -25,18 +37,27 @@ export const ansiTheme = {
 
 const HOME_ENV_KEYS = ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"] as const;
 
+// pi resolves its agent directory from PI_CODING_AGENT_DIR before HOME, so the
+// home helpers clear it; otherwise an exported variable redirects global paths
+// away from the temp home.
+const AGENT_DIR_ENV_KEY = "PI_CODING_AGENT_DIR";
+
+function restoreEnv(key: string, value: string | undefined): void {
+	if (value === undefined) delete process.env[key];
+	else process.env[key] = value;
+}
+
 export function setTempHome(home: string): () => void {
 	const snapshot = Object.fromEntries(HOME_ENV_KEYS.map((key) => [key, process.env[key]])) as Record<typeof HOME_ENV_KEYS[number], string | undefined>;
+	const previousAgentDir = process.env[AGENT_DIR_ENV_KEY];
 	process.env.HOME = home;
 	process.env.USERPROFILE = home;
 	delete process.env.HOMEDRIVE;
 	delete process.env.HOMEPATH;
+	delete process.env[AGENT_DIR_ENV_KEY];
 	return () => {
-		for (const key of HOME_ENV_KEYS) {
-			const value = snapshot[key];
-			if (value === undefined) delete process.env[key];
-			else process.env[key] = value;
-		}
+		for (const key of HOME_ENV_KEYS) restoreEnv(key, snapshot[key]);
+		restoreEnv(AGENT_DIR_ENV_KEY, previousAgentDir);
 	};
 }
 
@@ -79,7 +100,7 @@ export function createSubscribableSession(messages: any[] = []) {
 }
 
 export function stripAnsi(text: string): string {
-	return text.replace(/\u001b\[[0-9;]*m/g, "").replace(/\u001b\][^\u0007]*\u0007/g, "");
+	return stripTerminalSequences(text);
 }
 
 export function getRenderedLine(lines: string[], match: (plain: string) => boolean): string {
@@ -119,16 +140,84 @@ export async function emitAll(pi: TestPI, event: string, payload: unknown, ctx: 
 	}
 }
 
+/**
+ * Like `emitAll`, but returns each handler's result in registration order. Each
+ * handler sees the same payload: pi's chaining of boundary results between
+ * handlers is not emulated.
+ */
+export async function callHandlers(pi: TestPI, event: string, payload: unknown, ctx: unknown): Promise<unknown[]> {
+	const handlers = pi.handlers.get(event);
+	if (!handlers?.length) throw new Error(`No handlers registered for "${event}"`);
+	const results: unknown[] = [];
+	for (const handler of handlers) {
+		results.push(await handler(payload, ctx));
+	}
+	return results;
+}
+
+/** A tool result message for `toolCallId`, as pi passes it in `TurnEndEvent.toolResults`. */
+export function handoffToolResult(toolCallId: string, isError = false): ToolResultMessage {
+	return {
+		role: "toolResult",
+		toolCallId,
+		toolName: "handoff",
+		content: [{ type: "text", text: isError ? "Handoff rejected." : "Handoff staged." }],
+		isError,
+		timestamp: 0,
+	};
+}
+
+/** A completed `turn_end` event with an empty boundary chain; override any field. */
+export function turnEndEvent(overrides: Partial<TurnEndEvent> = {}): TurnEndEvent {
+	return {
+		type: "turn_end",
+		turnIndex: 0,
+		message: {
+			role: "assistant",
+			content: [],
+			api: "faux",
+			provider: "faux",
+			model: "faux",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: 0,
+		},
+		toolResults: [],
+		messageEntryId: "assistant-entry",
+		toolResultEntryIds: [],
+		entries: [],
+		continue: false,
+		context: { contextEntries: [], contextMessages: [], llmMessages: [], pendingMessages: [], canContinue: true },
+		outcome: "completed",
+		...overrides,
+	};
+}
+
 // ── Readonly test helpers ────────────────────────────────────────────
 
-export type ToolCall = (event: { toolName: string; input?: Record<string, unknown> }, ctx: { cwd?: string }) => Promise<any>;
+export type ToolCall = (event: { toolName: string; toolCallId?: string; input?: Record<string, unknown> }, ctx: { cwd?: string }) => Promise<any>;
 
 /**
- * Create a test PI instance with pi-schematic registered and the tool_call handler extracted.
+ * Create a test PI instance with pi-schematic registered and its tool_call handlers composed as pi runs them.
  */
 export async function registerReadonlyPI(): Promise<{ pi: TestPI; toolCall: ToolCall }> {
 	const pi = await createTestHost();
-	const [toolCall] = pi.handlers.get("tool_call") as ToolCall[];
+	const handlers = pi.handlers.get("tool_call") as ToolCall[];
+	// Pi runs tool_call handlers in registration order and the first block wins.
+	const toolCall: ToolCall = async (event, ctx) => {
+		for (const handler of handlers) {
+			const result = await handler(event, ctx);
+			if (result?.block) return result;
+		}
+		return undefined;
+	};
 	return { pi, toolCall };
 }
 
@@ -143,7 +232,6 @@ export function makeReadonlyUICtx(overrides: Record<string, unknown> = {}) {
 			theme: { fg: (_name: string, text: string) => text },
 			setStatus: () => {},
 			setWidget: () => {},
-			addAutocompleteProvider: () => {},
 		},
 		getContextUsage: () => null,
 		...overrides,
@@ -157,25 +245,26 @@ export async function tmpDir(): Promise<string> {
 }
 
 export async function withTempHome<T>(run: (homeDir: string) => Promise<T>): Promise<T> {
-	const previousHome = process.env.HOME;
-	const previousUserProfile = process.env.USERPROFILE;
 	const homeDir = await tmpDir();
-	process.env.HOME = homeDir;
-	process.env.USERPROFILE = homeDir;
+	const restore = setTempHome(homeDir);
 	try {
 		return await run(homeDir);
 	} finally {
-		if (previousHome === undefined) {
-			delete process.env.HOME;
-		} else {
-			process.env.HOME = previousHome;
-		}
-		if (previousUserProfile === undefined) {
-			delete process.env.USERPROFILE;
-		} else {
-			process.env.USERPROFILE = previousUserProfile;
-		}
+		restore();
 		await rm(homeDir, { recursive: true, force: true });
+	}
+}
+
+/** Nest inside `withTempHome`, not around it: `withTempHome` clears `PI_CODING_AGENT_DIR` for its run. */
+export async function withTempAgentDir<T>(run: (agentDir: string) => Promise<T>): Promise<T> {
+	const previousAgentDir = process.env[AGENT_DIR_ENV_KEY];
+	const agentDir = await tmpDir();
+	process.env[AGENT_DIR_ENV_KEY] = agentDir;
+	try {
+		return await run(agentDir);
+	} finally {
+		restoreEnv(AGENT_DIR_ENV_KEY, previousAgentDir);
+		await rm(agentDir, { recursive: true, force: true });
 	}
 }
 
@@ -251,12 +340,12 @@ export async function runRealChildInvocation(params: {
 		? resolve(os.tmpdir(), "..", `readonly-child-escape-${process.pid}-${Date.now()}`)
 		: "readonly-child-escape";
 	const agentDir = join(tempRoot, "agent");
-	const extensionDir = join(cwd, ".pi", "extensions");
+	const extensionDir = join(cwd, CONFIG_DIR_NAME, "extensions");
 	const sentinel = "AGENTIC_E2E_PROBE_OK";
 	const provider = "agentic-e2e";
 	const modelId = "agentic-e2e-model";
 	const resultText = params.resultText ?? `${provider}/${modelId}:${sentinel}`;
-	// Zero by default, so the fixture stays free exactly as before unless a test asks for cost.
+	// Zero by default, so the fixture stays free unless a test asks for cost.
 	const childCostUsd = params.childCostUsd ?? 0;
 	const childUsage = {
 		input: childCostUsd ? 1_000 : 0, output: childCostUsd ? 500 : 0, cacheRead: 0, cacheWrite: 0,
@@ -395,7 +484,7 @@ export default function(pi) {
 		};
 		const activeTools = params.activeTools ?? ["read", "agentic_e2e_probe", "spawn"];
 		const state = params.state ?? createState();
-		if (params.readonly !== undefined) state.readonlyEnabled = params.readonly;
+		state.readonlyEnabled = params.readonly ?? false;
 		if (params.notebookPages) {
 			for (const [pageName, pageContent] of Object.entries(params.notebookPages)) {
 				state.notebookPages.set(pageName, pageContent);
@@ -483,20 +572,19 @@ export default function(pi) {
 
 // ── TUI context factory ───────────────────────────────────────────────
 
-/** Recorded TUI writes; `workingMessages` is normalized by the factory so callers may omit it. */
 export interface TUIRecord {
 	statuses: Map<string, string | undefined>;
 	widgets: Map<string, string[] | undefined>;
 	workingMessages?: Array<string | undefined>;
-	/** Last footer factory passed to `setFooter`; undefined after a restore. */
+	/** Last footer factory passed to \`setFooter\`; undefined after a restore. */
 	footer?: unknown;
-	/** Count of non-undefined `setFooter` calls, so idempotency is observable. */
+	/** Count of non-undefined \`setFooter\` calls, so idempotency is observable. */
 	footerInstalls?: number;
-	/** Count of `setFooter(undefined)` restores. */
+	/** Count of \`setFooter(undefined)\` restores. */
 	footerRestores?: number;
 }
 
-/** Test theme: semantic tokens become `[token:text]` so assertions read the tone. */
+/** Test theme: semantic tokens become \`[token:text]\` so assertions read the tone. */
 export const TEST_TUI_THEME = { fg: (name: string, text: string) => `[${name}:${text}]` };
 
 /** Render the footer factory a record holds, as pi would, so tests can read its lines. */

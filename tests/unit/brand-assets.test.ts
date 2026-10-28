@@ -95,7 +95,16 @@ test("README hero references the same asset as pi.image", () => {
 });
 
 test("every local asset referenced by README exists", () => {
-	for (const [, ref] of readText(README_URL).matchAll(/(?:src="|\]\()(assets\/[^")\s]+)/g)) {
+	const readme = readText(README_URL);
+	// Relative links for readers in the repository; absolute raw URLs for npm,
+	// which renders the README from the published tarball where relative paths
+	// cannot resolve.
+	const refs = [
+		...readme.matchAll(/(?:src="|\]\()(assets\/[^")\s]+)/g),
+		...readme.matchAll(/https:\/\/raw\.githubusercontent\.com\/chunkhound\/pi-schematic\/main\/(assets\/[^")\s]+)/g),
+	].map((match) => match[1]);
+	assert.ok(refs.length > 0, "README references no assets");
+	for (const ref of refs) {
 		assert.ok(existsSync(repoPath(ref)), `missing README asset: ${ref}`);
 	}
 });

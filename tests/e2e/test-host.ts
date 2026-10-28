@@ -32,16 +32,13 @@
  *   → shell-delay <ms>     — fake shell awaits this long before returning (elapsed-budget crossing)
  *   → flag-empty <name>    — set an extension flag to "" (as the CLI can)
  *   → ui-events             — return current status values and emitted notifications
- *   → compact-success       — run queued handoff compaction success path
- *   → compact-fail [message] — run queued handoff compaction failure path
- *   → successor-turn        — drain a queued follow-up into the successor context hook
+ *   → turn-end              — run the turn_end handlers and commit their returned drafts
+ *   → turn-start            — run the turn_start handlers (handoff confirmation point)
  *   → user-turn <text>      — persist a newer user message without draining a follow-up
  *   → session-tree          — fire a tree-navigation event without changing the active branch
  *   → tree-edit-last-user   — open the latest user turn for editing and move the active branch to its parent
  *   → agent-end             — run the first agent_end handler
  *   → agent-settled         — run the first agent_settled handler
- *   → drop-follow-up        — discard one queued follow-up without persisting it (simulated delivery loss)
- *   → successor-count       — count sent messages starting with "## Next instruction"
  *   → sent-messages         — return extension-sent user messages
  *   → flag <name> <value>    — seed an extension flag value (as the CLI would)
  *   → spent <usd>            — append a usage entry so session cost is non-zero
@@ -113,7 +110,6 @@ pi.setThinkingLevel = (level: Parameters<typeof originalSetThinkingLevel>[0]) =>
 // ── Mock ExtensionContext for tool/command execution ──────────────
 
 type MockContextUsage = { tokens?: number | null; percent?: number | null; contextWindow?: number | null } | null;
-type CompactRequest = { onComplete?: () => void; onError?: (error: Error) => void };
 
 /** One scripted `workflow.run` reply, consumed in queue order by scriptTurn. */
 interface ScriptedTurn {
@@ -134,7 +130,6 @@ interface ScriptedTurn {
 }
 
 let currentUsage: MockContextUsage = null;
-let lastCompactRequest: CompactRequest | null = null;
 // Run control: a held exec gates workflow.shell (hold-exec/release-exec); the background
 // command promise is reported later by cmd-wait, after its side effects settle.
 let execGate: Promise<void> | null = null;
@@ -512,9 +507,6 @@ const mockCtx = {
 	},
 	hasPendingMessages: () => queuedFollowUps.length > 0,
 	shutdown: () => process.exit(0),
-	compact: (request: { onComplete?: () => void; onError?: (error: Error) => void }) => {
-		lastCompactRequest = request;
-	},
 	getSystemPrompt: () => "",
 } as any; // Type assertion needed: mock intentionally omits some interface fields
 
@@ -650,93 +642,28 @@ for await (const line of rl) {
 		} catch (e: unknown) {
 			process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n");
 		}
-	} else if (trimmed === "compact-success" || trimmed.startsWith("compact-fail")) {
-		const [beforeCompact] = pi.handlers.get("session_before_compact") ?? [];
-		const compactRequest = lastCompactRequest as any;
-		if (!beforeCompact || !compactRequest) {
-			process.stdout.write("ERR:no queued compaction\n");
-			continue;
+	} else if (trimmed === "turn-end" || trimmed === "turn-end fail") {
+		// Mirror pi's turn_end boundary: every handler sees the submitted tool result; the
+		// returned drafts commit in order, and `continue` keeps the run going.
+		const event = {
+			type: "turn_end",
+			outcome: "success",
+			entries: [],
+			toolResults: [{ toolCallId: "e2e-handoff", toolName: "handoff", content: "Handoff staged.", isError: trimmed === "turn-end fail" }],
+		};
+		let continued = false;
+		let drafted = 0;
+		for (const handler of pi.handlers.get("turn_end") ?? []) {
+			const result = await handler(event, mockCtx) as { entries?: any[]; continue?: boolean } | undefined;
+			for (const draft of result?.entries ?? []) {
+				appendEntry({ ...draft, id: draft.id ?? `draft-${++entrySeq}` });
+				drafted += 1;
+			}
+			if (result?.continue) continued = true;
 		}
-		if (trimmed === "compact-success") {
-			if (typeof compactRequest.onComplete !== "function") {
-				process.stdout.write("ERR:no success callback\n");
-				continue;
-			}
-			const result = await beforeCompact(
-				{ preparation: { tokensBefore: 1 }, branchEntries: [{ id: "leaf-e2e" }] },
-				mockCtx,
-			);
-			lastCompactRequest = null;
-			if (!result?.compaction) {
-				process.stdout.write("OK:null\n");
-				continue;
-			}
-			// Mirror Pi: the compaction entry lands in the branch before the successor
-			// delivery, so recovery scans observe the same order.
-			const compactionId = `compaction-${++entrySeq}`;
-			appendEntry({
-				type: "compaction",
-				id: compactionId,
-				summary: result.compaction.summary,
-				details: result.compaction.details,
-			});
-			compactRequest.onComplete();
-			// Mirror Pi: a successful compaction emits session_compact so cut waiters
-			// (e.g. workflow.handoff) observe the marker id for the successor settle.
-			for (const handler of pi.handlers.get("session_compact") ?? []) {
-				await handler({ compactionEntry: { id: compactionId }, fromExtension: true }, mockCtx);
-			}
-			const lastMessage = pi.sentUserMessages.at(-1);
-			process.stdout.write("OK:" + JSON.stringify({
-				...result.compaction,
-				queuedFollowUp: lastMessage?.options?.deliverAs === "followUp",
-			}) + "\n");
-		} else {
-			if (typeof compactRequest.onError !== "function") {
-				process.stdout.write("ERR:no failure callback\n");
-				continue;
-			}
-			const failureMessage = trimmed.slice("compact-fail".length).trim() || "simulated compaction failure";
-			compactRequest.onError(new Error(failureMessage));
-			lastCompactRequest = null;
-			// Real pi emits session_compact_failed; the workflow's handoff wait listens for it.
-			for (const handler of pi.handlers.get("session_compact_failed") ?? []) {
-				await handler({ type: "session_compact_failed", errorMessage: failureMessage, aborted: false, willRetry: false, fromExtension: true, reason: "manual" }, mockCtx);
-			}
-			const lastMessage = pi.sentUserMessages.at(-1)?.content ?? "";
-			process.stdout.write("OK:compaction failed:" + lastMessage + "\n");
-		}
-	} else if (trimmed === "successor-turn") {
-		const successorMessage = queuedFollowUps.shift();
-		const [contextHandler] = pi.handlers.get("context") ?? [];
-		if (!successorMessage || !contextHandler) {
-			process.stdout.write("ERR:no queued successor turn\n");
-			continue;
-		}
-		// Model Pi persistence: draining the follow-up appends the user message as
-		// text content parts — the shape real Pi persists.
-		appendEntry({
-			type: "message",
-			id: `message-${++entrySeq}`,
-			message: { role: "user", content: [{ type: "text", text: successorMessage }] },
-		});
-		const result = await contextHandler({
-			messages: [{ role: "user", content: successorMessage, timestamp: Date.now() }],
-		}, mockCtx);
-		process.stdout.write("OK:" + JSON.stringify({ successorMessage, context: result ?? null }) + "\n");
-	} else if (trimmed.startsWith("successor-assistant ")) {
-		// Simulate the successor run's model reply: settle gates correlate a run only
-		// once an assistant entry lands after the delivered user message.
-		const text = trimmed.slice("successor-assistant ".length).trim();
-		if (!text) {
-			process.stdout.write("ERR:missing successor-assistant text\n");
-			continue;
-		}
-		appendEntry({
-			type: "message",
-			id: `message-${++entrySeq}`,
-			message: { role: "assistant", content: [{ type: "text", text }] },
-		});
+		process.stdout.write("OK:" + JSON.stringify({ continue: continued, entries: drafted }) + "\n");
+	} else if (trimmed === "turn-start") {
+		for (const handler of pi.handlers.get("turn_start") ?? []) await handler({ type: "turn_start" }, mockCtx);
 		process.stdout.write("OK\n");
 	} else if (trimmed.startsWith("user-turn ")) {
 		const content = trimmed.slice("user-turn ".length).trim();
@@ -776,12 +703,6 @@ for await (const line of rl) {
 		}
 		for (const handler of settledHandlers) await handler({}, mockCtx);
 		process.stdout.write("OK\n");
-	} else if (trimmed === "drop-follow-up") {
-		const dropped = queuedFollowUps.shift();
-		process.stdout.write(dropped ? "OK\n" : "ERR:no queued follow-up\n");
-	} else if (trimmed === "successor-count") {
-		const count = pi.sentUserMessages.filter((message) => message.content.startsWith("## Next instruction")).length;
-		process.stdout.write("OK:" + count + "\n");
 	} else if (trimmed === "sent-messages") {
 		process.stdout.write("OK:" + JSON.stringify(pi.sentUserMessages) + "\n");
 	} else if (trimmed === "appended") {

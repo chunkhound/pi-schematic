@@ -9,6 +9,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { wrapWithBwrap, wrapWithSandboxExec } from "../../os-sandbox.js";
 import { applyReadonlyBashGuard, classifyBashCommand } from "../../readonly-bash.js";
+import { registerReadonlyPI } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
 import {
 	READONLY_BASH_SCOPE,
@@ -127,7 +128,7 @@ test("bash and sandbox consumers use centralized readonly copy", () => {
 });
 
 test("parent readonly tool-call consumer uses centralized block copy", async () => {
-	const pi = await createTestHost();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await pi.commands.get("readonly")!.handler("", {
 		hasUI: true,
 		getContextUsage: () => null,
@@ -139,7 +140,6 @@ test("parent readonly tool-call consumer uses centralized block copy", async () 
 			addAutocompleteProvider: () => {},
 		},
 	} as any);
-	const [toolCall] = pi.handlers.get("tool_call")!;
 	const result = await toolCall({ toolName: "write", input: {} }, {});
 	assert.deepEqual(result, { block: true, reason: READONLY_WRITE_EDIT_BLOCK_REASON });
 	const handoffResult = await toolCall({ toolName: "handoff", input: {} }, {});

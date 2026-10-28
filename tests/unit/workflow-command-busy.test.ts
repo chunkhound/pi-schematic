@@ -49,6 +49,7 @@ function countingDeps(onBuild: () => void): WorkflowCommandDeps {
 	return {
 		setReadonly: () => false,
 		requestHandoff: async () => {},
+		watchHandoffSettlement: () => ({ done: new Promise<never>(() => {}), dispose: () => {} }),
 		prepareRunFrontmatter: async () => {},
 		sandboxFactory: () => {
 			onBuild();

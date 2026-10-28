@@ -9,14 +9,15 @@ pi-schematic is a Pi extension. It registers tools and hooks into the agent life
 | `before_agent_start` | Resolves deferred readonly frontmatter, refreshes Model Groups, then writes schematic's prompt sections, including a per-run current-date anchor (see **Prompt sections** and **Date anchor** under Behavioral notes) |
 | `context` | Advisory watchdog reminders when context is elevated; a handoff nudge before every LLM call while a requested handoff is pending; readonly toggle nudges |
 | `input` | Resolves model-selection frontmatter during idle input; blocks it during streaming; queues readonly resolution; `/workflow` marks input handled for the workflow run's duration |
-| `tool_call` | Readonly blocks write/edit/powershell/unguarded bash; blocks handoff unless a requested bypass is active |
-| `session_start` | Reconstructs notebook pages/epoch/watermark from the active branch, rehydrates readonly state, and recovers an absent successor handoff message; loads and validates Model Groups, registers group autocomplete, reports config issues, and resets session state on `/new` |
-| `session_shutdown` | Drops the per-session workflow binding (`discardWorkflowRuntime`, called from `workflow/command.ts`). The run releases the process-global reservation in `finally`, not this hook. Resets the error-path child-usage backfill via `abortAndClearChildSessions` (in `state.ts`, called from `resetState`). |
-| `session_tree` | Invalidates branch-local handoff work, reconstructs notebook pages/epoch/watermark from the newly active branch, rehydrates readonly state, recovers a successor only when no newer user turn exists and no session-tree descendant owned by that cut proves delivery, refreshes indicators |
-| `turn_end` | Updates the footer indicators (context %, notebook count, topic, readonly) |
+| `tool_call` | Refuses every `handoff` call after the first in a message of only `handoff` calls, `handoff` calls that share an assistant message with other tool calls (the other calls go to their own handlers), and `handoff` calls after a failed cut in the same run (an error result, the call does not run), before any readonly check; readonly then blocks write/edit/powershell/unguarded bash and blocks handoff unless a requested bypass is active |
+| `session_start` | Reconstructs notebook pages/epoch/watermark from the active branch, rehydrates readonly state; loads and validates Model Groups, registers group autocomplete, reports config issues, and resets session state on `/new` |
+| `session_shutdown` | Drops the per-session workflow binding (`discardWorkflowRuntime`, called from `workflow/command.ts`). The run releases the process-global reservation in `finally`, not this hook. |
+| `session_tree` | Invalidates branch-local handoff work (a handoff staged on the abandoned branch is dropped), reconstructs notebook pages/epoch/watermark from the newly active branch, rehydrates readonly state, refreshes indicators |
+| `message_end` | Records which `handoff` calls of an assistant message to refuse (every one when other tool calls share the message, all but the first otherwise), for `tool_call` |
+| `turn_end` | Returns a staged handoff as one boundary of drafts and asks Pi to continue the run (see **Handoff**); also updates TUI indicators (context %, notebook count, topic, readonly) |
+| `turn_start` | Confirms the staged handoff's cut on the branch and finalizes it (request, topic, notebook, readonly nudge), or fails it; a cut without its successor also aborts the run |
 | `agent_end` | Records last context usage percent |
-| `agent_settled` | Counts one handoff enforcement attempt per settled run in which the eligible handoff nudge was sent and cancels a required handoff after `MAX_HANDOFF_ATTEMPTS`. Recovery in index.ts clears the recovery latch and, when no queued messages remain, resends an absent successor handoff message. |
-| `session_before_compact` | Emits a fixed continuation frame plus a per-cut identity marker as the compaction summary; the successor's next instruction + context arrive as one real user message after compaction |
+| `agent_settled` | Resolves a staged handoff first (confirms the cut, or fails it: a missing cut keeps the request pending, a cut without its successor clears it), re-arms a readonly nudge that a lost-successor abort spent, then counts one handoff enforcement attempt per settled run in which the eligible handoff nudge was sent and cancels a required handoff after `MAX_HANDOFF_ATTEMPTS`; clears the failed-cut refusal |
 
 ## State
 
@@ -29,12 +30,9 @@ interface SchematicState {
   activeNotebookTopicSource: "human" | "agent" | null
   pendingTopicBoundaryHint: NotebookTopicBoundaryHint | null
   lastContextPercent: number | null
-  pendingHandoff: { generation: number } | null
-  handoffGeneration: number
-  handoffCompactionGeneration: number | null
-  pendingHandoffDelivery: { generation: number; payload: HandoffPayload; recoveryKey: string } | null
-  recoveryRequestedMessage: { handoffEntryId: string | null; recoveryKey: string | null; message: string } | null
-  pendingNotebookDiscard: { generation: number; nextEpoch: number; deleted: string[] } | null
+  stagedHandoff: StagedHandoff | null
+  handoffFailedInRun: boolean
+  handoffRefusals: Map<string, string>
   discardEpochWatermark: number
   pendingRequestedHandoff: { nextInstruction: string | null; toolCalled: boolean; enforcementAttempts: number; eligibleNudgeDelivered: boolean } | null
   modelGroups: {
@@ -42,8 +40,9 @@ interface SchematicState {
     validation: ModelGroupsBootValidation | null
   }
   childSessions: Map<string, AgentSession>
-  liveChildSessions: Map<string, AgentSession>
   // NEVER replaced — only .clear(); renderer ownership checks depend on stable identity (state.ts)
+  liveChildSessions: Map<string, AgentSession>
+  // installed by the active workflow host; flushed on message_end and at settle
   childUsageSink: ((toolCallId: string, provider: string | null, model: string, usage: Usage) => void) | null
   // raised/lowered by the workflow run's suppression unsubscribe; NOT cleared by resetState
   inputSuppressed: boolean
@@ -51,6 +50,8 @@ interface SchematicState {
   childAbortPromises: WeakMap<AgentSession, Promise<void>>
   readonlyEnabled: boolean
   readonlyNudgePending: boolean
+  // re-arms readonlyNudgePending when the run settles (see Handoff, lost successor)
+  readonlyNudgeRearmAtSettle: boolean
   frontmatterSkillCache: Map<string, FrontmatterEntry>
   frontmatterPromptCache: Map<string, FrontmatterEntry>
   frontmatterSkillIssues: Map<string, FrontmatterIssue>
@@ -67,11 +68,16 @@ interface SchematicState {
 **Spawn** — Routing rules:
 - Without a Model Group, the child inherits the parent's public model and explicit or default thinking level.
 - An exact known group selects a registry-resolved, authenticated entry at random. An entry-specific thinking level overrides the explicit or inherited level and is clamped for the selected model.
-- An unknown group reports fallback and uses the parent model and thinking.
+- An unknown group uses the parent model and the explicit or inherited thinking level. The fallback shows in the spawn tool's TUI display (`<group>? fallback → <provider>/<model> • <thinking>`) and in the result's details as `route.status: "unknown-fallback"`; the result text the model receives carries no marker.
 - A known empty group, or one with no usable authenticated entries, fails before child-session creation.
 - The selected public model enters a child-owned runtime.
 - Children inherit cwd, the active registered tools they can run in that session, and readonly posture. They keep child-local notebook tools. They cannot spawn or handoff, and they never inherit the run-scoped `workflow_output` tool: a child call would satisfy the parent's structured-output contract.
-- The spawn result carries the child's usage. The parent session total and the workflow cost total therefore price child work.
+
+Only a failure before the child session exists throws: model or route resolution, constraint validation, or the session factory rejecting. Once the session exists, a failure returns as an error result carrying the child's usage, zero when nothing ran, unless the thrown value cannot be turned into text. A child run that Pi resolves with stop reason `error` or `aborted` also returns an error result with `isError` set, and `details.outcome` stays `error` or `aborted`. The UI shows an aborted result as aborted although it carries `isError`; once `details.outcome` is final, the renderer prefers it over the child's stop reasons.
+
+The result text is cut at `DEFAULT_MAX_LINES` lines, then at `DEFAULT_MAX_BYTES` bytes on a UTF-8 character boundary, and the marker renders the size through `formatByteCap` (the form notebook uses). Error results are cut to the same limits with the same marker.
+
+The spawn result returns the child's token and cost usage, one sum over the child session's entries, built the way Pi sums its own session usage. It counts toward the parent's session totals and footer, not its context size. If the entries cannot be read or summed, the spawn keeps the child's text, reports zero usage and sets `statsUnavailable`. Inside a workflow run the run-scoped `childUsageSink` (`state.ts`) also receives each child's cumulative spend on every `message_end` and at settle, so the workflow cost total prices child work live.
 
 **Model Groups** — `/model-groups` manages versioned global and trusted-project JSON configuration. Project groups shadow same-named global groups. Configuration is loaded and validated against Pi's model registry into the `modelGroups` snapshot; only group names and their effective modalities reach the agent prompt (see **Prompt sections**). Routing uses the parent registry only to select configured/authenticated entries—the registry/auth objects are not passed into the child runtime.
 
@@ -79,23 +85,31 @@ interface SchematicState {
 
 **Date anchor** — The `schematic_date` prompt section holds a `## Current date` block (`time/format.ts`: ISO date, weekday, IANA zone, UTC offset, plus a resolve-relative-references directive). `index.ts` registers it directly after the `schematic` primer section and before the topic, Model Groups and notebook sections. It is rendered once per user prompt, in `before_agent_start`, and stays fixed for the whole run, so it is never per-turn. While the host zone stays fixed, the block is byte-stable within a calendar day; the UTC offset can also change once on a DST transition day. When the date is unchanged since the previous prompt, Pi adds no update for `schematic_date`. When it has changed, Pi appends a section-update message for `schematic_date` and leaves the leading system message unchanged. A run that crosses midnight keeps the prior day's anchor until the next prompt renders it again. Every field — date, weekday, and offset — comes from one `Intl.DateTimeFormat` call for the rendered zone, so the anchor never mixes a host-local day with another zone's offset; `formatCurrentDate(date, zone?)` accepts an explicit zone, which is what makes DST and day-boundary behaviour testable. Any zone Intl cannot render — a host with a bogus `TZ`, or an explicit argument — falls back to `UTC` rather than rendering `undefined` or throwing out of the hook; zone aliases (`US/Eastern`) are kept verbatim. `time/format.ts` is the single source of truth for the anchor text.
 
-**Notebook** — Agent-curated named pages **scoped to the active session branch**, not a long-lived memory product. Stored as session custom entries so pages survive handoff and resume of the same work stream; `/new` (fresh session) clears them with the conversation. The visible pages and the committed generation epoch follow the branch the user navigated to: `/tree` reconstruction rehydrates from the newly active branch, so branches diverge without cross-contamination and returning to an earlier branch restores its state; writes land on the current branch's generation. Discard is transactional — survivors are staged at the next epoch and committed only on successful handoff compaction — and the epoch high-water mark is derived from the branch during reconstruction, so a failed attempt can never resurrect staged pages after a restart. Active topic (`notebook_topic_set` or `/notebook <topic>`) frames spawn-vs-handoff preference; human-set topics are authoritative. Topic clears after a successful handoff. The interactive `/notebook` list pipes the selected page into an external pager (`$PI_PAGER`, else `$PAGER`, else an installed `less` except on Windows) while Pi's TUI is suspended; with no pager or a `cat` or `more` pager it shows a truncated inline preview, and either way the user returns to the list.
+**Notebook** — Agent-curated named pages **scoped to the active session branch**, not a long-lived memory product. Stored as session custom entries so pages survive handoff and resume of the same work stream; `/new` (fresh session) clears them with the conversation. The visible pages and the committed generation epoch follow the branch the user navigated to: `/tree` reconstruction rehydrates from the newly active branch, so branches diverge without cross-contamination and returning to an earlier branch restores its state; writes land on the current branch's generation. Discard is transactional — survivors and both generation markers are written in the handoff's boundary pass together with the cut, and a declined boundary, or one that another extension drops whole, writes nothing; if another extension drops only the cut and keeps the notebook drafts, the discard markers persist and the notebook is rebuilt from them; if it keeps the cut and drops the notebook drafts, the pages stay, the completion notice counts them as kept, and a session with a UI also shows a warning naming them — and the epoch high-water mark is derived from the branch during reconstruction, so a failed attempt can never resurrect discarded pages after a restart. Active topic (`notebook_topic_set` or `/notebook <topic>`) frames spawn-vs-handoff preference; human-set topics are authoritative. Topic clears after a successful handoff. The interactive `/notebook` list pipes the selected page into an external pager (`$PI_PAGER`, else `$PAGER`, else an installed `less` except on Windows) while Pi's TUI is suspended; with no pager or a `cat` or `more` pager it shows a truncated inline preview, and either way the user returns to the list.
 
 Human topic-boundary cues under readonly that arrive below the context-eligibility threshold queue on the `pendingTopicBoundaryHint` field (`state.ts`) and promote to a handoff bypass once context usage crosses the threshold (resolved in the `before_agent_start` hook, `index.ts`).
 
-**Handoff** — Requires a real instruction and a meaningful context load. It rejects empty instructions, very small sessions, and missing usage.
-- The next instruction is extension-carried and delivered verbatim. A human `/handoff` direction wins. Otherwise the model supplies it.
-- The preparation is model-owned: `context` plus notebook curation.
-- `/handoff <direction>` queues the direction as the instruction. Otherwise the model supplies `nextInstruction` to the handoff tool.
-- The instruction never starts in the current context. That context is discarded at compaction.
-- After compaction, the successor receives one real user message: `## Next instruction` (verbatim) and `## Context`. The compaction summary is a fixed continuation frame plus an identity marker, which lets Pi report the correct cut.
-- A versioned copy of the exact payload is stored in the handoff compaction details. `/tree` and session resume recover it only when no newer user turn exists and no session-tree descendant owned by that cut proves delivery.
-- Repeated triggers coalesce through an in-process latch. A settled run clears the latch, so a silently failed send is retried while the successor is absent. A persisted message is never duplicated.
-- Readonly is not frozen into the summary. A pending nudge re-announces the ON posture on the first post-handoff turn. A clean OFF-to-OFF handoff stays silent. `tool_call` enforcement stays live.
-- Notebook bodies are not inlined into the prompt. The next context fetches pages by name.
-- Under readonly, handoff is blocked unless the user runs `/handoff` or crosses an eligible human topic boundary. Readonly can resume after compaction.
-- Compaction replaces the prior transcript with the fixed continuation frame. The next turns see a small context again. Providers start a new input prefix for billing and cache, and the dropped history is not in that prefix.
-- Spawn runs children in a separate context, so their token use does not permanently inflate the parent. This extension does not configure provider cache TTLs or breakpoints.
+**Handoff** — Requires a real instruction and a meaningful context load (rejects empty instructions, very small sessions, or missing usage). Splits the next instruction (extension-carried, delivered verbatim; a human `/handoff` direction wins, otherwise the model supplies it) from preparation (model-owned: `context` plus notebook curation). `/handoff <direction>` queues the direction as the instruction; otherwise the model supplies `nextInstruction` to the handoff tool. The instruction is never started in the current context — that context is discarded at the cut.
+
+The handoff tool only stages the request and ends its batch. At the end of that turn the cut and the successor are written in one `turn_end` pass:
+
+1. a retain-none compaction with the fixed continuation frame and `details.handoffId`;
+2. a `pi-schematic-handoff` custom message (`## Next instruction` verbatim + `## Context`);
+3. a hidden `pi-schematic-handoff-note` message saying the system prompt is stale until the next run starts; a message typed during the run is a steer and does not refresh it.
+
+The same run continues with the successor turn. If another extension's `turn_end` handler stops the continuation, the cut is persisted and the successor runs on the next prompt; a session with a UI (interactive or RPC) shows a warning, and a print-mode session gets no report. If the run is aborted after the cut, pi still starts the successor turn, so the handoff completes at `turn_start` (a session with a UI shows the completion notice), the successor turn ends with an empty aborted assistant message, and the persisted successor reaches the model on the next prompt. A `handoff` that shares an assistant message with other tool calls is refused and stages nothing; the other calls go to their own handlers, and the refusal tells the model to call `handoff` alone in its next message.
+
+A handoff fails when its cut is missing at the next `turn_start` or when the run settles. Causes include an abort, another extension's `turn_end` replacing the entries, and invalid drafts. A missing cut never starts a run. The failure guidance is a `pi-schematic-handoff-failed` message that starts no run, and an interactive session also shows an error notification. A pending `/handoff` or required-handoff request stays pending, and the watchdog counts the run as one attempt when it sent the eligible handoff nudge, so a later run can retry until `MAX_HANDOFF_ATTEMPTS`; on the attempt that reaches that limit the watchdog cancels the request in the same settle, and the failure message says no required handoff remains pending. If the boundary had been submitted, the notebook is rebuilt from the branch, so a discard that another extension let through still applies. For the rest of that run every further `handoff` call is refused, so a run loses at most one cut; the refusal clears when the run settles or the handoff state is invalidated (`/tree`, `/new`).
+
+A `handoff` call rejected at validation (an empty instruction, a session too small, missing usage) reports its reason only in the tool's error result, which carries the required-handoff guidance while such a request is pending. It queues no follow-up message, so nothing reaches a later successor.
+
+Completion needs the cut, the successor with the same `handoffId` after it, and no later compaction on the branch. Another extension's `turn_end` handler can keep the cut but drop the successor draft. It can also append its own compaction after the cut, so pi projects only that latest compaction and hides the successor and note. Either way the handoff fails, and the context is already cut, so nothing is retried. The `pi-schematic-handoff-failed` message carries the instruction and starts no run. A session with a UI also shows an error notification. At `turn_start` the run is aborted, so the successor turn never reaches the model without its instruction. The pending request is cleared, the topic is cleared and readonly is re-announced as after a completed cut, so a later handoff is accepted. The aborted turn still runs the `context` hook, which spends the readonly nudge, so the nudge is re-armed when the run settles and reaches the next run. Schematic's `turn_end` handler spreads `event.entries` into its result; a handler that returns its own `entries` without them drops the earlier drafts.
+
+Pi does not fire `session_before_compact` or `session_compact` for a handoff cut; other extensions find it as a `compaction` entry whose `details.handoffId` is set. Cuts written before the turn_end boundary carry a versioned payload in their compaction details and sent the successor as a user message after the cut. Schematic no longer reads that payload, so such a cut whose successor was never delivered is not repaired; the user prompts again.
+
+Readonly is not frozen into the summary: a pending nudge re-announces the ON posture on the first post-handoff turn while a clean OFF-to-OFF handoff stays silent; `tool_call` enforcement stays live. Under readonly, handoff is blocked unless the user runs `/handoff` or crosses an eligible human topic boundary; readonly can resume after the cut. Notebook bodies are not inlined into the prompt; the next context in this work stream fetches pages by name.
+
+Compaction replaces the prior transcript with the fixed continuation frame: the next turns see a small context again (quality), and providers start a new input prefix for billing/cache (the dropped history is no longer in that prefix). Spawn runs children in separate context so their token use does not permanently inflate the parent. This extension does not configure provider cache TTLs or breakpoints.
 
 **Workflow** — `/workflow <workflow> [args]` runs a user-authored synchronous JavaScript file in a codemode sandbox.
 - The script owns control flow and the exit condition.
@@ -136,7 +150,7 @@ Coding-agent guardrail on every OS — not a hardened security boundary. Stronge
 | `spawn/` | Child sessions and live TUI rendering |
 | `model-groups/` | Persistence, boot validation, CRUD TUI/autocomplete, spawn routing, prompt section |
 | `notebook/` | Page store, tools, topic, rehydration, external pager, prompt sections |
-| `handoff/` | Verbatim next-instruction delivery, model-owned context prep, constant-frame compaction bridge, live readonly nudge |
+| `handoff/` | Verbatim next-instruction delivery, model-owned context prep, the turn_end boundary (cut, successor, note), live readonly nudge |
 | `workflow/` | `/workflow` command: workflow compiler, sandbox host, handles, soft cost/time targets, exit record |
 | `usage.ts` / `process-state.ts` | Spend attribution shared by the workflow cost total, the run overview, and spawn; module-copy-safe process state |
 | `readonly-*.ts` / `os-sandbox.ts` | Readonly posture, bash policy, sandbox |

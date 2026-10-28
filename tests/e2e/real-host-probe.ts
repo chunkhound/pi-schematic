@@ -2,14 +2,13 @@
  * real-host-probe.ts — Probe extension loaded into the real pi CLI by the
  * real-host E2E harness (`real-host.ts`).
  *
- * Registers a scripted provider whose responses — tool calls, provider errors and
- * replies with a given usage — the test arms through `/e2e-script`, plus commands
- * that wait for outstanding work, navigate the tree, start runs without a user turn,
- * and inject delivery and compaction failures. Every
- * observation is appended as one JSON line to the file `PROBE_LOG_ENV_VAR` names.
+ * Registers a scripted provider whose responses the test arms through
+ * `/e2e-script`, plus the `PROBE_COMMAND` commands. Every observation is appended
+ * as one JSON line to the file `PROBE_LOG_ENV_VAR` names.
  *
  * The harness loads this file after schematic, so its "input" handler runs last and
- * its "continue" means pi accepted the input.
+ * its "continue" means pi accepted the input, and its turn_end handler sees the
+ * boundary entries schematic returned.
  *
  * Runs inside the pi process: never write to stdout or stderr here.
  */
@@ -19,22 +18,22 @@ import { createAssistantMessageEventStream, type AssistantMessage, type ToolCall
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
+import { HANDOFF_SUCCESSOR_CUSTOM_TYPE } from "../../handoff/format.js";
 import {
-	NEXT_INSTRUCTION_PREFIX,
-	PROBE_API,
 	PROBE_BARRIER_STATUS_KEY,
 	PROBE_COMMAND,
-	PROBE_CONTEXT_WINDOW,
 	PROBE_LOG_ENV_VAR,
-	PROBE_MODEL_ID,
+	PROBE_MODEL_FIELDS,
 	PROBE_PROVIDER,
+	PROBE_PROVIDER_FIELDS,
+	ZERO_COST,
+	cutHandoffId,
 	parseScriptedStep,
 	type BarrierReport,
 	type ProbeRecord,
 	type ScriptedStep,
 } from "./real-host-protocol.js";
 
-const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
 const SCRIPTED_INPUT_TOKENS = 50000;
 // Load-time check: every scripted response must clear the handoff floor whatever the
 // context size, or schematic rejects the handoffs this suite scripts.
@@ -45,7 +44,7 @@ if (!(SCRIPTED_INPUT_TOKENS > MIN_HANDOFF_TOKENS)) {
 	);
 }
 function usageOf(inputTokens: number): AssistantMessage["usage"] {
-	return { input: inputTokens, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: inputTokens, cost: zeroCost };
+	return { input: inputTokens, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: inputTokens, cost: ZERO_COST };
 }
 
 function parseScript(args: string): ScriptedStep[] {
@@ -103,19 +102,19 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	let runScript: ScriptedStep[] | null = null;
 	let step = 0;
 	let runEntryCount = 0;
-	let dropNextSuccessor = false;
-	let cancelNextCompaction = false;
+	// How the next turn_end boundary that carries a handoff cut is altered: the whole
+	// boundary dropped, only its successor dropped, a compaction appended after the cut,
+	// or only its notebook rewrite dropped.
+	let nextCutTamper: "drop" | "dropSuccessor" | "compactAfter" | "dropNotebookRewrite" | null = null;
+	let abortAfterHandoff = false;
 	// Runs `/e2e-turn <count>` still has to start, one per agent_settled.
 	let chainedTurns = 0;
 
 	// Outstanding work, kept from public extension events only; /e2e-barrier waits until
-	// none is left. A successful handoff tool call awaits its compaction's outcome; a handoff
-	// compaction awaits its successor input and a failed one its failure-report input
-	// (schematic sends one either way); an accepted extension input awaits the user message
-	// that delivers it, in a new run or queued into the running one; a run awaits agent_settled.
-	const handoffCallsAwaitingCompaction: string[] = [];
-	const compactionsAwaitingSuccessor: string[] = [];
-	let failedCompactionsAwaitingReport = 0;
+	// none is left. A successful handoff tool call awaits the turn_end that writes or
+	// declines its cut; an accepted extension input awaits the user message that delivers
+	// it, in a new run or queued into the running one; a run awaits agent_settled.
+	const handoffCallsAwaitingBoundary: string[] = [];
 	const inputsAwaitingDelivery: string[] = [];
 	let runsAwaitingSettle = 0;
 	const accountingErrors: string[] = [];
@@ -131,9 +130,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	};
 
 	const outstanding = (ctx: ExtensionCommandContext): string[] => [
-		...handoffCallsAwaitingCompaction.map((id) => `handoff call ${id} has no compaction outcome`),
-		...compactionsAwaitingSuccessor.map((id) => `handoff compaction ${id} has no successor input`),
-		...(failedCompactionsAwaitingReport > 0 ? [`${failedCompactionsAwaitingReport} failed handoff compaction(s) have no failure-report input`] : []),
+		...handoffCallsAwaitingBoundary.map((id) => `handoff call ${id} has no turn_end`),
 		...inputsAwaitingDelivery.map((text) => `extension input ${JSON.stringify(text.slice(0, 80))} has no user message`),
 		...(runsAwaitingSettle > 0 ? [`${runsAwaitingSettle} run(s) have no agent_settled`] : []),
 		...(chainedTurns > 0 ? [`${chainedTurns} chained /e2e-turn run(s) have not started`] : []),
@@ -167,11 +164,8 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	};
 
 	pi.registerProvider(PROBE_PROVIDER, {
-		api: PROBE_API, apiKey: "test-key", baseUrl: "http://localhost.invalid",
-		models: [{
-			id: PROBE_MODEL_ID, name: "Schematic E2E Model", reasoning: false,
-			input: ["text"], cost: zeroCost, contextWindow: PROBE_CONTEXT_WINDOW, maxTokens: 1024,
-		}],
+		...PROBE_PROVIDER_FIELDS,
+		models: [{ ...PROBE_MODEL_FIELDS, name: "Schematic E2E Model" }],
 		streamSimple(model, context) {
 			const i = step++;
 			log({ kind: "request", step: i, calls: runScript, texts: contextTexts(context.messages) });
@@ -191,13 +185,16 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 				});
 				return stream;
 			}
-			const toolCall: ToolCall | null = scripted !== null && "name" in scripted ? { type: "toolCall", id, ...scripted } : null;
+			const toolCalls: ToolCall[] = scripted === null ? []
+				: "name" in scripted ? [{ type: "toolCall", id, ...scripted }]
+				: "calls" in scripted ? scripted.calls.map((call, n) => ({ type: "toolCall", id: `${id}-${n}`, ...call }))
+				: [];
 			const reply = scripted !== null && "text" in scripted ? scripted : { text: "ack", inputTokens: SCRIPTED_INPUT_TOKENS };
-			const stopReason = toolCall ? "toolUse" : "stop";
+			const stopReason = toolCalls.length > 0 ? "toolUse" : "stop";
 			const message: AssistantMessage = {
 				...origin, role: "assistant",
-				content: toolCall ? [toolCall] : [{ type: "text", text: reply.text }],
-				usage: usageOf(toolCall ? SCRIPTED_INPUT_TOKENS : reply.inputTokens), stopReason,
+				content: toolCalls.length > 0 ? toolCalls : [{ type: "text", text: reply.text }],
+				usage: usageOf(toolCalls.length > 0 ? SCRIPTED_INPUT_TOKENS : reply.inputTokens), stopReason,
 			};
 			queueMicrotask(() => {
 				stream.push({ type: "done", reason: stopReason, message });
@@ -249,47 +246,55 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		wake();
 	});
 
-	pi.on("tool_execution_end", async (event) => {
-		// A handoff call that returned without error has called ctx.compact.
+	pi.on("tool_execution_end", async (event, ctx) => {
+		// A handoff call that returned without error has staged a cut for its turn_end.
 		if (event.toolName !== "handoff" || event.isError) return;
-		handoffCallsAwaitingCompaction.push(event.toolCallId);
+		handoffCallsAwaitingBoundary.push(event.toolCallId);
+		if (abortAfterHandoff) {
+			abortAfterHandoff = false;
+			ctx.abort();
+		}
 		wake();
+	});
+
+	pi.on("turn_end", async (event) => {
+		for (const result of event.toolResults) {
+			if (result.toolName !== "handoff" || result.isError) continue;
+			const index = handoffCallsAwaitingBoundary.indexOf(result.toolCallId);
+			if (index === -1) accountingErrors.push(`turn_end holds handoff result ${result.toolCallId} without its tool_execution_end`);
+			else handoffCallsAwaitingBoundary.splice(index, 1);
+		}
+		const handoffId = event.entries.map(cutHandoffId).find((id) => id !== null);
+		wake();
+		if (handoffId === undefined) return undefined;
+		const tamper = nextCutTamper;
+		nextCutTamper = null;
+		log({ kind: "cut", handoffId, dropped: tamper === "drop" });
+		switch (tamper) {
+			case null:
+				return undefined;
+			case "drop":
+				// Drop every draft and the continuation, as pi itself does for an invalid boundary.
+				return { entries: [], continue: false };
+			case "dropSuccessor":
+				return { entries: event.entries.filter((entry) => !(entry.type === "custom_message" && entry.customType === HANDOFF_SUCCESSOR_CUSTOM_TYPE)) };
+			case "compactAfter":
+				return { entries: [...event.entries, { type: "compaction", summary: "e2e compaction after the cut", firstKeptEntryId: null }] };
+			case "dropNotebookRewrite":
+				return { entries: event.entries.filter((entry) => !(entry.type === "custom" && entry.customType.startsWith("notebook-"))) };
+		}
 	});
 
 	pi.on("input", async (event) => {
 		if (event.source !== "extension") return { action: "continue" };
-		const successor = event.text.startsWith(NEXT_INSTRUCTION_PREFIX);
-		const dropped = successor && dropNextSuccessor;
-		if (successor) {
-			dropNextSuccessor = false;
-			log({ kind: "successor-send", text: event.text, dropped });
-			compactionsAwaitingSuccessor.shift();
-		} else if (failedCompactionsAwaitingReport > 0) {
-			failedCompactionsAwaitingReport--;
-		}
-		if (!dropped) inputsAwaitingDelivery.push(event.text);
+		inputsAwaitingDelivery.push(event.text);
 		wake();
-		return dropped ? { action: "handled" } : { action: "continue" };
-	});
-
-	pi.on("session_before_compact", async () => {
-		if (!cancelNextCompaction) return;
-		cancelNextCompaction = false;
-		return { cancel: true };
+		return { action: "continue" };
 	});
 
 	pi.on("session_compact", async (event) => {
-		const entryId = event.compactionEntry.id;
-		log({ kind: "compact", entryId });
-		if ((event.compactionEntry.details as { handoff?: unknown } | undefined)?.handoff === true) {
-			if (handoffCallsAwaitingCompaction.shift() === undefined) accountingErrors.push(`handoff compaction ${entryId} without a handoff call`);
-			compactionsAwaitingSuccessor.push(entryId);
-		}
-		wake();
-	});
-
-	pi.on("session_compact_failed", async () => {
-		if (handoffCallsAwaitingCompaction.shift() !== undefined) failedCompactionsAwaitingReport++;
+		// A handoff cut is a boundary entry and fires no session_compact; this is pi's own compaction.
+		log({ kind: "compact", entryId: event.compactionEntry.id });
 		wake();
 	});
 
@@ -306,14 +311,14 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		handler: async (args, ctx) => {
 			// Returns at once and reports through a status, so the wait is bounded by the
 			// deadline the harness passes, not by RpcClient's fixed request timeout.
-			// Still assumed: a send that a command, session_tree or agent_settled handler starts
-			// (the /handoff request, handoff recovery) shows up first as its "input" event; no
+			// Still assumed: a send that a command handler starts (schematic's /handoff
+			// request) shows up first as its "input" event; no
 			// public event announces it earlier. A barrier processed before that event reports
 			// quiet with the run still to come, so a harness step that has counted fewer runs
 			// than it expects waits for the next observed event and barriers again. The
 			// assumption therefore only reaches a step whose expected count is already met —
 			// the "nothing happened" checks (0 expected runs) above all. Those stay sound while
-			// schematic's /handoff, session_tree and agent_settled handlers and its "input"
+			// schematic's /handoff handler and its "input"
 			// handler ahead of this file's await no I/O (that one returns early for the
 			// extension-sourced sends at issue here). A run that starts late anyway lands in the
 			// next step's window or in close(), which fails on any run no step expected. Closing
@@ -347,17 +352,38 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerCommand(PROBE_COMMAND.dropNextSuccessor, {
-		description: "Drop the next successor send before it reaches the session",
+	pi.registerCommand(PROBE_COMMAND.dropNextCut, {
+		description: "Drop the next handoff cut and its continuation from the turn_end boundary",
 		handler: async () => {
-			dropNextSuccessor = true;
+			nextCutTamper = "drop";
 		},
 	});
 
-	pi.registerCommand(PROBE_COMMAND.cancelNextCompaction, {
-		description: "Cancel the next compaction from session_before_compact",
+	pi.registerCommand(PROBE_COMMAND.dropNextSuccessor, {
+		description: "Keep the next handoff cut but drop its successor from the turn_end boundary",
 		handler: async () => {
-			cancelNextCompaction = true;
+			nextCutTamper = "dropSuccessor";
+		},
+	});
+
+	pi.registerCommand(PROBE_COMMAND.compactAfterNextCut, {
+		description: "Append a compaction after the next handoff cut in the turn_end boundary",
+		handler: async () => {
+			nextCutTamper = "compactAfter";
+		},
+	});
+
+	pi.registerCommand(PROBE_COMMAND.dropNotebookRewriteAtNextCut, {
+		description: "Keep the next handoff cut and its successor but drop the notebook rewrite from the turn_end boundary",
+		handler: async () => {
+			nextCutTamper = "dropNotebookRewrite";
+		},
+	});
+
+	pi.registerCommand(PROBE_COMMAND.abortAfterHandoff, {
+		description: "Abort the run once the next handoff call has returned without error",
+		handler: async () => {
+			abortAfterHandoff = true;
 		},
 	});
 

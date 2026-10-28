@@ -1,5 +1,5 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
-import type { ExtensionContext, ExtensionUIContext, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteProviderFactory, ExtensionContext, ExtensionUIContext, ThemeColor } from "@earendil-works/pi-coding-agent";
 import type { SchematicState } from "../state.js";
 import { getEffectiveModelGroups } from "./router.js";
 import { MODALITY_FG, modalityLetterRun } from "./modality.js";
@@ -60,7 +60,7 @@ function buildSuggestionDescription(route: string, letters: string, capsWidth: n
 	return `${padded}${gap}${colorize("muted", route)}`;
 }
 
-export function createModelGroupAutocompleteProvider(state: SchematicState, colorize?: DescriptionColorizer) {
+export function createModelGroupAutocompleteProvider(state: SchematicState, colorize?: DescriptionColorizer): AutocompleteProviderFactory {
 	return (current: any) => ({
 		async getSuggestions(lines: string[], cursorLine: number, cursorCol: number, options: unknown) {
 			const line = lines[cursorLine] ?? "";
