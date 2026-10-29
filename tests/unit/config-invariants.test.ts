@@ -40,6 +40,7 @@ const LOCK_PATH = new URL("package-lock.json", REPO_ROOT_URL);
 const SPAWN_SOURCE_PATH = new URL("spawn/index.ts", REPO_ROOT_URL);
 const RENDERER_SOURCE_PATH = new URL("spawn/renderer.ts", REPO_ROOT_URL);
 const README_PATH = new URL("README.md", REPO_ROOT_URL);
+const CONTRIBUTING_PATH = new URL("CONTRIBUTING.md", REPO_ROOT_URL);
 // Pinned versions verified against package.json + lockfile.
 // Update when Pi devDependencies are bumped.
 const EXPECTED_PI_VERSION = "1.0.4";
@@ -71,6 +72,10 @@ const EXPECTED_ALLOWLIST_KEYS = new Set<string>([
 
 function readText(url: URL): string {
 	return readFileSync(url, "utf8");
+}
+
+function escapeDot(value: string): string {
+	return value.replaceAll(".", "\\.");
 }
 
 function parseAuditConfig(): AuditConfig {
@@ -260,8 +265,14 @@ test("the Node floor guard rejects any extra floor literal", () => {
 test("docs name the current Node and Pi floors", () => {
 	const readme = readText(README_PATH);
 	assert.deepEqual(new Set(readme.match(/Node\.js [\d.]+/g)), new Set([`Node.js ${EXPECTED_NODE_FLOOR}`]), "README must name only the Node floor");
-	assert.match(readme, new RegExp(`Pi ${EXPECTED_PI_VERSION.replaceAll(".", "\\.")}`), "README must name the Pi floor");
+	assert.match(readme, new RegExp(`Pi ${escapeDot(EXPECTED_PI_VERSION)}`), "README must name the Pi floor");
 	assert.doesNotMatch(readme, /0\.99\.2/, "README still names the retired Pi floor");
+	const contributing = readText(CONTRIBUTING_PATH);
+	assert.deepEqual(
+		new Set(contributing.match(/[\d.]+ \(minimum\)/g)),
+		new Set([`${EXPECTED_NODE_FLOOR} (minimum)`]),
+		"CONTRIBUTING must name only the Node floor",
+	);
 });
 
 test("audit-ci config enforces the reviewed allowlist policy", () => {
