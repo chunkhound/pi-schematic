@@ -24,6 +24,7 @@ type AuditConfig = {
 };
 
 type PackageJson = {
+	version: string;
 	engines: { node: string };
 	peerDependencies: Record<string, string>;
 	devDependencies: Record<string, string>;
@@ -38,10 +39,13 @@ const WORKFLOW_PATH = new URL(".github/workflows/test.yml", REPO_ROOT_URL);
 const LOCK_PATH = new URL("package-lock.json", REPO_ROOT_URL);
 const SPAWN_SOURCE_PATH = new URL("spawn/index.ts", REPO_ROOT_URL);
 const RENDERER_SOURCE_PATH = new URL("spawn/renderer.ts", REPO_ROOT_URL);
+const README_PATH = new URL("README.md", REPO_ROOT_URL);
 // Pinned versions verified against package.json + lockfile.
 // Update when Pi devDependencies are bumped.
 const EXPECTED_PI_VERSION = "1.0.4";
 const EXPECTED_TYPEBOX_VERSION = "1.3.27";
+// Floor for CI, engines, and the matrix. Bump only with the workflow and README.
+const EXPECTED_NODE_FLOOR = "22.19.0";
 // Approved peer floors — must track the pinned devDependency versions above.
 const EXPECTED_PI_PEER = `>=${EXPECTED_PI_VERSION}`;
 const EXPECTED_TYPEBOX_PEER = `>=${EXPECTED_TYPEBOX_VERSION}`;
@@ -120,6 +124,12 @@ function minimumNodeVersion(value: string): string {
 	return match.groups.version;
 }
 
+function workflowNodeFloor(workflow: string): string {
+	const match = workflow.match(/^\s+NODE_FLOOR: "(?<floor>\d+\.\d+\.\d+)"$/m);
+	assert.ok(match?.groups?.floor, "workflow env must define NODE_FLOOR");
+	return match.groups.floor;
+}
+
 function runAuditCi(): void {
 	const command = "npx audit-ci --config audit-ci.jsonc";
 	const result = spawnSync(command, { cwd: REPO_ROOT, encoding: "utf8", shell: true });
@@ -164,6 +174,41 @@ test("pinned Pi compatibility metadata and source boundaries stay exact", () => 
 	assert.doesNotMatch(rendererSource, /process\.(?:stdout|stderr)\.write\s*\(/);
 });
 
+test("package and lockfile versions agree", () => {
+	const packageJson = parsePackageJson();
+	const lock = JSON.parse(readText(LOCK_PATH)) as {
+		version?: string;
+		packages: Record<string, { version?: string }>;
+	};
+	assert.equal(lock.version, packageJson.version, "package-lock.json version must match package.json");
+	assert.equal(
+		lock.packages[""]?.version,
+		packageJson.version,
+		"package-lock.json root package version must match package.json",
+	);
+});
+
+test("the Node floor has one source across CI, engines, and the matrix", () => {
+	const packageJson = parsePackageJson();
+	const workflow = readText(WORKFLOW_PATH);
+	const floor = workflowNodeFloor(workflow);
+	assert.equal(floor, EXPECTED_NODE_FLOOR, "workflow env NODE_FLOOR must equal the reviewed floor");
+	assert.equal(packageJson.engines.node, `>=${floor}`, "engines.node must equal the workflow NODE_FLOOR");
+	assert.ok(EXPECTED_MATRIX.has(`ubuntu-latest@${floor}`), "the matrix must run the Node floor on ubuntu-latest");
+	assert.doesNotMatch(
+		workflow,
+		new RegExp(`matrix\\.node-version == '${floor.replaceAll(".", "\\.")}'`),
+		"step conditions must read env.NODE_FLOOR, not the literal",
+	);
+});
+
+test("docs name the current Node and Pi floors", () => {
+	const readme = readText(README_PATH);
+	assert.deepEqual(new Set(readme.match(/Node\.js [\d.]+/g)), new Set([`Node.js ${EXPECTED_NODE_FLOOR}`]), "README must name only the Node floor");
+	assert.match(readme, new RegExp(`Pi ${EXPECTED_PI_VERSION.replaceAll(".", "\\.")}`), "README must name the Pi floor");
+	assert.doesNotMatch(readme, /0\.99\.2/, "README still names the retired Pi floor");
+});
+
 test("audit-ci config enforces the reviewed allowlist policy", () => {
 	const config = parseAuditConfig();
 	assert.equal(config.$schema, AUDIT_SCHEMA);
@@ -192,7 +237,6 @@ test("workflow keeps the expected matrix and audit/test order", () => {
 	assert.match(workflow, /run: npx audit-ci --config audit-ci\.jsonc/);
 	assert.ok(EXPECTED_MATRIX.has(`ubuntu-latest@${minimumNodeVersion(packageJson.engines.node)}`));
 });
-
 
 test("Windows current-Pi step runs after packed-host failure but not on cancellation", () => {
 	const workflow = readText(WORKFLOW_PATH);

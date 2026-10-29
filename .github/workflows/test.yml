@@ -6,8 +6,8 @@
 
 name: test
 
-# Single source for the supported Node floor. The matrix and package.json engines are
-# pinned to this value by tests/unit/config-invariants.test.ts.
+# Single source for the supported Node floor. The matrix literal and package.json
+# engines are checked against this value by tests/unit/config-invariants.test.ts.
 env:
   NODE_FLOOR: "22.19.0"
 
