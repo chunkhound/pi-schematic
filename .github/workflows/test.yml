@@ -29,8 +29,10 @@ on:
 
 jobs:
   # ── Cross-platform test matrix ──────────────────────────────────────
-  # The minimum Node.js runs only on Linux, the primary platform. macOS and Windows run
-  # the newest runtime. This balances CI cost against coverage of both ends.
+  # Node 22 (the floor) runs only on Linux: it is the primary platform and the only one
+  # guaranteed to have the oldest toolchain. macOS and Windows run Node 24 to catch
+  # regressions in the newest runtime. This asymmetry is intentional — do not flatten the
+  # matrix; it balances CI cost against coverage of both ends.
   test:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -69,8 +71,7 @@ jobs:
         run: npm test
 
       # E2E tests — two suites: the real-host suite runs the pi CLI in RPC mode, and the
-      # line-host harness runs a child process over stdin/stdout (no PTY). The workflow
-      # suites drive /workflow through the line host.
+      # line-host harness runs a child process over stdin/stdout (no PTY).
       # Issue #12 concerns the line-host harness's cross-platform run only, not the real-host suite:
       # https://github.com/chunkhound/pi-schematic/issues/12
       - name: E2E tests
