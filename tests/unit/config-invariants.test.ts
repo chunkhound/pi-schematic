@@ -124,10 +124,49 @@ function minimumNodeVersion(value: string): string {
 	return match.groups.version;
 }
 
+const SEMVER = /\d+\.\d+\.\d+/;
+const NODE_FLOOR = /^\s*NODE_FLOOR: "(?<floor>\d+\.\d+\.\d+)"$/;
+
 function workflowNodeFloor(workflow: string): string {
-	const match = workflow.match(/^\s+NODE_FLOOR: "(?<floor>\d+\.\d+\.\d+)"$/m);
-	assert.ok(match?.groups?.floor, "workflow env must define NODE_FLOOR");
-	return match.groups.floor;
+	const floor = workflow.split("\n").find((line) => NODE_FLOOR.test(line))?.match(NODE_FLOOR)?.groups?.floor;
+	assert.ok(floor, "workflow env must define NODE_FLOOR");
+	return floor;
+}
+
+// WHY: only the root env.NODE_FLOOR and matrix entries may pin the floor. Step-level
+// pins, same-major literals, and stale full versions re-introduce a second source of
+// truth, while a nested NODE_FLOOR override silently diverges the conditions. Comment
+// text is stripped before matching, so prose may name the floor without being a source.
+function floorLiteralViolations(workflow: string, floor: string): string[] {
+	const lines = workflow.split("\n");
+	const exempt = matrixLineIndices(lines);
+	exempt.add(lines.findIndex((line) => NODE_FLOOR.test(line)));
+	return lines.map((line) => line.split("#")[0].trim()).filter((line, index) => !exempt.has(index) && claimsFloor(line, floor));
+}
+
+// A same-major node-version literal is a floor claim; a full version is stale at any major.
+function claimsFloor(line: string, floor: string): boolean {
+	const pinned = line.match(/^["']?node-version["']?: ["']?v?(?<version>\d+(?:\.\d+)*)/)?.groups?.version;
+	return pinned === undefined
+		? SEMVER.test(line) && /node-version|NODE_FLOOR/.test(line)
+		: pinned.split(".").length === 3 || pinned.split(".")[0] === floor.split(".")[0];
+}
+
+// Indices of the matrix block, which ends at the next line of the matrix key's indent or less.
+function matrixLineIndices(lines: string[]): Set<number> {
+	const start = lines.findIndex((line) => /^\s*matrix:\s*$/.test(line));
+	assert.notEqual(start, -1, "workflow must define a matrix");
+	const indent = indentOf(lines[start]);
+	const indices = new Set<number>();
+	for (let index = start + 1; index < lines.length; index += 1) {
+		if (lines[index].trim() !== "" && indentOf(lines[index]) <= indent) break;
+		indices.add(index);
+	}
+	return indices;
+}
+
+function indentOf(line: string): number {
+	return line.length - line.trimStart().length;
 }
 
 function runAuditCi(): void {
@@ -195,11 +234,27 @@ test("the Node floor has one source across CI, engines, and the matrix", () => {
 	assert.equal(floor, EXPECTED_NODE_FLOOR, "workflow env NODE_FLOOR must equal the reviewed floor");
 	assert.equal(packageJson.engines.node, `>=${floor}`, "engines.node must equal the workflow NODE_FLOOR");
 	assert.ok(EXPECTED_MATRIX.has(`ubuntu-latest@${floor}`), "the matrix must run the Node floor on ubuntu-latest");
-	assert.doesNotMatch(
-		workflow,
-		new RegExp(`matrix\\.node-version == '${floor.replaceAll(".", "\\.")}'`),
-		"step conditions must read env.NODE_FLOOR, not the literal",
+	assert.deepEqual(
+		floorLiteralViolations(workflow, floor),
+		[],
+		"only env.NODE_FLOOR and the matrix entry may name the floor",
 	);
+});
+
+test("the Node floor guard rejects any extra floor literal", () => {
+	const workflow = readText(WORKFLOW_PATH);
+	const floor = workflowNodeFloor(workflow);
+	assert.deepEqual(floorLiteralViolations(workflow, floor), [], "the real workflow must stay clean");
+	const anchor = "      - run: npm ci\n";
+	assert.ok(workflow.includes(anchor), "workflow must keep the npm ci step");
+	const injected = (snippet: string): string[] => floorLiteralViolations(workflow.replace(anchor, anchor + snippet), floor);
+	const step = "      - uses: actions/setup-node@v4\n        with:\n";
+	assert.equal(injected(`${step}          node-version: "${floor}"\n`).length, 1, "step-level floor pin");
+	assert.equal(injected(`${step}          node-version: "22"\n`).length, 1, "step-level major pin");
+	assert.equal(injected(`${step}          "node-version": "22"\n`).length, 1, "quoted key major pin");
+	assert.equal(injected(`${step}          node-version: "20.19.0"\n`).length, 1, "stale full version");
+	assert.equal(injected("      - name: Stale floor\n        if: matrix.node-version == '22.18.0'\n").length, 1, "stale floor literal");
+	assert.equal(floorLiteralViolations(workflow.replace("  test:\n", `  test:\n    env:\n      NODE_FLOOR: "22.18.0"\n`), floor).length, 1, "job-level NODE_FLOOR override");
 });
 
 test("docs name the current Node and Pi floors", () => {
