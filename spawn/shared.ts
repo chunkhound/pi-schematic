@@ -3,8 +3,14 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 export type SpawnOutcome = "running" | "success" | "aborted" | "error";
 
+/** Advisory spawn notice type (event-subscription failure). Informational, never a run
+ * error, so it must not reuse the workflow error entry type. */
+export const SPAWN_NOTICE_ENTRY_TYPE = "spawn-notice";
+
 export type SpawnRouteDetails =
-	| { status: "inherited" }
+	// provider/modelId are optional only to read sessions persisted before they were added;
+	// every new write sets them so the spend ledger never splits one model across two rows.
+	| { status: "inherited"; provider?: string; modelId?: string }
 	| { status: "routed"; group: string; provider: string; modelId: string }
 	| { status: "unknown-fallback"; requestedGroup: string; provider: string; modelId: string };
 

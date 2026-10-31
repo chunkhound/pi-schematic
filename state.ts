@@ -6,9 +6,18 @@
  */
 
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { Usage } from "@earendil-works/pi-ai";
 import type { ModelGroupsBootValidation, ResolvedModelGroup } from "./model-groups/types.js";
 import type { FrontmatterEntry, FrontmatterIssue } from "./frontmatter-cache.js";
 import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
+
+/**
+ * Run-scoped sink for live child spend. The active workflow host installs it, and the
+ * spawn tool flushes each child's cumulative usage on every message_end and at settle.
+ * Null outside a workflow run; only host dispose uninstalls it, never resetState, because
+ * a run survives `workflow.new`.
+ */
+export type ChildUsageSink = (toolCallId: string, provider: string | null, model: string, usage: Usage) => void;
 
 /** A handoff accepted by the tool, kept until its turn_end boundary is confirmed or failed. */
 export interface StagedHandoff {
@@ -128,6 +137,12 @@ export interface SchematicState {
 	/** One abort promise per child session, shared by signal and reset cleanup. WeakMap entries are GC'd with the session; no manual clear needed. */
 	childAbortPromises: WeakMap<AgentSession, Promise<void>>;
 
+	/** Live child-spend sink installed by the active workflow host; see {@link ChildUsageSink}. */
+	childUsageSink: ChildUsageSink | null;
+
+	/** True while a workflow run owns the input channel (serial-run invariant, see docs/workflows.md). */
+	inputSuppressed: boolean;
+
 	/** Whether readonly mode is active — write/edit/powershell blocked; handoff needs explicit /handoff or a human topic boundary; bash writes limited to temp. */
 	readonlyEnabled: boolean;
 
@@ -200,6 +215,8 @@ export function createState(): SchematicState {
 		liveChildSessions,
 		childSessionEpoch: 0,
 		childAbortPromises: new WeakMap(),
+		childUsageSink: null,
+		inputSuppressed: false,
 		readonlyEnabled: false,
 		readonlyNudgePending: false,
 		readonlyNudgeRearmAtSettle: false,
