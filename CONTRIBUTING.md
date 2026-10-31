@@ -61,15 +61,18 @@ Pull requests are automatically tested via GitHub Actions. A cross-platform matr
 
 | OS | Node | Runs |
 |---|---|---|
-| Ubuntu | 22 (minimum) | Type check, security audit, unit tests, E2E tests |
+| Ubuntu | 22.19.0 (minimum) | Type check, security audit, unit tests, E2E tests |
 | Ubuntu | 24 | Type check, security audit, unit tests, E2E tests |
 | macOS | 24 | Unit tests, E2E tests |
 | Windows | 24 | Unit tests, E2E tests |
 
-Node 22 (minimum) is tested only on Linux — the primary platform and the only one guaranteed to have the oldest toolchain. macOS and Windows test Node 24 (latest) to catch regressions in the newest runtime while balancing CI cost.
+Node 22.19.0 (minimum) is tested only on Linux — the primary platform and the only one guaranteed to have the oldest toolchain. macOS and Windows test Node 24 (latest) to catch regressions in the newest runtime while balancing CI cost. Both E2E suites run on Linux, macOS and Windows.
 
-Snapshot golden files in `tests/snapshots/` are stored with LF line endings (enforced by `.gitattributes`). The `normalizeEOL` helper in the snapshot test file normalizes `\r\n` to `\n` on read, so Windows developers get correct comparisons even if their working tree has CRLF. If you update snapshots, the CI matrix validates them on all platforms.
-Both E2E suites run on Linux, macOS and Windows.
+All tracked text is LF in the index and in the working tree, snapshot goldens included: one `.gitattributes` rule, `* text=auto eol=lf`,
+owns that contract for every text file, so tests do not depend on `core.autocrlf`. A stale clone can still hold CRLF and fail `npm test`; the guard —
+the `repository text has one LF line-ending contract` test in `tests/unit/config-invariants.test.ts` — is the executable check, and its assertion
+message is the only copy of the recovery command. The `normalizeEOL` helper in the snapshot test file normalizes `\r\n` to `\n` on read: a read-side
+safety net for comparisons, never the contract, so reverting the global rule is not safe. The CI matrix validates snapshot updates on all platforms.
 
 ## Community
 

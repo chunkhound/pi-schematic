@@ -13,9 +13,14 @@ if (patterns.length === 0) {
 }
 
 const loader = pathToFileURL(resolve(root, "register-loader.mjs")).href;
+// WHY: e2e files spawn real pi CLI processes. Cap concurrent test files so a run
+// with many suites cannot start one host per file. Unit tests keep Node's default
+// concurrency.
+const e2e = patterns.some((p) => p.includes("tests/e2e/"));
+const concurrency = e2e ? ["--test-concurrency=2"] : [];
 const result = spawnSync(
   process.execPath,
-  ["--import", loader, "--test", ...patterns],
+  ["--import", loader, "--test", ...concurrency, ...patterns],
   {
     cwd: root,
     stdio: "inherit",

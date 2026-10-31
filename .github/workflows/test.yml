@@ -1,10 +1,15 @@
 # Cross-platform CI for pi-schematic
 #
-# Runs the full unit suite on Linux, macOS, and Windows
-# on the minimum Node.js version required by pi coding agent. Snapshot
-# tests verify TUI render output against golden files.
+# Runs the test suites on Linux, macOS, and Windows. The Node.js matrix lives in
+# `jobs.test.strategy.matrix`.
+# Snapshot tests verify TUI render output against golden files.
 
 name: test
+
+# Single source for the supported Node floor. The matrix literal and package.json
+# engines are checked against this value by tests/unit/config-invariants.test.ts.
+env:
+  NODE_FLOOR: "22.19.0"
 
 permissions:
   contents: read
@@ -24,11 +29,10 @@ on:
 
 jobs:
   # ── Cross-platform test matrix ──────────────────────────────────────
-  # Node 22 (minimum) is tested only on Linux — the primary platform and the only one
-  # guaranteed to have the oldest toolchain. macOS and Windows test Node 24 (latest)
-  # to catch regressions in the newest runtime. This asymmetry is intentional: it
-  # balances CI cost with meaningful coverage while ensuring the minimum version works
-  # correctly on the platform most likely to encounter toolchain edge cases.
+  # The Node floor runs only on Linux: it is the primary platform and the only one
+  # guaranteed to have the oldest toolchain. macOS and Windows run Node 24 to catch
+  # regressions in the newest runtime. This asymmetry is intentional — do not flatten the
+  # matrix; it balances CI cost against coverage of both ends.
   test:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -75,14 +79,14 @@ jobs:
 
       # The packed extension is exercised from a foreign cwd with the latest host.
       - name: Packed latest Pi host contract
-        if: (matrix.os == 'ubuntu-latest' && matrix.node-version == '22.19.0') || matrix.os == 'windows-latest'
+        if: (matrix.os == 'ubuntu-latest' && matrix.node-version == env.NODE_FLOOR) || matrix.os == 'windows-latest'
         working-directory: ${{ runner.temp }}
         env:
           COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/packed-host-diagnostics-${{ matrix.os }}-node-${{ matrix.node-version }}
         run: node "${{ github.workspace }}/scripts/test-package-host.mjs"
 
       - name: Upload packed host diagnostics
-        if: always() && ((matrix.os == 'ubuntu-latest' && matrix.node-version == '22.19.0') || matrix.os == 'windows-latest')
+        if: always() && ((matrix.os == 'ubuntu-latest' && matrix.node-version == env.NODE_FLOOR) || matrix.os == 'windows-latest')
         uses: actions/upload-artifact@v4
         with:
           name: packed-host-diagnostics-${{ matrix.os }}-node-${{ matrix.node-version }}-attempt-${{ github.run_attempt }}

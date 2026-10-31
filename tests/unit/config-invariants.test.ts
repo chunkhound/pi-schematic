@@ -2,7 +2,7 @@
  * Invariant tests for the audit-ci security audit configuration.
  *
  * Validates the audit policy, that any allowlist entries have unexpired expiry
- * dates, and that CI preserves the audit → unit → e2e order.
+ * dates, that CI preserves the audit → unit → e2e order, and that tracked text stays LF.
  */
 
 import assert from "node:assert/strict";
@@ -24,6 +24,7 @@ type AuditConfig = {
 };
 
 type PackageJson = {
+	version: string;
 	engines: { node: string };
 	peerDependencies: Record<string, string>;
 	devDependencies: Record<string, string>;
@@ -38,10 +39,15 @@ const WORKFLOW_PATH = new URL(".github/workflows/test.yml", REPO_ROOT_URL);
 const LOCK_PATH = new URL("package-lock.json", REPO_ROOT_URL);
 const SPAWN_SOURCE_PATH = new URL("spawn/index.ts", REPO_ROOT_URL);
 const RENDERER_SOURCE_PATH = new URL("spawn/renderer.ts", REPO_ROOT_URL);
+const README_PATH = new URL("README.md", REPO_ROOT_URL);
+const CONTRIBUTING_PATH = new URL("CONTRIBUTING.md", REPO_ROOT_URL);
+const GITATTRIBUTES_PATH = new URL(".gitattributes", REPO_ROOT_URL);
 // Pinned versions verified against package.json + lockfile.
 // Update when Pi devDependencies are bumped.
-const EXPECTED_PI_VERSION = "0.99.2";
+const EXPECTED_PI_VERSION = "1.0.4";
 const EXPECTED_TYPEBOX_VERSION = "1.3.27";
+// Floor for CI, engines, and the matrix. Bump only with the workflow and README.
+const EXPECTED_NODE_FLOOR = "22.19.0";
 // Approved peer floors — must track the pinned devDependency versions above.
 const EXPECTED_PI_PEER = `>=${EXPECTED_PI_VERSION}`;
 const EXPECTED_TYPEBOX_PEER = `>=${EXPECTED_TYPEBOX_VERSION}`;
@@ -51,16 +57,19 @@ const EXPECTED_MATRIX = new Set([
 	"macos-latest@24",
 	"windows-latest@24",
 ]);
-// Transitive brace-expansion and undici advisories in the pinned test host
-// @earendil-works/pi-coding-agent@0.99.2 (devDependency). Remove them when a
-// pinned host ships patched versions; the expiry forces periodic re-review.
+// Transitive undici advisories in the pinned test host
+// @earendil-works/pi-coding-agent@1.0.4 (devDependency). Remove an entry when a
+// pinned host ships a patched version; the expiry forces periodic re-review.
 const EXPECTED_ALLOWLIST_KEYS = new Set<string>([
-	"GHSA-6j4f-fj2g-mc7p",
-	"GHSA-qhr7-859c-m2p7",
-	"GHSA-q2hr-2g5m-vwhr",
 	"GHSA-xjj6-f33q-929c",
 	"GHSA-4qv8-2p9j-2685",
 	"GHSA-f72v-6w45-q472",
+	"GHSA-2m5v-pch6-74hx",
+	"GHSA-4w7w-5xrc-9h26",
+	"GHSA-55wc-3pg8-jfw6",
+	"GHSA-9fm3-97px-rjf6",
+	"GHSA-qrxm-fqhp-jwvm",
+	"GHSA-g3hv-75wg-m249",
 ]);
 
 function readText(url: URL): string {
@@ -106,16 +115,55 @@ function allowlistEntries(config: AuditConfig): Array<[string, AuditRecord]> {
 	});
 }
 
-function parseIsoDate(value: string): number {
-	const timestamp = Date.parse(`${value}T00:00:00Z`);
-	assert.notEqual(Number.isNaN(timestamp), true, `invalid ISO date: ${value}`);
-	return timestamp;
-}
-
 function minimumNodeVersion(value: string): string {
 	const match = value.match(/^>=(?<version>\d+\.\d+\.\d+)$/);
 	assert.ok(match?.groups?.version, `unsupported engines.node format: ${value}`);
 	return match.groups.version;
+}
+
+const SEMVER = /\d+\.\d+\.\d+/;
+const NODE_FLOOR = /^\s*NODE_FLOOR: "(?<floor>\d+\.\d+\.\d+)"$/;
+
+function workflowNodeFloor(workflow: string): string {
+	const floor = workflow.split("\n").find((line) => NODE_FLOOR.test(line))?.match(NODE_FLOOR)?.groups?.floor;
+	assert.ok(floor, "workflow env must define NODE_FLOOR");
+	return floor;
+}
+
+// WHY: only the root env.NODE_FLOOR and matrix entries may pin the floor. Step-level
+// pins, same-major literals, and stale full versions re-introduce a second source of
+// truth, while a nested NODE_FLOOR override silently diverges the conditions. Comment
+// text is stripped before matching, so prose may name the floor without being a source.
+function floorLiteralViolations(workflow: string, floor: string): string[] {
+	const lines = workflow.split("\n");
+	const exempt = matrixLineIndices(lines);
+	exempt.add(lines.findIndex((line) => NODE_FLOOR.test(line)));
+	return lines.map((line) => line.split("#")[0].trim()).filter((line, index) => !exempt.has(index) && claimsFloor(line, floor));
+}
+
+// A same-major node-version literal is a floor claim; a full version is stale at any major.
+function claimsFloor(line: string, floor: string): boolean {
+	const pinned = line.match(/^["']?node-version["']?: ["']?v?(?<version>\d+(?:\.\d+)*)/)?.groups?.version;
+	return pinned === undefined
+		? SEMVER.test(line) && /node-version|NODE_FLOOR/.test(line)
+		: pinned.split(".").length === 3 || pinned.split(".")[0] === floor.split(".")[0];
+}
+
+// Indices of the matrix block, which ends at the next line of the matrix key's indent or less.
+function matrixLineIndices(lines: string[]): Set<number> {
+	const start = lines.findIndex((line) => /^\s*matrix:\s*$/.test(line));
+	assert.notEqual(start, -1, "workflow must define a matrix");
+	const indent = indentOf(lines[start]);
+	const indices = new Set<number>();
+	for (let index = start + 1; index < lines.length; index += 1) {
+		if (lines[index].trim() !== "" && indentOf(lines[index]) <= indent) break;
+		indices.add(index);
+	}
+	return indices;
+}
+
+function indentOf(line: string): number {
+	return line.length - line.trimStart().length;
 }
 
 function runAuditCi(): void {
@@ -162,6 +210,81 @@ test("pinned Pi compatibility metadata and source boundaries stay exact", () => 
 	assert.doesNotMatch(rendererSource, /process\.(?:stdout|stderr)\.write\s*\(/);
 });
 
+test("package and lockfile versions agree", () => {
+	const packageJson = parsePackageJson();
+	const lock = JSON.parse(readText(LOCK_PATH)) as {
+		version?: string;
+		packages: Record<string, { version?: string }>;
+	};
+	assert.equal(lock.version, packageJson.version, "package-lock.json version must match package.json");
+	assert.equal(
+		lock.packages[""]?.version,
+		packageJson.version,
+		"package-lock.json root package version must match package.json",
+	);
+});
+
+test("the Node floor has one source across CI, engines, and the matrix", () => {
+	const packageJson = parsePackageJson();
+	const workflow = readText(WORKFLOW_PATH);
+	const floor = workflowNodeFloor(workflow);
+	assert.equal(floor, EXPECTED_NODE_FLOOR, "workflow env NODE_FLOOR must equal the reviewed floor");
+	assert.equal(packageJson.engines.node, `>=${floor}`, "engines.node must equal the workflow NODE_FLOOR");
+	assert.ok(EXPECTED_MATRIX.has(`ubuntu-latest@${floor}`), "the matrix must run the Node floor on ubuntu-latest");
+	assert.deepEqual(
+		floorLiteralViolations(workflow, floor),
+		[],
+		"only env.NODE_FLOOR and the matrix entry may name the floor",
+	);
+});
+
+test("the Node floor guard rejects any extra floor literal", () => {
+	const workflow = readText(WORKFLOW_PATH);
+	const floor = workflowNodeFloor(workflow);
+	assert.deepEqual(floorLiteralViolations(workflow, floor), [], "the real workflow must stay clean");
+	const anchor = "      - run: npm ci\n";
+	assert.ok(workflow.includes(anchor), "workflow must keep the npm ci step");
+	const injected = (snippet: string): string[] => floorLiteralViolations(workflow.replace(anchor, anchor + snippet), floor);
+	const step = "      - uses: actions/setup-node@v4\n        with:\n";
+	assert.equal(injected(`${step}          node-version: "${floor}"\n`).length, 1, "step-level floor pin");
+	assert.equal(injected(`${step}          node-version: "22"\n`).length, 1, "step-level major pin");
+	assert.equal(injected(`${step}          "node-version": "22"\n`).length, 1, "quoted key major pin");
+	assert.equal(injected(`${step}          node-version: "20.19.0"\n`).length, 1, "stale full version");
+	assert.equal(injected("      - name: Stale floor\n        if: matrix.node-version == '22.18.0'\n").length, 1, "stale floor literal");
+	assert.equal(floorLiteralViolations(workflow.replace("  test:\n", `  test:\n    env:\n      NODE_FLOOR: "22.18.0"\n`), floor).length, 1, "job-level NODE_FLOOR override");
+});
+
+// WHY: one global `* text=auto eol=lf` rule plus the EOL report keep every tracked
+// text file LF, whatever core.autocrlf says.
+const EOL_MARKERS = new Set(["i/crlf", "i/mixed", "w/crlf", "w/mixed"]);
+function eolViolations(report: string): string[] { return report.split("\n").filter((line) => line.split(/\s+/).some((field) => EOL_MARKERS.has(field))); }
+
+test("repository text has one LF line-ending contract", () => {
+	const rules = readText(GITATTRIBUTES_PATH).split("\n").map((line) => line.trim()).filter((line) => line !== "" && !line.startsWith("#"));
+	assert.deepEqual(rules, ["* text=auto eol=lf"], "all text must check out with LF; see .gitattributes");
+	const result = spawnSync("git", ["ls-files", "--eol"], { cwd: REPO_ROOT, encoding: "utf8" });
+	assert.equal(result.status, 0, `git ls-files --eol failed: ${result.stderr}`);
+	const line = (index: string, worktree: string): string => `i/${index}    w/${worktree}    attr/text=auto eol=lf \tREADME.md`;
+	for (const [index, worktree] of [["crlf", "lf"], ["mixed", "lf"], ["lf", "crlf"], ["lf", "mixed"]]) assert.equal(eolViolations(line(index, worktree)).length, 1, `must reject i/${index} w/${worktree}`);
+	assert.deepEqual(eolViolations(line("lf", "lf")), [], "clean LF report must pass");
+	assert.deepEqual(eolViolations("i/none    w/none    -text\tlogo.gif"), [], "non-text files must not be flagged");
+	assert.match(result.stdout, /i\/lf\s+w\/lf/, "git ls-files --eol must report i/lf and w/lf");
+	assert.deepEqual(eolViolations(result.stdout), [], "tracked text must be LF; stale Windows checkout recovery: git checkout -- .");
+});
+
+test("docs name the current Node and Pi floors", () => {
+	const readme = readText(README_PATH);
+	assert.deepEqual(new Set(readme.match(/Node\.js [\d.]+/g)), new Set([`Node.js ${EXPECTED_NODE_FLOOR}`]), "README must name only the Node floor");
+	assert.ok(readme.includes(`Pi ${EXPECTED_PI_VERSION}`), "README must name the Pi floor");
+	assert.doesNotMatch(readme, /0\.99\.2/, "README still names the retired Pi floor");
+	const contributing = readText(CONTRIBUTING_PATH);
+	assert.deepEqual(
+		new Set(contributing.match(/[\d.]+ \(minimum\)/g)),
+		new Set([`${EXPECTED_NODE_FLOOR} (minimum)`]),
+		"CONTRIBUTING must name only the Node floor",
+	);
+});
+
 test("audit-ci config enforces the reviewed allowlist policy", () => {
 	const config = parseAuditConfig();
 	assert.equal(config.$schema, AUDIT_SCHEMA);
@@ -174,7 +297,7 @@ test("audit-ci config enforces the reviewed allowlist policy", () => {
 		assert.match(key, /^GHSA-[a-z0-9-]+(?:\|[^|>]+(?:>[^|>]+)*)?$/);
 		assert.equal(value.active, true);
 		assert.match(value.expiry, /^\d{4}-\d{2}-\d{2}$/);
-		assert.ok(parseIsoDate(value.expiry) >= today, `expired allowlist entry: ${key}`);
+		assert.ok(Date.parse(`${value.expiry}T00:00:00Z`) >= today, `expired allowlist entry: ${key}`);
 		assert.notEqual(value.notes.trim(), "");
 	}
 });
@@ -184,12 +307,12 @@ test("workflow keeps the expected matrix and audit/test order", () => {
 	const packageJson = parsePackageJson();
 	assert.match(workflow, /fail-fast:\s+false/);
 	assert.deepEqual(parseMatrixEntries(workflow), EXPECTED_MATRIX);
+	assert.ok(stepIndex(workflow, "Type check") < stepIndex(workflow, "Security audit"));
 	assert.ok(stepIndex(workflow, "Security audit") < stepIndex(workflow, "Unit tests"));
 	assert.ok(stepIndex(workflow, "Unit tests") < stepIndex(workflow, "E2E tests"));
 	assert.match(workflow, /run: npx audit-ci --config audit-ci\.jsonc/);
 	assert.ok(EXPECTED_MATRIX.has(`ubuntu-latest@${minimumNodeVersion(packageJson.engines.node)}`));
 });
-
 
 test("Windows current-Pi step runs after packed-host failure but not on cancellation", () => {
 	const workflow = readText(WORKFLOW_PATH);
