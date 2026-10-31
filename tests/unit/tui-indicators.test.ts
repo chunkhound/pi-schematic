@@ -1,8 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createState } from "../../state.js";
-import { updateIndicators, STATUS_KEY_TOPIC, STATUS_KEY_READONLY } from "../../tui.js";
-import { makeTUICtx } from "./helpers.js";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import {
+	formatCost,
+	formatElapsed,
+	installWorkflowFooter,
+	renderUnifiedBar,
+	uninstallWorkflowFooter,
+	updateIndicators,
+	workflowLabel,
+	workflowSegments,
+	STATUS_KEY_TOPIC,
+	STATUS_KEY_READONLY,
+	type BarSegment,
+	type WorkflowProgressView,
+} from "../../tui.js";
+import { makeTUICtx, renderFooterAt, TEST_TUI_THEME, type TUIRecord } from "./helpers.js";
+import type { Theme } from "@earendil-works/pi-coding-agent";
+
+/** TEST_TUI_THEME carries only `fg`; `workflowSegments` needs the full Theme surface. */
+const tuiTheme = TEST_TUI_THEME as unknown as Theme;
 
 test("updateIndicators sets context usage status with correct color tone", () => {
 	const state = createState();
@@ -75,6 +93,24 @@ test("updateIndicators preserves overflow context percentages", () => {
 	assert.ok(record.widgets.get("pi-schematic-warning")?.[0]?.includes("125%"));
 });
 
+test("updateIndicators skips duplicate status and widget writes", () => {
+	const state = createState();
+	const record: TUIRecord = { statuses: new Map(), widgets: new Map() };
+	const ctx = makeTUICtx({ percent: 85, record });
+	let statuses = 0;
+	let widgets = 0;
+	const setStatus = ctx.ui.setStatus;
+	const setWidget = ctx.ui.setWidget;
+	ctx.ui.setStatus = (...args: [string, string | undefined]) => { statuses++; setStatus(...args); };
+	ctx.ui.setWidget = (...args: [string, string[] | undefined]) => { widgets++; setWidget(...args); };
+	updateIndicators(ctx, state);
+	const first = [statuses, widgets];
+	assert.ok(first[0] > 0, "the first refresh writes statuses");
+	assert.equal(first[1], 1, "the first refresh writes the warning widget");
+	updateIndicators(ctx, state);
+	assert.deepEqual([statuses, widgets], first, "a repeated refresh writes nothing");
+});
+
 test("updateIndicators no-ops when ctx.hasUI is false", () => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
@@ -115,7 +151,7 @@ test("updateIndicators shows readonly indicator when enabled", () => {
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get(STATUS_KEY_READONLY);
-	assert.ok(s?.includes("\u{1F512}"), "readonly indicator should show lock emoji when enabled");
+	assert.ok(s?.includes("🔒"), "readonly indicator should show lock emoji when enabled");
 	assert.ok(s?.includes("readonly"), "readonly indicator should show 'readonly' text when enabled");
 });
 
@@ -153,4 +189,139 @@ test("updateIndicators hides widget below 70% context", () => {
 
 	updateIndicators(ctx, state);
 	assert.equal(record.widgets.get("pi-schematic-warning"), undefined, "warning widget should be cleared below 70%");
+});
+
+test("renderUnifiedBar keeps the run on the left and drops conversation cells first", () => {
+	const segments: BarSegment[] = [
+		{ key: "wf-name", text: "RUNNAME", priority: 0, zone: "workflow" },
+		{ key: "wf-cp", text: "CP", priority: 1, zone: "workflow" },
+		{ key: "wf-el", text: "EL", priority: 2, zone: "workflow" },
+		{ key: "wf-cost", text: "$0.00", priority: 3, zone: "workflow" },
+		{ key: "ctx", text: "ctx 42%", priority: 4, zone: "conversation" },
+		{ key: "topic", text: "TOPIC", priority: 5, zone: "conversation" },
+	];
+	assert.equal(renderUnifiedBar(segments, 200), "RUNNAME \u00B7 CP \u00B7 EL \u00B7 $0.00 \u2502 ctx 42% \u00B7 TOPIC");
+
+	const narrow = renderUnifiedBar(segments, 18);
+	assert.ok(narrow.includes("RUNNAME"), narrow);
+	assert.equal(narrow.includes("TOPIC"), false, "conversation drops before any run cell");
+	assert.ok(visibleWidth(narrow) <= 18, narrow);
+
+	const tiny = renderUnifiedBar(segments, 6);
+	assert.ok(visibleWidth(tiny) <= 6, tiny);
+});
+
+test("workflowSegments label elapsed with a clock and cost with $, most important first", () => {
+	const segments = workflowSegments({ name: "review", checkpoints: 3, costUsd: 0.42, elapsedMs: 529_000, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, unbounded: false, currentEffect: null }, tuiTheme);
+	assert.deepEqual(segments.map((segment) => [segment.text, segment.priority]), [
+		["\u{1F6E0}\u{FE0F} review", 0],
+		["\u{1F6A9} 3", 1],
+		["\u{23F1} 8:49", 2],
+		["$0.42", 3],
+	]);
+});
+
+test("workflowSegments appends the soft target and pins a pending stop against elision", () => {
+	const view = { name: "review", checkpoints: 3, costUsd: 6.4, elapsedMs: 529_000, pendingStop: "cost-limit" as const, limits: { costLimit: 5, timeBudgetMs: 3_600_000 }, unbounded: false, currentEffect: null };
+	const segments = workflowSegments(view, tuiTheme);
+	const pill = segments.find((segment) => segment.key === "workflow-soft-stop");
+	assert.ok(pill, "pending soft stop pill present");
+	assert.ok(pill.text.includes("stopping at next checkpoint"), pill.text);
+	assert.equal(pill.priority, -1, "pill outranks identity so elision cannot drop it");
+	assert.equal(segments.find((segment) => segment.key === "workflow-cost")?.text, "$6.40/$5.00");
+	assert.ok(segments.find((segment) => segment.key === "workflow-elapsed")?.text.includes("/1:00:00"));
+	const narrow = renderUnifiedBar(segments, 40);
+	assert.ok(narrow.includes("target reached"), narrow);
+	assert.equal(narrow.includes("review"), false, "the pill outranks the run name when eliding");
+});
+
+test("workflowSegments renders an unbounded view with the ∞ cell and no checkpoints cell", () => {
+	const view = { name: "review", checkpoints: 5, costUsd: 0.42, elapsedMs: 529_000, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, unbounded: true, currentEffect: null };
+	const segments = workflowSegments(view, tuiTheme);
+	const keys = segments.map((segment) => segment.key);
+	assert.equal(keys.includes("workflow-unbounded"), true, "an unbounded run carries the ∞ cell");
+	assert.equal(keys.includes("workflow-checkpoints"), false, "no checkpoint count cell on an unbounded run");
+	const unbounded = segments.find((segment) => segment.key === "workflow-unbounded")!;
+	assert.ok(unbounded.text.includes("\u221E unbounded"), "the cell text is the unbounded marker");
+});
+
+test("installWorkflowFooter replaces the footer once; uninstall restores the built-in one", () => {
+	const state = createState();
+	const record: TUIRecord = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
+	const ctx = makeTUICtx({ percent: 62, record });
+	const view = () => ({ state, progress: { name: "review", checkpoints: 1, costUsd: 0.1, elapsedMs: 1000, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, unbounded: false, currentEffect: null } });
+
+	installWorkflowFooter(ctx, view);
+	installWorkflowFooter(ctx, view);
+	assert.equal(record.footerInstalls, 1, "repeated progress ticks reuse the installed footer");
+
+	const lines = renderFooterAt(record, 120) ?? [];
+	assert.equal(lines.length, 2, "unified bar plus the dim ambient line");
+	assert.ok(lines[0].includes("review") && lines[0].includes("\u2502 [dim:ctx ]"), lines[0]);
+
+	uninstallWorkflowFooter(ctx);
+	assert.equal(record.footer, undefined, "run end restores the built-in footer");
+	assert.equal(record.footerRestores, 1);
+});
+
+test("workflow footer renders foreign statuses as one-line fitted cells", () => {
+	const state = createState();
+	const record: TUIRecord = { statuses: new Map([["other-extension", "FOREIGN\nSTATUS"], [STATUS_KEY_TOPIC, "INJECTED-TOPIC"]]), widgets: new Map() };
+	const ctx = makeTUICtx({ percent: 62, record });
+	installWorkflowFooter(ctx, () => ({ state, progress: { name: "review", checkpoints: 1, costUsd: 0.1, elapsedMs: 1000, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, unbounded: false, currentEffect: null } }));
+	const lines = renderFooterAt(record, 120) ?? [];
+	assert.ok(lines[0].includes("FOREIGN STATUS"), lines[0]);
+	assert.equal(lines[0].includes("\n"), false, lines[0]);
+	assert.ok(visibleWidth(lines[0]) <= 120, lines[0]);
+	assert.equal(lines[0].includes("INJECTED-TOPIC"), false, "schematic-owned keys are not re-rendered as foreign cells");
+});
+
+test("installWorkflowFooter stays silent headless", () => {
+	const state = createState();
+	const record: TUIRecord = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
+	const headless = makeTUICtx({ hasUI: false, record });
+	installWorkflowFooter(headless, () => ({ state, progress: { name: "review", checkpoints: 0, costUsd: 0, elapsedMs: 0, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, unbounded: false, currentEffect: null } }));
+	assert.equal(record.footerInstalls ?? 0, 0, "headless installs no footer");
+});
+
+// WHY: RPC reports hasUI, so it must receive setStatus/setWidget updates; workflow footer chrome
+// is TUI-exclusive and must not install there.
+test("an RPC context receives statuses but installs no footer", () => {
+	const state = createState();
+	const record: TUIRecord = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
+	const rpc = makeTUICtx({ hasUI: true, mode: "rpc", percent: 62, record });
+	updateIndicators(rpc, state);
+	installWorkflowFooter(rpc, () => ({ state, progress: { name: "review", checkpoints: 0, costUsd: 0, elapsedMs: 0, pendingStop: null, limits: { costLimit: null, timeBudgetMs: null }, unbounded: false, currentEffect: null } }));
+	uninstallWorkflowFooter(rpc);
+	assert.ok(record.statuses.get("pi-schematic-ctx")?.includes("62%"), "RPC receives indicator statuses");
+	assert.equal(record.footerInstalls ?? 0, 0, "no workflow footer in RPC mode");
+});
+
+// WHY: the footer is one physical row, so a multi-line currentEffect must be flattened before it
+// reaches the bar or it injects line breaks into the render.
+test("workflowSegments flattens a multi-line currentEffect into one cell", () => {
+	const view = {
+		name: "review", checkpoints: 1, costUsd: 0.1, elapsedMs: 1000, pendingStop: null,
+		limits: { costLimit: null, timeBudgetMs: null }, unbounded: false,
+		currentEffect: "line one\nline two\tline three",
+	} as WorkflowProgressView;
+	const effect = workflowSegments(view, tuiTheme).find((cell) => cell.key === "workflow-effect");
+	assert.ok(effect, "the effect cell is present");
+	assert.equal(effect.text.includes("\n"), false, "no newline reaches the footer row");
+	assert.equal(effect.text.includes("\t"), false, "no tab reaches the footer row");
+	assert.ok(effect.text.includes("line one line two"), effect.text);
+});
+
+test("workflow progress helpers share one formatting source", () => {
+	assert.equal(formatCost(1.2), "$1.20");
+	assert.equal(formatElapsed(3_725_000), "1:02:05");
+	assert.equal(workflowLabel("review"), "\u{1F6E0}\u{FE0F} review");
+});
+
+test("workflow footer pins zero-state and boundary formatting", () => {
+	assert.equal(formatCost(0), "$0.00");
+	assert.equal(formatElapsed(0), "0:00");
+	assert.equal(formatElapsed(59_000), "0:59");
+	assert.equal(formatElapsed(3_600_000), "1:00:00");
+	assert.equal(formatElapsed(-5_000), "0:00", "negative ticks clamp instead of printing garbage");
 });
