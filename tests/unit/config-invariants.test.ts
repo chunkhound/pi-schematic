@@ -76,10 +76,6 @@ function readText(url: URL): string {
 	return readFileSync(url, "utf8");
 }
 
-function escapeDot(value: string): string {
-	return value.replaceAll(".", "\\.");
-}
-
 function parseAuditConfig(): AuditConfig {
 	const lines = readText(AUDIT_CONFIG_PATH)
 		.split("\n")
@@ -117,12 +113,6 @@ function allowlistEntries(config: AuditConfig): Array<[string, AuditRecord]> {
 		assert.ok(value, `missing metadata for allowlist entry: ${key}`);
 		return [key, value];
 	});
-}
-
-function parseIsoDate(value: string): number {
-	const timestamp = Date.parse(`${value}T00:00:00Z`);
-	assert.notEqual(Number.isNaN(timestamp), true, `invalid ISO date: ${value}`);
-	return timestamp;
 }
 
 function minimumNodeVersion(value: string): string {
@@ -285,7 +275,7 @@ test("repository text has one LF line-ending contract", () => {
 test("docs name the current Node and Pi floors", () => {
 	const readme = readText(README_PATH);
 	assert.deepEqual(new Set(readme.match(/Node\.js [\d.]+/g)), new Set([`Node.js ${EXPECTED_NODE_FLOOR}`]), "README must name only the Node floor");
-	assert.match(readme, new RegExp(`Pi ${escapeDot(EXPECTED_PI_VERSION)}`), "README must name the Pi floor");
+	assert.ok(readme.includes(`Pi ${EXPECTED_PI_VERSION}`), "README must name the Pi floor");
 	assert.doesNotMatch(readme, /0\.99\.2/, "README still names the retired Pi floor");
 	const contributing = readText(CONTRIBUTING_PATH);
 	assert.deepEqual(
@@ -307,7 +297,7 @@ test("audit-ci config enforces the reviewed allowlist policy", () => {
 		assert.match(key, /^GHSA-[a-z0-9-]+(?:\|[^|>]+(?:>[^|>]+)*)?$/);
 		assert.equal(value.active, true);
 		assert.match(value.expiry, /^\d{4}-\d{2}-\d{2}$/);
-		assert.ok(parseIsoDate(value.expiry) >= today, `expired allowlist entry: ${key}`);
+		assert.ok(Date.parse(`${value.expiry}T00:00:00Z`) >= today, `expired allowlist entry: ${key}`);
 		assert.notEqual(value.notes.trim(), "");
 	}
 });
