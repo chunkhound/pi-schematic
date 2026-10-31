@@ -6,7 +6,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { CompactionEntry, CustomMessageEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
@@ -54,6 +54,19 @@ import {
 } from "./real-host-protocol.js";
 
 const TEST_OPTIONS = { timeout: REAL_HOST_TEST_TIMEOUT_MS };
+
+/**
+ * Two `workflow.run` turns around a checkpoint: each run must dispatch only after the prior
+ * one settled, and both texts reach the exit envelope. `--workflow-cost` keeps the real host's
+ * interactive budget dialog out of the run, which the RPC harness cannot answer.
+ */
+const TWO_STEP_WORKFLOW = `return defineWorkflow((workflow) => {
+  const one = workflow.run("step one");
+  workflow.checkpoint({ one: one.text });
+  const two = workflow.run("step two");
+  return workflow.exit({ reason: "done", one: one.text, two: two.text });
+});
+`;
 
 type RequestRecord = Extract<ProbeRecord, { kind: "request" }>;
 
@@ -194,8 +207,31 @@ describe("pi-schematic real-host E2E", () => {
 			.filter((command) => command.source === "extension" && resolve(command.sourceInfo.path) === SCHEMATIC_ENTRY)
 			.map((command) => command.name)
 			.sort();
-		assert.deepEqual(names, ["handoff", "model-groups", "notebook", "readonly"]);
+		assert.deepEqual(names, ["handoff", "model-groups", "notebook", "readonly", "workflow"]);
 	}));
+
+	it("a two-step workflow dispatches each run after the previous one settles", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
+		await mkdirSync(join(host.projectDir, ".pi", "workflows"), { recursive: true });
+		writeFileSync(join(host.projectDir, ".pi", "workflows", "two-step.js"), TWO_STEP_WORKFLOW);
+		// The probe scripts one run at a time, so only the first run's reply is scripted; low usage
+		// keeps the handoff watchdog out.
+		await host.arm([{ text: "one", inputTokens: 1_000 }]);
+		await host.turn("/workflow two-step", 2);
+		await host.settle(0);
+
+		const { entries } = await host.entries();
+		const prompts = entries.map(userText).filter((text): text is string => text !== null);
+		assert.deepEqual(prompts, ["step one", "step two"], "each run turn lands in order, the second only after the first settles");
+		const exits = entries
+			.filter((entry): entry is Extract<SessionEntry, { type: "custom" }> => entry.type === "custom" && entry.customType === "workflow-exit")
+			.map((entry) => entry.data as { reason: string; metadata: Record<string, unknown> });
+		assert.equal(exits.length, 1, "one workflow-exit record");
+		assert.equal(exits[0].reason, "done");
+		// The probe scripts one run at a time, so the second run is unscripted; both run results
+		// still reach the envelope, which proves the second run returned rather than hung.
+		assert.equal(exits[0].metadata.one, "one", "the first run's reply reaches the exit envelope");
+		assert.equal(typeof exits[0].metadata.two, "string", "the second run's reply reaches the exit envelope");
+	}, { args: ["--workflow-cost", "1"] }));
 
 	it("spawn adds the child's usage to the parent's session stats", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
 		await host.script([
