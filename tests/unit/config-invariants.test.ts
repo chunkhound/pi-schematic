@@ -2,7 +2,7 @@
  * Invariant tests for the audit-ci security audit configuration.
  *
  * Validates the audit policy, that any allowlist entries have unexpired expiry
- * dates, and that CI preserves the audit → unit → e2e order.
+ * dates, that CI preserves the audit → unit → e2e order, and that tracked text stays LF.
  */
 
 import assert from "node:assert/strict";
@@ -41,6 +41,7 @@ const SPAWN_SOURCE_PATH = new URL("spawn/index.ts", REPO_ROOT_URL);
 const RENDERER_SOURCE_PATH = new URL("spawn/renderer.ts", REPO_ROOT_URL);
 const README_PATH = new URL("README.md", REPO_ROOT_URL);
 const CONTRIBUTING_PATH = new URL("CONTRIBUTING.md", REPO_ROOT_URL);
+const GITATTRIBUTES_PATH = new URL(".gitattributes", REPO_ROOT_URL);
 // Pinned versions verified against package.json + lockfile.
 // Update when Pi devDependencies are bumped.
 const EXPECTED_PI_VERSION = "1.0.4";
@@ -68,6 +69,7 @@ const EXPECTED_ALLOWLIST_KEYS = new Set<string>([
 	"GHSA-55wc-3pg8-jfw6",
 	"GHSA-9fm3-97px-rjf6",
 	"GHSA-qrxm-fqhp-jwvm",
+	"GHSA-g3hv-75wg-m249",
 ]);
 
 function readText(url: URL): string {
@@ -260,6 +262,24 @@ test("the Node floor guard rejects any extra floor literal", () => {
 	assert.equal(injected(`${step}          node-version: "20.19.0"\n`).length, 1, "stale full version");
 	assert.equal(injected("      - name: Stale floor\n        if: matrix.node-version == '22.18.0'\n").length, 1, "stale floor literal");
 	assert.equal(floorLiteralViolations(workflow.replace("  test:\n", `  test:\n    env:\n      NODE_FLOOR: "22.18.0"\n`), floor).length, 1, "job-level NODE_FLOOR override");
+});
+
+// WHY: one global `* text=auto eol=lf` rule plus the EOL report keep every tracked
+// text file LF, whatever core.autocrlf says.
+const EOL_MARKERS = new Set(["i/crlf", "i/mixed", "w/crlf", "w/mixed"]);
+function eolViolations(report: string): string[] { return report.split("\n").filter((line) => line.split(/\s+/).some((field) => EOL_MARKERS.has(field))); }
+
+test("repository text has one LF line-ending contract", () => {
+	const rules = readText(GITATTRIBUTES_PATH).split("\n").map((line) => line.trim()).filter((line) => line !== "" && !line.startsWith("#"));
+	assert.deepEqual(rules, ["* text=auto eol=lf"], "all text must check out with LF; see .gitattributes");
+	const result = spawnSync("git", ["ls-files", "--eol"], { cwd: REPO_ROOT, encoding: "utf8" });
+	assert.equal(result.status, 0, `git ls-files --eol failed: ${result.stderr}`);
+	const line = (index: string, worktree: string): string => `i/${index}    w/${worktree}    attr/text=auto eol=lf \tREADME.md`;
+	for (const [index, worktree] of [["crlf", "lf"], ["mixed", "lf"], ["lf", "crlf"], ["lf", "mixed"]]) assert.equal(eolViolations(line(index, worktree)).length, 1, `must reject i/${index} w/${worktree}`);
+	assert.deepEqual(eolViolations(line("lf", "lf")), [], "clean LF report must pass");
+	assert.deepEqual(eolViolations("i/none    w/none    -text\tlogo.gif"), [], "non-text files must not be flagged");
+	assert.match(result.stdout, /i\/lf\s+w\/lf/, "git ls-files --eol must report i/lf and w/lf");
+	assert.deepEqual(eolViolations(result.stdout), [], "tracked text must be LF; stale Windows checkout recovery: git checkout -- .");
 });
 
 test("docs name the current Node and Pi floors", () => {
