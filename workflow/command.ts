@@ -6,8 +6,7 @@
 // reference is read through the live bundle and rebound from the coordinator, and
 // all user-visible output goes through ctx.ui — never console.*.
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isKeyRelease, isKeyRepeat, matchesKey } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { CodemodeResult, CodemodeSandbox } from "@earendil-works/pi-codemode";
 import type { SchematicState } from "../state.js";
 import { installWorkflowFooter, uninstallWorkflowFooter, updateIndicators, reasonLabel, type WorkflowProgressView } from "../tui.js";
@@ -27,15 +26,11 @@ import { WORKFLOW_SUMMARY_ENTRY_TYPE, buildWorkflowSummary } from "./summary.js"
 import type { WorkflowHost, WorkflowHostDeps, WorkflowProgress, WorkflowSandboxFactory, ReservedReason, ExitOutcome, ExitRecord, WorkflowErrorPhase } from "./types.js";
 import { WORKFLOW_ERROR_ENTRY_TYPE } from "./types.js";
 import { parseWorkflowArgs, listWorkflows, readWorkflow, resolveWorkflowPath } from "./file.js";
-import { registeredState } from "../process-state.js";
+import { admitted, registerSessionGuard } from "./boundaries.js";
+import { subscribeCancellation, subscribeTurnEnd, suppressInput } from "./cancel.js";
 
-type CancelKey = "escape" | "ctrl+c";
-const CANCEL_KEYS: readonly CancelKey[] = ["escape", "ctrl+c"];
-// Arm-then-confirm window for cancellation, matching pi's double-press interrupt guard
-// (`lastSigintTime`/`lastEscapeTime`): one stray keypress must not kill a long run.
-/** Arm-then-confirm window: two presses of the same cancel key within this window abort. Rule: docs/workflows.md (Targets, exit, cancellation, salvage). */
-export const CANCEL_CONFIRM_MS = 500;
-const CANCEL_LABEL: Record<CancelKey, string> = { escape: "Escape", "ctrl+c": "Ctrl+C" };
+// Test and invariant imports keep their single command-module entry point.
+export { CANCEL_CONFIRM_MS, cancelPressOf } from "./cancel.js";
 // Sandbox memory cap; listed in docs/workflow-engine.md (Stable vs internal).
 const MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
 
@@ -571,159 +566,3 @@ async function closeSandbox(sandbox: CodemodeSandbox, pi: ExtensionAPI, ctx: Ext
 	}
 }
 
-/** The only session change a workflow can own: `workflow.new` starts a new session (pi's
- * `reason: "new"` switch). Admission is this token, never a blocklist of commands, so a
- * fork, a tree move, or a `/resume` has no grant and always cancels. `workflow.handoff`
- * needs no admission: the turn_end boundary writes its entries without a session change. */
-type AdmittedChange = "new";
-
-/** pi's own capacity compactions: blocking one only defers the same shift into the run's next
- * turn and can fail it outright (overflow recovery), so they always pass. Every other reason is
- * a session change the run does not own: a handoff no longer requests one. */
-const HOST_MANAGED_COMPACTIONS: readonly string[] = ["threshold", "overflow"];
-
-/** Notice text per switch reason, so the operator learns which command to retry. */
-const SWITCH_LABELS: Record<"new" | "resume", string> = { new: "start a new session", resume: "switch session" };
-
-/**
- * Session boundaries cancel while a run owns the session. pi dispatches `/new`, `/resume`,
- * `/fork`, `/tree` and `/compact` before the `input` hook, so suppression alone cannot exclude
- * them and a lifecycle command can replace the session under a live run. The guard answers each
- * boundary pi offers; rule and residual windows: docs/workflows.md (Constraints, Host gaps).
- */
-function registerSessionGuard(pi: ExtensionAPI, state: SchematicState): void {
-	pi.on("session_before_switch", (event, ctx) => {
-		// Only pi's `new` switch can be the workflow's own; a `resume` never is.
-		return rejectBoundary(state, ctx, event.reason === "new" ? "new" : null, SWITCH_LABELS[event.reason]);
-	});
-	pi.on("session_before_fork", (_event, ctx) => rejectBoundary(state, ctx, null, "fork this session"));
-	pi.on("session_before_tree", (_event, ctx) => rejectBoundary(state, ctx, null, "move in the session tree"));
-	pi.on("session_before_compact", (event, ctx) =>
-		HOST_MANAGED_COMPACTIONS.includes(event.reason) ? undefined : rejectBoundary(state, ctx, null, "compact this session"));
-}
-
-/** Decide one boundary: pass when no run owns the session, or when this run asked for it.
- * `state.inputSuppressed` is the run's own flag, raised with the `input` handler and cleared on
- * release, so the guard follows the serial invariant instead of mirroring the reservation. */
-function rejectBoundary(state: SchematicState, ctx: ExtensionContext, kind: AdmittedChange | null, label: string): { cancel: true } | undefined {
-	if (!state.inputSuppressed) return undefined;
-	if (kind !== null && spendAdmission(kind)) return undefined;
-	warnOperator(ctx, `A workflow is running. Wait for it to finish, or press Escape or Ctrl+C twice to stop it, before you ${label}.`);
-	return { cancel: true };
-}
-
-/** Advisory only: pi reports a throwing `session_before_*` handler and lets the boundary
- * through, so the cancel must stand even when the notice cannot be shown. Without a UI, the
- * caller still gets pi's own cancellation (`{ cancelled: true }`, "Compaction cancelled"). */
-function warnOperator(ctx: ExtensionContext, message: string): void {
-	try {
-		if (ctx.hasUI) ctx.ui.notify(message, "warning");
-	} catch {
-		// The cancel is what the operator's safety depends on, and it already stands.
-	}
-}
-
-/** Admission slot. Process-global because module copies are not shared state: after
- * `workflow.new` the run requests its next handoff through the replacement runtime, whose guard
- * handler is a second copy of this module (jiti `moduleCache:false`, see process-state.ts). */
-const admissionSlot = registeredState<{ granted: AdmittedChange | null }>("pi-schematic.workflow-session-admission", () => ({ granted: null }));
-
-/** Hold one grant while the workflow asks pi for its own session change, so the guard admits
- * exactly that change and cancels every other boundary until the grant is spent. Releasing on
- * return means a change that never reached pi leaves no standing admission behind. */
-async function admitted<T>(kind: AdmittedChange, change: () => Promise<T>): Promise<T> {
-	const slot = admissionSlot;
-	slot.granted = kind;
-	try {
-		return await change();
-	} finally {
-		if (slot.granted === kind) slot.granted = null;
-	}
-}
-
-/** Spend the grant once, and only on the change it was held for. */
-function spendAdmission(kind: AdmittedChange): boolean {
-	const slot = admissionSlot;
-	if (slot.granted !== kind) return false;
-	slot.granted = null;
-	return true;
-}
-
-/**
- * Suppress non-extension input for the run. Also raises `state.inputSuppressed` so the
- * frontmatter `input` hook (registered at load, hence earlier in pi's dispatch order)
- * skips dropped submissions instead of mutating model/readonly state ahead of the drop.
- * Takes the bundle so rebindRun sets the flag on the replacement's live state.
- *
- * Input exclusion is not atomic, including across `workflow.new`: see docs/workflows.md (Host gaps).
- * {@link registerSessionGuard} covers the boundaries pi dispatches ahead of this hook.
- */
-function suppressInput(bundle: RunBundle): () => void {
-	// Capture the state: the unsubscribe that runs AFTER a rebind must clear the state
-	// this subscription raised, not the replacement's (they are one object in production,
-	// but distinct in tests — clearing must not depend on that identity).
-	const state = bundle.state;
-	// Register before raising the flag: a throwing registration then leaves no stuck flag.
-	const off = bundle.pi.on("input", (event) => (event.source === "extension" ? undefined : { action: "handled" as const }));
-	state.inputSuppressed = true;
-	return () => {
-		state.inputSuppressed = false;
-		off();
-	};
-}
-
-/** Bridge pi's per-turn outcome to the host: an aborted turn (RPC/print abort, provider abort)
- * must cancel a live workflow even though only TUI keys reach the key funnel. Child sessions run
- * their own extension runner, so a child's abort never fires this parent handler. */
-function subscribeTurnEnd(bundle: RunBundle, ctl: RunCtl): () => void {
-	return bundle.pi.on("turn_end", (event) => {
-		if (event.outcome === "aborted") ctl.host?.abort("cancelled");
-	});
-}
-
-/** Register cancellation for a live context. Arm state is per registration, so a
- * `workflow.new` rebind starts with no inherited armed press. */
-function subscribeCancellation(bundle: RunBundle, ctl: RunCtl, ctx: ExtensionCommandContext): () => void {
-	return registerCancellation(ctx, bundle.deps.cancelConfirmMs ?? CANCEL_CONFIRM_MS, () => ctl.host?.abort("cancelled"));
-}
-
-/** Escape / Ctrl+C arm a two-step funnel: the first press warns, a second press of the same
- * key inside the window aborts. This mirrors pi's double-press interrupt guard so a single
- * stray keypress cannot kill a long run. Terminal input is TUI-only. */
-function registerCancellation(ctx: ExtensionCommandContext, confirmMs: number, onCancel: () => void): () => void {
-	if (ctx.mode !== "tui") return () => {};
-	const armedAt = new Map<CancelKey, number>();
-	return ctx.ui.onTerminalInput((data) => {
-		const press = cancelPressOf(data);
-		if (!press) return undefined;
-		// A coalesced pair is two physical presses: it already satisfies the guard.
-		if (press.confirmed || confirmCancel(armedAt, press.key, Date.now(), confirmMs)) onCancel();
-		else notify(ctx, `Press ${CANCEL_LABEL[press.key]} again within ${confirmMs}ms to cancel the workflow`, "warning");
-		return { consume: true };
-	});
-}
-
-/** Map a terminal read to a cancel press, or null to pass it through untouched.
- * pi-tui's StdinBuffer coalesces two Escape presses inside its 10ms escape window into
- * `"\x1b\x1b"` (stdin-buffer.js), which its parser reports as `ctrl+alt+[` and matches
- * against no cancel key (keys.js). Two physical presses must still cancel, so report that
- * read as an already-confirmed Escape. Kitty flag 2 also emits a press then a release for one
- * physical key; `isKeyRelease`/`isKeyRepeat` drop those non-press events. */
-export function cancelPressOf(data: string): { key: CancelKey; confirmed: boolean } | null {
-	if (data === "\x1b\x1b") return { key: "escape", confirmed: true };
-	if (isKeyRelease(data) || isKeyRepeat(data)) return null;
-	// Only the funnel's cancel keys are consumed: every other keypress must still reach the
-	// editor while a run is active, instead of being swallowed wholesale.
-	const key = CANCEL_KEYS.find((candidate) => matchesKey(data, candidate));
-	return key ? { key, confirmed: false } : null;
-}
-
-/** Arm or confirm per key: a press inside the window consumes the arm and returns true; a
- * first press, or one after the window, (re)arms and returns false. Keys never cross-confirm. */
-function confirmCancel(armedAt: Map<CancelKey, number>, key: CancelKey, now: number, windowMs: number): boolean {
-	const at = armedAt.get(key);
-	armedAt.delete(key);
-	if (at !== undefined && now - at < windowMs) return true;
-	armedAt.set(key, now);
-	return false;
-}
