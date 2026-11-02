@@ -443,9 +443,9 @@ function blockStreamingFrontmatter(
 function refreshModelGroupsState(state: SchematicState, ctx: ExtensionContext) {
 	state.modelGroups.groups = [];
 	state.modelGroups.validation = null;
-	if (!ctx.cwd || !(ctx as any).modelRegistry) return null;
+	if (!ctx.cwd || !ctx.modelRegistry) return null;
 	const loadedModelGroups = loadModelGroups(createModelGroupsAccess(ctx.cwd, ctx.isProjectTrusted()));
-	const resolvedModelGroups = validateModelGroups(loadedModelGroups, (ctx as any).modelRegistry);
+	const resolvedModelGroups = validateModelGroups(loadedModelGroups, ctx.modelRegistry);
 	state.modelGroups.groups = resolvedModelGroups;
 	state.modelGroups.validation = { groups: resolvedModelGroups, loadIssues: loadedModelGroups.issues };
 	return state.modelGroups.validation;
@@ -793,11 +793,11 @@ export default function (pi: ExtensionAPI): void {
 		state.lastContextPercent = percent;
 
 		// Build the readonly toggle-nudge (one-shot on mode change)
-		let readonlyNudgeMsg: { role: string; customType: string; content: string; display: boolean; timestamp: number } | null = null;
+		let readonlyNudgeMsg: { role: "custom"; customType: string; content: string; display: boolean; timestamp: number } | null = null;
 		if (state.readonlyNudgePending) {
 			state.readonlyNudgePending = false;
 			readonlyNudgeMsg = {
-				role: "custom" as const,
+				role: "custom",
 				customType: "pi-schematic-readonly-nudge",
 				content: state.readonlyEnabled
 					? (state.pendingRequestedHandoff ||
@@ -813,7 +813,7 @@ export default function (pi: ExtensionAPI): void {
 			};
 		}
 		const appendReadonlyNudge = () => readonlyNudgeMsg
-			? { messages: [...event.messages, readonlyNudgeMsg as any] }
+			? { messages: [...event.messages, readonlyNudgeMsg] }
 			: undefined;
 
 		// In readonly mode, an eligible human topic boundary is equivalent to /handoff:
@@ -860,8 +860,6 @@ export default function (pi: ExtensionAPI): void {
 		// Below primacy-zone threshold (~30%), skip watchdog unless a boundary
 		// hint or a sticky user-requested handoff is pending — context is still
 		// fresh enough that ordinary nudges add noise.
-		// HACK: `as any` required because readonlyNudgeMsg has customType field not in AgentMessage.
-		// Proper fix: augment CustomAgentMessages via module augmentation on @earendil-works/pi-agent-core.
 		if (!mustEnforceRequestedHandoff && !state.pendingTopicBoundaryHint && (percent === null || percent < 30)) {
 			state.lastWatchdogBand = null;
 			return appendReadonlyNudge();
@@ -883,7 +881,7 @@ export default function (pi: ExtensionAPI): void {
 		return {
 			messages: [
 				...event.messages,
-				...(readonlyNudgeMsg ? [readonlyNudgeMsg as any] : []),
+				...(readonlyNudgeMsg ? [readonlyNudgeMsg] : []),
 				{
 					role: "custom",
 					customType: "pi-schematic-watchdog",

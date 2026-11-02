@@ -43,6 +43,48 @@
         "notes": "undici: fetch() skips Subresource Integrity checks for non-lowercase algorithm tokens. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2, pinned exactly by @earendil-works/pi-coding-agent@0.99.2 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@0.99.2 (devDependency; the extension ships no runtime deps).",
         "expiry": "2026-12-31"
       }
+    },
+    {
+      "GHSA-2m5v-pch6-74hx": {
+        "active": true,
+        "notes": "undici: Agent drops custom tls options, bypassing TLS certificate validation. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2, pinned exactly by @earendil-works/pi-coding-agent@0.99.2 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@0.99.2 (devDependency; the extension ships no runtime deps).",
+        "expiry": "2026-12-31"
+      }
+    },
+    {
+      "GHSA-4w7w-5xrc-9h26": {
+        "active": true,
+        "notes": "undici: cache poisoning and cross-user disclosure via cross-origin redirects. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2, pinned exactly by @earendil-works/pi-coding-agent@0.99.2 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@0.99.2 (devDependency; the extension ships no runtime deps).",
+        "expiry": "2026-12-31"
+      }
+    },
+    {
+      "GHSA-qrxm-fqhp-jwvm": {
+        "active": true,
+        "notes": "undici: denial of service via TLS 1.2 certificate-changing renegotiation. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2, pinned exactly by @earendil-works/pi-coding-agent@0.99.2 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@0.99.2 (devDependency; the extension ships no runtime deps).",
+        "expiry": "2026-12-31"
+      }
+    },
+    {
+      "GHSA-9fm3-97px-rjf6": {
+        "active": true,
+        "notes": "undici: WebSocket client buffers automatic PONG replies without bound. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2, pinned exactly by @earendil-works/pi-coding-agent@0.99.2 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@0.99.2 (devDependency; the extension ships no runtime deps).",
+        "expiry": "2026-12-31"
+      }
+    },
+    {
+      "GHSA-55wc-3pg8-jfw6": {
+        "active": true,
+        "notes": "undici: the decompress interceptor crashes the process on an unhandled exception. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2, pinned exactly by @earendil-works/pi-coding-agent@0.99.2 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@0.99.2 (devDependency; the extension ships no runtime deps).",
+        "expiry": "2026-12-31"
+      }
+    },
+    {
+      "GHSA-g3hv-75wg-m249": {
+        "active": true,
+        "notes": "minimatch: denial of service via globparts amplification. npm audit affected range: <11.0.1. Installed 10.2.6, pinned exactly by @earendil-works/pi-coding-agent@0.99.2 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@0.99.2 (devDependency; the extension ships no runtime deps).",
+        "expiry": "2026-12-31"
+      }
     }
   ]
 }
