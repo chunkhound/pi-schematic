@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import type { AutocompleteProviderFactory } from "@earendil-works/pi-coding-agent";
 import { escapeDisplayLabel } from "../../model-groups/display.js";
 import { __setModelGroupsFsForTests, modelGroupsPath } from "../../model-groups/store.js";
 import { theme } from "./helpers.js";
@@ -257,7 +258,7 @@ test("before_agent_start clears stale Model Groups guidance when registry become
 
 test("session_start registers Model Groups autocomplete provider when UI supports it", async () => withTemp(async ({ cwd }) => {
 	const pi = await createTestHost();
-	const providers: any[] = [];
+	const providers: AutocompleteProviderFactory[] = [];
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, {
 		hasUI: true,
@@ -266,7 +267,7 @@ test("session_start registers Model Groups autocomplete provider when UI support
 		cwd,
 		modelRegistry: registry(),
 		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: () => {}, setStatus: () => {}, setWidget: () => {}, addAutocompleteProvider: (factory: any) => providers.push(factory) },
+		ui: { theme, notify: () => {}, setStatus: () => {}, setWidget: () => {}, addAutocompleteProvider: (factory: AutocompleteProviderFactory) => providers.push(factory) },
 	});
 	assert.equal(providers.length, 1);
 }));

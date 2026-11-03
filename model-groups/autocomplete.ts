@@ -102,17 +102,13 @@ export function createModelGroupAutocompleteProvider(state: SchematicState, colo
 
 export function registerModelGroupAutocomplete(ctx: ExtensionContext, state: SchematicState): void {
 	if (!ctx.hasUI) return;
-	const ui = ctx.ui as unknown as {
-		addAutocompleteProvider?: (factory: ReturnType<typeof createModelGroupAutocompleteProvider>) => void;
-		theme?: { fg: (color: ThemeColor, text: string) => string };
-	};
+	const ui = ctx.ui;
 	if (typeof ui.addAutocompleteProvider !== "function") return;
-	const key = ui as object;
-	if (registeredUis.has(key)) return;
-	registeredUis.add(key);
+	if (registeredUis.has(ui)) return;
+	registeredUis.add(ui);
 	// Lazy adapter so the colorizer reflects the live theme (not a snapshot).
 	const colorize: DescriptionColorizer | undefined = ui.theme
-		? (color, text) => ui.theme!.fg(color, text)
+		? (color, text) => ui.theme.fg(color, text)
 		: undefined;
 	ui.addAutocompleteProvider(createModelGroupAutocompleteProvider(state, colorize));
 }
