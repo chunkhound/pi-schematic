@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Model-group spawn retry** — a spawn routed to a group with more than one usable/capable member now retries after a child-run failure: it re-draws randomly from the remaining pool (excluding the member that just failed) until success or the pool is exhausted. A group of size 1, an inherited route, an unknown-fallback route, and failures before a child session exists (route/constraint errors, session-factory failures) never retry. The result reflects the last successful attempt, or the last failure when every member failed.
+
 - **Date anchor** — the `schematic_date` prompt section holds a `## Current date` block (ISO date, weekday, IANA zone, UTC offset, plus a resolve-relative-references directive). `before_agent_start` renders it once per user prompt, and it is byte-stable within a calendar day, so while the host zone stays fixed it changes at most once per day; on a DST transition day the offset adds one more change. When it changes, Pi appends a section-update message and the leading system message stays unchanged. A zone Intl cannot render falls back to `UTC` rather than throwing.
 - **Notebook pages open in a pager** — Enter in the interactive `/notebook` picker opens the selected page in `$PI_PAGER`, else `$PAGER`, else `less` if installed (not on Windows); with no pager or a `cat` or `more` pager it shows the inline preview instead. Quitting either returns to the list on the same page. See [Compatibility and limits](README.md#compatibility-and-limits).
 

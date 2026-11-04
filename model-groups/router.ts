@@ -83,7 +83,7 @@ function effectiveGroupMap(groups: ResolvedModelGroup[]): Map<string, ResolvedMo
 export function getEffectiveModelGroups(groups: ResolvedModelGroup[]): ResolvedModelGroup[] { return [...effectiveGroupMap(groups).values()].sort((a, b) => a.name.localeCompare(b.name)); }
 export function getEffectiveModelGroupNames(groups: ResolvedModelGroup[]): string[] { return getEffectiveModelGroups(groups).map((group) => group.name); }
 
-type SpawnRouteOptions = {
+export type SpawnRouteOptions = {
 	requestedGroup?: string;
 	constraints?: Readonly<Record<string, unknown>>;
 	groups: ResolvedModelGroup[];
@@ -92,6 +92,8 @@ type SpawnRouteOptions = {
 	modelRegistry: Pick<ModelRegistry, "find" | "hasConfiguredAuth">;
 	constraintRegistry?: ConstraintRegistry;
 	rng?: () => number;
+	/** Member keys (`provider/modelId`) to exclude from selection, for retry re-draws. */
+	exclude?: ReadonlySet<string>;
 };
 type DeclaredRequirement = { descriptor: AnyConstraintDescriptor; requirement: unknown };
 type RoutedMember = { entry: ResolvedModelGroup["models"][number]; model: Model<Api> };
@@ -118,8 +120,14 @@ function inheritedRoute(status: "inherited" | "unknown-fallback", requestedGroup
 	};
 }
 
-function usableMembers(group: ResolvedModelGroup, modelRegistry: SpawnRouteOptions["modelRegistry"]): RoutedMember[] {
+/** Stable identity of a group member across retries (`provider/modelId`). */
+export function spawnMemberKey(provider: string, modelId: string): string {
+	return `${provider}/${modelId}`;
+}
+
+function usableMembers(group: ResolvedModelGroup, modelRegistry: SpawnRouteOptions["modelRegistry"], exclude?: ReadonlySet<string>): RoutedMember[] {
 	return group.models
+		.filter((entry) => !exclude?.has(spawnMemberKey(entry.provider, entry.modelId)))
 		.map((entry) => {
 			const model = modelRegistry.find(entry.provider, entry.modelId) as Model<Api> | undefined;
 			return isUsableModel(modelRegistry, model) ? { entry, model } : undefined;
@@ -127,13 +135,33 @@ function usableMembers(group: ResolvedModelGroup, modelRegistry: SpawnRouteOptio
 		.filter((entry): entry is RoutedMember => Boolean(entry));
 }
 
+/** Narrow the usable pool to constraint-capable members (falling back to all usable). */
+function narrowMemberPool(usable: RoutedMember[], declared: readonly DeclaredRequirement[]): RoutedMember[] {
+	if (!declared.length) return usable;
+	const capable = usable.filter(({ model }) => declared.every(({ descriptor, requirement }) => descriptor.modelSatisfies({ fact: descriptor.modelFact(model), requirement }).satisfied));
+	return capable.length ? capable : usable;
+}
+
 function selectMember(usable: RoutedMember[], declared: readonly DeclaredRequirement[], rng?: () => number): RoutedMember {
-	const capable = declared.length
-		? usable.filter(({ model }) => declared.every(({ descriptor, requirement }) => descriptor.modelSatisfies({ fact: descriptor.modelFact(model), requirement }).satisfied))
-		: usable;
-	const pool = capable.length ? capable : usable;
+	const pool = narrowMemberPool(usable, declared);
 	const randomIndex = Math.min(pool.length - 1, Math.max(0, Math.floor((rng ?? Math.random)() * pool.length)));
 	return pool[randomIndex];
+}
+
+/**
+ * Keys of the members a routed spawn could draw from, after usable/auth filtering
+ * and constraint narrowing. Returns undefined when the request is not a routable
+ * known group (inherited or unknown-fallback), so callers know retry is impossible.
+ */
+export function listSpawnCandidateKeys(options: SpawnRouteOptions): string[] | undefined {
+	const requestedGroup = options.requestedGroup?.trim();
+	if (!requestedGroup) return undefined;
+	const group = effectiveGroupMap(options.groups).get(requestedGroup);
+	if (!group || group.models.length === 0) return undefined;
+	const usable = usableMembers(group, options.modelRegistry);
+	if (!usable.length) return [];
+	const declared = decodeDeclared(options.constraintRegistry ?? productionConstraintRegistry, options.constraints ?? {})();
+	return narrowMemberPool(usable, declared).map(({ entry }) => spawnMemberKey(entry.provider, entry.modelId));
 }
 
 function buildRoutedRoute(group: ResolvedModelGroup, requestedGroup: string, _usable: RoutedMember[], selected: RoutedMember, options: Pick<SpawnRouteOptions, "parentThinking">): SpawnModelRoute {
@@ -212,7 +240,7 @@ export function resolveSpawnModelRoute(options: SpawnRouteOptions): SpawnModelRo
 			: undefined;
 	if (group) {
 		if (group.models.length === 0) throw new SpawnRouteError(group.name, "empty");
-		const usable = usableMembers(group, options.modelRegistry);
+		const usable = usableMembers(group, options.modelRegistry, options.exclude);
 		if (!usable.length) throw new SpawnRouteError(group.name, "no-usable-models");
 		const selected = selectMember(usable, getDeclaredRequirements(), options.rng);
 		route = buildRoutedRoute(group, requestedGroup!, usable, selected, options);
