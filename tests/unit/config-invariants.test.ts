@@ -52,7 +52,7 @@ const EXPECTED_NODE_FLOOR = "22.19.0";
 const EXPECTED_PI_PEER = `>=${EXPECTED_PI_VERSION}`;
 const EXPECTED_TYPEBOX_PEER = `>=${EXPECTED_TYPEBOX_VERSION}`;
 const EXPECTED_MATRIX = new Set([
-	"ubuntu-latest@22.19.0",
+	`ubuntu-latest@${EXPECTED_NODE_FLOOR}`,
 	"ubuntu-latest@24",
 	"macos-latest@24",
 	"windows-latest@24",
@@ -186,7 +186,7 @@ function runAuditCi(): void {
 test("pinned Pi compatibility metadata and source boundaries stay exact", () => {
 	const packageJson = parsePackageJson();
 	const lock = JSON.parse(readText(LOCK_PATH)) as { packages: Record<string, { version?: string }> };
-	assert.equal(packageJson.engines.node, ">=22.19.0");
+	assert.equal(packageJson.engines.node, `>=${EXPECTED_NODE_FLOOR}`);
 	for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"]) {
 		assert.equal(packageJson.peerDependencies[name], EXPECTED_PI_PEER, `${name} peer must require ${EXPECTED_PI_PEER}`);
 	}
