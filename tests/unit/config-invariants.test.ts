@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { assertPresent } from "../assertions.js";
+import { CHILD_TIMEOUT_MS } from "./spawn-node.js";
 
 type AuditRecord = {
 	active: boolean;
@@ -127,7 +128,13 @@ function minimumNodeVersion(value: string): string {
 
 function runAuditCi(): void {
 	const command = "npx audit-ci --config audit-ci.jsonc";
-	const result = spawnSync(command, { cwd: REPO_ROOT, encoding: "utf8", shell: true });
+	const result = spawnSync(command, {
+		cwd: REPO_ROOT,
+		encoding: "utf8",
+		shell: true,
+		timeout: CHILD_TIMEOUT_MS,
+		killSignal: "SIGKILL",
+	});
 	const diagnostics = [
 		`command: ${command}`,
 		`error.stack: ${result.error?.stack ?? "none"}`,
@@ -137,6 +144,8 @@ function runAuditCi(): void {
 		`stderr:\n${result.stderr}`,
 	].join("\n");
 
+	const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+	expect(timedOut, `${command} did not finish within ${CHILD_TIMEOUT_MS} ms and was killed\n${diagnostics}`).toBe(false);
 	expect(result.error, diagnostics).toBe(undefined);
 	expect(result.signal, diagnostics).toBe(null);
 	expect(result.status, diagnostics).toBe(0);
