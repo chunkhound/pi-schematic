@@ -24,7 +24,7 @@ test("effective model group names use project-over-global names", () => {
 test("omitted and unknown groups inherit parent route with fallback metadata", () => {
 	const parent = model("openai", "gpt-parent");
 	const reg = registry([parent]);
-	expect(resolveSpawnModelRoute({ groups: [], parentModel: parent, parentThinking: "medium", modelRegistry: reg }).status).toStrictEqual("inherited");
+	expect(resolveSpawnModelRoute({ groups: [], parentModel: parent, parentThinking: "medium", modelRegistry: reg }).status).toBe("inherited");
 	const route = resolveSpawnModelRoute({ requestedGroup: "typo", groups: [], parentModel: parent, parentThinking: "medium", modelRegistry: reg });
 	expect(route.status).toBe("unknown-fallback"); expect(route.requestedGroup).toBe("typo"); expect(route.model).toBe(parent); expect(route.thinking).toBe("medium");
 });
@@ -160,9 +160,9 @@ test("plain inherited route honors requiredModalities with empty-array no-op", (
 	const rich = model("p", "rich-parent", { input: ["text", "image"] });
 	const text = model("p", "text-parent", { input: ["text"] });
 	// Empty array is a no-op: route returns unchanged, no requirement check.
-	expect(resolveSpawnModelRoute({ constraints: { modalities: { required: [] } }, groups: [], parentModel: text, parentThinking: "medium", modelRegistry: registry([text]) }).status).toStrictEqual("inherited");
+	expect(resolveSpawnModelRoute({ constraints: { modalities: { required: [] } }, groups: [], parentModel: text, parentThinking: "medium", modelRegistry: registry([text]) }).status).toBe("inherited");
 	// Parent satisfies all requirements → inherited route succeeds.
-	expect(resolveSpawnModelRoute({ constraints: { modalities: { required: ["text", "image"] } }, groups: [], parentModel: rich, parentThinking: "medium", modelRegistry: registry([rich]) }).status).toStrictEqual("inherited");
+	expect(resolveSpawnModelRoute({ constraints: { modalities: { required: ["text", "image"] } }, groups: [], parentModel: rich, parentThinking: "medium", modelRegistry: registry([rich]) }).status).toBe("inherited");
 	// Parent lacks a required modality → missing-modality with the parent model details.
 	expect(() => resolveSpawnModelRoute({ constraints: { modalities: { required: ["image"] } }, groups: [], parentModel: text, parentThinking: "medium", modelRegistry: registry([text]) })).toThrow(expect.toSatisfy((error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.group === "<inherited>" && error.missingFromModel[0] === "image" && error.missingFromGroup.length === 0 && /Spawn model/.test(error.message)));
 });
