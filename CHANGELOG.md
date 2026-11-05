@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Spawn usage reaches the parent's totals** — `spawn` returns the child session's token and cost usage with its result. The parent's session totals and footer then include the work its children did. The sum covers the child's whole session, including compaction summaries. If the child's entries cannot be read or summed, the result keeps the child's text, reports zero usage and sets `statsUnavailable`. Context-window accounting is unchanged, because Pi does not count a tool result's usage toward the parent's context size.
 - **Spawn preview strips terminal sequences** — the collapsed spawn preview now removes OSC (including OSC 8 links), APC, and erase and cursor-position sequences from child assistant text, not only SGR styling (#83).
 - **Global files follow `PI_CODING_AGENT_DIR`** — the global `model-groups.json` and the global prompt scan resolve inside pi's agent directory, so with `PI_CODING_AGENT_DIR` set both move with it, as pi's own global files do. With the variable unset, both stay at their previous locations.
+- **Type-checks against Pi 1.5** — the `spawn` tool builds its `thinking` parameter schema with typebox instead of pi-ai's `StringEnum`, which returns a non-typebox schema from Pi 1.5 on. The schema sent to the model is unchanged.
 
 ## [0.6.0] - 2026-09-26
 
