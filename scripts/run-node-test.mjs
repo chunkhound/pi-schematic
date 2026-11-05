@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { needsE2eConcurrency } from "./e2e-concurrency.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -16,8 +17,7 @@ const loader = pathToFileURL(resolve(root, "register-loader.mjs")).href;
 // WHY: e2e files spawn real pi CLI processes. Cap concurrent test files so a run
 // with many suites cannot start one host per file. Unit tests keep Node's default
 // concurrency.
-const e2e = patterns.some((p) => p.includes("tests/e2e/"));
-const concurrency = e2e ? ["--test-concurrency=2"] : [];
+const concurrency = needsE2eConcurrency(patterns) ? ["--test-concurrency=2"] : [];
 const result = spawnSync(
   process.execPath,
   ["--import", loader, "--test", ...concurrency, ...patterns],
