@@ -1,12 +1,12 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { findPackageJSON } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { expect, test } from "vitest";
 import { piManifestPath } from "../../pi-packages.mjs";
+import { assertPresent } from "../assertions.js";
+import { spawnNode } from "./spawn-node.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..", "..");
@@ -17,18 +17,10 @@ test("register-loader resolves test-loader relative to itself instead of cwd", (
 	const cwd = mkdtempSync(resolve(tmpdir(), "pi-schematic-loader-"));
 
 	try {
-		const result = spawnSync(
-			process.execPath,
-			["--import", REGISTER_LOADER, ENTRY],
-			{
-				cwd,
-				encoding: "utf8",
-				env: { ...process.env, NODE_OPTIONS: "" },
-			},
-		);
+		const result = spawnNode([ENTRY], { cwd, loader: REGISTER_LOADER });
 
-		assert.equal(result.status, 0, result.stderr || result.stdout);
-		assert.match(result.stdout, /ok/);
+		expect(result.status, result.stderr || result.stdout).toBe(0);
+		expect(result.stdout).toMatch(/ok/);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}
@@ -37,22 +29,14 @@ test("register-loader resolves test-loader relative to itself instead of cwd", (
 test("register-loader errors when entry file does not exist", () => {
 	const cwd = mkdtempSync(resolve(tmpdir(), "pi-schematic-loader-fail-"));
 	try {
-		const result = spawnSync(
-			process.execPath,
-			["--import", REGISTER_LOADER, "/nonexistent/entry.mjs"],
-			{
-				cwd,
-				encoding: "utf8",
-				env: { ...process.env, NODE_OPTIONS: "" },
-			},
-		);
+		const result = spawnNode(["/nonexistent/entry.mjs"], { cwd, loader: REGISTER_LOADER });
 
-		assert.notEqual(result.status, 0, "should exit non-zero for missing entry");
+		expect(result.status, "should exit non-zero for missing entry").not.toBe(0);
 		// Node.js always includes the path in ENOENT errors, so checking for "nonexistent" is sufficient
-		assert.ok(
+		expect(
 			result.stderr.includes("nonexistent"),
 			"stderr should reference the missing file, got: " + result.stderr,
-		);
+		).toBe(true);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}
@@ -61,11 +45,8 @@ test("register-loader errors when entry file does not exist", () => {
 test("register-loader resolves typebox exports from pi's dependency tree", () => {
 	const cwd = mkdtempSync(resolve(tmpdir(), "pi-schematic-loader-typebox-"));
 	try {
-		const result = spawnSync(
-			process.execPath,
+		const result = spawnNode(
 			[
-				"--import",
-				REGISTER_LOADER,
 				"--input-type=module",
 				"-e",
 				[
@@ -75,35 +56,29 @@ test("register-loader resolves typebox exports from pi's dependency tree", () =>
 					"console.log(JSON.stringify(Object.fromEntries(specifiers.map((specifier) => [specifier, import.meta.resolve(specifier)]))));",
 				].join("\n"),
 			],
-			{
-				cwd,
-				encoding: "utf8",
-				env: { ...process.env, NODE_OPTIONS: "" },
-			},
+			{ cwd, loader: REGISTER_LOADER },
 		);
 
-		assert.equal(result.status, 0, result.stderr || result.stdout);
+		expect(result.status, result.stderr || result.stdout).toBe(0);
 		const resolved = JSON.parse(result.stdout.trim()) as Record<string, string>;
 		const [rootSpecifier, ...subpathSpecifiers] = Object.keys(resolved);
 		const typeboxRoot = resolved[rootSpecifier].replace(/(?:build\/)?index\.m?js$/, "");
-		assert.match(typeboxRoot, /^file:/);
+		expect(typeboxRoot).toMatch(/^file:/);
 		// The copy pi itself loads, not the project's top-level one, which can be another version.
 		const piTypeboxManifest = findPackageJSON("typebox", pathToFileURL(piManifestPath));
-		assert.ok(piTypeboxManifest, "pi's dependency tree should contain typebox");
+		assertPresent(piTypeboxManifest, "pi's dependency tree should contain typebox");
 		// Node's resolver returns real paths, so compare against the real path of pi's copy.
-		assert.equal(
-			typeboxRoot,
+		expect(typeboxRoot, "typebox should resolve from pi's dependency tree").toBe(
 			pathToFileURL(realpathSync(dirname(piTypeboxManifest))).href + "/",
-			"typebox should resolve from pi's dependency tree",
 		);
 		for (const specifier of Object.keys(resolved)) {
-			assert.match(resolved[specifier], /^file:/);
-			assert.ok(
+			expect(resolved[specifier]).toMatch(/^file:/);
+			expect(
 				resolved[specifier].startsWith(typeboxRoot),
 				`${specifier} should resolve from the same typebox package root`,
-			);
+			).toBe(true);
 		}
-		assert.ok(subpathSpecifiers.length > 0);
+		expect(subpathSpecifiers.length > 0).toBe(true);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}
@@ -112,25 +87,18 @@ test("register-loader resolves typebox exports from pi's dependency tree", () =>
 test("register-loader leaves an unknown typebox subpath to Node's export check", () => {
 	const cwd = mkdtempSync(resolve(tmpdir(), "pi-schematic-loader-typebox-missing-"));
 	try {
-		const result = spawnSync(
-			process.execPath,
+		const result = spawnNode(
 			[
-				"--import",
-				REGISTER_LOADER,
 				"--input-type=module",
 				"-e",
 				'await import("typebox/not-real");',
 			],
-			{
-				cwd,
-				encoding: "utf8",
-				env: { ...process.env, NODE_OPTIONS: "" },
-			},
+			{ cwd, loader: REGISTER_LOADER },
 		);
 
-		assert.notEqual(result.status, 0, "should exit non-zero for missing typebox export");
-		assert.match(result.stderr, /ERR_PACKAGE_PATH_NOT_EXPORTED/);
-		assert.match(result.stderr, /Package subpath '\.\/not-real' is not defined by "exports" in .*typebox[\\/]package\.json/);
+		expect(result.status, "should exit non-zero for missing typebox export").not.toBe(0);
+		expect(result.stderr).toMatch(/ERR_PACKAGE_PATH_NOT_EXPORTED/);
+		expect(result.stderr).toMatch(/Package subpath '\.\/not-real' is not defined by "exports" in .*typebox[\\/]package\.json/);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}

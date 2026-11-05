@@ -5,11 +5,11 @@
  * dates, and that CI preserves the audit → unit → e2e order.
  */
 
-import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import { expect, test } from "vitest";
+import { assertPresent } from "../assertions.js";
 
 type AuditRecord = {
 	active: boolean;
@@ -91,7 +91,7 @@ function parseMatrixEntries(workflow: string): Set<string> {
 
 function stepIndex(workflow: string, step: string): number {
 	const index = workflow.indexOf(`- name: ${step}`);
-	assert.notEqual(index, -1, `missing workflow step: ${step}`);
+	expect(index, `missing workflow step: ${step}`).not.toBe(-1);
 	return index;
 }
 
@@ -106,22 +106,23 @@ function stepBlock(workflow: string, step: string): string {
 function allowlistEntries(config: AuditConfig): Array<[string, AuditRecord]> {
 	return config.allowlist.map((entry) => {
 		const [key, value] = Object.entries(entry)[0] ?? [];
-		assert.ok(key, "allowlist entry must define exactly one scoped advisory path");
-		assert.ok(value, `missing metadata for allowlist entry: ${key}`);
+		expect(key, "allowlist entry must define exactly one scoped advisory path").toBeTruthy();
+		expect(value, `missing metadata for allowlist entry: ${key}`).toBeTruthy();
 		return [key, value];
 	});
 }
 
 function parseIsoDate(value: string): number {
 	const timestamp = Date.parse(`${value}T00:00:00Z`);
-	assert.notEqual(Number.isNaN(timestamp), true, `invalid ISO date: ${value}`);
+	expect(Number.isNaN(timestamp), `invalid ISO date: ${value}`).not.toBe(true);
 	return timestamp;
 }
 
 function minimumNodeVersion(value: string): string {
 	const match = value.match(/^>=(?<version>\d+\.\d+\.\d+)$/);
-	assert.ok(match?.groups?.version, `unsupported engines.node format: ${value}`);
-	return match.groups.version;
+	const version = match?.groups?.version;
+	assertPresent(version, `unsupported engines.node format: ${value}`);
+	return version;
 }
 
 function runAuditCi(): void {
@@ -136,71 +137,71 @@ function runAuditCi(): void {
 		`stderr:\n${result.stderr}`,
 	].join("\n");
 
-	assert.equal(result.error, undefined, diagnostics);
-	assert.equal(result.signal, null, diagnostics);
-	assert.equal(result.status, 0, diagnostics);
+	expect(result.error, diagnostics).toBe(undefined);
+	expect(result.signal, diagnostics).toBe(null);
+	expect(result.status, diagnostics).toBe(0);
 }
 
 test("pinned Pi compatibility metadata and source boundaries stay exact", () => {
 	const packageJson = parsePackageJson();
 	const lock = JSON.parse(readText(LOCK_PATH)) as { packages: Record<string, { version?: string }> };
-	assert.equal(packageJson.engines.node, ">=22.19.0");
+	expect(packageJson.engines.node).toBe(">=22.19.0");
 	for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"]) {
-		assert.equal(packageJson.peerDependencies[name], EXPECTED_PI_PEER, `${name} peer must require ${EXPECTED_PI_PEER}`);
+		expect(packageJson.peerDependencies[name], `${name} peer must require ${EXPECTED_PI_PEER}`).toBe(EXPECTED_PI_PEER);
 	}
-	assert.equal(packageJson.peerDependencies.typebox, EXPECTED_TYPEBOX_PEER, `typebox peer must require ${EXPECTED_TYPEBOX_PEER}`);
+	expect(packageJson.peerDependencies.typebox, `typebox peer must require ${EXPECTED_TYPEBOX_PEER}`).toBe(EXPECTED_TYPEBOX_PEER);
 	for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"]) {
-		assert.equal(packageJson.devDependencies[name], EXPECTED_PI_VERSION);
-		assert.equal(lock.packages[`node_modules/${name}`]?.version, EXPECTED_PI_VERSION);
+		expect(packageJson.devDependencies[name]).toBe(EXPECTED_PI_VERSION);
+		expect(lock.packages[`node_modules/${name}`]?.version).toBe(EXPECTED_PI_VERSION);
 	}
-	assert.equal(packageJson.devDependencies.typebox, EXPECTED_TYPEBOX_VERSION);
-	assert.equal(lock.packages["node_modules/typebox"]?.version, EXPECTED_TYPEBOX_VERSION);
+	expect(packageJson.devDependencies.typebox).toBe(EXPECTED_TYPEBOX_VERSION);
+	expect(lock.packages["node_modules/typebox"]?.version).toBe(EXPECTED_TYPEBOX_VERSION);
 
 	const spawnSource = readText(SPAWN_SOURCE_PATH);
-	assert.doesNotMatch(spawnSource, /\bAuthStorage\b|\bModelRegistry\b/);
-	assert.doesNotMatch(spawnSource, /\bauthStorage\s*:/);
-	assert.doesNotMatch(spawnSource, /sessionFactory\(\{[\s\S]*?\bmodelRegistry\s*:/);
-	assert.match(spawnSource, /modelRegistry:\s*ctx\.modelRegistry/);
-	assert.match(spawnSource, /model:\s*childModel/);
-	assert.match(spawnSource, /session\.dispose\(\)/);
+	expect(spawnSource).not.toMatch(/\bAuthStorage\b|\bModelRegistry\b/);
+	expect(spawnSource).not.toMatch(/\bauthStorage\s*:/);
+	expect(spawnSource).not.toMatch(/sessionFactory\(\{[\s\S]*?\bmodelRegistry\s*:/);
+	expect(spawnSource).toMatch(/modelRegistry:\s*ctx\.modelRegistry/);
+	expect(spawnSource).toMatch(/model:\s*childModel/);
+	expect(spawnSource).toMatch(/session\.dispose\(\)/);
 	const rendererSource = readText(RENDERER_SOURCE_PATH);
-	assert.doesNotMatch(rendererSource, /console\.(?:debug|warn|error|log)\s*\(/);
-	assert.doesNotMatch(rendererSource, /process\.(?:stdout|stderr)\.write\s*\(/);
+	expect(rendererSource).not.toMatch(/console\.(?:debug|warn|error|log)\s*\(/);
+	expect(rendererSource).not.toMatch(/process\.(?:stdout|stderr)\.write\s*\(/);
 });
 
 test("audit-ci config enforces the reviewed allowlist policy", () => {
 	const config = parseAuditConfig();
-	assert.equal(config.$schema, AUDIT_SCHEMA);
-	assert.equal(config.moderate, true);
+	expect(config.$schema).toBe(AUDIT_SCHEMA);
+	expect(config.moderate).toBe(true);
 
 	const entries = allowlistEntries(config);
-	assert.deepEqual(new Set(entries.map(([key]) => key)), EXPECTED_ALLOWLIST_KEYS);
+	expect(new Set(entries.map(([key]) => key))).toStrictEqual(EXPECTED_ALLOWLIST_KEYS);
 	const today = Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
 	for (const [key, value] of entries) {
-		assert.match(key, /^GHSA-[a-z0-9-]+(?:\|[^|>]+(?:>[^|>]+)*)?$/);
-		assert.equal(value.active, true);
-		assert.match(value.expiry, /^\d{4}-\d{2}-\d{2}$/);
-		assert.ok(parseIsoDate(value.expiry) >= today, `expired allowlist entry: ${key}`);
-		assert.notEqual(value.notes.trim(), "");
+		expect(key).toMatch(/^GHSA-[a-z0-9-]+(?:\|[^|>]+(?:>[^|>]+)*)?$/);
+		expect(value.active).toBe(true);
+		expect(value.expiry).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+		expect(parseIsoDate(value.expiry) >= today, `expired allowlist entry: ${key}`).toBe(true);
+		expect(value.notes.trim()).not.toBe("");
 	}
 });
 
 test("workflow keeps the expected matrix and audit/test order", () => {
 	const workflow = readText(WORKFLOW_PATH);
 	const packageJson = parsePackageJson();
-	assert.match(workflow, /fail-fast:\s+false/);
-	assert.deepEqual(parseMatrixEntries(workflow), EXPECTED_MATRIX);
-	assert.ok(stepIndex(workflow, "Security audit") < stepIndex(workflow, "Unit tests"));
-	assert.ok(stepIndex(workflow, "Unit tests") < stepIndex(workflow, "E2E tests"));
-	assert.match(workflow, /run: npx audit-ci --config audit-ci\.jsonc/);
-	assert.ok(EXPECTED_MATRIX.has(`ubuntu-latest@${minimumNodeVersion(packageJson.engines.node)}`));
+	expect(workflow).toMatch(/fail-fast:\s+false/);
+	expect(parseMatrixEntries(workflow)).toStrictEqual(EXPECTED_MATRIX);
+	expect(stepIndex(workflow, "Security audit") < stepIndex(workflow, "Unit tests")).toBe(true);
+	expect(stepIndex(workflow, "Unit tests") < stepIndex(workflow, "E2E tests")).toBe(true);
+	expect(workflow).toMatch(/run: npx audit-ci --config audit-ci\.jsonc/);
+	expect(EXPECTED_MATRIX.has(`ubuntu-latest@${minimumNodeVersion(packageJson.engines.node)}`)).toBe(true);
 });
 
 
 test("Windows current-Pi step runs after packed-host failure but not on cancellation", () => {
 	const workflow = readText(WORKFLOW_PATH);
 	const block = stepBlock(workflow, "Synchronized current Pi compatibility on Windows");
-	assert.match(block, /if:\s*matrix\.os == 'windows-latest' && !cancelled\(\)/);
+	expect(block).toMatch(/if:\s*matrix\.os == 'windows-latest' && !cancelled\(\)/);
 });
 
 test("audit-ci config matches the CI audit command", () => {

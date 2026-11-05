@@ -1,5 +1,4 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import { createState } from "../../state.js";
 import { setActiveNotebookTopic, clearActiveNotebookTopic } from "../../notebook/topic.js";
 import { registerNotebookTopicTool } from "../../notebook/topic-tool.js";
@@ -8,19 +7,19 @@ import { createTestHost } from "./test-host.js";
 test("topic helpers manage the active notebook topic lifecycle", () => {
 	const state = createState();
 	const first = setActiveNotebookTopic(state, "OAuth", "agent");
-	assert.deepEqual(first, {
+	expect(first).toStrictEqual({
 		changed: true,
 		previous: null,
 		current: "oauth",
 		boundaryHint: null,
 	});
 	const second = setActiveNotebookTopic(state, "Billing", "human");
-	assert.equal(second.boundaryHint?.from, "oauth");
-	assert.equal(second.boundaryHint?.to, "billing");
+	expect(second.boundaryHint?.from).toBe("oauth");
+	expect(second.boundaryHint?.to).toBe("billing");
 	clearActiveNotebookTopic(state);
-	assert.equal(state.activeNotebookTopic, null);
-	assert.equal(state.activeNotebookTopicSource, null);
-	assert.equal(state.pendingTopicBoundaryHint, null);
+	expect(state.activeNotebookTopic).toBe(null);
+	expect(state.activeNotebookTopicSource).toBe(null);
+	expect(state.pendingTopicBoundaryHint).toBe(null);
 });
 
 test("notebook_topic_set establishes a fresh topic, is idempotent, and refuses overrides", async () => {
@@ -29,16 +28,16 @@ test("notebook_topic_set establishes a fresh topic, is idempotent, and refuses o
 
 	const tool = pi.tools.get("notebook_topic_set");
 	const first = await tool.execute("1", { topic: "OAuth" });
-	assert.equal(first.details.topic, "oauth");
-	assert.equal(state.activeNotebookTopic, "oauth");
-	assert.equal(state.activeNotebookTopicSource, "agent");
+	expect(first.details.topic).toBe("oauth");
+	expect(state.activeNotebookTopic).toBe("oauth");
+	expect(state.activeNotebookTopicSource).toBe("agent");
 
 	const second = await tool.execute("2", { topic: "oauth" });
-	assert.equal(second.details.changed, false);
-	assert.equal(second.details.source, "agent");
-	assert.match(second.content[0].text, /already set to "oauth"/i);
+	expect(second.details.changed).toBe(false);
+	expect(second.details.source).toBe("agent");
+	expect(second.content[0].text).toMatch(/already set to "oauth"/i);
 
-	await assert.rejects(() => tool.execute("3", { topic: "billing" }), /already exists/);
+	await expect(tool.execute("3", { topic: "billing" })).rejects.toThrow(/already exists/);
 });
 
 
@@ -49,19 +48,13 @@ test("notebook_topic_set preserves human authority, stays idempotent for equal t
 
 	setActiveNotebookTopic(state, "oauth", "human");
 	const same = await tool.execute("1", { topic: "OAuth" });
-	assert.equal(same.details.changed, false);
-	assert.equal(same.details.source, "human");
-	assert.match(same.content[0].text, /already set to "oauth"/i);
-	await assert.rejects(
-		() => tool.execute("2", { topic: "billing" }),
-		/human-set notebook topic is authoritative/i,
-	);
+	expect(same.details.changed).toBe(false);
+	expect(same.details.source).toBe("human");
+	expect(same.content[0].text).toMatch(/already set to "oauth"/i);
+	await expect(tool.execute("2", { topic: "billing" })).rejects.toThrow(/human-set notebook topic is authoritative/i);
 
 	const freshState = createState();
 	const freshPi = await createTestHost((api) => registerNotebookTopicTool(api, freshState));
 	const freshTool = freshPi.tools.get("notebook_topic_set");
-	await assert.rejects(
-		() => freshTool.execute("3", { topic: "@@@" }),
-		/notebook topic cannot be empty/i,
-	);
+	await expect(freshTool.execute("3", { topic: "@@@" })).rejects.toThrow(/notebook topic cannot be empty/i);
 });
