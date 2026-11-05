@@ -1,6 +1,5 @@
 import { expect, test } from "vitest";
 import fc from "fast-check";
-import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -9,6 +8,7 @@ import {
 	formatZoneOffset,
 	hostZone,
 } from "../../time/format.js";
+import { spawnNode } from "./spawn-node.js";
 
 // Instants are built with Date.UTC throughout, so a run in any host zone
 // exercises the same instants — the tests never inherit the runner's wall clock.
@@ -200,11 +200,14 @@ test.skipIf(process.platform === "win32")("formatCurrentDate defaults to the hos
 	const script =
 		`import { formatCurrentDate, hostZone } from "./time/format.js"; ` +
 		`console.log(hostZone() + "|" + formatCurrentDate(new Date(${instant})));`;
-	const out = execFileSync(
-		process.execPath,
-		["--import", LOADER, "--input-type=module", "-e", script],
-		{ cwd: ROOT, env: { ...process.env, TZ: "America/New_York" }, encoding: "utf8", timeout: 10000 },
-	).trim();
+	const result = spawnNode(["--input-type=module", "-e", script], {
+		cwd: ROOT,
+		env: { TZ: "America/New_York" },
+		loader: LOADER,
+		timeoutMs: 10_000,
+	});
+	expect(result.status, result.stderr).toBe(0);
+	const out = result.stdout.trim();
 	const [zone, formatted] = out.split("|");
 	expect(zone, "pinned TZ must reach Intl as the host zone").toBe("America/New_York");
 	expect(formatted, "formatCurrentDate(instant) must resolve its default zone to the host zone").toMatch(/America\/New_York/);
