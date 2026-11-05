@@ -174,7 +174,7 @@ test("formatCurrentDatePrompt holds one date change and one offset flip across a
 		expect(dates[i] >= dates[i - 1], `date moved backwards at step ${i}: ${dates[i - 1]} → ${dates[i]}`).toBe(true);
 	}
 	const dateFlips = dates.filter((date, i) => i > 0 && date !== dates[i - 1]).length;
-	expect(dateFlips <= 1, `date changed more than once: ${[...new Set(dates)].join(", ")}`).toBe(true);
+	expect(dateFlips, `date changed more than once: ${[...new Set(dates)].join(", ")}`).toBeLessThanOrEqual(1);
 });
 
 // The offset must be instant-correct against Intl, so a DST flip can never

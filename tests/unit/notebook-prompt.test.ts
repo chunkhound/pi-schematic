@@ -7,13 +7,13 @@ test("frames the active topic with its source", () => {
 	state.activeNotebookTopic = "oauth";
 	state.activeNotebookTopicSource = "human";
 
-	expect(notebookTopicSection(state).render()!.includes("Current topic: `oauth` (human-set).")).toBe(true);
+	expect(notebookTopicSection(state).render()!).toContain("Current topic: `oauth` (human-set).");
 });
 
 test("asks for a topic when none is set", () => {
 	const state = createState();
 
-	expect(notebookTopicSection(state).render()!.includes("No active notebook topic is set.")).toBe(true);
+	expect(notebookTopicSection(state).render()!).toContain("No active notebook topic is set.");
 });
 
 test("labels a topic with an unknown source", () => {
@@ -21,7 +21,7 @@ test("labels a topic with an unknown source", () => {
 	state.activeNotebookTopic = "oauth";
 	state.activeNotebookTopicSource = null;
 
-	expect(notebookTopicSection(state).render()!.includes("(unknown-set)")).toBe(true);
+	expect(notebookTopicSection(state).render()!).toContain("(unknown-set)");
 });
 
 test("lists notebook pages sorted by name", () => {
@@ -40,8 +40,8 @@ test("lists only the first line of each page", () => {
 
 	const body = notebookPagesSection(state).render()!;
 
-	expect(body.includes("alpha: summary line")).toBe(true);
-	expect(!body.includes("second line")).toBe(true);
+	expect(body).toContain("alpha: summary line");
+	expect(body).not.toContain("second line");
 });
 
 test("truncates a page summary at 80 characters", () => {

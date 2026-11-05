@@ -338,9 +338,9 @@ test("Property 5: Epoch counter — set to 1 on first savePage", async () => {
 							// After first savePage, epoch transitions from 0 to 1
 							// After subsequent saves, epoch is unchanged (set once)
 							expect(
-								state.epoch > 0,
+								state.epoch,
 								`epoch must be > 0 after savePage, got ${state.epoch}`,
-							).toBe(true);
+							).toBeGreaterThan(0);
 							if (prevEpoch === 0) {
 								// First write: epoch transitions from 0 to 1
 								expect(state.epoch, "epoch must be 1 after first savePage").toBe(1);
@@ -461,9 +461,9 @@ test("Property 6: childSessionEpoch monotonicity (never decreases)", async () =>
 					for (const action of actions) {
 						await apply(state, action);
 						expect(
-							state.childSessionEpoch >= maxSeenEpoch,
+							state.childSessionEpoch,
 							`childSessionEpoch must never decrease: was ${maxSeenEpoch}, got ${state.childSessionEpoch}`,
-						).toBe(true);
+						).toBeGreaterThanOrEqual(maxSeenEpoch);
 						maxSeenEpoch = Math.max(maxSeenEpoch, state.childSessionEpoch);
 					}
 				},

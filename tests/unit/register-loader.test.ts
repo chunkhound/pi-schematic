@@ -33,10 +33,7 @@ test("register-loader errors when entry file does not exist", () => {
 
 		expect(result.status, "should exit non-zero for missing entry").not.toBe(0);
 		// Node.js always includes the path in ENOENT errors, so checking for "nonexistent" is sufficient
-		expect(
-			result.stderr.includes("nonexistent"),
-			"stderr should reference the missing file, got: " + result.stderr,
-		).toBe(true);
+		expect(result.stderr, "stderr should reference the missing file, got: " + result.stderr).toContain("nonexistent");
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}
@@ -78,7 +75,7 @@ test("register-loader resolves typebox exports from pi's dependency tree", () =>
 				`${specifier} should resolve from the same typebox package root`,
 			).toBe(true);
 		}
-		expect(subpathSpecifiers.length > 0).toBe(true);
+		expect(subpathSpecifiers.length).toBeGreaterThan(0);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}

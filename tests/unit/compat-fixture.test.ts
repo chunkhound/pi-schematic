@@ -65,8 +65,8 @@ test("parseNpmViewValue rejects non-JSON output, naming the command and keeping 
 	const stdout = "{not json";
 	expect(() => parseNpmViewValue(stdout)).toThrow(expect.toSatisfy((error: Error) => {
 		expect(error.message).toMatch(/npm view --json/);
-		expect(error.message.includes(JSON.stringify(stdout))).toBe(true);
-		expect(error.cause instanceof SyntaxError).toBe(true);
+		expect(error.message).toContain(JSON.stringify(stdout));
+		expect(error.cause).toBeInstanceOf(SyntaxError);
 		return true;
 	}));
 });
@@ -102,8 +102,8 @@ test("packEntry rejects non-JSON output, quoting it and keeping the parse error 
 	const stdout = "npm WARN not json";
 	expect(() => packEntry(stdout)).toThrow(expect.toSatisfy((error: Error) => {
 		expect(error.message).toMatch(/Unexpected npm pack --json output/);
-		expect(error.message.includes(JSON.stringify(stdout))).toBe(true);
-		expect(error.cause instanceof SyntaxError).toBe(true);
+		expect(error.message).toContain(JSON.stringify(stdout));
+		expect(error.cause).toBeInstanceOf(SyntaxError);
 		return true;
 	}));
 });
@@ -138,7 +138,7 @@ test("resolveLatestPi rejects when npm prints no latest version, without a TypeB
 	await withStubNpm("", "", async (temp, calls, options) => {
 		await expect(resolveLatestPi(temp, options)).rejects.toSatisfy((error: Error) => {
 			expect(error.message).toMatch(/did not declare a usable version/);
-			expect(error.message.includes(JSON.stringify(""))).toBe(true);
+			expect(error.message).toContain(JSON.stringify(""));
 			return true;
 		});
 		expect(calls().length).toBe(1);
@@ -150,7 +150,7 @@ test("resolveLatestPi rejects when npm resolves several latest versions, quoting
 	await withStubNpm(stdout, "", async (temp, calls, options) => {
 		await expect(resolveLatestPi(temp, options)).rejects.toSatisfy((error: Error) => {
 			expect(error.message).toMatch(/did not declare a usable version/);
-			expect(error.message.includes(JSON.stringify(stdout))).toBe(true);
+			expect(error.message).toContain(JSON.stringify(stdout));
 			return true;
 		});
 		expect(calls().length).toBe(1);
@@ -161,7 +161,7 @@ test("resolveLatestPi rejects when the resolved Pi version declares no TypeBox d
 	await withStubNpm('["1.2.0"]', "", async (temp, calls, options) => {
 		await expect(resolveLatestPi(temp, options)).rejects.toSatisfy((error: Error) => {
 			expect(error.message).toMatch(/Pi coding-agent 1\.2\.0 did not declare a usable TypeBox version/);
-			expect(error.message.includes(JSON.stringify(""))).toBe(true);
+			expect(error.message).toContain(JSON.stringify(""));
 			return true;
 		});
 		expect(calls().map((args) => args[1])).toStrictEqual([

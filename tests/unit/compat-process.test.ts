@@ -174,7 +174,7 @@ test("runChecked truncates oversized diagnostic output", () => {
 		}),
 	).toThrow(expect.toSatisfy((error: unknown) => {
 		expect(String(error)).toMatch(/\[truncated 808 chars\]/);
-		expect(String(error).includes(payload)).toBe(false);
+		expect(String(error)).not.toContain(payload);
 		return true;
 	}));
 });

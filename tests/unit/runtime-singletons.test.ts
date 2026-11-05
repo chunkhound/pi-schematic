@@ -34,7 +34,7 @@ test("__setSingletons warns and preserves lock + write context during in-flight 
 		});
 		const after = getSingletons();
 		const warnings = h.warnings.filter((entry) => entry.level === "warn");
-		expect(warnings.length > 0).toBe(true);
+		expect(warnings.length).toBeGreaterThan(0);
 		expect(String(warnings[0].args[0])).toMatch(/pending/);
 		expect(after.writeLock).toBe(before.writeLock);
 		expect(after.writeContext).toBe(before.writeContext);
@@ -72,8 +72,8 @@ test("write lock serializes concurrent writers and completes all", async () => {
 
 	// All writers completed in some order
 	expect(order.length).toBe(5);
-	expect(order.includes(0)).toBe(true);
-	expect(order.includes(4)).toBe(true);
+	expect(order).toContain(0);
+	expect(order).toContain(4);
 
 	// Order is deterministic (no concurrent completion — serialized by lock)
 	// If lock works, order is a strict permutation of [0,1,2,3,4]

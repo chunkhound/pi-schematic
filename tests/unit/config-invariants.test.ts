@@ -190,7 +190,7 @@ test("audit-ci config enforces the reviewed allowlist policy", () => {
 		expect(key).toMatch(/^GHSA-[a-z0-9-]+(?:\|[^|>]+(?:>[^|>]+)*)?$/);
 		expect(value.active).toBe(true);
 		expect(value.expiry).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-		expect(parseIsoDate(value.expiry) >= today, `expired allowlist entry: ${key}`).toBe(true);
+		expect(parseIsoDate(value.expiry), `expired allowlist entry: ${key}`).toBeGreaterThanOrEqual(today);
 		expect(value.notes.trim()).not.toBe("");
 	}
 });
@@ -200,8 +200,8 @@ test("workflow keeps the expected matrix and audit/test order", () => {
 	const packageJson = parsePackageJson();
 	expect(workflow).toMatch(/fail-fast:\s+false/);
 	expect(parseMatrixEntries(workflow)).toStrictEqual(EXPECTED_MATRIX);
-	expect(stepIndex(workflow, "Security audit") < stepIndex(workflow, "Unit tests")).toBe(true);
-	expect(stepIndex(workflow, "Unit tests") < stepIndex(workflow, "E2E tests")).toBe(true);
+	expect(stepIndex(workflow, "Security audit")).toBeLessThan(stepIndex(workflow, "Unit tests"));
+	expect(stepIndex(workflow, "Unit tests")).toBeLessThan(stepIndex(workflow, "E2E tests"));
 	expect(workflow).toMatch(/run: npx audit-ci --config audit-ci\.jsonc/);
 	expect(EXPECTED_MATRIX.has(`ubuntu-latest@${minimumNodeVersion(packageJson.engines.node)}`)).toBe(true);
 });
