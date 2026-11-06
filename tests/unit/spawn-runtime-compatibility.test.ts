@@ -7,6 +7,7 @@ import { Value } from "typebox/value";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, type SessionStats } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxProvider, type Usage } from "@earendil-works/pi-ai";
 import { createState } from "../../state.js";
+import { THINKING_LEVELS } from "../../thinking-levels.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
 import { createTestHost } from "./test-host.js";
 import { assertErrorResult, EMPTY_CHILD_USAGE, runRealChildInvocation } from "./helpers.js";
@@ -100,7 +101,7 @@ test("spawn schema accepts canonical thinking levels and rejects other values", 
 	const pi = await createTestHost((api) => registerSpawnTool(api, state));
 	const tool = pi.tools.get("spawn");
 	const thinkingSchema = JSON.parse(JSON.stringify(tool.parameters)).properties.thinking;
-	const supportedLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+	const supportedLevels = [...THINKING_LEVELS];
 	assert.equal(thinkingSchema.type, "string");
 	assert.deepEqual(thinkingSchema.enum, supportedLevels);
 	assert.doesNotMatch(JSON.stringify(thinkingSchema), /"(?:anyOf|const)"\s*:/);
