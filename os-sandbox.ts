@@ -7,7 +7,7 @@
  *   Linux  → bubblewrap (bwrap) if available
  *   Windows → not supported (returns command unchanged, classifyBashCommand applies)
  *
- * Both wrappers pass the command to `/bin/bash -c` inside the sandbox and add
+ * The wrappers pass the command to `/bin/bash -c` inside the sandbox and add
  * nothing else: the command sees the same stdin, returns the same exit code and
  * streams the same output bytes to the same stdout and stderr as unsandboxed,
  * apart from the writes the sandbox denies and these differences:
@@ -19,7 +19,11 @@
  *   - under bwrap, the command runs in its own namespaces and session
  *     (`--unshare-all`, `--new-session`), so it sees a separate PID namespace,
  *     and `--tmpfs /tmp` gives it an empty `/tmp` apart from the temp dir bound
- *     back in, and `--dev /dev` gives it bwrap's own minimal `/dev`.
+ *     back in, and `--dev /dev` gives it bwrap's own minimal `/dev`;
+ *   - the command travels as one quoted `-c` argument and each single quote in
+ *     it adds four bytes, so a command made largely of single quotes reaches
+ *     the OS limit for one argument (128 KiB on Linux) sooner than unsandboxed
+ *     and fails with E2BIG.
  * Neither wrapper prints a readonly notice; appendSandboxBlockNotice and
  * appendSandboxBlockNoticeToResult add it to a failed command's error text or
  * tool result.
@@ -175,7 +179,7 @@ export function quoteShellArgument(value: string): string {
 	return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
-/** Build the `/bin/bash -c <quoted command>` tail that both sandbox wrappers run. */
+/** Build the `/bin/bash -c <quoted command>` tail that the sandbox wrappers run. */
 function buildInnerBashInvocation(command: string): string {
 	return `/bin/bash -c ${quoteShellArgument(command)}`;
 }
