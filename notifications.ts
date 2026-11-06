@@ -11,8 +11,8 @@ import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 export const READONLY_BASH_SCOPE = "bash writes/deletions outside temp blocked";
 /** Scope of non-temporary mutations blocked while readonly is active. */
 export const READONLY_NON_TEMP_MUTATION_SCOPE = "write, edit, powershell, and non-temp bash filesystem mutations remain blocked";
-/** Message emitted when the OS sandbox rejects a readonly mutation. */
-export const READONLY_SANDBOX_BLOCK_NOTICE = "[readonly mode] The OS sandbox blocked a filesystem write outside the OS temp dir.\nUse /readonly to disable, or write within the OS temp dir.";
+/** Notice appended to a failed sandboxed command's result whose output shows the sandbox's denial phrase. */
+export const READONLY_SANDBOX_BLOCK_NOTICE = "[readonly mode] If this command failed on a write outside the OS temp dir, the OS sandbox blocked it.\nUse /readonly to disable, or write within the OS temp dir.";
 /** User-visible shorthand for an explicit handoff request. */
 export const READONLY_EXPLICIT_HANDOFF = "explicit /handoff";
 /** All supported ways to activate the temporary readonly handoff exception. */

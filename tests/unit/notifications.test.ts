@@ -7,14 +7,12 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { wrapWithBwrap, wrapWithSandboxExec } from "../../os-sandbox.js";
 import { applyReadonlyBashGuard, classifyBashCommand } from "../../readonly-bash.js";
 import { registerReadonlyPI } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
 import {
 	READONLY_BASH_SCOPE,
 	READONLY_NON_TEMP_MUTATION_SCOPE,
-	READONLY_SANDBOX_BLOCK_NOTICE,
 	READONLY_EXPLICIT_HANDOFF,
 	READONLY_HANDOFF_TRIGGER,
 	READONLY_NEXT_CONTEXT_RESUMES,
@@ -112,7 +110,7 @@ test("block reasons use 'Readonly mode:' prefix", () => {
 	assert.ok(buildReadonlyBashBlockReason("test", "cmd").startsWith("Readonly mode:"));
 });
 
-test("bash and sandbox consumers use centralized readonly copy", () => {
+test("bash guard uses centralized readonly block copy", () => {
 	const command = "touch /outside-temp-file";
 	const result = applyReadonlyBashGuard(command, process.cwd());
 	assert.equal(result.action, "block");
@@ -123,8 +121,6 @@ test("bash and sandbox consumers use centralized readonly copy", () => {
 			assert.equal(result.reason, buildReadonlyBashBlockReason(verdict.reason, command));
 		}
 	}
-	assert.ok(wrapWithSandboxExec("echo test").includes(READONLY_SANDBOX_BLOCK_NOTICE));
-	assert.ok(wrapWithBwrap("echo test").includes(READONLY_SANDBOX_BLOCK_NOTICE));
 });
 
 test("parent readonly tool-call consumer uses centralized block copy", async () => {
