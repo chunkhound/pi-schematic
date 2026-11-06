@@ -7,14 +7,19 @@
  *   Linux  → bubblewrap (bwrap) if available
  *   Windows → not supported (returns command unchanged, classifyBashCommand applies)
  *
+ * The wrappers only add the sandbox, so stdin, exit code and output pass
+ * through; the appendSandboxBlockNotice* helpers add the readonly notice.
+ *
  * This replaces the best-effort command-pattern matching in classifyBashCommand
  * with actual kernel-enforced file-write blocking.
  */
 
 import { execSync } from "node:child_process";
-import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+
+import type { JsonObject } from "@earendil-works/pi-ai";
+import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 
 import {
 	READONLY_SANDBOX_BLOCK_NOTICE,
@@ -121,8 +126,10 @@ export function buildMacProfile(tempDir: string): string {
 
 	// Collect unique paths — both canonical and unresolved (symlink) forms.
 	// Seatbelt subpath does NOT resolve symlinks, so we must include both.
-	// Also include /tmp and /private/tmp because bash (on macOS) creates
-	// heredoc temp files in /tmp regardless of $TMPDIR.
+	// Also include /tmp and /private/tmp because macOS system bash 3.2 ignores
+	// $TMPDIR for heredoc temp files: it tries /var/tmp, which stays denied,
+	// then falls back to /tmp. Newer bash honours $TMPDIR. Heredocs inside the
+	// user's own command need this fallback.
 	const writePaths = new Set<string>();
 	writePaths.add(canon);
 	if (original !== canon) writePaths.add(original);
@@ -150,59 +157,31 @@ export function buildMacProfile(tempDir: string): string {
 	return parts.join("");
 }
 
-/**
- * Generate a unique heredoc delimiter for wrapping commands.
- * Using a random suffix avoids accidental collision with command content.
- */
-function generateDelimiter(): string {
-	const suffix = crypto.randomBytes(4).toString("hex");
-	return `PI_SANDBOX_INNER_${suffix}`;
-}
-
 /** Quote a dynamic argument for the outer bash that launches the sandbox. */
 export function quoteShellArgument(value: string): string {
 	return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 /**
+ * Build the `"$0" -c <quoted command>` tail that the sandbox wrappers run. pi
+ * starts the outer shell as `<shell> -c <wrapped command>`, so `$0` is the
+ * shell path pi spawned; the outer shell expands it before the sandbox starts,
+ * and the command runs under the same shell as unsandboxed.
+ */
+function buildInnerBashInvocation(command: string): string {
+	return `"$0" -c ${quoteShellArgument(command)}`;
+}
+
+/**
  * Wrap a bash command with sandbox-exec on macOS.
  *
- * Uses a heredoc to pipe the original command verbatim (with all newlines
- * and special characters preserved) to an inner bash running under
- * sandbox-exec:
+ *   sandbox-exec -p '<profile>' "$0" -c '<command>'
  *
- *   sandbox-exec -p '<profile>' /bin/bash << 'DELIM'
- *   <original-command>
- *   DELIM
- *
- * The outer bash tool calls spawn(shell, ['-c', modifiedCommand]), so:
- *   /bin/bash -c "sandbox-exec -p '...' /bin/bash << 'DELIM'\n<cmd>\nDELIM"
- *
- * The heredoc preserves all original characters (multiline, quotes, pipes,
- * redirects) so the inner bash receives the exact original command.
- * All descendants inherit the sandbox restrictions.
+ * All descendants inherit the sandbox.
  */
 export function wrapWithSandboxExec(command: string): string {
 	const profile = buildMacProfile(getCanonicalTempDir());
-	const delim = generateDelimiter();
-	return `sandbox-exec -p '${profile}' /bin/bash << '${delim}'
-output=\$({
-:
-${command}
-} 2>&1)
-rc=\$?
-if [ \$rc -ne 0 ]; then
-  case "\$output" in
-    *"Operation not permitted"*|*"Permission denied"*|*"denying file-write"*)
-      echo ""
-      echo "${READONLY_SANDBOX_BLOCK_NOTICE}"
-      echo ""
-      ;;
-  esac
-fi
-[ -n "\$output" ] && echo "\$output"
-exit \$rc
-${delim}`;
+	return `sandbox-exec -p '${profile}' ${buildInnerBashInvocation(command)}`;
 }
 
 // ── Linux: bubblewrap ────────────────────────────────────────────
@@ -210,7 +189,7 @@ ${delim}`;
 /**
  * Wrap a bash command with bubblewrap on Linux.
  *
- * Uses the same heredoc approach as sandbox-exec for consistent behavior.
+ *   bwrap <flags> "$0" -c '<command>'
  *
  * --ro-bind / /  makes entire root read-only
  * --tmpfs /tmp   then mounts writable tmpfs at /tmp (overrides ro-bind)
@@ -221,7 +200,6 @@ ${delim}`;
  */
 export function wrapWithBwrap(command: string, tempDir: string = getCanonicalTempDir()): string {
 	const canon = resolveRealPath(tempDir);
-	const delim = generateDelimiter();
 	const flags = [
 		"--ro-bind / /",
 		"--tmpfs /tmp",
@@ -233,24 +211,75 @@ export function wrapWithBwrap(command: string, tempDir: string = getCanonicalTem
 		"--die-with-parent",
 		"--new-session",
 	];
-	return `bwrap ${flags.join(" ")} /bin/bash << '${delim}'
-output=\$({
-:
-${command}
-} 2>&1)
-rc=\$?
-if [ \$rc -ne 0 ]; then
-  case "\$output" in
-    *"Operation not permitted"*|*"Permission denied"*|*"denying file-write"*)
-      echo ""
-      echo "${READONLY_SANDBOX_BLOCK_NOTICE}"
-      echo ""
-      ;;
-  esac
-fi
-[ -n "\$output" ] && echo "\$output"
-exit \$rc
-${delim}`;
+	return `bwrap ${flags.join(" ")} ${buildInnerBashInvocation(command)}`;
+}
+
+// ── Block notice ─────────────────────────────────────────────────
+
+/** Lowercase denial phrase each platform's sandbox puts in a blocked write's error. */
+const SANDBOX_DENIAL_PHRASES: Partial<Record<NodeJS.Platform, string>> = {
+	darwin: "operation not permitted",
+	linux: "read-only file system",
+};
+
+const SANDBOX_BLOCK_NOTICE_SUFFIX = `\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`;
+
+function containsSandboxDenial(text: string, platform: NodeJS.Platform): boolean {
+	const phrase = SANDBOX_DENIAL_PHRASES[platform];
+	return phrase !== undefined && text.toLowerCase().includes(phrase);
+}
+
+/**
+ * Return `text` with the readonly block notice appended as its own paragraph
+ * when it contains the platform's sandbox denial phrase (case-insensitive), or
+ * `undefined` when it does not. Matching keys only on the platform's denial
+ * phrase (platforms without an entry, such as win32, never match), so callers
+ * apply it only to calls they sandboxed.
+ */
+export function appendSandboxBlockNotice(text: string, platform: NodeJS.Platform = process.platform): string | undefined {
+	return containsSandboxDenial(text, platform) ? text + SANDBOX_BLOCK_NOTICE_SUFFIX : undefined;
+}
+
+/**
+ * Return a failed tool result's `content` and `structuredContent` with the
+ * readonly block notice appended, or `undefined` unless `isError` is true and
+ * the platform's denial phrase occurs in a text block or in a string
+ * `structuredContent.output`.
+ *
+ * The notice is appended to the last text block's text (or added as a new
+ * text block when there is none) and to a string `structuredContent.output`;
+ * every other field is kept. The input is not mutated, and `isError` is not
+ * part of the return.
+ */
+export function appendSandboxBlockNoticeToResult(
+	result: Pick<AgentToolResult, "content" | "structuredContent" | "isError">,
+	platform: NodeJS.Platform = process.platform,
+): Pick<AgentToolResult, "content" | "structuredContent"> | undefined {
+	if (result.isError !== true) return undefined;
+
+	const structured = result.structuredContent;
+	const structuredObject = typeof structured === "object" && structured !== null && !Array.isArray(structured)
+		? structured as JsonObject
+		: undefined;
+	const output = typeof structuredObject?.output === "string" ? structuredObject.output : undefined;
+	const matched = result.content.some((block) => block.type === "text" && containsSandboxDenial(block.text, platform))
+		|| (output !== undefined && containsSandboxDenial(output, platform));
+	if (!matched) return undefined;
+
+	let lastTextIndex = -1;
+	result.content.forEach((block, index) => {
+		if (block.type === "text") lastTextIndex = index;
+	});
+	const content = lastTextIndex === -1
+		? [...result.content, { type: "text" as const, text: READONLY_SANDBOX_BLOCK_NOTICE }]
+		: result.content.map((block, index) =>
+			index === lastTextIndex && block.type === "text"
+				? { ...block, text: block.text + SANDBOX_BLOCK_NOTICE_SUFFIX }
+				: block);
+	const structuredContent = output === undefined
+		? structured
+		: { ...structuredObject, output: output + SANDBOX_BLOCK_NOTICE_SUFFIX };
+	return { content, structuredContent };
 }
 
 // ── Unified dispatch ─────────────────────────────────────────────
@@ -262,8 +291,8 @@ ${delim}`;
  * On Linux: wraps with bubblewrap if available.
  * On other platforms / when unavailable: returns command unchanged.
  *
- * The returned command must be passed to /bin/bash -c (or equivalent) for
- * execution — the shell tool handles this automatically.
+ * The returned command must run as `<shell> -c <command>`, as pi's bash tool
+ * runs it, because the inner shell is the outer shell's `$0`.
  */
 export function wrapCommandWithOsSandbox(command: string): string {
 	const platform = process.platform;

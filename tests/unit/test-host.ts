@@ -25,11 +25,11 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { DefaultResourceLoader, ExtensionRunner, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { mkdtempSync, rmSync } from "node:fs";
-import { findPackageJSON } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import registerSchematic from "../../index.js";
+import { piManifestPath } from "../../pi-packages.mjs";
 
 // `ThinkingLevel` is not re-exported from the package root; derive it from the
 // api surface so the harness stays pinned to whatever Pi exposes.
@@ -39,17 +39,12 @@ type ThinkingLevel = ReturnType<ExtensionAPI["getThinkingLevel"]>;
 // expected path + fix when Pi reorganizes it, instead of an opaque import error.
 async function importInternal<T>(relativePath: string, exportNames: readonly string[]): Promise<T> {
 	const guidance = "This host pins Pi's internal dist layout; update tests/unit/test-host.ts for the installed Pi version.";
-	let url: string;
+	const url = pathToFileURL(join(dirname(piManifestPath), "dist", relativePath)).href;
 	let mod: Record<string, unknown>;
 	try {
-		const manifestPath = findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url);
-		if (manifestPath === undefined) {
-			throw new Error("Cannot find the installed pi package.json from tests/unit/test-host.ts.");
-		}
-		url = pathToFileURL(join(dirname(manifestPath), "dist", relativePath)).href;
 		mod = (await import(url)) as Record<string, unknown>;
 	} catch (cause) {
-		throw new Error(`The test host could not load pi's internal module ${relativePath}. ${guidance}`, { cause });
+		throw new Error(`The test host could not load pi's internal module at ${url}. ${guidance}`, { cause });
 	}
 	for (const exportName of exportNames) {
 		if (typeof mod[exportName] !== "function") {

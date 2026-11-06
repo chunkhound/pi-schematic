@@ -7,12 +7,11 @@
  * source of truth instead of a duplicated list that drifts on every edit.
  */
 
-import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import test from "node:test";
+import { expect, test } from "vitest";
+import { assertPresent } from "../assertions.js";
+import { REPO_ROOT_URL } from "../paths.js";
 
-const REPO_ROOT_URL = new URL("../../", import.meta.url);
 const PACKAGE_JSON_URL = new URL("package.json", REPO_ROOT_URL);
 const README_URL = new URL("README.md", REPO_ROOT_URL);
 
@@ -41,7 +40,7 @@ function assetText(asset: string): string {
 function pathFills(svg: string): string[] {
 	return [...svg.matchAll(/<path\b[^>]*>/g)].map(([path]) => {
 		const fill = path.match(/\bfill="([^"]+)"/)?.[1];
-		assert.ok(fill, `path missing fill: ${path}`);
+		assertPresent(fill, `path missing fill: ${path}`);
 		return fill;
 	});
 }
@@ -49,9 +48,9 @@ function pathFills(svg: string): string[] {
 function piImage(): { url: string; repoPath: string } {
 	const packageJson = JSON.parse(readText(PACKAGE_JSON_URL)) as { pi?: { image?: string } };
 	const url = packageJson.pi?.image;
-	assert.ok(url, "pi.image must be set for the pi.dev gallery");
+	assertPresent(url, "pi.image must be set for the pi.dev gallery");
 	const path = url.match(PI_IMAGE_PATTERN)?.groups?.path;
-	assert.ok(path, `pi.image must be a raw main-branch brand asset URL: ${url}`);
+	assertPresent(path, `pi.image must be a raw main-branch brand asset URL: ${url}`);
 	return { url, repoPath: path };
 }
 
@@ -78,36 +77,45 @@ function markCells(svg: string): Set<string> {
 
 test("pi.image resolves to an existing brand asset", () => {
 	const { repoPath: target } = piImage();
-	assert.ok(existsSync(repoPath(target)), `missing pi.image target: ${target}`);
+	expect(existsSync(repoPath(target)), `missing pi.image target: ${target}`).toBeTruthy();
 });
 
 test("the gallery image is a 360x360 GIF89a", () => {
 	const { repoPath: target } = piImage();
 	const gif = readFileSync(repoPath(target));
-	assert.equal(gif.toString("ascii", 0, 6), "GIF89a");
-	assert.equal(gif.readUInt16LE(6), 360);
-	assert.equal(gif.readUInt16LE(8), 360);
+	expect(gif.toString("ascii", 0, 6)).toBe("GIF89a");
+	expect(gif.readUInt16LE(6)).toBe(360);
+	expect(gif.readUInt16LE(8)).toBe(360);
 });
 
 test("README hero references the same asset as pi.image", () => {
 	const { url } = piImage();
-	assert.ok(readText(README_URL).includes(url), "README hero must use the absolute pi.image URL");
+	expect(readText(README_URL), "README hero must use the absolute pi.image URL").toContain(url);
 });
 
 test("every local asset referenced by README exists", () => {
-	for (const [, ref] of readText(README_URL).matchAll(/(?:src="|\]\()(assets\/[^")\s]+)/g)) {
-		assert.ok(existsSync(repoPath(ref)), `missing README asset: ${ref}`);
+	const readme = readText(README_URL);
+	// Relative links for readers in the repository; absolute raw URLs for npm,
+	// which renders the README from the published tarball where relative paths
+	// cannot resolve.
+	const refs = [
+		...readme.matchAll(/(?:src="|\]\()(assets\/[^")\s]+)/g),
+		...readme.matchAll(/https:\/\/raw\.githubusercontent\.com\/chunkhound\/pi-schematic\/main\/(assets\/[^")\s]+)/g),
+	].map((match) => match[1]);
+	expect(refs.length, "README references no assets").toBeGreaterThan(0);
+	for (const ref of refs) {
+		expect(existsSync(repoPath(ref)), `missing README asset: ${ref}`).toBeTruthy();
 	}
 });
 
 test("the static and monochrome marks use their intended fills", () => {
-	assert.deepStrictEqual(pathFills(assetText("logo.svg")).sort(), [...PALETTE].sort());
-	assert.deepStrictEqual(pathFills(assetText("logo-mono.svg")), ["currentColor"]);
+	expect(pathFills(assetText("logo.svg")).sort()).toStrictEqual([...PALETTE].sort());
+	expect(pathFills(assetText("logo-mono.svg"))).toStrictEqual(["currentColor"]);
 });
 
 test("the S silhouette is identical across the three SVGs", () => {
 	const logo = markCells(assetText("logo.svg"));
-	assert.ok(logo.size > 0, "no grid cells parsed from logo.svg");
-	assert.deepStrictEqual(markCells(assetText("logo-mono.svg")), logo);
-	assert.deepStrictEqual(markCells(assetText("logo-animated.svg")), logo);
+	expect(logo.size, "no grid cells parsed from logo.svg").toBeGreaterThan(0);
+	expect(markCells(assetText("logo-mono.svg"))).toStrictEqual(logo);
+	expect(markCells(assetText("logo-animated.svg"))).toStrictEqual(logo);
 });

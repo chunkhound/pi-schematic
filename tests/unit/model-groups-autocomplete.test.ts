@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
+import type { AutocompleteProviderFactory } from "@earendil-works/pi-coding-agent";
 import { createModelGroupAutocompleteProvider, registerModelGroupAutocomplete } from "../../model-groups/autocomplete.js";
 import { createState } from "../../state.js";
-import type { ResolvedModelGroup } from "../../model-groups/types.js";
 import { group } from "./model-groups-helpers.js";
 
 function suggestOptions() {
@@ -118,8 +118,8 @@ test("#group autocomplete prepends colored effective modal letters when a colori
 
 test("registerModelGroupAutocomplete uses ctx.ui.addAutocompleteProvider once", () => {
 	const state = createState();
-	const providers: any[] = [];
-	const ctx = { hasUI: true, ui: { addAutocompleteProvider: (factory: any) => providers.push(factory) } };
+	const providers: AutocompleteProviderFactory[] = [];
+	const ctx = { hasUI: true, ui: { addAutocompleteProvider: (factory: AutocompleteProviderFactory) => providers.push(factory) } };
 	registerModelGroupAutocomplete(ctx as any, state);
 	registerModelGroupAutocomplete(ctx as any, state);
 	assert.equal(providers.length, 1);

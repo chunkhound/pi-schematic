@@ -18,7 +18,7 @@ import type {
 	ToolDefinition,
 	ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import { StringEnum, type AssistantMessage, type ModelThinkingLevel, type TextContent, type Usage } from "@earendil-works/pi-ai";
+import { type AssistantMessage, type ModelThinkingLevel, type TextContent, type Usage } from "@earendil-works/pi-ai";
 import {
 	READONLY_CHILD_AUTHORITY_NOTE,
 	READONLY_NO_SHELL_SUMMARY,
@@ -40,6 +40,7 @@ import { resolveSpawnModelRoute } from "../model-groups/router.js";
 import { productionConstraintRegistry, type ConstraintRegistry } from "../model-groups/constraints/registry.js";
 import { MODEL_GROUP_MODALITY_PROSE } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
+import { appendSandboxBlockNotice, appendSandboxBlockNoticeToResult } from "../os-sandbox.js";
 import { HANDOFF_TOOL_NAME } from "../handoff/tool.js";
 import { THINKING_LEVELS } from "../thinking-levels.js";
 import {
@@ -278,23 +279,48 @@ export function filterReadonlyToolNames(toolNames: string[], readonlyEnabled: bo
  * Falls back to classifyBashCommand command-pattern inspection when no OS sandbox
  * is available (Windows). The fallback blocks filesystem writes/deletions outside
  * the OS temp dir using the same logic as the parent's tool_call hook.
+ *
+ * Appends the readonly block notice to a sandboxed call's failed result or
+ * error message when it carries the platform's sandbox denial phrase.
  */
-function createReadonlyChildBashTool(
+export function createReadonlyChildBashTool(
 	cwd: string,
 ) {
-	const bashTool = createBashToolDefinition(cwd, {
+	const buildBashTool = (record: { sandboxed: boolean }) => createBashToolDefinition(cwd, {
 		spawnHook: (spawnContext) => {
-			const result = applyReadonlyBashGuard(spawnContext.command, cwd);
+			const result = applyReadonlyBashGuard(spawnContext.command, spawnContext.cwd);
 			if (result.action === "block") {
 				throw new Error(result.reason);
 			}
 			if (result.action === "sandbox") {
 				spawnContext.command = result.sandboxedCommand;
+				record.sandboxed = true;
 			}
 			return spawnContext;
 		},
 	});
-	return defineTool(bashTool);
+	const bashTool = createBashToolDefinition(cwd);
+	return defineTool({
+		...bashTool,
+		// A definition per execution: parallel child bash calls would otherwise
+		// share one `sandboxed` flag.
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const record = { sandboxed: false };
+			let result: Awaited<ReturnType<typeof bashTool.execute>>;
+			try {
+				result = await buildBashTool(record).execute(toolCallId, params, signal, onUpdate, ctx);
+			} catch (error) {
+				if (record.sandboxed && error instanceof Error) {
+					const message = appendSandboxBlockNotice(error.message);
+					if (message !== undefined) error.message = message;
+				}
+				throw error;
+			}
+			if (!record.sandboxed) return result;
+			const noticed = appendSandboxBlockNoticeToResult(result);
+			return noticed === undefined ? result : { ...result, ...noticed };
+		},
+	});
 }
 
 
@@ -333,13 +359,13 @@ export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
 		constraints: Type.Optional(Type.Object(Object.fromEntries(constraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])) as any, {
 			description: `Capability requirements for the delegated task — a JSON object keyed by constraint name, not a JSON string and not an array. Keys: ${constraintRegistry.descriptors.map((descriptor) => descriptor.key).join(", ")} — each value must match its key's schema; unknown keys or invalid values are rejected before a child is created.`,
 		})),
-		thinking: Type.Optional(StringEnum(
-			THINKING_LEVELS,
-			{
-				description:
-					"Override child thinking level. A routed Model Group entry may override it.",
-			},
-		)),
+		// A plain string enum rather than a union of literals, because some providers reject anyOf/const schemas.
+		thinking: Type.Optional(Type.Unsafe<ModelThinkingLevel>({
+			type: "string",
+			enum: THINKING_LEVELS,
+			description:
+				"Override child thinking level. A routed Model Group entry may override it.",
+		})),
 	});
 }
 

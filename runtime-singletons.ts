@@ -20,8 +20,6 @@ export interface RuntimeFrameScheduler {
 	cancelDirty(component: unknown): void;
 	flushNow(): void;
 	clear(): void;
-	/** Marker property to identify the default noop scheduler. */
-	[NOOP_SCHEDULER_MARKER]?: true;
 }
 
 export interface RuntimeWriteLock {
@@ -44,16 +42,12 @@ export function createWriteLock(): RuntimeWriteLock {
 
 // ── Pre‑init defaults (overwritten by spawn/renderer.ts at import time) ──
 
-/** Sentinel tag to identify the default noop scheduler. */
-const NOOP_SCHEDULER_MARKER = Symbol("no-op-scheduler");
-
 function createNoopScheduler(): RuntimeFrameScheduler {
 	return {
 		markDirty: () => {},
 		cancelDirty: () => {},
 		flushNow: () => {},
 		clear: () => {},
-		[NOOP_SCHEDULER_MARKER]: true,
 	};
 }
 
@@ -96,9 +90,4 @@ export function __setSingletons(
 /** Read the current singleton container. */
 export function getSingletons(): RuntimeSingletons {
 	return current;
-}
-
-/** True when scheduler is the pre-init noop — see createTestHarness() safety check. */
-export function isNoopScheduler(scheduler: RuntimeFrameScheduler): boolean {
-	return NOOP_SCHEDULER_MARKER in scheduler;
 }

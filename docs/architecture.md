@@ -9,8 +9,9 @@ pi-schematic is a Pi extension. It registers tools and hooks into the agent life
 | `before_agent_start` | Resolves deferred readonly frontmatter, refreshes Model Groups, then writes schematic's prompt sections, including a per-run current-date anchor (see **Prompt sections** and **Date anchor** under Behavioral notes) |
 | `context` | Advisory watchdog reminders when context is elevated; a handoff nudge before every LLM call while a requested handoff is pending; readonly toggle nudges |
 | `input` | Resolves model-selection frontmatter during idle input; blocks it during streaming; queues readonly resolution |
-| `tool_call` | Refuses every `handoff` call after the first in a message of only `handoff` calls, `handoff` calls that share an assistant message with other tool calls (the other calls go to their own handlers), and `handoff` calls after a failed cut in the same run (an error result, the call does not run), before any readonly check; readonly then blocks write/edit/powershell/unguarded bash and blocks handoff unless a requested bypass is active |
-| `session_start` | Reconstructs notebook pages/epoch/watermark from the active branch, rehydrates readonly state; loads and validates Model Groups, registers group autocomplete, reports config issues, and resets session state on `/new` |
+| `tool_call` | Refuses every `handoff` call after the first in a message of only `handoff` calls, `handoff` calls that share an assistant message with other tool calls (the other calls go to their own handlers), and `handoff` calls after a failed cut in the same run (an error result, the call does not run), before any readonly check; readonly then blocks write/edit/powershell/unguarded bash and blocks handoff unless a requested bypass is active; records the ids of the bash calls it rewrites into the OS sandbox |
+| `tool_result` | Appends the readonly block notice to the failed result of a bash call that `tool_call` sandboxed when it carries the platform's denial phrase, and drops the call's id |
+| `session_start` | Reconstructs notebook pages/epoch/watermark from the active branch, rehydrates readonly state; loads and validates Model Groups, registers group autocomplete, reports config issues, and resets session state on `/new`; clears the sandboxed bash call ids on every start |
 | `session_tree` | Invalidates branch-local handoff work (a handoff staged on the abandoned branch is dropped), reconstructs notebook pages/epoch/watermark from the newly active branch, rehydrates readonly state, refreshes indicators |
 | `message_end` | Records which `handoff` calls of an assistant message to refuse (every one when other tool calls share the message, all but the first otherwise), for `tool_call` |
 | `turn_end` | Returns a staged handoff as one boundary of drafts and asks Pi to continue the run (see **Handoff**); also updates TUI indicators (context %, notebook count, topic, readonly) |
@@ -114,9 +115,25 @@ A failed model change visibly blocks command expansion and records no success en
 
 | Platform | Enforcement |
 |---|---|
-| **macOS** | OS sandbox via `sandbox-exec` (Seatbelt) — kernel denies file writes outside the OS temp dir; classifier is secondary |
+| **macOS** | OS sandbox via `sandbox-exec` (Seatbelt) — kernel denies file writes outside the OS temp dir, `/tmp`, `/private/tmp` and `/dev/null`; classifier is secondary. The classifier accepts file writes only under the OS temp dir and to `/dev/null`, so it blocks `/tmp` writes the profile allows when the two differ (#129) |
 | **Linux** | OS sandbox via `bwrap` when available — read-only root + writable temp; classifier is secondary. Without `bwrap`, classifier only |
 | **Windows** | **No OS / syscall-level sandbox.** `canUseOsSandbox()` is always false. Only the shell-command **classifier** runs — best-effort pattern matching. Known gaps: interpreter one-liners (`node -e`, `python -c`, …), piped indirection (`xargs`, etc.). **Not true write protection.** |
+
+**Readonly sandbox differences.** A sandboxed bash command runs as `<shell> -c <wrapped command>`, and the wrapper starts the sandbox with `"$0" -c <command>`. The command then sees the same stdin, exit code and output as an unsandboxed run. Apart from the writes the sandbox denies, it differs in these ways:
+
+- **Shell:** the command runs under the shell pi started, because the outer shell expands `$0` to that shell's path.
+- **Command prefix:** pi's `shellCommandPrefix` runs in the outer shell before the sandbox starts. Shell options, functions, aliases and unexported variables it sets do not reach the command, and its own writes are not sandboxed (#127).
+- **Startup files:** when pi's shell is bash, `BASH_ENV` is read twice. The outer shell reads it outside the sandbox, the inner shell inside.
+- **`SHLVL`:** the command sees a value one higher than unsandboxed.
+- **Readonly children:** their bash tool applies neither `shellPath` nor `shellCommandPrefix`, so child commands run under pi's default shell, `/bin/bash` where it exists (#125).
+- **macOS:** the sandbox denies writes to `/dev/stdout`, `/dev/stderr` and `/dev/fd/N` (#126). The classifier blocks redirects to these paths on every platform.
+- **Linux namespaces:** `bwrap --unshare-all` gives the command its own mount, PID, IPC and UTS namespaces. It adds user and cgroup namespaces where the kernel allows them. `--share-net` keeps the network shared.
+- **Linux session:** `--new-session` starts the command in a new session.
+- **Linux `/tmp`:** `/tmp` is a fresh tmpfs, and the OS temp dir is bound writable at its own path. Other writes under `/tmp` land in the tmpfs and are discarded when the call ends. When the temp dir is `/tmp` itself (`TMPDIR` unset), the command sees the real `/tmp`.
+- **Linux `/dev`:** `--dev /dev` mounts a new, minimal `/dev`.
+- **Argument size:** the wrapped command is one shell argument. It adds the sandbox setup and four bytes per single quote in the command. A command near the per-argument limit (128 KiB on Linux) therefore fails sooner than unsandboxed.
+
+**Readonly block notice.** The notice on a failed sandboxed bash call is a hint taken from the command's output, not a record of denials. A command can print the denial phrase without a denial, or hide a real one by discarding its error output. A denial in the middle of more than 1 MiB of output is missed. pi keeps only its first and last 512 KiB in `structuredContent.output`, and at most the last 50 KB in the text.
 
 Coding-agent guardrail on every OS — not a hardened security boundary. Strongest on macOS/Linux with sandbox binaries present; weakest on Windows. UI-oriented toggle; state rehydrates on resume.
 

@@ -6,7 +6,6 @@ import {
 	__setSingletons,
 	createWriteLock,
 	getSingletons,
-	isNoopScheduler,
 } from "../../runtime-singletons.js";
 
 test("createTestHarness swaps singleton state atomically and restores it on teardown", () => {
@@ -24,32 +23,29 @@ test("createTestHarness swaps singleton state atomically and restores it on tear
 
 test("__setSingletons warns and preserves lock + write context during in-flight writes", () => {
 	// Use harness to isolate the test's singleton manipulation
+	const outer = getSingletons();
 	const h = createTestHarness();
+	const before = getSingletons();
 	try {
-		const warnings: string[] = [];
-		const originalWarn = console.warn;
-		console.warn = (msg: string) => {
-			warnings.push(msg);
-		};
-		try {
-			const before = getSingletons();
-			before.writeLock.pending = 1; // simulate in-flight write on test singleton
-			__setSingletons({
-				writeLock: createWriteLock(),
-				writeContext: new AsyncLocalStorage<true>(),
-				frameScheduler: before.frameScheduler,
-			});
-			const after = getSingletons();
-			assert.ok(warnings.length > 0);
-			assert.match(warnings[0], /pending/);
-			assert.equal(after.writeLock, before.writeLock);
-			assert.equal(after.writeContext, before.writeContext);
-		} finally {
-			console.warn = originalWarn;
-		}
+		before.writeLock.pending = 1; // simulate in-flight write on test singleton
+		__setSingletons({
+			writeLock: createWriteLock(),
+			writeContext: new AsyncLocalStorage<true>(),
+			frameScheduler: before.frameScheduler,
+		});
+		const after = getSingletons();
+		const warnings = h.warnings.filter((entry) => entry.level === "warn");
+		assert.ok(warnings.length > 0);
+		assert.match(String(warnings[0].args[0]), /pending/);
+		assert.equal(after.writeLock, before.writeLock);
+		assert.equal(after.writeContext, before.writeContext);
 	} finally {
+		// Settle the simulated write, as a finished write would, so teardown
+		// can restore the previous singletons instead of preserving this lock.
+		before.writeLock.pending = 0;
 		h.teardown();
 	}
+	assert.equal(getSingletons(), outer);
 });
 
 test("write lock serializes concurrent writers and completes all", async () => {
@@ -85,17 +81,5 @@ test("write lock serializes concurrent writers and completes all", async () => {
 	const sorted = [...order].sort((a, b) => a - b);
 	assert.deepEqual(order, sorted, "lock must serialize writers — no concurrent completion");
 
-	h.teardown();
-});
-
-test("isNoopScheduler returns false for SpawnFrameScheduler", () => {
-	// The noop scheduler is created at module init but overwritten by
-	// spawn/renderer.ts at import time — so the global singleton always
-	// holds a real scheduler. The true path (returns true) is exercised by
-	// the import-order guard in createTestHarness() — see test-utils.ts.
-	assert.equal(isNoopScheduler(getSingletons().frameScheduler), false);
-
-	const h = createTestHarness();
-	assert.equal(isNoopScheduler(getSingletons().frameScheduler), false);
 	h.teardown();
 });

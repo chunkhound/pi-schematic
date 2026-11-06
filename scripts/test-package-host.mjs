@@ -26,23 +26,23 @@ async function main() {
       type: "module",
       dependencies: {
         ...latestPiDependencies(latestPi),
-        "pi-schematic": `file:${tarball}`,
+        "@chunkhound/pi-schematic": `file:${tarball}`,
       },
     }, null, 2)}\n`);
     await runNpmWithRetry(host, ["install", "--ignore-scripts"]);
-    const graph = JSON.parse((await runNpmWithRetry(host, ["ls", "--json", "pi-schematic",
+    const graph = JSON.parse((await runNpmWithRetry(host, ["ls", "--json", "@chunkhound/pi-schematic",
       "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"], { capture: true })).stdout);
-    const extension = graph.dependencies?.["pi-schematic"];
+    const extension = graph.dependencies?.["@chunkhound/pi-schematic"];
     if (!extension) throw new Error("Packed extension is missing from host graph");
     for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"]) {
-      const nested = join(host, "node_modules", "pi-schematic", "node_modules", ...name.split("/"), "package.json");
+      const nested = join(host, "node_modules", "@chunkhound", "pi-schematic", "node_modules", ...name.split("/"), "package.json");
       if (existsSync(nested)) throw new Error(`Packed extension owns nested peer ${name}`);
     }
 
     writeFileSync(join(host, "smoke.mjs"), `
 import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
-const extensionPath = join(process.cwd(), "node_modules", "pi-schematic", "index.ts");
+const extensionPath = join(process.cwd(), "node_modules", "@chunkhound", "pi-schematic", "index.ts");
 const loader = new DefaultResourceLoader({
   cwd: process.cwd(),
   agentDir: join(process.cwd(), "agent"),

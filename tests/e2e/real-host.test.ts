@@ -6,7 +6,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
+import os from "node:os";
 import { join, resolve } from "node:path";
 import type { CompactionEntry, CustomMessageEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
@@ -28,8 +29,10 @@ import {
 	READONLY_ACTIVE_SUMMARY,
 	READONLY_HANDOFF_BLOCK_REASON,
 	READONLY_HANDOFF_EXCEPTION_SUMMARY,
+	READONLY_SANDBOX_BLOCK_NOTICE,
 	READONLY_WRITE_EDIT_BLOCK_REASON,
 } from "../../notifications.js";
+import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { buildNudge, MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
 import {
@@ -622,6 +625,24 @@ describe("pi-schematic real-host E2E", () => {
 		assert.equal(write.isError, true, "write stays blocked");
 		assert.equal(write.text, READONLY_WRITE_EDIT_BLOCK_REASON);
 		assert.equal(existsSync(blocked), false, "blocked write left no file");
+	}));
+
+	it("readonly sandboxed bash write outside temp fails with the readonly block notice", { ...TEST_OPTIONS, skip: !canUseOsSandbox() }, async (t) => withRealHost(t, async (host) => {
+		// The harness HOME and project live under the OS temp dir, which the sandbox lets writes into,
+		// so the target sits under the real home directory of the test process instead.
+		const target = join(os.homedir(), `pi-schematic-e2e-readonly-${process.pid}-${Date.now()}`);
+		t.after(() => rmSync(target, { force: true }));
+		const script = `require("fs").writeFileSync(${JSON.stringify(target)}, "x")`;
+		await host.command("/readonly");
+		await host.script([{ name: "bash", arguments: { command: `${quoteShellArgument(process.execPath)} -e ${quoteShellArgument(script)}` } }], 1);
+
+		const { entries } = await host.entries();
+		const bash = onlyResult(toolResults(entries, "bash"), "bash");
+		assert.equal(bash.isError, true, "the write fails");
+		assert.ok(bash.text.endsWith(READONLY_SANDBOX_BLOCK_NOTICE), bash.text);
+		const probed = onlyResult(host.probeLog().filter((record) => record.kind === "bashResult"), "probed bash");
+		assert.ok(probed.structuredOutput?.endsWith(READONLY_SANDBOX_BLOCK_NOTICE), String(probed.structuredOutput));
+		assert.equal(existsSync(target), false, "the sandbox blocked the write");
 	}));
 
 	it("readonly topic boundary enables the handoff bypass on the next context hook", TEST_OPTIONS, async (t) => withRealHost(t, async (host) => {
