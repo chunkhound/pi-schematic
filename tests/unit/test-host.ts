@@ -304,6 +304,8 @@ async function loadExtensions(
 	await loader.reload();
 	const { extensions, errors, runtime } = loader.getExtensions();
 	// Tool and flag conflicts count too: pi's loader keeps both extensions, but the pi CLI exits on any load error.
+	// pi keeps only the message of a factory's error, and reports a thrown non-Error value as "failed to load
+	// extension". The original value is not captured: the message names the failing extension, which is enough.
 	if (errors.length > 0) {
 		throw new Error(`pi reported extension load errors:\n${errors.map((e) => `${e.path}: ${e.error}`).join("\n")}`);
 	}
