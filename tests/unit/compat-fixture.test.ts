@@ -76,11 +76,11 @@ test("parseNpmViewValue rejects non-JSON output, naming the command and keeping 
 	);
 });
 
-const packEntryFixture = { filename: "pi-schematic-1.0.0.tgz" };
+const packEntryFixture = { filename: "chunkhound-pi-schematic-1.0.0.tgz" };
 
 const packEntryAccepted: Array<[string, unknown]> = [
 	["a one-element array", [packEntryFixture]],
-	["an object keyed by package name", { "pi-schematic": packEntryFixture }],
+	["an object keyed by package name", { "@chunkhound/pi-schematic": packEntryFixture }],
 ];
 
 for (const [shape, packJson] of packEntryAccepted) {

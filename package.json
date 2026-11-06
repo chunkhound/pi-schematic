@@ -1,6 +1,7 @@
 {
-  "name": "pi-schematic",
-  "version": "0.6.0",
+  "name": "@chunkhound/pi-schematic",
+  "publishConfig": { "access": "public" },
+  "version": "0.7.0",
   "type": "module",
   "description": "Context management primitives for the pi coding agent — spawn, notebook, handoff",
   "license": "MIT",
@@ -11,6 +12,22 @@
     "type": "git",
     "url": "git+https://github.com/chunkhound/pi-schematic.git"
   },
+  "homepage": "https://github.com/chunkhound/pi-schematic#readme",
+  "bugs": "https://github.com/chunkhound/pi-schematic/issues",
+  "author": {
+    "name": "ChunkHound",
+    "url": "https://github.com/chunkhound"
+  },
+  "files": [
+    "/*.ts",
+    "!/vitest.config.ts",
+    "handoff/",
+    "model-groups/",
+    "notebook/",
+    "spawn/",
+    "time/",
+    "CHANGELOG.md"
+  ],
   "engines": {
     "node": ">=22.19.0"
   },

@@ -1,13 +1,13 @@
 <p align="center">
-  <a href="https://pi.dev/packages/pi-schematic">
+  <a href="https://pi.dev/packages/@chunkhound/pi-schematic">
     <img src="https://raw.githubusercontent.com/chunkhound/pi-schematic/main/assets/logo-animated.gif" alt="pi-schematic" width="180">
   </a>
 </p>
 
 # pi-schematic
 
-[![pi.dev package](https://img.shields.io/badge/pi.dev-package-purple)](https://pi.dev/packages/pi-schematic)
-[![npm version](https://img.shields.io/npm/v/pi-schematic?logo=npm)](https://www.npmjs.com/package/pi-schematic)
+[![pi.dev package](https://img.shields.io/badge/pi.dev-package-purple)](https://pi.dev/packages/@chunkhound/pi-schematic)
+[![npm version](https://img.shields.io/npm/v/@chunkhound/pi-schematic?logo=npm)](https://www.npmjs.com/package/@chunkhound/pi-schematic)
 [![CI](https://github.com/chunkhound/pi-schematic/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/chunkhound/pi-schematic/actions/workflows/test.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -20,7 +20,7 @@
 Requires [Pi](https://pi.dev) 0.99.2 or later and Node.js 22.19.0 or later.
 
 ```bash
-pi install npm:pi-schematic
+pi install npm:@chunkhound/pi-schematic
 ```
 
 To let **handoff** own deliberate restarts, disable Pi's built-in compaction in `~/.pi/agent/settings.json` (or in `settings.json` inside the directory `PI_CODING_AGENT_DIR` names):
@@ -166,7 +166,7 @@ Toggle it with `/readonly`, `Ctrl+Shift+R`, `--readonly`, or workflow frontmatte
 - [Architecture and exact lifecycle behavior](docs/architecture.md)
 - [Changelog](CHANGELOG.md)
 - [Questions, bugs, and feature requests](https://github.com/chunkhound/pi-schematic/issues)
-- [Pi package page](https://pi.dev/packages/pi-schematic)
+- [Pi package page](https://pi.dev/packages/@chunkhound/pi-schematic)
 - [Agentic Coding](https://agenticoding.ai) — companion methodology
 
 ## Contributing
