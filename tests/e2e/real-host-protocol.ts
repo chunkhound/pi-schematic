@@ -88,7 +88,8 @@ export type ProbeRecord =
 	| { kind: "request"; step: number; calls: ScriptedStep[] | null; texts: string[] }
 	| { kind: "compact"; entryId: string }
 	| { kind: "cut"; handoffId: string; dropped: boolean }
-	| { kind: "tools"; names: string[] };
+	| { kind: "tools"; names: string[] }
+	| { kind: "bashResult"; toolCallId: string; isError: boolean; text: string; structuredOutput: string | null };
 
 /**
  * Outcome of `/e2e-barrier <id> <deadlineMs>`: `failure` is null once nothing is outstanding,
@@ -209,6 +210,19 @@ export function parseProbeRecord(line: string): ProbeRecord {
 			};
 		case "tools":
 			return { kind: "tools", names: requireStringArray(parsed, "names", line) };
+		case "bashResult": {
+			const { structuredOutput } = parsed;
+			if (structuredOutput !== null && typeof structuredOutput !== "string") {
+				malformed(line, `structuredOutput is neither a string nor null: ${JSON.stringify(structuredOutput)}`);
+			}
+			return {
+				kind: "bashResult",
+				toolCallId: requireString(parsed, "toolCallId", line),
+				isError: requireBoolean(parsed, "isError", line),
+				text: requireString(parsed, "text", line),
+				structuredOutput,
+			};
+		}
 		default:
 			throw new Error(`Probe log line has an unknown kind ${JSON.stringify(parsed.kind)}: ${line}`);
 	}

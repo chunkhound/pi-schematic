@@ -13,7 +13,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder, isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, isBashToolResult, isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
 	type SelectItem,
@@ -107,6 +107,7 @@ import {
 	updateIndicators,
 } from "./tui.js";
 import { applyReadonlyBashGuard } from "./readonly-bash.js";
+import { appendSandboxBlockNoticeToResult } from "./os-sandbox.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -580,8 +581,18 @@ export default function (pi: ExtensionAPI): void {
 				// Mutate input.command in-place — SDK has no transform return type.
 				// Other tool_call hooks will see the sandbox-wrapped command.
 				event.input.command = result.sandboxedCommand;
+				state.sandboxedBashCallIds.add(event.toolCallId);
 			}
 		}
+	});
+
+	// The sandbox wrapper passes the command's output through unchanged, so the
+	// block is reported here, on the failed result of a sandboxed call.
+	pi.on("tool_result", async (event) => {
+		if (!isBashToolResult(event)) return;
+		const wasSandboxed = state.sandboxedBashCallIds.delete(event.toolCallId);
+		if (!wasSandboxed) return;
+		return appendSandboxBlockNoticeToResult(event);
 	});
 
 	// ── Preflight model-selection frontmatter before slash-command expansion ──
@@ -895,6 +906,8 @@ export default function (pi: ExtensionAPI): void {
 
 	// ── session_start: reset state + readonly rehydration + indicators ──
 	pi.on("session_start", async (event, ctx: ExtensionContext) => {
+		// Every start, not only "new": resetState below runs only for /new.
+		state.sandboxedBashCallIds.clear();
 		if (event.reason === "new") {
 			resetState(state);
 			// Clear any stale TUI indicators from the previous session

@@ -172,6 +172,11 @@ export interface SchematicState {
 	 */
 	lastWatchdogBand: number | null;
 
+	/**
+	 * Bash calls tool_call sandboxed, removed on their tool_result. An id whose
+	 * result never arrives lasts until the next session_start clears the set.
+	 */
+	sandboxedBashCallIds: Set<string>;
 }
 
 /** Create a fresh state instance. Call reset() on /new. */
@@ -209,6 +214,7 @@ export function createState(): SchematicState {
 		frontmatterPromptIssues,
 		pendingReadonlyCommands: [],
 		lastWatchdogBand: null,
+		sandboxedBashCallIds: new Set(),
 	};
 	// Prevent replacement — spawn lifecycle code and renderer ownership checks
 	// depend on stable map identity. Only .clear() and .delete() are valid —
@@ -250,6 +256,7 @@ export function resetState(state: SchematicState): void {
 	state.frontmatterSkillIssues.clear();
 	state.frontmatterPromptIssues.clear();
 	state.pendingReadonlyCommands.length = 0;
+	state.sandboxedBashCallIds.clear();
 	abortAndClearChildSessions(state);
 }
 

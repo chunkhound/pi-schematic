@@ -247,6 +247,18 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	});
 
 	pi.on("tool_execution_end", async (event, ctx) => {
+		// The final bash result, after every tool_result handler; the session entry drops structuredContent.
+		if (event.toolName === "bash") {
+			const structured: unknown = event.result.structuredContent;
+			const output = typeof structured === "object" && structured !== null && "output" in structured ? structured.output : undefined;
+			log({
+				kind: "bashResult",
+				toolCallId: event.toolCallId,
+				isError: event.isError,
+				text: messageText(event.result.content),
+				structuredOutput: typeof output === "string" ? output : null,
+			});
+		}
 		// A handoff call that returned without error has staged a cut for its turn_end.
 		if (event.toolName !== "handoff" || event.isError) return;
 		handoffCallsAwaitingBoundary.push(event.toolCallId);
