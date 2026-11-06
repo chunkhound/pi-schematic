@@ -6,6 +6,7 @@ import path from "node:path";
 import { registerReadonlyPI, makeReadonlyUICtx } from "./helpers.js";
 import type { ToolCall } from "./helpers.js";
 import type { TestPI } from "./test-host.js";
+import { applyReadonlyBashGuard, classifyBashCommand } from "../../readonly-bash.js";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -379,4 +380,40 @@ test("blocks nested wrapper sudo+env+xargs", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 	await assertBlocked(toolCall, "sudo env xargs rm /etc/passwd");
+});
+
+// WHY: only node's payload treats `=>` as an arrow function, not an assignment redirect.
+test("node arrows are allowed as non-redirects", () => {
+	assert.deepEqual(classifyBashCommand("node -e 'const f = () => 1; console.log(f())'", "/"), { ok: true });
+	assert.deepEqual(classifyBashCommand('node -e "const f = () => 1; console.log(f())"', "/"), { ok: true });
+});
+
+// WHY: shell payloads are real shell syntax, so `=>` there is a write redirect.
+test("shell -c payloads keep `=>` as a write redirect", () => {
+	assert.equal(classifyBashCommand('bash -c "echo a=>/etc/pwned"', "/").ok, false);
+	assert.equal(classifyBashCommand('sh -c "echo a=>/etc/pwned"', "/").ok, false);
+	assert.equal(classifyBashCommand('zsh -c "echo a=>/etc/pwned"', "/").ok, false);
+});
+
+test("a real write redirect outside temp stays blocked", () => {
+	assert.equal(applyReadonlyBashGuard("echo hi > /Users/ofri/blocked-out.txt", "/").action, "block");
+});
+
+// WHY: only node gets arrow leniency; every other interpreter keeps real redirect semantics.
+test("spaced arrows are allowed only in node payloads", () => {
+	assert.deepEqual(classifyBashCommand("node -e 'const f = (x) => x + 1'", "/"), { ok: true });
+	assert.deepEqual(classifyBashCommand("node -e 'const f = x => x + 1'", "/"), { ok: true });
+});
+
+// WHY: perl qx() and ruby %x() produce command output, so a following `=>` is a hash-rocket
+// write redirect, not an arrow; the old shell-interpreter set wrongly exempted them (C5).
+test("hash-rocket in non-node interpreter payloads stays blocked", () => {
+	assert.equal(classifyBashCommand('perl -e "print qx(echo hi)=> /etc/pwned"', "/").ok, false);
+	assert.equal(classifyBashCommand('ruby -e "print %x(echo hi)=> /etc/pwned"', "/").ok, false);
+	assert.equal(classifyBashCommand('python3 -c "y = 1 => /etc/pwned"', "/").ok, false);
+});
+
+test("arrow leniency is interpreter-scoped: a top-level assignment redirect stays blocked", () => {
+	// `a=>/etc/x` is `a=` plus a real redirect; only a node payload treats `=>` as an arrow.
+	assert.equal(applyReadonlyBashGuard("a=>/etc/pi-guard-probe", "/").action, "block");
 });
