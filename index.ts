@@ -13,7 +13,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder, isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, isBashToolResult, isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
 	type SelectItem,
@@ -595,7 +595,7 @@ export default function (pi: ExtensionAPI): void {
 	// The sandbox wrapper passes the command's output through unchanged, so the
 	// block is reported here, on the failed result of a sandboxed call.
 	pi.on("tool_result", async (event) => {
-		if (event.toolName !== "bash" || !sandboxedBashCallIds.delete(event.toolCallId)) return;
+		if (!isBashToolResult(event) || !sandboxedBashCallIds.delete(event.toolCallId)) return;
 		return appendSandboxBlockNoticeToResult(event);
 	});
 

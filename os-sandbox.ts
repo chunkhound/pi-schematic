@@ -7,23 +7,10 @@
  *   Linux  → bubblewrap (bwrap) if available
  *   Windows → not supported (returns command unchanged, classifyBashCommand applies)
  *
- * The wrappers pass the command to `/bin/bash -c` inside the sandbox and add
- * nothing else: the command sees the same stdin, returns the same exit code and
- * streams the same output bytes to the same stdout and stderr as unsandboxed,
- * apart from the writes the sandbox denies and these differences:
- *   - the inner shell is always `/bin/bash`, whatever shell pi is configured
- *     to use;
- *   - under bwrap, a command killed by signal N reports exit code 128+N rather
- *     than a signal, because bwrap exits with that code instead of re-raising
- *     the signal;
- *   - under bwrap, the command runs in its own namespaces and session
- *     (`--unshare-all`, `--new-session`), so it sees a separate PID namespace,
- *     and `--tmpfs /tmp` gives it an empty `/tmp` apart from the temp dir bound
- *     back in, and `--dev /dev` gives it bwrap's own minimal `/dev`;
- *   - the command travels as one quoted `-c` argument and each single quote in
- *     it adds four bytes, so a command made largely of single quotes reaches
- *     the OS limit for one argument (128 KiB on Linux) sooner than unsandboxed
- *     and fails with E2BIG.
+ * The wrappers pass the command to bash `-c` as one argument and add nothing
+ * else, no heredoc and no redirect, so the command reads the caller's stdin and
+ * its exit code and output bytes reach pi untouched. README's "Compatibility
+ * and limits" section lists what still differs from an unsandboxed run.
  * Neither wrapper prints a readonly notice; appendSandboxBlockNotice and
  * appendSandboxBlockNoticeToResult add it to a failed command's error text or
  * tool result.
@@ -179,15 +166,21 @@ export function quoteShellArgument(value: string): string {
 	return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
-/** Build the `/bin/bash -c <quoted command>` tail that the sandbox wrappers run. */
+/**
+ * Build the `"${BASH:-/bin/bash}" -c <quoted command>` tail that the sandbox
+ * wrappers run. The outer shell expands `$BASH` to its own path before the
+ * sandbox starts, so the command runs under the same shell as unsandboxed
+ * whenever that shell is bash (macOS `/bin/sh` included), and under
+ * `/bin/bash` otherwise.
+ */
 function buildInnerBashInvocation(command: string): string {
-	return `/bin/bash -c ${quoteShellArgument(command)}`;
+	return `"\${BASH:-/bin/bash}" -c ${quoteShellArgument(command)}`;
 }
 
 /**
  * Wrap a bash command with sandbox-exec on macOS.
  *
- *   sandbox-exec -p '<profile>' /bin/bash -c '<command>'
+ *   sandbox-exec -p '<profile>' "${BASH:-/bin/bash}" -c '<command>'
  *
  * All descendants inherit the sandbox.
  */
@@ -201,7 +194,7 @@ export function wrapWithSandboxExec(command: string): string {
 /**
  * Wrap a bash command with bubblewrap on Linux.
  *
- *   bwrap <flags> /bin/bash -c '<command>'
+ *   bwrap <flags> "${BASH:-/bin/bash}" -c '<command>'
  *
  * --ro-bind / /  makes entire root read-only
  * --tmpfs /tmp   then mounts writable tmpfs at /tmp (overrides ro-bind)
@@ -244,7 +237,9 @@ function containsSandboxDenial(text: string, platform: NodeJS.Platform): boolean
 /**
  * Return `text` with the readonly block notice appended as its own paragraph
  * when it contains the platform's sandbox denial phrase (case-insensitive), or
- * `undefined` when it does not. Platforms without a sandbox never match.
+ * `undefined` when it does not. Matching keys only on the platform's denial
+ * phrase (platforms without an entry, such as win32, never match), so callers
+ * apply it only to calls they sandboxed.
  */
 export function appendSandboxBlockNotice(text: string, platform: NodeJS.Platform = process.platform): string | undefined {
 	return containsSandboxDenial(text, platform) ? text + SANDBOX_BLOCK_NOTICE_SUFFIX : undefined;

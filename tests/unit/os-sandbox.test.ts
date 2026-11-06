@@ -16,6 +16,7 @@ import {
 } from "../../os-sandbox.js";
 import { READONLY_SANDBOX_BLOCK_NOTICE } from "../../notifications.js";
 import { resolveRealPath } from "../../resolve-path.js";
+import { bashResult, SANDBOX_DENIAL_PHRASES } from "./helpers.js";
 
 const NOTICE_SUFFIX = `\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`;
 
@@ -29,15 +30,6 @@ function hasPosixShell(): boolean {
 	}
 }
 
-/** Build a result shaped like pi's bash tool result for a command that exited with code 1. */
-function bashResult(output: string, isError = true) {
-	return {
-		content: [{ type: "text" as const, text: `${output}\n\nCommand exited with code 1` }],
-		structuredContent: { output, truncated: false, exit_code: 1, wall_time_seconds: 0.1 },
-		isError,
-	};
-}
-
 interface RunResult {
 	stdout: Buffer;
 	stderr: Buffer;
@@ -45,68 +37,71 @@ interface RunResult {
 	signal: NodeJS.Signals | null;
 }
 
-/** Run a command the way pi's bash tool spawns it: `/bin/bash -c`, stdin at /dev/null, separate pipes. */
-function runLikePi(command: string): Promise<RunResult> {
-	return new Promise((resolve, reject) => {
-		const child = spawn("/bin/bash", ["-c", command], { stdio: ["ignore", "pipe", "pipe"] });
-		const stdout: Buffer[] = [];
-		const stderr: Buffer[] = [];
-		child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-		child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-		child.on("error", reject);
-		child.on("close", (code, signal) => {
-			resolve({ stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), code, signal });
-		});
-	});
-}
-
-interface StreamTiming {
-	firstStdoutAt: number;
+interface Run extends RunResult {
+	firstStdoutAt: number | undefined;
 	closedAt: number;
 }
 
-/** Run a command like `runLikePi` and record when the first stdout chunk and the close event arrive. */
-function runLikePiTimed(command: string): Promise<StreamTiming> {
+/**
+ * Run a command the way pi's bash tool spawns it: `<shell> -c`, stdin at
+ * /dev/null, separate pipes, its own process group. Records when the first
+ * stdout chunk and the close event arrive.
+ */
+function runLikePi(command: string, shell = "/bin/bash"): Promise<Run> {
 	return new Promise((resolve, reject) => {
-		const child = spawn("/bin/bash", ["-c", command], { stdio: ["ignore", "pipe", "ignore"] });
+		const child = spawn(shell, ["-c", command], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+		const stdout: Buffer[] = [];
+		const stderr: Buffer[] = [];
 		let firstStdoutAt: number | undefined;
-		child.stdout.on("data", () => {
+		child.stdout.on("data", (chunk: Buffer) => {
 			firstStdoutAt ??= performance.now();
+			stdout.push(chunk);
 		});
+		child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
 		child.on("error", reject);
-		child.on("close", () => {
-			const closedAt = performance.now();
-			if (firstStdoutAt === undefined) {
-				reject(new Error("command wrote no stdout"));
-				return;
-			}
-			resolve({ firstStdoutAt, closedAt });
+		child.on("close", (code, signal) => {
+			resolve({ stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), code, signal, firstStdoutAt, closedAt: performance.now() });
 		});
 	});
 }
 
+/** Run `command` like pi and assert that it exits 0. */
+async function runLikePiOk(command: string): Promise<Run> {
+	const run = await runLikePi(command);
+	assert.equal(run.code, 0, run.stderr.toString());
+	return run;
+}
+
+function outcome({ stdout, stderr, code, signal }: Run): RunResult {
+	return { stdout, stderr, code, signal };
+}
+
 async function runSandboxedAndPlain(command: string): Promise<{ sandboxed: RunResult; plain: RunResult }> {
-	return { sandboxed: await runLikePi(wrapCommandWithOsSandbox(command)), plain: await runLikePi(command) };
+	return { sandboxed: outcome(await runLikePi(wrapCommandWithOsSandbox(command))), plain: outcome(await runLikePi(command)) };
 }
 
 const sandboxRuntime = { skip: !canUseOsSandbox(), timeout: 20_000 };
 
 /** A blocked write's error on the current host, or `undefined` on a platform without a sandbox. */
-const HOST_DENIAL_OUTPUT: string | undefined = ({
-	darwin: "bash: /outside: Operation not permitted",
-	linux: "bash: /outside: Read-only file system",
-} as Partial<Record<NodeJS.Platform, string>>)[process.platform];
-const BOTH_DENIAL_PHRASES = "Operation not permitted; Read-only file system";
+const HOST_DENIAL_PHRASE = SANDBOX_DENIAL_PHRASES[process.platform];
+const HOST_DENIAL_OUTPUT = HOST_DENIAL_PHRASE === undefined ? undefined : `bash: /outside: ${HOST_DENIAL_PHRASE}`;
+/** Every platform's denial phrase except the current host's, so it never matches by default. */
+const OTHER_DENIAL_OUTPUT = `bash: /outside: ${Object.entries(SANDBOX_DENIAL_PHRASES)
+	.filter(([platform]) => platform !== process.platform)
+	.map(([, phrase]) => phrase)
+	.join("; ")}`;
 
 // ── Block notice ────────────────────────────────────────────────
 
+// A row without a platform uses the default, the current host.
 for (const { platform, output } of [
 	{ platform: "darwin", output: "bash: /outside: Operation not permitted" },
 	{ platform: "darwin", output: "Error: EPERM: operation not permitted, open '/outside'" },
 	{ platform: "linux", output: "bash: /outside: Read-only file system" },
 	{ platform: "linux", output: "Error: EROFS: read-only file system, open '/outside'" },
-] as const) {
-	test(`appends the block notice to a failed ${platform} result reporting "${output}"`, () => {
+	...(HOST_DENIAL_OUTPUT === undefined ? [] : [{ platform: undefined, output: HOST_DENIAL_OUTPUT }]),
+] as { platform?: NodeJS.Platform; output: string }[]) {
+	test(`appends the block notice to a failed ${platform ?? "current-platform"} result reporting "${output}"`, () => {
 		const result = bashResult(output);
 
 		const noticed = appendSandboxBlockNoticeToResult(result, platform);
@@ -124,9 +119,9 @@ for (const { name, platform, output, isError } of [
 	{ name: "the linux phrase on darwin", platform: "darwin", output: "bash: /outside: Read-only file system", isError: true },
 	{ name: "the darwin phrase on linux", platform: "linux", output: "bash: /outside: Operation not permitted", isError: true },
 	{ name: "a successful result with the darwin phrase", platform: "darwin", output: "bash: /outside: Operation not permitted", isError: false },
-	{ name: "the darwin phrase on win32", platform: "win32", output: "bash: /outside: Operation not permitted", isError: true },
-	{ name: "the linux phrase on win32", platform: "win32", output: "bash: /outside: Read-only file system", isError: true },
-] as const) {
+	{ name: "both phrases on win32", platform: "win32", output: "bash: /outside: Operation not permitted; Read-only file system", isError: true },
+	{ name: "another platform's phrase on the current platform", platform: undefined, output: OTHER_DENIAL_OUTPUT, isError: true },
+] as { name: string; platform?: NodeJS.Platform; output: string; isError: boolean }[]) {
 	test(`appends no block notice for ${name}`, () => {
 		assert.equal(appendSandboxBlockNoticeToResult(bashResult(output, isError), platform), undefined);
 	});
@@ -191,24 +186,14 @@ test("block notice adds a text block when the phrase is only in the structured o
 	});
 });
 
-test("block notice on a result defaults to the current platform", { skip: HOST_DENIAL_OUTPUT === undefined }, () => {
-	const output = HOST_DENIAL_OUTPUT ?? "";
-
-	const noticed = appendSandboxBlockNoticeToResult(bashResult(output));
-
-	assert.deepEqual(noticed?.structuredContent, { output: `${output}${NOTICE_SUFFIX}`, truncated: false, exit_code: 1, wall_time_seconds: 0.1 });
-});
-
-test("block notice on a result appends nothing by default on a platform without a sandbox", { skip: HOST_DENIAL_OUTPUT !== undefined }, () => {
-	assert.equal(appendSandboxBlockNoticeToResult(bashResult(BOTH_DENIAL_PHRASES)), undefined);
-});
-
 for (const { name, structuredContent } of [
 	{ name: "an array", structuredContent: ["bash: /outside: Operation not permitted"] },
 	{ name: "a string", structuredContent: "bash: /outside: Operation not permitted" },
 	{ name: "a number", structuredContent: 1 },
 ]) {
 	test(`block notice keeps ${name} structured content as it is`, () => {
+		const before = structuredClone(structuredContent);
+
 		const noticed = appendSandboxBlockNoticeToResult({
 			content: [{ type: "text", text: "bash: /outside: Operation not permitted" }],
 			structuredContent,
@@ -217,43 +202,37 @@ for (const { name, structuredContent } of [
 
 		assert.deepEqual(noticed?.content, [{ type: "text", text: `bash: /outside: Operation not permitted${NOTICE_SUFFIX}` }]);
 		assert.equal(noticed?.structuredContent, structuredContent);
-		assert.deepEqual(noticed?.structuredContent, structuredClone(structuredContent));
+		assert.deepEqual(noticed?.structuredContent, before);
 	});
 }
 
-test("text block notice appends the notice to text with the platform phrase", () => {
-	const message = "Error: EROFS: read-only file system, open '/outside'";
-
-	assert.equal(appendSandboxBlockNotice(message, "linux"), `${message}${NOTICE_SUFFIX}`);
-});
+// A row without a platform uses the default, the current host.
+for (const { platform, message } of [
+	{ platform: "linux", message: "Error: EROFS: read-only file system, open '/outside'" },
+	...(HOST_DENIAL_OUTPUT === undefined ? [] : [{ platform: undefined, message: HOST_DENIAL_OUTPUT }]),
+] as { platform?: NodeJS.Platform; message: string }[]) {
+	test(`text block notice appends the notice on ${platform ?? "the current platform"} to "${message}"`, () => {
+		assert.equal(appendSandboxBlockNotice(message, platform), `${message}${NOTICE_SUFFIX}`);
+	});
+}
 
 for (const { name, platform, message } of [
 	{ name: "Permission denied", platform: "darwin", message: "bash: /outside: Permission denied" },
 	{ name: "the other platform's phrase", platform: "linux", message: "Error: EPERM: operation not permitted" },
-	{ name: "win32", platform: "win32", message: "Error: EPERM: operation not permitted" },
-] as const) {
+	{ name: "another platform's phrase on the current platform", platform: undefined, message: OTHER_DENIAL_OUTPUT },
+] as { name: string; platform?: NodeJS.Platform; message: string }[]) {
 	test(`text block notice appends nothing for ${name}`, () => {
 		assert.equal(appendSandboxBlockNotice(message, platform), undefined);
 	});
 }
 
-test("text block notice defaults to the current platform", { skip: HOST_DENIAL_OUTPUT === undefined }, () => {
-	const message = HOST_DENIAL_OUTPUT ?? "";
-
-	assert.equal(appendSandboxBlockNotice(message), `${message}${NOTICE_SUFFIX}`);
-});
-
-test("text block notice appends nothing by default on a platform without a sandbox", { skip: HOST_DENIAL_OUTPUT !== undefined }, () => {
-	assert.equal(appendSandboxBlockNotice(BOTH_DENIAL_PHRASES), undefined);
-});
-
 // ── Wrapper shape ───────────────────────────────────────────────
 
-test("sandbox wrappers pass the command to bash -c as one quoted argument and add nothing else", () => {
+test("sandbox wrappers pass the command to the outer shell's bash -c as one quoted argument and add nothing else", () => {
 	const command = `printf '%s\\n' "it's quoted"\necho second line`;
 
 	for (const wrapped of [wrapWithSandboxExec(command), wrapWithBwrap(command)]) {
-		assert.ok(wrapped.endsWith(` /bin/bash -c ${quoteShellArgument(command)}`), wrapped);
+		assert.ok(wrapped.endsWith(` "\${BASH:-/bin/bash}" -c ${quoteShellArgument(command)}`), wrapped);
 		assert.equal(wrapped.includes("<<"), false, wrapped);
 		assert.equal(wrapped.includes(READONLY_SANDBOX_BLOCK_NOTICE), false, wrapped);
 		assert.equal(wrapped.includes("2>&1"), false, wrapped);
@@ -278,15 +257,11 @@ test("quotes dynamic Linux sandbox paths for the outer shell", () => {
 	assert.equal(wrapped.includes(`--bind "${canonicalPath}" "${canonicalPath}"`), false);
 });
 
-test("bwrap executes a quoted bind path without shell injection", { skip: process.platform !== "linux" || !canUseOsSandbox() }, () => {
+test("bwrap executes a quoted bind path without shell injection", { skip: process.platform !== "linux" || !canUseOsSandbox() }, async () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-quote'-"));
 	const target = path.join(dir, "result.txt");
 	try {
-		execFileSync(
-			"/bin/bash",
-			["-c", wrapWithBwrap(`printf wrapped > ${quoteShellArgument(target)}`, dir)],
-			{ encoding: "utf8", timeout: 5000 },
-		);
+		await runLikePiOk(wrapWithBwrap(`printf wrapped > ${quoteShellArgument(target)}`, dir));
 		assert.equal(fs.readFileSync(target, "utf8"), "wrapped");
 	} finally {
 		try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
@@ -333,14 +308,29 @@ for (const { name, write } of [
 	});
 }
 
-test("sandbox allows writes inside temp", sandboxRuntime, () => {
+test("sandbox allows writes inside temp", sandboxRuntime, async () => {
 	const insideDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-sandbox-"));
 	const insidePath = path.join(insideDir, "inside.txt");
 	try {
-		execFileSync("/bin/bash", ["-c", wrapCommandWithOsSandbox(`echo allowed > "${insidePath}"`)], { encoding: "utf8", timeout: 5000 });
+		await runLikePiOk(wrapCommandWithOsSandbox(`echo allowed > "${insidePath}"`));
 		assert.equal(fs.readFileSync(insidePath, "utf8").trim(), "allowed", "sandbox should allow temp writes");
 	} finally {
 		try { fs.rmSync(insideDir, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
+	}
+});
+
+test("sandboxed command runs under the bash that launched the sandbox", sandboxRuntime, async () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-bash-"));
+	const linkedBash = path.join(dir, "bash");
+	try {
+		fs.symlinkSync("/bin/bash", linkedBash);
+
+		const run = await runLikePi(wrapCommandWithOsSandbox('echo "$BASH"'), linkedBash);
+
+		assert.equal(run.code, 0, run.stderr.toString());
+		assert.equal(run.stdout.toString(), `${linkedBash}\n`);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
 	}
 });
 
@@ -385,9 +375,10 @@ test("sandboxed trailing backslash prints as unsandboxed", sandboxRuntime, async
 });
 
 test("sandboxed output streams while the command runs", sandboxRuntime, async () => {
-	const timing = await runLikePiTimed(wrapCommandWithOsSandbox("printf first; sleep 3; printf second"));
+	const run = await runLikePi(wrapCommandWithOsSandbox("printf first; sleep 3; printf second"));
 
-	assert.ok(timing.closedAt - timing.firstStdoutAt >= 1000, JSON.stringify(timing));
+	assert.ok(run.firstStdoutAt !== undefined, "command wrote no stdout");
+	assert.ok(run.closedAt - run.firstStdoutAt >= 1000, JSON.stringify({ firstStdoutAt: run.firstStdoutAt, closedAt: run.closedAt }));
 });
 
 test("sandboxed stray closing brace is the same syntax error as unsandboxed", sandboxRuntime, async () => {
@@ -398,12 +389,12 @@ test("sandboxed stray closing brace is the same syntax error as unsandboxed", sa
 	assert.deepEqual(sandboxed.stdout, plain.stdout);
 });
 
-test("sandbox allows writes to /dev/null", sandboxRuntime, () => {
+test("sandbox allows writes to /dev/null", sandboxRuntime, async () => {
 	// CONTRACT: /dev/null redirects are always allowed (not a real write)
-	execFileSync("/bin/bash", ["-c", wrapCommandWithOsSandbox('echo discard > /dev/null')], { encoding: "utf8", timeout: 5000 });
+	await runLikePiOk(wrapCommandWithOsSandbox("echo discard > /dev/null"));
 });
 
-test("sandbox allows writes through a symlinked temp path", sandboxRuntime, () => {
+test("sandbox allows writes through a symlinked temp path", sandboxRuntime, async () => {
 	const realDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-real-"));
 	const linkDir = path.join(os.tmpdir(), `pi-readonly-link-${Date.now()}`);
 	try {
@@ -411,7 +402,7 @@ test("sandbox allows writes through a symlinked temp path", sandboxRuntime, () =
 		fs.symlinkSync(realDir, linkDir);
 		const insidePath = path.join(linkDir, "via-symlink.txt");
 
-		execFileSync("/bin/bash", ["-c", wrapCommandWithOsSandbox(`echo symlink-works > "${insidePath}"`)], { encoding: "utf8", timeout: 5000 });
+		await runLikePiOk(wrapCommandWithOsSandbox(`echo symlink-works > "${insidePath}"`));
 		assert.equal(fs.readFileSync(insidePath, "utf8").trim(), "symlink-works", "sandbox should allow writes through symlinks to temp");
 	} finally {
 		try { fs.rmSync(linkDir, { force: true }); } catch { /* best-effort cleanup */ }

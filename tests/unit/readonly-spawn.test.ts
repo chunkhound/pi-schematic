@@ -16,7 +16,7 @@ import {
 } from "../../spawn/index.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
-import { runRealChildInvocation } from "./helpers.js";
+import { runRealChildInvocation, SANDBOX_DENIAL_PHRASES, textOf } from "./helpers.js";
 
 // ── Tool filtering ───────────────────────────────────────────────────
 
@@ -89,10 +89,6 @@ function outsideTempPath(label: string): string {
 	return path.join(os.homedir(), `readonly-child-${label}-${process.pid}-${Date.now()}`);
 }
 
-function textOf(result: { content: { type: string; text?: string }[] }): string {
-	return result.content.map((block) => block.text ?? "").join("");
-}
-
 // No ctx: pi's bash tool then skips the session environment, which these tests do not need.
 function runChildBash(
 	command: string,
@@ -129,7 +125,8 @@ function runChildBashUntil(command: string, marker: string) {
 	});
 }
 
-const SANDBOX_DENIAL_PHRASE = process.platform === "linux" ? "Read-only file system" : "Operation not permitted";
+const SANDBOX_DENIAL_PHRASE = SANDBOX_DENIAL_PHRASES[process.platform] ?? "";
+const hasDenialPhrase = { skip: SANDBOX_DENIAL_PHRASES[process.platform] === undefined };
 
 test("sandboxed child bash write outside temp returns the readonly block notice", { skip: !canUseOsSandbox() }, async () => {
 	const target = outsideTempPath("write");
@@ -195,8 +192,27 @@ test("sandboxed child bash error without a sandbox denial is rethrown without th
 test("child bash call the readonly guard blocks throws the block reason", async () => {
 	const target = outsideTempPath("blocked");
 
-	await assert.rejects(runChildBash(`touch ${target}`), /Readonly mode:/);
-	assert.equal(fs.existsSync(target), false);
+	try {
+		await assert.rejects(runChildBash(`touch ${target}`), /Readonly mode:/);
+		assert.equal(fs.existsSync(target), false);
+	} finally {
+		fs.rmSync(target, { force: true });
+	}
+});
+
+test("child bash call the readonly guard blocks gets no block notice when its command names the denial phrase", hasDenialPhrase, async () => {
+	const target = outsideTempPath("blocked-phrase");
+	try {
+		await assert.rejects(runChildBash(`echo '${SANDBOX_DENIAL_PHRASE}' > ${target}`), (error: unknown) => {
+			assert.ok(error instanceof Error);
+			assert.match(error.message, /Readonly mode:/);
+			assert.ok(error.message.includes(SANDBOX_DENIAL_PHRASE), error.message);
+			assert.equal(error.message.includes(READONLY_SANDBOX_BLOCK_NOTICE), false, error.message);
+			return true;
+		});
+	} finally {
+		fs.rmSync(target, { force: true });
+	}
 });
 
 // ── Integration ──────────────────────────────────────────────────────

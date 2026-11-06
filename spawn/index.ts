@@ -302,7 +302,8 @@ export function createReadonlyChildBashTool(
 	const bashTool = buildBashTool({ sandboxed: false });
 	return defineTool({
 		...bashTool,
-		// A definition per call scopes the sandbox record to this execution.
+		// A definition per execution: parallel child bash calls would otherwise
+		// share one `sandboxed` flag.
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const record = { sandboxed: false };
 			let result: Awaited<ReturnType<typeof bashTool.execute>>;
