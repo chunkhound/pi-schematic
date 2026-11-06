@@ -40,6 +40,7 @@ import { resolveSpawnModelRoute } from "../model-groups/router.js";
 import { productionConstraintRegistry, type ConstraintRegistry } from "../model-groups/constraints/registry.js";
 import { MODEL_GROUP_MODALITY_PROSE } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
+import { appendSandboxBlockNotice, appendSandboxBlockNoticeToResult } from "../os-sandbox.js";
 import { HANDOFF_TOOL_NAME } from "../handoff/tool.js";
 import { THINKING_LEVELS } from "../thinking-levels.js";
 import {
@@ -278,11 +279,14 @@ export function filterReadonlyToolNames(toolNames: string[], readonlyEnabled: bo
  * Falls back to classifyBashCommand command-pattern inspection when no OS sandbox
  * is available (Windows). The fallback blocks filesystem writes/deletions outside
  * the OS temp dir using the same logic as the parent's tool_call hook.
+ *
+ * Appends the readonly block notice to a sandboxed call's failed result or
+ * error message when it carries the platform's sandbox denial phrase.
  */
-function createReadonlyChildBashTool(
+export function createReadonlyChildBashTool(
 	cwd: string,
 ) {
-	const bashTool = createBashToolDefinition(cwd, {
+	const buildBashTool = (record: { sandboxed: boolean }) => createBashToolDefinition(cwd, {
 		spawnHook: (spawnContext) => {
 			const result = applyReadonlyBashGuard(spawnContext.command, cwd);
 			if (result.action === "block") {
@@ -290,11 +294,32 @@ function createReadonlyChildBashTool(
 			}
 			if (result.action === "sandbox") {
 				spawnContext.command = result.sandboxedCommand;
+				record.sandboxed = true;
 			}
 			return spawnContext;
 		},
 	});
-	return defineTool(bashTool);
+	const bashTool = buildBashTool({ sandboxed: false });
+	return defineTool({
+		...bashTool,
+		// A definition per call scopes the sandbox record to this execution.
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const record = { sandboxed: false };
+			let result: Awaited<ReturnType<typeof bashTool.execute>>;
+			try {
+				result = await buildBashTool(record).execute(toolCallId, params, signal, onUpdate, ctx);
+			} catch (error) {
+				if (record.sandboxed && error instanceof Error) {
+					const message = appendSandboxBlockNotice(error.message);
+					if (message !== undefined) error.message = message;
+				}
+				throw error;
+			}
+			if (!record.sandboxed) return result;
+			const noticed = appendSandboxBlockNoticeToResult(result);
+			return noticed === undefined ? result : { ...result, ...noticed };
+		},
+	});
 }
 
 

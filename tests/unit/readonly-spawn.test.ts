@@ -1,17 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
 	READONLY_CHILD_AUTHORITY_NOTE,
+	READONLY_SANDBOX_BLOCK_NOTICE,
 	READONLY_WRITE_EDIT_SUMMARY,
 	READONLY_INVALID_BASH_COMMAND_REASON,
 } from "../../notifications.js";
 import {
 	buildChildToolNames,
+	createReadonlyChildBashTool,
 	filterReadonlyToolNames,
 } from "../../spawn/index.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
+import { canUseOsSandbox } from "../../os-sandbox.js";
 import { runRealChildInvocation } from "./helpers.js";
 
 // ── Tool filtering ───────────────────────────────────────────────────
@@ -77,6 +81,84 @@ test("readonly bash guard blocks non-temp writes and allows temp writes", () => 
 
 	const tempResult = applyReadonlyBashGuard(`touch ${insideTemp} && rm ${insideTemp}`, cwd);
 	assert.notEqual(tempResult.action, "block", "temp dir writes should not be blocked");
+});
+
+// ── Readonly child bash tool ─────────────────────────────────────────
+
+function outsideTempPath(label: string): string {
+	return path.join(os.homedir(), `readonly-child-${label}-${process.pid}-${Date.now()}`);
+}
+
+function textOf(result: { content: { type: string; text?: string }[] }): string {
+	return result.content.map((block) => block.text ?? "").join("");
+}
+
+// No ctx: pi's bash tool then skips the session environment, which these tests do not need.
+function runChildBash(command: string, timeout?: number) {
+	return createReadonlyChildBashTool(process.cwd())
+		.execute("child-bash", { command, timeout }, undefined, undefined, undefined as any);
+}
+
+test("sandboxed child bash write outside temp returns the readonly block notice", { skip: !canUseOsSandbox() }, async () => {
+	const target = outsideTempPath("write");
+	try {
+		const result = await runChildBash(`node -e "require('fs').writeFileSync('${target}','x')"`);
+
+		assert.equal(result.isError, true);
+		assert.ok(textOf(result).includes(READONLY_SANDBOX_BLOCK_NOTICE), textOf(result));
+		assert.equal(fs.existsSync(target), false, "the sandbox must block the write");
+	} finally {
+		fs.rmSync(target, { force: true });
+	}
+});
+
+test("sandboxed child bash error carrying a sandbox denial gets the readonly block notice", { skip: !canUseOsSandbox() }, async () => {
+	const target = outsideTempPath("timeout");
+	try {
+		const command = `node -e "try{require('fs').writeFileSync('${target}','x')}catch(e){console.log(e.message)} setTimeout(()=>{},20000)"`;
+
+		// The timeout leaves the sandboxed node start room to print the denial first.
+		await assert.rejects(runChildBash(command, 3), (error: unknown) => {
+			assert.ok(error instanceof Error);
+			assert.match(error.message, /Command timed out after 3 seconds/);
+			assert.ok(error.message.endsWith(READONLY_SANDBOX_BLOCK_NOTICE), error.message);
+			return true;
+		});
+		assert.equal(fs.existsSync(target), false, "the sandbox must block the write");
+	} finally {
+		fs.rmSync(target, { force: true });
+	}
+});
+
+test("sandboxed child bash success returns its output without the notice", { skip: !canUseOsSandbox() }, async () => {
+	const result = await runChildBash("echo readonly-child-ok");
+
+	assert.equal(result.isError, undefined);
+	assert.equal(textOf(result), "readonly-child-ok\n");
+});
+
+test("sandboxed child bash failure without a sandbox denial returns no notice", { skip: !canUseOsSandbox() }, async () => {
+	const result = await runChildBash("echo plain-failure; exit 3");
+
+	assert.equal(result.isError, true);
+	assert.match(textOf(result), /plain-failure[\s\S]*Command exited with code 3$/);
+	assert.equal(textOf(result).includes(READONLY_SANDBOX_BLOCK_NOTICE), false);
+});
+
+test("sandboxed child bash error without a sandbox denial is rethrown without the notice", { skip: !canUseOsSandbox() }, async () => {
+	await assert.rejects(runChildBash("sleep 5", 1), (error: unknown) => {
+		assert.ok(error instanceof Error);
+		assert.match(error.message, /Command timed out after 1 seconds/);
+		assert.equal(error.message.includes(READONLY_SANDBOX_BLOCK_NOTICE), false, error.message);
+		return true;
+	});
+});
+
+test("child bash call the readonly guard blocks throws the block reason", async () => {
+	const target = outsideTempPath("blocked");
+
+	await assert.rejects(runChildBash(`touch ${target}`), /Readonly mode:/);
+	assert.equal(fs.existsSync(target), false);
 });
 
 // ── Integration ──────────────────────────────────────────────────────
