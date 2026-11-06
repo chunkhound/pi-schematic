@@ -143,6 +143,25 @@ test("block notice goes after the last text block only", () => {
 	]);
 });
 
+test("block notice keeps a non-text block in place and goes after the last text block", () => {
+	const image = { type: "image" as const, data: "aW1hZ2U=", mimeType: "image/png" };
+
+	const noticed = appendSandboxBlockNoticeToResult({
+		content: [
+			{ type: "text", text: "bash: /outside: Operation not permitted" },
+			image,
+			{ type: "text", text: "Command exited with code 1" },
+		],
+		isError: true,
+	}, "darwin");
+
+	assert.deepEqual(noticed?.content, [
+		{ type: "text", text: "bash: /outside: Operation not permitted" },
+		image,
+		{ type: "text", text: `Command exited with code 1${NOTICE_SUFFIX}` },
+	]);
+});
+
 test("block notice returns an absent structured content as undefined", () => {
 	const noticed = appendSandboxBlockNoticeToResult({
 		content: [{ type: "text", text: "bash: /outside: Operation not permitted" }],

@@ -589,7 +589,9 @@ export default function (pi: ExtensionAPI): void {
 	// The sandbox wrapper passes the command's output through unchanged, so the
 	// block is reported here, on the failed result of a sandboxed call.
 	pi.on("tool_result", async (event) => {
-		if (!isBashToolResult(event) || !state.sandboxedBashCallIds.delete(event.toolCallId)) return;
+		if (!isBashToolResult(event)) return;
+		const wasSandboxed = state.sandboxedBashCallIds.delete(event.toolCallId);
+		if (!wasSandboxed) return;
 		return appendSandboxBlockNoticeToResult(event);
 	});
 

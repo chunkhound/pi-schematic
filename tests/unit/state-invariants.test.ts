@@ -138,6 +138,7 @@ function assertResetClears(state: SchematicState): void {
 	assert.equal(state.frontmatterPromptIssues.size, 0, "frontmatterPromptIssues must be empty after reset");
 	assert.equal(state.pendingReadonlyCommands.length, 0, "pendingReadonlyCommands must be empty after reset");
 	assert.equal(state.lastWatchdogBand, null, "lastWatchdogBand must be null after reset");
+	assert.equal(state.sandboxedBashCallIds.size, 0, "sandboxedBashCallIds must be empty after reset");
 }
 
 // ── Properties ────────────────────────────────────────────────────────
@@ -293,6 +294,7 @@ test("Property 4: Reset clears all state fields", async () => {
 					s2.frontmatterSkillIssues.set("skill-b", { kind: "invalid-readonly-value", filePath: "/tmp/skill-b.md" });
 					s2.frontmatterPromptIssues.set("prompt-b", { kind: "unreadable-file", filePath: "/tmp/prompt-b.md" });
 					s2.pendingReadonlyCommands.push({ type: "skill", name: "skill-a" });
+					s2.sandboxedBashCallIds.add("bash-call-1");
 					s2.modelGroups.groups = [{
 						name: "stale",
 						scope: "project",

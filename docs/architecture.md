@@ -115,7 +115,7 @@ A failed model change visibly blocks command expansion and records no success en
 
 | Platform | Enforcement |
 |---|---|
-| **macOS** | OS sandbox via `sandbox-exec` (Seatbelt) — kernel denies file writes outside the OS temp dir; classifier is secondary |
+| **macOS** | OS sandbox via `sandbox-exec` (Seatbelt) — kernel denies file writes outside the OS temp dir, `/tmp`, `/private/tmp` and `/dev/null`; classifier is secondary. The classifier accepts file writes only under the OS temp dir and to `/dev/null`, so it blocks `/tmp` writes the profile allows when the two differ (#129) |
 | **Linux** | OS sandbox via `bwrap` when available — read-only root + writable temp; classifier is secondary. Without `bwrap`, classifier only |
 | **Windows** | **No OS / syscall-level sandbox.** `canUseOsSandbox()` is always false. Only the shell-command **classifier** runs — best-effort pattern matching. Known gaps: interpreter one-liners (`node -e`, `python -c`, …), piped indirection (`xargs`, etc.). **Not true write protection.** |
 
@@ -132,6 +132,8 @@ A failed model change visibly blocks command expansion and records no success en
 - **Linux `/tmp`:** `/tmp` is a fresh tmpfs, and the OS temp dir is bound writable at its own path. Other writes under `/tmp` land in the tmpfs and are discarded when the call ends. When the temp dir is `/tmp` itself (`TMPDIR` unset), the command sees the real `/tmp`.
 - **Linux `/dev`:** `--dev /dev` mounts a new, minimal `/dev`.
 - **Argument size:** the wrapped command is one shell argument. It adds the sandbox setup and four bytes per single quote in the command. A command near the per-argument limit (128 KiB on Linux) therefore fails sooner than unsandboxed.
+
+**Readonly block notice.** The notice on a failed sandboxed bash call is a hint taken from the command's output, not a record of denials. A command can print the denial phrase without a denial, or hide a real one by discarding its error output. A denial in the middle of more than 1 MiB of output is missed. pi keeps only its first and last 512 KiB in `structuredContent.output`, and at most the last 50 KB in the text.
 
 Coding-agent guardrail on every OS — not a hardened security boundary. Strongest on macOS/Linux with sandbox binaries present; weakest on Windows. UI-oriented toggle; state rehydrates on resume.
 

@@ -288,7 +288,7 @@ export function createReadonlyChildBashTool(
 ) {
 	const buildBashTool = (record: { sandboxed: boolean }) => createBashToolDefinition(cwd, {
 		spawnHook: (spawnContext) => {
-			const result = applyReadonlyBashGuard(spawnContext.command, cwd);
+			const result = applyReadonlyBashGuard(spawnContext.command, spawnContext.cwd);
 			if (result.action === "block") {
 				throw new Error(result.reason);
 			}
@@ -299,7 +299,7 @@ export function createReadonlyChildBashTool(
 			return spawnContext;
 		},
 	});
-	const bashTool = buildBashTool({ sandboxed: false });
+	const bashTool = createBashToolDefinition(cwd);
 	return defineTool({
 		...bashTool,
 		// A definition per execution: parallel child bash calls would otherwise

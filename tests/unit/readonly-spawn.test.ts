@@ -16,7 +16,7 @@ import {
 } from "../../spawn/index.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
-import { runRealChildInvocation, SANDBOX_DENIAL_PHRASES, textOf } from "./helpers.js";
+import { runRealChildInvocation, SANDBOX_DENIAL_PHRASES, textOf, tmpDir } from "./helpers.js";
 
 // ── Tool filtering ───────────────────────────────────────────────────
 
@@ -230,6 +230,55 @@ test("child bash call the readonly guard blocks gets no block notice after a san
 		});
 	} finally {
 		fs.rmSync(target, { force: true });
+	}
+});
+
+test("concurrent child bash calls on one tool get the block notice only on the sandboxed call", { skip: !canUseOsSandbox() || SANDBOX_DENIAL_PHRASES[process.platform] === undefined }, async () => {
+	const sandboxedTarget = outsideTempPath("concurrent-sandboxed");
+	const blockedTarget = outsideTempPath("concurrent-blocked");
+	const tool = createReadonlyChildBashTool(process.cwd());
+	const run = (toolCallId: string, command: string) => tool.execute(toolCallId, { command }, undefined, undefined, undefined as any);
+	try {
+		const [sandboxedResult, blockedResult] = await Promise.allSettled([
+			run("child-bash-sandboxed", nodeCommand(`require("fs").writeFileSync(${JSON.stringify(sandboxedTarget)}, "x")`)),
+			run("child-bash-blocked", `echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(blockedTarget)}`),
+		]);
+
+		assert.equal(sandboxedResult.status, "fulfilled");
+		assert.ok(textOf(sandboxedResult.value).endsWith(READONLY_SANDBOX_BLOCK_NOTICE), textOf(sandboxedResult.value));
+		assert.equal(blockedResult.status, "rejected");
+		assert.ok(blockedResult.reason instanceof Error);
+		assert.match(blockedResult.reason.message, /Readonly mode:/);
+		assert.equal(blockedResult.reason.message.includes(READONLY_SANDBOX_BLOCK_NOTICE), false, blockedResult.reason.message);
+	} finally {
+		fs.rmSync(sandboxedTarget, { force: true });
+		fs.rmSync(blockedTarget, { force: true });
+	}
+});
+
+test("sandboxed child bash timeout after a sandbox denial gets the readonly block notice", { skip: !canUseOsSandbox() || hasDenialPhrase.skip, timeout: 20_000 }, async () => {
+	const command = sandboxed(`echo '${SANDBOX_DENIAL_PHRASE}'; while :; do sleep 1; done`);
+
+	await assert.rejects(runChildBash(command, { timeout: 1 }), (error: unknown) => {
+		assert.ok(error instanceof Error);
+		assert.match(error.message, /Command timed out after 1 seconds/);
+		assert.ok(error.message.endsWith(READONLY_SANDBOX_BLOCK_NOTICE), error.message);
+		return true;
+	});
+});
+
+test("child bash call resolves a relative write against the execution cwd", async () => {
+	const executionCwd = await tmpDir();
+	// The tool's own cwd is outside temp, so classifying against it would block the write.
+	const tool = createReadonlyChildBashTool(os.homedir());
+	const ctx = { cwd: executionCwd, sessionManager: { getSessionId: () => "readonly-child", getSessionFile: () => undefined } };
+	try {
+		const result = await tool.execute("child-bash", { command: "touch relative-target" }, undefined, undefined, ctx as any);
+
+		assert.equal(result.isError, undefined, textOf(result));
+		assert.equal(fs.existsSync(path.join(executionCwd, "relative-target")), true);
+	} finally {
+		fs.rmSync(executionCwd, { recursive: true, force: true });
 	}
 });
 
