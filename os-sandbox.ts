@@ -7,12 +7,8 @@
  *   Linux  → bubblewrap (bwrap) if available
  *   Windows → not supported (returns command unchanged, classifyBashCommand applies)
  *
- * The wrappers pass the command to the inner shell's `-c` as one argument and
- * add nothing else, no heredoc and no redirect, so the command reads the
- * caller's stdin and its exit code and output bytes reach pi untouched.
- * Neither wrapper prints a readonly notice; appendSandboxBlockNotice and
- * appendSandboxBlockNoticeToResult add it to a failed command's error text or
- * tool result.
+ * The wrappers only add the sandbox, so stdin, exit code and output pass
+ * through; the appendSandboxBlockNotice* helpers add the readonly notice.
  *
  * This replaces the best-effort command-pattern matching in classifyBashCommand
  * with actual kernel-enforced file-write blocking.

@@ -173,11 +173,8 @@ export interface SchematicState {
 	lastWatchdogBand: number | null;
 
 	/**
-	 * Ids of bash calls the readonly tool_call handler rewrote into the OS
-	 * sandbox; its tool_result handler removes each id on that call's result.
-	 * Cleared on every session_start, so an id whose result never arrives (a
-	 * later tool_call handler blocks the call, or an abort) lasts at most until
-	 * the next session start.
+	 * Bash calls tool_call sandboxed, removed on their tool_result. An id whose
+	 * result never arrives lasts until the next session_start clears the set.
 	 */
 	sandboxedBashCallIds: Set<string>;
 }
