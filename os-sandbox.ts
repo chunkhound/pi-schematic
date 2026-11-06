@@ -7,12 +7,22 @@
  *   Linux  → bubblewrap (bwrap) if available
  *   Windows → not supported (returns command unchanged, classifyBashCommand applies)
  *
- * The wrapper passes the command to `/bin/bash -c` inside the sandbox and adds
+ * Both wrappers pass the command to `/bin/bash -c` inside the sandbox and add
  * nothing else: the command sees the same stdin, returns the same exit code and
- * streams the same output bytes to the same stdout and stderr as unsandboxed;
- * only the writes the sandbox denies differ. The wrapper prints no readonly
- * notice; appendSandboxBlockNotice and appendSandboxBlockNoticeToResult add it
- * to a failed command's error text or tool result.
+ * streams the same output bytes to the same stdout and stderr as unsandboxed,
+ * apart from the writes the sandbox denies and these differences:
+ *   - the inner shell is always `/bin/bash`, whatever shell pi is configured
+ *     to use;
+ *   - under bwrap, a command killed by signal N reports exit code 128+N rather
+ *     than a signal, because bwrap exits with that code instead of re-raising
+ *     the signal;
+ *   - under bwrap, the command runs in its own namespaces and session
+ *     (`--unshare-all`, `--new-session`), so it sees a separate PID namespace,
+ *     and `--tmpfs /tmp` gives it an empty `/tmp` apart from the temp dir bound
+ *     back in, and `--dev /dev` gives it bwrap's own minimal `/dev`.
+ * Neither wrapper prints a readonly notice; appendSandboxBlockNotice and
+ * appendSandboxBlockNoticeToResult add it to a failed command's error text or
+ * tool result.
  *
  * This replaces the best-effort command-pattern matching in classifyBashCommand
  * with actual kernel-enforced file-write blocking.
@@ -175,10 +185,7 @@ function buildInnerBashInvocation(command: string): string {
  *
  *   sandbox-exec -p '<profile>' /bin/bash -c '<command>'
  *
- * The command reaches the inner bash as its `-c` argument and nothing else
- * runs around it, so it keeps the caller's stdin, exit code, streamed stdout
- * and stderr, and output bytes; only writes the profile denies fail. All
- * descendants inherit the sandbox.
+ * All descendants inherit the sandbox.
  */
 export function wrapWithSandboxExec(command: string): string {
 	const profile = buildMacProfile(getCanonicalTempDir());
@@ -191,12 +198,6 @@ export function wrapWithSandboxExec(command: string): string {
  * Wrap a bash command with bubblewrap on Linux.
  *
  *   bwrap <flags> /bin/bash -c '<command>'
- *
- * Like the sandbox-exec wrapper, the command keeps the caller's stdin, exit
- * code, streamed stdout and stderr, and output bytes; only writes outside the
- * temp dir fail. One accepted difference: a command killed by signal N reports
- * exit code 128+N rather than a signal, because bwrap exits with that code
- * instead of re-raising the signal.
  *
  * --ro-bind / /  makes entire root read-only
  * --tmpfs /tmp   then mounts writable tmpfs at /tmp (overrides ro-bind)
