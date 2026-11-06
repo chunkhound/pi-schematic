@@ -17,7 +17,7 @@
 
 ## Quick start
 
-Requires [Pi](https://pi.dev) 0.99.2 or later and Node.js 22.19.0 or later.
+Requires [Pi](https://pi.dev) 1.0.4 or later and Node.js 22.19.0 or later.
 
 ```bash
 pi install npm:pi-schematic
@@ -144,7 +144,7 @@ When you delegate a task with `spawn`, you can declare which capabilities it nee
 
 | Area | Current behavior |
 |---|---|
-| **Runtime** | Requires Pi 0.99.2+ and Node.js 22.19.0+. Spawn passes the selected public model into a child-owned runtime. Persisted, environment-based, and extension-rediscoverable provider/auth configuration is available; parent-only transient credentials, inline provider factories, and in-memory catalog changes may not be. Resolution failures are explicit and never silently select another model. |
+| **Runtime** | Requires Pi 1.0.4+ and Node.js 22.19.0+. Spawn passes the selected public model into a child-owned runtime. Persisted, environment-based, and extension-rediscoverable provider/auth configuration is available; parent-only transient credentials, inline provider factories, and in-memory catalog changes may not be. Resolution failures are explicit and never silently select another model. |
 | **Frontmatter** | `model: <provider>/<model-id>` overrides `model-group`; `thinking: off|minimal|low|medium|high|xhigh|max` is capability-clamped and overrides group thinking; `readonly` is boolean. Interactive model selection runs at idle input, while readonly is deferred to `before_agent_start`. Model/thinking changes are sticky. Failed or streaming selection blocks expansion; headless/RPC invocations ignore this policy. |
 | **Group routing** | A known group samples uniformly **with replacement** from authenticated, usable entries, so repeated calls may select the same model. Unknown spawn groups fall back to the parent's model; the spawn tool's TUI display and the result's `details.route` (status `unknown-fallback`) show the fallback, and the result text the model receives carries no marker; known groups with no usable entries fail before child creation. There is no weighting, no-repeat selection, health routing, retry/failover, or optimizer. |
 | **Model Groups files** | Global groups live in `pi-schematic/model-groups.json` inside pi's agent directory (`~/.pi/agent/` by default, or the directory `PI_CODING_AGENT_DIR` names); project groups live in `.pi/pi-schematic/model-groups.json` under the project and are read only in a trusted project. A missing file is no configuration, with no warning. An SDK host that passes its own `agentDir` to pi does not move these files or the global prompt scan: pi loads prompts from that `agentDir/prompts`, while schematic resolves both from `PI_CODING_AGENT_DIR` or the home default, because pi passes no agent directory to extensions. |

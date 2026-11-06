@@ -18,6 +18,7 @@ export const COMPAT_NODE_TEST_FILES = [
   "tests/unit/spawn.test.ts",
   "tests/unit/readonly-spawn.test.ts",
   "tests/unit/compat-process.test.ts",
+  "tests/unit/e2e-concurrency.test.ts",
   "tests/unit/model-group-frontmatter.test.ts",
   "tests/unit/model-groups-crud.test.ts",
   "tests/unit/model-groups-integration.test.ts",

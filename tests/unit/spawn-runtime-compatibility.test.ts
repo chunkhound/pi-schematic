@@ -7,6 +7,7 @@ import { Value } from "typebox/value";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, type SessionStats } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxProvider, type Usage } from "@earendil-works/pi-ai";
 import { createState } from "../../state.js";
+import { THINKING_LEVELS } from "../../thinking-levels.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
 import { createTestHost } from "./test-host.js";
 import { assertErrorResult, EMPTY_CHILD_USAGE, runRealChildInvocation } from "./helpers.js";
@@ -95,20 +96,25 @@ test("spawn routes through the public registry but uses only the selected-model 
 	assert.match(source, /model:\s*childModel/);
 });
 
-test("spawn accepts max thinking parameter in schema", async () => {
+test("spawn schema accepts canonical thinking levels and rejects other values", async () => {
 	const state = createState();
 	const pi = await createTestHost((api) => registerSpawnTool(api, state));
 	const tool = pi.tools.get("spawn");
-	const schemaText = JSON.stringify(tool.parameters);
-	assert.match(schemaText, /max/);
+	const thinkingSchema = JSON.parse(JSON.stringify(tool.parameters)).properties.thinking;
+	const supportedLevels = [...THINKING_LEVELS];
+	assert.equal(thinkingSchema.type, "string");
+	assert.deepEqual(thinkingSchema.enum, supportedLevels);
+	assert.doesNotMatch(JSON.stringify(thinkingSchema), /"(?:anyOf|const)"\s*:/);
 	assert.equal(Value.Check(tool.parameters, { prompt: "work" }), true, "schema accepts prompt without thinking");
-	assert.equal(Value.Check(tool.parameters, { prompt: "work", thinking: "max" }), true, "schema accepts thinking: max");
+	for (const thinking of supportedLevels) {
+		assert.equal(Value.Check(tool.parameters, { prompt: "work", thinking }), true, `schema accepts thinking: ${thinking}`);
+	}
+	assert.equal(Value.Check(tool.parameters, { prompt: "work", thinking: "ultra" }), false, "schema rejects unknown thinking levels");
 	assert.equal(
 		Value.Check(tool.parameters, { prompt: "work", group: "review", thinking: "max" }),
 		true,
 		"schema composes Model Group routing with explicit thinking",
 	);
-
 });
 
 test("spawn real child completes with max thinking requested", async () => {

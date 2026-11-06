@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, globSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { needsE2eConcurrency } from "./e2e-concurrency.mjs";
 import { VITEST_FILES } from "../tests/vitest-files.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -41,9 +42,13 @@ const loader = pathToFileURL(resolve(root, "register-loader.mjs")).href;
 // node --test reads each argument as a glob pattern, so a path containing glob characters such as
 // `[ab]` matches nothing; relative paths keep the checkout's directory names out of the pattern.
 const testFiles = files.map((file) => relative(root, file).split(sep).join("/"));
+// WHY: e2e files spawn real pi CLI processes. Cap concurrent test files so a run
+// with many suites cannot start one host per file. Unit tests keep Node's default
+// concurrency.
+const concurrency = needsE2eConcurrency(patterns) ? ["--test-concurrency=2"] : [];
 const result = spawnSync(
   process.execPath,
-  ["--import", loader, "--test", ...flags, ...testFiles],
+  ["--import", loader, "--test", ...concurrency, ...flags, ...testFiles],
   {
     cwd: root,
     stdio: "inherit",
