@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import { READONLY_POWERSHELL_BLOCK_REASON, READONLY_SANDBOX_BLOCK_NOTICE } from "../../notifications.js";
 import { canUseOsSandbox } from "../../os-sandbox.js";
-import { registerReadonlyPI, makeReadonlyUICtx } from "./helpers.js";
+import { emitAll, registerReadonlyPI, makeReadonlyUICtx } from "./helpers.js";
 import { createBeforeAgentStartEvent } from "./test-host.js";
 
 test("readonly toggle on blocks write, edit, powershell, handoff, and bash mutations", async () => {
@@ -118,6 +118,7 @@ async function registerReadonlyBash() {
 	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
 	const [toolResult] = pi.handlers.get("tool_result") as Array<(event: any, ctx: any) => Promise<any>>;
 	return {
+		pi,
 		callBash: (toolCallId: string) =>
 			toolCall({ toolName: "bash", toolCallId, input: { command: "ls" } }, { cwd: "/workspace" }),
 		result: (toolCallId: string, overrides: Record<string, unknown> = {}) => {
@@ -183,4 +184,18 @@ test("a failed non-bash result for a sandboxed id gets no notice", async (t) => 
 	await bash.callBash("call-1");
 
 	assert.equal(await bash.result("call-1", { toolName: "read" }), undefined);
+});
+
+test("a session start drops sandboxed ids whose result never arrived", async (t) => {
+	if (!canUseOsSandbox()) return t.skip("no OS sandbox on this host");
+	const bash = await registerReadonlyBash();
+	// The resumed branch keeps readonly on, so only the dropped id can explain a missing notice.
+	const branch = [{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } }];
+	await bash.callBash("before-start");
+
+	await emitAll(bash.pi, "session_start", { reason: "resume" }, { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => branch } });
+
+	assert.equal(await bash.result("before-start"), undefined);
+	await bash.callBash("after-start");
+	assert.ok(await bash.result("after-start"), "a call sandboxed after the session start still gets the notice");
 });

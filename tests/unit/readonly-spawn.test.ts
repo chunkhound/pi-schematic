@@ -15,7 +15,7 @@ import {
 	filterReadonlyToolNames,
 } from "../../spawn/index.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
-import { canUseOsSandbox } from "../../os-sandbox.js";
+import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
 import { runRealChildInvocation } from "./helpers.js";
 
 // ── Tool filtering ───────────────────────────────────────────────────
@@ -94,33 +94,69 @@ function textOf(result: { content: { type: string; text?: string }[] }): string 
 }
 
 // No ctx: pi's bash tool then skips the session environment, which these tests do not need.
-function runChildBash(command: string, timeout?: number) {
+function runChildBash(
+	command: string,
+	options: { timeout?: number; signal?: AbortSignal; onUpdate?: (update: { content: { type: string; text?: string }[] }) => void } = {},
+) {
 	return createReadonlyChildBashTool(process.cwd())
-		.execute("child-bash", { command, timeout }, undefined, undefined, undefined as any);
+		.execute("child-bash", { command, timeout: options.timeout }, options.signal, options.onUpdate as any, undefined as any);
 }
+
+/** Return `command` after checking that the readonly guard sandboxes it rather than blocking it. */
+function sandboxed(command: string): string {
+	assert.equal(applyReadonlyBashGuard(command, process.cwd()).action, "sandbox", command);
+	return command;
+}
+
+/** A sandboxed `node -e` command; the script reaches node as one shell-quoted argument. */
+function nodeCommand(script: string): string {
+	return sandboxed(`${quoteShellArgument(process.execPath)} -e ${quoteShellArgument(script)}`);
+}
+
+/**
+ * Run a command that never exits on its own, aborting it once its streamed output
+ * contains `marker` (case-insensitive). The 20-second bash timeout only ends a run
+ * whose output never shows the marker, which then fails on "Command timed out".
+ */
+function runChildBashUntil(command: string, marker: string) {
+	const controller = new AbortController();
+	return runChildBash(command, {
+		timeout: 20,
+		signal: controller.signal,
+		onUpdate: (update) => {
+			if (textOf(update).toLowerCase().includes(marker.toLowerCase())) controller.abort();
+		},
+	});
+}
+
+const SANDBOX_DENIAL_PHRASE = process.platform === "linux" ? "Read-only file system" : "Operation not permitted";
 
 test("sandboxed child bash write outside temp returns the readonly block notice", { skip: !canUseOsSandbox() }, async () => {
 	const target = outsideTempPath("write");
 	try {
-		const result = await runChildBash(`node -e "require('fs').writeFileSync('${target}','x')"`);
+		const result = await runChildBash(nodeCommand(`require("fs").writeFileSync(${JSON.stringify(target)}, "x")`));
 
 		assert.equal(result.isError, true);
 		assert.ok(textOf(result).includes(READONLY_SANDBOX_BLOCK_NOTICE), textOf(result));
+		const structured = result.structuredContent as { output: string; exit_code: number };
+		assert.ok(structured.output.endsWith(`\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`), structured.output);
+		assert.equal(structured.exit_code, 1);
 		assert.equal(fs.existsSync(target), false, "the sandbox must block the write");
 	} finally {
 		fs.rmSync(target, { force: true });
 	}
 });
 
-test("sandboxed child bash error carrying a sandbox denial gets the readonly block notice", { skip: !canUseOsSandbox() }, async () => {
-	const target = outsideTempPath("timeout");
+test("sandboxed child bash error carrying a sandbox denial gets the readonly block notice", { skip: !canUseOsSandbox(), timeout: 40_000 }, async () => {
+	const target = outsideTempPath("abort");
 	try {
-		const command = `node -e "try{require('fs').writeFileSync('${target}','x')}catch(e){console.log(e.message)} setTimeout(()=>{},20000)"`;
+		const command = nodeCommand(
+			`try { require("fs").writeFileSync(${JSON.stringify(target)}, "x") } catch (error) { console.log(error.message) } setInterval(() => {}, 1000)`,
+		);
 
-		// The timeout leaves the sandboxed node start room to print the denial first.
-		await assert.rejects(runChildBash(command, 3), (error: unknown) => {
+		await assert.rejects(runChildBashUntil(command, SANDBOX_DENIAL_PHRASE), (error: unknown) => {
 			assert.ok(error instanceof Error);
-			assert.match(error.message, /Command timed out after 3 seconds/);
+			assert.match(error.message, /Command aborted/);
 			assert.ok(error.message.endsWith(READONLY_SANDBOX_BLOCK_NOTICE), error.message);
 			return true;
 		});
@@ -145,10 +181,12 @@ test("sandboxed child bash failure without a sandbox denial returns no notice", 
 	assert.equal(textOf(result).includes(READONLY_SANDBOX_BLOCK_NOTICE), false);
 });
 
-test("sandboxed child bash error without a sandbox denial is rethrown without the notice", { skip: !canUseOsSandbox() }, async () => {
-	await assert.rejects(runChildBash("sleep 5", 1), (error: unknown) => {
+test("sandboxed child bash error without a sandbox denial is rethrown without the notice", { skip: !canUseOsSandbox(), timeout: 40_000 }, async () => {
+	const command = sandboxed("echo plain-abort-marker; while :; do sleep 1; done");
+
+	await assert.rejects(runChildBashUntil(command, "plain-abort-marker"), (error: unknown) => {
 		assert.ok(error instanceof Error);
-		assert.match(error.message, /Command timed out after 1 seconds/);
+		assert.match(error.message, /Command aborted/);
 		assert.equal(error.message.includes(READONLY_SANDBOX_BLOCK_NOTICE), false, error.message);
 		return true;
 	});

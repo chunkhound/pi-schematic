@@ -60,11 +60,43 @@ function runLikePi(command: string): Promise<RunResult> {
 	});
 }
 
+interface StreamTiming {
+	firstStdoutAt: number;
+	closedAt: number;
+}
+
+/** Run a command like `runLikePi` and record when the first stdout chunk and the close event arrive. */
+function runLikePiTimed(command: string): Promise<StreamTiming> {
+	return new Promise((resolve, reject) => {
+		const child = spawn("/bin/bash", ["-c", command], { stdio: ["ignore", "pipe", "ignore"] });
+		let firstStdoutAt: number | undefined;
+		child.stdout.on("data", () => {
+			firstStdoutAt ??= performance.now();
+		});
+		child.on("error", reject);
+		child.on("close", () => {
+			const closedAt = performance.now();
+			if (firstStdoutAt === undefined) {
+				reject(new Error("command wrote no stdout"));
+				return;
+			}
+			resolve({ firstStdoutAt, closedAt });
+		});
+	});
+}
+
 async function runSandboxedAndPlain(command: string): Promise<{ sandboxed: RunResult; plain: RunResult }> {
 	return { sandboxed: await runLikePi(wrapCommandWithOsSandbox(command)), plain: await runLikePi(command) };
 }
 
 const sandboxRuntime = { skip: !canUseOsSandbox(), timeout: 20_000 };
+
+/** A blocked write's error on the current host, or `undefined` on a platform without a sandbox. */
+const HOST_DENIAL_OUTPUT: string | undefined = ({
+	darwin: "bash: /outside: Operation not permitted",
+	linux: "bash: /outside: Read-only file system",
+} as Partial<Record<NodeJS.Platform, string>>)[process.platform];
+const BOTH_DENIAL_PHRASES = "Operation not permitted; Read-only file system";
 
 // ── Block notice ────────────────────────────────────────────────
 
@@ -159,11 +191,35 @@ test("block notice adds a text block when the phrase is only in the structured o
 	});
 });
 
-test("block notice on a result defaults to the current platform", () => {
-	const result = bashResult("Operation not permitted; Read-only file system");
+test("block notice on a result defaults to the current platform", { skip: HOST_DENIAL_OUTPUT === undefined }, () => {
+	const output = HOST_DENIAL_OUTPUT ?? "";
 
-	assert.deepEqual(appendSandboxBlockNoticeToResult(result), appendSandboxBlockNoticeToResult(result, process.platform));
+	const noticed = appendSandboxBlockNoticeToResult(bashResult(output));
+
+	assert.deepEqual(noticed?.structuredContent, { output: `${output}${NOTICE_SUFFIX}`, truncated: false, exit_code: 1, wall_time_seconds: 0.1 });
 });
+
+test("block notice on a result appends nothing by default on a platform without a sandbox", { skip: HOST_DENIAL_OUTPUT !== undefined }, () => {
+	assert.equal(appendSandboxBlockNoticeToResult(bashResult(BOTH_DENIAL_PHRASES)), undefined);
+});
+
+for (const { name, structuredContent } of [
+	{ name: "an array", structuredContent: ["bash: /outside: Operation not permitted"] },
+	{ name: "a string", structuredContent: "bash: /outside: Operation not permitted" },
+	{ name: "a number", structuredContent: 1 },
+]) {
+	test(`block notice keeps ${name} structured content as it is`, () => {
+		const noticed = appendSandboxBlockNoticeToResult({
+			content: [{ type: "text", text: "bash: /outside: Operation not permitted" }],
+			structuredContent,
+			isError: true,
+		}, "darwin");
+
+		assert.deepEqual(noticed?.content, [{ type: "text", text: `bash: /outside: Operation not permitted${NOTICE_SUFFIX}` }]);
+		assert.equal(noticed?.structuredContent, structuredContent);
+		assert.deepEqual(noticed?.structuredContent, structuredClone(structuredContent));
+	});
+}
 
 test("text block notice appends the notice to text with the platform phrase", () => {
 	const message = "Error: EROFS: read-only file system, open '/outside'";
@@ -181,10 +237,14 @@ for (const { name, platform, message } of [
 	});
 }
 
-test("text block notice defaults to the current platform", () => {
-	const message = "Operation not permitted; Read-only file system";
+test("text block notice defaults to the current platform", { skip: HOST_DENIAL_OUTPUT === undefined }, () => {
+	const message = HOST_DENIAL_OUTPUT ?? "";
 
-	assert.equal(appendSandboxBlockNotice(message), appendSandboxBlockNotice(message, process.platform));
+	assert.equal(appendSandboxBlockNotice(message), `${message}${NOTICE_SUFFIX}`);
+});
+
+test("text block notice appends nothing by default on a platform without a sandbox", { skip: HOST_DENIAL_OUTPUT !== undefined }, () => {
+	assert.equal(appendSandboxBlockNotice(BOTH_DENIAL_PHRASES), undefined);
 });
 
 // ── Wrapper shape ───────────────────────────────────────────────
@@ -241,9 +301,7 @@ test("quoteShellArgument emits POSIX single-quoted arguments", () => {
 	assert.equal(quoteShellArgument("'"), `''"'"''`);
 });
 
-test("quoteShellArgument round-trips through a POSIX shell", () => {
-	if (!hasPosixShell()) return;
-
+test("quoteShellArgument round-trips through a POSIX shell", { skip: !hasPosixShell() }, () => {
 	for (const raw of ["normal", "spaces", "dollar$ign", "backtick`", "line1\nline2", "'mixed' quotes", "'"]) {
 		const quoted = quoteShellArgument(raw);
 		const result = execFileSync("/bin/sh", ["-c", `printf '%s' ${quoted}`], { encoding: "utf8", timeout: 2000 });
@@ -324,6 +382,12 @@ test("sandboxed trailing backslash prints as unsandboxed", sandboxRuntime, async
 
 	assert.deepEqual(sandboxed, plain);
 	assert.equal(sandboxed.code, 0);
+});
+
+test("sandboxed output streams while the command runs", sandboxRuntime, async () => {
+	const timing = await runLikePiTimed(wrapCommandWithOsSandbox("printf first; sleep 3; printf second"));
+
+	assert.ok(timing.closedAt - timing.firstStdoutAt >= 1000, JSON.stringify(timing));
 });
 
 test("sandboxed stray closing brace is the same syntax error as unsandboxed", sandboxRuntime, async () => {
