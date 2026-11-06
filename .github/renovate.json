@@ -1,6 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
+  "extends": [
+    "config:recommended",
+    "group:allNonMajor",
+    "helpers:pinGitHubActionDigestsToSemver",
+    "security:minimumReleaseAgeNpm",
+    ":maintainLockFilesMonthly"
+  ],
   "packageRules": [
     {
       "matchPackageNames": [
@@ -9,8 +15,21 @@
         "@earendil-works/pi-tui",
         "typebox"
       ],
-      "groupName": "Pi compatibility dependencies",
-      "rangeStrategy": "pin"
+      "groupName": "Pi compatibility floor",
+      "dependencyDashboardApproval": true
+    },
+    {
+      "matchPackageNames": ["typescript"],
+      "groupName": "TypeScript"
+    },
+    {
+      "matchDepTypes": ["peerDependencies", "engines"],
+      "enabled": false
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["node"],
+      "enabled": false
     }
   ]
 }
