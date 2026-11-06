@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-06
+
 ### Added
 
 - **Date anchor** — the `schematic_date` prompt section holds a `## Current date` block (ISO date, weekday, IANA zone, UTC offset, plus a resolve-relative-references directive). `before_agent_start` renders it once per user prompt, and it is byte-stable within a calendar day, so while the host zone stays fixed it changes at most once per day; on a DST transition day the offset adds one more change. When it changes, Pi appends a section-update message and the leading system message stays unchanged. A zone Intl cannot render falls back to `UTC` rather than throwing.
 - **Notebook pages open in a pager** — Enter in the interactive `/notebook` picker opens the selected page in `$PI_PAGER`, else `$PAGER`, else `less` if installed (not on Windows); with no pager or a `cat` or `more` pager it shows the inline preview instead. Quitting either returns to the list on the same page. See [Compatibility and limits](README.md#compatibility-and-limits).
+- **npm package** — Published on npm as `@chunkhound/pi-schematic`; install with `pi install npm:@chunkhound/pi-schematic`.
 
 ### Breaking Changes
 
@@ -213,7 +216,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Comprehensive test suite** — 50+ tests covering spawn execution and rendering (concurrency, cancellation, truncation, stale detection, ownership lifecycle, microtask batching), ledger tools (add/get/list, staleness, rehydration, empty states, prompt hints), handoff (tool, command, compaction), watchdog (nudge injection, enforcement), and extension lifecycle.
 - **MIT licensed** — open-source permissive license.
 
-[Unreleased]: https://github.com/chunkhound/pi-schematic/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/chunkhound/pi-schematic/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/chunkhound/pi-schematic/compare/v0.5.0...v0.7.0
 [0.6.0]: https://github.com/chunkhound/pi-schematic/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/chunkhound/pi-schematic/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/chunkhound/pi-schematic/compare/v0.3.0...v0.4.0

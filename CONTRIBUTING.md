@@ -74,6 +74,25 @@ Node 22 (minimum) is tested only on Linux — the primary platform and the only 
 Snapshot golden files in `tests/snapshots/` are stored with LF line endings (enforced by `.gitattributes`). The `normalizeEOL` helper in the snapshot test file normalizes `\r\n` to `\n` on read, so Windows developers get correct comparisons even if their working tree has CRLF. If you update snapshots, the CI matrix validates them on all platforms.
 Both E2E suites run on Linux, macOS and Windows.
 
+## Releasing
+
+Feature PRs add changelog entries under [Unreleased] and do not change the version.
+
+A release PR titled `release: X.Y.Z` sets the version in `package.json` and `package-lock.json` by hand. Rename `[Unreleased]` to `[X.Y.Z] - <date>`, add a fresh `[Unreleased]` heading above it, and update the compare links. After merge, tag the merge commit `vX.Y.Z` and push the tag, or create a GitHub release with that tag. The tag push runs `.github/workflows/npm-publish.yml`, which fails unless the tagged commit is on main, checks the tag against `package.json`, runs the gates, and publishes through npm trusted publishing.
+
+For the first publish, a maintainer must publish by hand before registering a trusted publisher. The publishing account needs publish rights in the `chunkhound` npm org. `publishConfig.access` is `public`, so `npm publish` publishes the scoped package publicly. From a clean checkout of the tag, run:
+
+```bash
+git clone --branch vX.Y.Z https://github.com/chunkhound/pi-schematic <dir>
+cd <dir>
+npm ci
+npm pack --dry-run
+npm publish
+npm trust github @chunkhound/pi-schematic --file npm-publish.yml --repository chunkhound/pi-schematic --allow-publish
+```
+
+The `npm trust` command requires npm 11.15 or later. If the tag's workflow run starts before the manual publish, rerun it after bootstrap. It finds the version on the registry and skips publishing.
+
 ## Community
 
 Use GitHub Issues for bug reports and feature requests. Keep discussions concrete: describe the agent workflow you expected, what happened instead, and any reproduction steps.
