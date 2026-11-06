@@ -193,7 +193,7 @@ test("child bash call the readonly guard blocks throws the block reason", async 
 	const target = outsideTempPath("blocked");
 
 	try {
-		await assert.rejects(runChildBash(`touch ${target}`), /Readonly mode:/);
+		await assert.rejects(runChildBash(`touch ${quoteShellArgument(target)}`), /Readonly mode:/);
 		assert.equal(fs.existsSync(target), false);
 	} finally {
 		fs.rmSync(target, { force: true });
@@ -203,10 +203,28 @@ test("child bash call the readonly guard blocks throws the block reason", async 
 test("child bash call the readonly guard blocks gets no block notice when its command names the denial phrase", hasDenialPhrase, async () => {
 	const target = outsideTempPath("blocked-phrase");
 	try {
-		await assert.rejects(runChildBash(`echo '${SANDBOX_DENIAL_PHRASE}' > ${target}`), (error: unknown) => {
+		await assert.rejects(runChildBash(`echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(target)}`), (error: unknown) => {
 			assert.ok(error instanceof Error);
 			assert.match(error.message, /Readonly mode:/);
 			assert.ok(error.message.includes(SANDBOX_DENIAL_PHRASE), error.message);
+			assert.equal(error.message.includes(READONLY_SANDBOX_BLOCK_NOTICE), false, error.message);
+			return true;
+		});
+	} finally {
+		fs.rmSync(target, { force: true });
+	}
+});
+
+test("child bash call the readonly guard blocks gets no block notice after a sandboxed call on the same tool", { skip: !canUseOsSandbox() || SANDBOX_DENIAL_PHRASES[process.platform] === undefined }, async () => {
+	const target = outsideTempPath("blocked-after-sandboxed");
+	const tool = createReadonlyChildBashTool(process.cwd());
+	const run = (command: string) => tool.execute("child-bash", { command }, undefined, undefined, undefined as any);
+	try {
+		await run(sandboxed("echo sandboxed-first"));
+
+		await assert.rejects(run(`echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(target)}`), (error: unknown) => {
+			assert.ok(error instanceof Error);
+			assert.match(error.message, /Readonly mode:/);
 			assert.equal(error.message.includes(READONLY_SANDBOX_BLOCK_NOTICE), false, error.message);
 			return true;
 		});

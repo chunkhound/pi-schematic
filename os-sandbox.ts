@@ -7,10 +7,9 @@
  *   Linux  → bubblewrap (bwrap) if available
  *   Windows → not supported (returns command unchanged, classifyBashCommand applies)
  *
- * The wrappers pass the command to bash `-c` as one argument and add nothing
- * else, no heredoc and no redirect, so the command reads the caller's stdin and
- * its exit code and output bytes reach pi untouched. README's "Compatibility
- * and limits" section lists what still differs from an unsandboxed run.
+ * The wrappers pass the command to the inner shell's `-c` as one argument and
+ * add nothing else, no heredoc and no redirect, so the command reads the
+ * caller's stdin and its exit code and output bytes reach pi untouched.
  * Neither wrapper prints a readonly notice; appendSandboxBlockNotice and
  * appendSandboxBlockNoticeToResult add it to a failed command's error text or
  * tool result.
@@ -131,9 +130,10 @@ export function buildMacProfile(tempDir: string): string {
 
 	// Collect unique paths — both canonical and unresolved (symlink) forms.
 	// Seatbelt subpath does NOT resolve symlinks, so we must include both.
-	// Also include /tmp and /private/tmp because bash (on macOS) creates
-	// heredoc temp files in /tmp regardless of $TMPDIR, so heredocs inside the
-	// user's own command still need them.
+	// Also include /tmp and /private/tmp because macOS system bash 3.2 ignores
+	// $TMPDIR for heredoc temp files: it tries /var/tmp, which stays denied,
+	// then falls back to /tmp. Newer bash honours $TMPDIR. Heredocs inside the
+	// user's own command need this fallback.
 	const writePaths = new Set<string>();
 	writePaths.add(canon);
 	if (original !== canon) writePaths.add(original);
@@ -167,20 +167,19 @@ export function quoteShellArgument(value: string): string {
 }
 
 /**
- * Build the `"${BASH:-/bin/bash}" -c <quoted command>` tail that the sandbox
- * wrappers run. The outer shell expands `$BASH` to its own path before the
- * sandbox starts, so the command runs under the same shell as unsandboxed
- * whenever that shell is bash (macOS `/bin/sh` included), and under
- * `/bin/bash` otherwise.
+ * Build the `"$0" -c <quoted command>` tail that the sandbox wrappers run. pi
+ * starts the outer shell as `<shell> -c <wrapped command>`, so `$0` is the
+ * shell path pi spawned; the outer shell expands it before the sandbox starts,
+ * and the command runs under the same shell as unsandboxed.
  */
 function buildInnerBashInvocation(command: string): string {
-	return `"\${BASH:-/bin/bash}" -c ${quoteShellArgument(command)}`;
+	return `"$0" -c ${quoteShellArgument(command)}`;
 }
 
 /**
  * Wrap a bash command with sandbox-exec on macOS.
  *
- *   sandbox-exec -p '<profile>' "${BASH:-/bin/bash}" -c '<command>'
+ *   sandbox-exec -p '<profile>' "$0" -c '<command>'
  *
  * All descendants inherit the sandbox.
  */
@@ -194,7 +193,7 @@ export function wrapWithSandboxExec(command: string): string {
 /**
  * Wrap a bash command with bubblewrap on Linux.
  *
- *   bwrap <flags> "${BASH:-/bin/bash}" -c '<command>'
+ *   bwrap <flags> "$0" -c '<command>'
  *
  * --ro-bind / /  makes entire root read-only
  * --tmpfs /tmp   then mounts writable tmpfs at /tmp (overrides ro-bind)
@@ -251,9 +250,10 @@ export function appendSandboxBlockNotice(text: string, platform: NodeJS.Platform
  * the platform's denial phrase occurs in a text block or in a string
  * `structuredContent.output`.
  *
- * The notice goes after the last text block (into a new text block when there
- * is none) and after a string `structuredContent.output`; every other field is
- * kept. The input is not mutated, and `isError` is not part of the return.
+ * The notice is appended to the last text block's text (or added as a new
+ * text block when there is none) and to a string `structuredContent.output`;
+ * every other field is kept. The input is not mutated, and `isError` is not
+ * part of the return.
  */
 export function appendSandboxBlockNoticeToResult(
 	result: Pick<AgentToolResult, "content" | "structuredContent" | "isError">,
@@ -295,8 +295,8 @@ export function appendSandboxBlockNoticeToResult(
  * On Linux: wraps with bubblewrap if available.
  * On other platforms / when unavailable: returns command unchanged.
  *
- * The returned command must be passed to /bin/bash -c (or equivalent) for
- * execution — the shell tool handles this automatically.
+ * The returned command must run as `<shell> -c <command>`, as pi's bash tool
+ * runs it, because the inner shell is the outer shell's `$0`.
  */
 export function wrapCommandWithOsSandbox(command: string): string {
 	const platform = process.platform;

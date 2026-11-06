@@ -178,15 +178,30 @@ test("a failed non-bash result for a sandboxed id gets no notice", sandboxOnly, 
 	assert.equal(await bash.result("call-1", { toolName: "read" }), undefined);
 });
 
+// The resumed branch keeps readonly on, so only a dropped id can explain a missing notice.
+const READONLY_ON_BRANCH = [{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } }];
+
+function resumeSession(pi: Awaited<ReturnType<typeof registerReadonlyBash>>["pi"]) {
+	return emitAll(pi, "session_start", { reason: "resume" }, { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => READONLY_ON_BRANCH } });
+}
+
 test("a session start drops sandboxed ids whose result never arrived", sandboxOnly, async () => {
 	const bash = await registerReadonlyBash();
-	// The resumed branch keeps readonly on, so only the dropped id can explain a missing notice.
-	const branch = [{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } }];
 	await bash.callBash("before-start");
+	await resumeSession(bash.pi);
 
-	await emitAll(bash.pi, "session_start", { reason: "resume" }, { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => branch } });
+	const result = await bash.result("before-start");
 
-	assert.equal(await bash.result("before-start"), undefined);
+	assert.equal(result, undefined);
+});
+
+test("a call sandboxed after a session start gets the notice", sandboxOnly, async () => {
+	const bash = await registerReadonlyBash();
+	await resumeSession(bash.pi);
 	await bash.callBash("after-start");
-	assert.ok(await bash.result("after-start"), "a call sandboxed after the session start still gets the notice");
+
+	const result = await bash.result("after-start");
+
+	assert.ok(result?.content);
+	assert.ok(textOf({ content: result.content }).endsWith(READONLY_SANDBOX_BLOCK_NOTICE));
 });

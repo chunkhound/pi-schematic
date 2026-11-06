@@ -537,12 +537,6 @@ export default function (pi: ExtensionAPI): void {
 		}
 	}
 
-	// Ids of bash calls rewritten into the OS sandbox. Each id is removed on its
-	// result and the set is cleared on every session_start, so an id whose result
-	// never arrives (a later tool_call handler blocks the call, or an abort) lasts
-	// at most until the next session start.
-	const sandboxedBashCallIds = new Set<string>();
-
 	// ── Readonly: tool_call blocking ────────────────────────────────
 	pi.on("tool_call", async (event, ctx) => {
 		// ── Readonly mode ───────────────────────────────────────────
@@ -587,7 +581,7 @@ export default function (pi: ExtensionAPI): void {
 				// Mutate input.command in-place — SDK has no transform return type.
 				// Other tool_call hooks will see the sandbox-wrapped command.
 				event.input.command = result.sandboxedCommand;
-				sandboxedBashCallIds.add(event.toolCallId);
+				state.sandboxedBashCallIds.add(event.toolCallId);
 			}
 		}
 	});
@@ -595,7 +589,7 @@ export default function (pi: ExtensionAPI): void {
 	// The sandbox wrapper passes the command's output through unchanged, so the
 	// block is reported here, on the failed result of a sandboxed call.
 	pi.on("tool_result", async (event) => {
-		if (!isBashToolResult(event) || !sandboxedBashCallIds.delete(event.toolCallId)) return;
+		if (!isBashToolResult(event) || !state.sandboxedBashCallIds.delete(event.toolCallId)) return;
 		return appendSandboxBlockNoticeToResult(event);
 	});
 
@@ -910,7 +904,8 @@ export default function (pi: ExtensionAPI): void {
 
 	// ── session_start: reset state + readonly rehydration + indicators ──
 	pi.on("session_start", async (event, ctx: ExtensionContext) => {
-		sandboxedBashCallIds.clear();
+		// Every start, not only "new": resetState below runs only for /new.
+		state.sandboxedBashCallIds.clear();
 		if (event.reason === "new") {
 			resetState(state);
 			// Clear any stale TUI indicators from the previous session

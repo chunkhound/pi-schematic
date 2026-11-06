@@ -37,47 +37,33 @@ interface RunResult {
 	signal: NodeJS.Signals | null;
 }
 
-interface Run extends RunResult {
-	firstStdoutAt: number | undefined;
-	closedAt: number;
-}
-
 /**
  * Run a command the way pi's bash tool spawns it: `<shell> -c`, stdin at
- * /dev/null, separate pipes, its own process group. Records when the first
- * stdout chunk and the close event arrive.
+ * /dev/null, separate pipes, its own process group.
  */
-function runLikePi(command: string, shell = "/bin/bash"): Promise<Run> {
+function runLikePi(command: string, shell = "/bin/bash"): Promise<RunResult> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(shell, ["-c", command], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
 		const stdout: Buffer[] = [];
 		const stderr: Buffer[] = [];
-		let firstStdoutAt: number | undefined;
-		child.stdout.on("data", (chunk: Buffer) => {
-			firstStdoutAt ??= performance.now();
-			stdout.push(chunk);
-		});
+		child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
 		child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
 		child.on("error", reject);
 		child.on("close", (code, signal) => {
-			resolve({ stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), code, signal, firstStdoutAt, closedAt: performance.now() });
+			resolve({ stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), code, signal });
 		});
 	});
 }
 
 /** Run `command` like pi and assert that it exits 0. */
-async function runLikePiOk(command: string): Promise<Run> {
+async function runLikePiOk(command: string): Promise<RunResult> {
 	const run = await runLikePi(command);
 	assert.equal(run.code, 0, run.stderr.toString());
 	return run;
 }
 
-function outcome({ stdout, stderr, code, signal }: Run): RunResult {
-	return { stdout, stderr, code, signal };
-}
-
 async function runSandboxedAndPlain(command: string): Promise<{ sandboxed: RunResult; plain: RunResult }> {
-	return { sandboxed: outcome(await runLikePi(wrapCommandWithOsSandbox(command))), plain: outcome(await runLikePi(command)) };
+	return { sandboxed: await runLikePi(wrapCommandWithOsSandbox(command)), plain: await runLikePi(command) };
 }
 
 const sandboxRuntime = { skip: !canUseOsSandbox(), timeout: 20_000 };
@@ -126,6 +112,12 @@ for (const { name, platform, output, isError } of [
 		assert.equal(appendSandboxBlockNoticeToResult(bashResult(output, isError), platform), undefined);
 	});
 }
+
+test("appends no block notice to a result whose isError is unset", () => {
+	const { isError: _isError, ...result } = bashResult("bash: /outside: Operation not permitted");
+
+	assert.equal(appendSandboxBlockNoticeToResult(result, "darwin"), undefined);
+});
 
 test("block notice leaves the input result unchanged", () => {
 	const result = bashResult("bash: /outside: Operation not permitted");
@@ -228,11 +220,11 @@ for (const { name, platform, message } of [
 
 // ── Wrapper shape ───────────────────────────────────────────────
 
-test("sandbox wrappers pass the command to the outer shell's bash -c as one quoted argument and add nothing else", () => {
+test(`sandbox wrappers pass the command as one quoted argument to "$0" -c with nothing added`, () => {
 	const command = `printf '%s\\n' "it's quoted"\necho second line`;
 
 	for (const wrapped of [wrapWithSandboxExec(command), wrapWithBwrap(command)]) {
-		assert.ok(wrapped.endsWith(` "\${BASH:-/bin/bash}" -c ${quoteShellArgument(command)}`), wrapped);
+		assert.ok(wrapped.endsWith(` "$0" -c ${quoteShellArgument(command)}`), wrapped);
 		assert.equal(wrapped.includes("<<"), false, wrapped);
 		assert.equal(wrapped.includes(READONLY_SANDBOX_BLOCK_NOTICE), false, wrapped);
 		assert.equal(wrapped.includes("2>&1"), false, wrapped);
@@ -293,14 +285,25 @@ for (const { name, write } of [
 		write: (target: string) => `${quoteShellArgument(process.execPath)} -e ${quoteShellArgument(`require("fs").writeFileSync(${JSON.stringify(target)}, "blocked")`)}`,
 	},
 ]) {
-	test(`sandbox blocks ${name} outside temp and the failed result gets the block notice`, sandboxRuntime, async () => {
+	test(`sandbox blocks ${name} outside temp`, sandboxRuntime, async () => {
 		const outsidePath = path.join(os.homedir(), `.pi-readonly-outside-${process.pid}-${Date.now()}`);
 		try {
 			const run = await runLikePi(wrapCommandWithOsSandbox(write(outsidePath)));
 
 			assert.notEqual(run.code, 0);
 			assert.equal(fs.existsSync(outsidePath), false, "outside temp file should not be created");
+		} finally {
+			fs.rmSync(outsidePath, { force: true });
+		}
+	});
+
+	test(`the failed result of ${name} the sandbox blocked gets the block notice`, sandboxRuntime, async () => {
+		const outsidePath = path.join(os.homedir(), `.pi-readonly-outside-${process.pid}-${Date.now()}`);
+		try {
+			const run = await runLikePi(wrapCommandWithOsSandbox(write(outsidePath)));
+
 			const noticed = appendSandboxBlockNoticeToResult(bashResult(`${run.stdout}${run.stderr}`));
+
 			assert.ok(noticed?.content[0]?.type === "text" && noticed.content[0].text.endsWith(NOTICE_SUFFIX), JSON.stringify(noticed));
 		} finally {
 			fs.rmSync(outsidePath, { force: true });
@@ -319,13 +322,13 @@ test("sandbox allows writes inside temp", sandboxRuntime, async () => {
 	}
 });
 
-test("sandboxed command runs under the bash that launched the sandbox", sandboxRuntime, async () => {
+test("sandboxed command runs under the shell that launched the sandbox", sandboxRuntime, async () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-bash-"));
 	const linkedBash = path.join(dir, "bash");
 	try {
 		fs.symlinkSync("/bin/bash", linkedBash);
 
-		const run = await runLikePi(wrapCommandWithOsSandbox('echo "$BASH"'), linkedBash);
+		const run = await runLikePi(wrapCommandWithOsSandbox('echo "$0"'), linkedBash);
 
 		assert.equal(run.code, 0, run.stderr.toString());
 		assert.equal(run.stdout.toString(), `${linkedBash}\n`);
@@ -334,8 +337,22 @@ test("sandboxed command runs under the bash that launched the sandbox", sandboxR
 	}
 });
 
+test("sandboxed command launched from /bin/sh runs under /bin/sh", sandboxRuntime, async () => {
+	const run = await runLikePi(wrapCommandWithOsSandbox('echo "$0"'), "/bin/sh");
+
+	assert.equal(run.code, 0, run.stderr.toString());
+	assert.equal(run.stdout.toString(), "/bin/sh\n");
+});
+
+test("sandboxed command launched from zsh runs under zsh", { ...sandboxRuntime, skip: sandboxRuntime.skip || !fs.existsSync("/bin/zsh") }, async () => {
+	const run = await runLikePi(wrapCommandWithOsSandbox('echo "$0"'), "/bin/zsh");
+
+	assert.equal(run.code, 0, run.stderr.toString());
+	assert.equal(run.stdout.toString(), "/bin/zsh\n");
+});
+
 for (const reader of ["cat", "read x", "head -1"]) {
-	test(`sandboxed ${reader} reads stdin as unsandboxed and the commands after it run`, sandboxRuntime, async () => {
+	test(`sandboxed ${reader} on pi's /dev/null stdin behaves as unsandboxed`, sandboxRuntime, async () => {
 		const { sandboxed, plain } = await runSandboxedAndPlain(`${reader}; echo after; false`);
 
 		assert.deepEqual(sandboxed, plain);
@@ -375,18 +392,36 @@ test("sandboxed trailing backslash prints as unsandboxed", sandboxRuntime, async
 });
 
 test("sandboxed output streams while the command runs", sandboxRuntime, async () => {
-	const run = await runLikePi(wrapCommandWithOsSandbox("printf first; sleep 3; printf second"));
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-stream-"));
+	const flag = path.join(dir, "flag");
+	// The command waits for the flag, which the test creates only after the
+	// first chunk arrived. Buffered output would never deliver that chunk
+	// early, so the wait would run out (about 10 s) and print "timeout".
+	const command = `printf first; i=0; while [ ! -e ${quoteShellArgument(flag)} ]; do `
+		+ `if [ "$i" -ge 100 ]; then printf timeout; break; fi; sleep 0.1; i=$((i + 1)); done; printf second`;
+	try {
+		const stdout = await new Promise<string>((resolve, reject) => {
+			const child = spawn("/bin/bash", ["-c", wrapCommandWithOsSandbox(command)], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+			const chunks: Buffer[] = [];
+			child.stdout.on("data", (chunk: Buffer) => {
+				if (chunks.length === 0) fs.writeFileSync(flag, "");
+				chunks.push(chunk);
+			});
+			child.on("error", reject);
+			child.on("close", () => resolve(Buffer.concat(chunks).toString()));
+		});
 
-	assert.ok(run.firstStdoutAt !== undefined, "command wrote no stdout");
-	assert.ok(run.closedAt - run.firstStdoutAt >= 1000, JSON.stringify({ firstStdoutAt: run.firstStdoutAt, closedAt: run.closedAt }));
+		assert.equal(stdout, "firstsecond");
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
 });
 
 test("sandboxed stray closing brace is the same syntax error as unsandboxed", sandboxRuntime, async () => {
 	const { sandboxed, plain } = await runSandboxedAndPlain("echo one; } ; echo two");
 
 	assert.notEqual(plain.code, 0);
-	assert.equal(sandboxed.code, plain.code);
-	assert.deepEqual(sandboxed.stdout, plain.stdout);
+	assert.deepEqual(sandboxed, plain);
 });
 
 test("sandbox allows writes to /dev/null", sandboxRuntime, async () => {
