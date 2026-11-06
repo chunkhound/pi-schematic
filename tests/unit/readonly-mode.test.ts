@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
-import { READONLY_POWERSHELL_BLOCK_REASON } from "../../notifications.js";
+import { READONLY_POWERSHELL_BLOCK_REASON, READONLY_SANDBOX_BLOCK_NOTICE } from "../../notifications.js";
+import { canUseOsSandbox } from "../../os-sandbox.js";
 import { registerReadonlyPI, makeReadonlyUICtx } from "./helpers.js";
 import { createBeforeAgentStartEvent } from "./test-host.js";
 
@@ -106,4 +107,80 @@ test("readonly toggle off delivers a deactivation nudge via context hook", async
 	assert.ok(readonlyNudge, "context hook should deliver a readonly deactivation nudge");
 	assert.match(readonlyNudge.content, /readonly/i);
 	assert.match(readonlyNudge.content, /off|disabled|turned off/i);
+});
+
+// ── Sandbox block notice on failed sandboxed bash results ────────────
+
+const SANDBOX_DENIAL_PHRASE = process.platform === "linux" ? "Read-only file system" : "Operation not permitted";
+
+async function registerReadonlyBash() {
+	const { pi, toolCall } = await registerReadonlyPI();
+	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
+	const [toolResult] = pi.handlers.get("tool_result") as Array<(event: any, ctx: any) => Promise<any>>;
+	return {
+		callBash: (toolCallId: string) =>
+			toolCall({ toolName: "bash", toolCallId, input: { command: "ls" } }, { cwd: "/workspace" }),
+		result: (toolCallId: string, overrides: Record<string, unknown> = {}) => {
+			const output = `touch: x: ${SANDBOX_DENIAL_PHRASE}`;
+			return toolResult(
+				{
+					toolName: "bash",
+					toolCallId,
+					input: { command: "ls" },
+					isError: true,
+					content: [{ type: "text", text: `${output}\n\nCommand exited with code 1` }],
+					structuredContent: { output, truncated: false, exit_code: 1, wall_time_seconds: 0.1 },
+					...overrides,
+				},
+				{},
+			);
+		},
+	};
+}
+
+test("a failed sandboxed bash result gets the sandbox block notice once", async (t) => {
+	if (!canUseOsSandbox()) return t.skip("no OS sandbox on this host");
+	const bash = await registerReadonlyBash();
+
+	await bash.callBash("call-1");
+	const first = await bash.result("call-1");
+
+	assert.equal(first.content[0].text, `touch: x: ${SANDBOX_DENIAL_PHRASE}\n\nCommand exited with code 1\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`);
+	assert.equal(first.structuredContent.output, `touch: x: ${SANDBOX_DENIAL_PHRASE}\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`);
+	assert.equal(first.structuredContent.exit_code, 1);
+	assert.equal("isError" in first, false);
+	assert.equal(await bash.result("call-1"), undefined);
+});
+
+test("a successful sandboxed bash result gets no notice", async (t) => {
+	if (!canUseOsSandbox()) return t.skip("no OS sandbox on this host");
+	const bash = await registerReadonlyBash();
+
+	await bash.callBash("call-1");
+
+	assert.equal(await bash.result("call-1", { isError: false }), undefined);
+});
+
+test("a failed bash result gets no notice when the host has no OS sandbox", async (t) => {
+	if (canUseOsSandbox()) return t.skip("this host has an OS sandbox");
+	const bash = await registerReadonlyBash();
+
+	await bash.callBash("call-1");
+
+	assert.equal(await bash.result("call-1"), undefined);
+});
+
+test("a failed bash result for an id that was never sandboxed gets no notice", async () => {
+	const bash = await registerReadonlyBash();
+
+	assert.equal(await bash.result("never-called"), undefined);
+});
+
+test("a failed non-bash result for a sandboxed id gets no notice", async (t) => {
+	if (!canUseOsSandbox()) return t.skip("no OS sandbox on this host");
+	const bash = await registerReadonlyBash();
+
+	await bash.callBash("call-1");
+
+	assert.equal(await bash.result("call-1", { toolName: "read" }), undefined);
 });
