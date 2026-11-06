@@ -1,0 +1,12 @@
+────────────────────────────────────────────────────────────────────────────────
+ 🛠️ workflow review-worktree                                                    
+ exit   time target reached                                                     
+ time   1:23:45                                                                 
+ counts checkpoints 3   ·   steps 5   ·   turns 14   ·   classify 2             
+ spend  $1.87                                                                   
+ stopped at checkpoint {"round":3,"approved":true}                              
+ by model                                                                       
+   anthropic/claude-opus-4-5   $1.50   720k in · 360k out                       
+   anthropic/claude-haiku-4    $0.30   120k in · 60k out                        
+   typesafe/jev                $0.07   7k in · 4k out                           
+────────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,17 @@
+────────────────────────────────────────────────────────────────────────────────
+ 🛠️ workflow review-worktree                                                    
+ exit   approved                                                                
+ time   1:23:45                                                                 
+ counts checkpoints 3   ·   steps 5   ·   turns 14   ·   classify 2             
+ spend  $1.87                                                                   
+ detail handoff 1 · shell 4 · notebook 6 · new 1                                
+ start  2026-01-02T03:00:00.000Z                                                
+ end    2026-01-02T04:23:45.000Z                                                
+ by model                                                                       
+   anthropic/claude-opus-4-5   $1.50   720k in · 360k out                       
+      cache 108k/12k  ·  8 calls                                                
+   anthropic/claude-haiku-4    $0.30   120k in · 60k out                        
+      cache 18k/2k  ·  4 calls                                                  
+   typesafe/jev                $0.07   7k in · 4k out                           
+      cache 1k/120  ·  2 calls                                                  
+────────────────────────────────────────────────────────────────────────────────
