@@ -10,6 +10,7 @@ export const VITEST_FILES = [
   "tests/unit/model-groups-display.test.ts",
   "tests/unit/pi-module-identity.test.ts",
   "tests/unit/resolve-path.test.ts",
+  "tests/unit/test-host.test.ts",
   "tests/unit/test-infra.test.ts",
   "tests/unit/thinking-levels.test.ts",
 ];
