@@ -1,5 +1,4 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import { getReadonlyFromBranch } from "../../readonly-rehydration.js";
 
 function makePI(readonlyFlag = false) {
@@ -7,26 +6,20 @@ function makePI(readonlyFlag = false) {
 }
 
 test("getReadonlyFromBranch returns false for empty branch with no CLI flag", () => {
-	assert.equal(getReadonlyFromBranch([], makePI(false)), false);
+	expect(getReadonlyFromBranch([], makePI(false))).toBe(false);
 });
 
 test("getReadonlyFromBranch returns true for empty branch with CLI flag", () => {
-	assert.equal(getReadonlyFromBranch([], makePI(true)), true);
+	expect(getReadonlyFromBranch([], makePI(true))).toBe(true);
 });
 
 test("getReadonlyFromBranch uses a persisted readonly entry when present", () => {
-	assert.equal(
-		getReadonlyFromBranch([
+	expect(getReadonlyFromBranch([
 			{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } },
-		], makePI(false)),
-		true,
-	);
-	assert.equal(
-		getReadonlyFromBranch([
+		], makePI(false))).toBe(true);
+	expect(getReadonlyFromBranch([
 			{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: false } },
-		], makePI(true)),
-		false,
-	);
+		], makePI(true))).toBe(false);
 });
 
 test("getReadonlyFromBranch picks the latest entry (true wins)", () => {
@@ -35,7 +28,7 @@ test("getReadonlyFromBranch picks the latest entry (true wins)", () => {
 		{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: false } },
 		{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } },
 	];
-	assert.equal(getReadonlyFromBranch(branch, makePI(false)), true);
+	expect(getReadonlyFromBranch(branch, makePI(false))).toBe(true);
 });
 
 test("getReadonlyFromBranch picks the latest entry (false wins)", () => {
@@ -44,22 +37,19 @@ test("getReadonlyFromBranch picks the latest entry (false wins)", () => {
 		{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } },
 		{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: false } },
 	];
-	assert.equal(getReadonlyFromBranch(branch, makePI(false)), false);
+	expect(getReadonlyFromBranch(branch, makePI(false))).toBe(false);
 });
 
 test("getReadonlyFromBranch skips entries with wrong customType", () => {
 	const branch = [
 		{ type: "custom", customType: "other-extension", data: { enabled: true } },
 	];
-	assert.equal(getReadonlyFromBranch(branch, makePI(false)), false);
+	expect(getReadonlyFromBranch(branch, makePI(false))).toBe(false);
 });
 
 test("getReadonlyFromBranch falls back to the CLI flag when no valid readonly entry exists", () => {
-	assert.equal(getReadonlyFromBranch([null, "string", 42], makePI(true)), true);
-	assert.equal(
-		getReadonlyFromBranch([
+	expect(getReadonlyFromBranch([null, "string", 42], makePI(true))).toBe(true);
+	expect(getReadonlyFromBranch([
 			{ type: "custom", customType: "pi-schematic-readonly", data: null },
-		], makePI(false)),
-		false,
-	);
+		], makePI(false))).toBe(false);
 });

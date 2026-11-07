@@ -1,7 +1,5 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import fc from "fast-check";
-import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -10,6 +8,7 @@ import {
 	formatZoneOffset,
 	hostZone,
 } from "../../time/format.js";
+import { spawnNode } from "./spawn-node.js";
 
 // Instants are built with Date.UTC throughout, so a run in any host zone
 // exercises the same instants — the tests never inherit the runner's wall clock.
@@ -49,12 +48,12 @@ function intlOffset(date: Date, zone: string): string {
 // ── formatZoneOffset ──────────────────────────────────────────────────
 
 test("formatZoneOffset renders Intl offsets for named zones", () => {
-	assert.equal(formatZoneOffset(utc(2026, 6, 1), "UTC"), "UTC+00:00");
-	assert.equal(formatZoneOffset(utc(2026, 6, 1), "America/New_York"), "UTC-04:00"); // EDT
-	assert.equal(formatZoneOffset(utc(2026, 11, 21), "America/New_York"), "UTC-05:00"); // EST
-	assert.equal(formatZoneOffset(utc(2026, 6, 1), "Asia/Kolkata"), "UTC+05:30"); // half-hour
-	assert.equal(formatZoneOffset(utc(2026, 6, 1), "Asia/Kathmandu"), "UTC+05:45"); // quarter-hour
-	assert.equal(formatZoneOffset(utc(2026, 6, 1), "Pacific/Kiritimati"), "UTC+14:00"); // extreme east
+	expect(formatZoneOffset(utc(2026, 6, 1), "UTC")).toBe("UTC+00:00");
+	expect(formatZoneOffset(utc(2026, 6, 1), "America/New_York")).toBe("UTC-04:00"); // EDT
+	expect(formatZoneOffset(utc(2026, 11, 21), "America/New_York")).toBe("UTC-05:00"); // EST
+	expect(formatZoneOffset(utc(2026, 6, 1), "Asia/Kolkata")).toBe("UTC+05:30"); // half-hour
+	expect(formatZoneOffset(utc(2026, 6, 1), "Asia/Kathmandu")).toBe("UTC+05:45"); // quarter-hour
+	expect(formatZoneOffset(utc(2026, 6, 1), "Pacific/Kiritimati")).toBe("UTC+14:00"); // extreme east
 });
 
 // Property across the whole valid offset range (UTC±14:00) in 15-minute steps,
@@ -66,7 +65,7 @@ test("formatZoneOffset property: minutes east of UTC match Intl", () => {
 		fc.property(fc.integer({ min: -840, max: 840 }).map((m) => m - (m % 15)), (minutesEast) => {
 			const abs = Math.abs(minutesEast);
 			const zone = `${minutesEast < 0 ? "-" : "+"}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
-			assert.equal(formatZoneOffset(utc(2026, 0, 1), zone), intlOffset(utc(2026, 0, 1), zone));
+			expect(formatZoneOffset(utc(2026, 0, 1), zone)).toBe(intlOffset(utc(2026, 0, 1), zone));
 		}),
 		{ numRuns: 200 },
 	);
@@ -81,8 +80,8 @@ test("formatZoneOffset property: minutes east of UTC match Intl", () => {
 test("formatCurrentDate degrades an unusable zone to the fallback", () => {
 	for (const zone of ["", "Invalid/Zone", "Etc/Unknown"]) {
 		const line = formatCurrentDate(utc(2025, 0, 1, 12), zone);
-		assert.doesNotMatch(line, /undefined|Invalid|Unknown/, `${JSON.stringify(zone)} leaked into the prompt`);
-		assert.equal(line, "2025-01-01 (Wednesday), UTC (UTC+00:00)", `${JSON.stringify(zone)} must fall back to UTC`);
+		expect(line, `${JSON.stringify(zone)} leaked into the prompt`).not.toMatch(/undefined|Invalid|Unknown/);
+		expect(line, `${JSON.stringify(zone)} must fall back to UTC`).toBe("2025-01-01 (Wednesday), UTC (UTC+00:00)");
 	}
 });
 
@@ -90,9 +89,9 @@ test("formatCurrentDate degrades an unusable zone to the fallback", () => {
 // too — never the text "undefined", never a throw.
 test("hostZone drives a renderable default anchor", () => {
 	const zone = hostZone();
-	assert.notEqual(zone, "", "host zone must not be empty");
-	assert.doesNotThrow(() => formatCurrentDatePrompt(new Date(), zone));
-	assert.doesNotMatch(formatCurrentDate(utc(2025, 0, 1, 12), zone), /undefined/);
+	expect(zone, "host zone must not be empty").not.toBe("");
+	expect(() => formatCurrentDatePrompt(new Date(), zone)).not.toThrow();
+	expect(formatCurrentDate(utc(2025, 0, 1, 12), zone)).not.toMatch(/undefined/);
 });
 
 // ── formatCurrentDate ─────────────────────────────────────────────────
@@ -100,37 +99,28 @@ test("hostZone drives a renderable default anchor", () => {
 // Every field must come from the rendered zone, so an instant that is still the
 // previous day in that zone renders the previous day.
 test("formatCurrentDate renders the calendar day of the zone, not the host", () => {
-	assert.equal(
-		formatCurrentDate(utc(2026, 9, 5, 4, 0), "America/New_York"),
-		"2026-10-05 (Monday), America/New_York (UTC-04:00)",
-	);
-	assert.equal(
-		formatCurrentDate(utc(2026, 9, 5, 2, 0), "America/New_York"),
-		"2026-10-04 (Sunday), America/New_York (UTC-04:00)",
-	);
-	assert.equal(
-		formatCurrentDate(utc(2026, 9, 5, 2, 0), "Asia/Jerusalem"),
-		"2026-10-05 (Monday), Asia/Jerusalem (UTC+03:00)",
-	);
+	expect(formatCurrentDate(utc(2026, 9, 5, 4, 0), "America/New_York")).toBe("2026-10-05 (Monday), America/New_York (UTC-04:00)");
+	expect(formatCurrentDate(utc(2026, 9, 5, 2, 0), "America/New_York")).toBe("2026-10-04 (Sunday), America/New_York (UTC-04:00)");
+	expect(formatCurrentDate(utc(2026, 9, 5, 2, 0), "Asia/Jerusalem")).toBe("2026-10-05 (Monday), Asia/Jerusalem (UTC+03:00)");
 });
 
 test("formatCurrentDate zero-pads month and day", () => {
-	assert.match(formatCurrentDate(utc(2025, 0, 1), "UTC"), /^2025-01-01 /);
-	assert.match(formatCurrentDate(utc(2025, 8, 9), "UTC"), /^2025-09-09 /);
+	expect(formatCurrentDate(utc(2025, 0, 1), "UTC")).toMatch(/^2025-01-01 /);
+	expect(formatCurrentDate(utc(2025, 8, 9), "UTC")).toMatch(/^2025-09-09 /);
 });
 
 // The host zone is interpolated into the prompt, so a host that reports no
 // usable zone must render the fallback rather than the literal text "undefined".
 test("formatCurrentDate never renders an unknown zone as text", () => {
 	const line = formatCurrentDate(utc(2025, 0, 1, 12));
-	assert.doesNotMatch(line, /undefined/);
-	assert.match(line, /^\d{4}-\d{2}-\d{2} \(\w+\), \S+ \(UTC[+-]\d{2}:\d{2}\)$/);
+	expect(line).not.toMatch(/undefined/);
+	expect(line).toMatch(/^\d{4}-\d{2}-\d{2} \(\w+\), \S+ \(UTC[+-]\d{2}:\d{2}\)$/);
 });
 
 test("formatCurrentDate carries no clock reading", () => {
 	const out = formatCurrentDate(utc(2026, 9, 5, 14, 30, 45), "UTC");
-	assert.doesNotMatch(out, /\d{2}:\d{2}:\d{2}/, "no hh:mm:ss");
-	assert.doesNotMatch(out, /\dT\d|\dZ/, "no ISO time separator or Z suffix");
+	expect(out, "no hh:mm:ss").not.toMatch(/\d{2}:\d{2}:\d{2}/);
+	expect(out, "no ISO time separator or Z suffix").not.toMatch(/\dT\d|\dZ/);
 });
 
 // ── the caching contract the docs promise ─────────────────────────────
@@ -140,10 +130,10 @@ test("formatCurrentDate carries no clock reading", () => {
 test("formatCurrentDatePrompt is byte-stable across a whole calendar day", () => {
 	const start = utc(2026, 9, 5, 4).getTime(); // 2026-10-05 00:00 in America/New_York
 	const baseline = formatCurrentDatePrompt(new Date(start), "America/New_York");
-	assert.match(baseline, /^## Current date\n2026-10-05 \(Monday\), America\/New_York \(UTC-04:00\)/);
+	expect(baseline).toMatch(/^## Current date\n2026-10-05 \(Monday\), America\/New_York \(UTC-04:00\)/);
 	for (let minute = 0; minute < 1440; minute++) {
 		const instant = new Date(start + minute * MINUTE);
-		assert.equal(formatCurrentDatePrompt(instant, "America/New_York"), baseline, `minute ${minute} drifted`);
+		expect(formatCurrentDatePrompt(instant, "America/New_York"), `minute ${minute} drifted`).toBe(baseline);
 	}
 });
 
@@ -153,7 +143,7 @@ test("formatCurrentDatePrompt is byte-stable across the host day", () => {
 	const start = localMidnight(utc(2026, 9, 5, 0));
 	const baseline = formatCurrentDatePrompt(new Date(start));
 	for (let minute = 0; minute <= 1320; minute++) {
-		assert.equal(formatCurrentDatePrompt(new Date(start + minute * MINUTE)), baseline, `minute ${minute} drifted`);
+		expect(formatCurrentDatePrompt(new Date(start + minute * MINUTE)), `minute ${minute} drifted`).toBe(baseline);
 	}
 });
 
@@ -166,25 +156,25 @@ test("formatCurrentDatePrompt holds one date change and one offset flip across a
 	const offsets: string[] = [];
 	for (let minute = 0; minute <= 1320; minute += 15) {
 		const line = formatCurrentDate(new Date(start + minute * MINUTE), "America/New_York");
-		assert.match(line, /^\d{4}-\d{2}-\d{2} \(\w+\), America\/New_York \(UTC[+-]\d{2}:\d{2}\)$/);
+		expect(line).toMatch(/^\d{4}-\d{2}-\d{2} \(\w+\), America\/New_York \(UTC[+-]\d{2}:\d{2}\)$/);
 		dates.push(line.slice(0, 10));
 		offsets.push(line.slice(line.indexOf("(UTC")));
 	}
 	// Offsets must run [-05:00 … -05:00, -04:00 … -04:00] with exactly one flip.
-	assert.equal(offsets[0], "(UTC-05:00)", "sweep must start on EST");
-	assert.equal(offsets[offsets.length - 1], "(UTC-04:00)", "sweep must end on EDT");
+	expect(offsets[0], "sweep must start on EST").toBe("(UTC-05:00)");
+	expect(offsets[offsets.length - 1], "sweep must end on EDT").toBe("(UTC-04:00)");
 	for (const offset of offsets) {
-		assert.ok(offset === "(UTC-05:00)" || offset === "(UTC-04:00)", `unexpected offset ${offset}`);
+		expect(offset === "(UTC-05:00)" || offset === "(UTC-04:00)", `unexpected offset ${offset}`).toBe(true);
 	}
 	const offsetFlips = offsets.filter((offset, i) => i > 0 && offset !== offsets[i - 1]).length;
-	assert.equal(offsetFlips, 1, `offset must flip exactly once, got ${offsetFlips}: ${[...new Set(offsets)].join(", ")}`);
+	expect(offsetFlips, `offset must flip exactly once, got ${offsetFlips}: ${[...new Set(offsets)].join(", ")}`).toBe(1);
 	// Dates are ISO so lexicographic order is chronological: non-decreasing,
 	// at most one change (the midnight boundary), never alternating back.
 	for (let i = 1; i < dates.length; i++) {
-		assert.ok(dates[i] >= dates[i - 1], `date moved backwards at step ${i}: ${dates[i - 1]} → ${dates[i]}`);
+		expect(dates[i] >= dates[i - 1], `date moved backwards at step ${i}: ${dates[i - 1]} → ${dates[i]}`).toBe(true);
 	}
 	const dateFlips = dates.filter((date, i) => i > 0 && date !== dates[i - 1]).length;
-	assert.ok(dateFlips <= 1, `date changed more than once: ${[...new Set(dates)].join(", ")}`);
+	expect(dateFlips, `date changed more than once: ${[...new Set(dates)].join(", ")}`).toBeLessThanOrEqual(1);
 });
 
 // The offset must be instant-correct against Intl, so a DST flip can never
@@ -192,10 +182,10 @@ test("formatCurrentDatePrompt holds one date change and one offset flip across a
 test("formatCurrentDate offset matches Intl longOffset authority incl. DST", () => {
 	const instants = [utc(2026, 2, 8, 6), utc(2026, 2, 8, 9), utc(2026, 10, 1, 6), utc(2026, 10, 1, 9)];
 	for (const instant of instants) {
-		assert.equal(formatZoneOffset(instant, "America/New_York"), intlOffset(instant, "America/New_York"));
+		expect(formatZoneOffset(instant, "America/New_York")).toBe(intlOffset(instant, "America/New_York"));
 	}
-	assert.equal(formatZoneOffset(utc(2026, 2, 8, 6), "America/New_York"), "UTC-05:00");
-	assert.equal(formatZoneOffset(utc(2026, 2, 8, 9), "America/New_York"), "UTC-04:00");
+	expect(formatZoneOffset(utc(2026, 2, 8, 6), "America/New_York")).toBe("UTC-05:00");
+	expect(formatZoneOffset(utc(2026, 2, 8, 9), "America/New_York")).toBe("UTC-04:00");
 });
 
 // ── formatCurrentDatePrompt ───────────────────────────────────────────
@@ -204,34 +194,34 @@ test("formatCurrentDate offset matches Intl longOffset authority incl. DST", () 
 // the zone via the host proves the default parameter wires to hostZone(). A child
 // process isolates the TZ from the in-process host-day stability tests above.
 // America/New_York is never reported as an Intl alias, unlike Asia/Kolkata.
-test("formatCurrentDate defaults to the host zone under a pinned TZ", () => {
-	if (process.platform === "win32") return; // TZ→Intl propagation is POSIX-guaranteed
+// Skipped on Windows: TZ→Intl propagation is POSIX-guaranteed.
+test.skipIf(process.platform === "win32")("formatCurrentDate defaults to the host zone under a pinned TZ", () => {
 	const instant = Date.UTC(2026, 9, 5, 4, 0);
 	const script =
 		`import { formatCurrentDate, hostZone } from "./time/format.js"; ` +
 		`console.log(hostZone() + "|" + formatCurrentDate(new Date(${instant})));`;
-	const out = execFileSync(
-		process.execPath,
-		["--import", LOADER, "--input-type=module", "-e", script],
-		{ cwd: ROOT, env: { ...process.env, TZ: "America/New_York" }, encoding: "utf8", timeout: 10000 },
-	).trim();
+	const result = spawnNode(["--input-type=module", "-e", script], {
+		cwd: ROOT,
+		env: { TZ: "America/New_York" },
+		loader: LOADER,
+		timeoutMs: 10_000,
+	});
+	expect(result.status, result.stderr).toBe(0);
+	const out = result.stdout.trim();
 	const [zone, formatted] = out.split("|");
-	assert.equal(zone, "America/New_York", "pinned TZ must reach Intl as the host zone");
-	assert.match(formatted, /America\/New_York/, "formatCurrentDate(instant) must resolve its default zone to the host zone");
+	expect(zone, "pinned TZ must reach Intl as the host zone").toBe("America/New_York");
+	expect(formatted, "formatCurrentDate(instant) must resolve its default zone to the host zone").toMatch(/America\/New_York/);
 });
 
-// Pin the entire block with one assert.equal: it covers both the date line and
+// Pin the entire block with one expect: it covers both the date line and
 // the directive, so a rewording of either fails here. Importing the directive
 // constant would pass even after a regression.
 test("formatCurrentDatePrompt anchors the date and instructs resolution", () => {
-	assert.equal(
-		formatCurrentDatePrompt(utc(2026, 9, 5), "UTC"),
-		'## Current date\n2026-10-05 (Monday), UTC (UTC+00:00)\n\n' +
-			'Resolve every relative or ambiguous time reference ("today", "yesterday", "last Friday", "this week", "recently", "latest") to an absolute date from this anchor before you answer or act. The anchor is the date this request started and is not updated during it; never guess a date.',
-	);
+	expect(formatCurrentDatePrompt(utc(2026, 9, 5), "UTC")).toBe('## Current date\n2026-10-05 (Monday), UTC (UTC+00:00)\n\n' +
+			'Resolve every relative or ambiguous time reference ("today", "yesterday", "last Friday", "this week", "recently", "latest") to an absolute date from this anchor before you answer or act. The anchor is the date this request started and is not updated during it; never guess a date.');
 });
 
 test("formatCurrentDatePrompt renders exactly one ISO date", () => {
 	const block = formatCurrentDatePrompt(utc(2026, 9, 5), "UTC");
-	assert.equal(block.match(/\d{4}-\d{2}-\d{2}/g)?.length, 1, "exactly one anchor date, no yesterday/tomorrow lines");
+	expect(block.match(/\d{4}-\d{2}-\d{2}/g)?.length, "exactly one anchor date, no yesterday/tomorrow lines").toBe(1);
 });

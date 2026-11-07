@@ -1,6 +1,5 @@
-import test from "node:test";
-import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { expect, test } from "vitest";
 import { createTestHarness } from "../test-utils.js";
 import {
 	__setSingletons,
@@ -13,12 +12,12 @@ test("createTestHarness swaps singleton state atomically and restores it on tear
 	const h = createTestHarness();
 	const during = getSingletons();
 
-	assert.notEqual(during, before);
-	assert.notEqual(during.writeContext, before.writeContext);
-	assert.notEqual(during.frameScheduler, before.frameScheduler);
+	expect(during).not.toBe(before);
+	expect(during.writeContext).not.toBe(before.writeContext);
+	expect(during.frameScheduler).not.toBe(before.frameScheduler);
 
 	h.teardown();
-	assert.equal(getSingletons(), before);
+	expect(getSingletons()).toBe(before);
 });
 
 test("__setSingletons warns and preserves lock + write context during in-flight writes", () => {
@@ -35,17 +34,17 @@ test("__setSingletons warns and preserves lock + write context during in-flight 
 		});
 		const after = getSingletons();
 		const warnings = h.warnings.filter((entry) => entry.level === "warn");
-		assert.ok(warnings.length > 0);
-		assert.match(String(warnings[0].args[0]), /pending/);
-		assert.equal(after.writeLock, before.writeLock);
-		assert.equal(after.writeContext, before.writeContext);
+		expect(warnings.length).toBeGreaterThan(0);
+		expect(String(warnings[0].args[0])).toMatch(/pending/);
+		expect(after.writeLock).toBe(before.writeLock);
+		expect(after.writeContext).toBe(before.writeContext);
 	} finally {
 		// Settle the simulated write, as a finished write would, so teardown
 		// can restore the previous singletons instead of preserving this lock.
 		before.writeLock.pending = 0;
 		h.teardown();
 	}
-	assert.equal(getSingletons(), outer);
+	expect(getSingletons()).toBe(outer);
 });
 
 test("write lock serializes concurrent writers and completes all", async () => {
@@ -72,14 +71,14 @@ test("write lock serializes concurrent writers and completes all", async () => {
 	await Promise.all(writers);
 
 	// All writers completed in some order
-	assert.equal(order.length, 5);
-	assert.ok(order.includes(0));
-	assert.ok(order.includes(4));
+	expect(order.length).toBe(5);
+	expect(order).toContain(0);
+	expect(order).toContain(4);
 
 	// Order is deterministic (no concurrent completion — serialized by lock)
 	// If lock works, order is a strict permutation of [0,1,2,3,4]
 	const sorted = [...order].sort((a, b) => a - b);
-	assert.deepEqual(order, sorted, "lock must serialize writers — no concurrent completion");
+	expect(order, "lock must serialize writers — no concurrent completion").toStrictEqual(sorted);
 
 	h.teardown();
 });
