@@ -5,6 +5,7 @@ import { Type } from "typebox";
 import { CONFIG_DIR_NAME, type ExecResult, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { expect, test } from "vitest";
 import { assertPresent } from "../assertions.js";
+import { CHILD_TIMEOUT_MS } from "./spawn-node.js";
 import { createTestHost, emitBeforeAgentStart } from "./test-host.js";
 
 function registerNamedTool(pi: ExtensionAPI, name: string): void {
@@ -90,7 +91,11 @@ test("pi.exec during registration runs in the seeded project directory", async (
 	try {
 		let result: ExecResult | undefined;
 		await createTestHost(async (pi) => {
-			result = await pi.exec(process.execPath, ["-e", "process.stdout.write(process.cwd())"]);
+			// The child must come from pi.exec, so it cannot go through spawnNode; pi.exec has no env option to
+			// clear NODE_OPTIONS, and the child only prints its working directory.
+			result = await pi.exec(process.execPath, ["-e", "process.stdout.write(process.cwd())"], {
+				timeout: CHILD_TIMEOUT_MS,
+			});
 		}, { cwd: dir });
 
 		assertPresent(result);
