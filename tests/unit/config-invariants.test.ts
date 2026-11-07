@@ -6,11 +6,10 @@
  */
 
 import { readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { assertPresent } from "../assertions.js";
-import { CHILD_TIMEOUT_MS } from "./spawn-node.js";
+import { spawnNode } from "./spawn-node.js";
 
 type AuditRecord = {
 	active: boolean;
@@ -34,6 +33,7 @@ const AUDIT_SCHEMA = "https://github.com/IBM/audit-ci/raw/main/docs/schema.json"
 const REPO_ROOT_URL = new URL("../../", import.meta.url);
 const REPO_ROOT = fileURLToPath(REPO_ROOT_URL);
 const AUDIT_CONFIG_PATH = new URL("audit-ci.jsonc", REPO_ROOT_URL);
+const AUDIT_CI_BIN_URL = new URL("node_modules/audit-ci/dist/bin.js", REPO_ROOT_URL);
 const PACKAGE_JSON_PATH = new URL("package.json", REPO_ROOT_URL);
 const WORKFLOW_PATH = new URL(".github/workflows/test.yml", REPO_ROOT_URL);
 const LOCK_PATH = new URL("package-lock.json", REPO_ROOT_URL);
@@ -126,28 +126,17 @@ function minimumNodeVersion(value: string): string {
 	return version;
 }
 
+// Runs the installed audit-ci bin, the one `npx audit-ci` resolves to in CI, as a Node child so it
+// gets spawnNode's deadline and cleared NODE_OPTIONS.
 function runAuditCi(): void {
-	const command = "npx audit-ci --config audit-ci.jsonc";
-	const result = spawnSync(command, {
-		cwd: REPO_ROOT,
-		encoding: "utf8",
-		shell: true,
-		timeout: CHILD_TIMEOUT_MS,
-		killSignal: "SIGKILL",
-	});
+	const args = [fileURLToPath(AUDIT_CI_BIN_URL), "--config", "audit-ci.jsonc"];
+	const result = spawnNode(args, { cwd: REPO_ROOT });
 	const diagnostics = [
-		`command: ${command}`,
-		`error.stack: ${result.error?.stack ?? "none"}`,
+		`command: node ${args.join(" ")}`,
 		`status: ${String(result.status)}`,
-		`signal: ${String(result.signal)}`,
 		`stdout:\n${result.stdout}`,
 		`stderr:\n${result.stderr}`,
 	].join("\n");
-
-	const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
-	expect(timedOut, `${command} did not finish within ${CHILD_TIMEOUT_MS} ms and was killed\n${diagnostics}`).toBe(false);
-	expect(result.error, diagnostics).toBe(undefined);
-	expect(result.signal, diagnostics).toBe(null);
 	expect(result.status, diagnostics).toBe(0);
 }
 
