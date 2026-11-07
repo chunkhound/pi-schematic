@@ -20,6 +20,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { TestContext } from "node:test";
 import { RpcClient, type RpcClientOptions, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
+import { piManifestPath } from "../../pi-packages.mjs";
 import {
 	parseBarrierReport,
 	parseProbeRecord,
@@ -37,7 +38,10 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const SCHEMATIC_ENTRY = resolve(HERE, "..", "..", "index.ts");
 const PROBE_ENTRY = resolve(HERE, "real-host-probe.ts");
 const CHILD_PROBE_ENTRY = resolve(HERE, "real-host-child-probe.ts");
-const CLI_PATH = join(dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"))), "cli.js");
+// The CLI is the file pi's manifest declares as `bin.pi`, the one the `pi` command runs.
+const PI_BIN: unknown = JSON.parse(readFileSync(piManifestPath, "utf8")).bin?.pi;
+if (typeof PI_BIN !== "string") throw new Error(`No string bin.pi in pi's manifest at ${piManifestPath}.`);
+const CLI_PATH = resolve(dirname(piManifestPath), PI_BIN);
 const REQUIRED_COMMANDS = ["handoff", "notebook", "readonly", PROBE_COMMAND.barrier];
 
 /** Barrier waits one host may make, its `close()` included; a test that needs more fails. */

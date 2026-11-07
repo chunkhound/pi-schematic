@@ -26,6 +26,7 @@ export const VITEST_FILES = [
   "tests/unit/resolve-path.test.ts",
   "tests/unit/runtime-singletons.test.ts",
   "tests/unit/state-invariants.test.ts",
+  "tests/unit/test-host.test.ts",
   "tests/unit/test-infra.test.ts",
   "tests/unit/thinking-levels.test.ts",
   "tests/unit/time-format.test.ts",
