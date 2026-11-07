@@ -5,8 +5,7 @@
  * that must hold after every operation on a pure SchematicState.
  */
 
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import * as fc from "fast-check";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
@@ -88,57 +87,57 @@ async function apply(
 function assertTopicSourceCoupling(state: SchematicState): void {
 	const msg = `topic=${state.activeNotebookTopic} source=${state.activeNotebookTopicSource}`;
 	if (state.activeNotebookTopic === null) {
-		assert.equal(state.activeNotebookTopicSource, null, `topic null → source null: ${msg}`);
+		expect(state.activeNotebookTopicSource, `topic null → source null: ${msg}`).toBe(null);
 	} else {
-		assert.notEqual(state.activeNotebookTopicSource, null, `topic set → source set: ${msg}`);
+		expect(state.activeNotebookTopicSource, `topic set → source set: ${msg}`).not.toBe(null);
 	}
 	// Bidirectional: source null → topic null too
 	if (state.activeNotebookTopicSource === null) {
-		assert.equal(state.activeNotebookTopic, null, `source null → topic null: ${msg}`);
+		expect(state.activeNotebookTopic, `source null → topic null: ${msg}`).toBe(null);
 	}
 }
 
 function assertChildSessionContainment(state: SchematicState): void {
 	for (const key of state.childSessions.keys()) {
-		assert.ok(
+		expect(
 			state.liveChildSessions.has(key),
 			`childSessions key "${key}" must be in liveChildSessions`,
-		);
+		).toBe(true);
 	}
 }
 
 function assertClippedPagesContained(state: SchematicState): void {
 	for (const name of state.clippedPages) {
-		assert.ok(
+		expect(
 			state.notebookPages.has(name),
 			`clipped page "${name}" must exist in notebookPages`,
-		);
+		).toBe(true);
 	}
 }
 
 function assertResetClears(state: SchematicState): void {
-	assert.equal(state.notebookPages.size, 0, "notebookPages must be empty after reset");
-	assert.equal(state.clippedPages.size, 0, "clippedPages must be empty after reset");
-	assert.equal(state.childSessions.size, 0, "childSessions must be empty after reset");
-	assert.equal(state.liveChildSessions.size, 0, "liveChildSessions must be empty after reset");
-	assert.equal(state.epoch, 0, "epoch must be 0 after reset");
-	assert.equal(state.activeNotebookTopic, null, "topic must be null after reset");
-	assert.equal(state.activeNotebookTopicSource, null, "topic source must be null after reset");
-	assert.equal(state.stagedHandoff, null, "stagedHandoff must be null after reset");
-	assert.equal(state.handoffRefusals.size, 0, "handoffRefusals must be empty after reset");
-	assert.equal(state.pendingRequestedHandoff, null, "pendingRequestedHandoff must be null after reset");
-	assert.equal(state.pendingTopicBoundaryHint, null, "pendingTopicBoundaryHint must be null after reset");
-	assert.equal(state.modelGroups.groups.length, 0, "modelGroups.groups must be empty after reset");
-	assert.equal(state.modelGroups.validation, null, "modelGroups.validation must be null after reset");
-	assert.equal(state.readonlyEnabled, false, "readonlyEnabled must be false after reset");
-	assert.equal(state.readonlyNudgePending, false, "readonlyNudgePending must be false after reset");
-	assert.equal(state.frontmatterSkillCache.size, 0, "frontmatterSkillCache must be empty after reset");
-	assert.equal(state.frontmatterPromptCache.size, 0, "frontmatterPromptCache must be empty after reset");
-	assert.equal(state.frontmatterSkillIssues.size, 0, "frontmatterSkillIssues must be empty after reset");
-	assert.equal(state.frontmatterPromptIssues.size, 0, "frontmatterPromptIssues must be empty after reset");
-	assert.equal(state.pendingReadonlyCommands.length, 0, "pendingReadonlyCommands must be empty after reset");
-	assert.equal(state.lastWatchdogBand, null, "lastWatchdogBand must be null after reset");
-	assert.equal(state.sandboxedBashCallIds.size, 0, "sandboxedBashCallIds must be empty after reset");
+	expect(state.notebookPages.size, "notebookPages must be empty after reset").toBe(0);
+	expect(state.clippedPages.size, "clippedPages must be empty after reset").toBe(0);
+	expect(state.childSessions.size, "childSessions must be empty after reset").toBe(0);
+	expect(state.liveChildSessions.size, "liveChildSessions must be empty after reset").toBe(0);
+	expect(state.epoch, "epoch must be 0 after reset").toBe(0);
+	expect(state.activeNotebookTopic, "topic must be null after reset").toBe(null);
+	expect(state.activeNotebookTopicSource, "topic source must be null after reset").toBe(null);
+	expect(state.stagedHandoff, "stagedHandoff must be null after reset").toBe(null);
+	expect(state.handoffRefusals.size, "handoffRefusals must be empty after reset").toBe(0);
+	expect(state.pendingRequestedHandoff, "pendingRequestedHandoff must be null after reset").toBe(null);
+	expect(state.pendingTopicBoundaryHint, "pendingTopicBoundaryHint must be null after reset").toBe(null);
+	expect(state.modelGroups.groups.length, "modelGroups.groups must be empty after reset").toBe(0);
+	expect(state.modelGroups.validation, "modelGroups.validation must be null after reset").toBe(null);
+	expect(state.readonlyEnabled, "readonlyEnabled must be false after reset").toBe(false);
+	expect(state.readonlyNudgePending, "readonlyNudgePending must be false after reset").toBe(false);
+	expect(state.frontmatterSkillCache.size, "frontmatterSkillCache must be empty after reset").toBe(0);
+	expect(state.frontmatterPromptCache.size, "frontmatterPromptCache must be empty after reset").toBe(0);
+	expect(state.frontmatterSkillIssues.size, "frontmatterSkillIssues must be empty after reset").toBe(0);
+	expect(state.frontmatterPromptIssues.size, "frontmatterPromptIssues must be empty after reset").toBe(0);
+	expect(state.pendingReadonlyCommands.length, "pendingReadonlyCommands must be empty after reset").toBe(0);
+	expect(state.lastWatchdogBand, "lastWatchdogBand must be null after reset").toBe(null);
+	expect(state.sandboxedBashCallIds.size, "sandboxedBashCallIds must be empty after reset").toBe(0);
 }
 
 // ── Properties ────────────────────────────────────────────────────────
@@ -230,19 +229,17 @@ test("Property 3: childSessionEpoch only changes on reset", async () => {
 							} else {
 								expectedChildEpoch = state.childSessionEpoch;
 							}
-							assert.equal(
+							expect(
 								state.childSessionEpoch,
-								expectedChildEpoch,
 								`childSessionEpoch must be ${expectedChildEpoch} after reset (prev=${prevChildEpoch})`,
-							);
+							).toBe(expectedChildEpoch);
 							expectedChildEpoch = state.childSessionEpoch;
 						} else {
 							// Non-reset: childSessionEpoch must be unchanged
-							assert.equal(
+							expect(
 								state.childSessionEpoch,
-								prevChildEpoch,
 								`childSessionEpoch must not change on ${action.type} action`,
-							);
+							).toBe(prevChildEpoch);
 							expectedChildEpoch = state.childSessionEpoch;
 						}
 					}
@@ -331,7 +328,7 @@ test("Property 5: Epoch counter — set to 1 on first savePage", async () => {
 				async (actions) => {
 					const state = createState();
 
-					assert.equal(state.epoch, 0, "epoch must be 0 on fresh state");
+					expect(state.epoch, "epoch must be 0 on fresh state").toBe(0);
 
 					for (const action of actions) {
 						const prevEpoch: number = state.epoch;
@@ -340,23 +337,23 @@ test("Property 5: Epoch counter — set to 1 on first savePage", async () => {
 						if (action.type === "savePage") {
 							// After first savePage, epoch transitions from 0 to 1
 							// After subsequent saves, epoch is unchanged (set once)
-							assert.ok(
-								state.epoch > 0,
+							expect(
+								state.epoch,
 								`epoch must be > 0 after savePage, got ${state.epoch}`,
-							);
+							).toBeGreaterThan(0);
 							if (prevEpoch === 0) {
 								// First write: epoch transitions from 0 to 1
-								assert.equal(state.epoch, 1, "epoch must be 1 after first savePage");
+								expect(state.epoch, "epoch must be 1 after first savePage").toBe(1);
 							} else {
 								// Subsequent writes: epoch unchanged
-								assert.equal(state.epoch, prevEpoch, "epoch must not change on subsequent savePage");
+								expect(state.epoch, "epoch must not change on subsequent savePage").toBe(prevEpoch);
 							}
 						} else if (action.type === "reset") {
 							// Reset sets epoch to 0
-							assert.equal(state.epoch, 0, "epoch must be 0 after reset");
+							expect(state.epoch, "epoch must be 0 after reset").toBe(0);
 						} else {
 							// Non-save, non-reset: epoch unchanged
-							assert.equal(state.epoch, prevEpoch, "epoch unchanged on non-save/non-reset actions");
+							expect(state.epoch, "epoch unchanged on non-save/non-reset actions").toBe(prevEpoch);
 						}
 					}
 				},
@@ -381,8 +378,8 @@ const STAGED_HANDOFF: NonNullable<SchematicState["stagedHandoff"]> = {
 
 test("a new state has no staged handoff and no refusals", () => {
 	const state = createState();
-	assert.equal(state.stagedHandoff, null);
-	assert.equal(state.handoffRefusals.size, 0);
+	expect(state.stagedHandoff).toBe(null);
+	expect(state.handoffRefusals.size).toBe(0);
 });
 
 test("reset clears a staged handoff and the refusals, keeping the refusal map identity", () => {
@@ -392,14 +389,14 @@ test("reset clears a staged handoff and the refusals, keeping the refusal map id
 	refusals.set("call-2", "refused");
 	state.handoffFailedInRun = true;
 	resetState(state);
-	assert.equal(state.stagedHandoff, null);
-	assert.equal(state.handoffFailedInRun, false);
-	assert.equal(state.handoffRefusals.size, 0);
-	assert.equal(state.handoffRefusals, refusals);
+	expect(state.stagedHandoff).toBe(null);
+	expect(state.handoffFailedInRun).toBe(false);
+	expect(state.handoffRefusals.size).toBe(0);
+	expect(state.handoffRefusals).toBe(refusals);
 });
 
 test("a new requested handoff starts uncalled, uncounted and unnudged with the given instruction", () => {
-	assert.deepEqual(newRequestedHandoff("ship the release notes"), {
+	expect(newRequestedHandoff("ship the release notes")).toStrictEqual({
 		toolCalled: false,
 		enforcementAttempts: 0,
 		eligibleNudgeDelivered: false,
@@ -416,12 +413,12 @@ test("invalidateHandoffState clears the staged handoff, the refusals and the pen
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 1, eligibleNudgeDelivered: false, nextInstruction: null };
 	state.handoffFailedInRun = true;
 	invalidateHandoffState(state);
-	assert.equal(state.stagedHandoff, null);
-	assert.equal(state.handoffFailedInRun, false);
-	assert.equal(state.handoffRefusals.size, 0);
-	assert.equal(state.handoffRefusals, refusals);
-	assert.equal(state.pendingRequestedHandoff, null);
-	assert.equal(state.pendingTopicBoundaryHint, null);
+	expect(state.stagedHandoff).toBe(null);
+	expect(state.handoffFailedInRun).toBe(false);
+	expect(state.handoffRefusals.size).toBe(0);
+	expect(state.handoffRefusals).toBe(refusals);
+	expect(state.pendingRequestedHandoff).toBe(null);
+	expect(state.pendingTopicBoundaryHint).toBe(null);
 });
 
 test("reset clears deferred readonly frontmatter commands", () => {
@@ -429,14 +426,14 @@ test("reset clears deferred readonly frontmatter commands", () => {
 	state.pendingReadonlyCommands.push({ type: "skill", name: "a" });
 
 	resetState(state);
-	assert.equal(state.pendingReadonlyCommands.length, 0, "readonly queue cleared");
+	expect(state.pendingReadonlyCommands.length, "readonly queue cleared").toBe(0);
 });
 
 test("clipped page flags stay contained and reset clears them", async () => {
 	const state = createState();
 	await saveNotebookPage(mockPi, state, "clipped-page", CLIPPED_BODY);
 	assertClippedPagesContained(state);
-	assert.equal(state.clippedPages.has("clipped-page"), true, "oversized write must flag the page clipped");
+	expect(state.clippedPages.has("clipped-page"), "oversized write must flag the page clipped").toBe(true);
 
 	resetState(state);
 	assertClippedPagesContained(state);
@@ -463,10 +460,10 @@ test("Property 6: childSessionEpoch monotonicity (never decreases)", async () =>
 
 					for (const action of actions) {
 						await apply(state, action);
-						assert.ok(
-							state.childSessionEpoch >= maxSeenEpoch,
+						expect(
+							state.childSessionEpoch,
 							`childSessionEpoch must never decrease: was ${maxSeenEpoch}, got ${state.childSessionEpoch}`,
-						);
+						).toBeGreaterThanOrEqual(maxSeenEpoch);
 						maxSeenEpoch = Math.max(maxSeenEpoch, state.childSessionEpoch);
 					}
 				},
@@ -497,11 +494,10 @@ test("Property 7: clipped pages are a subset of notebook pages", async () => {
 						await apply(state, action);
 						assertClippedPagesContained(state);
 						if (action.type === "saveClippedPage") {
-							assert.equal(
+							expect(
 								state.clippedPages.has(action.name),
-								true,
 								`clipped write "${action.name}" must set the clipped flag`,
-							);
+							).toBe(true);
 						}
 					}
 				},

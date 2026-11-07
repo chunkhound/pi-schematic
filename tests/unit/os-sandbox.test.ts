@@ -1,5 +1,4 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
@@ -58,7 +57,7 @@ function runLikePi(command: string, shell = "/bin/bash"): Promise<RunResult> {
 /** Run `command` like pi and assert that it exits 0. */
 async function runLikePiOk(command: string): Promise<RunResult> {
 	const run = await runLikePi(command);
-	assert.equal(run.code, 0, run.stderr.toString());
+	expect(run.code, run.stderr.toString()).toBe(0);
 	return run;
 }
 
@@ -66,7 +65,7 @@ async function runSandboxedAndPlain(command: string): Promise<{ sandboxed: RunRe
 	return { sandboxed: await runLikePi(wrapCommandWithOsSandbox(command)), plain: await runLikePi(command) };
 }
 
-const sandboxRuntime = { skip: !canUseOsSandbox(), timeout: 20_000 };
+const SANDBOX_TIMEOUT_MS = 20_000;
 
 /** A blocked write's error on the current host, or `undefined` on a platform without a sandbox. */
 const HOST_DENIAL_PHRASE = SANDBOX_DENIAL_PHRASES[process.platform];
@@ -92,7 +91,7 @@ for (const { platform, output } of [
 
 		const noticed = appendSandboxBlockNoticeToResult(result, platform);
 
-		assert.deepEqual(noticed, {
+		expect(noticed).toStrictEqual({
 			content: [{ type: "text", text: `${output}\n\nCommand exited with code 1${NOTICE_SUFFIX}` }],
 			structuredContent: { output: `${output}${NOTICE_SUFFIX}`, truncated: false, exit_code: 1, wall_time_seconds: 0.1 },
 		});
@@ -109,14 +108,14 @@ for (const { name, platform, output, isError } of [
 	{ name: "another platform's phrase on the current platform", platform: undefined, output: OTHER_DENIAL_OUTPUT, isError: true },
 ] as { name: string; platform?: NodeJS.Platform; output: string; isError: boolean }[]) {
 	test(`appends no block notice for ${name}`, () => {
-		assert.equal(appendSandboxBlockNoticeToResult(bashResult(output, isError), platform), undefined);
+		expect(appendSandboxBlockNoticeToResult(bashResult(output, isError), platform)).toBe(undefined);
 	});
 }
 
 test("appends no block notice to a result whose isError is unset", () => {
 	const { isError: _isError, ...result } = bashResult("bash: /outside: Operation not permitted");
 
-	assert.equal(appendSandboxBlockNoticeToResult(result, "darwin"), undefined);
+	expect(appendSandboxBlockNoticeToResult(result, "darwin")).toBe(undefined);
 });
 
 test("block notice leaves the input result unchanged", () => {
@@ -125,7 +124,7 @@ test("block notice leaves the input result unchanged", () => {
 
 	appendSandboxBlockNoticeToResult(result, "darwin");
 
-	assert.deepEqual(result, before);
+	expect(result).toStrictEqual(before);
 });
 
 test("block notice goes after the last text block only", () => {
@@ -137,7 +136,7 @@ test("block notice goes after the last text block only", () => {
 		isError: true,
 	}, "darwin");
 
-	assert.deepEqual(noticed?.content, [
+	expect(noticed?.content).toStrictEqual([
 		{ type: "text", text: "bash: /outside: Operation not permitted" },
 		{ type: "text", text: `Command exited with code 1${NOTICE_SUFFIX}` },
 	]);
@@ -155,7 +154,7 @@ test("block notice keeps a non-text block in place and goes after the last text 
 		isError: true,
 	}, "darwin");
 
-	assert.deepEqual(noticed?.content, [
+	expect(noticed?.content).toStrictEqual([
 		{ type: "text", text: "bash: /outside: Operation not permitted" },
 		image,
 		{ type: "text", text: `Command exited with code 1${NOTICE_SUFFIX}` },
@@ -168,7 +167,7 @@ test("block notice returns an absent structured content as undefined", () => {
 		isError: true,
 	}, "darwin");
 
-	assert.deepEqual(noticed, {
+	expect(noticed).toStrictEqual({
 		content: [{ type: "text", text: `bash: /outside: Operation not permitted${NOTICE_SUFFIX}` }],
 		structuredContent: undefined,
 	});
@@ -181,7 +180,7 @@ test("block notice keeps structured content without a string output as it is", (
 		isError: true,
 	}, "darwin");
 
-	assert.deepEqual(noticed?.structuredContent, { output: null, exit_code: 1 });
+	expect(noticed?.structuredContent).toStrictEqual({ output: null, exit_code: 1 });
 });
 
 test("block notice adds a text block when the phrase is only in the structured output", () => {
@@ -191,7 +190,7 @@ test("block notice adds a text block when the phrase is only in the structured o
 		isError: true,
 	}, "darwin");
 
-	assert.deepEqual(noticed, {
+	expect(noticed).toStrictEqual({
 		content: [{ type: "text", text: READONLY_SANDBOX_BLOCK_NOTICE }],
 		structuredContent: { output: `bash: /outside: Operation not permitted${NOTICE_SUFFIX}`, exit_code: 1 },
 	});
@@ -211,9 +210,9 @@ for (const { name, structuredContent } of [
 			isError: true,
 		}, "darwin");
 
-		assert.deepEqual(noticed?.content, [{ type: "text", text: `bash: /outside: Operation not permitted${NOTICE_SUFFIX}` }]);
-		assert.equal(noticed?.structuredContent, structuredContent);
-		assert.deepEqual(noticed?.structuredContent, before);
+		expect(noticed?.content).toStrictEqual([{ type: "text", text: `bash: /outside: Operation not permitted${NOTICE_SUFFIX}` }]);
+		expect(noticed?.structuredContent).toBe(structuredContent);
+		expect(noticed?.structuredContent).toStrictEqual(before);
 	});
 }
 
@@ -223,7 +222,7 @@ for (const { platform, message } of [
 	...(HOST_DENIAL_OUTPUT === undefined ? [] : [{ platform: undefined, message: HOST_DENIAL_OUTPUT }]),
 ] as { platform?: NodeJS.Platform; message: string }[]) {
 	test(`text block notice appends the notice on ${platform ?? "the current platform"} to "${message}"`, () => {
-		assert.equal(appendSandboxBlockNotice(message, platform), `${message}${NOTICE_SUFFIX}`);
+		expect(appendSandboxBlockNotice(message, platform)).toBe(`${message}${NOTICE_SUFFIX}`);
 	});
 }
 
@@ -233,7 +232,7 @@ for (const { name, platform, message } of [
 	{ name: "another platform's phrase on the current platform", platform: undefined, message: OTHER_DENIAL_OUTPUT },
 ] as { name: string; platform?: NodeJS.Platform; message: string }[]) {
 	test(`text block notice appends nothing for ${name}`, () => {
-		assert.equal(appendSandboxBlockNotice(message, platform), undefined);
+		expect(appendSandboxBlockNotice(message, platform)).toBe(undefined);
 	});
 }
 
@@ -243,18 +242,18 @@ test(`sandbox wrappers pass the command as one quoted argument to "$0" -c with n
 	const command = `printf '%s\\n' "it's quoted"\necho second line`;
 
 	for (const wrapped of [wrapWithSandboxExec(command), wrapWithBwrap(command)]) {
-		assert.ok(wrapped.endsWith(` "$0" -c ${quoteShellArgument(command)}`), wrapped);
-		assert.equal(wrapped.includes("<<"), false, wrapped);
-		assert.equal(wrapped.includes(READONLY_SANDBOX_BLOCK_NOTICE), false, wrapped);
-		assert.equal(wrapped.includes("2>&1"), false, wrapped);
+		expect(wrapped.endsWith(` "$0" -c ${quoteShellArgument(command)}`), wrapped).toBe(true);
+		expect(wrapped, wrapped).not.toContain("<<");
+		expect(wrapped, wrapped).not.toContain(READONLY_SANDBOX_BLOCK_NOTICE);
+		expect(wrapped, wrapped).not.toContain("2>&1");
 	}
 });
 
 // ── buildMacProfile invariants ──────────────────────────────────
 
 test("buildMacProfile rejects paths containing quotes", () => {
-	assert.throws(() => buildMacProfile("/tmp/evil'"), /contain.*quote/);
-	assert.throws(() => buildMacProfile('/tmp/evil"'), /contain.*quote/);
+	expect(() => buildMacProfile("/tmp/evil'")).toThrow(/contain.*quote/);
+	expect(() => buildMacProfile('/tmp/evil"')).toThrow(/contain.*quote/);
 });
 
 test("quotes dynamic Linux sandbox paths for the outer shell", () => {
@@ -263,17 +262,17 @@ test("quotes dynamic Linux sandbox paths for the outer shell", () => {
 	const quotedPath = quoteShellArgument(canonicalPath);
 	const wrapped = wrapWithBwrap("true", tempPath);
 
-	assert.equal(quoteShellArgument("a'b"), `'a'"'"'b'`);
-	assert.ok(wrapped.includes(`--bind ${quotedPath} ${quotedPath}`));
-	assert.equal(wrapped.includes(`--bind "${canonicalPath}" "${canonicalPath}"`), false);
+	expect(quoteShellArgument("a'b")).toBe(`'a'"'"'b'`);
+	expect(wrapped).toContain(`--bind ${quotedPath} ${quotedPath}`);
+	expect(wrapped).not.toContain(`--bind "${canonicalPath}" "${canonicalPath}"`);
 });
 
-test("bwrap executes a quoted bind path without shell injection", { skip: process.platform !== "linux" || !canUseOsSandbox() }, async () => {
+test.skipIf(process.platform !== "linux" || !canUseOsSandbox())("bwrap executes a quoted bind path without shell injection", async () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-quote'-"));
 	const target = path.join(dir, "result.txt");
 	try {
 		await runLikePiOk(wrapWithBwrap(`printf wrapped > ${quoteShellArgument(target)}`, dir));
-		assert.equal(fs.readFileSync(target, "utf8"), "wrapped");
+		expect(fs.readFileSync(target, "utf8")).toBe("wrapped");
 	} finally {
 		try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
 	}
@@ -282,16 +281,16 @@ test("bwrap executes a quoted bind path without shell injection", { skip: proces
 test("quoteShellArgument emits POSIX single-quoted arguments", () => {
 	// POSIX shell single-quote invariant: input is wrapped in single quotes.
 	// Embedded single quotes close, quote, and reopen the outer argument.
-	assert.equal(quoteShellArgument(""), "''");
-	assert.equal(quoteShellArgument("normal"), "'normal'");
-	assert.equal(quoteShellArgument("'"), `''"'"''`);
+	expect(quoteShellArgument("")).toBe("''");
+	expect(quoteShellArgument("normal")).toBe("'normal'");
+	expect(quoteShellArgument("'")).toBe(`''"'"''`);
 });
 
-test("quoteShellArgument round-trips through a POSIX shell", { skip: !hasPosixShell() }, () => {
+test.skipIf(!hasPosixShell())("quoteShellArgument round-trips through a POSIX shell", () => {
 	for (const raw of ["normal", "spaces", "dollar$ign", "backtick`", "line1\nline2", "'mixed' quotes", "'"]) {
 		const quoted = quoteShellArgument(raw);
 		const result = execFileSync("/bin/sh", ["-c", `printf '%s' ${quoted}`], { encoding: "utf8", timeout: 2000 });
-		assert.equal(result, raw, `quoteShellArgument(${JSON.stringify(raw)}) should round-trip`);
+		expect(result, `quoteShellArgument(${JSON.stringify(raw)}) should round-trip`).toBe(raw);
 	}
 });
 
@@ -304,44 +303,44 @@ for (const { name, write } of [
 		write: (target: string) => `${quoteShellArgument(process.execPath)} -e ${quoteShellArgument(`require("fs").writeFileSync(${JSON.stringify(target)}, "blocked")`)}`,
 	},
 ]) {
-	test(`sandbox blocks ${name} outside temp`, sandboxRuntime, async () => {
+	test.skipIf(!canUseOsSandbox())(`sandbox blocks ${name} outside temp`, async () => {
 		const outsidePath = path.join(os.homedir(), `.pi-readonly-outside-${process.pid}-${Date.now()}`);
 		try {
 			const run = await runLikePi(wrapCommandWithOsSandbox(write(outsidePath)));
 
-			assert.notEqual(run.code, 0);
-			assert.equal(fs.existsSync(outsidePath), false, "outside temp file should not be created");
+			expect(run.code).not.toBe(0);
+			expect(fs.existsSync(outsidePath), "outside temp file should not be created").toBe(false);
 		} finally {
 			fs.rmSync(outsidePath, { force: true });
 		}
-	});
+	}, SANDBOX_TIMEOUT_MS);
 
-	test(`the failed result of ${name} the sandbox blocked gets the block notice`, sandboxRuntime, async () => {
+	test.skipIf(!canUseOsSandbox())(`the failed result of ${name} the sandbox blocked gets the block notice`, async () => {
 		const outsidePath = path.join(os.homedir(), `.pi-readonly-outside-${process.pid}-${Date.now()}`);
 		try {
 			const run = await runLikePi(wrapCommandWithOsSandbox(write(outsidePath)));
 
 			const noticed = appendSandboxBlockNoticeToResult(bashResult(`${run.stdout}${run.stderr}`));
 
-			assert.ok(noticed?.content[0]?.type === "text" && noticed.content[0].text.endsWith(NOTICE_SUFFIX), JSON.stringify(noticed));
+			expect(noticed?.content[0]?.type === "text" && noticed.content[0].text.endsWith(NOTICE_SUFFIX), JSON.stringify(noticed)).toBe(true);
 		} finally {
 			fs.rmSync(outsidePath, { force: true });
 		}
-	});
+	}, SANDBOX_TIMEOUT_MS);
 }
 
-test("sandbox allows writes inside temp", sandboxRuntime, async () => {
+test.skipIf(!canUseOsSandbox())("sandbox allows writes inside temp", async () => {
 	const insideDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-sandbox-"));
 	const insidePath = path.join(insideDir, "inside.txt");
 	try {
 		await runLikePiOk(wrapCommandWithOsSandbox(`echo allowed > "${insidePath}"`));
-		assert.equal(fs.readFileSync(insidePath, "utf8").trim(), "allowed", "sandbox should allow temp writes");
+		expect(fs.readFileSync(insidePath, "utf8").trim(), "sandbox should allow temp writes").toBe("allowed");
 	} finally {
 		try { fs.rmSync(insideDir, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
 	}
-});
+}, SANDBOX_TIMEOUT_MS);
 
-test("sandboxed command runs under the shell that launched the sandbox", sandboxRuntime, async () => {
+test.skipIf(!canUseOsSandbox())("sandboxed command runs under the shell that launched the sandbox", async () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-bash-"));
 	const linkedBash = path.join(dir, "bash");
 	try {
@@ -349,35 +348,35 @@ test("sandboxed command runs under the shell that launched the sandbox", sandbox
 
 		const run = await runLikePi(wrapCommandWithOsSandbox('echo "$0"'), linkedBash);
 
-		assert.equal(run.code, 0, run.stderr.toString());
-		assert.equal(run.stdout.toString(), `${linkedBash}\n`);
+		expect(run.code, run.stderr.toString()).toBe(0);
+		expect(run.stdout.toString()).toBe(`${linkedBash}\n`);
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
-});
+}, SANDBOX_TIMEOUT_MS);
 
-test("sandboxed command launched from /bin/sh runs under /bin/sh", sandboxRuntime, async () => {
+test.skipIf(!canUseOsSandbox())("sandboxed command launched from /bin/sh runs under /bin/sh", async () => {
 	const run = await runLikePi(wrapCommandWithOsSandbox('echo "$0"'), "/bin/sh");
 
-	assert.equal(run.code, 0, run.stderr.toString());
-	assert.equal(run.stdout.toString(), "/bin/sh\n");
-});
+	expect(run.code, run.stderr.toString()).toBe(0);
+	expect(run.stdout.toString()).toBe("/bin/sh\n");
+}, SANDBOX_TIMEOUT_MS);
 
-test("sandboxed command launched from zsh runs under zsh", { ...sandboxRuntime, skip: sandboxRuntime.skip || !fs.existsSync("/bin/zsh") }, async () => {
+test.skipIf(!canUseOsSandbox() || !fs.existsSync("/bin/zsh"))("sandboxed command launched from zsh runs under zsh", async () => {
 	const run = await runLikePi(wrapCommandWithOsSandbox('echo "$0"'), "/bin/zsh");
 
-	assert.equal(run.code, 0, run.stderr.toString());
-	assert.equal(run.stdout.toString(), "/bin/zsh\n");
-});
+	expect(run.code, run.stderr.toString()).toBe(0);
+	expect(run.stdout.toString()).toBe("/bin/zsh\n");
+}, SANDBOX_TIMEOUT_MS);
 
 for (const reader of ["cat", "read x", "head -1"]) {
-	test(`sandboxed ${reader} on pi's /dev/null stdin behaves as unsandboxed`, sandboxRuntime, async () => {
+	test.skipIf(!canUseOsSandbox())(`sandboxed ${reader} on pi's /dev/null stdin behaves as unsandboxed`, async () => {
 		const { sandboxed, plain } = await runSandboxedAndPlain(`${reader}; echo after; false`);
 
-		assert.deepEqual(sandboxed, plain);
-		assert.equal(sandboxed.stdout.toString(), "after\n");
-		assert.equal(sandboxed.code, 1);
-	});
+		expect(sandboxed).toStrictEqual(plain);
+		expect(sandboxed.stdout.toString()).toBe("after\n");
+		expect(sandboxed.code).toBe(1);
+	}, SANDBOX_TIMEOUT_MS);
 }
 
 for (const { command, bytes } of [
@@ -385,32 +384,32 @@ for (const { command, bytes } of [
 	{ command: "printf -- -n", bytes: "-n" },
 	{ command: String.raw`printf 'a\0b'`, bytes: "a\0b" },
 ]) {
-	test(`sandboxed ${command} writes the same bytes as unsandboxed`, sandboxRuntime, async () => {
+	test.skipIf(!canUseOsSandbox())(`sandboxed ${command} writes the same bytes as unsandboxed`, async () => {
 		const { sandboxed, plain } = await runSandboxedAndPlain(command);
 
-		assert.deepEqual(sandboxed, plain);
-		assert.deepEqual(sandboxed.stdout, Buffer.from(bytes));
-	});
+		expect(sandboxed).toStrictEqual(plain);
+		expect(sandboxed.stdout).toStrictEqual(Buffer.from(bytes));
+	}, SANDBOX_TIMEOUT_MS);
 }
 
-test("sandboxed output to stderr reaches stderr, not stdout", sandboxRuntime, async () => {
+test.skipIf(!canUseOsSandbox())("sandboxed output to stderr reaches stderr, not stdout", async () => {
 	const { sandboxed, plain } = await runSandboxedAndPlain("echo to-stderr >&2");
 
-	assert.deepEqual(sandboxed, plain);
-	assert.equal(sandboxed.stdout.length, 0);
-	assert.equal(sandboxed.stderr.toString(), "to-stderr\n");
-});
+	expect(sandboxed).toStrictEqual(plain);
+	expect(sandboxed.stdout.length).toBe(0);
+	expect(sandboxed.stderr.toString()).toBe("to-stderr\n");
+}, SANDBOX_TIMEOUT_MS);
 
-test("sandboxed trailing backslash prints as unsandboxed", sandboxRuntime, async () => {
+test.skipIf(!canUseOsSandbox())("sandboxed trailing backslash prints as unsandboxed", async () => {
 	// The output differs between bash versions, so it is compared with the
 	// unsandboxed run rather than with a literal.
 	const { sandboxed, plain } = await runSandboxedAndPlain("echo hi \\");
 
-	assert.deepEqual(sandboxed, plain);
-	assert.equal(sandboxed.code, 0);
-});
+	expect(sandboxed).toStrictEqual(plain);
+	expect(sandboxed.code).toBe(0);
+}, SANDBOX_TIMEOUT_MS);
 
-test("sandboxed output streams while the command runs", sandboxRuntime, async () => {
+test.skipIf(!canUseOsSandbox())("sandboxed output streams while the command runs", async () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-stream-"));
 	const flag = path.join(dir, "flag");
 	// The command waits for the flag, which the test creates only after the
@@ -430,25 +429,25 @@ test("sandboxed output streams while the command runs", sandboxRuntime, async ()
 			child.on("close", () => resolve(Buffer.concat(chunks).toString()));
 		});
 
-		assert.equal(stdout, "firstsecond");
+		expect(stdout).toBe("firstsecond");
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
-});
+}, SANDBOX_TIMEOUT_MS);
 
-test("sandboxed stray closing brace is the same syntax error as unsandboxed", sandboxRuntime, async () => {
+test.skipIf(!canUseOsSandbox())("sandboxed stray closing brace is the same syntax error as unsandboxed", async () => {
 	const { sandboxed, plain } = await runSandboxedAndPlain("echo one; } ; echo two");
 
-	assert.notEqual(plain.code, 0);
-	assert.deepEqual(sandboxed, plain);
-});
+	expect(plain.code).not.toBe(0);
+	expect(sandboxed).toStrictEqual(plain);
+}, SANDBOX_TIMEOUT_MS);
 
-test("sandbox allows writes to /dev/null", sandboxRuntime, async () => {
+test.skipIf(!canUseOsSandbox())("sandbox allows writes to /dev/null", async () => {
 	// CONTRACT: /dev/null redirects are always allowed (not a real write)
 	await runLikePiOk(wrapCommandWithOsSandbox("echo discard > /dev/null"));
-});
+}, SANDBOX_TIMEOUT_MS);
 
-test("sandbox allows writes through a symlinked temp path", sandboxRuntime, async () => {
+test.skipIf(!canUseOsSandbox())("sandbox allows writes through a symlinked temp path", async () => {
 	const realDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-real-"));
 	const linkDir = path.join(os.tmpdir(), `pi-readonly-link-${Date.now()}`);
 	try {
@@ -457,9 +456,9 @@ test("sandbox allows writes through a symlinked temp path", sandboxRuntime, asyn
 		const insidePath = path.join(linkDir, "via-symlink.txt");
 
 		await runLikePiOk(wrapCommandWithOsSandbox(`echo symlink-works > "${insidePath}"`));
-		assert.equal(fs.readFileSync(insidePath, "utf8").trim(), "symlink-works", "sandbox should allow writes through symlinks to temp");
+		expect(fs.readFileSync(insidePath, "utf8").trim(), "sandbox should allow writes through symlinks to temp").toBe("symlink-works");
 	} finally {
 		try { fs.rmSync(linkDir, { force: true }); } catch { /* best-effort cleanup */ }
 		try { fs.rmSync(realDir, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
 	}
-});
+}, SANDBOX_TIMEOUT_MS);

@@ -1,5 +1,4 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import fc from "fast-check";
 import {
 	estimateHandoffContextTokens,
@@ -10,26 +9,26 @@ import {
 } from "../../handoff/eligibility.js";
 
 test("handoff eligibility prefers explicit tokens", () => {
-	assert.equal(estimateHandoffContextTokens({ tokens: MIN_HANDOFF_TOKENS, percent: 1, contextWindow: 1 }), MIN_HANDOFF_TOKENS);
-	assert.equal(isHandoffEligible({ tokens: MIN_HANDOFF_TOKENS }), true);
-	assert.equal(isHandoffEligible({ tokens: MIN_HANDOFF_TOKENS - 1 }), false);
+	expect(estimateHandoffContextTokens({ tokens: MIN_HANDOFF_TOKENS, percent: 1, contextWindow: 1 })).toBe(MIN_HANDOFF_TOKENS);
+	expect(isHandoffEligible({ tokens: MIN_HANDOFF_TOKENS })).toBe(true);
+	expect(isHandoffEligible({ tokens: MIN_HANDOFF_TOKENS - 1 })).toBe(false);
 });
 
 test("handoff eligibility estimates tokens from percent and context window", () => {
-	assert.equal(estimateHandoffContextTokens({ tokens: null, percent: 15, contextWindow: 200_000 }), 30_000);
-	assert.equal(isHandoffEligible({ tokens: null, percent: 15.001, contextWindow: 200_000 }), true);
-	assert.equal(isHandoffEligible({ tokens: null, percent: 125, contextWindow: 200_000 }), true);
-	assert.equal(isHandoffEligible({ tokens: null, percent: 14.9, contextWindow: 200_000 }), false);
-	assert.equal(estimateHandoffContextTokens({ tokens: null, percent: 14.9999, contextWindow: 200_000 }), 29_999.8);
-	assert.equal(isHandoffEligible({ tokens: null, percent: 14.9999, contextWindow: 200_000 }), false);
+	expect(estimateHandoffContextTokens({ tokens: null, percent: 15, contextWindow: 200_000 })).toBe(30_000);
+	expect(isHandoffEligible({ tokens: null, percent: 15.001, contextWindow: 200_000 })).toBe(true);
+	expect(isHandoffEligible({ tokens: null, percent: 125, contextWindow: 200_000 })).toBe(true);
+	expect(isHandoffEligible({ tokens: null, percent: 14.9, contextWindow: 200_000 })).toBe(false);
+	expect(estimateHandoffContextTokens({ tokens: null, percent: 14.9999, contextWindow: 200_000 })).toBe(29_999.8);
+	expect(isHandoffEligible({ tokens: null, percent: 14.9999, contextWindow: 200_000 })).toBe(false);
 });
 
 test("context percentage normalization accepts finite non-negative usage, including overflow", () => {
-	assert.equal(normalizeContextPercent(0), 0);
-	assert.equal(normalizeContextPercent(100), 100);
-	assert.equal(normalizeContextPercent(125), 125);
+	expect(normalizeContextPercent(0)).toBe(0);
+	expect(normalizeContextPercent(100)).toBe(100);
+	expect(normalizeContextPercent(125)).toBe(125);
 	for (const percent of [-1, Number.NaN, Number.POSITIVE_INFINITY, null, undefined]) {
-		assert.equal(normalizeContextPercent(percent), null);
+		expect(normalizeContextPercent(percent)).toBe(null);
 	}
 });
 
@@ -43,16 +42,16 @@ test("handoff eligibility rejects malformed or unestimable usage", () => {
 		{ tokens: null, percent: -1, contextWindow: 200_000 },
 		{ tokens: null, percent: 20, contextWindow: 0 },
 	]) {
-		assert.equal(estimateHandoffContextTokens(usage), null);
-		assert.equal(isHandoffEligible(usage), false);
+		expect(estimateHandoffContextTokens(usage)).toBe(null);
+		expect(isHandoffEligible(usage)).toBe(false);
 	}
 });
 
 test("handoff eligibility rejects arithmetic overflow", () => {
 	const usage = { tokens: null, percent: 100, contextWindow: Number.MAX_VALUE };
-	assert.equal(estimateHandoffContextTokens(usage), null);
-	assert.equal(isHandoffEligible(usage), false);
-	assert.equal(formatHandoffContextUsage(usage), "~unknown tokens estimated from context usage");
+	expect(estimateHandoffContextTokens(usage)).toBe(null);
+	expect(isHandoffEligible(usage)).toBe(false);
+	expect(formatHandoffContextUsage(usage)).toBe("~unknown tokens estimated from context usage");
 });
 
 test("handoff eligibility is monotonic as explicit context tokens grow", () => {
@@ -60,16 +59,13 @@ test("handoff eligibility is monotonic as explicit context tokens grow", () => {
 		fc.property(fc.integer({ min: 0, max: 100_000 }), fc.integer({ min: 0, max: 100_000 }), (base, additional) => {
 			const initial = isHandoffEligible({ tokens: base });
 			const larger = isHandoffEligible({ tokens: base + additional });
-			assert.ok(!initial || larger, `${base} eligible but ${base + additional} was not`);
+			expect(!initial || larger, `${base} eligible but ${base + additional} was not`).toBe(true);
 		}),
 	);
 });
 
 test("handoff usage formatting distinguishes explicit and estimated values", () => {
-	assert.equal(formatHandoffContextUsage({ tokens: 12_345 }), "12345 tokens");
-	assert.equal(
-		formatHandoffContextUsage({ tokens: null, percent: 10, contextWindow: 200_000 }),
-		"~20000 tokens estimated from context usage",
-	);
-	assert.equal(formatHandoffContextUsage(null), "~unknown tokens estimated from context usage");
+	expect(formatHandoffContextUsage({ tokens: 12_345 })).toBe("12345 tokens");
+	expect(formatHandoffContextUsage({ tokens: null, percent: 10, contextWindow: 200_000 })).toBe("~20000 tokens estimated from context usage");
+	expect(formatHandoffContextUsage(null)).toBe("~unknown tokens estimated from context usage");
 });

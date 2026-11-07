@@ -17,11 +17,9 @@ export const COMPAT_NODE_TEST_FILES = [
   "tests/unit/frontmatter-cache.test.ts",
   "tests/unit/spawn.test.ts",
   "tests/unit/readonly-spawn.test.ts",
-  "tests/unit/compat-process.test.ts",
   "tests/unit/model-group-frontmatter.test.ts",
   "tests/unit/model-groups-crud.test.ts",
   "tests/unit/model-groups-integration.test.ts",
-  "tests/unit/module-evaluation-order.test.ts",
   "tests/unit/handoff.test.ts",
   "tests/unit/handoff-boundary-session.test.ts",
   "tests/unit/notebook.test.ts",
@@ -31,7 +29,9 @@ export const COMPAT_NODE_TEST_FILES = [
   "tests/unit/system-prompt.test.ts",
 ];
 export const COMPAT_VITEST_FILES = [
+  "tests/unit/compat-process.test.ts",
   "tests/unit/dependency-graph-assertions.test.ts",
+  "tests/unit/module-evaluation-order.test.ts",
   "tests/unit/pi-module-identity.test.ts",
   "tests/unit/test-host.test.ts",
 ];
