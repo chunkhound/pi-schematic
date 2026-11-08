@@ -1,17 +1,16 @@
 /**
  * Snapshot tests for TUI render output.
  *
- * Creates golden files in tests/snapshots/ for every render variant.
- * Use UPDATE_SNAPSHOTS=1 to create/update golden files.
+ * Compares every render variant with its golden file in tests/snapshots/
+ * through Vitest's file snapshots: a missing golden file is written in a
+ * local run and fails the test under CI, and `--update=all` rewrites them.
  *
  * No MockPi needed — uses real Theme, real TUI components via the harness.
  */
 
-import test from "node:test";
-import assert from "node:assert/strict";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { expect, onTestFinished, test } from "vitest";
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { createState, type SchematicState } from "../../state.js";
@@ -50,12 +49,6 @@ const theme: Theme = {
 
 // ── Snapshot helpers ──────────────────────────────────────────────────
 
-function ensureSnapshotDir(): void {
-	if (!existsSync(SNAPSHOT_DIR)) {
-		mkdirSync(SNAPSHOT_DIR, { recursive: true });
-	}
-}
-
 /** Normalize line endings so golden files (stored with \n) match on Windows (\r\n). */
 function normalizeEOL(s: string): string {
 	return s.replace(/\r?\n/g, "\n");
@@ -66,29 +59,18 @@ function stripOSC(s: string): string {
 	return s.replace(/\u001b\]133;[A-Z][^\u0007]*\u0007/g, "");
 }
 
-function matchSnapshot(name: string, actual: string): void {
-	ensureSnapshotDir();
-	const file = join(SNAPSHOT_DIR, `${name}.txt`);
+async function expectGoldenFile(name: string, actual: string): Promise<void> {
 	const cleaned = stripOSC(normalizeEOL(actual));
-	if (process.env.UPDATE_SNAPSHOTS) {
-		writeFileSync(file, cleaned);
-		return;
-	}
-	if (!existsSync(file)) {
-		assert.fail(`Snapshot ${name} is missing. Re-run with UPDATE_SNAPSHOTS=1 to create it.`);
-	}
-	const expected = normalizeEOL(readFileSync(file, "utf-8"));
-	assert.equal(cleaned, expected, `Snapshot ${name} does not match`);
+	await expect(cleaned, `Snapshot ${name} does not match`).toMatchFileSnapshot(join(SNAPSHOT_DIR, `${name}.txt`));
 }
 
-function withHarness(run: (state: SchematicState) => void): void {
+function withHarness(run: (state: SchematicState) => Promise<void>): Promise<void> {
 	const harness = createTestHarness();
-	const state = createState();
-	try {
-		run(state);
-	} finally {
+	onTestFinished(() => {
 		harness.teardown();
-	}
+	});
+	const state = createState();
+	return run(state);
 }
 
 // ── Snapshot width ────────────────────────────────────────────────────
@@ -99,7 +81,7 @@ const SNAP_WIDTH = 80;
 // 1–2: Spawn call (renderSpawnCall)
 // ═══════════════════════════════════════════════════════════════════════
 
-test("spawn call collapsed matches snapshot", () => {
+test("spawn call collapsed matches snapshot", async () => {
 	const component = renderSpawnCall(
 		{ prompt: "Research the rate limits for the OpenAI API and document the results.", thinking: "medium" },
 		theme,
@@ -107,10 +89,10 @@ test("spawn call collapsed matches snapshot", () => {
 	);
 
 	const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
-	matchSnapshot("spawn-call-collapsed", rtb.toSnapshot());
+	await expectGoldenFile("spawn-call-collapsed", rtb.toSnapshot());
 });
 
-test("spawn call long prompt matches snapshot", () => {
+test("spawn call long prompt matches snapshot", async () => {
 	const prompt = [
 		"Line 1: Initialize the project structure",
 		"Line 2: Set up TypeScript configuration",
@@ -128,14 +110,14 @@ test("spawn call long prompt matches snapshot", () => {
 	);
 
 	const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
-	matchSnapshot("spawn-call-long", rtb.toSnapshot());
+	await expectGoldenFile("spawn-call-long", rtb.toSnapshot());
 });
 
 // ═══════════════════════════════════════════════════════════════════════
 // 3–5: Spawn result (renderSpawnResult, static Text path, no child session)
 // ═══════════════════════════════════════════════════════════════════════
 
-test("spawn result success matches snapshot", () => withHarness((state) => {
+test("spawn result success matches snapshot", () => withHarness(async (state) => {
 	const component = renderSpawnResult(
 		{
 			content: [{ type: "text", text: "Task completed successfully. All tests pass and documentation is updated." }],
@@ -153,10 +135,10 @@ test("spawn result success matches snapshot", () => withHarness((state) => {
 	);
 
 	const rtb = new RenderTestBackend().render(component as any, SNAP_WIDTH);
-	matchSnapshot("spawn-result-success", rtb.toSnapshot());
+	await expectGoldenFile("spawn-result-success", rtb.toSnapshot());
 }));
 
-test("spawn result error matches snapshot", () => withHarness((state) => {
+test("spawn result error matches snapshot", () => withHarness(async (state) => {
 	const component = renderSpawnResult(
 		{
 			content: [{ type: "text", text: "Failed to connect to API: rate limit exceeded. Retry after 60 seconds." }],
@@ -174,10 +156,10 @@ test("spawn result error matches snapshot", () => withHarness((state) => {
 	);
 
 	const rtb = new RenderTestBackend().render(component as any, SNAP_WIDTH);
-	matchSnapshot("spawn-result-error", rtb.toSnapshot());
+	await expectGoldenFile("spawn-result-error", rtb.toSnapshot());
 }));
 
-test("spawn result aborted matches snapshot", () => withHarness((state) => {
+test("spawn result aborted matches snapshot", () => withHarness(async (state) => {
 	const component = renderSpawnResult(
 		{
 			content: [{ type: "text", text: "Operation cancelled by user request." }],
@@ -195,14 +177,14 @@ test("spawn result aborted matches snapshot", () => withHarness((state) => {
 	);
 
 	const rtb = new RenderTestBackend().render(component as any, SNAP_WIDTH);
-	matchSnapshot("spawn-result-aborted", rtb.toSnapshot());
+	await expectGoldenFile("spawn-result-aborted", rtb.toSnapshot());
 }));
 
 // ═══════════════════════════════════════════════════════════════════════
 // 6–8: NestedAgentSessionComponent (via renderSpawnResult with child session)
 // ═══════════════════════════════════════════════════════════════════════
 
-test("nested collapsed running matches snapshot", () => withHarness((state) => {
+test("nested collapsed running matches snapshot", () => withHarness(async (state) => {
 	const session = createSession([]);
 	state.childSessions.set("tc-nested-1", session);
 
@@ -218,10 +200,10 @@ test("nested collapsed running matches snapshot", () => withHarness((state) => {
 	);
 
 	const rtb = new RenderTestBackend().render(component as any, SNAP_WIDTH);
-	matchSnapshot("nested-collapsed-running", rtb.toSnapshot());
+	await expectGoldenFile("nested-collapsed-running", rtb.toSnapshot());
 }));
 
-test("nested collapsed success matches snapshot", () => withHarness((state) => {
+test("nested collapsed success matches snapshot", () => withHarness(async (state) => {
 	const session = createSession([
 		{
 			role: "assistant",
@@ -247,10 +229,10 @@ test("nested collapsed success matches snapshot", () => withHarness((state) => {
 	);
 
 	const rtb = new RenderTestBackend().render(component as any, SNAP_WIDTH);
-	matchSnapshot("nested-collapsed-success", rtb.toSnapshot());
+	await expectGoldenFile("nested-collapsed-success", rtb.toSnapshot());
 }));
 
-test("nested expanded matches snapshot", () => withHarness((state) => {
+test("nested expanded matches snapshot", () => withHarness(async (state) => {
 	const session = createSession([
 		{
 			role: "assistant",
@@ -276,39 +258,39 @@ test("nested expanded matches snapshot", () => withHarness((state) => {
 	);
 
 	const rtb = new RenderTestBackend().render(component as any, SNAP_WIDTH);
-	matchSnapshot("nested-expanded", rtb.toSnapshot());
+	await expectGoldenFile("nested-expanded", rtb.toSnapshot());
 }));
 
 // ═══════════════════════════════════════════════════════════════════════
 // 9–11: Context indicator snapshots
 // ═══════════════════════════════════════════════════════════════════════
 
-test("context indicator at 30% matches snapshot", () => {
+test("context indicator at 30% matches snapshot", async () => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
 	const ctx = makeTUICtx({ percent: 30, record });
 
 	updateIndicators(ctx, state);
 	const status = record.statuses.get("pi-schematic-ctx") ?? "";
-	matchSnapshot("indicator-30", status);
+	await expectGoldenFile("indicator-30", status);
 });
 
-test("context indicator at 50% matches snapshot", () => {
+test("context indicator at 50% matches snapshot", async () => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
 	const ctx = makeTUICtx({ percent: 50, record });
 
 	updateIndicators(ctx, state);
 	const status = record.statuses.get("pi-schematic-ctx") ?? "";
-	matchSnapshot("indicator-50", status);
+	await expectGoldenFile("indicator-50", status);
 });
 
-test("context indicator at 70% matches snapshot", () => {
+test("context indicator at 70% matches snapshot", async () => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
 	const ctx = makeTUICtx({ percent: 70, record });
 
 	updateIndicators(ctx, state);
 	const status = record.statuses.get("pi-schematic-ctx") ?? "";
-	matchSnapshot("indicator-70", status);
+	await expectGoldenFile("indicator-70", status);
 });

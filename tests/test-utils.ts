@@ -1,16 +1,24 @@
 /**
  * Central test harness for the pi-schematic extension.
  *
- * Every non-E2E test that touches module-level singletons starts with
- * `const h = createTestHarness()` and ends with `h.teardown()`.  One call
- * replaces the singleton container atomically and captures console output —
- * no per-test patches.
+ * Every non-E2E test that touches module-level singletons creates a harness
+ * with `createTestHarness()` and tears it down from `afterEach` or an
+ * `onTestFinished` callback.  One call installs a fresh singleton container
+ * (keeping the previous write lock and context while a write is pending on
+ * them) and captures console output — no per-test patches.
+ *
+ * `teardown()` restores the console, then the container that was current at
+ * `createTestHarness()` (even while a write is pending), then clears the
+ * harness scheduler, and finally throws when a write was still pending on
+ * the harness write lock.  It never releases or resets that write.  Calling it
+ * from a hook adds that error to the test's errors next to any assertion
+ * failure instead of replacing it.
  *
  * Usage:
  *
  *   const h = createTestHarness();
+ *   onTestFinished(() => { h.teardown(); });
  *   // test body — use h.warnings
- *   h.teardown();
  *
  * With beforeEach/afterEach:
  *
@@ -35,7 +43,13 @@ import { SpawnFrameScheduler } from "../spawn/renderer.js";
 export interface TestHarness {
 	/** Captured console.debug/log/warn/error calls. */
 	warnings: Array<{ level: string; args: unknown[] }>;
-	/** Restore console and the previous singletons, then clear the harness scheduler. */
+	/**
+	 * Restore the console, then the singletons that were current at
+	 * createTestHarness() whether or not a write is pending, then clear the
+	 * harness scheduler.  Throws, after all three, when the harness write lock
+	 * had pending writes at the start of the call; the pending write is left as
+	 * it is.  Call it from afterEach or an onTestFinished callback.
+	 */
 	teardown: () => void;
 }
 
@@ -84,14 +98,22 @@ export function createTestHarness(): TestHarness {
 	return {
 		warnings,
 		teardown: () => {
-			__setSingletons(previousSingletons);
-			// Clear the harness scheduler to release any dirty components before
-			// disposal.
-			singletons.frameScheduler.clear();
+			const pendingWrites = singletons.writeLock.pending;
 			console.debug = originalDebug;
 			console.log = originalLog;
 			console.warn = originalWarn;
 			console.error = originalError;
+			// A write still running keeps the lock and context it captured; forcing
+			// the swap only stops the harness lock from leaking into the next test.
+			__setSingletons(previousSingletons, { forceWriteLock: true });
+			// Clear the harness scheduler to release any dirty components before
+			// disposal.
+			singletons.frameScheduler.clear();
+			if (pendingWrites > 0) {
+				throw new Error(
+					`createTestHarness teardown: ${pendingWrites} write(s) still pending on the harness write lock; the test ended before its writes finished.`,
+				);
+			}
 		},
 	};
 }

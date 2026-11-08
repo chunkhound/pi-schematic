@@ -5,13 +5,14 @@
 import { CONFIG_DIR_NAME, type Theme, type TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
-import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import os from "node:os";
+import { expect } from "vitest";
 import { createState, resetState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
+import { assertPresent } from "../assertions.js";
 import { AGENT_DIR_ENV_KEY } from "../paths.js";
 import { createTestHost, type TestPI } from "./test-host.js";
 
@@ -24,10 +25,10 @@ export const EMPTY_CHILD_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite
 
 /** A failure after the child session exists is returned as an error result, not thrown. */
 export function assertErrorResult(result: any, text: string, usage: unknown): void {
-	assert.equal(result.isError, true);
-	assert.deepEqual(result.content, [{ type: "text", text }]);
-	assert.equal(result.details.outcome, "error");
-	assert.deepEqual(result.usage, usage);
+	expect(result.isError).toBe(true);
+	expect(result.content).toStrictEqual([{ type: "text", text }]);
+	expect(result.details.outcome).toBe("error");
+	expect(result.usage).toStrictEqual(usage);
 }
 
 export const ansiTheme = {
@@ -103,19 +104,19 @@ export function stripAnsi(text: string): string {
 
 export function getRenderedLine(lines: string[], match: (plain: string) => boolean): string {
 	const line = lines.find(candidate => match(stripAnsi(candidate)));
-	assert.ok(line);
+	assertPresent(line);
 	return line;
 }
 
 export function getLineContaining(lines: string[], text: string): string {
 	const line = lines.find(candidate => candidate.includes(text));
-	assert.ok(line);
+	assertPresent(line);
 	return line;
 }
 
 export function assertShellBackgroundPreserved(line: string): void {
-	assert.equal(line.includes("\u001b[0m"), false);
-	assert.match(line, /\u001b\[48;/);
+	expect(line).not.toContain("\u001b[0m");
+	expect(line).toMatch(/\u001b\[48;/);
 }
 
 export function createDeferred() {
