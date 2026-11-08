@@ -83,7 +83,7 @@ jobs:
 
       - name: Upload packed host diagnostics
         if: always() && ((matrix.os == 'ubuntu-latest' && matrix.node-version == '22.19.0') || matrix.os == 'windows-latest')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: packed-host-diagnostics-${{ matrix.os }}-node-${{ matrix.node-version }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/packed-host-diagnostics-${{ matrix.os }}-node-${{ matrix.node-version }}
@@ -103,7 +103,7 @@ jobs:
 
       - name: Upload current Pi diagnostics on Windows
         if: always() && matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: current-pi-diagnostics-windows-node-24-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/current-pi-diagnostics-windows-node-24
@@ -114,7 +114,7 @@ jobs:
       # Upload test results for debugging — artifacts available for 30 days.
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-results-${{ matrix.os }}-node-${{ matrix.node-version }}
           path: |
@@ -137,7 +137,7 @@ jobs:
         run: node "${{ github.workspace }}/scripts/test-compat-current.mjs"
       - name: Upload current Pi diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: current-pi-diagnostics-ubuntu-node-24-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/current-pi-diagnostics-ubuntu-node-24
