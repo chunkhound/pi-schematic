@@ -1,8 +1,8 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import { createState } from "../../state.js";
 import { updateIndicators, STATUS_KEY_TOPIC, STATUS_KEY_READONLY } from "../../tui.js";
 import { makeTUICtx } from "./helpers.js";
+import { assertPresent } from "../assertions.js";
 
 test("updateIndicators sets context usage status with correct color tone", () => {
 	const state = createState();
@@ -11,8 +11,8 @@ test("updateIndicators sets context usage status with correct color tone", () =>
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get("pi-schematic-ctx");
-	assert.ok(s?.includes("[accent:42%]"), "42% should use accent tone");
-	assert.equal(record.widgets.get("pi-schematic-warning"), undefined, "42% is below 70 — no warning widget");
+	expect(s, "42% should use accent tone").toContain("[accent:42%]");
+	expect(record.widgets.get("pi-schematic-warning"), "42% is below 70 — no warning widget").toBeUndefined();
 });
 
 test("updateIndicators uses error tone at 70%+ context", () => {
@@ -22,9 +22,9 @@ test("updateIndicators uses error tone at 70%+ context", () => {
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get("pi-schematic-ctx");
-	assert.ok(s?.includes("[error:85%]"), "85% should use error tone");
+	expect(s, "85% should use error tone").toContain("[error:85%]");
 	const w = record.widgets.get("pi-schematic-warning");
-	assert.ok(w?.[0]?.includes("85%"), "warning widget shown at 85%");
+	expect(w?.[0], "warning widget shown at 85%").toContain("85%");
 });
 
 test("updateIndicators uses warning tone at 50-69% context", () => {
@@ -34,7 +34,7 @@ test("updateIndicators uses warning tone at 50-69% context", () => {
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get("pi-schematic-ctx");
-	assert.ok(s?.includes("[warning:55%]"), "55% should use warning tone");
+	expect(s, "55% should use warning tone").toContain("[warning:55%]");
 });
 
 test("updateIndicators uses accent tone at 30-49% context", () => {
@@ -44,7 +44,7 @@ test("updateIndicators uses accent tone at 30-49% context", () => {
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get("pi-schematic-ctx");
-	assert.ok(s?.includes("[accent:30%]"), "30% should use accent tone");
+	expect(s, "30% should use accent tone").toContain("[accent:30%]");
 });
 
 test("updateIndicators handles null context usage", () => {
@@ -54,7 +54,7 @@ test("updateIndicators handles null context usage", () => {
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get("pi-schematic-ctx");
-	assert.ok(s?.includes("--%"), "null usage shows --%");
+	expect(s, "null usage shows --%").toContain("--%");
 });
 
 test("updateIndicators treats malformed percentages as unavailable", () => {
@@ -62,8 +62,8 @@ test("updateIndicators treats malformed percentages as unavailable", () => {
 		const state = createState();
 		const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
 		updateIndicators(makeTUICtx({ percent, record }), state);
-		assert.ok(record.statuses.get("pi-schematic-ctx")?.includes("--%"));
-		assert.equal(record.widgets.get("pi-schematic-warning"), undefined);
+		expect(record.statuses.get("pi-schematic-ctx")).toContain("--%");
+		expect(record.widgets.get("pi-schematic-warning")).toBeUndefined();
 	}
 });
 
@@ -71,8 +71,8 @@ test("updateIndicators preserves overflow context percentages", () => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
 	updateIndicators(makeTUICtx({ percent: 125, record }), state);
-	assert.ok(record.statuses.get("pi-schematic-ctx")?.includes("125%"));
-	assert.ok(record.widgets.get("pi-schematic-warning")?.[0]?.includes("125%"));
+	expect(record.statuses.get("pi-schematic-ctx")).toContain("125%");
+	expect(record.widgets.get("pi-schematic-warning")?.[0]).toContain("125%");
 });
 
 test("updateIndicators no-ops when ctx.hasUI is false", () => {
@@ -81,8 +81,8 @@ test("updateIndicators no-ops when ctx.hasUI is false", () => {
 	const ctx = makeTUICtx({ hasUI: false, record });
 
 	updateIndicators(ctx, state);
-	assert.equal(record.statuses.size, 0, "no-op should not call any setStatus");
-	assert.equal(record.widgets.size, 0, "no-op should not call any setWidget");
+	expect(record.statuses.size, "no-op should not call any setStatus").toBe(0);
+	expect(record.widgets.size, "no-op should not call any setWidget").toBe(0);
 });
 
 test("updateIndicators shows notebook page count in status", () => {
@@ -94,7 +94,7 @@ test("updateIndicators shows notebook page count in status", () => {
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get("pi-schematic-notebook");
-	assert.ok(s?.includes("2"), "notebook page count should be 2");
+	expect(s, "notebook page count should be 2").toContain("2");
 });
 
 test("updateIndicators shows active notebook topic when set", () => {
@@ -104,7 +104,7 @@ test("updateIndicators shows active notebook topic when set", () => {
 	const ctx = makeTUICtx({ percent: 30, record });
 
 	updateIndicators(ctx, state);
-	assert.equal(record.statuses.get(STATUS_KEY_TOPIC), "🧭 oauth");
+	expect(record.statuses.get(STATUS_KEY_TOPIC)).toBe("🧭 oauth");
 });
 
 test("updateIndicators shows readonly indicator when enabled", () => {
@@ -115,8 +115,8 @@ test("updateIndicators shows readonly indicator when enabled", () => {
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get(STATUS_KEY_READONLY);
-	assert.ok(s?.includes("\u{1F512}"), "readonly indicator should show lock emoji when enabled");
-	assert.ok(s?.includes("readonly"), "readonly indicator should show 'readonly' text when enabled");
+	expect(s, "readonly indicator should show lock emoji when enabled").toContain("\u{1F512}");
+	expect(s, "readonly indicator should show 'readonly' text when enabled").toContain("readonly");
 });
 
 test("updateIndicators hides readonly indicator when disabled", () => {
@@ -126,7 +126,7 @@ test("updateIndicators hides readonly indicator when disabled", () => {
 	const ctx = makeTUICtx({ percent: null, record });
 
 	updateIndicators(ctx, state);
-	assert.equal(record.statuses.get(STATUS_KEY_READONLY), undefined, "readonly indicator should be undefined when disabled");
+	expect(record.statuses.get(STATUS_KEY_READONLY), "readonly indicator should be undefined when disabled").toBeUndefined();
 });
 
 test("updateIndicators shows readonly-specific warning widget at 70%+ context", () => {
@@ -137,11 +137,11 @@ test("updateIndicators shows readonly-specific warning widget at 70%+ context", 
 
 	updateIndicators(ctx, state);
 	const w = record.widgets.get("pi-schematic-warning");
-	assert.ok(w, "warning widget should be present at 85%");
-	assert.ok(w[0].includes("readonly"), "widget should mention readonly");
-	assert.ok(w[0].includes("spawn"), "widget should mention spawn");
-	assert.ok(w[0].includes("explicit /handoff"), "widget should mention explicit /handoff");
-	assert.equal(w[0].includes("resumes readonly"), false, "widget should not promise auto-resume wording");
+	assertPresent(w, "warning widget should be present at 85%");
+	expect(w[0], "widget should mention readonly").toContain("readonly");
+	expect(w[0], "widget should mention spawn").toContain("spawn");
+	expect(w[0], "widget should mention explicit /handoff").toContain("explicit /handoff");
+	expect(w[0], "widget should not promise auto-resume wording").not.toContain("resumes readonly");
 });
 
 test("updateIndicators hides widget below 70% context", () => {
@@ -152,5 +152,5 @@ test("updateIndicators hides widget below 70% context", () => {
 	const ctx = makeTUICtx({ percent: 30, record });
 
 	updateIndicators(ctx, state);
-	assert.equal(record.widgets.get("pi-schematic-warning"), undefined, "warning widget should be cleared below 70%");
+	expect(record.widgets.get("pi-schematic-warning"), "warning widget should be cleared below 70%").toBeUndefined();
 });

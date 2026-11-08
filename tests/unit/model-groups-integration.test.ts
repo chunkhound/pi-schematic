@@ -1,5 +1,4 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import type { AutocompleteProviderFactory } from "@earendil-works/pi-coding-agent";
@@ -33,7 +32,7 @@ test("/model-groups command registers and opens ctx.ui.custom with live registry
 		hasConfiguredAuth: () => true,
 	};
 
-	assert.ok(pi.commands.has("model-groups"));
+	expect([...pi.commands.keys()]).toContain("model-groups");
 	let customCalled = 0;
 	let rendered = "";
 	await pi.commands.get("model-groups")!.handler("", {
@@ -51,10 +50,10 @@ test("/model-groups command registers and opens ctx.ui.custom with live registry
 			},
 		},
 	});
-	assert.equal(customCalled, 1);
-	assert.match(rendered, /Model Groups/);
-	assert.match(rendered, /cwd-sentinel-group/);
-	assert.deepEqual(findCalls, ["openai:gpt-5", "openai:gpt-5"]);
+	expect(customCalled).toBe(1);
+	expect(rendered).toMatch(/Model Groups/);
+	expect(rendered).toMatch(/cwd-sentinel-group/);
+	expect(findCalls).toStrictEqual(["openai:gpt-5", "openai:gpt-5"]);
 }));
 
 test("index session_start stores model group validation and notifies load and validation issues", async () => withTemp(async ({ cwd }) => {
@@ -80,7 +79,7 @@ test("index session_start stores model group validation and notifies load and va
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
-	assert.ok(notifications.some((m) => /1 unavailable model references · 1 project overrides/.test(m)));
+	expect(notifications).toContainEqual(expect.stringMatching(/1 unavailable model references · 1 project overrides/));
 }));
 
 test("index session_start notifies empty-common and stale-override boot counts", async () => withTemp(async ({ cwd }) => {
@@ -104,7 +103,7 @@ test("index session_start notifies empty-common and stale-override boot counts",
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
-	assert.ok(notifications.some((m) => /1 unavailable model references · 0 project overrides · 2 groups with no common modalities · 1 stale modality overrides/.test(m)), JSON.stringify(notifications, null, 2));
+	expect(notifications, JSON.stringify(notifications, null, 2)).toContainEqual(expect.stringMatching(/1 unavailable model references · 0 project overrides · 2 groups with no common modalities · 1 stale modality overrides/));
 }));
 
 test("index session_start notifies corrupt/schema/unsupported load issues", async () => withTemp(async ({ cwd }) => {
@@ -125,8 +124,8 @@ test("index session_start notifies corrupt/schema/unsupported load issues", asyn
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
-	assert.ok(notifications.some((m) => /corrupt-json/.test(m)));
-	assert.ok(notifications.some((m) => /unsupported-version/.test(m)));
+	expect(notifications).toContainEqual(expect.stringMatching(/corrupt-json/));
+	expect(notifications).toContainEqual(expect.stringMatching(/unsupported-version/));
 }));
 
 test("index session_start notifies schema-invalid load issues", async () => withTemp(async ({ cwd }) => {
@@ -145,9 +144,9 @@ test("index session_start notifies schema-invalid load issues", async () => with
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
-	assert.ok(notifications.some((m) => /schema-invalid/.test(m)));
-	assert.ok(notifications.some((m) => /project scope/.test(m)));
-	assert.ok(notifications.some((m) => m.includes(escapeDisplayLabel(modelGroupsPath("project", cwd)))));
+	expect(notifications).toContainEqual(expect.stringMatching(/schema-invalid/));
+	expect(notifications).toContainEqual(expect.stringMatching(/project scope/));
+	expect(notifications).toContainEqual(expect.stringContaining(escapeDisplayLabel(modelGroupsPath("project", cwd))));
 }));
 
 test("index session_start includes backup-failure detail in load issue notifications", async () => withTemp(async ({ cwd }) => {
@@ -167,7 +166,7 @@ test("index session_start includes backup-failure detail in load issue notificat
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
-	assert.ok(notifications.some((m) => /corrupt-json/.test(m) && /backup failed.*original file left untouched/.test(m) && m.includes(escapeDisplayLabel(modelGroupsPath("project", cwd)))));
+	expect(notifications).toSatisfy((all: string[]) => all.some((m) => /corrupt-json/.test(m) && /backup failed.*original file left untouched/.test(m) && m.includes(escapeDisplayLabel(modelGroupsPath("project", cwd)))));
 }));
 
 test("before_agent_start writes fresh names-and-effective-modalities guidance", async () => withTemp(async ({ cwd }) => {
@@ -178,14 +177,14 @@ test("before_agent_start writes fresh names-and-effective-modalities guidance", 
 	const event = createBeforeAgentStartEvent();
 	await handler(event, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
 	const section = event.systemPromptOptions.sections.schematic_model_groups;
-	assert.match(section, /## Model Groups for spawn/);
-	assert.match(section, /Available Model Groups: review \(text, image, reasoning\)/);
-	assert.match(section, /constraints/);
-	assert.match(section, /exact group name/);
-	assert.match(section, /known and confident/);
-	assert.match(section, /omit group and inherit/);
-	assert.doesNotMatch(section, /gpt-5/);
-	assert.doesNotMatch(section, /model-groups\.json/);
+	expect(section).toMatch(/## Model Groups for spawn/);
+	expect(section).toMatch(/Available Model Groups: review \(text, image, reasoning\)/);
+	expect(section).toMatch(/constraints/);
+	expect(section).toMatch(/exact group name/);
+	expect(section).toMatch(/known and confident/);
+	expect(section).toMatch(/omit group and inherit/);
+	expect(section).not.toMatch(/gpt-5/);
+	expect(section).not.toMatch(/model-groups\.json/);
 }));
 
 test("before_agent_start exposes union-effective modalities for automatic mixed groups", async () => withTemp(async ({ cwd }) => {
@@ -201,7 +200,7 @@ test("before_agent_start exposes union-effective modalities for automatic mixed 
 	// Automatic mixed group: guidance lists the union — image/reasoning present via the capable member.
 	const event = createBeforeAgentStartEvent();
 	await handler(event, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: reg, getContextUsage: () => null });
-	assert.match(event.systemPromptOptions.sections.schematic_model_groups, /Available Model Groups: mixed \(text, image, reasoning\)/);
+	expect(event.systemPromptOptions.sections.schematic_model_groups).toMatch(/Available Model Groups: mixed \(text, image, reasoning\)/);
 }));
 
 test("before_agent_start labels empty effective modalities unambiguously", async () => withTemp(async ({ cwd }) => {
@@ -212,9 +211,9 @@ test("before_agent_start labels empty effective modalities unambiguously", async
 	const event = createBeforeAgentStartEvent();
 	await handler(event, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
 	const section = event.systemPromptOptions.sections.schematic_model_groups;
-	assert.match(section, /foo \(no common modalities\)/);
-	assert.match(section, /foo \(none\) \(no common modalities\)/);
-	assert.doesNotMatch(section, /foo \(none\),/);
+	expect(section).toMatch(/foo \(no common modalities\)/);
+	expect(section).toMatch(/foo \(none\) \(no common modalities\)/);
+	expect(section).not.toMatch(/foo \(none\),/);
 }));
 
 test("before_agent_start rewrites updated effective modalities after registry changes", async () => withTemp(async ({ cwd }) => {
@@ -232,14 +231,14 @@ test("before_agent_start rewrites updated effective modalities after registry ch
 	const ctx = { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: changingRegistry, getContextUsage: () => null };
 	const initial = createBeforeAgentStartEvent();
 	await handler(initial, ctx);
-	assert.match(initial.systemPromptOptions.sections.schematic_model_groups, /review \(text, image\)/);
+	expect(initial.systemPromptOptions.sections.schematic_model_groups).toMatch(/review \(text, image\)/);
 
 	model = { ...model, input: ["text"], reasoning: true };
 	const refreshed = createBeforeAgentStartEvent();
 	await handler(refreshed, ctx);
 	const refreshedSection = refreshed.systemPromptOptions.sections.schematic_model_groups;
-	assert.match(refreshedSection, /review \(text, reasoning\)/);
-	assert.doesNotMatch(refreshedSection, /review \(text, image\)/);
+	expect(refreshedSection).toMatch(/review \(text, reasoning\)/);
+	expect(refreshedSection).not.toMatch(/review \(text, image\)/);
 }));
 
 test("before_agent_start clears stale Model Groups guidance when registry becomes unavailable", async () => withTemp(async ({ cwd }) => {
@@ -249,11 +248,11 @@ test("before_agent_start clears stale Model Groups guidance when registry become
 	const handler = pi.handlers.get("before_agent_start")![0];
 	const loaded = createBeforeAgentStartEvent();
 	await handler(loaded, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
-	assert.match(loaded.systemPromptOptions.sections.schematic_model_groups, /Available Model Groups: review/);
+	expect(loaded.systemPromptOptions.sections.schematic_model_groups).toMatch(/Available Model Groups: review/);
 
 	const unavailable = createBeforeAgentStartEvent();
 	await handler(unavailable, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: undefined, getContextUsage: () => null });
-	assert.equal(unavailable.systemPromptOptions.sections.schematic_model_groups, undefined);
+	expect(unavailable.systemPromptOptions.sections.schematic_model_groups).toBeUndefined();
 }));
 
 test("session_start registers Model Groups autocomplete provider when UI supports it", async () => withTemp(async ({ cwd }) => {
@@ -269,7 +268,7 @@ test("session_start registers Model Groups autocomplete provider when UI support
 		getContextUsage: () => ({ percent: 10 }),
 		ui: { theme, notify: () => {}, setStatus: () => {}, setWidget: () => {}, addAutocompleteProvider: (factory: AutocompleteProviderFactory) => providers.push(factory) },
 	});
-	assert.equal(providers.length, 1);
+	expect(providers.length).toBe(1);
 }));
 
 test("index session_start does not notify when load and validation issues are absent", async () => withTemp(async ({ cwd }) => {
@@ -286,7 +285,7 @@ test("index session_start does not notify when load and validation issues are ab
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
-	assert.deepEqual(notifications, []);
+	expect(notifications).toStrictEqual([]);
 }));
 
 test("root-recorded /model-groups rejects RPC and skips JSON/print before custom UI", async () => {
@@ -302,8 +301,8 @@ test("root-recorded /model-groups rejects RPC and skips JSON/print before custom
 			isProjectTrusted: () => true,
 			ui: { notify: (message: string) => notifications.push(message), custom: async () => { customCalls++; } },
 		});
-		assert.equal(customCalls, 0, mode);
-		assert.deepEqual(notifications, mode === "rpc" ? ["/model-groups requires TUI mode"] : [], mode);
+		expect(customCalls, mode).toBe(0);
+		expect(notifications, mode).toStrictEqual(mode === "rpc" ? ["/model-groups requires TUI mode"] : []);
 	}
 });
 
@@ -322,15 +321,15 @@ test("model groups untrusted root flow never probes project data and publishes g
 	await pi.handlers.get("session_start")!.at(-1)!({ reason: "load" }, {
 		mode: "tui", hasUI: true, isProjectTrusted: () => false, cwd, modelRegistry: registry(), getContextUsage: () => ({ percent: 10 }), ui: baseUi,
 	});
-	assert.equal(projectProbe, false);
+	expect(projectProbe).toBe(false);
 	let rendered = "";
 	await pi.commands.get("model-groups")!.handler("", {
 		mode: "tui", hasUI: true, isProjectTrusted: () => false, cwd, modelRegistry: registry(),
 		ui: { ...baseUi, custom: async (factory: any) => { rendered = factory({ requestRender: () => {} }, theme, {}, () => {}).render(80).join("\n"); } },
 	});
-	assert.match(rendered, /globalOnly/);
-	assert.doesNotMatch(rendered, /projectSecret|\[project\]/);
-	assert.equal(projectProbe, false);
+	expect(rendered).toMatch(/globalOnly/);
+	expect(rendered).not.toMatch(/projectSecret|\[project\]/);
+	expect(projectProbe).toBe(false);
 }));
 
 test("model groups boot load-issue notifications escape hostile source, backup, and error detail fields", async () => withTemp(async ({ cwd }) => {
@@ -348,8 +347,8 @@ test("model groups boot load-issue notifications escape hostile source, backup, 
 		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {}, addAutocompleteProvider: () => {} },
 	});
 	const notification = notifications.find((message) => message.includes("corrupt-json"))!;
-	assert.ok(notification.includes(`project scope (${escapeDisplayLabel(projectPath)})`));
-	assert.ok(notification.includes(`backup failed (${escapeDisplayLabel(`${projectPath}.bak`)}), original file left untouched`));
-	assert.match(notification, /backup\\n\\x1B\[31mfailed\\x07/);
-	assert.doesNotMatch(notification, /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/);
+	expect(notification).toContain(`project scope (${escapeDisplayLabel(projectPath)})`);
+	expect(notification).toContain(`backup failed (${escapeDisplayLabel(`${projectPath}.bak`)}), original file left untouched`);
+	expect(notification).toMatch(/backup\\n\\x1B\[31mfailed\\x07/);
+	expect(notification).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/);
 }));
