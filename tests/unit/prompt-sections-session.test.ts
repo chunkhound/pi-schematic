@@ -12,8 +12,7 @@
  * credentials.
  */
 
-import { describe, it, before, after } from "node:test";
-import { strict as assert } from "node:assert";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import os from "node:os";
@@ -40,13 +39,13 @@ let sandboxDir: string;
 let restoreHome: () => void;
 const previousPiOffline = process.env.PI_OFFLINE;
 
-before(async () => {
+beforeAll(async () => {
 	sandboxDir = await mkdtemp(join(os.tmpdir(), "pi-schematic-prompt-sections-"));
 	restoreHome = setTempHome(sandboxDir);
 	process.env.PI_OFFLINE = "1";
 });
 
-after(async () => {
+afterAll(async () => {
 	restoreHome();
 	if (previousPiOffline === undefined) delete process.env.PI_OFFLINE;
 	else process.env.PI_OFFLINE = previousPiOffline;
@@ -100,15 +99,15 @@ describe("prompt sections in a real agent session", () => {
 			session.dispose();
 		}
 
-		assert.equal(systemMessagesPerRequest.length, 3);
+		expect(systemMessagesPerRequest.length).toBe(3);
 		const firstRequestSectionNames = systemMessagesPerRequest[0].flatMap((message) => Object.keys(message.sections ?? {}));
-		assert.ok(firstRequestSectionNames.includes("schematic"), `first request sections: ${firstRequestSectionNames.join(", ")}`);
+		expect(firstRequestSectionNames, `first request sections: ${firstRequestSectionNames.join(", ")}`).toContain("schematic");
 		const secondRunPatches = systemMessagesPerRequest[2].slice(systemMessagesPerRequest[1].length);
-		assert.ok(secondRunPatches.length > 0, "request 3 carried no new system messages");
+		expect(secondRunPatches.length, "request 3 carried no new system messages").toBeGreaterThan(0);
 		for (const message of secondRunPatches) {
-			assert.deepEqual(Object.keys(message.sections ?? {}), ["schematic_topic"]);
+			expect(Object.keys(message.sections ?? {})).toStrictEqual(["schematic_topic"]);
 			const topicBody = message.sections?.schematic_topic;
-			assert.ok(typeof topicBody === "string" && topicBody.includes("oauth"), `schematic_topic patch: ${String(topicBody)}`);
+			expect(topicBody, `schematic_topic patch: ${String(topicBody)}`).toEqual(expect.stringContaining("oauth"));
 		}
 	});
 
@@ -168,7 +167,7 @@ describe("prompt sections in a real agent session", () => {
 			session.dispose();
 		}
 
-		assert.equal(requests.length, 3);
+		expect(requests.length).toBe(3);
 		const handoffRunRequest = requests[2];
 		const nudgeFirstLine = buildNudge({
 			activeNotebookTopic: null,
@@ -180,7 +179,7 @@ describe("prompt sections in a real agent session", () => {
 			.filter((message) => message.role !== "system")
 			.map((message) => JSON.stringify(message.content))
 			.join("\n");
-		assert.ok(nonSystemText.includes(JSON.stringify(nudgeFirstLine).slice(1, -1)), "the handoff run's request carries the eligible handoff nudge");
+		expect(nonSystemText, "the handoff run's request carries the eligible handoff nudge").toContain(JSON.stringify(nudgeFirstLine).slice(1, -1));
 		const sections: Record<string, string> = {};
 		for (const message of handoffRunRequest.filter((candidate): candidate is SystemMessage => candidate.role === "system")) {
 			for (const [name, body] of Object.entries(message.sections ?? {})) {
@@ -188,7 +187,7 @@ describe("prompt sections in a real agent session", () => {
 				else sections[name] = body;
 			}
 		}
-		assert.ok(sections.schematic !== undefined, `schematic section missing; sections: ${Object.keys(sections).join(", ")}`);
-		assert.ok(sections.schematic_topic?.includes("Current topic: `oauth`"), `schematic_topic: ${String(sections.schematic_topic)}`);
+		expect(sections.schematic, `schematic section missing; sections: ${Object.keys(sections).join(", ")}`).toBeDefined();
+		expect(sections.schematic_topic, `schematic_topic: ${String(sections.schematic_topic)}`).toContain("Current topic: `oauth`");
 	});
 });

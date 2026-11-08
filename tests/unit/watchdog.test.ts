@@ -1,5 +1,4 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import fc from "fast-check";
 import { createState } from "../../state.js";
 import { registerWatchdog, MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
@@ -8,6 +7,7 @@ import { registerHandoffCommand } from "../../handoff/command.js";
 import { registerHandoffTool } from "../../handoff/tool.js";
 import { registerHandoffBoundary } from "../../handoff/boundary.js";
 import { callHandlers, emitAll, handoffToolResult, makeReadonlyUICtx, registerReadonlyPI, turnEndEvent } from "./helpers.js";
+import { assertPresent } from "../assertions.js";
 import { createTestHost } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
@@ -27,8 +27,8 @@ test("watchdog records context usage without user notifications", async () => {
 		},
 	);
 
-	assert.deepEqual(notifications, []);
-	assert.equal(state.lastContextPercent, 70);
+	expect(notifications).toStrictEqual([]);
+	expect(state.lastContextPercent).toBe(70);
 });
 
 test("watchdog ignores malformed percentages", async () => {
@@ -37,7 +37,7 @@ test("watchdog ignores malformed percentages", async () => {
 		const pi = await createTestHost((api) => registerWatchdog(api, state));
 		const [handler] = pi.handlers.get("agent_end")!;
 		await handler({}, { hasUI: false, getContextUsage: () => ({ percent }) });
-		assert.equal(state.lastContextPercent, null);
+		expect(state.lastContextPercent).toBe(null);
 	}
 });
 
@@ -46,7 +46,7 @@ test("watchdog records overflow percentages", async () => {
 	const pi = await createTestHost((api) => registerWatchdog(api, state));
 	const [handler] = pi.handlers.get("agent_end")!;
 	await handler({}, { hasUI: false, getContextUsage: () => ({ percent: 125 }) });
-	assert.equal(state.lastContextPercent, 125);
+	expect(state.lastContextPercent).toBe(125);
 });
 
 test("context injects watchdog reminder before each LLM call", async () => {
@@ -61,16 +61,16 @@ test("context injects watchdog reminder before each LLM call", async () => {
 		},
 	);
 
-	assert.equal(result.messages.length, 2);
-	assert.deepEqual(result.messages[0], { role: "user", content: "hi", timestamp: 1 });
-	assert.equal(result.messages[1].role, "custom");
-	assert.equal(result.messages[1].customType, "pi-schematic-watchdog");
-	assert.equal(result.messages[1].display, false);
-	assert.match(result.messages[1].content, /70%/);
-	assert.match(result.messages[1].content, /oauth/);
-	assert.match(result.messages[1].content, /spawn/i);
-	assert.match(result.messages[1].content, /parent context/i);
-	assert.doesNotMatch(result.messages[1].content, /draft a clear prompt|what comes next/i);
+	expect(result.messages.length).toBe(2);
+	expect(result.messages[0]).toStrictEqual({ role: "user", content: "hi", timestamp: 1 });
+	expect(result.messages[1].role).toBe("custom");
+	expect(result.messages[1].customType).toBe("pi-schematic-watchdog");
+	expect(result.messages[1].display).toBe(false);
+	expect(result.messages[1].content).toMatch(/70%/);
+	expect(result.messages[1].content).toMatch(/oauth/);
+	expect(result.messages[1].content).toMatch(/spawn/i);
+	expect(result.messages[1].content).toMatch(/parent context/i);
+	expect(result.messages[1].content).not.toMatch(/draft a clear prompt|what comes next/i);
 });
 
 
@@ -85,10 +85,10 @@ test("context injects a boundary nudge below 30% after an explicit topic change"
 		{ getContextUsage: () => ({ percent: 20 }) },
 	);
 
-	assert.equal(result.messages[1].display, false);
-	assert.match(result.messages[1].content, /oauth/i);
-	assert.match(result.messages[1].content, /billing/i);
-	assert.match(result.messages[1].content, /topic changed/i);
+	expect(result.messages[1].display).toBe(false);
+	expect(result.messages[1].content).toMatch(/oauth/i);
+	expect(result.messages[1].content).toMatch(/billing/i);
+	expect(result.messages[1].content).toMatch(/topic changed/i);
 });
 
 
@@ -101,7 +101,7 @@ test("context treats malformed percentages as unavailable", async () => {
 			{ messages: [{ role: "user", content: "hi", timestamp: 1 }] },
 			{ getContextUsage: () => ({ percent }) },
 		);
-		assert.equal(result, undefined);
+		expect(result).toBe(undefined);
 	}
 });
 
@@ -114,13 +114,13 @@ test("context injects a no-topic nudge when context is high", async () => {
 		{ getContextUsage: () => ({ percent: 70 }) },
 	);
 
-	assert.equal(result.messages.length, 2);
-	assert.equal(result.messages[1].role, "custom");
-	assert.equal(result.messages[1].customType, "pi-schematic-watchdog");
-	assert.equal(result.messages[1].display, false);
-	assert.match(result.messages[1].content, /no active notebook topic/i);
-	assert.match(result.messages[1].content, /fresh topic/i);
-	assert.match(result.messages[1].content, /handoff/i);
+	expect(result.messages.length).toBe(2);
+	expect(result.messages[1].role).toBe("custom");
+	expect(result.messages[1].customType).toBe("pi-schematic-watchdog");
+	expect(result.messages[1].display).toBe(false);
+	expect(result.messages[1].content).toMatch(/no active notebook topic/i);
+	expect(result.messages[1].content).toMatch(/fresh topic/i);
+	expect(result.messages[1].content).toMatch(/handoff/i);
 });
 
 
@@ -136,7 +136,7 @@ test("context nudges at band crossings and after a below-30% reset", async () =>
 			{ messages: [{ role: "user", content: `at ${percent}`, timestamp: percent }] },
 			{ getContextUsage: () => ({ percent }) },
 		);
-		assert.equal(result !== undefined, shouldNudge, `watchdog nudge at ${percent}%`);
+		expect(result !== undefined, `watchdog nudge at ${percent}%`).toBe(shouldNudge);
 	}
 });
 
@@ -151,22 +151,22 @@ test("context consumes a boundary hint after the first injected nudge", async ()
 		{ messages: [{ role: "user", content: "hi", timestamp: 1 }] },
 		{ getContextUsage: () => ({ percent: 20 }) },
 	);
-	assert.match(first.messages[1].content, /oauth/i);
-	assert.match(first.messages[1].content, /billing/i);
-	assert.match(first.messages[1].content, /topic changed/i);
+	expect(first.messages[1].content).toMatch(/oauth/i);
+	expect(first.messages[1].content).toMatch(/billing/i);
+	expect(first.messages[1].content).toMatch(/topic changed/i);
 
 	const second = await handler(
 		{ messages: [{ role: "user", content: "hi", timestamp: 2 }] },
 		{ getContextUsage: () => ({ percent: 20 }) },
 	);
-	assert.equal(second, undefined);
+	expect(second).toBe(undefined);
 });
 
 
 test("buildNudge emits topic and spawn guidance", () => {
 	const nudge = buildNudge({ activeNotebookTopic: "oauth", pendingTopicBoundaryHint: null, readonlyEnabled: false, pendingRequestedHandoff: null }, 46, false);
-	assert.match(nudge, /Active notebook topic: oauth/);
-	assert.match(nudge, /prefer spawn/i);
+	expect(nudge).toMatch(/Active notebook topic: oauth/);
+	expect(nudge).toMatch(/prefer spawn/i);
 });
 
 test("default watchdog guidance respects token eligibility", async () => {
@@ -177,8 +177,8 @@ test("default watchdog guidance respects token eligibility", async () => {
 		{ getContextUsage: () => ({ percent: 30, contextWindow: 64_000 }) },
 	);
 	const nudge = result.messages.at(-1).content;
-	assert.match(nudge, /continue working until handoff is available/i);
-	assert.doesNotMatch(nudge, /prefer a deliberate handoff/i);
+	expect(nudge).toMatch(/continue working until handoff is available/i);
+	expect(nudge).not.toMatch(/prefer a deliberate handoff/i);
 });
 
 test("buildNudge does not require an ineligible pending handoff by default", () => {
@@ -188,8 +188,8 @@ test("buildNudge does not require an ineligible pending handoff by default", () 
 		readonlyEnabled: false,
 		pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: null },
 	}, null, false);
-	assert.match(nudge, /not yet ready for compaction/i);
-	assert.doesNotMatch(nudge, /complete a real handoff in this session now/i);
+	expect(nudge).toMatch(/not yet ready for compaction/i);
+	expect(nudge).not.toMatch(/complete a real handoff in this session now/i);
 });
 
 test("buildNudge uses prompt wording for eligible requested handoffs and topic boundaries", () => {
@@ -199,11 +199,11 @@ test("buildNudge uses prompt wording for eligible requested handoffs and topic b
 		readonlyEnabled: false,
 		pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: null },
 	}, 30, true);
-	assert.match(requested, /real handoff is required/i);
-	assert.match(requested, /do not perform the new instruction here/i);
-	assert.match(requested, /call handoff with the next instruction and the remaining context/i);
-	assert.doesNotMatch(requested, /before continuing normal work/i, "stale obligation copy must not survive");
-	assert.doesNotMatch(requested, /\bbrief\b/i);
+	expect(requested).toMatch(/real handoff is required/i);
+	expect(requested).toMatch(/do not perform the new instruction here/i);
+	expect(requested).toMatch(/call handoff with the next instruction and the remaining context/i);
+	expect(requested, "stale obligation copy must not survive").not.toMatch(/before continuing normal work/i);
+	expect(requested).not.toMatch(/\bbrief\b/i);
 
 	const directed = buildNudge({
 		activeNotebookTopic: null,
@@ -211,9 +211,9 @@ test("buildNudge uses prompt wording for eligible requested handoffs and topic b
 		readonlyEnabled: false,
 		pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: "continue work" },
 	}, 30, true);
-	assert.match(directed, /call handoff with only the remaining context/i);
-	assert.match(directed, /successor receives the instruction verbatim/i);
-	assert.doesNotMatch(directed, /next instruction and the remaining context/i);
+	expect(directed).toMatch(/call handoff with only the remaining context/i);
+	expect(directed).toMatch(/successor receives the instruction verbatim/i);
+	expect(directed).not.toMatch(/next instruction and the remaining context/i);
 
 	const boundary = buildNudge({
 		activeNotebookTopic: "billing",
@@ -221,11 +221,11 @@ test("buildNudge uses prompt wording for eligible requested handoffs and topic b
 		readonlyEnabled: false,
 		pendingRequestedHandoff: null,
 	}, 30, true);
-	assert.match(boundary, /task-boundary signal/i);
-	assert.match(boundary, /next instruction/i);
-	assert.match(boundary, /remaining context/i);
-	assert.match(boundary, /call handoff/i);
-	assert.doesNotMatch(boundary, /\bbrief\b/i);
+	expect(boundary).toMatch(/task-boundary signal/i);
+	expect(boundary).toMatch(/next instruction/i);
+	expect(boundary).toMatch(/remaining context/i);
+	expect(boundary).toMatch(/call handoff/i);
+	expect(boundary).not.toMatch(/\bbrief\b/i);
 });
 
 test("buildNudge handles null percent and boundary hints before topic guidance", () => {
@@ -239,12 +239,12 @@ test("buildNudge handles null percent and boundary hints before topic guidance",
 		null,
 		false,
 	);
-	assert.match(boundary, /Notebook topic changed from oauth to billing/);
-	assert.doesNotMatch(boundary, /Active notebook topic: oauth/);
+	expect(boundary).toMatch(/Notebook topic changed from oauth to billing/);
+	expect(boundary).not.toMatch(/Active notebook topic: oauth/);
 
 	const noTopic = buildNudge({ activeNotebookTopic: null, pendingTopicBoundaryHint: null, readonlyEnabled: false, pendingRequestedHandoff: null }, null, false);
-	assert.match(noTopic, /Topic-aware context reminder/);
-	assert.match(noTopic, /No active notebook topic is set/);
+	expect(noTopic).toMatch(/Topic-aware context reminder/);
+	expect(noTopic).toMatch(/No active notebook topic is set/);
 });
 
 /** Stand in for the context hook injecting the eligible required-handoff nudge during the current run. */
@@ -262,7 +262,7 @@ async function createPendingHandoffHost() {
 		...makeReadonlyUICtx(),
 		isIdle: () => true,
 	} as any);
-	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
+	expect(state.pendingRequestedHandoff?.toolCalled).toBe(false);
 	const [agentEnd] = pi.handlers.get("agent_end")!;
 	const [agentSettled] = pi.handlers.get("agent_settled")!;
 	return { state, agentEnd, agentSettled };
@@ -287,10 +287,10 @@ test("watchdog stays advisory for a fresh user-requested handoff", async () => {
 		},
 	);
 
-	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
-	assert.ok(state.pendingRequestedHandoff, "handoff request should remain active after one settled run");
-	assert.equal(state.pendingRequestedHandoff.enforcementAttempts, 1);
-	assert.deepEqual(notifications, []);
+	expect(state.pendingRequestedHandoff?.toolCalled).toBe(false);
+	assertPresent(state.pendingRequestedHandoff, "handoff request should remain active after one settled run");
+	expect(state.pendingRequestedHandoff.enforcementAttempts).toBe(1);
+	expect(notifications).toStrictEqual([]);
 });
 
 /** Host with the handoff command, tool, boundary and watchdog registered in the extension's order. */
@@ -321,7 +321,7 @@ async function endStagingTurn(pi: TestPI, toolCallId: string): Promise<any[]> {
 		{ hasUI: false, signal: { aborted: false }, getContextUsage: eligibleUsage },
 	);
 	const boundary = results.find((result: any) => result?.entries) as { entries: any[] } | undefined;
-	assert.ok(boundary, "the staging turn_end must return boundary entries");
+	assertPresent(boundary, "the staging turn_end must return boundary entries");
 	return boundary.entries;
 }
 
@@ -337,7 +337,7 @@ test("a staged handoff that completes at the settle is neither counted nor cance
 		deliverEligibleNudge(state);
 		await emitAll(pi, "agent_settled", { type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage, sessionManager: { getBranch: () => [] } });
 	}
-	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, MAX_HANDOFF_ATTEMPTS - 1);
+	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(MAX_HANDOFF_ATTEMPTS - 1);
 
 	const userMessagesBeforeRun = pi.sentUserMessages.length;
 	deliverEligibleNudge(state);
@@ -351,9 +351,9 @@ test("a staged handoff that completes at the settle is neither counted nor cance
 		sessionManager: { getBranch: () => branch },
 	});
 
-	assert.equal(state.pendingRequestedHandoff, null, "the confirmed cut clears the request");
-	assert.equal(notifications.some((message) => /Required handoff cancelled/i.test(message)), false);
-	assert.equal(pi.sentUserMessages.length, userMessagesBeforeRun, "a completed handoff sends no failure guidance");
+	expect(state.pendingRequestedHandoff, "the confirmed cut clears the request").toBe(null);
+	expect(notifications.filter((message) => /Required handoff cancelled/i.test(message))).toStrictEqual([]);
+	expect(pi.sentUserMessages.length, "a completed handoff sends no failure guidance").toBe(userMessagesBeforeRun);
 });
 
 test("watchdog auto-cancels a required handoff after enough unanswered settled runs", async () => {
@@ -374,22 +374,22 @@ test("watchdog auto-cancels a required handoff after enough unanswered settled r
 	for (let i = 0; i < 3; i++) {
 		await handler({}, ctx);
 	}
-	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 0);
+	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(0);
 
 	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS - 1; i++) {
 		deliverEligibleNudge(state);
 		await handler({}, ctx);
 	}
-	assert.ok(state.pendingRequestedHandoff, "handoff must remain pending before the final attempt");
-	assert.deepEqual(notifications, [], "cancellation must not notify early");
+	assertPresent(state.pendingRequestedHandoff, "handoff must remain pending before the final attempt");
+	expect(notifications, "cancellation must not notify early").toStrictEqual([]);
 
 	deliverEligibleNudge(state);
 	await handler({}, ctx);
-	assert.equal(state.pendingRequestedHandoff, null, "pending handoff should be auto-cancelled");
-	assert.equal(statuses.get(STATUS_KEY_HANDOFF), undefined, "cancellation should clear the handoff status");
-	assert.ok(notifications.length > 0, "user should receive a cancellation notification");
-	assert.match(notifications[0] as string, /Required handoff cancelled/i, "notification should mention cancellation without source-specific wording");
-	assert.doesNotMatch(notifications[0] as string, /user-requested|temporary bypass/i);
+	expect(state.pendingRequestedHandoff, "pending handoff should be auto-cancelled").toBe(null);
+	expect(statuses.get(STATUS_KEY_HANDOFF), "cancellation should clear the handoff status").toBe(undefined);
+	expect(notifications.length, "user should receive a cancellation notification").toBeGreaterThan(0);
+	expect(notifications[0] as string, "notification should mention cancellation without source-specific wording").toMatch(/Required handoff cancelled/i);
+	expect(notifications[0] as string).not.toMatch(/user-requested|temporary bypass/i);
 });
 
 test("a nudged run whose staged handoff cut was not persisted counts one attempt", async () => {
@@ -401,17 +401,17 @@ test("a nudged run whose staged handoff cut was not persisted counts one attempt
 
 	deliverEligibleNudge(state);
 	await stageHandoff(pi, "dropped-cut");
-	assert.equal(state.pendingRequestedHandoff?.toolCalled, true, "staging marks the handoff called");
+	expect(state.pendingRequestedHandoff?.toolCalled, "staging marks the handoff called").toBe(true);
 	await endStagingTurn(pi, "dropped-cut");
 
 	const userMessagesBeforeSettle = pi.sentUserMessages.length;
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage, sessionManager: { getBranch: () => [] } });
 
-	assert.equal(state.pendingRequestedHandoff?.toolCalled, false, "the failure resets toolCalled before the watchdog counts");
-	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 1);
-	assert.equal(pi.sentUserMessages.length, userMessagesBeforeSettle, "a dropped cut starts no run");
-	assert.equal(pi.sentMessages.at(-1)?.message.customType, "pi-schematic-handoff-failed");
-	assert.equal(pi.sentMessages.at(-1)?.options?.triggerTurn, false);
+	expect(state.pendingRequestedHandoff?.toolCalled, "the failure resets toolCalled before the watchdog counts").toBe(false);
+	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
+	expect(pi.sentUserMessages.length, "a dropped cut starts no run").toBe(userMessagesBeforeSettle);
+	expect(pi.sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
+	expect(pi.sentMessages.at(-1)?.options?.triggerTurn).toBe(false);
 });
 
 test("a nudged run whose handoff was aborted counts one attempt and starts no run", async () => {
@@ -432,11 +432,11 @@ test("a nudged run whose handoff was aborted counts one attempt and starts no ru
 	const userMessagesBeforeSettle = pi.sentUserMessages.length;
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage, sessionManager: { getBranch: () => [] } });
 
-	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
-	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 1);
-	assert.equal(pi.sentUserMessages.length, userMessagesBeforeSettle, "an abort must not start another run");
-	assert.equal(pi.sentMessages.at(-1)?.message.customType, "pi-schematic-handoff-failed");
-	assert.equal(pi.sentMessages.at(-1)?.options?.triggerTurn, false);
+	expect(state.pendingRequestedHandoff?.toolCalled).toBe(false);
+	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
+	expect(pi.sentUserMessages.length, "an abort must not start another run").toBe(userMessagesBeforeSettle);
+	expect(pi.sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
+	expect(pi.sentMessages.at(-1)?.options?.triggerTurn).toBe(false);
 });
 
 test("agent_end events within a run add no attempt", async () => {
@@ -447,13 +447,13 @@ test("agent_end events within a run add no attempt", async () => {
 	deliverEligibleNudge(state);
 	await agentEnd({}, ctx);
 	await agentEnd({}, ctx);
-	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 0, "agent_end must not count an attempt");
+	expect(state.pendingRequestedHandoff?.enforcementAttempts, "agent_end must not count an attempt").toBe(0);
 	await agentSettled({ type: "agent_settled" }, ctx);
 	deliverEligibleNudge(state);
 	await agentEnd({}, ctx);
 	await agentSettled({ type: "agent_settled" }, ctx);
 
-	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 2);
+	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(2);
 });
 
 test("a continued run cancels only after MAX_HANDOFF_ATTEMPTS settled runs", async () => {
@@ -473,29 +473,29 @@ test("a continued run cancels only after MAX_HANDOFF_ATTEMPTS settled runs", asy
 		deliverEligibleNudge(state);
 		for (let i = 0; i < 3; i++) await agentEnd({}, ctx);
 		await agentSettled({ type: "agent_settled" }, ctx);
-		assert.ok(state.pendingRequestedHandoff, `handoff must remain pending after settled run ${run}`);
-		assert.deepEqual(notifications, [], "cancellation must not notify early");
+		assertPresent(state.pendingRequestedHandoff, `handoff must remain pending after settled run ${run}`);
+		expect(notifications, "cancellation must not notify early").toStrictEqual([]);
 	}
 
 	deliverEligibleNudge(state);
 	for (let i = 0; i < 3; i++) await agentEnd({}, ctx);
 	await agentSettled({ type: "agent_settled" }, ctx);
-	assert.equal(state.pendingRequestedHandoff, null);
-	assert.equal(statuses.get(STATUS_KEY_HANDOFF), undefined);
-	assert.equal(notifications.length, 1);
-	assert.equal(notifications[0].level, "warning");
-	assert.match(notifications[0].message, /Required handoff cancelled/i);
+	expect(state.pendingRequestedHandoff).toBe(null);
+	expect(statuses.get(STATUS_KEY_HANDOFF)).toBe(undefined);
+	expect(notifications.length).toBe(1);
+	expect(notifications[0].level).toBe("warning");
+	expect(notifications[0].message).toMatch(/Required handoff cancelled/i);
 });
 
 test("a settled run without the eligible nudge does not count", async () => {
 	const { state, agentSettled } = await createPendingHandoffHost();
 
 	await agentSettled({ type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage });
-	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 0);
+	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(0);
 
 	deliverEligibleNudge(state);
 	await agentSettled({ type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage });
-	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 1);
+	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
 });
 
 test("the eligible nudge counts once per settled run", async () => {
@@ -505,8 +505,8 @@ test("the eligible nudge counts once per settled run", async () => {
 	await agentSettled({ type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage });
 	await agentSettled({ type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage });
 
-	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 1);
-	assert.equal(state.pendingRequestedHandoff?.eligibleNudgeDelivered, false);
+	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
+	expect(state.pendingRequestedHandoff?.eligibleNudgeDelivered).toBe(false);
 });
 
 test("an aborted settle after the eligible nudge counts as an attempt", async () => {
@@ -515,7 +515,7 @@ test("an aborted settle after the eligible nudge counts as an attempt", async ()
 	deliverEligibleNudge(state);
 	await agentSettled({ type: "agent_settled", aborted: true }, { hasUI: false, getContextUsage: eligibleUsage });
 
-	assert.equal(state.pendingRequestedHandoff?.enforcementAttempts, 1);
+	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
 });
 
 // Full-host runs: the real context hook decides whether the eligible nudge was delivered.
@@ -554,15 +554,15 @@ test("a run nudged while eligible counts when it settles after compaction", asyn
 	const postCompactionUsage = { tokens: null, contextWindow: 200000, percent: null };
 
 	for (let run = 1; run < MAX_HANDOFF_ATTEMPTS; run++) {
-		assert.match(await runContextHook(eligibleUsage()), /A real handoff is required/);
+		expect(await runContextHook(eligibleUsage())).toMatch(/A real handoff is required/);
 		await settle(postCompactionUsage);
-		assert.deepEqual(warnings, [], `cancellation must not warn after run ${run}`);
+		expect(warnings, `cancellation must not warn after run ${run}`).toStrictEqual([]);
 	}
 
 	await runContextHook(eligibleUsage());
 	await settle(postCompactionUsage);
-	assert.equal(warnings.length, 1);
-	assert.match(warnings[0], /Required handoff cancelled/i);
+	expect(warnings.length).toBe(1);
+	expect(warnings[0]).toMatch(/Required handoff cancelled/i);
 });
 
 test("a run nudged only to keep working does not count", async () => {
@@ -570,11 +570,11 @@ test("a run nudged only to keep working does not count", async () => {
 	const ineligibleUsage = { tokens: 5000, percent: 2.5, contextWindow: 200000 };
 
 	for (let run = 0; run < MAX_HANDOFF_ATTEMPTS + 1; run++) {
-		assert.match(await runContextHook(ineligibleUsage), /not yet ready for compaction/);
+		expect(await runContextHook(ineligibleUsage)).toMatch(/not yet ready for compaction/);
 		await settle(eligibleUsage());
 	}
 
-	assert.deepEqual(warnings, []);
+	expect(warnings).toStrictEqual([]);
 });
 
 test("agent_settled does not record context usage", async () => {
@@ -584,7 +584,7 @@ test("agent_settled does not record context usage", async () => {
 
 	await handler({ type: "agent_settled" }, { hasUI: false, getContextUsage: () => ({ percent: 70 }) });
 
-	assert.equal(state.lastContextPercent, null);
+	expect(state.lastContextPercent).toBe(null);
 });
 
 // ── Readonly-specific injection contracts ─────────────────────────
@@ -614,7 +614,7 @@ test("context hook suppresses watchdog after readonly toggle nudge is drained", 
 			{ messages: [{ role: "user", content: `second at ${percent}`, timestamp: percent }] },
 			{ getContextUsage: () => ({ percent }) },
 		);
-		assert.equal(result, undefined, `watchdog must be suppressed at ${percent}% in readonly mode`);
+		expect(result, `watchdog must be suppressed at ${percent}% in readonly mode`).toBe(undefined);
 	}
 });
 
@@ -628,12 +628,12 @@ test("context injects a readonly-mode nudge after toggle", async () => {
 		{ getContextUsage: () => null },
 	);
 
-	assert.equal(result.messages.length, 2);
-	assert.equal(result.messages[1].customType, "pi-schematic-readonly-nudge");
-	assert.match(result.messages[1].content, /readonly/i);
-	assert.match(result.messages[1].content, /write\/edit\/powershell blocked/i);
-	assert.match(result.messages[1].content, /bash writes/i);
-	assert.match(result.messages[1].content, /handoff/i);
+	expect(result.messages.length).toBe(2);
+	expect(result.messages[1].customType).toBe("pi-schematic-readonly-nudge");
+	expect(result.messages[1].content).toMatch(/readonly/i);
+	expect(result.messages[1].content).toMatch(/write\/edit\/powershell blocked/i);
+	expect(result.messages[1].content).toMatch(/bash writes/i);
+	expect(result.messages[1].content).toMatch(/handoff/i);
 });
 
 test("context injects readonly handoff guidance after explicit user /handoff", async () => {
@@ -652,13 +652,13 @@ test("context injects readonly handoff guidance after explicit user /handoff", a
 	);
 	const watchdogMessage = result.messages.find((message: any) => message.customType === "pi-schematic-watchdog");
 
-	assert.ok(watchdogMessage, "requested handoff should inject watchdog guidance");
-	assert.match(watchdogMessage.content, /handoff/i);
-	assert.match(watchdogMessage.content, /readonly/i);
-	assert.match(watchdogMessage.content, /temporary handoff exception active/i);
-	assert.match(watchdogMessage.content, /write\/edit\/powershell remain blocked/i);
-	assert.match(watchdogMessage.content, /fresh context resumes in readonly mode|resumes readonly mode/i);
-	assert.doesNotMatch(watchdogMessage.content, /User explicitly requested|this request only/i);
+	assertPresent(watchdogMessage, "requested handoff should inject watchdog guidance");
+	expect(watchdogMessage.content).toMatch(/handoff/i);
+	expect(watchdogMessage.content).toMatch(/readonly/i);
+	expect(watchdogMessage.content).toMatch(/temporary handoff exception active/i);
+	expect(watchdogMessage.content).toMatch(/write\/edit\/powershell remain blocked/i);
+	expect(watchdogMessage.content).toMatch(/fresh context resumes in readonly mode|resumes readonly mode/i);
+	expect(watchdogMessage.content).not.toMatch(/User explicitly requested|this request only/i);
 });
 
 test("readonly toggle nudge aligns with handoff exception in the same turn", async () => {
@@ -677,12 +677,12 @@ test("readonly toggle nudge aligns with handoff exception in the same turn", asy
 	const readonlyMessage = result.messages.find((message: any) => message.customType === "pi-schematic-readonly-nudge");
 	const watchdogMessage = result.messages.find((message: any) => message.customType === "pi-schematic-watchdog");
 
-	assert.ok(readonlyMessage, "readonly toggle should still emit its one-shot nudge");
-	assert.ok(watchdogMessage, "handoff guidance should still be injected");
-	assert.match(readonlyMessage.content, /temporary handoff exception active/i);
-	assert.match(readonlyMessage.content, /write\/edit\/powershell remain blocked/i);
-	assert.doesNotMatch(readonlyMessage.content, /handoff blocked/i);
-	assert.match(watchdogMessage.content, /temporary handoff exception active/i);
+	assertPresent(readonlyMessage, "readonly toggle should still emit its one-shot nudge");
+	assertPresent(watchdogMessage, "handoff guidance should still be injected");
+	expect(readonlyMessage.content).toMatch(/temporary handoff exception active/i);
+	expect(readonlyMessage.content).toMatch(/write\/edit\/powershell remain blocked/i);
+	expect(readonlyMessage.content).not.toMatch(/handoff blocked/i);
+	expect(watchdogMessage.content).toMatch(/temporary handoff exception active/i);
 });
 
 test("eligible readonly human topic boundary auto-creates handoff bypass equivalent to /handoff", async () => {
@@ -707,14 +707,14 @@ test("eligible readonly human topic boundary auto-creates handoff bypass equival
 
 	// An eligible topic boundary in readonly mode creates the handoff bypass and injects
 	// watchdog guidance — equivalent to explicit /handoff or a human topic boundary.
-	assert.ok(result, "topic boundary should inject watchdog guidance");
+	assertPresent(result, "topic boundary should inject watchdog guidance");
 	const watchdogMessage = result.messages.find((m: any) => m.customType === "pi-schematic-watchdog");
-	assert.ok(watchdogMessage, "watchdog message should be present");
-	assert.match(watchdogMessage.content, /handoff/i);
-	assert.match(watchdogMessage.content, /temporary handoff exception active/i);
+	assertPresent(watchdogMessage, "watchdog message should be present");
+	expect(watchdogMessage.content).toMatch(/handoff/i);
+	expect(watchdogMessage.content).toMatch(/temporary handoff exception active/i);
 
 	const blockResult = await toolCall({ toolName: "handoff", input: {} }, { cwd: "/tmp" });
-	assert.equal(blockResult, undefined, "handoff tool should be unblocked after topic boundary creates bypass");
+	expect(blockResult, "handoff tool should be unblocked after topic boundary creates bypass").toBe(undefined);
 });
 
 test("watchdog band-crossing: nudge iff context enters a higher band", async () => {
@@ -738,13 +738,12 @@ test("watchdog band-crossing: nudge iff context enters a higher band", async () 
 					) ?? false;
 					if (raw < 30) {
 						// Below 30% resets lastWatchdogBand and never nudges.
-						assert.equal(didNudge, false, `${raw}% below 30% must not nudge`);
+						expect(didNudge, `${raw}% below 30% must not nudge`).toBe(false);
 						lastBand = null;
 					} else {
 						const currentBand: number = raw < 50 ? 0 : raw < 70 ? 1 : 2;
 						const shouldNudge: boolean = lastBand === null || currentBand > lastBand;
-						assert.equal(didNudge, shouldNudge,
-							`${raw}% band ${lastBand}→${currentBand}: nudge=${didNudge}`);
+						expect(didNudge, `${raw}% band ${lastBand}→${currentBand}: nudge=${didNudge}`).toBe(shouldNudge);
 						if (didNudge) lastBand = currentBand;
 					}
 				}

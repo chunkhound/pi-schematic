@@ -1,10 +1,10 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { applyPromptSections, createPromptSectionRegistry } from "../../prompt-sections.js";
 import { modelGroupsPath } from "../../model-groups/store.js";
+import { assertPresent } from "../assertions.js";
 import { createBeforeAgentStartEvent, createTestHost, emitBeforeAgentStart } from "./test-host.js";
 import { withTemp } from "./model-groups-helpers.js";
 import { callHandlers, handoffToolResult, makeTUICtx, turnEndEvent } from "./helpers.js";
@@ -17,7 +17,7 @@ test("renders sections in registration order", () => {
 	registry.register({ name: "schematic_b", render: () => "second" });
 	registry.register({ name: "schematic_a", render: () => "third" });
 
-	assert.deepEqual(registry.render().map((section) => section.name), ["schematic", "schematic_b", "schematic_a"]);
+	expect(registry.render().map((section) => section.name)).toStrictEqual(["schematic", "schematic_b", "schematic_a"]);
 });
 
 test("omits a section whose body is undefined", () => {
@@ -26,7 +26,7 @@ test("omits a section whose body is undefined", () => {
 	registry.register({ name: "schematic_absent", render: () => undefined });
 	registry.register({ name: "schematic_two", render: () => "body-two" });
 
-	assert.deepEqual(registry.render().map((section) => section.name), ["schematic_one", "schematic_two"]);
+	expect(registry.render().map((section) => section.name)).toStrictEqual(["schematic_one", "schematic_two"]);
 });
 
 test("omits a section whose body is empty", () => {
@@ -35,13 +35,13 @@ test("omits a section whose body is empty", () => {
 	registry.register({ name: "schematic_empty", render: () => "" });
 	registry.register({ name: "schematic_two", render: () => "body-two" });
 
-	assert.deepEqual(registry.render().map((section) => section.name), ["schematic_one", "schematic_two"]);
+	expect(registry.render().map((section) => section.name)).toStrictEqual(["schematic_one", "schematic_two"]);
 });
 
 for (const name of ["schematic", "schematic_model_groups"]) {
 	test(`accepts names with the schematic prefix: ${name}`, () => {
 		const registry = createPromptSectionRegistry();
-		assert.doesNotThrow(() => registry.register({ name, render: () => "body" }));
+		expect(() => registry.register({ name, render: () => "body" })).not.toThrow();
 	});
 }
 
@@ -55,7 +55,7 @@ for (const { name, reason } of [
 ]) {
 	test(`rejects names outside the schematic prefix: ${name} (${reason})`, () => {
 		const registry = createPromptSectionRegistry();
-		assert.throws(() => registry.register({ name, render: () => "body" }), /Invalid schematic prompt section name/);
+		expect(() => registry.register({ name, render: () => "body" })).toThrow(/Invalid schematic prompt section name/);
 	});
 }
 
@@ -63,8 +63,7 @@ test("rejects a duplicate section name", () => {
 	const registry = createPromptSectionRegistry();
 	registry.register({ name: "schematic_topic", render: () => "first" });
 
-	assert.throws(
-		() => registry.register({ name: "schematic_topic", render: () => "second" }),
+	expect(() => registry.register({ name: "schematic_topic", render: () => "second" })).toThrow(
 		/Duplicate schematic prompt section/,
 	);
 });
@@ -78,7 +77,7 @@ test("propagates a failing section render", () => {
 		},
 	});
 
-	assert.throws(() => registry.render(), /render-failure/);
+	expect(() => registry.render()).toThrow(/render-failure/);
 });
 
 // ── applyPromptSections ─────────────────────────────────────────────
@@ -93,21 +92,21 @@ test("writes rendered sections into the prompt options", () => {
 
 	applyPromptSections(event, rendered);
 
-	assert.equal(event.systemPromptOptions.sections.schematic_one, "body-one");
-	assert.equal(event.systemPromptOptions.sections.schematic_two, "body-two");
+	expect(event.systemPromptOptions.sections.schematic_one).toBe("body-one");
+	expect(event.systemPromptOptions.sections.schematic_two).toBe("body-two");
 });
 
 test("leaves the prompt unforced when no earlier handler forced it", () => {
 	const event = createBeforeAgentStartEvent();
 
-	assert.equal(applyPromptSections(event, rendered), undefined);
+	expect(applyPromptSections(event, rendered)).toBe(undefined);
 });
 
 test("appends section bodies to a prompt an earlier handler forced", () => {
 	const event = createBeforeAgentStartEvent();
 	event.systemPromptOptions.forceSystemPrompt = "FORCED";
 
-	assert.deepEqual(applyPromptSections(event, rendered), {
+	expect(applyPromptSections(event, rendered)).toStrictEqual({
 		systemPrompt: "FORCED\n\n<schematic_one>\nbody-one\n</schematic_one>\n\n<schematic_two>\nbody-two\n</schematic_two>",
 	});
 });
@@ -118,7 +117,7 @@ test("records sections while the prompt is forced", () => {
 
 	applyPromptSections(event, rendered);
 
-	assert.equal(event.systemPromptOptions.sections.schematic_one, "body-one");
+	expect(event.systemPromptOptions.sections.schematic_one).toBe("body-one");
 });
 
 // ── Through pi's dispatch ───────────────────────────────────────────
@@ -132,9 +131,9 @@ test("keeps a section written by a later extension (regression #45)", async () =
 
 	const { result, prompt } = await emitBeforeAgentStart({ after: [probe] });
 
-	assert.equal(result.systemPromptOptions.forceSystemPrompt, undefined);
-	assert.ok(prompt.includes("<probe>\nPROBE-SECTION\n</probe>"));
-	assert.ok(prompt.includes("<schematic>"));
+	expect(result.systemPromptOptions.forceSystemPrompt).toBe(undefined);
+	expect(prompt).toContain("<probe>\nPROBE-SECTION\n</probe>");
+	expect(prompt).toContain("<schematic>");
 });
 
 test("keeps a section written by an earlier extension", async () => {
@@ -146,7 +145,7 @@ test("keeps a section written by an earlier extension", async () => {
 
 	const { prompt } = await emitBeforeAgentStart({ before: [probe] });
 
-	assert.ok(prompt.includes("<probe>\nPROBE-SECTION\n</probe>"));
+	expect(prompt).toContain("<probe>\nPROBE-SECTION\n</probe>");
 });
 
 test("appends schematic's content to a prompt an earlier extension forced", async () => {
@@ -156,9 +155,9 @@ test("appends schematic's content to a prompt an earlier extension forced", asyn
 
 	const { prompt } = await emitBeforeAgentStart({ before: [forcer] });
 
-	assert.ok(prompt.includes("FORCED-MARKER"));
-	assert.ok(prompt.includes("## Context management"));
-	assert.ok(prompt.includes("<schematic>\n## Context management"));
+	expect(prompt).toContain("FORCED-MARKER");
+	expect(prompt).toContain("## Context management");
+	expect(prompt).toContain("<schematic>\n## Context management");
 });
 
 test("hands a later extension a prompt that already holds schematic's content", async () => {
@@ -170,10 +169,10 @@ test("hands a later extension a prompt that already holds schematic's content", 
 
 	const contentIndex = prompt.indexOf("## Context management");
 	const markerIndex = prompt.indexOf("FORCED-MARKER");
-	assert.ok(contentIndex >= 0, "schematic's content is missing from the prompt");
-	assert.ok(markerIndex >= 0, "the later extension's marker is missing from the prompt");
-	assert.ok(contentIndex < markerIndex, "schematic's content must precede the later extension's marker");
-	assert.ok(prompt.includes("## Context management"));
+	expect(contentIndex, "schematic's content is missing from the prompt").toBeGreaterThanOrEqual(0);
+	expect(markerIndex, "the later extension's marker is missing from the prompt").toBeGreaterThanOrEqual(0);
+	expect(contentIndex, "schematic's content must precede the later extension's marker").toBeLessThan(markerIndex);
+	expect(prompt).toContain("## Context management");
 });
 
 // ── Handler level ───────────────────────────────────────────────────
@@ -185,7 +184,7 @@ test("keeps the primer section byte-identical while the topic and notebook secti
 	const beforeEvent = createBeforeAgentStartEvent();
 	await handler(beforeEvent, ctx);
 	const before = beforeEvent.systemPromptOptions.sections;
-	assert.ok(before.schematic !== undefined);
+	expect(before.schematic).toBeDefined();
 
 	await pi.tools.get("notebook_write").execute("1", { name: "alpha", content: "first line" }, undefined, undefined, makeTUICtx());
 	await pi.commands.get("notebook")!.handler("oauth", { hasUI: false, getContextUsage: () => null });
@@ -193,9 +192,10 @@ test("keeps the primer section byte-identical while the topic and notebook secti
 	await handler(afterEvent, ctx);
 	const after = afterEvent.systemPromptOptions.sections;
 
-	assert.equal(after.schematic, before.schematic);
-	assert.notEqual(after.schematic_topic, before.schematic_topic);
-	assert.ok(after.schematic_notebook !== undefined && before.schematic_notebook === undefined);
+	expect(after.schematic).toBe(before.schematic);
+	expect(after.schematic_topic).not.toBe(before.schematic_topic);
+	expect(after.schematic_notebook).toBeDefined();
+	expect(before.schematic_notebook).toBeUndefined();
 });
 
 for (const sectionName of ["schematic", "schematic_topic", "schematic_model_groups", "schematic_notebook"]) {
@@ -218,8 +218,8 @@ for (const sectionName of ["schematic", "schematic_topic", "schematic_model_grou
 		await handler(event, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry, getContextUsage: () => null });
 
 		const body = event.systemPromptOptions.sections[sectionName];
-		assert.ok(body !== undefined, `section ${sectionName} is missing`);
-		assert.equal(body, body.trim());
+		assertPresent(body, `section ${sectionName} is missing`);
+		expect(body).toBe(body.trim());
 	}));
 }
 
@@ -232,8 +232,8 @@ test("re-renders the topic and notebook sections after a handoff completes", asy
 	await pi.tools.get("notebook_write").execute("2", { name: "keep", content: "durable decision" }, undefined, undefined, makeTUICtx());
 	const beforeHandoff = createBeforeAgentStartEvent();
 	await handler(beforeHandoff, ctx);
-	assert.ok(beforeHandoff.systemPromptOptions.sections.schematic_topic?.includes("Current topic: `oauth`"));
-	assert.ok(beforeHandoff.systemPromptOptions.sections.schematic_notebook?.includes("  stale: obsolete finding"));
+	expect(beforeHandoff.systemPromptOptions.sections.schematic_topic).toContain("Current topic: `oauth`");
+	expect(beforeHandoff.systemPromptOptions.sections.schematic_notebook).toContain("  stale: obsolete finding");
 
 	let branch: unknown[] = [];
 	const handoffCtx = {
@@ -256,7 +256,7 @@ test("re-renders the topic and notebook sections after a handoff completes", asy
 	await handler(afterHandoff, ctx);
 
 	const sections = afterHandoff.systemPromptOptions.sections;
-	assert.ok(sections.schematic_topic?.includes("No active notebook topic is set."));
-	assert.ok(sections.schematic_notebook?.includes("  keep: durable decision"));
-	assert.ok(!sections.schematic_notebook?.includes("stale"));
+	expect(sections.schematic_topic).toContain("No active notebook topic is set.");
+	expect(sections.schematic_notebook).toContain("  keep: durable decision");
+	expect(sections.schematic_notebook).not.toContain("stale");
 });
