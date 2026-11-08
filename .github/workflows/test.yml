@@ -1,8 +1,7 @@
 # Cross-platform CI for pi-schematic
 #
-# Runs the full unit suite on Linux, macOS, and Windows on the current
-# Node.js LTS, and on Linux on the minimum Node.js version required by pi
-# coding agent. Snapshot tests verify TUI render output against golden files.
+# Runs the full unit suite on Linux, macOS, and Windows, each on the minimum
+# Node.js version required by pi coding agent and on the current Node.js LTS. Snapshot tests verify TUI render output against golden files.
 
 name: test
 
@@ -24,29 +23,25 @@ on:
 
 jobs:
   # ── Cross-platform test matrix ──────────────────────────────────────
-  # The floor (Pi's minimum Node.js version) is tested only on Linux — the primary
-  # platform and the only one guaranteed to have the oldest toolchain. All three
-  # platforms test the current Node.js LTS, read from .node-version, to catch
-  # regressions in the newest runtime. This asymmetry is intentional: it balances CI
-  # cost with meaningful coverage while ensuring the minimum version works correctly
-  # on the platform most likely to encounter toolchain edge cases.
+  # Every platform runs two tracks: the floor (Pi's minimum Node.js version) and the
+  # current Node.js LTS, read from .node-version. Platform-specific code paths
+  # (Windows shell spawning, path handling) can depend on the Node version too.
   test:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false          # report every combination, don't cancel
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        track: [newest]
+        track: [floor, newest]
         include:
-          - os: ubuntu-latest
-            track: floor
+          - track: floor
             node-version: "22.19.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          # The floor entry pins node-version; the newest track reads .node-version.
+          # The floor track pins node-version; the newest track reads .node-version.
           node-version: ${{ matrix.node-version }}
           node-version-file: ${{ !matrix.node-version && '.node-version' || '' }}
           cache: "npm"
@@ -95,14 +90,14 @@ jobs:
       # diagnostics are captured for both the packed and current-Pi paths. !cancelled()
       # (not always()) avoids running on explicit workflow cancellation.
       - name: Synchronized current Pi compatibility on Windows
-        if: matrix.os == 'windows-latest' && !cancelled()
+        if: matrix.os == 'windows-latest' && !cancelled() && matrix.track == 'newest'
         working-directory: ${{ runner.temp }}
         env:
           COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/current-pi-diagnostics-windows-newest
         run: node "${{ github.workspace }}/scripts/test-compat-current.mjs"
 
       - name: Upload current Pi diagnostics on Windows
-        if: always() && matrix.os == 'windows-latest'
+        if: always() && matrix.os == 'windows-latest' && matrix.track == 'newest'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: current-pi-diagnostics-windows-newest-attempt-${{ github.run_attempt }}
