@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-08
+
+### Changed
+
+- **Published through npm trusted publishing** — this version is published by the tag workflow with npm trusted publishing instead of by hand. The package contents are unchanged from 0.7.0.
+
 ## [0.7.0] - 2026-11-06
 
 ### Added
@@ -216,7 +222,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Comprehensive test suite** — 50+ tests covering spawn execution and rendering (concurrency, cancellation, truncation, stale detection, ownership lifecycle, microtask batching), ledger tools (add/get/list, staleness, rehydration, empty states, prompt hints), handoff (tool, command, compaction), watchdog (nudge injection, enforcement), and extension lifecycle.
 - **MIT licensed** — open-source permissive license.
 
-[Unreleased]: https://github.com/chunkhound/pi-schematic/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/chunkhound/pi-schematic/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/chunkhound/pi-schematic/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/chunkhound/pi-schematic/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/chunkhound/pi-schematic/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/chunkhound/pi-schematic/compare/v0.4.0...v0.5.0
