@@ -29,8 +29,7 @@
         "\"matchPackageNames\":\\s*\\[\"@types/node\"\\],\\s*\"allowedVersions\":\\s*\"\\^(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],
       "depNameTemplate": "pi-node-floor",
-      "datasourceTemplate": "custom.pi-node-floor",
-      "versioningTemplate": "npm"
+      "datasourceTemplate": "custom.pi-node-floor"
     },
     {
       "customType": "regex",
@@ -43,8 +42,7 @@
         "uses: actions/setup-node@[^\\n]+\\n\\s+with:\\n\\s+node-version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],
       "depNameTemplate": "node",
-      "datasourceTemplate": "node-version",
-      "versioningTemplate": "node"
+      "datasourceTemplate": "node-version"
     }
   ],
   "packageRules": [
@@ -53,17 +51,15 @@
         "@earendil-works/pi-ai",
         "@earendil-works/pi-coding-agent",
         "@earendil-works/pi-tui",
-        "typebox"
+        "typebox",
+        "pi-node-floor"
       ],
       "groupName": "Pi compatibility floor",
       "dependencyDashboardApproval": true
     },
     {
       "matchDepNames": ["pi-node-floor"],
-      "groupName": "Pi compatibility floor",
-      "dependencyDashboardApproval": true,
-      "separateMajorMinor": false,
-      "rangeStrategy": "replace"
+      "separateMajorMinor": false
     },
     {
       "matchDepNames": ["node"],
