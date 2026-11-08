@@ -20,9 +20,11 @@
       "customType": "regex",
       "managerFilePatterns": [
         "/^\\.github/workflows/test\\.yml$/",
-        "/^\\.github/renovate\\.json$/"
+        "/^\\.github/renovate\\.json$/",
+        "/^\\.node-version$/"
       ],
       "matchStrings": [
+        "^(?<currentValue>\\d+\\.\\d+\\.\\d+)\\s*$",
         "track: floor\\s+node-version: \"(?<currentValue>[^\"]+)\"",
         "\"matchPackageNames\":\\s*\\[\"@types/node\"\\],\\s*\"allowedVersions\":\\s*\"\\^(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],
@@ -82,6 +84,10 @@
     {
       "matchManagers": ["github-actions"],
       "matchDepNames": ["node"],
+      "enabled": false
+    },
+    {
+      "matchManagers": ["nodenv"],
       "enabled": false
     }
   ]
