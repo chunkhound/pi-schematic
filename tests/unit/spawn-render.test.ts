@@ -8,8 +8,8 @@
  * Execution and lifecycle tests remain in spawn.test.ts.
  */
 
-import test, { afterEach, beforeEach } from "node:test";
-import assert from "node:assert/strict";
+import { afterEach, beforeEach, expect, test } from "vitest";
+import { assertPresent } from "../assertions.js";
 import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
@@ -66,12 +66,12 @@ test("collapsed nested spawn render shows preview and stats", async () => {
 	) as any;
 
 	const lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("mock-model • medium")));
-	assert.ok(lines.some((l: string) => l.includes("one")));
-	assert.ok(lines.some((l: string) => l.includes("five")));
-	assert.ok(lines.some((l: string) => l.includes("... 2 more lines")));
-	assert.ok(lines.some((l: string) => l.includes("tok 12/34")));
-	assert.ok(lines.some((l: string) => l.includes("trunc")));
+	expect(lines.some((l: string) => l.includes("mock-model • medium"))).toBe(true);
+	expect(lines.some((l: string) => l.includes("one"))).toBe(true);
+	expect(lines.some((l: string) => l.includes("five"))).toBe(true);
+	expect(lines.some((l: string) => l.includes("... 2 more lines"))).toBe(true);
+	expect(lines.some((l: string) => l.includes("tok 12/34"))).toBe(true);
+	expect(lines.some((l: string) => l.includes("trunc"))).toBe(true);
 });
 
 test("spawn result identity formats default routed and unknown fallback", async () => {
@@ -81,19 +81,19 @@ test("spawn result identity formats default routed and unknown fallback", async 
 		{ content: [{ type: "text", text: "done" }], details: { model: "gpt-routed", thinking: "high", truncated: false, outcome: "success", route: { status: "routed", group: "review", provider: "openai", modelId: "gpt-routed" } } },
 		{ expanded: false }, theme, createRenderContext(),
 	) as any;
-	assert.ok(routed.render(120).some((l: string) => l.includes("review → openai/gpt-routed • high")));
+	expect(routed.render(120).some((l: string) => l.includes("review → openai/gpt-routed • high"))).toBe(true);
 
 	const inherited = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "done" }], details: { model: "parent", thinking: "low", truncated: false, outcome: "success", route: { status: "inherited" } } },
 		{ expanded: false }, theme, createRenderContext(),
 	) as any;
-	assert.ok(inherited.render(120).some((l: string) => l.includes("✅ parent • low")));
+	expect(inherited.render(120).some((l: string) => l.includes("✅ parent • low"))).toBe(true);
 
 	const fallback = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "done" }], details: { model: "parent", thinking: "medium", truncated: false, outcome: "success", route: { status: "unknown-fallback", requestedGroup: "rev", provider: "openai", modelId: "parent" } } },
 		{ expanded: false }, theme, createRenderContext(),
 	) as any;
-	assert.ok(fallback.render(120).some((l: string) => l.includes("rev? fallback → openai/parent • medium")));
+	expect(fallback.render(120).some((l: string) => l.includes("rev? fallback → openai/parent • medium"))).toBe(true);
 
 	const escaped = childSpawnTool.renderResult(
 		{
@@ -114,8 +114,8 @@ test("spawn result identity formats default routed and unknown fallback", async 
 		{ expanded: false }, theme, createRenderContext(),
 	) as any;
 	const escapedLines = escaped.render(120);
-	assert.ok(escapedLines.some((line: string) => line.includes("review\\n\\x1B → open\\tai/gpt\\rrouted • low")));
-	assert.ok(escapedLines.every((line: string) => !line.includes("\u001b")));
+	expect(escapedLines.some((line: string) => line.includes("review\\n\\x1B → open\\tai/gpt\\rrouted • low"))).toBe(true);
+	expect(escapedLines.every((line: string) => !line.includes("\u001b"))).toBe(true);
 });
 
 test("collapsed nested spawn render keeps all text blocks from the last assistant message", async () => {
@@ -137,8 +137,8 @@ test("collapsed nested spawn render keeps all text blocks from the last assistan
 	) as any;
 
 	const lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("first")));
-	assert.ok(lines.some((l: string) => l.includes("second")));
+	expect(lines.some((l: string) => l.includes("first"))).toBe(true);
+	expect(lines.some((l: string) => l.includes("second"))).toBe(true);
 });
 
 async function renderCollapsedPreview(text: string, width: number): Promise<string[]> {
@@ -166,25 +166,25 @@ test("collapsed nested spawn preview strips OSC 8 hyperlink sequences from child
 	);
 
 	const preview = lines.find((l: string) => l.includes("the docs"));
-	assert.ok(preview, "preview line with the link label is rendered");
-	assert.ok(preview.includes("see the docs now"));
-	assert.ok(!preview.includes("\u001b"), `escape byte leaked: ${JSON.stringify(preview)}`);
-	assert.ok(!preview.includes("example.com"));
+	assertPresent(preview, "preview line with the link label is rendered");
+	expect(preview).toContain("see the docs now");
+	expect(preview, `escape byte leaked: ${JSON.stringify(preview)}`).not.toContain("\u001b");
+	expect(preview).not.toContain("example.com");
 });
 
 test("collapsed nested spawn preview strips erase and cursor-home sequences from child text", async () => {
 	const lines = await renderCollapsedPreview("before\u001b[2Kmiddle\u001b[Hafter", 120);
 
 	const preview = lines.find((l: string) => l.includes("before"));
-	assert.ok(preview, "preview line is rendered");
-	assert.ok(preview.includes("beforemiddleafter"));
-	assert.ok(!preview.includes("\u001b"), `escape byte leaked: ${JSON.stringify(preview)}`);
+	assertPresent(preview, "preview line is rendered");
+	expect(preview).toContain("beforemiddleafter");
+	expect(preview, `escape byte leaked: ${JSON.stringify(preview)}`).not.toContain("\u001b");
 });
 
 test("collapsed nested spawn preview leaves plain text unchanged", async () => {
 	const lines = await renderCollapsedPreview("plain text, with unicode: café — 日本", 120);
 
-	assert.ok(lines.some((l: string) => l.includes("plain text, with unicode: café — 日本")));
+	expect(lines.some((l: string) => l.includes("plain text, with unicode: café — 日本"))).toBe(true);
 });
 
 test("collapsed nested spawn truncation preserves shell background across preview and stats lines", async () => {
@@ -215,7 +215,7 @@ test("collapsed nested spawn truncation preserves shell background across previe
 	const statsLine = getRenderedLine(lines, plain => plain.includes("tok 12/34"));
 	assertShellBackgroundPreserved(previewLine);
 	assertShellBackgroundPreserved(statsLine);
-	assert.match(stripAnsi(statsLine), /tok 12\/34/);
+	expect(stripAnsi(statsLine)).toMatch(/tok 12\/34/);
 });
 
 test("collapsed nested spawn keeps truncated stats line calm", async () => {
@@ -248,8 +248,8 @@ test("collapsed nested spawn keeps truncated stats line calm", async () => {
 
 	const lines = component.render(120);
 	const statsLine = getLineContaining(lines, "tok 12/34");
-	assert.match(statsLine, /<dim>.*tok 12\/34.*trunc.*<\/dim>/);
-	assert.equal(statsLine.includes("<warning>"), false);
+	expect(statsLine).toMatch(/<dim>.*tok 12\/34.*trunc.*<\/dim>/);
+	expect(statsLine.includes("<warning>")).toBe(false);
 });
 
 test("static no-output child error with empty details renders without fabricated identity", async () => {
@@ -267,9 +267,9 @@ test("static no-output child error with empty details renders without fabricated
 	) as any;
 	const lines = component.render(120);
 
-	assert.ok(lines.some((line: string) => line.includes("💬 error")));
-	assert.ok(lines.some((line: string) => line.includes("Child agent produced no output.")));
-	assert.equal(lines.some((line: string) => line.includes("unknown")), false);
+	expect(lines.some((line: string) => line.includes("💬 error"))).toBe(true);
+	expect(lines.some((line: string) => line.includes("Child agent produced no output."))).toBe(true);
+	expect(lines.some((line: string) => line.includes("unknown"))).toBe(false);
 });
 
 const returnedErrorResult = {
@@ -328,10 +328,10 @@ for (const { name, result, present, staticPresent, absent } of errorResultRender
 			createRenderContext({ isError: true }),
 		) as any).render(120);
 		for (const text of [...present, ...staticPresent]) {
-			assert.ok(lines.some((line: string) => line.includes(text)));
+			expect(lines.some((line: string) => line.includes(text))).toBe(true);
 		}
 		for (const text of absent) {
-			assert.equal(lines.some((line: string) => line.includes(text)), false);
+			expect(lines.some((line: string) => line.includes(text))).toBe(false);
 		}
 	});
 
@@ -353,12 +353,12 @@ for (const { name, result, present, staticPresent, absent } of errorResultRender
 			createRenderContext({ lastComponent: running, isError: true }),
 		) as any;
 		const lines = retained.render(120);
-		assert.equal(retained, running);
+		expect(retained).toBe(running);
 		for (const text of present) {
-			assert.ok(lines.some((line: string) => line.includes(text)));
+			expect(lines.some((line: string) => line.includes(text))).toBe(true);
 		}
 		for (const text of absent) {
-			assert.equal(lines.some((line: string) => line.includes(text)), false);
+			expect(lines.some((line: string) => line.includes(text))).toBe(false);
 		}
 	});
 }
@@ -383,10 +383,10 @@ test("retained nested spawn preserves identity when malformed terminal details r
 	) as any;
 	const collapsedLines = sameComponent.render(120);
 
-	assert.equal(sameComponent, component);
-	assert.ok(collapsedLines.some((line: string) => line.includes("⚠ mock-model • high")));
-	assert.ok(collapsedLines.some((line: string) => line.includes("💬 error")));
-	assert.equal((sameComponent as any).details.outcome, "error");
+	expect(sameComponent).toBe(component);
+	expect(collapsedLines.some((line: string) => line.includes("⚠ mock-model • high"))).toBe(true);
+	expect(collapsedLines.some((line: string) => line.includes("💬 error"))).toBe(true);
+	expect((sameComponent as any).details.outcome).toBe("error");
 
 	const expandedComponent = childSpawnTool.renderResult(
 		{ content: [], details: {} },
@@ -395,8 +395,8 @@ test("retained nested spawn preserves identity when malformed terminal details r
 		createRenderContext({ expanded: true, lastComponent: sameComponent, isError: true }),
 	) as any;
 	const expandedLines = expandedComponent.render(120);
-	assert.equal(expandedComponent, component);
-	assert.ok(expandedLines.some((line: string) => line.includes("⚠ mock-model • high")));
+	expect(expandedComponent).toBe(component);
+	expect(expandedLines.some((line: string) => line.includes("⚠ mock-model • high"))).toBe(true);
 });
 
 test("spawn result ignores malformed route and stats fields", async () => {
@@ -421,10 +421,10 @@ test("spawn result ignores malformed route and stats fields", async () => {
 	) as any;
 	const lines = component.render(120);
 
-	assert.ok(lines.some((line: string) => line.includes("✅ safe-model • medium")));
-	assert.equal(lines.some((line: string) => line.includes("review")), false);
-	assert.equal(lines.some((line: string) => line.includes("tok ")), false);
-	assert.equal(lines.some((line: string) => line.includes("stats unavailable")), false);
+	expect(lines.some((line: string) => line.includes("✅ safe-model • medium"))).toBe(true);
+	expect(lines.some((line: string) => line.includes("review"))).toBe(false);
+	expect(lines.some((line: string) => line.includes("tok "))).toBe(false);
+	expect(lines.some((line: string) => line.includes("stats unavailable"))).toBe(false);
 });
 
 test("nested spawn render is safe without details", async () => {
@@ -443,7 +443,7 @@ test("nested spawn render is safe without details", async () => {
 	) as any;
 
 	const lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("hello")));
+	expect(lines.some((l: string) => l.includes("hello"))).toBe(true);
 });
 
 test("expanded nested spawn header stays within width after indent", async () => {
@@ -466,8 +466,8 @@ test("expanded nested spawn header stays within width after indent", async () =>
 
 	const lines = component.render(24);
 	const headerLine = lines.find((line: string) => line.includes("model-name")) ?? "";
-	assert.ok(headerLine.startsWith("     "));
-	assert.ok(stripAnsi(headerLine).length <= 24);
+	expect(headerLine.startsWith("     ")).toBe(true);
+	expect(stripAnsi(headerLine).length).toBeLessThanOrEqual(24);
 });
 
 test("nested spawn render cache preserves stable output for identical params", async () => {
@@ -486,7 +486,7 @@ test("nested spawn render cache preserves stable output for identical params", a
 
 	const first = component.render(120);
 	const second = component.render(120);
-	assert.deepEqual(second, first);
+	expect(second).toStrictEqual(first);
 });
 
 test("nested spawn clears cached render when showImages changes", async () => {
@@ -519,10 +519,10 @@ test("nested spawn clears cached render when showImages changes", async () => {
 	) as any;
 	const linesWithoutImages = sameComponent.render(120);
 
-	assert.equal(sameComponent, component);
-	assert.ok(Array.isArray(linesWithImages));
-	assert.ok(Array.isArray(linesWithoutImages));
-	assert.equal((sameComponent as any).cachedShowImages, false);
+	expect(sameComponent).toBe(component);
+	expect(linesWithImages).toBeInstanceOf(Array);
+	expect(linesWithoutImages).toBeInstanceOf(Array);
+	expect((sameComponent as any).cachedShowImages).toBe(false);
 });
 
 test("nested spawn rerenders when stats become unavailable", async () => {
@@ -543,7 +543,7 @@ test("nested spawn rerenders when stats become unavailable", async () => {
 		createRenderContext(),
 	) as any;
 	const before = component.render(120);
-	assert.equal(before.some((l: string) => l.includes("stats unavailable")), false);
+	expect(before.some((l: string) => l.includes("stats unavailable"))).toBe(false);
 
 	const sameComponent = childSpawnTool.renderResult(
 		{
@@ -556,9 +556,9 @@ test("nested spawn rerenders when stats become unavailable", async () => {
 	) as any;
 	const after = sameComponent.render(120);
 
-	assert.equal(sameComponent, component);
-	assert.ok(after.some((l: string) => l.includes("stats unavailable")));
-	assert.equal(after.some((l: string) => l.includes("initializing")), false);
+	expect(sameComponent).toBe(component);
+	expect(after.some((l: string) => l.includes("stats unavailable"))).toBe(true);
+	expect(after.some((l: string) => l.includes("initializing"))).toBe(false);
 });
 
 const collapsedStatsCases = [
@@ -601,10 +601,10 @@ for (const { name, stats, statsUnavailable, present, absent } of collapsedStatsC
 		) as any;
 		const lines = component.render(120);
 		for (const text of present) {
-			assert.ok(lines.some((line: string) => line.includes(text)));
+			expect(lines.some((line: string) => line.includes(text))).toBe(true);
 		}
 		for (const text of absent) {
-			assert.equal(lines.some((line: string) => line.includes(text)), false);
+			expect(lines.some((line: string) => line.includes(text))).toBe(false);
 		}
 	});
 }
@@ -641,7 +641,7 @@ for (const { name, outcome, isError, present, absent } of stopReasonOutcomeCases
 			theme,
 			createRenderContext({ isError }),
 		) as any).render(120);
-		assert.ok(lines.some((line: string) => line.includes(present)));
-		assert.equal(lines.some((line: string) => line.includes(absent)), false);
+		expect(lines.some((line: string) => line.includes(present))).toBe(true);
+		expect(lines.some((line: string) => line.includes(absent))).toBe(false);
 	});
 }

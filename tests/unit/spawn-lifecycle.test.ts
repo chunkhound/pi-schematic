@@ -1,5 +1,4 @@
-import test, { afterEach, beforeEach } from "node:test";
-import assert from "node:assert/strict";
+import { afterEach, beforeEach, expect, test } from "vitest";
 import { createState, resetState, abortChildSession } from "../../state.js";
 import { createSession, createSubscribableSession, createRenderContext, theme } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
@@ -35,9 +34,9 @@ test("resetState aborts and clears child session registries", () => {
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 	resetState(state);
-	assert.equal(abortCalls, 1);
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	expect(abortCalls).toBe(1);
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("resetState aborts a claimed child session after render ownership transfer", async () => {
@@ -60,14 +59,14 @@ test("resetState aborts a claimed child session after render ownership transfer"
 		createRenderContext(),
 	);
 
-	assert.equal(state.childSessions.has("tool-call-1"), false);
-	assert.equal(state.liveChildSessions.has("tool-call-1"), true);
+	expect(state.childSessions.has("tool-call-1")).toBe(false);
+	expect(state.liveChildSessions.has("tool-call-1")).toBe(true);
 
 	resetState(state);
 
-	assert.equal(abortCalls, 1);
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	expect(abortCalls).toBe(1);
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("nested spawn dispose shares the deduplicated abort promise with other abort paths", async () => {
@@ -95,10 +94,10 @@ test("nested spawn dispose shares the deduplicated abort promise with other abor
 
 	component.dispose();
 
-	assert.equal(abortCalls, 1, "dispose reuses the shared abort instead of aborting again");
-	assert.equal(state.liveChildSessions.has("tool-call-1"), false, "dispose clears the live registry entry");
+	expect(abortCalls, "dispose reuses the shared abort instead of aborting again").toBe(1);
+	expect(state.liveChildSessions.has("tool-call-1"), "dispose clears the live registry entry").toBe(false);
 	const lateAbort = abortChildSession(state, session);
-	assert.strictEqual(lateAbort, sharedAbort, "dispose and later abort share dedup promise identity");
+	expect(lateAbort, "dispose and later abort share dedup promise identity").toBe(sharedAbort);
 
 	await sharedAbort;
 });
@@ -124,13 +123,13 @@ test("nested spawn dispose registers its abort in the shared dedup map", async (
 	) as any;
 
 	component.dispose();
-	assert.equal(abortCalls, 1);
+	expect(abortCalls).toBe(1);
 
 	// A later abort path must observe the promise dispose already created.
 	const lateAbort = abortChildSession(state, session);
-	assert.strictEqual(lateAbort, abortChildSession(state, session), "dedup promise is stable across repeated calls");
+	expect(lateAbort, "dedup promise is stable across repeated calls").toBe(abortChildSession(state, session));
 	await lateAbort;
-	assert.equal(abortCalls, 1, "a later abortChildSession call does not re-abort");
+	expect(abortCalls, "a later abortChildSession call does not re-abort").toBe(1);
 });
 
 test("nested spawn dispose is identity-guarded against a replaced live session", async () => {
@@ -159,8 +158,8 @@ test("nested spawn dispose is identity-guarded against a replaced live session",
 
 	component.dispose();
 
-	assert.equal(oldAbortCalls, 0, "a superseded session is not aborted by dispose");
-	assert.equal(state.liveChildSessions.get("tool-call-1"), replacement, "dispose must not delete the replacement's registry entry");
+	expect(oldAbortCalls, "a superseded session is not aborted by dispose").toBe(0);
+	expect(state.liveChildSessions.get("tool-call-1"), "dispose must not delete the replacement's registry entry").toBe(replacement);
 });
 
 test("nested spawn dispose survives re-entrant dispose from abort", async () => {
@@ -188,8 +187,8 @@ test("nested spawn dispose survives re-entrant dispose from abort", async () => 
 
 	component.dispose();
 
-	assert.equal(abortCalls, 1, "re-entrant dispose from abort does not double-abort");
-	assert.equal(state.liveChildSessions.has("tool-call-1"), false, "outer dispose still clears the live registry entry");
+	expect(abortCalls, "re-entrant dispose from abort does not double-abort").toBe(1);
+	expect(state.liveChildSessions.has("tool-call-1"), "outer dispose still clears the live registry entry").toBe(false);
 });
 
 // ── nested spawn lifecycle tests ──────────────────────────────────
@@ -214,8 +213,8 @@ test("nested spawn drops events after resetState bumps child epoch", async () =>
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 
 	const after = component.render(120);
-	assert.equal(invalidateCalls, 0, "stale events should not request rerender after reset");
-	assert.deepEqual(after, before, "stale events should not change rendered state after reset");
+	expect(invalidateCalls, "stale events should not request rerender after reset").toBe(0);
+	expect(after, "stale events should not change rendered state after reset").toStrictEqual(before);
 });
 
 test("nested spawn drops events when session is replaced in live state", async () => {
@@ -239,8 +238,8 @@ test("nested spawn drops events when session is replaced in live state", async (
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 
 	const after = component.render(120);
-	assert.equal(invalidateCalls, 0, "replaced sessions should not request rerender");
-	assert.deepEqual(after, before, "replaced sessions should not change rendered state");
+	expect(invalidateCalls, "replaced sessions should not request rerender").toBe(0);
+	expect(after, "replaced sessions should not change rendered state").toStrictEqual(before);
 });
 
 test("nested spawn completed-session deletion stays stale even if the toolCallId is later reused", async () => {
@@ -262,15 +261,15 @@ test("nested spawn completed-session deletion stays stale even if the toolCallId
 	state.liveChildSessions.delete("tool-call-1");
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	const afterDeletion = component.render(120);
-	assert.equal(invalidateCalls, 0, "completed-session deletion should immediately stale the old session");
-	assert.deepEqual(afterDeletion, before, "completed-session deletion should freeze the rendered state before reuse");
+	expect(invalidateCalls, "completed-session deletion should immediately stale the old session").toBe(0);
+	expect(afterDeletion, "completed-session deletion should freeze the rendered state before reuse").toStrictEqual(before);
 
 	state.liveChildSessions.set("tool-call-1", createSubscribableSession([]).session);
 	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "should be dropped" }] } });
 	const afterReuse = component.render(120);
-	assert.equal(invalidateCalls, 0, "toolCallId reuse should not revive a completed stale session");
-	assert.deepEqual(afterReuse, before, "toolCallId reuse should keep the old rendered state frozen");
-	assert.ok(afterReuse.every((l: string) => !l.includes("should be dropped")), "toolCallId reuse should not admit stale text updates");
+	expect(invalidateCalls, "toolCallId reuse should not revive a completed stale session").toBe(0);
+	expect(afterReuse, "toolCallId reuse should keep the old rendered state frozen").toStrictEqual(before);
+	expect(afterReuse.every((l: string) => !l.includes("should be dropped")), "toolCallId reuse should not admit stale text updates").toBe(true);
 });
 
 test("nested spawn drops late events after live registry deletion", async () => {
@@ -293,8 +292,8 @@ test("nested spawn drops late events after live registry deletion", async () => 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 
 	const after = component.render(120);
-	assert.equal(invalidateCalls, 0, "completed-session deletion should stop rerenders from late events");
-	assert.deepEqual(after, before, "completed-session deletion should freeze the rendered state");
+	expect(invalidateCalls, "completed-session deletion should stop rerenders from late events").toBe(0);
+	expect(after, "completed-session deletion should freeze the rendered state").toStrictEqual(before);
 });
 
 test("nested spawn reattach resets render guard for the new session", async () => {
@@ -314,7 +313,7 @@ test("nested spawn reattach resets render guard for the new session", async () =
 
 	first.emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	flushSpawnFrameScheduler();
-	assert.equal(invalidateCalls, 1, "first session event triggers invalidate after scheduler flush");
+	expect(invalidateCalls, "first session event triggers invalidate after scheduler flush").toBe(1);
 
 	// Reattach resets the render guard
 	const second = createSubscribableSession([{ role: "assistant", content: [{ type: "text", text: "replacement" }] }]);
@@ -329,9 +328,9 @@ test("nested spawn reattach resets render guard for the new session", async () =
 
 	second.emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "replacement 2" }] } });
 	flushSpawnFrameScheduler();
-	assert.equal(invalidateCalls, 2, "second session event triggers another invalidate after reattach");
+	expect(invalidateCalls, "second session event triggers another invalidate after reattach").toBe(2);
 	const lines = sameComponent.render(120);
-	assert.ok(lines.some((l: string) => l.includes("replacement 2")));
+	expect(lines.some((l: string) => l.includes("replacement 2"))).toBe(true);
 });
 
 test("nested spawn dispose then reattach streams new session events", async () => {
@@ -370,8 +369,6 @@ test("nested spawn dispose then reattach streams new session events", async () =
 	flushSpawnFrameScheduler();
 
 	const lines = reattached.render(120);
-	assert.ok(lines.some((l: string) => l.includes("session B output")),
-		"reattached component should render events from the new session");
-	assert.equal(lines.some((l: string) => l.includes("first")), false,
-		"reattached component should not show stale content from disposed session");
+	expect(lines.some((l: string) => l.includes("session B output")), "reattached component should render events from the new session").toBe(true);
+	expect(lines.some((l: string) => l.includes("first")), "reattached component should not show stale content from disposed session").toBe(false);
 });

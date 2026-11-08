@@ -1,5 +1,4 @@
-import test, { afterEach, beforeEach } from "node:test";
-import assert from "node:assert/strict";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createState } from "../../state.js";
 import { createSession, createSubscribableSession, createRenderContext, theme } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
@@ -27,7 +26,7 @@ test("test harness captures every forbidden console output level", () => {
 	for (const level of ["debug", "log", "warn", "error"] as const) {
 		globalThis.console[level](`sentinel-${level}`);
 	}
-	assert.deepEqual(h.warnings.map(({ level }) => level), ["debug", "log", "warn", "error"]);
+	expect(h.warnings.map(({ level }) => level)).toStrictEqual(["debug", "log", "warn", "error"]);
 });
 
 test("frame scheduler requeues a throwing target without diagnostics and recovers", () => {
@@ -57,15 +56,15 @@ test("frame scheduler requeues a throwing target without diagnostics and recover
 	scheduler.markDirty(failing);
 	scheduler.markDirty(healthy);
 	flushSpawnFrameScheduler();
-	assert.equal(healthyFlushes, 1);
-	assert.equal(healthyRenders, 1);
-	assert.equal(failingRenders, 0);
-	assert.deepEqual(h.warnings, []);
+	expect(healthyFlushes).toBe(1);
+	expect(healthyRenders).toBe(1);
+	expect(failingRenders).toBe(0);
+	expect(h.warnings).toStrictEqual([]);
 
 	flushSpawnFrameScheduler();
-	assert.equal(failingFlushes, 2);
-	assert.equal(failingRenders, 1);
-	assert.deepEqual(h.warnings, []);
+	expect(failingFlushes).toBe(2);
+	expect(failingRenders).toBe(1);
+	expect(h.warnings).toStrictEqual([]);
 	scheduler.clear();
 });
 
@@ -97,27 +96,27 @@ test("frame scheduler contains invalidate callback failures and continues health
 
 	scheduler.markDirty(failing);
 	scheduler.markDirty(healthy);
-	assert.doesNotThrow(() => flushSpawnFrameScheduler());
-	assert.equal(failingInvalidates, 1);
-	assert.equal(healthyInvalidates, 1);
-	assert.deepEqual(h.warnings, []);
+	expect(() => flushSpawnFrameScheduler()).not.toThrow();
+	expect(failingInvalidates).toBe(1);
+	expect(healthyInvalidates).toBe(1);
+	expect(h.warnings).toStrictEqual([]);
 
 	flushSpawnFrameScheduler();
-	assert.equal(failingFlushes, 2, "callback failure requeues its component");
-	assert.equal(failingInvalidates, 2);
-	assert.equal(healthyInvalidates, 1);
-	assert.deepEqual(h.warnings, []);
+	expect(failingFlushes, "callback failure requeues its component").toBe(2);
+	expect(failingInvalidates).toBe(2);
+	expect(healthyInvalidates).toBe(1);
+	expect(h.warnings).toStrictEqual([]);
 	scheduler.clear();
 });
 
-test("frame scheduler creates only one timer for a failed-target recovery frame", (t) => {
+test("frame scheduler creates only one timer for a failed-target recovery frame", () => {
 	const scheduler = getSingletons().frameScheduler;
 	let scheduledTimers = 0;
-	t.mock.method(globalThis, "setTimeout", ((callback: () => void) => {
+	vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void) => {
 		scheduledTimers++;
 		return { callback, id: scheduledTimers } as any;
 	}) as typeof setTimeout);
-	t.mock.method(globalThis, "clearTimeout", (() => {}) as typeof clearTimeout);
+	vi.spyOn(globalThis, "clearTimeout").mockImplementation((() => {}) as typeof clearTimeout);
 	const failing = {
 		flushPendingUpdates() { throw new Error("retry later"); },
 		clearRenderCache() {},
@@ -126,7 +125,7 @@ test("frame scheduler creates only one timer for a failed-target recovery frame"
 
 	scheduler.markDirty(failing);
 	flushSpawnFrameScheduler();
-	assert.equal(scheduledTimers, 2, "one initial frame and one recovery frame");
+	expect(scheduledTimers, "one initial frame and one recovery frame").toBe(2);
 	scheduler.clear();
 });
 
@@ -147,22 +146,22 @@ test("nested spawn live action tracks tool execution events", async () => {
 	// message_start → thinking
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	let lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("thinking")), `expected thinking, got: ${lines.join("\n")}`);
+	expect(lines.some((l: string) => l.includes("thinking")), `expected thinking, got: ${lines.join("\n")}`).toBe(true);
 
 	// message_update with text → live preview
 	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "writing code now" }] } });
 	lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("writing code now")), `expected live text preview, got: ${lines.join("\n")}`);
+	expect(lines.some((l: string) => l.includes("writing code now")), `expected live text preview, got: ${lines.join("\n")}`).toBe(true);
 
 	// message_end → success marker in identity line
 	emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "summary" }], stopReason: "end_turn" } });
 	lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("✅")), `expected success marker, got: ${lines.join("\n")}`);
+	expect(lines.some((l: string) => l.includes("✅")), `expected success marker, got: ${lines.join("\n")}`).toBe(true);
 
 	// Tool events degrade gracefully in minimal test env and still update live action
 	emit({ type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } });
 	lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("[bash]")), `expected tool live action, got: ${lines.join("\n")}`);
+	expect(lines.some((l: string) => l.includes("[bash]")), `expected tool live action, got: ${lines.join("\n")}`).toBe(true);
 });
 
 test("nested spawn handleEvent recovers from malformed events", async () => {
@@ -185,7 +184,7 @@ test("nested spawn handleEvent recovers from malformed events", async () => {
 	// Subsequent valid events still process
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	const lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("thinking")), `expected thinking after recovery, got: ${lines.join("\n")}`);
+	expect(lines.some((l: string) => l.includes("thinking")), `expected thinking after recovery, got: ${lines.join("\n")}`).toBe(true);
 });
 
 test("nested spawn message_end with aborted stopReason clears pending tools", async () => {
@@ -208,7 +207,7 @@ test("nested spawn message_end with aborted stopReason clears pending tools", as
 	emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "partial" }], stopReason: "aborted", errorMessage: "killed" } });
 
 	const lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("aborted")), `expected aborted, got: ${lines.join("\n")}`);
+	expect(lines.some((l: string) => l.includes("aborted")), `expected aborted, got: ${lines.join("\n")}`).toBe(true);
 });
 
 test("nested spawn dispose stops event processing", async () => {
@@ -231,7 +230,7 @@ test("nested spawn dispose stops event processing", async () => {
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	const after = component.render(120);
 
-	assert.ok(after.every((line: string) => !line.includes("thinking")), `unexpected post-dispose update: ${after.join("\n")}`);
+	expect(after.every((line: string) => !line.includes("thinking")), `unexpected post-dispose update: ${after.join("\n")}`).toBe(true);
 });
 
 test("nested spawn dispose aborts but does not dispose a claimed live child session", async () => {
@@ -258,14 +257,14 @@ test("nested spawn dispose aborts but does not dispose a claimed live child sess
 		createRenderContext(),
 	) as any;
 
-	assert.equal(state.childSessions.has("tool-call-1"), false);
-	assert.equal(state.liveChildSessions.has("tool-call-1"), true);
+	expect(state.childSessions.has("tool-call-1")).toBe(false);
+	expect(state.liveChildSessions.has("tool-call-1")).toBe(true);
 
 	component.dispose();
 
-	assert.equal(abortCalls, 1);
-	assert.equal(disposeCalls, 0);
-	assert.equal(state.liveChildSessions.has("tool-call-1"), false);
+	expect(abortCalls).toBe(1);
+	expect(disposeCalls).toBe(0);
+	expect(state.liveChildSessions.has("tool-call-1")).toBe(false);
 });
 
 test("nested spawn rapid events collapse to last state", async () => {
@@ -292,13 +291,13 @@ test("nested spawn rapid events collapse to last state", async () => {
 
 	// Single render should reflect last state
 	const lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("file3")));
+	expect(lines.some((l: string) => l.includes("file3"))).toBe(true);
 
 	// End the tool and verify final state
 	emit({ type: "tool_execution_end", toolCallId: "tc-1", result: { content: [{ type: "text", text: "done" }] }, isError: false });
 
 	const finalLines = component.render(120);
-	assert.ok(finalLines.some((l: string) => l.includes("✓")));
+	expect(finalLines.some((l: string) => l.includes("✓"))).toBe(true);
 });
 
 // Verifies pendingToolCallCreations accumulation: the last streamed args
@@ -336,7 +335,7 @@ test("nested spawn uses the latest streamed tool-call args before first frame fl
 	});
 	flushSpawnFrameScheduler();
 
-	assert.deepEqual(createdArgs, { value: "new" });
+	expect(createdArgs).toStrictEqual({ value: "new" });
 });
 
 test("nested spawn coalesces same-turn child events into one parent invalidate", async () => {
@@ -358,12 +357,12 @@ test("nested spawn coalesces same-turn child events into one parent invalidate",
 	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "file1" }] } });
 	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "file2" }] } });
 
-	assert.equal(invalidateCalls, 0, "child events do not invalidate synchronously");
+	expect(invalidateCalls, "child events do not invalidate synchronously").toBe(0);
 	flushSpawnFrameScheduler();
-	assert.equal(invalidateCalls, 1, "same-turn events coalesce into one invalidate");
+	expect(invalidateCalls, "same-turn events coalesce into one invalidate").toBe(1);
 
 	const lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("file2")));
+	expect(lines.some((l: string) => l.includes("file2"))).toBe(true);
 });
 
 test("nested spawn retries a throw-once parent invalidate without a new child event", async () => {
@@ -387,14 +386,14 @@ test("nested spawn retries a throw-once parent invalidate without a new child ev
 	);
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	assert.doesNotThrow(() => flushSpawnFrameScheduler());
-	assert.equal(invalidateCalls, 1);
+	expect(() => flushSpawnFrameScheduler()).not.toThrow();
+	expect(invalidateCalls).toBe(1);
 
 	flushSpawnFrameScheduler();
-	assert.equal(invalidateCalls, 2, "failed invalidate retries on the recovery frame");
+	expect(invalidateCalls, "failed invalidate retries on the recovery frame").toBe(2);
 	flushSpawnFrameScheduler();
-	assert.equal(invalidateCalls, 2, "successful retry consumes the queued render");
-	assert.deepEqual(h.warnings, []);
+	expect(invalidateCalls, "successful retry consumes the queued render").toBe(2);
+	expect(h.warnings).toStrictEqual([]);
 });
 
 test("nested spawn does not restore a failed invalidate after disposal", async () => {
@@ -420,11 +419,11 @@ test("nested spawn does not restore a failed invalidate after disposal", async (
 	) as any;
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	assert.doesNotThrow(() => flushSpawnFrameScheduler());
-	assert.equal(invalidateCalls, 1);
+	expect(() => flushSpawnFrameScheduler()).not.toThrow();
+	expect(invalidateCalls).toBe(1);
 	flushSpawnFrameScheduler();
-	assert.equal(invalidateCalls, 1, "dispose prevents stale render restoration");
-	assert.deepEqual(h.warnings, []);
+	expect(invalidateCalls, "dispose prevents stale render restoration").toBe(1);
+	expect(h.warnings).toStrictEqual([]);
 });
 
 test("nested spawn ignores child renderer invalidations during parent rebuild", async () => {
@@ -454,7 +453,7 @@ test("nested spawn ignores child renderer invalidations during parent rebuild", 
 		createRenderContext({ invalidate: () => { invalidateCalls++; } }),
 	) as any;
 	flushSpawnFrameScheduler();
-	assert.equal(invalidateCalls, 0, "initial empty attach does not invalidate");
+	expect(invalidateCalls, "initial empty attach does not invalidate").toBe(0);
 
 	(session as any).messages = [{
 		role: "assistant",
@@ -463,7 +462,7 @@ test("nested spawn ignores child renderer invalidations during parent rebuild", 
 	component.invalidate();
 	flushSpawnFrameScheduler();
 
-	assert.equal(invalidateCalls, 0, "child renderer invalidate requests stay inside spawn rebuild");
+	expect(invalidateCalls, "child renderer invalidate requests stay inside spawn rebuild").toBe(0);
 });
 
 test("nested spawn shared scheduler calls each distinct invalidate once per frame", async () => {
@@ -496,14 +495,14 @@ test("nested spawn shared scheduler calls each distinct invalidate once per fram
 	second.emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	second.emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "second latest" }] } });
 
-	assert.equal(firstInvalidates, 0, "shared scheduler defers parent invalidate");
-	assert.equal(secondInvalidates, 0, "shared scheduler defers parent invalidate");
+	expect(firstInvalidates, "shared scheduler defers parent invalidate").toBe(0);
+	expect(secondInvalidates, "shared scheduler defers parent invalidate").toBe(0);
 	flushSpawnFrameScheduler();
-	assert.equal(firstInvalidates, 1);
-	assert.equal(secondInvalidates, 1);
+	expect(firstInvalidates).toBe(1);
+	expect(secondInvalidates).toBe(1);
 
-	assert.ok(firstComponent.render(120).some((l: string) => l.includes("first latest")));
-	assert.ok(secondComponent.render(120).some((l: string) => l.includes("second latest")));
+	expect(firstComponent.render(120).some((l: string) => l.includes("first latest"))).toBe(true);
+	expect(secondComponent.render(120).some((l: string) => l.includes("second latest"))).toBe(true);
 });
 
 test("nested spawn shared scheduler still coalesces duplicate invalidate callbacks", async () => {
@@ -534,7 +533,7 @@ test("nested spawn shared scheduler still coalesces duplicate invalidate callbac
 	first.emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	second.emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	flushSpawnFrameScheduler();
-	assert.equal(invalidateCalls, 1, "identical callbacks still coalesce");
+	expect(invalidateCalls, "identical callbacks still coalesce").toBe(1);
 });
 
 test("nested spawn renders state changes across frame boundaries", async () => {
@@ -555,13 +554,13 @@ test("nested spawn renders state changes across frame boundaries", async () => {
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	flushSpawnFrameScheduler();
 	const firstLines = component.render(120);
-	assert.ok(firstLines.some((l: string) => l.includes("thinking")));
+	expect(firstLines.some((l: string) => l.includes("thinking"))).toBe(true);
 
 	// Second batch: message_update with new text, flush triggers new render
 	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "batch 2" }] } });
 	flushSpawnFrameScheduler();
 	const secondLines = component.render(120);
-	assert.ok(secondLines.some((l: string) => l.includes("batch 2")));
+	expect(secondLines.some((l: string) => l.includes("batch 2"))).toBe(true);
 });
 
 test("nested spawn dispose cancels pending and further invalidates after cleanup", async () => {
@@ -580,7 +579,7 @@ test("nested spawn dispose cancels pending and further invalidates after cleanup
 	) as any;
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	assert.equal(invalidateCalls, 0, "event does not invalidate synchronously");
+	expect(invalidateCalls, "event does not invalidate synchronously").toBe(0);
 
 	component.dispose();
 	flushSpawnFrameScheduler();
@@ -588,11 +587,11 @@ test("nested spawn dispose cancels pending and further invalidates after cleanup
 	// After dispose, emitting more events does not call invalidate
 	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "after" }] } });
 	flushSpawnFrameScheduler();
-	assert.equal(invalidateCalls, 0, "dispose cancels pending and future invalidates");
+	expect(invalidateCalls, "dispose cancels pending and future invalidates").toBe(0);
 
 	// Render still works after dispose without crashing
 	const lines = component.render(120);
-	assert.ok(lines.length > 0, "render after dispose should not crash");
+	expect(lines.length, "render after dispose should not crash").toBeGreaterThan(0);
 });
 
 test("nested spawn recovers batching state after event handler error", async () => {
@@ -617,8 +616,7 @@ test("nested spawn recovers batching state after event handler error", async () 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	flushSpawnFrameScheduler();
 	const lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("thinking")),
-		"error recovery should allow subsequent events to render");
+	expect(lines.some((l: string) => l.includes("thinking")), "error recovery should allow subsequent events to render").toBe(true);
 });
 
 test("handleEvent gracefully degrades with null message events", async () => {
@@ -643,5 +641,5 @@ test("handleEvent gracefully degrades with null message events", async () => {
 
 	// No crash = asToolResult guard works
 	const lines = component.render(120);
-	assert.ok(Array.isArray(lines));
+	expect(lines).toBeInstanceOf(Array);
 });
