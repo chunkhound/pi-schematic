@@ -333,8 +333,9 @@ export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
 		constraints: Type.Optional(Type.Object(Object.fromEntries(constraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])) as any, {
 			description: `Capability requirements for the delegated task — a JSON object keyed by constraint name, not a JSON string and not an array. Keys: ${constraintRegistry.descriptors.map((descriptor) => descriptor.key).join(", ")} — each value must match its key's schema; unknown keys or invalid values are rejected before a child is created.`,
 		})),
-		// Pi 1.5.0 StringEnum has an incompatible schema type; literal unions emit
-		// anyOf/const, which Google rejects for tool parameters. Keep a string enum.
+		// pi-ai >=1.5.0 StringEnum returns a pi-schema schema, which typebox cannot
+		// infer: `thinking` became unknown and the tool contract broke. Type.Unsafe
+		// restores the exact type; the wire shape stays a Google-safe string enum.
 		thinking: Type.Optional(Type.Unsafe<ModelThinkingLevel>({
 			type: "string",
 			enum: THINKING_LEVELS,
