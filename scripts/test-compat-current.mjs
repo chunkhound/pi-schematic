@@ -33,6 +33,7 @@ export const COMPAT_VITEST_FILES = [
   "tests/unit/dependency-graph-assertions.test.ts",
   "tests/unit/module-evaluation-order.test.ts",
   "tests/unit/pi-module-identity.test.ts",
+  "tests/unit/test-host.test.ts",
 ];
 
 // tests/vitest-files.mjs decides each file's runner. run-node-test.mjs drops a file that runs on
