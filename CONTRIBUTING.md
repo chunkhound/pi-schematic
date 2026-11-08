@@ -68,12 +68,12 @@ Pull requests are automatically tested via GitHub Actions. A cross-platform matr
 
 | OS | Node | Runs |
 |---|---|---|
-| Ubuntu | 22 (minimum) | Type check, security audit, unit tests, E2E tests |
-| Ubuntu | 24 | Type check, security audit, unit tests, E2E tests |
-| macOS | 24 | Unit tests, E2E tests |
-| Windows | 24 | Unit tests, E2E tests |
+| Ubuntu | Floor (Pi's minimum) | Type check, security audit, unit tests, E2E tests |
+| Ubuntu | Current LTS | Type check, security audit, unit tests, E2E tests |
+| macOS | Current LTS | Type check, security audit, unit tests, E2E tests |
+| Windows | Current LTS | Type check, security audit, unit tests, E2E tests |
 
-Node 22 (minimum) is tested only on Linux — the primary platform and the only one guaranteed to have the oldest toolchain. macOS and Windows test Node 24 (latest) to catch regressions in the newest runtime while balancing CI cost.
+The floor is the minimum Node.js version Pi requires (the `engines.node` of `@earendil-works/pi-coding-agent`). This package declares no `engines` of its own, because it only runs inside Pi. The floor is tested only on Linux — the primary platform and the only one guaranteed to have the oldest toolchain. The current Node.js LTS is tested on Linux, macOS and Windows to catch regressions in the newest runtime while balancing CI cost. `.node-version` holds the LTS, and every CI and publish job that runs on it reads its version from that file. Renovate updates both: the LTS in `.node-version`, and, when Pi raises its floor, the floor entry of the CI matrix together with the `@types/node` version cap, which keeps the Node types on the floor's major.
 
 Snapshot golden files in `tests/snapshots/` are stored with LF line endings (enforced by `.gitattributes`). The `normalizeEOL` helper in the snapshot test file normalizes `\r\n` to `\n` on read, so Windows developers get correct comparisons even if their working tree has CRLF. If you update snapshots, the CI matrix validates them on all platforms.
 Both E2E suites run on Linux, macOS and Windows.

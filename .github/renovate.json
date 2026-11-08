@@ -7,6 +7,30 @@
     "security:minimumReleaseAgeNpm",
     ":maintainLockFilesMonthly"
   ],
+  "customDatasources": {
+    "pi-node-floor": {
+      "defaultRegistryUrlTemplate": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/latest",
+      "transformTemplates": [
+        "{\"releases\":[{\"version\": $replace(engines.node, /^>=\\s*/, \"\")}]}"
+      ]
+    }
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/test\\.yml$/",
+        "/^\\.github/renovate\\.json$/"
+      ],
+      "matchStrings": [
+        "track: floor\\s+node-version: \"(?<currentValue>[^\"]+)\"",
+        "\"matchPackageNames\":\\s*\\[\"@types/node\"\\],\\s*\"allowedVersions\":\\s*\"\\^(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "pi-node-floor",
+      "datasourceTemplate": "custom.pi-node-floor",
+      "versioningTemplate": "npm"
+    }
+  ],
   "packageRules": [
     {
       "matchPackageNames": [
@@ -19,11 +43,22 @@
       "dependencyDashboardApproval": true
     },
     {
+      "matchDepNames": ["pi-node-floor"],
+      "groupName": "Pi compatibility floor",
+      "dependencyDashboardApproval": true,
+      "separateMajorMinor": false,
+      "rangeStrategy": "replace"
+    },
+    {
       "matchPackageNames": ["typescript"],
       "groupName": "TypeScript"
     },
     {
-      "matchDepTypes": ["peerDependencies", "engines"],
+      "matchPackageNames": ["@types/node"],
+      "allowedVersions": "^22.19.0"
+    },
+    {
+      "matchDepTypes": ["peerDependencies"],
       "enabled": false
     },
     {
