@@ -11,6 +11,7 @@ import { THINKING_LEVELS } from "../../thinking-levels.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
 import { createTestHost } from "./test-host.js";
 import { assertErrorResult, EMPTY_CHILD_USAGE, runRealChildInvocation } from "./helpers.js";
+import { REPO_ROOT_URL } from "../paths.js";
 
 test("real child completes through inherited/default thinking", async () => {
 	const proof = await runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK." });
@@ -85,15 +86,18 @@ test("concurrent real children both complete", async () => {
 	assert.equal(proof.probeCalls, 2);
 });
 
-test("spawn routes through the public registry but uses only the selected-model child session boundary", async () => {
-
-	const source = await readFile(new URL("../../spawn/index.ts", import.meta.url), "utf8");
+test("spawn routes through the public registry and keeps source boundaries exact", async () => {
+	const source = await readFile(new URL("spawn/index.ts", REPO_ROOT_URL), "utf8");
 	assert.doesNotMatch(source, /\bAuthStorage\b|\bModelRegistry\b/);
 	assert.doesNotMatch(source, /\bauthStorage\s*:/);
 	assert.doesNotMatch(source, /sessionFactory\(\{[\s\S]*?\bmodelRegistry\s*:/);
 	assert.doesNotMatch(source, /modelRuntime\s*[:.]|as\s+any[^\n]*(?:auth|runtime)/i);
 	assert.match(source, /modelRegistry:\s*ctx\.modelRegistry/);
 	assert.match(source, /model:\s*childModel/);
+	assert.match(source, /session\.dispose\(\)/);
+	const renderer = await readFile(new URL("spawn/renderer.ts", REPO_ROOT_URL), "utf8");
+	assert.doesNotMatch(renderer, /console\.(?:debug|warn|error|log)\s*\(/);
+	assert.doesNotMatch(renderer, /process\.(?:stdout|stderr)\.write\s*\(/);
 });
 
 test("spawn schema accepts canonical thinking levels and rejects other values", async () => {

@@ -1,15 +1,17 @@
 /**
- * Invariant tests for the audit-ci security audit configuration.
+ * Invariant tests for reviewed declarations that CI and the repository must agree
+ * on: the audit-ci allowlist policy, the pinned Pi and typebox versions with
+ * lockfile parity, the single Node floor, the repository-wide LF rule, the
+ * documented floors, and the CI matrix and step order.
  *
- * Validates the audit policy, that any allowlist entries have unexpired expiry
- * dates, that CI preserves the audit → unit → e2e order, and that tracked text stays LF.
+ * Each fact has one source. A second claim fails the suite.
  */
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { REPO_ROOT, REPO_ROOT_URL } from "../paths.js";
 
 type AuditRecord = {
 	active: boolean;
@@ -31,19 +33,16 @@ type PackageJson = {
 };
 
 const AUDIT_SCHEMA = "https://github.com/IBM/audit-ci/raw/main/docs/schema.json";
-const REPO_ROOT_URL = new URL("../../", import.meta.url);
-const REPO_ROOT = fileURLToPath(REPO_ROOT_URL);
 const AUDIT_CONFIG_PATH = new URL("audit-ci.jsonc", REPO_ROOT_URL);
 const PACKAGE_JSON_PATH = new URL("package.json", REPO_ROOT_URL);
 const WORKFLOW_PATH = new URL(".github/workflows/test.yml", REPO_ROOT_URL);
 const LOCK_PATH = new URL("package-lock.json", REPO_ROOT_URL);
-const SPAWN_SOURCE_PATH = new URL("spawn/index.ts", REPO_ROOT_URL);
-const RENDERER_SOURCE_PATH = new URL("spawn/renderer.ts", REPO_ROOT_URL);
 const README_PATH = new URL("README.md", REPO_ROOT_URL);
 const CONTRIBUTING_PATH = new URL("CONTRIBUTING.md", REPO_ROOT_URL);
 const GITATTRIBUTES_PATH = new URL(".gitattributes", REPO_ROOT_URL);
 // Pinned versions verified against package.json + lockfile.
 // Update when Pi devDependencies are bumped.
+const PINNED_PI_PACKAGES = ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"] as const;
 const EXPECTED_PI_VERSION = "1.0.4";
 const EXPECTED_TYPEBOX_VERSION = "1.3.27";
 // Floor for CI, engines, and the matrix. Bump only with the workflow and README.
@@ -183,31 +182,20 @@ function runAuditCi(): void {
 	assert.equal(result.status, 0, diagnostics);
 }
 
-test("pinned Pi compatibility metadata and source boundaries stay exact", () => {
+test("pinned Pi compatibility metadata stays exact", () => {
 	const packageJson = parsePackageJson();
 	const lock = JSON.parse(readText(LOCK_PATH)) as { packages: Record<string, { version?: string }> };
 	assert.equal(packageJson.engines.node, `>=${EXPECTED_NODE_FLOOR}`);
-	for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"]) {
+	for (const name of PINNED_PI_PACKAGES) {
 		assert.equal(packageJson.peerDependencies[name], EXPECTED_PI_PEER, `${name} peer must require ${EXPECTED_PI_PEER}`);
 	}
 	assert.equal(packageJson.peerDependencies.typebox, EXPECTED_TYPEBOX_PEER, `typebox peer must require ${EXPECTED_TYPEBOX_PEER}`);
-	for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"]) {
+	for (const name of PINNED_PI_PACKAGES) {
 		assert.equal(packageJson.devDependencies[name], EXPECTED_PI_VERSION);
 		assert.equal(lock.packages[`node_modules/${name}`]?.version, EXPECTED_PI_VERSION);
 	}
 	assert.equal(packageJson.devDependencies.typebox, EXPECTED_TYPEBOX_VERSION);
 	assert.equal(lock.packages["node_modules/typebox"]?.version, EXPECTED_TYPEBOX_VERSION);
-
-	const spawnSource = readText(SPAWN_SOURCE_PATH);
-	assert.doesNotMatch(spawnSource, /\bAuthStorage\b|\bModelRegistry\b/);
-	assert.doesNotMatch(spawnSource, /\bauthStorage\s*:/);
-	assert.doesNotMatch(spawnSource, /sessionFactory\(\{[\s\S]*?\bmodelRegistry\s*:/);
-	assert.match(spawnSource, /modelRegistry:\s*ctx\.modelRegistry/);
-	assert.match(spawnSource, /model:\s*childModel/);
-	assert.match(spawnSource, /session\.dispose\(\)/);
-	const rendererSource = readText(RENDERER_SOURCE_PATH);
-	assert.doesNotMatch(rendererSource, /console\.(?:debug|warn|error|log)\s*\(/);
-	assert.doesNotMatch(rendererSource, /process\.(?:stdout|stderr)\.write\s*\(/);
 });
 
 test("package and lockfile versions agree", () => {
