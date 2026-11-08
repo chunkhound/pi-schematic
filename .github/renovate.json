@@ -29,6 +29,20 @@
       "depNameTemplate": "pi-node-floor",
       "datasourceTemplate": "custom.pi-node-floor",
       "versioningTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/test\\.yml$/",
+        "/^\\.github/workflows/npm-publish\\.yml$/"
+      ],
+      "matchStrings": [
+        "track: newest\\s+node-version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
+        "uses: actions/setup-node@[^\\n]+\\n\\s+with:\\n\\s+node-version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version",
+      "versioningTemplate": "node"
     }
   ],
   "packageRules": [
@@ -48,6 +62,10 @@
       "dependencyDashboardApproval": true,
       "separateMajorMinor": false,
       "rangeStrategy": "replace"
+    },
+    {
+      "matchDepNames": ["node"],
+      "groupName": "Node.js"
     },
     {
       "matchPackageNames": ["typescript"],
