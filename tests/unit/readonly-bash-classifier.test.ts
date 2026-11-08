@@ -1,5 +1,4 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -15,11 +14,11 @@ async function enableReadonly(pi: TestPI) {
 
 async function assertBlocked(toolCall: ToolCall, command: string, cwd = "/workspace") {
 	const result = await toolCall({ toolName: "bash", input: { command } }, { cwd });
-	assert.equal(result.block, true, `expected block: ${command}`);
+	expect(result.block, `expected block: ${command}`).toBe(true);
 }
 
 async function assertAllowed(toolCall: ToolCall, command: string, cwd = "/workspace") {
-	assert.equal(await toolCall({ toolName: "bash", input: { command } }, { cwd }), undefined, `expected allow: ${command}`);
+	expect(await toolCall({ toolName: "bash", input: { command } }, { cwd }), `expected allow: ${command}`).toBeUndefined();
 }
 
 // ── Behavioral contract tests (via tool_call hook — real code path) ──
@@ -45,8 +44,8 @@ test("blocks malformed bash input without throwing", async () => {
 			{ toolName: "bash", input: { command } } as any,
 			{ cwd: "/workspace" },
 		);
-		assert.equal(result?.block, true, `expected malformed input to block: ${String(command)}`);
-		assert.match(result?.reason ?? "", /bash command input must be a string/);
+		expect(result?.block, `expected malformed input to block: ${String(command)}`).toBe(true);
+		expect(result?.reason ?? "").toMatch(/bash command input must be a string/);
 	}
 });
 
@@ -134,8 +133,8 @@ test("names the blocked shell in the block reason", async () => {
 	await enableReadonly(pi);
 
 	const result = await toolCall({ toolName: "bash", input: { command: "cmd.exe /c dir" } }, { cwd: "/workspace" });
-	assert.equal(result.block, true);
-	assert.match(result.reason, /cmd\.exe blocked/);
+	expect(result.block).toBe(true);
+	expect(result.reason).toMatch(/cmd\.exe blocked/);
 });
 
 test("allows read commands that mention pwsh only as an argument", async () => {

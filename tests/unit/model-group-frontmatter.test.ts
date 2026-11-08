@@ -5,8 +5,7 @@
  *   input preflight → model selection → optional before_agent_start readonly handling
  */
 
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -112,17 +111,17 @@ test("model-group frontmatter triggers model switch for /name command", async ()
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.equal(setModelCalls.length, 1, "setModel should be called once");
-		assert.equal(setModelCalls[0].provider, "openai");
-		assert.equal(setModelCalls[0].id, "gpt-4o");
-		assert.ok(notifications.some((n) => /Model changed.*reviewer.*\/review/.test(n.message)));
+		expect(setModelCalls.length, "setModel should be called once").toBe(1);
+		expect(setModelCalls[0].provider).toBe("openai");
+		expect(setModelCalls[0].id).toBe("gpt-4o");
+		expect(notifications.map((n) => n.message)).toContainEqual(expect.stringMatching(/Model changed.*reviewer.*\/review/));
 
 		const groupEntries = pi.appendedEntries.filter((e: any) => e.customType === "pi-schematic-model-group-switch");
-		assert.equal(groupEntries.length, 1, "should append one model-group-switch entry");
-		assert.equal(groupEntries[0].data.command, "/review");
-		assert.equal(groupEntries[0].data.groupName, "reviewer");
-		assert.equal(groupEntries[0].data.provider, "openai");
-		assert.equal(groupEntries[0].data.modelId, "gpt-4o");
+		expect(groupEntries.length, "should append one model-group-switch entry").toBe(1);
+		expect(groupEntries[0].data.command).toBe("/review");
+		expect(groupEntries[0].data.groupName).toBe("reviewer");
+		expect(groupEntries[0].data.provider).toBe("openai");
+		expect(groupEntries[0].data.modelId).toBe("gpt-4o");
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -153,9 +152,9 @@ test("model-group-only frontmatter applies and records the group's effective thi
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.deepEqual(setThinkingCalls, ["medium"], "group thinking is clamped for the routed model");
+		expect(setThinkingCalls, "group thinking is clamped for the routed model").toStrictEqual(["medium"]);
 		const entry = pi.appendedEntries.find((e: any) => e.customType === "pi-schematic-model-group-switch");
-		assert.equal(entry?.data.thinking, "medium", "entry records effective thinking");
+		expect(entry?.data.thinking, "entry records effective thinking").toBe("medium");
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -182,9 +181,9 @@ test("model-group frontmatter triggers model switch for /skill:name command", as
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/skill:quick", source: "interactive" }, ctx);
 
-		assert.equal(setModelCalls.length, 1);
-		assert.equal(setModelCalls[0].provider, "anthropic");
-		assert.ok(notifications.some((n) => /Model changed.*fast.*\/skill:quick/.test(n.message)));
+		expect(setModelCalls.length).toBe(1);
+		expect(setModelCalls[0].provider).toBe("anthropic");
+		expect(notifications.map((n) => n.message)).toContainEqual(expect.stringMatching(/Model changed.*fast.*\/skill:quick/));
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -211,11 +210,11 @@ test("unknown model-group in /skill:name frontmatter blocks execution before age
 		await sessionStartHandler({ reason: "load" }, ctx);
 		const result = await inputHandler({ text: "/skill:quick", source: "interactive" }, ctx);
 
-		assert.deepEqual(result, { action: "handled" }, "selection failure must prevent command expansion and agent start");
-		assert.equal(setModelCalls.length, 0, "setModel should not be called");
+		expect(result, "selection failure must prevent command expansion and agent start").toStrictEqual({ action: "handled" });
+		expect(setModelCalls.length, "setModel should not be called").toBe(0);
 		const error = notifications.find((notification) => notification.level === "error")?.message ?? "";
-		assert.match(error, /nonexistent/);
-		assert.match(error, /\/skill:quick/);
+		expect(error).toMatch(/nonexistent/);
+		expect(error).toMatch(/\/skill:quick/);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -242,12 +241,12 @@ test("unknown model-group in frontmatter blocks execution with error", async () 
 		await sessionStartHandler({ reason: "load" }, ctx);
 		const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.deepEqual(result, { action: "handled" }, "selection failure must prevent command expansion and agent start");
-		assert.equal(setModelCalls.length, 0, "setModel should not be called");
+		expect(result, "selection failure must prevent command expansion and agent start").toStrictEqual({ action: "handled" });
+		expect(setModelCalls.length, "setModel should not be called").toBe(0);
 		const error = notifications.find((n) => n.level === "error")?.message ?? "";
-		assert.match(error, /nonexistent/);
-		assert.match(error, /not defined/);
-		assert.match(error, /reviewer/);
+		expect(error).toMatch(/nonexistent/);
+		expect(error).toMatch(/not defined/);
+		expect(error).toMatch(/reviewer/);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -274,9 +273,9 @@ test("empty model-group (SpawnRouteError) blocks execution with error", async ()
 		await sessionStartHandler({ reason: "load" }, ctx);
 		const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.deepEqual(result, { action: "handled" });
-		assert.equal(setModelCalls.length, 0);
-		assert.match(notifications.find((n) => n.level === "error")?.message ?? "", /empty/);
+		expect(result).toStrictEqual({ action: "handled" });
+		expect(setModelCalls.length).toBe(0);
+		expect(notifications.find((n) => n.level === "error")?.message ?? "").toMatch(/empty/);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -296,7 +295,7 @@ test("headless session does not inherit model-group changes", async () => withTe
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await inputHandler({ text: "/review", source: "interactive" }, { hasUI: false } as any);
 
-		assert.equal(setModelCalls.length, 0, "setModel should not be called in headless");
+		expect(setModelCalls.length, "setModel should not be called in headless").toBe(0);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -323,8 +322,8 @@ test("no model-group frontmatter is a silent no-op", async () => withTemp(async 
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.equal(setModelCalls.length, 0, "setModel should not be called when no model-group frontmatter");
-		assert.ok(!notifications.some((n) => /Model changed/.test(n.message)));
+		expect(setModelCalls.length, "setModel should not be called when no model-group frontmatter").toBe(0);
+		expect(notifications.map((n) => n.message)).not.toContainEqual(expect.stringMatching(/Model changed/));
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -351,8 +350,8 @@ test("invalid model-group value produces warning notification", async () => with
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.equal(setModelCalls.length, 0, "setModel should not be called for invalid model-group");
-		assert.ok(notifications.some((n) => /model-group.*non-empty/.test(n.message)), "should warn about invalid model-group");
+		expect(setModelCalls.length, "setModel should not be called for invalid model-group").toBe(0);
+		expect(notifications.map((n) => n.message), "should warn about invalid model-group").toContainEqual(expect.stringMatching(/model-group.*non-empty/));
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -410,13 +409,13 @@ async function runPromptInput(
 	}
 }
 
-function hasModelSelectionEntry(pi: any): boolean {
+function modelSelectionEntries(pi: any): any[] {
 	const types = new Set([
 		"pi-schematic-model-switch",
 		"pi-schematic-model-group-switch",
 		"pi-schematic-thinking-change",
 	]);
-	return pi.appendedEntries.some((entry: any) => types.has(entry.customType));
+	return pi.appendedEntries.filter((entry: any) => types.has(entry.customType));
 }
 
 // ── Explicit model frontmatter tests ──────────────────────────────
@@ -440,17 +439,17 @@ test("explicit model frontmatter switches model", async () => withTemp(async ({ 
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.equal(setModelCalls.length, 1, "setModel should be called once");
-		assert.equal(setModelCalls[0].provider, "openai");
-		assert.equal(setModelCalls[0].id, "gpt-4o");
-		assert.ok(notifications.some((n) => /Model switched.*openai.*gpt-4o.*\/review/.test(n.message)));
+		expect(setModelCalls.length, "setModel should be called once").toBe(1);
+		expect(setModelCalls[0].provider).toBe("openai");
+		expect(setModelCalls[0].id).toBe("gpt-4o");
+		expect(notifications.map((n) => n.message)).toContainEqual(expect.stringMatching(/Model switched.*openai.*gpt-4o.*\/review/));
 
 		const switchEntries = pi.appendedEntries.filter((e: any) => e.customType === "pi-schematic-model-switch");
-		assert.equal(switchEntries.length, 1, "should append one model-switch entry");
-		assert.equal(switchEntries[0].data.command, "/review");
-		assert.equal(switchEntries[0].data.provider, "openai");
-		assert.equal(switchEntries[0].data.modelId, "gpt-4o");
-		assert.equal(switchEntries[0].data.thinking, null);
+		expect(switchEntries.length, "should append one model-switch entry").toBe(1);
+		expect(switchEntries[0].data.command).toBe("/review");
+		expect(switchEntries[0].data.provider).toBe("openai");
+		expect(switchEntries[0].data.modelId).toBe("gpt-4o");
+		expect(switchEntries[0].data.thinking).toBeNull();
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -478,11 +477,11 @@ test("explicit model with thinking sets both model and thinking level", async ()
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.equal(setModelCalls.length, 1, "setModel should be called once");
-		assert.equal(setModelCalls[0].id, "gpt-4o");
-		assert.equal(setThinkingCalls.length, 1, "setThinkingLevel should be called once");
-		assert.equal(setThinkingCalls[0], "high");
-		assert.ok(notifications.some((n) => /Model switched.*openai.*gpt-4o/.test(n.message)));
+		expect(setModelCalls.length, "setModel should be called once").toBe(1);
+		expect(setModelCalls[0].id).toBe("gpt-4o");
+		expect(setThinkingCalls.length, "setThinkingLevel should be called once").toBe(1);
+		expect(setThinkingCalls[0]).toBe("high");
+		expect(notifications.map((n) => n.message)).toContainEqual(expect.stringMatching(/Model switched.*openai.*gpt-4o/));
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -510,9 +509,9 @@ test("explicit model without thinking does not change thinking level", async () 
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.equal(setModelCalls.length, 1, "setModel should be called");
-		assert.equal(setModelCalls[0].id, "gpt-4o");
-		assert.equal(setThinkingCalls.length, 0, "setThinkingLevel should NOT be called");
+		expect(setModelCalls.length, "setModel should be called").toBe(1);
+		expect(setModelCalls[0].id).toBe("gpt-4o");
+		expect(setThinkingCalls.length, "setThinkingLevel should NOT be called").toBe(0);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -539,15 +538,15 @@ test("explicit model applies while invalid thinking is reported", async () => wi
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.equal(setModelCalls.length, 1, "valid model should still be applied");
-		assert.equal(setThinkingCalls.length, 0, "invalid thinking must not be applied");
+		expect(setModelCalls.length, "valid model should still be applied").toBe(1);
+		expect(setThinkingCalls.length, "invalid thinking must not be applied").toBe(0);
 		const warnings = notifications.filter((n) => n.level === "warning");
-		assert.equal(warnings.length, 1, "invalid thinking should produce one warning");
-		assert.match(warnings[0]?.message ?? "", /\`thinking\`/);
+		expect(warnings.length, "invalid thinking should produce one warning").toBe(1);
+		expect(warnings[0]?.message ?? "").toMatch(/\`thinking\`/);
 		const issues = pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-frontmatter-issue");
-		assert.equal(issues.length, 1, "invalid thinking should produce one issue entry");
-		assert.equal(issues[0]?.data.type, "command");
-		assert.equal(issues[0]?.data.issue.kind, "invalid-thinking-value");
+		expect(issues.length, "invalid thinking should produce one issue entry").toBe(1);
+		expect(issues[0]?.data.type).toBe("command");
+		expect(issues[0]?.data.issue.kind).toBe("invalid-thinking-value");
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -570,11 +569,11 @@ test("valid model applies when model-group frontmatter is invalid", async () => 
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.deepEqual(result, { action: "continue" });
-		assert.deepEqual(setModelCalls.map((model) => model.id), ["gpt-4o"]);
+		expect(result).toStrictEqual({ action: "continue" });
+		expect(setModelCalls.map((model) => model.id)).toStrictEqual(["gpt-4o"]);
 		const warnings = notifications.filter((notification) => notification.level === "warning");
-		assert.equal(warnings.length, 1);
-		assert.match(warnings[0]?.message ?? "", /`model-group`/);
+		expect(warnings.length).toBe(1);
+		expect(warnings[0]?.message ?? "").toMatch(/`model-group`/);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -600,9 +599,9 @@ test("explicit model + model-group warns and uses explicit model", async () => w
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.equal(setModelCalls.length, 1, "setModel should be called once");
-		assert.equal(setModelCalls[0].id, "gpt-4o", "explicit model should win over model-group");
-		assert.ok(notifications.some((n) => /reviewer.*overridden/.test(n.message)), "should warn about override");
+		expect(setModelCalls.length, "setModel should be called once").toBe(1);
+		expect(setModelCalls[0].id, "explicit model should win over model-group").toBe("gpt-4o");
+		expect(notifications.map((n) => n.message), "should warn about override").toContainEqual(expect.stringMatching(/reviewer.*overridden/));
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -631,11 +630,11 @@ test("explicit model + model-group + thinking uses explicit model and thinking, 
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.equal(setModelCalls.length, 1, "setModel should be called once");
-		assert.equal(setModelCalls[0].id, "gpt-4o", "explicit model should win");
-		assert.equal(setThinkingCalls.length, 1, "setThinkingLevel should be called");
-		assert.equal(setThinkingCalls[0], "high", "thinking from frontmatter should be applied");
-		assert.ok(notifications.some((n) => /reviewer.*overridden/.test(n.message)), "should warn about group override");
+		expect(setModelCalls.length, "setModel should be called once").toBe(1);
+		expect(setModelCalls[0].id, "explicit model should win").toBe("gpt-4o");
+		expect(setThinkingCalls.length, "setThinkingLevel should be called").toBe(1);
+		expect(setThinkingCalls[0], "thinking from frontmatter should be applied").toBe("high");
+		expect(notifications.map((n) => n.message), "should warn about group override").toContainEqual(expect.stringMatching(/reviewer.*overridden/));
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -664,11 +663,11 @@ test("model-group + thinking overrides group thinking level", async () => withTe
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.equal(setModelCalls.length, 1, "setModel should be called once");
-		assert.equal(setModelCalls[0].id, "gpt-4o", "model should come from group");
-		assert.equal(setThinkingCalls.length, 1, "setThinkingLevel should be called once");
-		assert.equal(setThinkingCalls[0], "low", "thinking should come from frontmatter, not group");
-		assert.ok(notifications.some((n) => /Model changed.*reviewer.*\/review/.test(n.message)), "should notify about group change");
+		expect(setModelCalls.length, "setModel should be called once").toBe(1);
+		expect(setModelCalls[0].id, "model should come from group").toBe("gpt-4o");
+		expect(setThinkingCalls.length, "setThinkingLevel should be called once").toBe(1);
+		expect(setThinkingCalls[0], "thinking should come from frontmatter, not group").toBe("low");
+		expect(notifications.map((n) => n.message), "should notify about group change").toContainEqual(expect.stringMatching(/Model changed.*reviewer.*\/review/));
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -697,15 +696,15 @@ test("thinking only frontmatter sets thinking level without changing model", asy
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.equal(setModelCalls.length, 0, "setModel should NOT be called");
-		assert.equal(setThinkingCalls.length, 1, "setThinkingLevel should be called");
-		assert.equal(setThinkingCalls[0], "high");
-		assert.ok(notifications.some((n) => /Thinking level set.*high.*\/review/.test(n.message)));
+		expect(setModelCalls.length, "setModel should NOT be called").toBe(0);
+		expect(setThinkingCalls.length, "setThinkingLevel should be called").toBe(1);
+		expect(setThinkingCalls[0]).toBe("high");
+		expect(notifications.map((n) => n.message)).toContainEqual(expect.stringMatching(/Thinking level set.*high.*\/review/));
 
 		const thinkingEntries = pi.appendedEntries.filter((e: any) => e.customType === "pi-schematic-thinking-change");
-		assert.equal(thinkingEntries.length, 1, "should append one thinking-change entry");
-		assert.equal(thinkingEntries[0].data.command, "/review");
-		assert.equal(thinkingEntries[0].data.thinking, "high");
+		expect(thinkingEntries.length, "should append one thinking-change entry").toBe(1);
+		expect(thinkingEntries[0].data.command).toBe("/review");
+		expect(thinkingEntries[0].data.thinking).toBe("high");
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -730,9 +729,9 @@ test("unknown model in frontmatter blocks execution", async () => withTemp(async
 		await sessionStartHandler({ reason: "load" }, ctx);
 		const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.deepEqual(result, { action: "handled" });
-		assert.equal(setModelCalls.length, 0, "setModel should not be called");
-		assert.match(notifications.find((n) => n.level === "error")?.message ?? "", /unknown\/no-such-model.*not found/);
+		expect(result).toStrictEqual({ action: "handled" });
+		expect(setModelCalls.length, "setModel should not be called").toBe(0);
+		expect(notifications.find((n) => n.level === "error")?.message ?? "").toMatch(/unknown\/no-such-model.*not found/);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -756,8 +755,8 @@ test("model switch failure blocks explicit model selection", async () => withTem
 		await sessionStartHandler({ reason: "load" }, ctx);
 		const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.deepEqual(result, { action: "handled" });
-		assert.match(notifications.find((n) => n.level === "error")?.message ?? "", /failed to switch/);
+		expect(result).toStrictEqual({ action: "handled" });
+		expect(notifications.find((n) => n.level === "error")?.message ?? "").toMatch(/failed to switch/);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -781,8 +780,8 @@ test("unauthenticated model in registry blocks explicit model selection", async 
 		await sessionStartHandler({ reason: "load" }, ctx);
 		const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.deepEqual(result, { action: "handled" });
-		assert.match(notifications.find((n) => n.level === "error")?.message ?? "", /no API key/);
+		expect(result).toStrictEqual({ action: "handled" });
+		expect(notifications.find((n) => n.level === "error")?.message ?? "").toMatch(/no API key/);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -807,8 +806,8 @@ test("invalid model format in frontmatter produces warning", async () => withTem
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.equal(setModelCalls.length, 0, "setModel should not be called for invalid model format");
-		assert.ok(notifications.some((n) => /`model`.*`<provider>\/<model-id>`/.test(n.message)), "should warn about invalid model format");
+		expect(setModelCalls.length, "setModel should not be called for invalid model format").toBe(0);
+		expect(notifications.map((n) => n.message), "should warn about invalid model format").toContainEqual(expect.stringMatching(/`model`.*`<provider>\/<model-id>`/));
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -833,8 +832,8 @@ test("invalid thinking value produces warning", async () => withTemp(async ({ cw
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.equal(setThinkingCalls.length, 0, "setThinkingLevel should NOT be called for invalid thinking");
-		assert.ok(notifications.some((n) => /`thinking`.*off, minimal, low/.test(n.message)), "should warn about invalid thinking");
+		expect(setThinkingCalls.length, "setThinkingLevel should NOT be called for invalid thinking").toBe(0);
+		expect(notifications.map((n) => n.message), "should warn about invalid thinking").toContainEqual(expect.stringMatching(/`thinking`.*off, minimal, low/));
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -852,7 +851,7 @@ test("explicit model frontmatter is ignored in headless session", async () => wi
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await inputHandler({ text: "/review", source: "interactive" }, { hasUI: false } as any);
 
-		assert.equal(setModelCalls.length, 0, "setModel should not be called in headless");
+		expect(setModelCalls.length, "setModel should not be called in headless").toBe(0);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -882,9 +881,9 @@ test("model-group toggle does not affect readonly state", async () => withTemp(a
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
 		await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
-		assert.equal(setModelCalls.length, 1, "model should be switched");
+		expect(setModelCalls.length, "model should be switched").toBe(1);
 		const readonlyEntries = pi.appendedEntries.filter((e: any) => e.customType === "pi-schematic-readonly");
-		assert.equal(readonlyEntries.length, 0, "readonly state should not be affected");
+		expect(readonlyEntries.length, "readonly state should not be affected").toBe(0);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -899,11 +898,11 @@ test("streaming blocks model selection without mutation", async () => withTemp(a
 	];
 	for (const scenario of cases) {
 		const run = await runPromptInput(cwd, scenario.frontmatter, "success", scenario.streamingBehavior);
-		assert.deepEqual(run.result, { action: "handled" });
-		assert.equal(run.modelCalls.length, 0);
-		assert.equal(run.thinkingCalls.length, 0);
-		assert.ok(run.notifications.some((item) => item.level === "warning"));
-		assert.equal(hasModelSelectionEntry(run.pi), false);
+		expect(run.result).toStrictEqual({ action: "handled" });
+		expect(run.modelCalls.length).toBe(0);
+		expect(run.thinkingCalls.length).toBe(0);
+		expect(run.notifications.map((item) => item.level)).toContain("warning");
+		expect(modelSelectionEntries(run.pi)).toStrictEqual([]);
 	}
 }));
 
@@ -934,10 +933,10 @@ test("embedded-slash prompt and skill tokens do not apply model-selection frontm
 			await sessionStartHandler({ reason: "load" }, ctx);
 
 			const result = await inputHandler({ text: scenario.text.replace("review", name), source: "interactive" }, ctx);
-			assert.deepEqual(result, { action: "continue" });
-			assert.deepEqual(modelCalls, []);
-			assert.deepEqual(thinkingCalls, []);
-			assert.equal(hasModelSelectionEntry(pi), false);
+			expect(result).toStrictEqual({ action: "continue" });
+			expect(modelCalls).toStrictEqual([]);
+			expect(thinkingCalls).toStrictEqual([]);
+			expect(modelSelectionEntries(pi)).toStrictEqual([]);
 		}
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
@@ -954,9 +953,9 @@ test("setModel failures block explicit and group selection without success entri
 	];
 	for (const scenario of cases) {
 		const run = await runPromptInput(cwd, scenario.frontmatter, scenario.behavior);
-		assert.deepEqual(run.result, { action: "handled" });
-		assert.match(run.notifications.find((item) => item.level === "error")?.message ?? "", /failed to switch/);
-		assert.equal(hasModelSelectionEntry(run.pi), false);
+		expect(run.result).toStrictEqual({ action: "handled" });
+		expect(run.notifications.find((item) => item.level === "error")?.message ?? "").toMatch(/failed to switch/);
+		expect(modelSelectionEntries(run.pi)).toStrictEqual([]);
 	}
 }));
 
@@ -989,11 +988,11 @@ test("model-group commands are applied during their input preflight", async () =
 		const reviewResult = await inputHandler({ text: "/review", source: "interactive" }, ctx);
 		const quickResult = await inputHandler({ text: "/quick", source: "interactive" }, ctx);
 
-		assert.deepEqual(reviewResult, { action: "continue" });
-		assert.deepEqual(quickResult, { action: "continue" });
-		assert.equal(setModelCalls.length, 2, "each command is selected before its agent turn");
-		assert.equal(setModelCalls[0].id, "gpt-4o");
-		assert.equal(setModelCalls[1].id, "claude-sonnet");
+		expect(reviewResult).toStrictEqual({ action: "continue" });
+		expect(quickResult).toStrictEqual({ action: "continue" });
+		expect(setModelCalls.length, "each command is selected before its agent turn").toBe(2);
+		expect(setModelCalls[0].id).toBe("gpt-4o");
+		expect(setModelCalls[1].id).toBe("claude-sonnet");
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
