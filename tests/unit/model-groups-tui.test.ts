@@ -1,8 +1,8 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import { CURSOR_MARKER, fuzzyFilter, visibleWidth } from "@earendil-works/pi-tui";
 import { createModelGroupsComponent } from "../../model-groups/tui.js";
 import { ModelGroupsPersistenceError, type ModelGroupsBootValidation, type ResolvedModelGroup } from "../../model-groups/types.js";
+import { assertPresent } from "../assertions.js";
 import { stripAnsi, theme } from "./helpers.js";
 import { group } from "./model-groups-helpers.js";
 
@@ -65,7 +65,7 @@ function selectRenderedLabel(c: { handleInput?: (data: string) => void; render: 
 		if (selected?.includes(label)) return;
 		press(c, DOWN);
 	}
-	assert.fail(`did not select rendered label: ${label}`);
+	expect.unreachable(`did not select rendered label: ${label}`);
 }
 
 function openModelEdit(c: Parameters<typeof selectRenderedLabel>[0], modelLabel: string): void {
@@ -100,7 +100,7 @@ function catalog(models: any[]): any {
 function atSearchableModel(models: any[], store?: any) {
 	const c = component({ groups: [group("review", { scope: "project" })], modelRegistry: catalog(models), store }).c;
 	pressAndRender(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER, ENTER);
-	assert.match(rendered(c), /Add model — Step 2\/3 Model/);
+	expect(rendered(c)).toMatch(/Add model — Step 2\/3 Model/);
 	return c;
 }
 
@@ -118,20 +118,20 @@ test("model groups TUI list renders validation summary, health tags, add row, no
 	};
 	const { c } = component({ groups, store });
 	let lines = c.render(100).join("\n");
-	assert.match(lines, /Boot validation: 1 unavailable model references · 1 project overrides/);
-	assert.match(lines, /project override/);
-	assert.match(lines, /⚠ degraded/);
-	assert.match(lines, /✗ unavailable/);
-	assert.match(lines, /\+ Add group/);
-	assert.doesNotMatch(lines, /Validate/);
+	expect(lines).toMatch(/Boot validation: 1 unavailable model references · 1 project overrides/);
+	expect(lines).toMatch(/project override/);
+	expect(lines).toMatch(/⚠ degraded/);
+	expect(lines).toMatch(/✗ unavailable/);
+	expect(lines).toMatch(/\+ Add group/);
+	expect(lines).not.toMatch(/Validate/);
 	c.handleInput?.("D");
 	lines = c.render(100).join("\n");
-	assert.match(lines, /Delete Model Group/);
-	assert.match(lines, /Same-name group in the other scope remains unaffected/);
+	expect(lines).toMatch(/Delete Model Group/);
+	expect(lines).toMatch(/Same-name group in the other scope remains unaffected/);
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\r");
-	assert.deepEqual(deleteCalls, ["global:review"]);
-	assert.doesNotMatch(c.render(100).join("\n"), /Delete Model Group/);
+	expect(deleteCalls).toStrictEqual(["global:review"]);
+	expect(c.render(100).join("\n")).not.toMatch(/Delete Model Group/);
 });
 
 test("model groups TUI renders modality labels, warnings, and stale override choices", () => {
@@ -142,23 +142,23 @@ test("model groups TUI renders modality labels, warnings, and stale override cho
 	review.validation.unsupportedOverrideModalities = ["reasoning"];
 	const { c } = component({ groups: [review] });
 	const reviewRow = stripAnsi(rendered(c, 200)).split("\n").find((line) => line.includes("review"));
-	assert.ok(reviewRow, "expected review row");
-	assert.match(reviewRow, /\bT\b/);
-	assert.match(reviewRow, /\bI\b/);
-	assert.match(reviewRow, /models .*?T I[\s]*/);
-	assert.match(rendered(c, 200), /⚠ no common modalities/);
-	assert.match(rendered(c, 200), /⚠ stale modality override: reasoning/);
+	assertPresent(reviewRow, "expected review row");
+	expect(reviewRow).toMatch(/\bT\b/);
+	expect(reviewRow).toMatch(/\bI\b/);
+	expect(reviewRow).toMatch(/models .*?T I[\s]*/);
+	expect(rendered(c, 200)).toMatch(/⚠ no common modalities/);
+	expect(rendered(c, 200)).toMatch(/⚠ stale modality override: reasoning/);
 	press(c, ENTER);
-	assert.match(rendered(c), /Supported by every model: text/);
-	assert.match(rendered(c), /Modalities: Override \(text, image\)/);
-	assert.match(rendered(c), /Capabilities/);
-	assert.match(rendered(c), /Models/);
+	expect(rendered(c)).toMatch(/Supported by every model: text/);
+	expect(rendered(c)).toMatch(/Modalities: Override \(text, image\)/);
+	expect(rendered(c)).toMatch(/Capabilities/);
+	expect(rendered(c)).toMatch(/Models/);
 	press(c, DOWN, DOWN, DOWN, ENTER);
-	assert.match(rendered(c), /T text  \[required\]/);
-	assert.match(rendered(c), /I image  \[on\]/);
+	expect(rendered(c)).toMatch(/T text  \[required\]/);
+	expect(rendered(c)).toMatch(/I image  \[on\]/);
 	// The group carries a persisted override (text, image, reasoning) → status reflects it.
-	assert.match(rendered(c), /Override — media limited to text, image/);
-	assert.doesNotMatch(rendered(c), /reasoning/);
+	expect(rendered(c)).toMatch(/Override — media limited to text, image/);
+	expect(rendered(c)).not.toMatch(/reasoning/);
 });
 
 test("model groups TUI Add-model picker shows capability chips per model", () => {
@@ -170,15 +170,15 @@ test("model groups TUI Add-model picker shows capability chips per model", () =>
 	];
 	const { c } = component({ groups: [review], modelRegistry: catalog(models) });
 	pressAndRender(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
-	assert.match(rendered(c), /Add model — Step 1\/3 Provider/);
+	expect(rendered(c)).toMatch(/Add model — Step 1\/3 Provider/);
 	pressAndRender(c, DOWN, ENTER);
 	const text = rendered(c);
-	assert.match(text, /Add model — Step 2\/3 Model/);
+	expect(text).toMatch(/Add model — Step 2\/3 Model/);
 	// Capable members show colored T/I chips; the unauthenticated model is not selectable.
-	assert.doesNotMatch(text, /gpt-no-auth/);
+	expect(text).not.toMatch(/gpt-no-auth/);
 	const stripped = stripAnsi(text);
-	assert.match(stripped, /openai\/gpt-text\s+T/);
-	assert.match(stripped, /openai\/gpt-vision\s+T I/);
+	expect(stripped).toMatch(/openai\/gpt-text\s+T/);
+	expect(stripped).toMatch(/openai\/gpt-vision\s+T I/);
 });
 
 test("model groups TUI editor rows show per-model capability chips and modalities screen shows dynamic Automatic/Override status", () => {
@@ -206,28 +206,28 @@ test("model groups TUI editor rows show per-model capability chips and modalitie
 	press(c, ENTER);
 	const editor = stripAnsi(rendered(c));
 	// Per-model capability chips mirror the Add-model picker; unresolved members carry none.
-	assert.match(editor, /openai\/gpt-text\s+T\s+\(available/);
-	assert.match(editor, /openai\/gpt-vision\s+T I\s+\(available/);
-	assert.doesNotMatch(editor, /gpt-missing/);
+	expect(editor).toMatch(/openai\/gpt-text\s+T\s+\(available/);
+	expect(editor).toMatch(/openai\/gpt-vision\s+T I\s+\(available/);
+	expect(editor).not.toMatch(/gpt-missing/);
 	// Hand-editing modalities surfaces a dynamic status for Automatic vs Override.
 	selectRenderedLabel(c, "Modalities:");
 	press(c, ENTER);
 	const modalities = stripAnsi(rendered(c));
 	// Text is a non-toggleable required base; no Automatic selector row remains.
-	assert.match(modalities, /T text  \[required\]/);
-	assert.match(modalities, /Automatic — using every capability its members support/);
-	assert.doesNotMatch(modalities, /Automatic \(/);
-	assert.doesNotMatch(modalities, /required base/);
+	expect(modalities).toMatch(/T text  \[required\]/);
+	expect(modalities).toMatch(/Automatic — using every capability its members support/);
+	expect(modalities).not.toMatch(/Automatic \(/);
+	expect(modalities).not.toMatch(/required base/);
 	// Single editable row: compact footer without arrow-nav; no per-row hint.
-	assert.match(modalities, /Enter\/Space toggle • Esc back/);
-	assert.doesNotMatch(modalities, /↑↓ navigate/);
-	assert.doesNotMatch(modalities, /Enter\/Space toggles/);
-	assert.match(modalities, /I image  \[on\]/);
+	expect(modalities).toMatch(/Enter\/Space toggle • Esc back/);
+	expect(modalities).not.toMatch(/↑↓ navigate/);
+	expect(modalities).not.toMatch(/Enter\/Space toggles/);
+	expect(modalities).toMatch(/I image  \[on\]/);
 	selectRenderedLabel(c, "I image");
 	press(c, ENTER);
 	const afterOverride = stripAnsi(rendered(c));
-	assert.match(afterOverride, /Override — media limited to text/);
-	assert.match(afterOverride, /I image  \[off\]/);
+	expect(afterOverride).toMatch(/Override — media limited to text/);
+	expect(afterOverride).toMatch(/I image  \[off\]/);
 });
 
 test("model groups TUI modality editor commits override and Automatic through updateGroup", () => {
@@ -256,25 +256,25 @@ test("model groups TUI modality editor commits override and Automatic through up
 	press(c, ENTER);
 	selectRenderedLabel(c, "Modalities:");
 	press(c, ENTER);
-	assert.match(rendered(c), /Modalities/);
+	expect(rendered(c)).toMatch(/Modalities/);
 	selectRenderedLabel(c, "I image");
 	press(c, ENTER);
-	assert.equal(calls.length, 1);
-	assert.deepEqual(calls[0].def.constraints.modalities, ["text", "reasoning"]);
-	assert.deepEqual(calls[0].def.opaqueTopLevel, { preserve: true }, "TUI edits retain opaque top-level group keys");
-	assert.match(rendered(c), /Modalities/, "toggle stays on the modalities screen");
-	assert.match(rendered(c), /I image  \[off\]/);
-	assert.match(rendered(c), /Override — media limited to text/);
+	expect(calls.length).toBe(1);
+	expect(calls[0].def.constraints.modalities).toStrictEqual(["text", "reasoning"]);
+	expect(calls[0].def.opaqueTopLevel, "TUI edits retain opaque top-level group keys").toStrictEqual({ preserve: true });
+	expect(rendered(c), "toggle stays on the modalities screen").toMatch(/Modalities/);
+	expect(rendered(c)).toMatch(/I image  \[off\]/);
+	expect(rendered(c)).toMatch(/Override — media limited to text/);
 	// Re-enabling the capability back to the full union returns the group to Automatic
 	// (no stored override, so no spawn ceiling attaches to a non-limit).
 	selectRenderedLabel(c, "I image");
 	press(c, ENTER);
-	assert.equal(calls.length, 2);
-	assert.equal(calls[1].def.constraints?.modalities, undefined);
-	assert.match(rendered(c), /Modalities/, "re-enable also stays on the modalities screen");
-	assert.match(rendered(c), /Automatic — using every capability its members support/);
+	expect(calls.length).toBe(2);
+	expect(calls[1].def.constraints?.modalities).toBeUndefined();
+	expect(rendered(c), "re-enable also stays on the modalities screen").toMatch(/Modalities/);
+	expect(rendered(c)).toMatch(/Automatic — using every capability its members support/);
 	press(c, ESC);
-	assert.match(rendered(c), /Modalities: Automatic \(text, image\)/);
+	expect(rendered(c)).toMatch(/Modalities: Automatic \(text, image\)/);
 });
 
 test("model groups TUI Space also toggles a modality and stays on screen", () => {
@@ -298,13 +298,13 @@ test("model groups TUI Space also toggles a modality and stays on screen", () =>
 	press(c, ENTER);
 	selectRenderedLabel(c, "Modalities:");
 	press(c, ENTER);
-	assert.match(rendered(c), /Modalities/);
+	expect(rendered(c)).toMatch(/Modalities/);
 	selectRenderedLabel(c, "I image");
 	press(c, " ");
-	assert.equal(calls.length, 1);
-	assert.deepEqual(calls[0].def.constraints.modalities, ["text"]);
-	assert.match(rendered(c), /Modalities/, "space toggle stays on the modalities screen");
-	assert.match(rendered(c), /I image  \[off\]/);
+	expect(calls.length).toBe(1);
+	expect(calls[0].def.constraints.modalities).toStrictEqual(["text"]);
+	expect(rendered(c), "space toggle stays on the modalities screen").toMatch(/Modalities/);
+	expect(rendered(c)).toMatch(/I image  \[off\]/);
 });
 
 test("model groups TUI modality editor preserves state and notifies on updateGroup failure", () => {
@@ -322,8 +322,8 @@ test("model groups TUI modality editor preserves state and notifies on updateGro
 	const { c } = component({ groups: [review], store, notify: (message) => messages.push(message) });
 	press(c, ENTER, DOWN, DOWN, DOWN, ENTER); // open Modalities
 	press(c, ENTER); // toggle the single media row → updateGroup throws
-	assert.ok(messages.some((m) => /modality write denied/.test(m)));
-	assert.match(rendered(c), /Modalities/, "screen retained after failure");
+	expect(messages).toContainEqual(expect.stringMatching(/modality write denied/));
+	expect(rendered(c), "screen retained after failure").toMatch(/Modalities/);
 });
 
 test("model groups TUI text-only modalities screen is inert and states Automatic", () => {
@@ -340,16 +340,16 @@ test("model groups TUI text-only modalities screen is inert and states Automatic
 	press(c, ENTER);
 	const screen = stripAnsi(rendered(c));
 	// No toggleable media rows: only the required text row, no toggle nav, no selection.
-	assert.match(screen, /T text  \[required\]/);
-	assert.match(screen, /No optional media capabilities available/);
-	assert.match(screen, /Automatic — using every capability its members support/);
-	assert.match(screen, /Esc back/);
-	assert.doesNotMatch(screen, /Enter\/Space toggle/);
-	assert.doesNotMatch(screen, /Enter\/Space toggles/);
-	assert.doesNotMatch(screen, /→/);
+	expect(screen).toMatch(/T text  \[required\]/);
+	expect(screen).toMatch(/No optional media capabilities available/);
+	expect(screen).toMatch(/Automatic — using every capability its members support/);
+	expect(screen).toMatch(/Esc back/);
+	expect(screen).not.toMatch(/Enter\/Space toggle/);
+	expect(screen).not.toMatch(/Enter\/Space toggles/);
+	expect(screen).not.toMatch(/→/);
 	// Enter/Space on the inert row must not persist anything.
 	press(c, ENTER, " ", ENTER);
-	assert.equal(updateCalls, 0);
+	expect(updateCalls).toBe(0);
 });
 
 test("model groups TUI empty-group modalities screen claims no capabilities", () => {
@@ -365,11 +365,11 @@ test("model groups TUI empty-group modalities screen claims no capabilities", ()
 	const screen = stripAnsi(rendered(c));
 	// The engine derives no supported/effective modalities for zero members, so the
 	// editor must not claim the text base capability — the empty state is the truth.
-	assert.match(screen, /Modalities — empty/);
-	assert.doesNotMatch(screen, /text  \[required\]/, "empty groups must not claim the text base capability");
-	assert.match(screen, /No optional media capabilities available/);
-	assert.match(screen, /Automatic — using every capability its members support/);
-	assert.match(screen, /Esc back/);
+	expect(screen).toMatch(/Modalities — empty/);
+	expect(screen, "empty groups must not claim the text base capability").not.toMatch(/text  \[required\]/);
+	expect(screen).toMatch(/No optional media capabilities available/);
+	expect(screen).toMatch(/Automatic — using every capability its members support/);
+	expect(screen).toMatch(/Esc back/);
 });
 
 test("model groups TUI computes unique new-group names and opens editor after create", () => {
@@ -385,8 +385,8 @@ test("model groups TUI computes unique new-group names and opens editor after cr
 	const { c } = component({ groups, store });
 	c.handleInput?.("\u001b[B"); // + Add group
 	c.handleInput?.("\r");
-	assert.deepEqual(calls, ["project:new-group-2:0"]);
-	assert.match(c.render(100).join("\n"), /Model Group: new-group-2/);
+	expect(calls).toStrictEqual(["project:new-group-2:0"]);
+	expect(c.render(100).join("\n")).toMatch(/Model Group: new-group-2/);
 });
 
 test("model groups TUI wizard renders provider/model/thinking steps and preserves state on add failure", () => {
@@ -409,36 +409,36 @@ test("model groups TUI wizard renders provider/model/thinking steps and preserve
 	const { c } = component({ groups, store, notify: (message) => messages.push(message) });
 	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
 	let text = rendered(c);
-	assert.match(text, /Add model — Step 1\/3 Provider/);
-	assert.match(text, /anthropic/);
-	assert.match(text, /openai/);
-	assert.doesNotMatch(text, /google/);
-	assert.doesNotMatch(text, /Step 4/);
+	expect(text).toMatch(/Add model — Step 1\/3 Provider/);
+	expect(text).toMatch(/anthropic/);
+	expect(text).toMatch(/openai/);
+	expect(text).not.toMatch(/google/);
+	expect(text).not.toMatch(/Step 4/);
 
 	press(c, DOWN, ENTER);
 	text = rendered(c);
-	assert.match(text, /Add model — Step 2\/3 Model/);
-	assert.match(text, /openai\/gpt-5/);
-	assert.doesNotMatch(text, /openai\/gpt-no-auth/);
-	assert.doesNotMatch(text, /anthropic\/claude/);
-	assert.doesNotMatch(text, /Step 4/);
+	expect(text).toMatch(/Add model — Step 2\/3 Model/);
+	expect(text).toMatch(/openai\/gpt-5/);
+	expect(text).not.toMatch(/openai\/gpt-no-auth/);
+	expect(text).not.toMatch(/anthropic\/claude/);
+	expect(text).not.toMatch(/Step 4/);
 
 	press(c, ENTER);
 	text = rendered(c);
-	assert.match(text, /Add model — Step 3\/3 Thinking/);
+	expect(text).toMatch(/Add model — Step 3\/3 Thinking/);
 	for (const option of GPT5_THINKING_OPTIONS) {
-		assert.match(text, new RegExp(`\\b${option}\\b`));
+		expect(text).toMatch(new RegExp(`\\b${option}\\b`));
 	}
-	assert.doesNotMatch(text, /Step 4/);
+	expect(text).not.toMatch(/Step 4/);
 
 	press(c, ENTER);
-	assert.equal(updateCalls, 1);
-	assert.equal(messages.length, 1);
-	assert.match(messages[0], /save failed at rename for project scope/);
-	assert.match(messages[0], /add failed/);
+	expect(updateCalls).toBe(1);
+	expect(messages.length).toBe(1);
+	expect(messages[0]).toMatch(/save failed at rename for project scope/);
+	expect(messages[0]).toMatch(/add failed/);
 	text = rendered(c);
-	assert.match(text, /Add model — Step 3\/3 Thinking/);
-	assert.doesNotMatch(text, /Model Group: review/);
+	expect(text).toMatch(/Add model — Step 3\/3 Thinking/);
+	expect(text).not.toMatch(/Model Group: review/);
 });
 
 test("model groups TUI Esc and left-arrow share wizard back-step behavior", () => {
@@ -464,16 +464,16 @@ test("model groups TUI Esc and left-arrow share wizard back-step behavior", () =
 	press(providerEsc, ESC);
 	press(providerEscKitty, ESC_KITTY);
 	press(providerLeft, LEFT);
-	assert.equal(rendered(providerEsc), rendered(providerLeft));
-	assert.equal(rendered(providerEscKitty), rendered(providerLeft));
-	assert.match(rendered(providerEsc), /Model Group: review/);
+	expect(rendered(providerEsc)).toBe(rendered(providerLeft));
+	expect(rendered(providerEscKitty)).toBe(rendered(providerLeft));
+	expect(rendered(providerEsc)).toMatch(/Model Group: review/);
 
 	const modelEsc = atModel();
 	const modelLeft = atModel();
 	press(modelEsc, ESC);
 	press(modelLeft, LEFT);
-	assert.equal(rendered(modelEsc), rendered(modelLeft));
-	assert.match(rendered(modelEsc), /Add model — Step 1\/3 Provider/);
+	expect(rendered(modelEsc)).toBe(rendered(modelLeft));
+	expect(rendered(modelEsc)).toMatch(/Add model — Step 1\/3 Provider/);
 
 	const thinkingEsc = atThinking();
 	const thinkingLeft = atThinking();
@@ -481,9 +481,9 @@ test("model groups TUI Esc and left-arrow share wizard back-step behavior", () =
 	press(thinkingEsc, ESC);
 	press(thinkingLeft, LEFT);
 	press(thinkingLeftSs3, LEFT_SS3);
-	assert.equal(rendered(thinkingEsc), rendered(thinkingLeft));
-	assert.equal(rendered(thinkingLeftSs3), rendered(thinkingLeft));
-	assert.match(rendered(thinkingEsc), /Add model — Step 2\/3 Model/);
+	expect(rendered(thinkingEsc)).toBe(rendered(thinkingLeft));
+	expect(rendered(thinkingLeftSs3)).toBe(rendered(thinkingLeft));
+	expect(rendered(thinkingEsc)).toMatch(/Add model — Step 2\/3 Model/);
 });
 
 test("model groups TUI selected markers and primary labels use accent token", () => {
@@ -494,39 +494,39 @@ test("model groups TUI selected markers and primary labels use accent token", ()
 	const list = component({ groups: [group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] })], renderTheme: accentTheme }).c;
 
 	let text = rendered(list);
-	assert.match(text, /<accent>→ review\s+\[project\] 1 models inherit<\/accent>/);
+	expect(text).toMatch(/<accent>→ review\s+\[project\] 1 models inherit<\/accent>/);
 	press(list, DOWN);
-	assert.match(rendered(list), /<accent>→ \+ Add group<\/accent>/);
+	expect(rendered(list)).toMatch(/<accent>→ \+ Add group<\/accent>/);
 
 	const editor = component({ groups: [group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] })], renderTheme: accentTheme }).c;
 	press(editor, ENTER);
 	text = rendered(editor);
-	assert.match(text, /<accent>→<\/accent> <accent>Location: project<\/accent> ✓/);
+	expect(text).toMatch(/<accent>→<\/accent> <accent>Location: project<\/accent> ✓/);
 	press(editor, DOWN, DOWN, DOWN, DOWN);
-	assert.match(rendered(editor), /<accent>→<\/accent> <accent>openai\/gpt-5<\/accent> \(available/);
+	expect(rendered(editor)).toMatch(/<accent>→<\/accent> <accent>openai\/gpt-5<\/accent> \(available/);
 	press(editor, DOWN);
-	assert.match(rendered(editor), /<accent>→<\/accent> <accent>\+ Add model…<\/accent>/);
+	expect(rendered(editor)).toMatch(/<accent>→<\/accent> <accent>\+ Add model…<\/accent>/);
 
 	press(editor, ENTER);
-	assert.match(rendered(editor), /<accent>→ anthropic<\/accent>/);
+	expect(rendered(editor)).toMatch(/<accent>→ anthropic<\/accent>/);
 
 	const modelEdit = component({ groups: [group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] })], renderTheme: accentTheme }).c;
 	press(modelEdit, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
-	assert.match(rendered(modelEdit), /<accent>→<\/accent> <accent>Thinking: inherit<\/accent>/);
+	expect(rendered(modelEdit)).toMatch(/<accent>→<\/accent> <accent>Thinking: inherit<\/accent>/);
 
 	const g = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] });
 	g.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
 	const modalitiesC = component({ groups: [g], renderTheme: accentTheme }).c;
 	press(modalitiesC, ENTER, DOWN, DOWN, DOWN, ENTER);
 	// The selected capability row is accent-highlighted; the modality letter keeps its own color.
-	assert.match(rendered(modalitiesC), /<accent>→<\/accent> I<accent> image  \[on\]<\/accent>/);
-	assert.match(rendered(modalitiesC), /Enter\/Space toggle • Esc back/);
+	expect(rendered(modalitiesC)).toMatch(/<accent>→<\/accent> I<accent> image  \[on\]<\/accent>/);
+	expect(rendered(modalitiesC)).toMatch(/Enter\/Space toggle • Esc back/);
 
 	const deleteConfirm = component({ groups: [group("review", { scope: "project" })], renderTheme: accentTheme }).c;
 	press(deleteConfirm, "D");
-	assert.match(rendered(deleteConfirm), /<accent>→<\/accent> <accent>Keep group<\/accent>/);
+	expect(rendered(deleteConfirm)).toMatch(/<accent>→<\/accent> <accent>Keep group<\/accent>/);
 	press(deleteConfirm, DOWN);
-	assert.match(rendered(deleteConfirm), /<accent>→<\/accent> <accent>Delete group<\/accent>/);
+	expect(rendered(deleteConfirm)).toMatch(/<accent>→<\/accent> <accent>Delete group<\/accent>/);
 });
 
 test("model groups TUI model edit renders identity/status and filters thinking options", () => {
@@ -539,28 +539,28 @@ test("model groups TUI model edit renders identity/status and filters thinking o
 
 	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
 	let text = rendered(c);
-	assert.match(text, /Provider: anthropic/);
-	assert.match(text, /Model ID: claude/);
-	assert.match(text, /Status: available/);
-	assert.match(text, /Thinking: inherit/);
-	assert.equal(text.match(/Thinking:/g)?.length, 1);
+	expect(text).toMatch(/Provider: anthropic/);
+	expect(text).toMatch(/Model ID: claude/);
+	expect(text).toMatch(/Status: available/);
+	expect(text).toMatch(/Thinking: inherit/);
+	expect(text.match(/Thinking:/g)?.length).toBe(1);
 
 	press(c, ESC, DOWN, DOWN, DOWN, DOWN, DOWN, ENTER);
 	text = rendered(c);
-	assert.match(text, /Provider: openai/);
-	assert.match(text, /Model ID: gpt-5/);
-	assert.match(text, /Status: available/);
+	expect(text).toMatch(/Provider: openai/);
+	expect(text).toMatch(/Model ID: gpt-5/);
+	expect(text).toMatch(/Status: available/);
 	for (const option of GPT5_THINKING_OPTIONS) {
-		assert.match(text, new RegExp(`Thinking: ${option}`));
+		expect(text).toMatch(new RegExp(`Thinking: ${option}`));
 	}
 
 	press(c, ESC, DOWN, DOWN, DOWN, DOWN, DOWN, DOWN, ENTER);
 	text = rendered(c);
-	assert.match(text, /Provider: missing/);
-	assert.match(text, /Model ID: nope/);
-	assert.match(text, /Status: unavailable/);
-	assert.match(text, /Thinking: inherit/);
-	assert.equal(text.match(/Thinking:/g)?.length, 1);
+	expect(text).toMatch(/Provider: missing/);
+	expect(text).toMatch(/Model ID: nope/);
+	expect(text).toMatch(/Status: unavailable/);
+	expect(text).toMatch(/Thinking: inherit/);
+	expect(text.match(/Thinking:/g)?.length).toBe(1);
 });
 
 test("model groups TUI MODEL_EDIT opens on the configured thinking level and preserves it on Enter", () => {
@@ -574,12 +574,12 @@ test("model groups TUI MODEL_EDIT opens on the configured thinking level and pre
 	// EDITOR → first model row → MODEL_EDIT.
 	openModelEdit(c, "gpt-5");
 	const text = rendered(c);
-	assert.match(text, /→ Thinking: high/);
-	assert.match(text, /Thinking: high ✓ current/);
+	expect(text).toMatch(/→ Thinking: high/);
+	expect(text).toMatch(/Thinking: high ✓ current/);
 	// Enter on the current row must write the same value — never silently reset to inherit.
 	press(c, ENTER);
-	assert.match(rendered(c), /Model Group: review/);
-	assert.deepEqual(calls, ["openai/gpt-5/high"]);
+	expect(rendered(c)).toMatch(/Model Group: review/);
+	expect(calls).toStrictEqual(["openai/gpt-5/high"]);
 });
 
 test("model groups TUI MODEL_EDIT shows an unsupported/unavailable current level as current, unavailable and preserves it", () => {
@@ -597,23 +597,23 @@ test("model groups TUI MODEL_EDIT shows an unsupported/unavailable current level
 	const { c } = component({ groups, store });
 	openModelEdit(c, "claude");
 	let text = rendered(c);
-	assert.match(text, /→ Thinking: high/);
-	assert.match(text, /Thinking: high ⚠ current, unavailable/);
-	assert.match(text, /Thinking: inherit/);
+	expect(text).toMatch(/→ Thinking: high/);
+	expect(text).toMatch(/Thinking: high ⚠ current, unavailable/);
+	expect(text).toMatch(/Thinking: inherit/);
 	press(c, ENTER);
-	assert.deepEqual(calls, ["anthropic/claude/high,missing/nope/max"]);
+	expect(calls).toStrictEqual(["anthropic/claude/high,missing/nope/max"]);
 
 	// Second model: unavailable, configured max → still current, unavailable.
 	press(c, DOWN, DOWN, DOWN, DOWN, DOWN, ENTER);
 	text = rendered(c);
-	assert.match(text, /Provider: missing/);
-	assert.match(text, /→ Thinking: max/);
-	assert.match(text, /Thinking: max ⚠ current, unavailable/);
+	expect(text).toMatch(/Provider: missing/);
+	expect(text).toMatch(/→ Thinking: max/);
+	expect(text).toMatch(/Thinking: max ⚠ current, unavailable/);
 	press(c, ENTER);
 	// Assert a NEW persist happened; `calls.at(-1)` alone would also pass if the
 	// second Enter did nothing and simply re-read the first call's value.
-	assert.equal(calls.length, 2);
-	assert.deepEqual(calls.at(-1), "anthropic/claude/high,missing/nope/max");
+	expect(calls.length).toBe(2);
+	expect(calls.at(-1)).toStrictEqual("anthropic/claude/high,missing/nope/max");
 });
 
 test("model groups TUI notifies and preserves location on move collision", () => {
@@ -625,11 +625,11 @@ test("model groups TUI notifies and preserves location on move collision", () =>
 	};
 	const { c } = component({ groups, store, notify: (message) => messages.push(message) });
 	press(c, ENTER, DOWN, ENTER);
-	assert.deepEqual(messages, ["target scope already contains review"]);
+	expect(messages).toStrictEqual(["target scope already contains review"]);
 	const text = rendered(c);
-	assert.match(text, /Model Group: review/);
-	assert.match(text, /Location: project ✓/);
-	assert.doesNotMatch(text, /Location: global ✓/);
+	expect(text).toMatch(/Model Group: review/);
+	expect(text).toMatch(/Location: project ✓/);
+	expect(text).not.toMatch(/Location: global ✓/);
 });
 
 test("model groups TUI notifies and preserves model edit state when updateGroup fails", () => {
@@ -651,21 +651,21 @@ test("model groups TUI notifies and preserves model edit state when updateGroup 
 	};
 	const { c } = component({ groups, store, notify: (message) => messages.push(message) });
 	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER, DOWN, ENTER);
-	assert.deepEqual(attemptedModels[0], ["openai/gpt-5/off"]);
-	assert.match(messages[0], /update failed 1/);
+	expect(attemptedModels[0]).toStrictEqual(["openai/gpt-5/off"]);
+	expect(messages[0]).toMatch(/update failed 1/);
 	let text = rendered(c);
-	assert.match(text, /Edit model/);
-	assert.match(text, /Provider: openai/);
-	assert.match(text, /Model ID: gpt-5/);
-	assert.doesNotMatch(text, /Model Group: review/);
+	expect(text).toMatch(/Edit model/);
+	expect(text).toMatch(/Provider: openai/);
+	expect(text).toMatch(/Model ID: gpt-5/);
+	expect(text).not.toMatch(/Model Group: review/);
 
 	press(c, "D");
-	assert.deepEqual(attemptedModels[1], []);
-	assert.match(messages[1], /update failed 2/);
+	expect(attemptedModels[1]).toStrictEqual([]);
+	expect(messages[1]).toMatch(/update failed 2/);
 	text = rendered(c);
-	assert.match(text, /Edit model/);
-	assert.match(text, /Provider: openai/);
-	assert.match(text, /Remove model/);
+	expect(text).toMatch(/Edit model/);
+	expect(text).toMatch(/Provider: openai/);
+	expect(text).toMatch(/Remove model/);
 });
 
 test("model groups TUI renders name editing inline and preserves edit/commit transitions", () => {
@@ -679,42 +679,42 @@ test("model groups TUI renders name editing inline and preserves edit/commit tra
 	c.focused = true;
 	press(c, ENTER, DOWN, DOWN); // selected, inactive name row
 	let text = rendered(c);
-	assert.match(text, /→ Name: abc/);
-	assert.doesNotMatch(text, /(?:^|\n)> /);
-	assert.doesNotMatch(text, /\u001b\[7m/);
-	assert.equal(text.includes(CURSOR_MARKER), false);
+	expect(text).toMatch(/→ Name: abc/);
+	expect(text).not.toMatch(/(?:^|\n)> /);
+	expect(text).not.toMatch(/\u001b\[7m/);
+	expect(text).not.toContain(CURSOR_MARKER);
 
 	press(c, ENTER, "d"); // D remains literal while the input is active
 	text = rendered(c);
-	assert.match(text, /→ Name: abcd/);
-	assert.doesNotMatch(text, /(?:^|\n)> /);
-	assert.match(text, /\u001b\[7m/);
-	assert.equal(text.split(CURSOR_MARKER).length - 1, 1);
+	expect(text).toMatch(/→ Name: abcd/);
+	expect(text).not.toMatch(/(?:^|\n)> /);
+	expect(text).toMatch(/\u001b\[7m/);
+	expect(text.split(CURSOR_MARKER).length - 1).toBe(1);
 
 	press(c, LEFT, BACKSPACE);
-	assert.match(stripAnsi(rendered(c)).replaceAll(CURSOR_MARKER, ""), /→ Name: abd/);
+	expect(stripAnsi(rendered(c)).replaceAll(CURSOR_MARKER, "")).toMatch(/→ Name: abd/);
 	press(c, "c", ESC); // Escape commits and exits edit mode
-	assert.deepEqual(calls, ["abc->abcd"]);
+	expect(calls).toStrictEqual(["abc->abcd"]);
 	text = rendered(c);
-	assert.match(text, /Model Group: abcd/);
-	assert.match(text, /  Name: abcd/);
-	assert.doesNotMatch(text, /\u001b\[7m/);
-	assert.equal(text.includes(CURSOR_MARKER), false);
+	expect(text).toMatch(/Model Group: abcd/);
+	expect(text).toMatch(/  Name: abcd/);
+	expect(text).not.toMatch(/\u001b\[7m/);
+	expect(text).not.toContain(CURSOR_MARKER);
 
 	press(c, DOWN, DOWN, ENTER, "e", ENTER); // Enter also commits and exits edit mode
-	assert.deepEqual(calls, ["abc->abcd", "abcd->abcde"]);
-	assert.match(rendered(c), /  Name: abcde/);
-	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+	expect(calls).toStrictEqual(["abc->abcd", "abcd->abcde"]);
+	expect(rendered(c)).toMatch(/  Name: abcde/);
+	expect(rendered(c)).not.toContain(CURSOR_MARKER);
 
 	press(c, DOWN, DOWN, ENTER, "f", DOWN, DOWN); // row-change flushes the pending rename before moving
-	assert.deepEqual(calls, ["abc->abcd", "abcd->abcde", "abcde->abcdef"]);
+	expect(calls).toStrictEqual(["abc->abcd", "abcd->abcde", "abcde->abcdef"]);
 	text = rendered(c);
-	assert.match(text, /Model Group: abcdef/);
-	assert.match(text, /→ \+ Add model/);
-	assert.match(text, /Name: abcdef/);
-	assert.doesNotMatch(text, /\u001b\[7m/);
-	assert.equal(text.includes(CURSOR_MARKER), false);
-	assert.doesNotMatch(text, /Delete Model Group/);
+	expect(text).toMatch(/Model Group: abcdef/);
+	expect(text).toMatch(/→ \+ Add model/);
+	expect(text).toMatch(/Name: abcdef/);
+	expect(text).not.toMatch(/\u001b\[7m/);
+	expect(text).not.toContain(CURSOR_MARKER);
+	expect(text).not.toMatch(/Delete Model Group/);
 });
 
 test("model groups TUI move, wizard add, model thinking, and remove persist through store calls", () => {
@@ -729,7 +729,7 @@ test("model groups TUI move, wizard add, model thinking, and remove persist thro
 	c.handleInput?.("\r"); // editor
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\r"); // switch global
-	assert.equal(calls[0], "move:review:global");
+	expect(calls[0]).toBe("move:review:global");
 
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B");
@@ -738,7 +738,7 @@ test("model groups TUI move, wizard add, model thinking, and remove persist thro
 	c.handleInput?.("\r"); // model edit
 	c.handleInput?.("\u001b[B"); // off
 	c.handleInput?.("\r");
-	assert.match(calls.at(-1)!, /update:global:review:openai\/gpt-5\/off/);
+	expect(calls.at(-1)!).toMatch(/update:global:review:openai\/gpt-5\/off/);
 
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B");
@@ -746,13 +746,13 @@ test("model groups TUI move, wizard add, model thinking, and remove persist thro
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B"); // + add model
 	press(c, ENTER); // provider step
-	assert.match(rendered(c), /Step 1\/3 Provider/);
+	expect(rendered(c)).toMatch(/Step 1\/3 Provider/);
 	press(c, ENTER); // anthropic provider (sorted first)
-	assert.match(rendered(c), /Step 2\/3 Model/);
+	expect(rendered(c)).toMatch(/Step 2\/3 Model/);
 	press(c, ENTER); // claude model
-	assert.match(rendered(c), /Step 3\/3 Thinking/);
+	expect(rendered(c)).toMatch(/Step 3\/3 Thinking/);
 	press(c, ENTER); // inherit thinking
-	assert.match(calls.at(-1)!, /anthropic\/claude\/inherit/);
+	expect(calls.at(-1)!).toMatch(/anthropic\/claude\/inherit/);
 
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B");
@@ -760,7 +760,7 @@ test("model groups TUI move, wizard add, model thinking, and remove persist thro
 	c.handleInput?.("\u001b[B"); // first model row after refresh
 	c.handleInput?.("\r");
 	c.handleInput?.("D");
-	assert.ok(calls.at(-1)!.startsWith("update:global:review:"));
+	expect(calls.at(-1)).toMatch(/^update:global:review:/);
 });
 
 test("model groups TUI notifies and keeps visible state on persistence errors", () => {
@@ -788,29 +788,29 @@ test("model groups TUI notifies and keeps visible state on persistence errors", 
 	c.handleInput?.("\r");
 	c.handleInput?.("2");
 	c.handleInput?.("\u001b"); // Escape preserves persistence-error handling and exits name input
-	assert.equal(messages.length, 1);
-	assert.match(messages[0], /save failed at temp-write for project scope/);
-	assert.match(messages[0], /source: \/tmp\/project\/\.pi\/pi-schematic\/model-groups\.json/);
-	assert.match(messages[0], /target: \/tmp\/project\/\.pi\/pi-schematic\/model-groups\.json\.123\.tmp/);
-	assert.match(messages[0], /collision/);
+	expect(messages.length).toBe(1);
+	expect(messages[0]).toMatch(/save failed at temp-write for project scope/);
+	expect(messages[0]).toMatch(/source: \/tmp\/project\/\.pi\/pi-schematic\/model-groups\.json/);
+	expect(messages[0]).toMatch(/target: \/tmp\/project\/\.pi\/pi-schematic\/model-groups\.json\.123\.tmp/);
+	expect(messages[0]).toMatch(/collision/);
 	const text = c.render(100).join("\n");
-	assert.match(text, /Model Group: review/);
-	assert.match(text, /→ Name: review/);
-	assert.equal(text.includes(CURSOR_MARKER), false);
+	expect(text).toMatch(/Model Group: review/);
+	expect(text).toMatch(/→ Name: review/);
+	expect(text).not.toContain(CURSOR_MARKER);
 });
 
 test("model groups TUI uses root Focusable propagation and MODEL_EDIT parent navigation", () => {
 	const c = component({ groups: [group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] })] }).c;
 	c.focused = true;
 	press(c, ENTER, DOWN, DOWN, ENTER);
-	assert.ok(c.render(80).join("\n").includes(CURSOR_MARKER));
+	expect(c.render(80).join("\n")).toContain(CURSOR_MARKER);
 	press(c, ENTER);
-	assert.equal(c.render(80).join("\n").includes(CURSOR_MARKER), false);
+	expect(c.render(80).join("\n")).not.toContain(CURSOR_MARKER);
 	press(c, DOWN, DOWN, ENTER);
-	assert.match(rendered(c), /Edit model/);
+	expect(rendered(c)).toMatch(/Edit model/);
 	press(c, ESC);
-	assert.match(rendered(c), /Location: project/);
-	assert.doesNotMatch(rendered(c), /Edit model/);
+	expect(rendered(c)).toMatch(/Location: project/);
+	expect(rendered(c)).not.toMatch(/Edit model/);
 });
 
 test("model groups TUI clamps final add row and enforces global-only access", () => {
@@ -824,27 +824,27 @@ test("model groups TUI clamps final add row and enforces global-only access", ()
 		listResolvedModelGroups: () => boot(groups.filter((candidate) => candidate.scope === "global")),
 	};
 	const c = component({ groups, store, policy: "global-only" }).c;
-	assert.doesNotMatch(rendered(c), /project-secret/);
+	expect(rendered(c)).not.toMatch(/project-secret/);
 	press(c, DOWN, DOWN);
-	assert.match(rendered(c), /→ \+ Add group/);
+	expect(rendered(c)).toMatch(/→ \+ Add group/);
 	press(c, ENTER);
-	assert.equal(calls.length, 1);
-	assert.equal(calls[0].scope, "global");
-	assert.deepEqual(calls[0].access, { cwd: "/tmp/project", policy: "global-only" });
-	assert.deepEqual(calls[0].def, { models: [] });
+	expect(calls.length).toBe(1);
+	expect(calls[0].scope).toBe("global");
+	expect(calls[0].access).toStrictEqual({ cwd: "/tmp/project", policy: "global-only" });
+	expect(calls[0].def).toStrictEqual({ models: [] });
 	const text = rendered(c);
-	assert.match(text, /Location: global/);
-	assert.doesNotMatch(text, /Location: project/);
+	expect(text).toMatch(/Location: global/);
+	expect(text).not.toMatch(/Location: project/);
 });
 
 test("model groups TUI escapes controlled labels, bounds width, and offers native max", () => {
 	const hostile = "group\n\u001b]8;;https://example.test\u0007link\u001b]8;;\u0007";
 	const c = component({ groups: [group(hostile, { scope: "project", models: [{ provider: "openai\u001b[31m", modelId: "model\nlong" }] })] }).c;
 	const lines = c.render(20);
-	assert.equal(lines.every((line) => visibleWidth(line) <= 20), true);
+	expect(Math.max(...lines.map((line) => visibleWidth(line)))).toBeLessThanOrEqual(20);
 	const text = lines.join("\n");
-	assert.match(text, /group\\n\\x1B/);
-	assert.doesNotMatch(text, /\u001b\]8;;/);
+	expect(text).toMatch(/group\\n\\x1B/);
+	expect(text).not.toMatch(/\u001b\]8;;/);
 
 	let maxGroups = [group("review", { scope: "project" })];
 	let selectedThinking: string | undefined;
@@ -857,10 +857,10 @@ test("model groups TUI escapes controlled labels, bounds width, and offers nativ
 	}).c;
 	press(max, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
 	press(max, DOWN, ENTER, ENTER);
-	assert.match(rendered(max), /Add model — Step 3\/3 Thinking/);
-	assert.match(rendered(max), /max/);
+	expect(rendered(max)).toMatch(/Add model — Step 3\/3 Thinking/);
+	expect(rendered(max)).toMatch(/max/);
 	press(max, ...Array(20).fill(DOWN), ENTER);
-	assert.equal(selectedThinking, "max");
+	expect(selectedThinking).toBe("max");
 });
 
 test("model groups TUI decodes then canonicalizes prototype-sensitive names and rejects malformed escapes", () => {
@@ -874,9 +874,9 @@ test("model groups TUI decodes then canonicalizes prototype-sensitive names and 
 		};
 		const c = component({ groups, store, notify: (message) => notifications.push(message) }).c;
 		press(c, ENTER, DOWN, DOWN, ENTER, "\u007f", "\u007f", "\u007f", ...[...` ${nextName} `], DOWN);
-		assert.deepEqual(calls, [`abc->${nextName}`]);
-		assert.match(rendered(c), new RegExp(nextName.replaceAll("_", "\\_")));
-		assert.deepEqual(notifications, []);
+		expect(calls).toStrictEqual([`abc->${nextName}`]);
+		expect(rendered(c)).toMatch(new RegExp(nextName.replaceAll("_", "\\_")));
+		expect(notifications).toStrictEqual([]);
 	}
 
 	const malformedCalls: string[] = [];
@@ -887,18 +887,18 @@ test("model groups TUI decodes then canonicalizes prototype-sensitive names and 
 		notify: (message) => notifications.push(message),
 	}).c;
 	press(malformed, ENTER, DOWN, DOWN, ENTER, "\\", ESC);
-	assert.deepEqual(malformedCalls, []);
-	assert.equal(notifications.length, 1);
-	assert.match(rendered(malformed), /→ Name: abc/);
-	assert.equal(rendered(malformed).includes(CURSOR_MARKER), false);
+	expect(malformedCalls).toStrictEqual([]);
+	expect(notifications.length).toBe(1);
+	expect(rendered(malformed)).toMatch(/→ Name: abc/);
+	expect(rendered(malformed)).not.toContain(CURSOR_MARKER);
 });
 
 test("model groups TUI keeps every screen width-bounded without wrapping logical rows", () => {
 	const assertScreen = (c: ReturnType<typeof component>["c"]) => {
 		const wideCount = c.render(200).length;
 		const narrow = c.render(12);
-		assert.equal(narrow.length, wideCount);
-		assert.equal(narrow.every((line) => visibleWidth(line) <= 12), true);
+		expect(narrow.length).toBe(wideCount);
+		expect(Math.max(...narrow.map((line) => visibleWidth(line)))).toBeLessThanOrEqual(12);
 	};
 	const longModel = { provider: "openai", modelId: "gpt-5", thinkingLevel: "max" as const };
 	const c = component({ groups: [group("界e\u0301界-a-very-long-group-name", { scope: "project", models: [longModel] })] }).c;
@@ -910,19 +910,19 @@ test("model groups TUI keeps every screen width-bounded without wrapping logical
 	const inactiveWideCount = c.render(200).length;
 	for (const width of [1, 2, 12]) {
 		const lines = c.render(width);
-		assert.equal(lines.length, inactiveWideCount);
-		assert.equal(lines.every((line) => visibleWidth(line) <= width), true);
-		assert.equal(lines.join("\n").includes(CURSOR_MARKER), false);
-		if (width === 12) assert.match(stripAnsi(lines.join("\n")), /界e\u0301/);
+		expect(lines.length).toBe(inactiveWideCount);
+		expect(Math.max(...lines.map((line) => visibleWidth(line)))).toBeLessThanOrEqual(width);
+		expect(lines.join("\n")).not.toContain(CURSOR_MARKER);
+		if (width === 12) expect(stripAnsi(lines.join("\n"))).toMatch(/界e\u0301/);
 	}
 	press(c, ENTER, "\u0001"); // active group-name input with cursor at line start
 	const activeWideCount = c.render(200).length;
 	for (const width of [1, 2, 12]) {
 		const lines = c.render(width);
-		assert.equal(lines.length, activeWideCount);
-		assert.equal(lines.every((line) => visibleWidth(line) <= width), true);
-		assert.equal(lines.join("\n").includes(CURSOR_MARKER), true);
-		if (width === 12) assert.match(stripAnsi(lines.join("\n")).replaceAll(CURSOR_MARKER, ""), /界e\u0301/);
+		expect(lines.length).toBe(activeWideCount);
+		expect(Math.max(...lines.map((line) => visibleWidth(line)))).toBeLessThanOrEqual(width);
+		expect(lines.join("\n")).toContain(CURSOR_MARKER);
+		if (width === 12) expect(stripAnsi(lines.join("\n")).replaceAll(CURSOR_MARKER, "")).toMatch(/界e\u0301/);
 	}
 	press(c, DOWN, ENTER);
 	assertScreen(c); // MODALITIES (from the name row, Down lands on the Modalities row)
@@ -945,26 +945,26 @@ test("model groups TUI searchable Model step filters raw fields and handles no m
 		{ provider: "other", id: "foreign", name: "Friendly Name", reasoning: true },
 	];
 	const c = atSearchableModel(models);
-	assert.match(rendered(c), /→ openai\/alpha-id/);
-	assert.match(rendered(c), /beta-id/);
-	assert.doesNotMatch(rendered(c), /hidden|foreign/);
+	expect(rendered(c)).toMatch(/→ openai\/alpha-id/);
+	expect(rendered(c)).toMatch(/beta-id/);
+	expect(rendered(c)).not.toMatch(/hidden|foreign/);
 
 	for (const query of ["alpha-id", "openai/alpha-id", "Friendly"]) {
 		const queried = atSearchableModel(models);
 		pressAndRender(queried, ...query);
-		assert.match(rendered(queried), /alpha-id/);
-		assert.doesNotMatch(rendered(queried), /beta-id/);
+		expect(rendered(queried)).toMatch(/alpha-id/);
+		expect(rendered(queried)).not.toMatch(/beta-id/);
 	}
 	const providerQuery = atSearchableModel(models);
 	pressAndRender(providerQuery, ..."openai");
-	assert.match(rendered(providerQuery), /alpha-id/);
-	assert.match(rendered(providerQuery), /beta-id/);
+	expect(rendered(providerQuery)).toMatch(/alpha-id/);
+	expect(rendered(providerQuery)).toMatch(/beta-id/);
 
 	pressAndRender(c, ..."Friendly impossible");
-	assert.match(rendered(c), /No matching models/);
+	expect(rendered(c)).toMatch(/No matching models/);
 	const before = rendered(c);
 	pressAndRender(c, UP, DOWN, ENTER);
-	assert.equal(rendered(c), before);
+	expect(rendered(c)).toBe(before);
 });
 
 test("model groups TUI fuzzy search excludes synthetic provider-space-id matches", () => {
@@ -983,13 +983,13 @@ test("model groups TUI fuzzy search excludes synthetic provider-space-id matches
 		`${candidate.provider} ${candidate.id}`,
 		candidate.name,
 	].join(" "));
-	assert.equal(approvedFields.length, 0);
-	assert.equal(withSyntheticProviderSpaceId.length, 1);
+	expect(approvedFields.length).toBe(0);
+	expect(withSyntheticProviderSpaceId.length).toBe(1);
 
 	const c = atSearchableModel([model]);
 	pressAndRender(c, ...query);
-	assert.match(rendered(c), /No matching models/);
-	assert.doesNotMatch(rendered(c), /→ abc\/xyz/);
+	expect(rendered(c)).toMatch(/No matching models/);
+	expect(rendered(c)).not.toMatch(/→ abc\/xyz/);
 });
 
 test("model groups TUI handles Model activation immediately after Provider transition without rendering", () => {
@@ -1005,12 +1005,12 @@ test("model groups TUI handles Model activation immediately after Provider trans
 	const models = Array.from({ length: 2 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: false }));
 	const c = component({ groups, modelRegistry: catalog(models), store }).c;
 	pressAndRender(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
-	assert.match(rendered(c), /Add model — Step 1\/3 Provider/);
+	expect(rendered(c)).toMatch(/Add model — Step 1\/3 Provider/);
 
 	for (const input of [ENTER, ENTER]) c.handleInput?.(input);
-	assert.match(rendered(c), /Add model — Step 3\/3 Thinking/);
+	expect(rendered(c)).toMatch(/Add model — Step 3\/3 Thinking/);
 	pressAndRender(c, ENTER);
-	assert.deepEqual(persisted, [{ provider: "openai", modelId: "model-0" }]);
+	expect(persisted).toStrictEqual([{ provider: "openai", modelId: "model-0" }]);
 });
 
 test("model groups TUI replaces Thinking control with Model control before rendering the back-step", () => {
@@ -1026,12 +1026,12 @@ test("model groups TUI replaces Thinking control with Model control before rende
 	const models = Array.from({ length: 3 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: false }));
 	const c = atSearchableModel(models, store);
 	pressAndRender(c, ENTER);
-	assert.match(rendered(c), /Add model — Step 3\/3 Thinking/);
+	expect(rendered(c)).toMatch(/Add model — Step 3\/3 Thinking/);
 
 	for (const input of [LEFT, DOWN, ENTER]) c.handleInput?.(input);
-	assert.match(rendered(c), /Add model — Step 3\/3 Thinking/);
+	expect(rendered(c)).toMatch(/Add model — Step 3\/3 Thinking/);
 	pressAndRender(c, ENTER);
-	assert.deepEqual(persisted, [{ provider: "openai", modelId: "model-1" }]);
+	expect(persisted).toStrictEqual([{ provider: "openai", modelId: "model-1" }]);
 });
 
 test("model groups TUI keeps Model selection live across rapid query, navigation, and selection before render", () => {
@@ -1048,28 +1048,28 @@ test("model groups TUI keeps Model selection live across rapid query, navigation
 	const c = atSearchableModel(models, store);
 
 	for (const input of ["m", "o", "d", "e", "l", DOWN, ENTER]) c.handleInput?.(input);
-	assert.match(rendered(c), /Add model — Step 3\/3 Thinking/);
+	expect(rendered(c)).toMatch(/Add model — Step 3\/3 Thinking/);
 	pressAndRender(c, ENTER);
-	assert.deepEqual(persisted, [{ provider: "openai", modelId: "model-1" }]);
+	expect(persisted).toStrictEqual([{ provider: "openai", modelId: "model-1" }]);
 });
 
 test("model groups TUI Model SelectList keeps all results behind a ten-row viewport and owns wrapping", () => {
 	const models = Array.from({ length: 12 }, (_, index) => ({ provider: "openai", id: `model-${String(index).padStart(2, "0")}`, reasoning: true }));
 	const c = atSearchableModel(models);
 	let text = rendered(c);
-	assert.match(text, /model-00/);
-	assert.match(text, /model-09/);
-	assert.doesNotMatch(text, /model-10|model-11/);
-	assert.match(text, /\(1\/12\)/);
+	expect(text).toMatch(/model-00/);
+	expect(text).toMatch(/model-09/);
+	expect(text).not.toMatch(/model-10|model-11/);
+	expect(text).toMatch(/\(1\/12\)/);
 
 	pressAndRender(c, UP);
 	text = rendered(c);
-	assert.match(text, /→ openai\/model-11/);
-	assert.match(text, /\(12\/12\)/);
+	expect(text).toMatch(/→ openai\/model-11/);
+	expect(text).toMatch(/\(12\/12\)/);
 	pressAndRender(c, DOWN);
-	assert.match(rendered(c), /→ openai\/model-00/);
+	expect(rendered(c)).toMatch(/→ openai\/model-00/);
 	pressAndRender(c, ...Array(10).fill(DOWN));
-	assert.match(rendered(c), /→ openai\/model-10/);
+	expect(rendered(c)).toMatch(/→ openai\/model-10/);
 });
 
 test("model groups TUI Model Input directly proves every nonempty, cursor-start, empty, and Esc branch", () => {
@@ -1077,34 +1077,34 @@ test("model groups TUI Model Input directly proves every nonempty, cursor-start,
 
 	const cursorMiddle = atSearchableModel(models);
 	pressAndRender(cursorMiddle, ..."model", DOWN, DOWN, LEFT);
-	assert.match(rendered(cursorMiddle), /Add model — Step 2\/3 Model/);
-	assert.match(rendered(cursorMiddle), /→ openai\/model-2/); // Left moved only the Input cursor.
+	expect(rendered(cursorMiddle)).toMatch(/Add model — Step 2\/3 Model/);
+	expect(rendered(cursorMiddle)).toMatch(/→ openai\/model-2/); // Left moved only the Input cursor.
 	pressAndRender(cursorMiddle, BACKSPACE);
-	assert.match(rendered(cursorMiddle), /→ openai\/model-0/); // A real middle-of-query mutation resets selection.
+	expect(rendered(cursorMiddle)).toMatch(/→ openai\/model-0/); // A real middle-of-query mutation resets selection.
 
 	for (const key of [LEFT, BACKSPACE]) {
 		const cursorStart = atSearchableModel(models);
 		pressAndRender(cursorStart, ..."model", ...Array(5).fill(LEFT), DOWN, DOWN, key);
-		assert.match(rendered(cursorStart), /→ openai\/model-2/); // Cursor-start key left query and selection unchanged.
-		assert.match(rendered(cursorStart), /Add model — Step 2\/3 Model/);
+		expect(rendered(cursorStart)).toMatch(/→ openai\/model-2/); // Cursor-start key left query and selection unchanged.
+		expect(rendered(cursorStart)).toMatch(/Add model — Step 2\/3 Model/);
 	}
 
 	const oneCharacter = atSearchableModel(models);
 	pressAndRender(oneCharacter, "m", BACKSPACE);
-	assert.match(rendered(oneCharacter), /Add model — Step 2\/3 Model/);
-	assert.match(rendered(oneCharacter), /openai\/model-3/); // The now-empty query exposes the full set.
+	expect(rendered(oneCharacter)).toMatch(/Add model — Step 2\/3 Model/);
+	expect(rendered(oneCharacter)).toMatch(/openai\/model-3/); // The now-empty query exposes the full set.
 	pressAndRender(oneCharacter, BACKSPACE);
-	assert.match(rendered(oneCharacter), /Step 1\/3 Provider/);
+	expect(rendered(oneCharacter)).toMatch(/Step 1\/3 Provider/);
 
 	for (const key of [LEFT, BACKSPACE]) {
 		const emptyQuery = atSearchableModel(models);
 		pressAndRender(emptyQuery, key);
-		assert.match(rendered(emptyQuery), /Step 1\/3 Provider/);
+		expect(rendered(emptyQuery)).toMatch(/Step 1\/3 Provider/);
 	}
 	for (const query of ["", "m"]) {
 		const escaped = atSearchableModel(models);
 		pressAndRender(escaped, ...query, ESC);
-		assert.match(rendered(escaped), /Step 1\/3 Provider/);
+		expect(rendered(escaped)).toMatch(/Step 1\/3 Provider/);
 	}
 });
 
@@ -1118,24 +1118,24 @@ test("model groups TUI directly proves query preservation and every abandonment,
 
 	const thinkingBack = atSearchableModel(models, store);
 	pressAndRender(thinkingBack, ..."target", ENTER, LEFT);
-	assert.match(rendered(thinkingBack), /Step 2\/3 Model/);
-	assert.match(rendered(thinkingBack), /> target/);
+	expect(rendered(thinkingBack)).toMatch(/Step 2\/3 Model/);
+	expect(rendered(thinkingBack)).toMatch(/> target/);
 
 	const abandonedAndExited = atSearchableModel(models, store);
 	pressAndRender(abandonedAndExited, ..."target", ESC);
-	assert.match(rendered(abandonedAndExited), /Step 1\/3 Provider/);
+	expect(rendered(abandonedAndExited)).toMatch(/Step 1\/3 Provider/);
 	pressAndRender(abandonedAndExited, ESC);
-	assert.match(rendered(abandonedAndExited), /Model Group: review/);
+	expect(rendered(abandonedAndExited)).toMatch(/Model Group: review/);
 	pressAndRender(abandonedAndExited, ...Array(5).fill(DOWN), ENTER, ENTER);
-	assert.match(rendered(abandonedAndExited), /Step 2\/3 Model/);
-	assert.doesNotMatch(rendered(abandonedAndExited), /> target/);
+	expect(rendered(abandonedAndExited)).toMatch(/Step 2\/3 Model/);
+	expect(rendered(abandonedAndExited)).not.toMatch(/> target/);
 
 	const completedAndReopened = atSearchableModel(models, store);
 	pressAndRender(completedAndReopened, ..."target", ENTER, ENTER);
-	assert.match(rendered(completedAndReopened), /Model Group: review/);
+	expect(rendered(completedAndReopened)).toMatch(/Model Group: review/);
 	pressAndRender(completedAndReopened, ...Array(5).fill(DOWN), ENTER, ENTER);
-	assert.match(rendered(completedAndReopened), /Step 2\/3 Model/);
-	assert.doesNotMatch(rendered(completedAndReopened), /> target/);
+	expect(rendered(completedAndReopened)).toMatch(/Step 2\/3 Model/);
+	expect(rendered(completedAndReopened)).not.toMatch(/> target/);
 });
 
 test("model groups TUI persists exact raw identity from both filtered/reordered and offscreen selections", () => {
@@ -1152,12 +1152,12 @@ test("model groups TUI persists exact raw identity from both filtered/reordered 
 	];
 	const filtered = atSearchableModel(filteredModels, store);
 	pressAndRender(filtered, ..."needle", ENTER, ENTER);
-	assert.deepEqual(persisted[0], { provider: "raw-provider", modelId: "z-last\u001b" });
+	expect(persisted[0]).toStrictEqual({ provider: "raw-provider", modelId: "z-last\u001b" });
 
 	const offscreenModels = Array.from({ length: 12 }, (_, index) => ({ provider: "raw-provider", id: `raw/${String(index).padStart(2, "0")}\u001b`, name: `match ${index}`, reasoning: false }));
 	const offscreen = atSearchableModel(offscreenModels, store);
 	pressAndRender(offscreen, ..."match", ...Array(11).fill(DOWN), ENTER, ENTER);
-	assert.deepEqual(persisted[1], { provider: "raw-provider", modelId: "raw/11\u001b" });
+	expect(persisted[1]).toStrictEqual({ provider: "raw-provider", modelId: "raw/11\u001b" });
 });
 
 test("model groups TUI directly proves every non-Model screen remains search-free and uncapped", () => {
@@ -1166,49 +1166,49 @@ test("model groups TUI directly proves every non-Model screen remains search-fre
 	const groups = Array.from({ length: 12 }, (_, index) => group(`group-${String(index).padStart(2, "0")}`, { scope: "project", models: index === 0 ? existingModels : [] }));
 	const c = component({ groups, modelRegistry: catalog(models) }).c;
 	c.focused = true;
-	assert.match(rendered(c), /group-11/); // LIST retains its full native viewport.
-	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+	expect(rendered(c)).toMatch(/group-11/); // LIST retains its full native viewport.
+	expect(rendered(c)).not.toContain(CURSOR_MARKER);
 	pressAndRender(c, ENTER);
-	assert.match(rendered(c), /provider-11\/only-model/); // EDITOR remains uncapped.
-	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+	expect(rendered(c)).toMatch(/provider-11\/only-model/); // EDITOR remains uncapped.
+	expect(rendered(c)).not.toContain(CURSOR_MARKER);
 	pressAndRender(c, DOWN, DOWN, DOWN, DOWN, ENTER);
-	assert.match(rendered(c), /Edit model/); // MODEL_EDIT.
-	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+	expect(rendered(c)).toMatch(/Edit model/); // MODEL_EDIT.
+	expect(rendered(c)).not.toContain(CURSOR_MARKER);
 	pressAndRender(c, ESC, ...Array(20).fill(DOWN), ENTER);
 	let text = rendered(c);
-	assert.match(text, /Step 1\/3 Provider/); // WIZARD_PROVIDER remains uncapped.
-	assert.match(text, /provider-11/);
-	assert.equal(text.includes(CURSOR_MARKER), false);
+	expect(text).toMatch(/Step 1\/3 Provider/); // WIZARD_PROVIDER remains uncapped.
+	expect(text).toMatch(/provider-11/);
+	expect(text).not.toContain(CURSOR_MARKER);
 	pressAndRender(c, ENTER);
-	assert.equal(rendered(c).includes(CURSOR_MARKER), true); // Search exists only on WIZARD_MODEL.
+	expect(rendered(c)).toContain(CURSOR_MARKER); // Search exists only on WIZARD_MODEL.
 	pressAndRender(c, ENTER);
-	assert.match(rendered(c), /Step 3\/3 Thinking/); // WIZARD_THINKING.
-	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+	expect(rendered(c)).toMatch(/Step 3\/3 Thinking/); // WIZARD_THINKING.
+	expect(rendered(c)).not.toContain(CURSOR_MARKER);
 
 	const deletion = component({ groups: [groups[0]], modelRegistry: catalog(models) }).c;
 	deletion.focused = true;
 	pressAndRender(deletion, "D");
-	assert.match(rendered(deletion), /Delete Model Group/); // DELETE_CONFIRM.
-	assert.equal(rendered(deletion).includes(CURSOR_MARKER), false);
+	expect(rendered(deletion)).toMatch(/Delete Model Group/); // DELETE_CONFIRM.
+	expect(rendered(deletion)).not.toContain(CURSOR_MARKER);
 });
 
 test("model groups TUI focus follows root loss and Model, Thinking, Provider screen transitions", () => {
 	const models = [{ provider: "openai", id: "model", reasoning: true }];
 	const c = atSearchableModel(models);
 	c.focused = true;
-	assert.equal(rendered(c).includes(CURSOR_MARKER), true);
+	expect(rendered(c)).toContain(CURSOR_MARKER);
 	c.focused = false;
-	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+	expect(rendered(c)).not.toContain(CURSOR_MARKER);
 	c.focused = true;
-	assert.equal(rendered(c).includes(CURSOR_MARKER), true);
+	expect(rendered(c)).toContain(CURSOR_MARKER);
 	pressAndRender(c, ENTER);
-	assert.match(rendered(c), /Step 3\/3 Thinking/);
-	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+	expect(rendered(c)).toMatch(/Step 3\/3 Thinking/);
+	expect(rendered(c)).not.toContain(CURSOR_MARKER);
 	pressAndRender(c, LEFT);
-	assert.equal(rendered(c).includes(CURSOR_MARKER), true);
+	expect(rendered(c)).toContain(CURSOR_MARKER);
 	pressAndRender(c, ESC);
-	assert.match(rendered(c), /Step 1\/3 Provider/);
-	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+	expect(rendered(c)).toMatch(/Step 1\/3 Provider/);
+	expect(rendered(c)).not.toContain(CURSOR_MARKER);
 });
 
 test("model groups TUI focuses the searchable Model Input only on the focused Model screen and keeps rendering safe", () => {
@@ -1216,11 +1216,11 @@ test("model groups TUI focuses the searchable Model Input only on the focused Mo
 	const c = atSearchableModel(models);
 	c.focused = true;
 	let text = rendered(c, 18);
-	assert.equal(text.includes(CURSOR_MARKER), true);
-	assert.equal(c.render(18).every((line) => visibleWidth(line) <= 18), true);
-	assert.doesNotMatch(text, /\u001b\[31m.*a-very/);
+	expect(text).toContain(CURSOR_MARKER);
+	expect(Math.max(...c.render(18).map((line) => visibleWidth(line)))).toBeLessThanOrEqual(18);
+	expect(text).not.toMatch(/\u001b\[31m.*a-very/);
 	pressAndRender(c, ESC);
-	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+	expect(rendered(c)).not.toContain(CURSOR_MARKER);
 });
 
 test("model groups TUI model picker preserves the id tail behind an ellipsis and shows the full id in the Selected detail", () => {
@@ -1233,21 +1233,21 @@ test("model groups TUI model picker preserves the id tail behind an ellipsis and
 	pressAndRender(c, DOWN); // select the long-id row so the detail shows it
 	// Narrow terminal: rows keep the provider and the distinguishing id tail, cut head-first with a visible ellipsis.
 	const narrow = stripAnsi(rendered(c, 36));
-	assert.match(narrow, /…/, "truncation is marked with a visible ellipsis");
-	assert.match(narrow, /openai\/…/, "provider stays on truncated rows");
-	assert.match(narrow, /openai\/…5\.2-codex-2025-07-01-rc1/, "the distinguishing id suffix survives truncation");
-	assert.match(narrow, /openai\/…2025-04-16-nightly-build/, "second row keeps its own tail");
-	assert.match(narrow, /openai\/gpt-4o/, "short ids stay untouched");
-	assert.match(narrow, /Selected:/);
+	expect(narrow, "truncation is marked with a visible ellipsis").toMatch(/…/);
+	expect(narrow, "provider stays on truncated rows").toMatch(/openai\/…/);
+	expect(narrow, "the distinguishing id suffix survives truncation").toMatch(/openai\/…5\.2-codex-2025-07-01-rc1/);
+	expect(narrow, "second row keeps its own tail").toMatch(/openai\/…2025-04-16-nightly-build/);
+	expect(narrow, "short ids stay untouched").toMatch(/openai\/gpt-4o/);
+	expect(narrow).toMatch(/Selected:/);
 	// The detail block shows the full id whenever it fits the terminal (width 44 here).
 	const mid = stripAnsi(rendered(c, 44));
-	assert.match(mid, /openai\/gpt-5\.2-codex-2025-07-01-rc1/, "detail shows the full id even when the row truncates");
+	expect(mid, "detail shows the full id even when the row truncates").toMatch(/openai\/gpt-5\.2-codex-2025-07-01-rc1/);
 	// Wide terminal: rows and the detail show the full identity.
 	const wide = stripAnsi(rendered(c, 100));
-	assert.doesNotMatch(wide, /…/, "no ellipsis when everything fits");
-	assert.match(wide, /openai\/gpt-5\.2-codex-2025-07-01-rc1/);
-	assert.match(wide, /openai\/o3-pro-2025-04-16-nightly-build/);
-	assert.match(wide, /GPT-5\.2 Codex/, "detail shows the display name");
+	expect(wide, "no ellipsis when everything fits").not.toMatch(/…/);
+	expect(wide).toMatch(/openai\/gpt-5\.2-codex-2025-07-01-rc1/);
+	expect(wide).toMatch(/openai\/o3-pro-2025-04-16-nightly-build/);
+	expect(wide, "detail shows the display name").toMatch(/GPT-5\.2 Codex/);
 });
 
 test("model groups TUI model picker detail keeps a width-bounded fixed line count and hides with no matches", () => {
@@ -1258,14 +1258,14 @@ test("model groups TUI model picker detail keeps a width-bounded fixed line coun
 	const c = atSearchableModel(models);
 	const wideLines = c.render(200);
 	const narrowLines = c.render(12);
-	assert.equal(narrowLines.length, wideLines.length, "detail block must not wrap: same line count at any width");
-	assert.ok(narrowLines.every((line) => visibleWidth(line) <= 12), "every line bounded at 12 cols");
-	assert.match(stripAnsi(narrowLines.join("\n")), /…/);
-	assert.match(stripAnsi(wideLines.join("\n")), /openai\/gpt-5\.2-codex-2025-07-01-rc1/);
+	expect(narrowLines.length, "detail block must not wrap: same line count at any width").toBe(wideLines.length);
+	expect(Math.max(...narrowLines.map((line) => visibleWidth(line))), "every line bounded at 12 cols").toBeLessThanOrEqual(12);
+	expect(stripAnsi(narrowLines.join("\n"))).toMatch(/…/);
+	expect(stripAnsi(wideLines.join("\n"))).toMatch(/openai\/gpt-5\.2-codex-2025-07-01-rc1/);
 	// No matches: the detail block disappears.
 	pressAndRender(c, ..."zzz");
-	assert.match(rendered(c), /No matching models/);
-	assert.doesNotMatch(rendered(c), /Selected:/);
+	expect(rendered(c)).toMatch(/No matching models/);
+	expect(rendered(c)).not.toMatch(/Selected:/);
 });
 
 test("model groups TUI persistence notifications escape each hostile dynamic field", () => {
@@ -1280,12 +1280,12 @@ test("model groups TUI persistence notifications escape each hostile dynamic fie
 		notify: (message) => notifications.push(message),
 	}).c;
 	press(c, ENTER, DOWN, DOWN, ENTER, "x", ENTER);
-	assert.equal(notifications.length, 1);
-	assert.match(notifications[0], /source\\n\\x1B/);
-	assert.match(notifications[0], /target\\n\\x1B/);
-	assert.match(notifications[0], /message\\n\\x1B/);
-	assert.match(notifications[0], /cause\\n\\x1B/);
-	assert.doesNotMatch(notifications[0], /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/);
+	expect(notifications.length).toBe(1);
+	expect(notifications[0]).toMatch(/source\\n\\x1B/);
+	expect(notifications[0]).toMatch(/target\\n\\x1B/);
+	expect(notifications[0]).toMatch(/message\\n\\x1B/);
+	expect(notifications[0]).toMatch(/cause\\n\\x1B/);
+	expect(notifications[0]).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/);
 });
 
 // ── #29 red-first: MODEL_EDIT opens on the current thinking level ──────────────
@@ -1302,18 +1302,18 @@ test("model groups TUI MODEL_EDIT opens on a mid-list configured level and marks
 	openModelEdit(c, "gpt-5");
 	const text = rendered(c);
 	// Cursor lands on the configured mid-list level, not on the first (inherit) row.
-	assert.match(text, /→ Thinking: medium/);
-	assert.doesNotMatch(text, /→ Thinking: inherit/);
+	expect(text).toMatch(/→ Thinking: medium/);
+	expect(text).not.toMatch(/→ Thinking: inherit/);
 	// Exactly one row carries the current marker, and it is the configured supported level.
-	assert.equal(text.match(/✓ current/g)?.length, 1);
-	assert.match(text, /Thinking: medium ✓ current/);
-	assert.match(text, /^  Thinking: inherit$/m);
-	assert.doesNotMatch(text, /Thinking: inherit ✓ current/);
+	expect(text.match(/✓ current/g)?.length).toBe(1);
+	expect(text).toMatch(/Thinking: medium ✓ current/);
+	expect(text).toMatch(/^  Thinking: inherit$/m);
+	expect(text).not.toMatch(/Thinking: inherit ✓ current/);
 	// Enter on the current row must write the same value — never silently reset to inherit.
 	press(c, ENTER);
-	assert.equal(calls.length, 1);
-	assert.equal(calls[0].models[0].thinkingLevel, "medium");
-	assert.match(rendered(c), /Model Group: review/);
+	expect(calls.length).toBe(1);
+	expect(calls[0].models[0].thinkingLevel).toBe("medium");
+	expect(rendered(c)).toMatch(/Model Group: review/);
 });
 
 test("model groups TUI MODEL_EDIT stale level on an available model keeps its row after inherit and Remove model last", () => {
@@ -1327,31 +1327,31 @@ test("model groups TUI MODEL_EDIT stale level on an available model keeps its ro
 	openModelEdit(c, "claude");
 	const text = rendered(c);
 	// The configured-but-unsupported value is on screen exactly once, owns the cursor, and is flagged.
-	assert.equal(text.match(/Thinking: high/g)?.length, 1);
-	assert.match(text, /→ Thinking: high/);
-	assert.match(text, /Thinking: high ⚠ current, unavailable/);
-	assert.match(text, /^  Thinking: inherit$/m);
-	assert.doesNotMatch(text, /Thinking: inherit ⚠ current, unavailable/);
+	expect(text.match(/Thinking: high/g)?.length).toBe(1);
+	expect(text).toMatch(/→ Thinking: high/);
+	expect(text).toMatch(/Thinking: high ⚠ current, unavailable/);
+	expect(text).toMatch(/^  Thinking: inherit$/m);
+	expect(text).not.toMatch(/Thinking: inherit ⚠ current, unavailable/);
 	// Row layout: the stale row sits directly after inherit and directly before Remove model.
 	const lines = stripAnsi(text).split("\n");
 	const inheritRow = lines.findIndex((line) => line.includes("Thinking: inherit"));
 	const staleRow = lines.findIndex((line) => line.includes("Thinking: high"));
 	const removeRow = lines.findIndex((line) => line.includes("Remove model"));
-	assert.equal(staleRow, inheritRow + 1);
-	assert.equal(removeRow, staleRow + 1);
+	expect(staleRow).toBe(inheritRow + 1);
+	expect(removeRow).toBe(staleRow + 1);
 	const selectedLine = () => stripAnsi(rendered(c)).split("\n").find((line) => line.includes("→"))!;
 	// UP → inherit, DOWN walks back through the stale row to Remove model.
 	press(c, UP);
-	assert.match(selectedLine(), /Thinking: inherit/);
+	expect(selectedLine()).toMatch(/Thinking: inherit/);
 	press(c, DOWN);
-	assert.match(selectedLine(), /Thinking: high ⚠ current, unavailable/);
+	expect(selectedLine()).toMatch(/Thinking: high ⚠ current, unavailable/);
 	press(c, DOWN);
-	assert.match(selectedLine(), /Remove model/);
+	expect(selectedLine()).toMatch(/Remove model/);
 	press(c, ENTER);
 	// Enter on the final row removes the member in the stale-value case.
-	assert.equal(calls.length, 1);
-	assert.deepEqual(calls[0].models, []);
-	assert.match(rendered(c), /Model Group: review/);
+	expect(calls.length).toBe(1);
+	expect(calls[0].models).toStrictEqual([]);
+	expect(rendered(c)).toMatch(/Model Group: review/);
 });
 
 test("model groups TUI MODEL_EDIT keeps an unsupported level after inherit when the model has other supported rows", () => {
@@ -1369,21 +1369,21 @@ test("model groups TUI MODEL_EDIT keeps an unsupported level after inherit when 
 	const { c } = component({ groups, store, modelRegistry: catalog(models) });
 	openModelEdit(c, "gpt-partial");
 	const text = rendered(c);
-	assert.equal(text.match(/Thinking: medium/g)?.length, 1);
-	assert.match(text, /→ Thinking: medium ⚠ current, unavailable/);
+	expect(text.match(/Thinking: medium/g)?.length).toBe(1);
+	expect(text).toMatch(/→ Thinking: medium ⚠ current, unavailable/);
 	const lines = stripAnsi(text).split("\n");
 	const inheritRow = lines.findIndex((line) => line.includes("Thinking: inherit"));
 	const staleRow = lines.findIndex((line) => line.includes("Thinking: medium"));
 	const supportedRow = lines.findIndex((line) => line.includes("Thinking: high"));
 	const removeRow = lines.findIndex((line) => line.includes("Remove model"));
 	// The stale row is pinned directly after inherit; supported rows intervene before Remove.
-	assert.equal(staleRow, inheritRow + 1);
-	assert.ok(supportedRow > staleRow, "a supported row must sit between the stale row and Remove model");
+	expect(staleRow).toBe(inheritRow + 1);
+	expect(supportedRow, "a supported row must sit between the stale row and Remove model").toBeGreaterThan(staleRow);
 	// Regression guard: append-at-end would move the stale row next to Remove model.
-	assert.notEqual(removeRow, staleRow + 1);
+	expect(removeRow).not.toBe(staleRow + 1);
 	press(c, ENTER);
-	assert.equal(calls.length, 1);
-	assert.equal(calls[0].models[0].thinkingLevel, "medium");
+	expect(calls.length).toBe(1);
+	expect(calls[0].models[0].thinkingLevel).toBe("medium");
 });
 
 test("model groups TUI MODEL_EDIT stale level on an unavailable model keeps Status unavailable and preserves the value", () => {
@@ -1396,17 +1396,17 @@ test("model groups TUI MODEL_EDIT stale level on an unavailable model keeps Stat
 	const { c } = component({ groups, store });
 	openModelEdit(c, "nope");
 	const text = rendered(c);
-	assert.match(text, /Status: unavailable/);
-	assert.equal(text.match(/Thinking: max/g)?.length, 1);
-	assert.match(text, /→ Thinking: max/);
-	assert.match(text, /Thinking: max ⚠ current, unavailable/);
-	assert.match(text, /^  Thinking: inherit$/m);
-	assert.doesNotMatch(text, /Thinking: inherit ⚠ current, unavailable/);
+	expect(text).toMatch(/Status: unavailable/);
+	expect(text.match(/Thinking: max/g)?.length).toBe(1);
+	expect(text).toMatch(/→ Thinking: max/);
+	expect(text).toMatch(/Thinking: max ⚠ current, unavailable/);
+	expect(text).toMatch(/^  Thinking: inherit$/m);
+	expect(text).not.toMatch(/Thinking: inherit ⚠ current, unavailable/);
 	// Enter from the stale row writes the same configured value back.
 	press(c, ENTER);
-	assert.equal(calls.length, 1);
-	assert.equal(calls[0].models[0].thinkingLevel, "max");
-	assert.match(rendered(c), /Model Group: review/);
+	expect(calls.length).toBe(1);
+	expect(calls[0].models[0].thinkingLevel).toBe("max");
+	expect(rendered(c)).toMatch(/Model Group: review/);
 });
 
 // ── #29 green-seal: unchanged wizard / removal / clamp contracts ──────────────
@@ -1423,12 +1423,12 @@ test("model groups TUI WIZARD thinking step still starts on inherit and persists
 	openAddModelWizard(c);
 	press(c, DOWN, ENTER);
 	press(c, ENTER);
-	assert.match(rendered(c), /Add model — Step 3\/3 Thinking/);
-	assert.match(rendered(c), /→ inherit/);
+	expect(rendered(c)).toMatch(/Add model — Step 3\/3 Thinking/);
+	expect(rendered(c)).toMatch(/→ inherit/);
 	press(c, DOWN);
-	assert.match(rendered(c), /→ off/);
+	expect(rendered(c)).toMatch(/→ off/);
 	press(c, ENTER);
-	assert.deepEqual(persisted, [{ provider: "openai", modelId: "gpt-5", thinkingLevel: "off" }]);
+	expect(persisted).toStrictEqual([{ provider: "openai", modelId: "gpt-5", thinkingLevel: "off" }]);
 });
 
 test("model groups TUI MODEL_EDIT clamps DOWN on Remove model and D removes a stale-valued member", () => {
@@ -1442,12 +1442,12 @@ test("model groups TUI MODEL_EDIT clamps DOWN on Remove model and D removes a st
 	openModelEdit(c, "claude");
 	// DOWN clamps on the final row regardless of how many thinking rows exist.
 	press(c, DOWN, DOWN, DOWN, DOWN, DOWN);
-	assert.match(rendered(c), /→ Remove model/);
-	assert.doesNotMatch(rendered(c), /→ Thinking: inherit/);
+	expect(rendered(c)).toMatch(/→ Remove model/);
+	expect(rendered(c)).not.toMatch(/→ Thinking: inherit/);
 	press(c, "D");
-	assert.equal(calls.length, 1);
-	assert.deepEqual(calls[0].models, []);
-	assert.match(rendered(c), /Model Group: review/);
+	expect(calls.length).toBe(1);
+	expect(calls[0].models).toStrictEqual([]);
+	expect(rendered(c)).toMatch(/Model Group: review/);
 });
 
 test("model groups TUI MODEL_EDIT dropping a stale level back to inherit deliberately persists inherit", () => {
@@ -1462,11 +1462,11 @@ test("model groups TUI MODEL_EDIT dropping a stale level back to inherit deliber
 	// Explicitly choosing inherit drops the stale value; this path is already green on
 	// the pre-fix baseline, so it is sealed rather than claimed as red-first.
 	press(c, UP);
-	assert.match(stripAnsi(rendered(c)).split("\n").find((line) => line.includes("→"))!, /Thinking: inherit/);
+	expect(stripAnsi(rendered(c)).split("\n").find((line) => line.includes("→"))!).toMatch(/Thinking: inherit/);
 	press(c, ENTER);
-	assert.equal(calls.length, 1);
-	assert.equal("thinkingLevel" in calls[0].models[0], false);
-	assert.match(rendered(c), /Model Group: review/);
+	expect(calls.length).toBe(1);
+	expect(calls[0].models[0]).not.toHaveProperty("thinkingLevel");
+	expect(rendered(c)).toMatch(/Model Group: review/);
 });
 
 test("model groups TUI MODEL_EDIT marks the default inherit row current when no level is configured", () => {
@@ -1480,13 +1480,13 @@ test("model groups TUI MODEL_EDIT marks the default inherit row current when no 
 	openModelEdit(c, "gpt-5");
 	const text = rendered(c);
 	// With no configured level, inherit is the current value and the only marked row.
-	assert.match(text, /→ Thinking: inherit ✓ current/);
-	assert.equal(text.match(/✓ current/g)?.length, 1);
-	assert.doesNotMatch(text, /⚠ current, unavailable/);
+	expect(text).toMatch(/→ Thinking: inherit ✓ current/);
+	expect(text.match(/✓ current/g)?.length).toBe(1);
+	expect(text).not.toMatch(/⚠ current, unavailable/);
 	press(c, ENTER);
-	assert.equal(calls.length, 1);
-	assert.equal("thinkingLevel" in calls[0].models[0], false);
-	assert.match(rendered(c), /Model Group: review/);
+	expect(calls.length).toBe(1);
+	expect(calls[0].models[0]).not.toHaveProperty("thinkingLevel");
+	expect(rendered(c)).toMatch(/Model Group: review/);
 });
 
 test("model groups TUI MODEL_EDIT opens on a supported level for a registered-but-unauthenticated model", () => {
@@ -1501,14 +1501,14 @@ test("model groups TUI MODEL_EDIT opens on a supported level for a registered-bu
 	const { c } = component({ groups, store });
 	openModelEdit(c, "gpt-no-auth");
 	const text = rendered(c);
-	assert.match(text, /Status: unavailable/);
-	assert.match(text, /→ Thinking: high/);
-	assert.equal(text.match(/✓ current/g)?.length, 1);
-	assert.match(text, /Thinking: high ✓ current/);
-	assert.doesNotMatch(text, /⚠ current, unavailable/);
+	expect(text).toMatch(/Status: unavailable/);
+	expect(text).toMatch(/→ Thinking: high/);
+	expect(text.match(/✓ current/g)?.length).toBe(1);
+	expect(text).toMatch(/Thinking: high ✓ current/);
+	expect(text).not.toMatch(/⚠ current, unavailable/);
 	press(c, ENTER);
-	assert.equal(calls.length, 1);
-	assert.equal(calls[0].models[0].thinkingLevel, "high");
+	expect(calls.length).toBe(1);
+	expect(calls[0].models[0].thinkingLevel).toBe("high");
 });
 
 test("model groups TUI MODEL_EDIT treats a stale off level on a non-reasoning model as current, unavailable", () => {
@@ -1523,11 +1523,11 @@ test("model groups TUI MODEL_EDIT treats a stale off level on a non-reasoning mo
 	const { c } = component({ groups, store });
 	openModelEdit(c, "claude");
 	const text = rendered(c);
-	assert.match(text, /→ Thinking: off/);
-	assert.match(text, /Thinking: off ⚠ current, unavailable/);
-	assert.match(text, /^  Thinking: inherit$/m);
+	expect(text).toMatch(/→ Thinking: off/);
+	expect(text).toMatch(/Thinking: off ⚠ current, unavailable/);
+	expect(text).toMatch(/^  Thinking: inherit$/m);
 	press(c, ENTER);
-	assert.equal(calls.length, 1);
-	assert.equal(calls[0].models[0].thinkingLevel, "off");
-	assert.match(rendered(c), /Model Group: review/);
+	expect(calls.length).toBe(1);
+	expect(calls[0].models[0].thinkingLevel).toBe("off");
+	expect(rendered(c)).toMatch(/Model Group: review/);
 });
