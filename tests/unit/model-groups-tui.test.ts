@@ -543,7 +543,7 @@ test("model groups TUI model edit renders identity/status and filters thinking o
 	expect(text).toMatch(/Model ID: claude/);
 	expect(text).toMatch(/Status: available/);
 	expect(text).toMatch(/Thinking: inherit/);
-	expect(text.match(/Thinking:/g)?.length).toBe(1);
+	expect(text.match(/Thinking:/g) ?? []).toHaveLength(1);
 
 	press(c, ESC, DOWN, DOWN, DOWN, DOWN, DOWN, ENTER);
 	text = rendered(c);
@@ -560,7 +560,7 @@ test("model groups TUI model edit renders identity/status and filters thinking o
 	expect(text).toMatch(/Model ID: nope/);
 	expect(text).toMatch(/Status: unavailable/);
 	expect(text).toMatch(/Thinking: inherit/);
-	expect(text.match(/Thinking:/g)?.length).toBe(1);
+	expect(text.match(/Thinking:/g) ?? []).toHaveLength(1);
 });
 
 test("model groups TUI MODEL_EDIT opens on the configured thinking level and preserves it on Enter", () => {
@@ -689,7 +689,7 @@ test("model groups TUI renders name editing inline and preserves edit/commit tra
 	expect(text).toMatch(/→ Name: abcd/);
 	expect(text).not.toMatch(/(?:^|\n)> /);
 	expect(text).toMatch(/\u001b\[7m/);
-	expect(text.split(CURSOR_MARKER).length - 1).toBe(1);
+	expect(text.split(CURSOR_MARKER)).toHaveLength(2);
 
 	press(c, LEFT, BACKSPACE);
 	expect(stripAnsi(rendered(c)).replaceAll(CURSOR_MARKER, "")).toMatch(/→ Name: abd/);
@@ -1258,7 +1258,7 @@ test("model groups TUI model picker detail keeps a width-bounded fixed line coun
 	const c = atSearchableModel(models);
 	const wideLines = c.render(200);
 	const narrowLines = c.render(12);
-	expect(narrowLines.length, "detail block must not wrap: same line count at any width").toBe(wideLines.length);
+	expect(narrowLines, "detail block must not wrap: same line count at any width").toHaveLength(wideLines.length);
 	expect(narrowLines.filter((line) => !(visibleWidth(line) <= 12)), "every line bounded at 12 cols").toStrictEqual([]);
 	expect(stripAnsi(narrowLines.join("\n"))).toMatch(/…/);
 	expect(stripAnsi(wideLines.join("\n"))).toMatch(/openai\/gpt-5\.2-codex-2025-07-01-rc1/);
@@ -1305,7 +1305,7 @@ test("model groups TUI MODEL_EDIT opens on a mid-list configured level and marks
 	expect(text).toMatch(/→ Thinking: medium/);
 	expect(text).not.toMatch(/→ Thinking: inherit/);
 	// Exactly one row carries the current marker, and it is the configured supported level.
-	expect(text.match(/✓ current/g)?.length).toBe(1);
+	expect(text.match(/✓ current/g) ?? []).toHaveLength(1);
 	expect(text).toMatch(/Thinking: medium ✓ current/);
 	expect(text).toMatch(/^  Thinking: inherit$/m);
 	expect(text).not.toMatch(/Thinking: inherit ✓ current/);
@@ -1327,7 +1327,7 @@ test("model groups TUI MODEL_EDIT stale level on an available model keeps its ro
 	openModelEdit(c, "claude");
 	const text = rendered(c);
 	// The configured-but-unsupported value is on screen exactly once, owns the cursor, and is flagged.
-	expect(text.match(/Thinking: high/g)?.length).toBe(1);
+	expect(text.match(/Thinking: high/g) ?? []).toHaveLength(1);
 	expect(text).toMatch(/→ Thinking: high/);
 	expect(text).toMatch(/Thinking: high ⚠ current, unavailable/);
 	expect(text).toMatch(/^  Thinking: inherit$/m);
@@ -1369,7 +1369,7 @@ test("model groups TUI MODEL_EDIT keeps an unsupported level after inherit when 
 	const { c } = component({ groups, store, modelRegistry: catalog(models) });
 	openModelEdit(c, "gpt-partial");
 	const text = rendered(c);
-	expect(text.match(/Thinking: medium/g)?.length).toBe(1);
+	expect(text.match(/Thinking: medium/g) ?? []).toHaveLength(1);
 	expect(text).toMatch(/→ Thinking: medium ⚠ current, unavailable/);
 	const lines = stripAnsi(text).split("\n");
 	const inheritRow = lines.findIndex((line) => line.includes("Thinking: inherit"));
@@ -1397,7 +1397,7 @@ test("model groups TUI MODEL_EDIT stale level on an unavailable model keeps Stat
 	openModelEdit(c, "nope");
 	const text = rendered(c);
 	expect(text).toMatch(/Status: unavailable/);
-	expect(text.match(/Thinking: max/g)?.length).toBe(1);
+	expect(text.match(/Thinking: max/g) ?? []).toHaveLength(1);
 	expect(text).toMatch(/→ Thinking: max/);
 	expect(text).toMatch(/Thinking: max ⚠ current, unavailable/);
 	expect(text).toMatch(/^  Thinking: inherit$/m);
@@ -1481,7 +1481,7 @@ test("model groups TUI MODEL_EDIT marks the default inherit row current when no 
 	const text = rendered(c);
 	// With no configured level, inherit is the current value and the only marked row.
 	expect(text).toMatch(/→ Thinking: inherit ✓ current/);
-	expect(text.match(/✓ current/g)?.length).toBe(1);
+	expect(text.match(/✓ current/g) ?? []).toHaveLength(1);
 	expect(text).not.toMatch(/⚠ current, unavailable/);
 	press(c, ENTER);
 	expect(calls).toHaveLength(1);
@@ -1503,7 +1503,7 @@ test("model groups TUI MODEL_EDIT opens on a supported level for a registered-bu
 	const text = rendered(c);
 	expect(text).toMatch(/Status: unavailable/);
 	expect(text).toMatch(/→ Thinking: high/);
-	expect(text.match(/✓ current/g)?.length).toBe(1);
+	expect(text.match(/✓ current/g) ?? []).toHaveLength(1);
 	expect(text).toMatch(/Thinking: high ✓ current/);
 	expect(text).not.toMatch(/⚠ current, unavailable/);
 	press(c, ENTER);

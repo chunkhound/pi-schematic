@@ -203,5 +203,5 @@ test.skipIf(skipWithoutSandbox)("a call sandboxed after a session start gets the
 	const result = await bash.result("after-start");
 
 	assertPresent(result?.content);
-	expect(textOf({ content: result.content }).endsWith(READONLY_SANDBOX_BLOCK_NOTICE)).toBe(true);
+	expect(textOf({ content: result.content }).slice(-READONLY_SANDBOX_BLOCK_NOTICE.length)).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
 });

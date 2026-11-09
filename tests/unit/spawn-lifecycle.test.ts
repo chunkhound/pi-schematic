@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test } from "vitest";
 import { createState, resetState, abortChildSession } from "../../state.js";
 import { createSession, createSubscribableSession, createRenderContext, theme } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
@@ -15,10 +15,9 @@ async function makeChildSpawnTool(state: any) {
 
 beforeEach(() => {
 	h = createTestHarness();
-});
-
-afterEach(() => {
-	h.teardown();
+	return () => {
+		h.teardown();
+	};
 });
 
 // ── resetState tests ──────────────────────────────────────────────
@@ -59,8 +58,8 @@ test("resetState aborts a claimed child session after render ownership transfer"
 		createRenderContext(),
 	);
 
-	expect(state.childSessions.has("tool-call-1")).toBe(false);
-	expect(state.liveChildSessions.has("tool-call-1")).toBe(true);
+	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
+	expect([...state.liveChildSessions.keys()]).toContain("tool-call-1");
 
 	resetState(state);
 
@@ -95,7 +94,7 @@ test("nested spawn dispose shares the deduplicated abort promise with other abor
 	component.dispose();
 
 	expect(abortCalls, "dispose reuses the shared abort instead of aborting again").toBe(1);
-	expect(state.liveChildSessions.has("tool-call-1"), "dispose clears the live registry entry").toBe(false);
+	expect([...state.liveChildSessions.keys()], "dispose clears the live registry entry").not.toContain("tool-call-1");
 	const lateAbort = abortChildSession(state, session);
 	expect(lateAbort, "dispose and later abort share dedup promise identity").toBe(sharedAbort);
 
@@ -188,7 +187,7 @@ test("nested spawn dispose survives re-entrant dispose from abort", async () => 
 	component.dispose();
 
 	expect(abortCalls, "re-entrant dispose from abort does not double-abort").toBe(1);
-	expect(state.liveChildSessions.has("tool-call-1"), "outer dispose still clears the live registry entry").toBe(false);
+	expect([...state.liveChildSessions.keys()], "outer dispose still clears the live registry entry").not.toContain("tool-call-1");
 });
 
 // ── nested spawn lifecycle tests ──────────────────────────────────

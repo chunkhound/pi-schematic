@@ -189,13 +189,14 @@ test("real child forwards the requested thinking to the session", async () => {
 	const proof = await runRealChildInvocation({
 		prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK.",
 		thinking: "max",
+		reasoning: true,
 	});
-	// Non-reasoning model clamps the requested max -> off; the session runs at the effective level.
-	expect(proof.result.details.thinking, "effective thinking reflects the clamped level").toBe("off");
-	if (proof.observedThinking.length > 0) {
-		// Whatever the provider observed must match the effective thinking the session ran with.
-		expect(proof.observedThinking[0], "provider observed the forwarded thinking level").toBe(proof.result.details.thinking);
-	}
+	// A reasoning model that maps neither xhigh nor max clamps the requested max to high.
+	expect(proof.result.details.thinking, "effective thinking reflects the clamped level").toBe("high");
+	// Every stream call carries the effective level. The call count stays a lower bound, as above.
+	expect(proof.streamCalls).toBeGreaterThanOrEqual(1);
+	expect(proof.observedThinking, "provider observed the forwarded thinking level on every stream call")
+		.toStrictEqual(Array.from({ length: proof.streamCalls }, () => "high"));
 });
 
 // 3a. Notebook injection: seeded pages appear in the child prompt.
@@ -240,7 +241,7 @@ test("real child publishes the session stats contract shape", async () => {
 	const proof = await runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK." });
 	const stats = proof.result.details.stats as Record<string, unknown> | undefined;
 	assertPresent(stats, "stats object must be published");
-	expect(typeof stats, "stats object must be published").toBe("object");
+	expect(stats, "stats object must be published").toBeTypeOf("object");
 	for (const key of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "totalTokens", "cost", "turns"]) {
 		expect(stats, `stats must contain ${key}`).toHaveProperty(key);
 	}

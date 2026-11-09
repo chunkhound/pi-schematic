@@ -297,7 +297,7 @@ test("synchronous handoff rejection preserves the readonly bypass contract", asy
 				getContextUsage: () => null,
 			},
 		),
-	).rejects.toThrow();
+	).rejects.toThrow(/Context usage unavailable/);
 
 	expect(await toolCall({ toolName: "handoff", input: { nextInstruction: "retry readonly handoff" } }, {}), "readonly bypass should remain active after synchronous rejection").toBeUndefined();
 	expect((await toolCall({ toolName: "write", input: { path: "/tmp/test", content: "x" } }, {})).block, "write should stay blocked while the bypass remains active").toBe(true);
@@ -316,7 +316,7 @@ test("retry succeeds after a handoff cut that pi did not persist", async () => {
 	const userMessagesBefore = pi.sentUserMessages.length;
 	await turnStartWith(pi, []);
 
-	expect(pi.sentUserMessages.length, "the failed cut must send no user message").toBe(userMessagesBefore);
+	expect(pi.sentUserMessages, "the failed cut must send no user message").toHaveLength(userMessagesBefore);
 	expect(pi.sentMessages.at(-1)?.message.customType, "the failed cut must persist the failure guidance").toBe("pi-schematic-handoff-failed");
 	expect(pi.sentMessages.at(-1)?.options?.triggerTurn, "the failure guidance must not start a run").toBe(false);
 
@@ -331,7 +331,7 @@ test("retry succeeds after a handoff cut that pi did not persist", async () => {
 	await expect(
 		stageHandoff(pi, "handoff-retry", { nextInstruction: "retry handoff" }),
 		"retry handoff should stage after the failed cut",
-	).resolves.not.toThrow();
+	).resolves.toBeUndefined();
 
 	expect((await toolCall({ toolName: "write", input: { path: "/tmp/test", content: "x" } }, {})).block, "readonly persists: write should still be blocked after the failed cut").toBe(true);
 });
@@ -357,7 +357,7 @@ test("an aborted handoff keeps the bypass and persists the failure without start
 
 	expect(pi.sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
 	expect(pi.sentMessages.at(-1)?.options?.triggerTurn).toBe(false);
-	expect(pi.sentUserMessages.length, "an abort must not start another run").toBe(userMessagesBefore);
+	expect(pi.sentUserMessages, "an abort must not start another run").toHaveLength(userMessagesBefore);
 	expect(await toolCall({ toolName: "handoff", input: {} }, {}), "the readonly bypass must remain for the retry").toBeUndefined();
 });
 
@@ -446,15 +446,15 @@ test("promoted readonly boundary preserves bypass across execute-time eligibilit
 		{ getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }) } as any,
 	);
 
-	for (const usage of [
-		() => null,
-		() => ({ tokens: 5000, percent: 2.5, contextWindow: 200000 }),
+	for (const { usage, message } of [
+		{ usage: () => null, message: /Context usage unavailable/ },
+		{ usage: () => ({ tokens: 5000, percent: 2.5, contextWindow: 200000 }), message: /handoff unavailable yet/ },
 	]) {
 		await expect(
 			pi.tools.get("handoff").execute("boundary-retry", { nextInstruction: "continue billing" }, undefined, undefined, {
 				getContextUsage: usage,
 			}),
-		).rejects.toThrow();
+		).rejects.toThrow(message);
 		expect(await toolCall({ toolName: "handoff", input: {} }, {}), "execute-time rejection must preserve the promoted readonly bypass").toBeUndefined();
 	}
 
@@ -561,8 +561,8 @@ test("readonly topic boundary handoff clears its bypass after the cut", async ()
 	const compaction = drafts.find((draft) => draft.type === "compaction");
 	const successor = drafts.find((draft) => draft.customType === "pi-schematic-handoff");
 	expect(compaction.summary, "readonly must not be frozen into the summary").toBe(buildContinuationFrame());
-	expect(successor.content.startsWith("## Next instruction\n\nContinue billing work"),
-		"the successor turn carries the stored direction verbatim").toBe(true);
+	const prefix = "## Next instruction\n\nContinue billing work";
+	expect(successor.content.slice(0, prefix.length), "the successor turn carries the stored direction verbatim").toBe(prefix);
 	expect((await toolCall({ toolName: "handoff", input: {} }, {})).block).toBe(true);
 	expect((await toolCall({ toolName: "write", input: {} }, {})).block).toBe(true);
 });
@@ -574,7 +574,7 @@ test("readonly agent topic transitions cannot promote or remain queued", () => {
 
 	expect(canPromoteBoundary(state, { tokens: 50_000, percent: 80, contextWindow: 64_000 })).toBe(false);
 	expect(discardNonHumanBoundary(state)).toBe(true);
-	expect(state.pendingTopicBoundaryHint).toBe(null);
+	expect(state.pendingTopicBoundaryHint).toBeNull();
 });
 
 test("readonly agent topic boundary is not promoted to handoff bypass", async () => {
@@ -664,7 +664,7 @@ test("session tree drops a staged handoff, releases the overlap guard, and a sta
 	expect(staleResults.filter((result: any) => result?.entries), "the dropped handoff must not write a cut").toStrictEqual([]);
 
 	const drafts = await completeHandoffCut(pi, "fresh-branch-handoff", { nextInstruction: "continue fresh branch work" });
-	expect(pi.sentUserMessages.length, "the dropped handoff reports no failure and the fresh one completes").toBe(0);
+	expect(pi.sentUserMessages, "the dropped handoff reports no failure and the fresh one completes").toHaveLength(0);
 	const successor = drafts.find((draft) => draft.customType === "pi-schematic-handoff");
 	expect(successor.content, "the fresh branch must receive its own instruction").toMatch(/^## Next instruction\n\ncontinue fresh branch work/);
 });

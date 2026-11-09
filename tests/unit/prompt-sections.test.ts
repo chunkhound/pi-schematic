@@ -42,6 +42,7 @@ for (const name of ["schematic", "schematic_model_groups"]) {
 	test(`accepts names with the schematic prefix: ${name}`, () => {
 		const registry = createPromptSectionRegistry();
 		expect(() => registry.register({ name, render: () => "body" })).not.toThrow();
+		expect(registry.render()).toStrictEqual([{ name, body: "body" }]);
 	});
 }
 

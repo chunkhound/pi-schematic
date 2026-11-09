@@ -37,7 +37,7 @@ test("watchdog ignores malformed percentages", async () => {
 		const pi = await createTestHost((api) => registerWatchdog(api, state));
 		const [handler] = pi.handlers.get("agent_end")!;
 		await handler({}, { hasUI: false, getContextUsage: () => ({ percent }) });
-		expect(state.lastContextPercent).toBe(null);
+		expect(state.lastContextPercent).toBeNull();
 	}
 });
 
@@ -136,7 +136,8 @@ test("context nudges at band crossings and after a below-30% reset", async () =>
 			{ messages: [{ role: "user", content: `at ${percent}`, timestamp: percent }] },
 			{ getContextUsage: () => ({ percent }) },
 		);
-		expect(result !== undefined, `watchdog nudge at ${percent}%`).toBe(shouldNudge);
+		if (shouldNudge) expect(result, `watchdog nudge at ${percent}%`).toBeDefined();
+		else expect(result, `watchdog nudge at ${percent}%`).toBeUndefined();
 	}
 });
 
@@ -351,9 +352,9 @@ test("a staged handoff that completes at the settle is neither counted nor cance
 		sessionManager: { getBranch: () => branch },
 	});
 
-	expect(state.pendingRequestedHandoff, "the confirmed cut clears the request").toBe(null);
+	expect(state.pendingRequestedHandoff, "the confirmed cut clears the request").toBeNull();
 	expect(notifications.filter((message) => /Required handoff cancelled/i.test(message))).toStrictEqual([]);
-	expect(pi.sentUserMessages.length, "a completed handoff sends no failure guidance").toBe(userMessagesBeforeRun);
+	expect(pi.sentUserMessages, "a completed handoff sends no failure guidance").toHaveLength(userMessagesBeforeRun);
 });
 
 test("watchdog auto-cancels a required handoff after enough unanswered settled runs", async () => {
@@ -385,9 +386,9 @@ test("watchdog auto-cancels a required handoff after enough unanswered settled r
 
 	deliverEligibleNudge(state);
 	await handler({}, ctx);
-	expect(state.pendingRequestedHandoff, "pending handoff should be auto-cancelled").toBe(null);
+	expect(state.pendingRequestedHandoff, "pending handoff should be auto-cancelled").toBeNull();
 	expect(statuses.get(STATUS_KEY_HANDOFF), "cancellation should clear the handoff status").toBeUndefined();
-	expect(notifications.length, "user should receive a cancellation notification").toBeGreaterThan(0);
+	expect(notifications, "user should receive a cancellation notification").toHaveLength(1);
 	expect(notifications[0] as string, "notification should mention cancellation without source-specific wording").toMatch(/Required handoff cancelled/i);
 	expect(notifications[0] as string).not.toMatch(/user-requested|temporary bypass/i);
 });
@@ -409,7 +410,7 @@ test("a nudged run whose staged handoff cut was not persisted counts one attempt
 
 	expect(state.pendingRequestedHandoff?.toolCalled, "the failure resets toolCalled before the watchdog counts").toBe(false);
 	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
-	expect(pi.sentUserMessages.length, "a dropped cut starts no run").toBe(userMessagesBeforeSettle);
+	expect(pi.sentUserMessages, "a dropped cut starts no run").toHaveLength(userMessagesBeforeSettle);
 	expect(pi.sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
 	expect(pi.sentMessages.at(-1)?.options?.triggerTurn).toBe(false);
 });
@@ -434,7 +435,7 @@ test("a nudged run whose handoff was aborted counts one attempt and starts no ru
 
 	expect(state.pendingRequestedHandoff?.toolCalled).toBe(false);
 	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
-	expect(pi.sentUserMessages.length, "an abort must not start another run").toBe(userMessagesBeforeSettle);
+	expect(pi.sentUserMessages, "an abort must not start another run").toHaveLength(userMessagesBeforeSettle);
 	expect(pi.sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
 	expect(pi.sentMessages.at(-1)?.options?.triggerTurn).toBe(false);
 });
@@ -480,7 +481,7 @@ test("a continued run cancels only after MAX_HANDOFF_ATTEMPTS settled runs", asy
 	deliverEligibleNudge(state);
 	for (let i = 0; i < 3; i++) await agentEnd({}, ctx);
 	await agentSettled({ type: "agent_settled" }, ctx);
-	expect(state.pendingRequestedHandoff).toBe(null);
+	expect(state.pendingRequestedHandoff).toBeNull();
 	expect(statuses.get(STATUS_KEY_HANDOFF)).toBeUndefined();
 	expect(notifications).toHaveLength(1);
 	expect(notifications[0].level).toBe("warning");
@@ -584,7 +585,7 @@ test("agent_settled does not record context usage", async () => {
 
 	await handler({ type: "agent_settled" }, { hasUI: false, getContextUsage: () => ({ percent: 70 }) });
 
-	expect(state.lastContextPercent).toBe(null);
+	expect(state.lastContextPercent).toBeNull();
 });
 
 // ── Readonly-specific injection contracts ─────────────────────────

@@ -8,7 +8,7 @@
  * Execution and lifecycle tests remain in spawn.test.ts.
  */
 
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test } from "vitest";
 import { assertPresent } from "../assertions.js";
 import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
@@ -36,10 +36,9 @@ async function makeChildSpawnTool(state: any) {
 
 beforeEach(() => {
 	h = createTestHarness();
-});
-
-afterEach(() => {
-	h.teardown();
+	return () => {
+		h.teardown();
+	};
 });
 
 test("collapsed nested spawn render shows preview and stats", async () => {

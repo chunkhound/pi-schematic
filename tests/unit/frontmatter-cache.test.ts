@@ -72,8 +72,8 @@ function makeSkill(name: string, filePath: string): Skill {
 
 test("cache lookups return null for unknown names", () => {
 	const state = createState();
-	expect(cacheLookupSkill(state, "nonexistent-skill")).toBe(null);
-	expect(cacheLookupCommand(state, "nonexistent-command")).toBe(null);
+	expect(cacheLookupSkill(state, "nonexistent-skill")).toBeNull();
+	expect(cacheLookupCommand(state, "nonexistent-command")).toBeNull();
 });
 
 test("populateFromSkills caches a skill with readonly: true", async () => {
@@ -84,7 +84,7 @@ test("populateFromSkills caches a skill with readonly: true", async () => {
 		populateFromSkills(state, [makeSkill("my-skill", filePath)]);
 
 		expect(cacheLookupSkill(state, "my-skill")).toBe(true);
-		expect(cacheLookupCommand(state, "my-skill")).toBe(null);
+		expect(cacheLookupCommand(state, "my-skill")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -98,7 +98,7 @@ test("populateFromSkills caches a skill with readonly: false", async () => {
 		populateFromSkills(state, [makeSkill("safe-skill", filePath)]);
 
 		expect(cacheLookupSkill(state, "safe-skill")).toBe(false);
-		expect(cacheLookupCommand(state, "safe-skill")).toBe(null);
+		expect(cacheLookupCommand(state, "safe-skill")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -111,8 +111,8 @@ test("populateFromSkills returns null for skill without readonly frontmatter", a
 		const filePath = await writeMd(dir, "no-readonly", { description: "Test" });
 		populateFromSkills(state, [makeSkill("no-readonly", filePath)]);
 
-		expect(cacheLookupSkill(state, "no-readonly")).toBe(null);
-		expect(cacheLookupCommand(state, "no-readonly")).toBe(null);
+		expect(cacheLookupSkill(state, "no-readonly")).toBeNull();
+		expect(cacheLookupCommand(state, "no-readonly")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -121,8 +121,8 @@ test("populateFromSkills returns null for skill without readonly frontmatter", a
 test("populateFromSkills silently skips missing file", () => {
 	const state = createState();
 	populateFromSkills(state, [makeSkill("missing", "/nonexistent/path/skill.md")]);
-	expect(cacheLookupSkill(state, "missing")).toBe(null);
-	expect(cacheLookupCommand(state, "missing")).toBe(null);
+	expect(cacheLookupSkill(state, "missing")).toBeNull();
+	expect(cacheLookupCommand(state, "missing")).toBeNull();
 });
 
 test("populateFromSkills caches multiple skills", async () => {
@@ -140,7 +140,7 @@ test("populateFromSkills caches multiple skills", async () => {
 
 		expect(cacheLookupSkill(state, "alpha")).toBe(true);
 		expect(cacheLookupSkill(state, "beta")).toBe(false);
-		expect(cacheLookupSkill(state, "gamma")).toBe(null);
+		expect(cacheLookupSkill(state, "gamma")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -159,11 +159,11 @@ test("populateFromSkills returns null for non-boolean readonly frontmatter", asy
 			makeSkill("array-ro", fp3),
 		]);
 
-		expect(cacheLookupSkill(state, "string-ro")).toBe(null);
+		expect(cacheLookupSkill(state, "string-ro")).toBeNull();
 		expect(cacheLookupSkillIssue(state, "string-ro")?.kind).toBe("invalid-readonly-value");
-		expect(cacheLookupSkill(state, "number-ro")).toBe(null);
+		expect(cacheLookupSkill(state, "number-ro")).toBeNull();
 		expect(cacheLookupSkillIssue(state, "number-ro")?.kind).toBe("invalid-readonly-value");
-		expect(cacheLookupSkill(state, "array-ro")).toBe(null);
+		expect(cacheLookupSkill(state, "array-ro")).toBeNull();
 		expect(cacheLookupSkillIssue(state, "array-ro")?.kind).toBe("invalid-readonly-value");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -181,7 +181,7 @@ test("cacheLookupCommand falls back to prompts when no skill is loaded", async (
 		populateFromSkills(state, []);
 		populatePromptCacheFromResolvedCommandsAndDirs(state, [], dir, true);
 
-		expect(cacheLookupSkill(state, "prompt-only")).toBe(null);
+		expect(cacheLookupSkill(state, "prompt-only")).toBeNull();
 		expect(cacheLookupCommand(state, "prompt-only")).toBe(true);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -275,7 +275,7 @@ test("populatePromptCacheFromResolvedCommandsAndDirs skips non-.md files", async
 		populatePromptCacheFromResolvedCommandsAndDirs(state, [], dir, true);
 
 		expect(cacheLookupCommand(state, "real-prompt")).toBe(true);
-		expect(cacheLookupCommand(state, "readme")).toBe(null);
+		expect(cacheLookupCommand(state, "readme")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -284,7 +284,7 @@ test("populatePromptCacheFromResolvedCommandsAndDirs skips non-.md files", async
 test("populatePromptCacheFromResolvedCommandsAndDirs skips nonexistent dir silently", () => {
 	const state = createState();
 	populatePromptCacheFromResolvedCommandsAndDirs(state, [], "/nonexistent/workspace", true);
-	expect(cacheLookupCommand(state, "anything")).toBe(null);
+	expect(cacheLookupCommand(state, "anything")).toBeNull();
 });
 
 test("project prompt overrides global prompt for the same name", async () => {
@@ -348,8 +348,8 @@ test("resolved non-prompt command blocks prompt-dir fallback for the same name",
 			description: "Builtin command",
 			sourceInfo: { path: promptPath, source: "test", scope: "temporary", origin: "top-level" },
 		}], workspace, true);
-		expect(cacheLookupCommand(state, "shared-owned")).toBe(null);
-		expect(cacheLookupCommandIssue(state, "shared-owned")).toBe(null);
+		expect(cacheLookupCommand(state, "shared-owned")).toBeNull();
+		expect(cacheLookupCommandIssue(state, "shared-owned")).toBeNull();
 	} finally {
 		await rm(workspace, { recursive: true, force: true });
 	}
@@ -392,7 +392,7 @@ test("populatePromptCacheFromResolvedCommandsAndDirs does not scan project dir w
 
 		populatePromptCacheFromResolvedCommandsAndDirs(state, [], dir, false);
 
-		expect(cacheLookupCommand(state, "proj-only")).toBe(null);
+		expect(cacheLookupCommand(state, "proj-only")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -411,7 +411,7 @@ test("populatePromptCacheFromResolvedCommandsAndDirs evicts deleted prompt entri
 
 		await rm(filePath, { force: true });
 		populatePromptCacheFromResolvedCommandsAndDirs(state, [], dir, true);
-		expect(cacheLookupCommand(state, "deleted-prompt")).toBe(null);
+		expect(cacheLookupCommand(state, "deleted-prompt")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -426,7 +426,7 @@ test("populatePromptCacheFromResolvedCommandsAndDirs records invalid readonly va
 		await writeMd(projectDir, "broken-prompt", { readonly: "yes" });
 
 		populatePromptCacheFromResolvedCommandsAndDirs(state, [], dir, true);
-		expect(cacheLookupCommand(state, "broken-prompt")).toBe(null);
+		expect(cacheLookupCommand(state, "broken-prompt")).toBeNull();
 		expect(cacheLookupCommandIssue(state, "broken-prompt")?.kind).toBe("invalid-readonly-value");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -442,7 +442,7 @@ test("populatePromptCacheFromResolvedCommandsAndDirs records unreadable prompt i
 		await mkdir(join(projectDir, "dir-prompt.md"), { recursive: true });
 
 		populatePromptCacheFromResolvedCommandsAndDirs(state, [], dir, true);
-		expect(cacheLookupCommand(state, "dir-prompt")).toBe(null);
+		expect(cacheLookupCommand(state, "dir-prompt")).toBeNull();
 		expect(cacheLookupCommandIssue(state, "dir-prompt")?.kind).toBe("unreadable-file");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -461,7 +461,7 @@ test("populatePromptCacheFromResolvedCommandsAndDirs evicts untrusted project pr
 		expect(cacheLookupCommand(state, "trusted-only")).toBe(true);
 
 		populatePromptCacheFromResolvedCommandsAndDirs(state, [], dir, false);
-		expect(cacheLookupCommand(state, "trusted-only")).toBe(null);
+		expect(cacheLookupCommand(state, "trusted-only")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -515,7 +515,7 @@ test("global prompts under the home agent dir are ignored when PI_CODING_AGENT_D
 
 			populatePromptCacheFromResolvedCommandsAndDirs(state, [], "/nonexistent/workspace", false);
 
-			expect(cacheLookupCommand(state, "home-prompt")).toBe(null);
+			expect(cacheLookupCommand(state, "home-prompt")).toBeNull();
 		});
 	});
 });
@@ -536,7 +536,7 @@ test("global prompt scan follows a PI_CODING_AGENT_DIR change between rebuilds",
 		process.env.PI_CODING_AGENT_DIR = secondAgentDir;
 		populatePromptCacheFromResolvedCommandsAndDirs(state, [], "/nonexistent/workspace", false);
 
-		expect(cacheLookupCommand(state, "first-dir-prompt")).toBe(null);
+		expect(cacheLookupCommand(state, "first-dir-prompt")).toBeNull();
 		expect(cacheLookupCommand(state, "second-dir-prompt")).toBe(true);
 	} finally {
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -596,7 +596,7 @@ test("populateFromSkills records malformed frontmatter issues", async () => {
 		await writeFile(filePath, `---\nreadonly: [\n---\n\nBody content.\n`);
 		populateFromSkills(state, [makeSkill("broken-skill", filePath)]);
 
-		expect(cacheLookupSkill(state, "broken-skill")).toBe(null);
+		expect(cacheLookupSkill(state, "broken-skill")).toBeNull();
 		expect(cacheLookupSkillIssue(state, "broken-skill")?.kind).toBe("malformed-frontmatter");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -617,7 +617,7 @@ test("populateFromSkills refreshes changed frontmatter when mtime changes", asyn
 
 		populateFromSkills(state, [makeSkill("mutable-skill", filePath)]);
 		expect(cacheLookupSkill(state, "mutable-skill")).toBe(false);
-		expect(cacheLookupCommand(state, "mutable-skill")).toBe(null);
+		expect(cacheLookupCommand(state, "mutable-skill")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -637,7 +637,7 @@ test("populateFromSkills clears an invalid issue after the skill is fixed", asyn
 
 		populateFromSkills(state, [makeSkill("recover-skill", filePath)]);
 		expect(cacheLookupSkill(state, "recover-skill")).toBe(true);
-		expect(cacheLookupSkillIssue(state, "recover-skill")).toBe(null);
+		expect(cacheLookupSkillIssue(state, "recover-skill")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -659,7 +659,7 @@ test("populateFromSkills clears an unreadable issue after the skill becomes read
 
 		populateFromSkills(state, [makeSkill("recover-readable-skill", filePath)]);
 		expect(cacheLookupSkill(state, "recover-readable-skill")).toBe(false);
-		expect(cacheLookupSkillIssue(state, "recover-readable-skill")).toBe(null);
+		expect(cacheLookupSkillIssue(state, "recover-readable-skill")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -712,7 +712,7 @@ test("populatePromptCacheFromResolvedCommandsAndDirs clears an invalid issue aft
 
 		populatePromptCacheFromResolvedCommandsAndDirs(state, commands, dir, false);
 		expect(cacheLookupCommand(state, "recover-prompt")).toBe(true);
-		expect(cacheLookupCommandIssue(state, "recover-prompt")).toBe(null);
+		expect(cacheLookupCommandIssue(state, "recover-prompt")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -732,7 +732,7 @@ test("populatePromptCacheFromResolvedCommandsAndDirs records malformed frontmatt
 		}];
 
 		populatePromptCacheFromResolvedCommandsAndDirs(state, commands, dir, false);
-		expect(cacheLookupCommand(state, "broken-yaml")).toBe(null);
+		expect(cacheLookupCommand(state, "broken-yaml")).toBeNull();
 		expect(cacheLookupCommandIssue(state, "broken-yaml")?.kind).toBe("malformed-frontmatter");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -762,7 +762,7 @@ test("populatePromptCacheFromResolvedCommandsAndDirs clears an unreadable issue 
 
 		populatePromptCacheFromResolvedCommandsAndDirs(state, commands, dir, false);
 		expect(cacheLookupCommand(state, "recover-readable")).toBe(false);
-		expect(cacheLookupCommandIssue(state, "recover-readable")).toBe(null);
+		expect(cacheLookupCommandIssue(state, "recover-readable")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -778,8 +778,8 @@ test("populateFromSkills caches model-group frontmatter", async () => {
 		populateFromSkills(state, [makeSkill("grouped", filePath)]);
 
 		expect(cacheLookupSkillModelGroup(state, "grouped")).toBe("reviewer");
-		expect(cacheLookupSkillExplicitModel(state, "grouped")).toBe(null);
-		expect(cacheLookupSkillExplicitThinking(state, "grouped")).toBe(null);
+		expect(cacheLookupSkillExplicitModel(state, "grouped")).toBeNull();
+		expect(cacheLookupSkillExplicitThinking(state, "grouped")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -793,7 +793,7 @@ test("populateFromSkills caches explicit model frontmatter", async () => {
 		populateFromSkills(state, [makeSkill("explicit", filePath)]);
 
 		expect(cacheLookupSkillExplicitModel(state, "explicit")).toBe("openai/gpt-4o");
-		expect(cacheLookupSkillModelGroup(state, "explicit")).toBe(null);
+		expect(cacheLookupSkillModelGroup(state, "explicit")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -807,8 +807,8 @@ test("populateFromSkills caches thinking frontmatter", async () => {
 		populateFromSkills(state, [makeSkill("thinker", filePath)]);
 
 		expect(cacheLookupSkillExplicitThinking(state, "thinker")).toBe("high");
-		expect(cacheLookupSkillExplicitModel(state, "thinker")).toBe(null);
-		expect(cacheLookupSkillModelGroup(state, "thinker")).toBe(null);
+		expect(cacheLookupSkillExplicitModel(state, "thinker")).toBeNull();
+		expect(cacheLookupSkillModelGroup(state, "thinker")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -821,9 +821,9 @@ test("populateFromSkills returns null for all new fields when frontmatter is abs
 		const filePath = await writeMd(dir, "bare", { description: "Test" });
 		populateFromSkills(state, [makeSkill("bare", filePath)]);
 
-		expect(cacheLookupSkillModelGroup(state, "bare")).toBe(null);
-		expect(cacheLookupSkillExplicitModel(state, "bare")).toBe(null);
-		expect(cacheLookupSkillExplicitThinking(state, "bare")).toBe(null);
+		expect(cacheLookupSkillModelGroup(state, "bare")).toBeNull();
+		expect(cacheLookupSkillExplicitModel(state, "bare")).toBeNull();
+		expect(cacheLookupSkillExplicitThinking(state, "bare")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -857,7 +857,7 @@ test("populateFromSkills returns null and records issue for invalid model-group 
 		const filePath = await writeMd(dir, "bad-group", { "model-group": "" });
 		populateFromSkills(state, [makeSkill("bad-group", filePath)]);
 
-		expect(cacheLookupSkillModelGroup(state, "bad-group")).toBe(null);
+		expect(cacheLookupSkillModelGroup(state, "bad-group")).toBeNull();
 		expect(cacheLookupSkillIssue(state, "bad-group")?.kind).toBe("invalid-model-group-value");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -878,7 +878,7 @@ test("populateFromSkills returns null and records issue for invalid explicit mod
 			const filePath = await writeMd(dir, name, { model });
 			populateFromSkills(state, [makeSkill(name, filePath)]);
 
-			expect(cacheLookupSkillExplicitModel(state, name), `${desc}: model should be null`).toBe(null);
+			expect(cacheLookupSkillExplicitModel(state, name), `${desc}: model should be null`).toBeNull();
 			expect(cacheLookupSkillIssue(state, name)?.kind, `${desc}: issue kind`).toBe("invalid-explicit-model-value");
 		}
 	} finally {
@@ -893,7 +893,7 @@ test("populateFromSkills returns null and records issue for invalid thinking val
 		const filePath = await writeMd(dir, "bad-thinking", { thinking: "ultra" });
 		populateFromSkills(state, [makeSkill("bad-thinking", filePath)]);
 
-		expect(cacheLookupSkillExplicitThinking(state, "bad-thinking")).toBe(null);
+		expect(cacheLookupSkillExplicitThinking(state, "bad-thinking")).toBeNull();
 		expect(cacheLookupSkillIssue(state, "bad-thinking")?.kind).toBe("invalid-thinking-value");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -910,7 +910,7 @@ test("populateFromSkills accepts all valid thinking levels", async () => {
 			populateFromSkills(state, [makeSkill(name, filePath)]);
 
 			expect(cacheLookupSkillExplicitThinking(state, name), `thinking level ${level} should be cached`).toBe(level);
-			expect(cacheLookupSkillIssue(state, name), `thinking level ${level} should have no issue`).toBe(null);
+			expect(cacheLookupSkillIssue(state, name), `thinking level ${level} should have no issue`).toBeNull();
 		}
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -964,8 +964,8 @@ test("populatePromptCacheFromResolvedCommandsAndDirs caches model-group for prom
 		}], dir, false);
 
 		expect(cacheLookupCommandModelGroup(state, "cmd-group")).toBe("fast");
-		expect(cacheLookupCommandExplicitModel(state, "cmd-group")).toBe(null);
-		expect(cacheLookupCommandExplicitThinking(state, "cmd-group")).toBe(null);
+		expect(cacheLookupCommandExplicitModel(state, "cmd-group")).toBeNull();
+		expect(cacheLookupCommandExplicitThinking(state, "cmd-group")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -1019,7 +1019,7 @@ test("populatePromptCacheFromResolvedCommandsAndDirs records invalid model-group
 			sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
 		}], dir, false);
 
-		expect(cacheLookupCommandModelGroup(state, "bad-cmd-group")).toBe(null);
+		expect(cacheLookupCommandModelGroup(state, "bad-cmd-group")).toBeNull();
 		expect(cacheLookupCommandIssue(state, "bad-cmd-group")?.kind).toBe("invalid-model-group-value");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -1038,7 +1038,7 @@ test("populatePromptCacheFromResolvedCommandsAndDirs records invalid explicit mo
 			sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
 		}], dir, false);
 
-		expect(cacheLookupCommandExplicitModel(state, "bad-cmd-model")).toBe(null);
+		expect(cacheLookupCommandExplicitModel(state, "bad-cmd-model")).toBeNull();
 		expect(cacheLookupCommandIssue(state, "bad-cmd-model")?.kind).toBe("invalid-explicit-model-value");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -1057,7 +1057,7 @@ test("populatePromptCacheFromResolvedCommandsAndDirs records invalid thinking is
 			sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
 		}], dir, false);
 
-		expect(cacheLookupCommandExplicitThinking(state, "bad-cmd-think")).toBe(null);
+		expect(cacheLookupCommandExplicitThinking(state, "bad-cmd-think")).toBeNull();
 		expect(cacheLookupCommandIssue(state, "bad-cmd-think")?.kind).toBe("invalid-thinking-value");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -1118,7 +1118,7 @@ test("populateFromSkills caches all frontmatter fields together", async () => {
 		expect(cacheLookupSkillModelGroup(state, "all-fields")).toBe("reviewer");
 		expect(cacheLookupSkillExplicitModel(state, "all-fields")).toBe("openai/gpt-4o");
 		expect(cacheLookupSkillExplicitThinking(state, "all-fields")).toBe("high");
-		expect(cacheLookupSkillIssue(state, "all-fields")).toBe(null);
+		expect(cacheLookupSkillIssue(state, "all-fields")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -1136,7 +1136,7 @@ test("populateFromSkills accepts slashes inside model IDs", async () => {
 		populateFromSkills(state, skills);
 		models.forEach((model, index) => {
 			expect(cacheLookupSkillExplicitModel(state, `nested-model-${index}`)).toBe(model);
-			expect(cacheLookupSkillIssue(state, `nested-model-${index}`)).toBe(null);
+			expect(cacheLookupSkillIssue(state, `nested-model-${index}`)).toBeNull();
 		});
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -1152,7 +1152,7 @@ test("populateFromSkills handles very long model name without crashing", async (
 		populateFromSkills(state, [makeSkill("long-model", filePath)]);
 
 		expect(cacheLookupSkillExplicitModel(state, "long-model")).toBe(longModel);
-		expect(cacheLookupSkillIssue(state, "long-model")).toBe(null);
+		expect(cacheLookupSkillIssue(state, "long-model")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -1166,7 +1166,7 @@ test("populateFromSkills handles model name with special characters", async () =
 		populateFromSkills(state, [makeSkill("special-model", filePath)]);
 
 		expect(cacheLookupSkillExplicitModel(state, "special-model")).toBe("my-provider/model-v2.5_beta");
-		expect(cacheLookupSkillIssue(state, "special-model")).toBe(null);
+		expect(cacheLookupSkillIssue(state, "special-model")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -1179,7 +1179,7 @@ test("populateFromSkills treats whitespace-only model-group as empty/invalid", a
 		const filePath = await writeMd(dir, "ws-group", { "model-group": "   " });
 		populateFromSkills(state, [makeSkill("ws-group", filePath)]);
 
-		expect(cacheLookupSkillModelGroup(state, "ws-group")).toBe(null);
+		expect(cacheLookupSkillModelGroup(state, "ws-group")).toBeNull();
 		expect(cacheLookupSkillIssue(state, "ws-group")?.kind).toBe("invalid-model-group-value");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -1219,7 +1219,7 @@ test("cache clears invalid model issue after file is fixed", async () => {
 
 		populateFromSkills(state, [makeSkill("recover-model", filePath)]);
 		expect(cacheLookupSkillExplicitModel(state, "recover-model")).toBe("openai/gpt-4o");
-		expect(cacheLookupSkillIssue(state, "recover-model")).toBe(null);
+		expect(cacheLookupSkillIssue(state, "recover-model")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -1239,7 +1239,7 @@ test("cache clears invalid thinking issue after file is fixed", async () => {
 
 		populateFromSkills(state, [makeSkill("recover-think", filePath)]);
 		expect(cacheLookupSkillExplicitThinking(state, "recover-think")).toBe("high");
-		expect(cacheLookupSkillIssue(state, "recover-think")).toBe(null);
+		expect(cacheLookupSkillIssue(state, "recover-think")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -1260,9 +1260,9 @@ test("validation reports the first issue when every field is invalid", async () 
 		const issue = cacheLookupSkillIssue(state, "multi-invalid");
 		assertPresent(issue, "should have an issue");
 		expect(issue.kind, "should report the first issue").toBe("invalid-readonly-value");
-		expect(cacheLookupSkillModelGroup(state, "multi-invalid")).toBe(null);
-		expect(cacheLookupSkillExplicitModel(state, "multi-invalid")).toBe(null);
-		expect(cacheLookupSkillExplicitThinking(state, "multi-invalid")).toBe(null);
+		expect(cacheLookupSkillModelGroup(state, "multi-invalid")).toBeNull();
+		expect(cacheLookupSkillExplicitModel(state, "multi-invalid")).toBeNull();
+		expect(cacheLookupSkillExplicitThinking(state, "multi-invalid")).toBeNull();
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}

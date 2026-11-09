@@ -105,12 +105,14 @@ export function stripAnsi(text: string): string {
 export function getRenderedLine(lines: string[], match: (plain: string) => boolean): string {
 	const line = lines.find(candidate => match(stripAnsi(candidate)));
 	assertPresent(line);
+	expect(line).not.toBe("");
 	return line;
 }
 
 export function getLineContaining(lines: string[], text: string): string {
 	const line = lines.find(candidate => candidate.includes(text));
 	assertPresent(line);
+	expect(line).not.toBe("");
 	return line;
 }
 
@@ -328,6 +330,8 @@ export interface RealChildInvocationResult {
 export async function runRealChildInvocation(params: {
 	prompt: string;
 	thinking?: "max";
+	/** Register the probe model as reasoning-capable, so a requested thinking level is not clamped to "off". */
+	reasoning?: boolean;
 	readonly?: boolean;
 	activeTools?: string[];
 	invokeReadonlyBash?: boolean;
@@ -383,7 +387,7 @@ export default function(pi) {
 	pi.registerProvider("${provider}", {
 		api: "agentic-e2e-api", apiKey: "test-key", baseUrl: "http://localhost.invalid",
 		models: [{
-			id: "${modelId}", name: "Agentic E2E Model", reasoning: false,
+			id: "${modelId}", name: "Agentic E2E Model", reasoning: ${params.reasoning ?? false},
 			input: ["text"], cost: usage.cost, contextWindow: 128000, maxTokens: 1024,
 		}],
 		streamSimple(model, context, options) {
@@ -469,7 +473,7 @@ export default function(pi) {
 		(globalThis as any).__agenticE2eThinking = [];
 		const model = {
 			id: modelId, name: "Agentic E2E Model", api: "agentic-e2e-api", provider,
-			reasoning: false, input: ["text"],
+			reasoning: params.reasoning ?? false, input: ["text"],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 128000, maxTokens: 1024,
 		};

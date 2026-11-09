@@ -2,11 +2,11 @@
  * Central test harness for the pi-schematic extension.
  *
  * Every non-E2E test that touches module-level singletons creates a harness
- * with `createTestHarness()` and tears it down from `afterEach` or an
- * `onTestFinished` callback.  One call installs a fresh singleton container,
- * its own write lock and context included, and captures console output — no
- * per-test patches.  It throws, changing nothing, while a write is pending on
- * the installed write lock.
+ * with `createTestHarness()` and tears it down from a cleanup returned by
+ * `beforeEach` or from an `onTestFinished` callback.  One call installs a
+ * fresh singleton container, its own write lock and context included, and
+ * captures console output, so no test needs its own patches.  It throws,
+ * changing nothing, while a write is pending on the installed write lock.
  *
  * `teardown()` restores the console, then the container that was current at
  * `createTestHarness()` (even while a write is pending), then clears the
@@ -19,14 +19,17 @@
  *
  *   const h = createTestHarness();
  *   onTestFinished(() => { h.teardown(); });
- *   // test body — use h.warnings
+ *   // test body: use h.warnings
  *
- * With beforeEach/afterEach:
+ * With a cleanup returned from beforeEach, which Vitest registers only when
+ * the hook returned, so a harness that refused to start is not torn down:
  *
  *   describe("spawn", () => {
  *     let h: TestHarness;
- *     beforeEach(() => { h = createTestHarness(); });
- *     afterEach(() => { h.teardown(); });
+ *     beforeEach(() => {
+ *       h = createTestHarness();
+ *       return () => { h.teardown(); };
+ *     });
  *   });
  */
 
@@ -49,7 +52,8 @@ export interface TestHarness {
 	 * createTestHarness() whether or not a write is pending, then clear the
 	 * harness scheduler.  Throws, after all three, when the harness write lock
 	 * had pending writes at the start of the call; the pending write is left as
-	 * it is.  Call it from afterEach or an onTestFinished callback.
+	 * it is.  Call it from a cleanup returned by beforeEach or from an
+	 * onTestFinished callback.
 	 */
 	teardown: () => void;
 }
@@ -61,8 +65,9 @@ export interface TestHarness {
  *
  * IMPORTANT: Do not call createTestHarness() twice without an intervening
  * teardown(). The second call captures the first's state, and teardown of the
- * second restores stale singletons. Use beforeEach/afterEach to guarantee a
- * single active harness per test.
+ * second restores stale singletons. Tear each harness down from a cleanup
+ * returned by beforeEach (or from afterEach) or from an onTestFinished
+ * callback to guarantee a single active harness per test.
  */
 export function createTestHarness(): TestHarness {
 	const previousSingletons = getSingletons();

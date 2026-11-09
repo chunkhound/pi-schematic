@@ -73,13 +73,13 @@ test("model groups store creates, round-trips, validates, renames, updates, dele
 	createGroup("global", access(cwd), "move-collision", { models: [] }, registry());
 	createGroup("project", access(cwd), "move-collision", { models: [] }, registry());
 	expect(() => moveGroup(access(cwd), "move-collision", "project")).toThrow(/already exists in project scope/);
-	expect(read("global", cwd).groups["move-collision"]).toBeTruthy();
-	expect(read("project", cwd).groups["move-collision"]).toBeTruthy();
+	expect(read("global", cwd).groups).toHaveProperty(["move-collision"], expect.objectContaining({ models: expect.any(Array) }));
+	expect(read("project", cwd).groups).toHaveProperty(["move-collision"], expect.objectContaining({ models: expect.any(Array) }));
 
 	const deleted = deleteGroup("global", access(cwd), "reviewers");
 	expect(deleted.otherScopeHasOverride).toBe(true);
 	moveGroup(access(cwd), "reviewers", "global");
-	expect(read("global", cwd).groups.reviewers).toBeTruthy();
+	expect(read("global", cwd).groups).toHaveProperty(["reviewers"], expect.objectContaining({ models: expect.any(Array) }));
 	expect(read("project", cwd).groups.reviewers).toBeUndefined();
 }));
 
@@ -201,7 +201,7 @@ test("model groups persistence failures throw typed errors and preserve committe
 		return true;
 	}));
 	__setModelGroupsFsForTests(null);
-	expect(read("project", cwd).groups.keep).toBeTruthy();
+	expect(read("project", cwd).groups).toHaveProperty(["keep"], expect.objectContaining({ models: expect.any(Array) }));
 	expect(read("project", cwd).groups.keep.models).toHaveLength(0);
 
 	__setModelGroupsFsForTests({ renameSync: () => { throw new Error("rename denied"); } });
@@ -211,7 +211,7 @@ test("model groups persistence failures throw typed errors and preserve committe
 		return true;
 	}));
 	__setModelGroupsFsForTests(null);
-	expect(read("project", cwd).groups.keep).toBeTruthy();
+	expect(read("project", cwd).groups).toHaveProperty(["keep"], expect.objectContaining({ models: expect.any(Array) }));
 	expect(read("project", cwd).groups.drop).toBeUndefined();
 
 	__setModelGroupsFsForTests({ renameSync: () => { throw new Error("delete denied"); } });
@@ -265,7 +265,7 @@ test("model groups strictly partitions schema and legacy version domains", () =>
 		expect(issue.kind, label).toBe("schema-invalid");
 		expect(issue.message, label).toMatch(message);
 		expect(`${projectPath}.bak`, label).toSatisfy(fs.existsSync);
-		expect(Object.keys(loaded.configs.project.groups).length, label).toBe(0);
+		expect(Object.keys(loaded.configs.project.groups), label).toHaveLength(0);
 	}
 	for (const raw of [{ groups: { legacy: { models: [] } } }, { version: 0, groups: { legacy: { models: [] } } }]) {
 		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");

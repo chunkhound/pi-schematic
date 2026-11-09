@@ -136,7 +136,8 @@ test.skipIf(!canUseOsSandbox())("sandboxed child bash write outside temp returns
 		expect(result.isError).toBe(true);
 		expect(textOf(result), textOf(result)).toContain(READONLY_SANDBOX_BLOCK_NOTICE);
 		const structured = result.structuredContent as { output: string; exit_code: number };
-		expect(structured.output.endsWith(`\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`), structured.output).toBe(true);
+		const suffix = `\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`;
+		expect(structured.output.slice(-suffix.length), structured.output).toBe(suffix);
 		expect(structured.exit_code).toBe(1);
 		expect(target, "the sandbox must block the write").not.toSatisfy(fs.existsSync);
 	} finally {
@@ -154,7 +155,7 @@ test.skipIf(!canUseOsSandbox())("sandboxed child bash error carrying a sandbox d
 		await expect(runChildBashUntil(command, SANDBOX_DENIAL_PHRASE)).rejects.toSatisfy((error: Error) => {
 			expect(error).toBeInstanceOf(Error);
 			expect(error.message).toMatch(/Command aborted/);
-			expect(error.message.endsWith(READONLY_SANDBOX_BLOCK_NOTICE), error.message).toBe(true);
+			expect(error.message.slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), error.message).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
 			return true;
 		});
 		expect(target, "the sandbox must block the write").not.toSatisfy(fs.existsSync);
@@ -246,7 +247,7 @@ test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("concurrent child bas
 
 		expect(sandboxedResult.status).toBe("fulfilled");
 		if (sandboxedResult.status !== "fulfilled") expect.unreachable();
-		expect(textOf(sandboxedResult.value).endsWith(READONLY_SANDBOX_BLOCK_NOTICE), textOf(sandboxedResult.value)).toBe(true);
+		expect(textOf(sandboxedResult.value).slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), textOf(sandboxedResult.value)).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
 		expect(blockedResult.status).toBe("rejected");
 		if (blockedResult.status !== "rejected") expect.unreachable();
 		expect(blockedResult.reason).toBeInstanceOf(Error);
@@ -264,7 +265,7 @@ test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("sandboxed child bash
 	await expect(runChildBash(command, { timeout: 1 })).rejects.toSatisfy((error: Error) => {
 		expect(error).toBeInstanceOf(Error);
 		expect(error.message).toMatch(/Command timed out after 1 seconds/);
-		expect(error.message.endsWith(READONLY_SANDBOX_BLOCK_NOTICE), error.message).toBe(true);
+		expect(error.message.slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), error.message).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
 		return true;
 	});
 }, 20_000);
@@ -298,7 +299,7 @@ test("real readonly child omits write/edit/powershell and blocks a non-temp bash
 	expect(proof.result.details.model).toBe(proof.modelId);
 	expect(proof.result.content[0].text).toMatch(/READONLY_BASH_BLOCKED/);
 	expect(proof.bashWriteExists, "readonly child bash must not write to its cwd").toBe(false);
-	expect(proof.observedToolSets.length).toBeGreaterThan(0);
+	expect(proof.observedToolSets).toHaveLength(2);
 	for (const toolNames of proof.observedToolSets) {
 		expect(toolNames).not.toContain("write");
 		expect(toolNames).not.toContain("edit");

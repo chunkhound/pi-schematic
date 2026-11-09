@@ -41,7 +41,7 @@ test("__setSingletons warns and preserves lock + write context during in-flight 
 	});
 	const after = getSingletons();
 	const warnings = h.warnings.filter((entry) => entry.level === "warn");
-	expect(warnings.length).toBeGreaterThan(0);
+	expect(warnings).toHaveLength(1);
 	expect(String(warnings[0].args[0])).toMatch(/pending/);
 	expect(after.writeLock).toBe(before.writeLock);
 	expect(after.writeContext).toBe(before.writeContext);
@@ -74,7 +74,7 @@ test("write lock serializes concurrent writers and completes all", async () => {
 	await Promise.all(writers);
 
 	// All writers completed in some order
-	expect(order.length).toBe(5);
+	expect(order).toHaveLength(5);
 	expect(order).toContain(0);
 	expect(order).toContain(4);
 
@@ -96,6 +96,29 @@ test("teardown restores the console and singletons, then fails, when a write is 
 
 	expect(writeLock.pending, "teardown leaves the pending write alone").toBe(1);
 	expect(clear, "teardown clears the harness scheduler before it throws").toHaveBeenCalledOnce();
+	expect(getSingletons()).toBe(outer);
+	expect(console.debug).toBe(debug);
+	expect(console.log).toBe(log);
+	expect(console.warn).toBe(warn);
+	expect(console.error).toBe(error);
+});
+
+test("teardown restores the console and singletons when clearing the harness scheduler throws", () => {
+	const outer = getSingletons();
+	const { debug, log, warn, error } = console;
+	const h = createTestHarness();
+	onTestFinished(() => {
+		// Undo the swaps teardown should have made, so a failure here does not
+		// leave the console captured and the harness singletons installed.
+		Object.assign(console, { debug, log, warn, error });
+		__setSingletons(outer, { forceWriteLock: true });
+	});
+	getSingletons().frameScheduler.clear = () => {
+		throw new Error("boom");
+	};
+
+	expect(() => h.teardown()).toThrow(/boom/);
+
 	expect(getSingletons()).toBe(outer);
 	expect(console.debug).toBe(debug);
 	expect(console.log).toBe(log);

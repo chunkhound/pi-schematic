@@ -426,7 +426,7 @@ test("notebook tool renderers expose stable call/result summaries", async () => 
 test("/notebook exits cleanly when headless", async () => {
 	const pi = await createTestHost();
 
-	await expect(pi.commands.get("notebook")!.handler("", { hasUI: false })).resolves.not.toThrow();
+	await expect(pi.commands.get("notebook")!.handler("", { hasUI: false })).resolves.toBeUndefined();
 });
 
 
@@ -577,6 +577,8 @@ test("/notebook overlay sorts entries consistently", async () => {
 	});
 
 	const lines = stripAnsi(overlay.render(120).join("\n"));
+	expect(lines).toContain("alpha");
+	expect(lines).toContain("zeta");
 	expect(lines.indexOf("alpha"), lines).toBeLessThan(lines.indexOf("zeta"));
 	expect(lines).toMatch(/enter view/);
 });
@@ -719,11 +721,11 @@ test("spawnPager resolves when the pager exits without reading stdin (EPIPE/EOF 
 	// before the child even starts.
 	const body = "x".repeat(5 * 1024 * 1024);
 
-	await expect(spawnPager(body, { cmd: process.execPath, args: ["-e", "process.exit(0)"] })).resolves.not.toThrow();
+	await expect(spawnPager(body, { cmd: process.execPath, args: ["-e", "process.exit(0)"] })).resolves.toBeUndefined();
 });
 
 test("spawnPager resolves when the pager exits nonzero", async () => {
-	await expect(spawnPager("body", { cmd: process.execPath, args: ["-e", "process.exit(1)"] })).resolves.not.toThrow();
+	await expect(spawnPager("body", { cmd: process.execPath, args: ["-e", "process.exit(1)"] })).resolves.toBeUndefined();
 });
 
 test("/notebook enter suspends the TUI, awaits the pager, then restores the TUI and reopens the list", async () => {
@@ -784,8 +786,8 @@ test("/notebook enter suspends the TUI, awaits the pager, then restores the TUI 
 	expect(customCalls, "list must reopen after pager exits").toBe(2);
 	const arrowLine = renders[0]!.split("\n").find((l) => l.includes("→"));
 	assertPresent(arrowLine, `expected a cursor row, got:\n${renders[0]}`);
-	expect(arrowLine!).toMatch(/zeta/);
-	expect(arrowLine!).not.toMatch(/alpha/);
+	expect(arrowLine).toMatch(/zeta/);
+	expect(arrowLine).not.toMatch(/alpha/);
 });
 
 /**
@@ -828,7 +830,7 @@ test("/notebook pager interaction installs and removes a SIGINT guard", async ()
 	await pi.commands.get("notebook")!.handler("", makeTUICtx({ percent: 20, custom: enterOnFirstOpen().custom }));
 
 	expect(duringSpawnListenerCount, "SIGINT guard must be installed during pager").toBe(baselineSigint + 1);
-	expect(process.listeners("SIGINT").length, "SIGINT guard must be removed after pager").toBe(baselineSigint);
+	expect(process.listeners("SIGINT"), "SIGINT guard must be removed after pager").toHaveLength(baselineSigint);
 });
 
 test("openInPager removes the SIGINT guard even if tui.start throws", async () => {
@@ -843,7 +845,7 @@ test("openInPager removes the SIGINT guard even if tui.start throws", async () =
 	};
 
 	await expect(openInPager(tui as any, "body", { cmd: "pager", args: [] })).rejects.toThrow(/start boom/);
-	expect(process.listeners("SIGINT").length, "SIGINT guard must not leak when tui.start throws").toBe(baselineSigint);
+	expect(process.listeners("SIGINT"), "SIGINT guard must not leak when tui.start throws").toHaveLength(baselineSigint);
 });
 
 test("openInPager propagates a tui.stop failure without spawning, guarding SIGINT, or restarting", async () => {
@@ -861,7 +863,7 @@ test("openInPager propagates a tui.stop failure without spawning, guarding SIGIN
 
 	await expect(openInPager(tui as any, "body", { cmd: "pager", args: [] })).rejects.toThrow(/stop boom/);
 	expect(spawned, "pager must not spawn when tui.stop throws").toBe(false);
-	expect(process.listeners("SIGINT").length, "SIGINT guard must not leak when tui.stop throws").toBe(baselineSigint);
+	expect(process.listeners("SIGINT"), "SIGINT guard must not leak when tui.stop throws").toHaveLength(baselineSigint);
 	expect(started, "TUI must not restart after a failed stop").toBe(false);
 });
 
@@ -913,7 +915,7 @@ test("/notebook reopens the list when the selected page vanished while it was op
 	});
 	await pi.commands.get("notebook")!.handler("", makeTUICtx({ percent: 20, custom }));
 
-	expect(reopens.length, "list must reopen instead of closing").toBe(1);
+	expect(reopens, "list must reopen instead of closing").toHaveLength(1);
 	expect(reopens[0]!).toMatch(/Notebook \(0 pages\)/);
 	expect(spawned, "a vanished page must not open the pager").toBe(false);
 });
@@ -950,8 +952,8 @@ test("/notebook inline preview returns to the list on any key when no pager is a
 	expect(customCalls, "list must reopen after the inline preview").toBe(2);
 	const arrowLine = renders[0]!.split("\n").find((l) => l.includes("→"));
 	assertPresent(arrowLine, `expected a cursor row, got:\n${renders[0]}`);
-	expect(arrowLine!).toMatch(/zeta/);
-	expect(arrowLine!).not.toMatch(/alpha/);
+	expect(arrowLine).toMatch(/zeta/);
+	expect(arrowLine).not.toMatch(/alpha/);
 });
 
 test("/notebook selecting an empty-content page opens the preview instead of closing the picker", async () => {
@@ -992,6 +994,11 @@ test("saveNotebookPage serializes concurrent writes and preserves completion ord
 	});
 	const second = saveNotebookPage(pi as any, state, "entry-a", "second", async () => {
 		order.push("second:start");
+	});
+	// Both writes hold the module-level lock, so a failing check must not leave them running into the next test.
+	onTestFinished(async () => {
+		firstGate.resolve();
+		await Promise.allSettled([first, second]);
 	});
 
 	await Promise.resolve();
@@ -1085,7 +1092,7 @@ test("saveNotebookPage releases the lock when assertWritable throws", async () =
 	await expect(saveNotebookPage(pi as any, state, "broken", "value", async () => {
 		throw new Error("blocked");
 	})).rejects.toThrow(/blocked/);
-	await expect(saveNotebookPage(pi as any, state, "fresh", "value")).resolves.not.toThrow();
+	await expect(saveNotebookPage(pi as any, state, "fresh", "value")).resolves.toMatchObject({ clipped: false });
 	expect(state.notebookPages.get("fresh")).toBe("value");
 });
 
@@ -1099,7 +1106,7 @@ test("resetNotebookWriteLock clears abandoned lock state for later writes", asyn
 	await Promise.resolve();
 	resetNotebookWriteLock();
 
-	await expect(saveNotebookPage(pi as any, state, "fresh", "value")).resolves.not.toThrow();
+	await expect(saveNotebookPage(pi as any, state, "fresh", "value")).resolves.toMatchObject({ clipped: false });
 	expect(state.notebookPages.get("fresh")).toBe("value");
 	gate.resolve();
 });
@@ -1146,7 +1153,7 @@ test("notebook tool definitions include prompt hints when withPromptHints is tru
 	const tools = createNotebookToolDefinitions(pi as any, state, { withPromptHints: true });
 
 	for (const tool of tools) {
-		expect(typeof tool.promptSnippet, `${tool.name} should have promptSnippet when withPromptHints=true`).toBe("string");
+		expect(tool.promptSnippet, `${tool.name} should have promptSnippet when withPromptHints=true`).toBeTypeOf("string");
 		expect(tool.promptGuidelines, `${tool.name} should have promptGuidelines when withPromptHints=true`).toSatisfy(Array.isArray);
 	}
 	const notebookWrite = tools.find(t => t.name === "notebook_write")!;
@@ -1565,7 +1572,8 @@ test("rejected overwrite preserves prior body and clipped flag", async () => {
 	expect(state.epoch).toBe(epochClipped);
 	read = await notebookRead.execute("3", { name: "page" }, undefined, undefined, {} as any);
 	expect((read.details as any).clipped).toBe(true);
-	expect((read.content[0] as any).text.endsWith(`\n\n${Notice}`)).toBe(true);
+	const suffix = `\n\n${Notice}`;
+	expect((read.content[0] as any).text.slice(-suffix.length)).toBe(suffix);
 });
 
 test("blank first line plus oversized line rejects and preserves prior page state", async () => {
@@ -1593,7 +1601,7 @@ test("blank first line plus oversized line rejects and preserves prior page stat
 	});
 	expect(updateCalled).toBe(false);
 	expect(state.notebookPages.get("page")).toBe(C);
-	expect(state.clippedPages.has("page")).toBe(false);
+	expect([...state.clippedPages]).not.toContain("page");
 	expect(state.epoch).toBe(epochBefore);
 	expect(pi.appendedEntries).toHaveLength(entriesBefore);
 	expect(record.statuses.size).toBe(0);
@@ -1610,7 +1618,7 @@ test("blank first line plus oversized line rejects and preserves prior page stat
 	});
 	const read = await notebookRead.execute("3", { name: "page" }, undefined, undefined, {} as any);
 	expect(state.notebookPages.get("page")).toBe(L(2000));
-	expect(state.clippedPages.has("page")).toBe(true);
+	expect([...state.clippedPages]).toContain("page");
 	expect(state.epoch).toBe(epochClipped);
 	expect(pi.appendedEntries).toHaveLength(entriesClipped);
 	expect((read.details as any).body).toBe(L(2000));
@@ -1619,7 +1627,7 @@ test("blank first line plus oversized line rejects and preserves prior page stat
 	// An untruncated empty write is still accepted by the new guard.
 	await saveNotebookPage(pi as any, state, "page", "");
 	expect(state.notebookPages.get("page")).toBe("");
-	expect(state.clippedPages.has("page")).toBe(false);
+	expect([...state.clippedPages]).not.toContain("page");
 });
 
 test("clipped flag survives fresh reconstruction without persisted quantities", async () => {
@@ -1636,7 +1644,8 @@ test("clipped flag survives fresh reconstruction without persisted quantities", 
 	const [, restoredRead] = createNotebookToolDefinitions(restoredPi as any, restored);
 	const read = await restoredRead.execute("1", { name: "page" }, undefined, undefined, {} as any);
 	expect((read.details as any).clipped).toBe(true);
-	expect((read.content[0] as any).text.endsWith(`\n\n${Notice}`)).toBe(true);
+	const suffix = `\n\n${Notice}`;
+	expect((read.content[0] as any).text.slice(-suffix.length)).toBe(suffix);
 });
 
 test("complete overwrite clears a durable clipped flag", async () => {
@@ -1693,7 +1702,7 @@ test("discard survivor retains its durable clipped flag", async () => {
 
 test("formatPageTuiPreview appends a badge only when clipped", async () => {
 	const mod = (await import("../../notebook/store.js")) as unknown as Record<string, unknown>;
-	expect(typeof mod["formatPageTuiPreview"]).toBe("function");
+	expect(mod["formatPageTuiPreview"]).toBeTypeOf("function");
 	const formatPageTuiPreview = mod["formatPageTuiPreview"] as (content: string, clipped: boolean) => string;
 
 	expect(formatPageTuiPreview(L(2000), true)).toBe("x [truncated]");
@@ -1734,9 +1743,9 @@ test("notebook_write descriptions state the shared write-size semantics", async 
 	const state = createState();
 	const [notebookWrite] = createNotebookToolDefinitions(pi as any, state);
 
-	expect(notebookWrite.description.endsWith(DescriptionSuffix)).toBe(true);
+	expect(notebookWrite.description.slice(-DescriptionSuffix.length)).toBe(DescriptionSuffix);
 	const contentDescription = (notebookWrite.parameters as any).properties.content.description as string;
-	expect(contentDescription.endsWith(DescriptionSuffix)).toBe(true);
+	expect(contentDescription.slice(-DescriptionSuffix.length)).toBe(DescriptionSuffix);
 	expect(JSON.stringify(notebookWrite.parameters)).not.toMatch(/Truncated at 50KB \/ 2000 lines\./);
 	expect(notebookWrite.description).not.toMatch(/Truncated at 50KB \/ 2000 lines\./);
 });
@@ -1774,10 +1783,10 @@ test("byte overflow preserves the first whole line in ASCII and UTF-8", async ()
 	const state = createState();
 	await saveNotebookPage(pi as any, state, "page", B);
 	expect(state.notebookPages.get("page")).toBe("a".repeat(25600));
-	expect(state.notebookPages.get("page")!.includes("\n")).toBe(false);
+	expect(state.notebookPages.get("page")!).not.toContain("\n");
 	await saveNotebookPage(pi as any, state, "page", U);
 	expect(state.notebookPages.get("page")).toBe("é".repeat(12800));
-	expect(state.notebookPages.get("page")!.includes("\n")).toBe(false);
+	expect(state.notebookPages.get("page")!).not.toContain("\n");
 });
 
 test("complete and empty bodies remain accepted at the existing caps", async () => {

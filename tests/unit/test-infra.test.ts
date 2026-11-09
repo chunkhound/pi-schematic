@@ -54,12 +54,16 @@ describe("run-node-test", () => {
 
 // TODO(#88): remove with tests/vitest-files.mjs once the unit project includes its files by glob.
 describe("tests/vitest-files.mjs", () => {
+	const onDisk = globSync("tests/unit/**/*.test.ts", { cwd: REPO_ROOT }).map((file) => file.split(sep).join("/"));
+
 	test("lists every unit test file under tests/unit", () => {
-		const onDisk = globSync("tests/unit/**/*.test.ts", { cwd: REPO_ROOT }).map((file) => file.split(sep).join("/"));
 		const unlisted = onDisk.filter((file) => !VITEST_FILES.includes(file)).sort();
-		expect(unlisted).toStrictEqual([]);
+		expect(unlisted, "missing from tests/vitest-files.mjs").toStrictEqual([]);
+	});
+
+	test("lists only files that exist", () => {
 		const missing = VITEST_FILES.filter((file) => !onDisk.includes(file)).sort();
-		expect(missing).toStrictEqual([]);
+		expect(missing, "listed in tests/vitest-files.mjs but missing on disk").toStrictEqual([]);
 	});
 });
 

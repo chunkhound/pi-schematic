@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import { createState } from "../../state.js";
 import { createSession, createSubscribableSession, createRenderContext, theme } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
@@ -16,10 +16,9 @@ async function makeChildSpawnTool(state: any) {
 
 beforeEach(() => {
 	h = createTestHarness();
-});
-
-afterEach(() => {
-	h.teardown();
+	return () => {
+		h.teardown();
+	};
 });
 
 test("test harness captures every forbidden console output level", () => {
@@ -257,14 +256,14 @@ test("nested spawn dispose aborts but does not dispose a claimed live child sess
 		createRenderContext(),
 	) as any;
 
-	expect(state.childSessions.has("tool-call-1")).toBe(false);
-	expect(state.liveChildSessions.has("tool-call-1")).toBe(true);
+	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
+	expect([...state.liveChildSessions.keys()]).toContain("tool-call-1");
 
 	component.dispose();
 
 	expect(abortCalls).toBe(1);
 	expect(disposeCalls).toBe(0);
-	expect(state.liveChildSessions.has("tool-call-1")).toBe(false);
+	expect([...state.liveChildSessions.keys()]).not.toContain("tool-call-1");
 });
 
 test("nested spawn rapid events collapse to last state", async () => {

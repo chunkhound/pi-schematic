@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test } from "vitest";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { assertPresent } from "../assertions.js";
 import { readFile } from "node:fs/promises";
@@ -61,10 +61,9 @@ async function makeChildSpawnTool(state: any) {
 
 beforeEach(() => {
 	h = createTestHarness();
-});
-
-afterEach(() => {
-	h.teardown();
+	return () => {
+		h.teardown();
+	};
 });
 
 async function executeWithFailingCleanup(primaryFailure: unknown, cleanupFailure: unknown, context: Record<string, unknown> = {}) {
@@ -1875,7 +1874,7 @@ test("a throwing notice for a failed reset abort does not emit an unhandled reje
 		await new Promise((resolve) => setImmediate(resolve));
 
 		expect(notifyCalls).toBe(1);
-		expect(unhandled.length, `no unhandled abort rejections: ${unhandled.map((e) => String(e)).join(", ")}`).toBe(0);
+		expect(unhandled, `no unhandled abort rejections: ${unhandled.map((e) => String(e)).join(", ")}`).toHaveLength(0);
 		assertChildRegistriesCleared(state);
 	} finally {
 		process.removeListener("unhandledRejection", onUnhandled);
@@ -2219,7 +2218,7 @@ test("executeSpawn does not prompt when onUpdate synchronously resets the child 
 
 	assertErrorResult(await execution, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
 	expect(promptCalls).toBe(0);
-	expect(abortCalls).toBeGreaterThanOrEqual(1);
+	expect(abortCalls).toBe(1);
 	expect(disposeCalls).toBe(1);
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
@@ -2398,9 +2397,9 @@ test("executeSpawn suppresses a successful stale prompt that ignores reset abort
 	resolvePrompt();
 
 	assertErrorResult(await execution, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
-	expect(abortCalls).toBeGreaterThanOrEqual(1);
+	expect(abortCalls).toBe(1);
 	expect(disposeCalls).toBe(1);
-	expect(updates.length, "no stale completion update is published").toBe(1);
+	expect(updates, "no stale completion update is published").toHaveLength(1);
 	expect((updates[0] as any).content).toStrictEqual([]);
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
@@ -2501,7 +2500,7 @@ test("spawn tool definitions include prompt hints when registered", async () => 
 	const pi = await createTestHost((api) => registerSpawnTool(api, state));
 
 	const spawnTool = pi.tools.get("spawn")!;
-	expect(typeof spawnTool.promptSnippet, "spawn should have promptSnippet").toBe("string");
+	expect(spawnTool.promptSnippet, "spawn should have promptSnippet").toBeTypeOf("string");
 	expect(spawnTool.promptSnippet!.length, "spawn promptSnippet should be non-trivial").toBeGreaterThan(10);
 	expect(spawnTool.promptGuidelines, "spawn should have promptGuidelines").toSatisfy(Array.isArray);
 	expect(spawnTool.promptGuidelines!.length, "spawn promptGuidelines should be non-empty").toBeGreaterThan(0);
@@ -2518,19 +2517,20 @@ test("registerSpawnTool registers a tool with correct name and metadata", async 
 	assertPresent(tool, "spawn tool should be registered");
 	expect(tool.name).toBe("spawn");
 	expect(tool.label).toBe("Spawn");
-	expect(typeof tool.description).toBe("string");
+	expect(tool.description).toBeTypeOf("string");
 	expect(tool.description).toMatch(/active registered tools executable in the child session/);
 	expect(tool.description).toMatch(/shared notebook tools/);
 	expect(tool.description).toMatch(/cannot spawn or handoff/);
 	expect(tool.description).not.toMatch(/supported built-in tools/);
-	expect(typeof tool.execute).toBe("function");
-	expect(typeof tool.renderCall).toBe("function");
-	expect(typeof tool.renderResult).toBe("function");
+	expect(tool.execute).toBeTypeOf("function");
+	expect(tool.renderCall).toBeTypeOf("function");
+	expect(tool.renderResult).toBeTypeOf("function");
 	expect(tool.renderShell).toBe("self");
-	expect(tool.parameters, "should have parameters").toBeTruthy();
+	assertPresent(tool.parameters, "should have parameters");
 	const constraints = (tool.parameters as any).properties.constraints;
 	expect(constraints.type).toBe("object");
-	expect(constraints.properties.modalities).toBeTruthy();
+	expect(constraints.properties.modalities).toBeTypeOf("object");
+	expect(constraints.properties.modalities).not.toBeNull();
 	expect(tool.executionMode, "spawn should not be sequential").toBeUndefined();
 });
 

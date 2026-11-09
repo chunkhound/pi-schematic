@@ -87,31 +87,31 @@ async function apply(
 function assertTopicSourceCoupling(state: SchematicState): void {
 	const msg = `topic=${state.activeNotebookTopic} source=${state.activeNotebookTopicSource}`;
 	if (state.activeNotebookTopic === null) {
-		expect(state.activeNotebookTopicSource, `topic null → source null: ${msg}`).toBe(null);
+		expect(state.activeNotebookTopicSource, `topic null → source null: ${msg}`).toBeNull();
 	} else {
-		expect(state.activeNotebookTopicSource, `topic set → source set: ${msg}`).not.toBe(null);
+		expect(state.activeNotebookTopicSource, `topic set → source set: ${msg}`).not.toBeNull();
 	}
 	// Bidirectional: source null → topic null too
 	if (state.activeNotebookTopicSource === null) {
-		expect(state.activeNotebookTopic, `source null → topic null: ${msg}`).toBe(null);
+		expect(state.activeNotebookTopic, `source null → topic null: ${msg}`).toBeNull();
 	}
 }
 
 function assertChildSessionContainment(state: SchematicState): void {
 	for (const key of state.childSessions.keys()) {
 		expect(
-			state.liveChildSessions.has(key),
+			[...state.liveChildSessions.keys()],
 			`childSessions key "${key}" must be in liveChildSessions`,
-		).toBe(true);
+		).toContain(key);
 	}
 }
 
 function assertClippedPagesContained(state: SchematicState): void {
 	for (const name of state.clippedPages) {
 		expect(
-			state.notebookPages.has(name),
+			[...state.notebookPages.keys()],
 			`clipped page "${name}" must exist in notebookPages`,
-		).toBe(true);
+		).toContain(name);
 	}
 }
 
@@ -121,22 +121,22 @@ function assertResetClears(state: SchematicState): void {
 	expect(state.childSessions.size, "childSessions must be empty after reset").toBe(0);
 	expect(state.liveChildSessions.size, "liveChildSessions must be empty after reset").toBe(0);
 	expect(state.epoch, "epoch must be 0 after reset").toBe(0);
-	expect(state.activeNotebookTopic, "topic must be null after reset").toBe(null);
-	expect(state.activeNotebookTopicSource, "topic source must be null after reset").toBe(null);
-	expect(state.stagedHandoff, "stagedHandoff must be null after reset").toBe(null);
+	expect(state.activeNotebookTopic, "topic must be null after reset").toBeNull();
+	expect(state.activeNotebookTopicSource, "topic source must be null after reset").toBeNull();
+	expect(state.stagedHandoff, "stagedHandoff must be null after reset").toBeNull();
 	expect(state.handoffRefusals.size, "handoffRefusals must be empty after reset").toBe(0);
-	expect(state.pendingRequestedHandoff, "pendingRequestedHandoff must be null after reset").toBe(null);
-	expect(state.pendingTopicBoundaryHint, "pendingTopicBoundaryHint must be null after reset").toBe(null);
-	expect(state.modelGroups.groups.length, "modelGroups.groups must be empty after reset").toBe(0);
-	expect(state.modelGroups.validation, "modelGroups.validation must be null after reset").toBe(null);
+	expect(state.pendingRequestedHandoff, "pendingRequestedHandoff must be null after reset").toBeNull();
+	expect(state.pendingTopicBoundaryHint, "pendingTopicBoundaryHint must be null after reset").toBeNull();
+	expect(state.modelGroups.groups, "modelGroups.groups must be empty after reset").toHaveLength(0);
+	expect(state.modelGroups.validation, "modelGroups.validation must be null after reset").toBeNull();
 	expect(state.readonlyEnabled, "readonlyEnabled must be false after reset").toBe(false);
 	expect(state.readonlyNudgePending, "readonlyNudgePending must be false after reset").toBe(false);
 	expect(state.frontmatterSkillCache.size, "frontmatterSkillCache must be empty after reset").toBe(0);
 	expect(state.frontmatterPromptCache.size, "frontmatterPromptCache must be empty after reset").toBe(0);
 	expect(state.frontmatterSkillIssues.size, "frontmatterSkillIssues must be empty after reset").toBe(0);
 	expect(state.frontmatterPromptIssues.size, "frontmatterPromptIssues must be empty after reset").toBe(0);
-	expect(state.pendingReadonlyCommands.length, "pendingReadonlyCommands must be empty after reset").toBe(0);
-	expect(state.lastWatchdogBand, "lastWatchdogBand must be null after reset").toBe(null);
+	expect(state.pendingReadonlyCommands, "pendingReadonlyCommands must be empty after reset").toHaveLength(0);
+	expect(state.lastWatchdogBand, "lastWatchdogBand must be null after reset").toBeNull();
 	expect(state.sandboxedBashCallIds.size, "sandboxedBashCallIds must be empty after reset").toBe(0);
 }
 
@@ -373,7 +373,7 @@ const STAGED_HANDOFF: NonNullable<SchematicState["stagedHandoff"]> = {
 
 test("a new state has no staged handoff and no refusals", () => {
 	const state = createState();
-	expect(state.stagedHandoff).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
 	expect(state.handoffRefusals.size).toBe(0);
 });
 
@@ -384,7 +384,7 @@ test("reset clears a staged handoff and the refusals, keeping the refusal map id
 	refusals.set("call-2", "refused");
 	state.handoffFailedInRun = true;
 	resetState(state);
-	expect(state.stagedHandoff).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
 	expect(state.handoffFailedInRun).toBe(false);
 	expect(state.handoffRefusals.size).toBe(0);
 	expect(state.handoffRefusals).toBe(refusals);
@@ -408,12 +408,12 @@ test("invalidateHandoffState clears the staged handoff, the refusals and the pen
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 1, eligibleNudgeDelivered: false, nextInstruction: null };
 	state.handoffFailedInRun = true;
 	invalidateHandoffState(state);
-	expect(state.stagedHandoff).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
 	expect(state.handoffFailedInRun).toBe(false);
 	expect(state.handoffRefusals.size).toBe(0);
 	expect(state.handoffRefusals).toBe(refusals);
-	expect(state.pendingRequestedHandoff).toBe(null);
-	expect(state.pendingTopicBoundaryHint).toBe(null);
+	expect(state.pendingRequestedHandoff).toBeNull();
+	expect(state.pendingTopicBoundaryHint).toBeNull();
 });
 
 test("reset clears deferred readonly frontmatter commands", () => {
@@ -421,14 +421,14 @@ test("reset clears deferred readonly frontmatter commands", () => {
 	state.pendingReadonlyCommands.push({ type: "skill", name: "a" });
 
 	resetState(state);
-	expect(state.pendingReadonlyCommands.length, "readonly queue cleared").toBe(0);
+	expect(state.pendingReadonlyCommands, "readonly queue cleared").toHaveLength(0);
 });
 
 test("clipped page flags stay contained and reset clears them", async () => {
 	const state = createState();
 	await saveNotebookPage(mockPi, state, "clipped-page", CLIPPED_BODY);
 	assertClippedPagesContained(state);
-	expect(state.clippedPages.has("clipped-page"), "oversized write must flag the page clipped").toBe(true);
+	expect([...state.clippedPages], "oversized write must flag the page clipped").toContain("clipped-page");
 
 	resetState(state);
 	assertClippedPagesContained(state);
@@ -491,9 +491,9 @@ test("Property 7: clipped pages are a subset of notebook pages", async () => {
 					assertClippedPagesContained(state);
 					if (action.type === "saveClippedPage") {
 						expect(
-							state.clippedPages.has(action.name),
+							[...state.clippedPages],
 							`clipped write "${action.name}" must set the clipped flag`,
-						).toBe(true);
+						).toContain(action.name);
 					}
 				}
 			},

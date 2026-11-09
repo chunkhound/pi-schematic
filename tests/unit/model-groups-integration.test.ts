@@ -166,7 +166,9 @@ test("index session_start includes backup-failure detail in load issue notificat
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
-	expect(notifications).toSatisfy((all: string[]) => all.some((m) => /corrupt-json/.test(m) && /backup failed.*original file left untouched/.test(m) && m.includes(escapeDisplayLabel(modelGroupsPath("project", cwd)))));
+	const notification = notifications.find((m) => m.includes("corrupt-json"));
+	expect(notification, "notifications: " + notifications.join(" / ")).toMatch(/backup failed.*original file left untouched/);
+	expect(notification).toContain(escapeDisplayLabel(modelGroupsPath("project", cwd)));
 }));
 
 test("before_agent_start writes fresh names-and-effective-modalities guidance", async () => withTemp(async ({ cwd }) => {

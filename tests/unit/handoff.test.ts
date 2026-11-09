@@ -45,8 +45,8 @@ function assertSuccessorTurn(content: string, input: { nextInstruction: string; 
 	const expected = [`## Next instruction\n\n${input.nextInstruction}`];
 	const context = input.context?.trim();
 	if (context) expected.push(`## Context\n\n${context}`);
-	expect(content.startsWith(expected.join("\n\n")),
-		`successor turn must start with the delivered instruction and context:\n${content}`).toBe(true);
+	const prefix = expected.join("\n\n");
+	expect(content.slice(0, prefix.length), `successor turn must start with the delivered instruction and context:\n${content}`).toBe(prefix);
 }
 
 type Usage = { tokens: number | null; percent: number | null; contextWindow: number | null } | null;
@@ -111,10 +111,10 @@ function persist(drafts: any[]): any[] {
 
 /** A failed handoff stages nothing, starts no run and reports through one displayed message; returns its content. */
 function assertFailedWithoutRun(state: SchematicState, pi: TestPI): string {
-	expect(state.stagedHandoff).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
 	expect(pi.sentUserMessages, "a failed handoff must not start a new run").toStrictEqual([]);
 	const content = pi.sentMessages[0]?.message.content;
-	expect(typeof content).toBe("string");
+	expect(content).toBeTypeOf("string");
 	expect(pi.sentMessages).toStrictEqual([{
 		message: { customType: "pi-schematic-handoff-failed", content, display: true },
 		options: { triggerTurn: false },
@@ -235,7 +235,7 @@ test("handoff with no pending direction requires nextInstruction but not context
 	const { ctx } = makeCtx();
 
 	await expect(executeHandoff(pi, ctx, { context: "only context" })).rejects.toThrow(/Empty handoff nextInstruction rejected/);
-	expect(state.stagedHandoff as unknown, "a rejected call must not stage").toBe(null);
+	expect(state.stagedHandoff, "a rejected call must not stage").toBeNull();
 
 	await executeHandoff(pi, ctx, { nextInstruction: "  Ship the fix  " });
 
@@ -262,7 +262,7 @@ test("handoff is rejected while another handoff is staged, and /handoff reports 
 
 	expect(state.stagedHandoff?.nextInstruction, "the first staged request must survive").toBe("first task");
 	expect(state.stagedHandoff?.toolCallId).toBe("first");
-	expect(state.pendingRequestedHandoff, "a rejected /handoff must not store its direction").toBe(null);
+	expect(state.pendingRequestedHandoff, "a rejected /handoff must not store its direction").toBeNull();
 });
 
 // ── turn_end: the boundary drafts ────────────────────────────────────
@@ -324,7 +324,7 @@ test("turn_end with discardPages writes the notebook rewrite before the cut", as
 	expect(result.entries[3].type).toBe("compaction");
 	expect(result.entries[4].details).toStrictEqual({ handoffId });
 	expect(state.stagedHandoff?.discardedPages, "only the requested page that existed is discarded").toStrictEqual(["stale"]);
-	expect(state.notebookPages.has("stale"), "the in-memory notebook changes only once the cut is confirmed").toBe(true);
+	expect([...state.notebookPages.keys()], "the in-memory notebook changes only once the cut is confirmed").toContain("stale");
 });
 
 test("the discard epoch moves past the discard watermark", async () => {
@@ -402,9 +402,9 @@ test("turn_start with the cut on the branch completes the handoff", async () => 
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
-	expect(state.stagedHandoff).toBe(null);
-	expect(state.pendingRequestedHandoff).toBe(null);
-	expect(state.activeNotebookTopic).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
+	expect(state.pendingRequestedHandoff).toBeNull();
+	expect(state.activeNotebookTopic).toBeNull();
 	expect(state.readonlyNudgePending).toBe(true);
 	expect([...state.notebookPages], "pages follow what the branch persisted").toStrictEqual([["keep", "durable"]]);
 	expect(state.epoch).toBe(2);
@@ -521,7 +521,7 @@ test("a completed handoff leaves the readonly nudge off when readonly is off", a
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
-	expect(state.stagedHandoff).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
 	expect(state.readonlyNudgePending).toBe(false);
 });
 
@@ -545,7 +545,7 @@ test("turn_start without the cut on the branch fails the handoff and keeps the r
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
-	expect(state.stagedHandoff).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
 	expect(state.pendingRequestedHandoff).toStrictEqual({
 		toolCalled: false,
 		enforcementAttempts: 0,
@@ -585,7 +585,7 @@ test("a failed handoff without a pending request clears the status and says noth
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
-	expect(state.pendingRequestedHandoff).toBe(null);
+	expect(state.pendingRequestedHandoff).toBeNull();
 	expect(statuses.get(STATUS_KEY_HANDOFF), "the in-progress status the tool set is cleared").toBeUndefined();
 	expect(pi.sentUserMessages).toStrictEqual([]);
 	expect(pi.sentMessages).toHaveLength(1);
@@ -614,7 +614,8 @@ for (const { attemptsBefore, nudged, requestSurvives } of [
 
 		await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 
-		expect(state.pendingRequestedHandoff !== null).toBe(requestSurvives);
+		if (requestSurvives) expect(state.pendingRequestedHandoff).not.toBeNull();
+		else expect(state.pendingRequestedHandoff).toBeNull();
 		expect(pi.sentMessages).toHaveLength(1);
 		expect(pi.sentMessages[0].message.content).toMatch(requestSurvives
 			? /The required handoff remains pending; retry when context usage is eligible\.$/
@@ -632,8 +633,8 @@ test("agent_settled with the cut on the branch completes with the successor-did-
 
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 
-	expect(state.stagedHandoff).toBe(null);
-	expect(state.pendingRequestedHandoff).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
+	expect(state.pendingRequestedHandoff).toBeNull();
 	expect(notifications).toStrictEqual([{ message: HANDOFF_SUCCESSOR_NOT_RUN, level: "warning" }]);
 	expect(pi.sentUserMessages).toStrictEqual([]);
 });
@@ -691,7 +692,7 @@ test("a submitted handoff whose cut is missing but whose notebook drafts persist
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
-	expect(state.stagedHandoff).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
 	expect(pi.sentMessages[0].message.customType).toBe("pi-schematic-handoff-failed");
 	expect([...state.notebookPages], "the discard drafts persisted, so the discard applies").toStrictEqual([["keep", "durable"]]);
 	expect(state.epoch).toBe(2);
@@ -720,7 +721,7 @@ test("a failed handoff, a retry and the second cut deliver the human direction a
 	await endTurn(pi, ctx, {}, "first");
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
-	expect(state.stagedHandoff).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
 	expect(state.pendingRequestedHandoff?.nextInstruction, "the failed cut keeps the request pending").toBe("human direction");
 
 	await executeHandoff(pi, ctx, { nextInstruction: "second model instruction", discardPages: ["stale"] }, "second");
@@ -730,8 +731,8 @@ test("a failed handoff, a retry and the second cut deliver the human direction a
 
 	const successor = result.entries.find((entry: any) => entry.customType === "pi-schematic-handoff");
 	expect(successor.content).toBe("## Next instruction\n\nhuman direction");
-	expect(state.stagedHandoff).toBe(null);
-	expect(state.pendingRequestedHandoff).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
+	expect(state.pendingRequestedHandoff).toBeNull();
 	expect([...state.notebookPages].sort()).toStrictEqual([["keep", "durable"], ["other", "also durable"]]);
 });
 
@@ -744,7 +745,7 @@ test("a handoff whose branch holds only an earlier handoff's cut fails as not pe
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
-	expect(state.stagedHandoff).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
 	expect(pi.sentMessages[0].message.content).toMatch(new RegExp(`^Handoff failed — ${REASON_NOT_PERSISTED.replace(/[()]/g, "\\$&")}\\.`));
 });
 
@@ -759,7 +760,7 @@ test("agent_settled after a handoff completed at turn_start sends and notifies n
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 
 	expect(notificationsAtCompletion).toBe(1);
-	expect(notifications.length, "no second notification at settle").toBe(1);
+	expect(notifications, "no second notification at settle").toHaveLength(1);
 	expect(pi.sentMessages).toStrictEqual([]);
 	expect(pi.sentUserMessages).toStrictEqual([]);
 });
@@ -925,7 +926,7 @@ test("the boundary settles a failed handoff before the watchdog counts the run, 
 		await endTurn(pi, ctx, { toolResults: [] });
 		await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 
-		expect(warnings().length, `after failed attempt ${attempt}`).toBe(attempt < MAX_HANDOFF_ATTEMPTS ? 0 : 1);
+		expect(warnings(), `after failed attempt ${attempt}`).toHaveLength(attempt < MAX_HANDOFF_ATTEMPTS ? 0 : 1);
 	}
 
 	expect(warnings()[0].message).toMatch(new RegExp(`^Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts`));
@@ -949,7 +950,7 @@ test("unready runs do not consume the enforcement budget", async () => {
 
 	for (let run = 0; run < MAX_HANDOFF_ATTEMPTS; run++) {
 		expect(await watchdogNudge(pi, small.ctx) ?? "").toMatch(/not yet ready for compaction/);
-		await expect(executeHandoff(pi, small.ctx, { nextInstruction: "continue work" }, "small")).rejects.toThrow();
+		await expect(executeHandoff(pi, small.ctx, { nextInstruction: "continue work" }, "small")).rejects.toThrow(/handoff unavailable yet/);
 		await emitAll(pi, "agent_settled", { type: "agent_settled" }, small.ctx);
 	}
 
@@ -1165,10 +1166,8 @@ test("buildNextUserMessage preserves instruction bytes and normalizes context pa
 			fc.string(),
 			(instruction, context) => {
 				const message = buildNextUserMessage({ nextInstruction: instruction, context });
-				expect(
-					message.startsWith(`## Next instruction\n\n${instruction}`),
-					"the instruction must open the message byte-for-byte",
-				).toBe(true);
+				const prefix = `## Next instruction\n\n${instruction}`;
+				expect(message.slice(0, prefix.length), "the instruction must open the message byte-for-byte").toBe(prefix);
 				if (context.trim()) expect(message, "non-blank context must be preserved in the message").toContain(context.trim());
 				expect(message, "context padding must not change the delivered message").toBe(buildNextUserMessage({ nextInstruction: instruction, context: ` \n${context} ` }));
 			},
@@ -1195,7 +1194,7 @@ test("handoff tool rejects an empty nextInstruction with context usage", async (
 			return true;
 		});
 
-	expect(state.stagedHandoff, "an empty instruction must not stage").toBe(null);
+	expect(state.stagedHandoff, "an empty instruction must not stage").toBeNull();
 	expect(pi.sentUserMessages, "the error result is the only report; nothing queues for a later turn").toStrictEqual([]);
 });
 
@@ -1219,7 +1218,7 @@ test("handoff tool rejects small session with clear error", async () => {
 			return true;
 		});
 
-	expect(state.stagedHandoff, "small-session rejection must not stage").toBe(null);
+	expect(state.stagedHandoff, "small-session rejection must not stage").toBeNull();
 });
 
 test("a small-session rejection keeps the pending request and states it in the error without queuing a follow-up", async () => {
@@ -1282,7 +1281,7 @@ test("handoff tool rejects small session with null percent without crashing", as
 			return true;
 		});
 
-	expect(state.stagedHandoff, "null-percent rejection must not stage").toBe(null);
+	expect(state.stagedHandoff, "null-percent rejection must not stage").toBeNull();
 });
 
 test("handoff tool rejects small session estimated from percent when tokens are unavailable", async () => {
@@ -1305,7 +1304,7 @@ test("handoff tool rejects small session estimated from percent when tokens are 
 			return true;
 		});
 
-	expect(state.stagedHandoff, "estimated small-session rejection must not stage").toBe(null);
+	expect(state.stagedHandoff, "estimated small-session rejection must not stage").toBeNull();
 });
 
 test("handoff tool accepts large estimated session when tokens are unavailable", async () => {
@@ -1322,7 +1321,7 @@ test("handoff tool accepts large estimated session when tokens are unavailable",
 			{
 				getContextUsage: () => ({ tokens: null, percent: 20, contextWindow: 200000 }),
 			},
-		)).resolves.not.toThrow();
+		)).resolves.toMatchObject({ terminate: true });
 	expect(state.stagedHandoff?.phase, "an accepted handoff must stage").toBe("staged");
 });
 
@@ -1340,7 +1339,7 @@ test("handoff tool accepts the exact 30000-token minimum", async () => {
 			{
 				getContextUsage: () => ({ tokens: 30000, percent: 15, contextWindow: 200000 }),
 			},
-		)).resolves.not.toThrow();
+		)).resolves.toMatchObject({ terminate: true });
 	expect(state.stagedHandoff?.phase, "an accepted handoff must stage").toBe("staged");
 });
 
@@ -1364,7 +1363,7 @@ test("handoff tool rejects session just below the 30000-token minimum", async ()
 			return true;
 		});
 
-	expect(state.stagedHandoff, "just-below-boundary rejection must not stage").toBe(null);
+	expect(state.stagedHandoff, "just-below-boundary rejection must not stage").toBeNull();
 });
 
 test("handoff tool rejects a whitespace-only nextInstruction", async () => {
@@ -1386,7 +1385,7 @@ test("handoff tool rejects a whitespace-only nextInstruction", async () => {
 			return true;
 		});
 
-	expect(state.stagedHandoff).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
 });
 
 test("/handoff queues as a followUp while a run is active", async () => {
@@ -1413,7 +1412,7 @@ test("handoff tool ignores a legacy task field and rejects the resulting empty i
 			getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
 		})).rejects.toThrow(/Empty handoff nextInstruction rejected/);
 
-	expect(state.stagedHandoff, "a legacy task field must not stage").toBe(null);
+	expect(state.stagedHandoff, "a legacy task field must not stage").toBeNull();
 });
 
 test("handoff tool rejects when context usage is unavailable", async () => {
@@ -1435,7 +1434,7 @@ test("handoff tool rejects when context usage is unavailable", async () => {
 			return true;
 		});
 
-	expect(state.stagedHandoff, "unavailable usage must not stage").toBe(null);
+	expect(state.stagedHandoff, "unavailable usage must not stage").toBeNull();
 });
 
 test("an unavailable-usage rejection keeps the pending request and states it in the error without queuing a follow-up", async () => {
@@ -1497,7 +1496,7 @@ test("handoff tool rejects when context usage cannot be estimated", async () => 
 			return true;
 		});
 
-	expect(state.stagedHandoff, "unestimable usage must not stage").toBe(null);
+	expect(state.stagedHandoff, "unestimable usage must not stage").toBeNull();
 });
 
 test("session_start new clears stale handoff status and warning widget", async () => {

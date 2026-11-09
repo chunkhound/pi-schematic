@@ -79,7 +79,7 @@ const allConstants = {
 
 test("all constants are non-empty strings", () => {
 	for (const [name, value] of Object.entries(allConstants)) {
-		expect(typeof value, `${name} must be a string`).toBe("string");
+		expect(value, `${name} must be a string`).toBeTypeOf("string");
 		expect(value.trim().length, `${name} must be non-empty`).toBeGreaterThan(0);
 	}
 });
@@ -93,20 +93,20 @@ test("composition chain: READONLY_ENABLED_STATUS contains READONLY_BASH_SCOPE", 
 });
 
 test("summary constants use [readonly] prefix", () => {
-	expect(READONLY_WRITE_EDIT_SUMMARY.startsWith("[readonly]")).toBe(true);
-	expect(READONLY_NO_SHELL_SUMMARY.startsWith("[readonly]")).toBe(true);
-	expect(READONLY_ACTIVE_SUMMARY.startsWith("[readonly]")).toBe(true);
-	expect(READONLY_HANDOFF_EXCEPTION_SUMMARY.startsWith("[readonly]")).toBe(true);
-	expect(READONLY_ENABLED_STATUS.startsWith("[readonly]")).toBe(true);
-	expect(READONLY_DISABLED_SUMMARY.startsWith("[readonly]")).toBe(true);
+	expect(READONLY_WRITE_EDIT_SUMMARY.slice(0, "[readonly]".length)).toBe("[readonly]");
+	expect(READONLY_NO_SHELL_SUMMARY.slice(0, "[readonly]".length)).toBe("[readonly]");
+	expect(READONLY_ACTIVE_SUMMARY.slice(0, "[readonly]".length)).toBe("[readonly]");
+	expect(READONLY_HANDOFF_EXCEPTION_SUMMARY.slice(0, "[readonly]".length)).toBe("[readonly]");
+	expect(READONLY_ENABLED_STATUS.slice(0, "[readonly]".length)).toBe("[readonly]");
+	expect(READONLY_DISABLED_SUMMARY.slice(0, "[readonly]".length)).toBe("[readonly]");
 });
 
 test("block reasons use 'Readonly mode:' prefix", () => {
-	expect(READONLY_WRITE_EDIT_BLOCK_REASON.startsWith("Readonly mode:")).toBe(true);
-	expect(READONLY_POWERSHELL_BLOCK_REASON.startsWith("Readonly mode:")).toBe(true);
+	expect(READONLY_WRITE_EDIT_BLOCK_REASON.slice(0, "Readonly mode:".length)).toBe("Readonly mode:");
+	expect(READONLY_POWERSHELL_BLOCK_REASON.slice(0, "Readonly mode:".length)).toBe("Readonly mode:");
 	expect(READONLY_POWERSHELL_BLOCK_REASON).toMatch(/powershell/);
-	expect(READONLY_HANDOFF_BLOCK_REASON.startsWith("Readonly mode:")).toBe(true);
-	expect(buildReadonlyBashBlockReason("test", "cmd").startsWith("Readonly mode:")).toBe(true);
+	expect(READONLY_HANDOFF_BLOCK_REASON.slice(0, "Readonly mode:".length)).toBe("Readonly mode:");
+	expect(buildReadonlyBashBlockReason("test", "cmd").slice(0, "Readonly mode:".length)).toBe("Readonly mode:");
 });
 
 test("bash guard uses centralized readonly block copy", () => {
