@@ -841,7 +841,7 @@ test("model groups TUI escapes controlled labels, bounds width, and offers nativ
 	const hostile = "group\n\u001b]8;;https://example.test\u0007link\u001b]8;;\u0007";
 	const c = component({ groups: [group(hostile, { scope: "project", models: [{ provider: "openai\u001b[31m", modelId: "model\nlong" }] })] }).c;
 	const lines = c.render(20);
-	expect(Math.max(...lines.map((line) => visibleWidth(line)))).toBeLessThanOrEqual(20);
+	expect(lines.filter((line) => !(visibleWidth(line) <= 20))).toStrictEqual([]);
 	const text = lines.join("\n");
 	expect(text).toMatch(/group\\n\\x1B/);
 	expect(text).not.toMatch(/\u001b\]8;;/);
@@ -898,7 +898,7 @@ test("model groups TUI keeps every screen width-bounded without wrapping logical
 		const wideCount = c.render(200).length;
 		const narrow = c.render(12);
 		expect(narrow.length).toBe(wideCount);
-		expect(Math.max(...narrow.map((line) => visibleWidth(line)))).toBeLessThanOrEqual(12);
+		expect(narrow.filter((line) => !(visibleWidth(line) <= 12))).toStrictEqual([]);
 	};
 	const longModel = { provider: "openai", modelId: "gpt-5", thinkingLevel: "max" as const };
 	const c = component({ groups: [group("界e\u0301界-a-very-long-group-name", { scope: "project", models: [longModel] })] }).c;
@@ -911,7 +911,7 @@ test("model groups TUI keeps every screen width-bounded without wrapping logical
 	for (const width of [1, 2, 12]) {
 		const lines = c.render(width);
 		expect(lines.length).toBe(inactiveWideCount);
-		expect(Math.max(...lines.map((line) => visibleWidth(line)))).toBeLessThanOrEqual(width);
+		expect(lines.filter((line) => !(visibleWidth(line) <= width))).toStrictEqual([]);
 		expect(lines.join("\n")).not.toContain(CURSOR_MARKER);
 		if (width === 12) expect(stripAnsi(lines.join("\n"))).toMatch(/界e\u0301/);
 	}
@@ -920,7 +920,7 @@ test("model groups TUI keeps every screen width-bounded without wrapping logical
 	for (const width of [1, 2, 12]) {
 		const lines = c.render(width);
 		expect(lines.length).toBe(activeWideCount);
-		expect(Math.max(...lines.map((line) => visibleWidth(line)))).toBeLessThanOrEqual(width);
+		expect(lines.filter((line) => !(visibleWidth(line) <= width))).toStrictEqual([]);
 		expect(lines.join("\n")).toContain(CURSOR_MARKER);
 		if (width === 12) expect(stripAnsi(lines.join("\n")).replaceAll(CURSOR_MARKER, "")).toMatch(/界e\u0301/);
 	}
@@ -1217,7 +1217,7 @@ test("model groups TUI focuses the searchable Model Input only on the focused Mo
 	c.focused = true;
 	let text = rendered(c, 18);
 	expect(text).toContain(CURSOR_MARKER);
-	expect(Math.max(...c.render(18).map((line) => visibleWidth(line)))).toBeLessThanOrEqual(18);
+	expect(c.render(18).filter((line) => !(visibleWidth(line) <= 18))).toStrictEqual([]);
 	expect(text).not.toMatch(/\u001b\[31m.*a-very/);
 	pressAndRender(c, ESC);
 	expect(rendered(c)).not.toContain(CURSOR_MARKER);
@@ -1259,7 +1259,7 @@ test("model groups TUI model picker detail keeps a width-bounded fixed line coun
 	const wideLines = c.render(200);
 	const narrowLines = c.render(12);
 	expect(narrowLines.length, "detail block must not wrap: same line count at any width").toBe(wideLines.length);
-	expect(Math.max(...narrowLines.map((line) => visibleWidth(line))), "every line bounded at 12 cols").toBeLessThanOrEqual(12);
+	expect(narrowLines.filter((line) => !(visibleWidth(line) <= 12)), "every line bounded at 12 cols").toStrictEqual([]);
 	expect(stripAnsi(narrowLines.join("\n"))).toMatch(/…/);
 	expect(stripAnsi(wideLines.join("\n"))).toMatch(/openai\/gpt-5\.2-codex-2025-07-01-rc1/);
 	// No matches: the detail block disappears.

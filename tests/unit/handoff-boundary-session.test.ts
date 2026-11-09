@@ -110,9 +110,8 @@ afterAll(async () => {
 function assertEntryType<T extends SessionEntry["type"]>(
 	entry: SessionEntry,
 	type: T,
-	message?: string,
 ): asserts entry is Extract<SessionEntry, { type: T }> {
-	expect(entry.type, message).toBe(type);
+	expect(entry.type).toBe(type);
 }
 
 function entryLabel(entry: SessionEntry): string {

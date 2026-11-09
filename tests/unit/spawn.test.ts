@@ -1237,7 +1237,7 @@ test("spawn execute clears childSessions after successful completion when unrend
 
 test("spawn execute fails explicitly without a configured model", async () => {
 	const host = await hostWithFailedUsage({});
-	await expect(() => host.execute("spawn-1", { cwd: "/tmp" })).rejects.toThrow(/No model configured\. Cannot spawn child agent\./);
+	await expect(host.execute("spawn-1", { cwd: "/tmp" })).rejects.toThrow(/No model configured\. Cannot spawn child agent\./);
 	expect(host.entryReads).toBe(0);
 });
 
@@ -1246,7 +1246,7 @@ test("a rejecting child session factory rejects spawn before a session exists", 
 	const state = createState();
 
 	await expect(
-		() => executeSpawn("spawn-factory-rejection", pi as any,
+		executeSpawn("spawn-factory-rejection", pi as any,
 			{ model: { id: "mock-model" }, cwd: "/tmp" } as any,
 			state, { prompt: "Do the task" }, undefined, undefined, "medium",
 			async () => { throw new Error("factory unavailable"); }),
@@ -1267,7 +1267,7 @@ test("executeSpawn propagates unusable-group errors before creating child work",
 	let factoryCalls = 0;
 
 	await expect(
-		() => executeSpawn(
+		executeSpawn(
 			"spawn-route-error",
 			pi as any,
 			{
@@ -1311,7 +1311,7 @@ test("executeSpawn propagates missing modalities before creating child work", as
 		validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
 	}];
 	let factoryCalls = 0;
-	await expect(() => executeSpawn("missing-modality", pi as any, {
+	await expect(executeSpawn("missing-modality", pi as any, {
 		model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
 		modelRegistry: { find: (_provider: string, id: string) => ({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
 	} as any, state, { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, "medium", async () => { factoryCalls++; throw new Error("must not create child"); })).rejects.toSatisfy((error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality");
@@ -1322,7 +1322,7 @@ test("executeSpawn propagates missing modalities before creating child work", as
 
 test("executeSpawn rejects unknown requirements before factory or session publication", async () => {
 	const pi = await createTestHost((_api) => {}); const state = createState(); let factoryCalls = 0;
-	await expect(() => executeSpawn("unknown-constraint", pi as any, {
+	await expect(executeSpawn("unknown-constraint", pi as any, {
 		model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
 		modelRegistry: { find: () => undefined, hasConfiguredAuth: () => false },
 	} as any, state, { prompt: "Do the task", constraints: { unknown: {} } }, undefined, undefined, "medium", async () => { factoryCalls++; throw new Error("must not create child"); })).rejects.toThrow(/Unknown spawn constraint/);
@@ -1340,7 +1340,7 @@ test("registered spawn tool rejects missing modalities before creating child wor
 	const pi = await createTestHost((api) => registerSpawnTool(api, state, (async () => { factoryCalls++; throw new Error("sessionFactory must not be called"); }) as any), { activeTools: ["read", "bash", "spawn"] });
 
 	await expect(
-		() => pi.tools.get("spawn").execute("registered-missing-modality", { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, {
+		pi.tools.get("spawn").execute("registered-missing-modality", { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, {
 			model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
 			modelRegistry: { find: (_provider: string, id: string) => ({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
 		} as any),
@@ -1363,7 +1363,7 @@ test("registered spawn tool rejects injected scalar group and model requirements
 	];
 	const pi = await createTestHost((api) => registerSpawnTool(api, state, (async () => { factoryCalls++; throw new Error("sessionFactory must not be called"); }) as any, createConstraintRegistry([testMinContext])), { activeTools: ["spawn"] });
 	await expect(
-		() => pi.tools.get("spawn").execute("registered-scalar", { prompt: "Do the task", group: "small", constraints: { testMinContext: 20 } }, undefined, undefined, {
+		pi.tools.get("spawn").execute("registered-scalar", { prompt: "Do the task", group: "small", constraints: { testMinContext: 20 } }, undefined, undefined, {
 			model: { provider: "openai", id: "parent", input: ["text"], reasoning: false, contextWindow: 100 }, cwd: "/tmp",
 			modelRegistry: { find: (_provider: string, id: string) => ({ provider: "openai", id, input: ["text"], reasoning: false, contextWindow: id === "small" ? 10 : 100 }), hasConfiguredAuth: () => true },
 		} as any),
