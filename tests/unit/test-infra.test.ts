@@ -56,8 +56,8 @@ describe("compat lane test lists", () => {
 
 	test("reject a Vitest file on the node:test list and a node:test file on the Vitest list", () => {
 		expect(() =>
-			assertCompatTestLists(["tests/unit/thinking-levels.test.ts"], ["tests/unit/spawn.test.ts"]),
-		).toThrow(/lists tests\/unit\/thinking-levels\.test\.ts, tests\/unit\/spawn\.test\.ts for the wrong runner/);
+			assertCompatTestLists(["tests/unit/thinking-levels.test.ts"], ["tests/e2e/basic.test.ts"]),
+		).toThrow(/lists tests\/unit\/thinking-levels\.test\.ts, tests\/e2e\/basic\.test\.ts for the wrong runner/);
 	});
 });
 

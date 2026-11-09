@@ -8,8 +8,13 @@ import { VITEST_FILES } from "../tests/vitest-files.mjs";
 
 const PI_SYNC_PACKAGES = ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"];
 
-// The unit tests the compat lane runs on each runner.
+// The end-to-end suites the compat lane runs on node:test through scripts/run-node-test.mjs.
 export const COMPAT_NODE_TEST_FILES = [
+  "tests/e2e/basic.test.ts",
+  "tests/e2e/real-host.test.ts",
+];
+// The unit tests the compat lane runs on Vitest.
+export const COMPAT_VITEST_FILES = [
   "tests/unit/spawn-runtime-compatibility.test.ts",
   "tests/unit/spawn-lifecycle.test.ts",
   "tests/unit/spawn-event.test.ts",
@@ -27,8 +32,6 @@ export const COMPAT_NODE_TEST_FILES = [
   "tests/unit/readonly-frontmatter.test.ts",
   "tests/unit/readonly-mode.test.ts",
   "tests/unit/system-prompt.test.ts",
-];
-export const COMPAT_VITEST_FILES = [
   "tests/unit/compat-process.test.ts",
   "tests/unit/dependency-graph-assertions.test.ts",
   "tests/unit/module-evaluation-order.test.ts",
@@ -76,10 +79,8 @@ async function main() {
 
     await runNpmWithRetry(copy, ["run", "typecheck"]);
     await runNpmWithRetry(copy, ["exec", "audit-ci", "--", "--config", "audit-ci.jsonc"]);
-    runChecked(process.execPath, ["./scripts/run-node-test.mjs", ...COMPAT_NODE_TEST_FILES], { cwd: copy });
     runChecked(process.execPath, ["./node_modules/vitest/vitest.mjs", "run", "--project", "unit", ...COMPAT_VITEST_FILES], { cwd: copy });
-    runChecked(process.execPath, ["./scripts/run-node-test.mjs", "tests/e2e/basic.test.ts"], { cwd: copy });
-    runChecked(process.execPath, ["./scripts/run-node-test.mjs", "tests/e2e/real-host.test.ts"], { cwd: copy });
+    runChecked(process.execPath, ["./scripts/run-node-test.mjs", ...COMPAT_NODE_TEST_FILES], { cwd: copy });
     writeCompatArtifacts(artifactDir, copy, { piVersion, typeboxVersion: latestPi.typeboxVersion });
     process.stdout.write(`Current synchronized Pi compatibility passed at ${piVersion}.\n`);
   } catch (error) {

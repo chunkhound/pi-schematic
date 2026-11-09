@@ -7,8 +7,7 @@ import { VITEST_FILES } from "../tests/vitest-files.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
 const args = process.argv.slice(2);
-const updateSnapshots = args.includes("--update-snapshots");
-const flags = args.filter((arg) => arg.startsWith("--") && arg !== "--update-snapshots");
+const flags = args.filter((arg) => arg.startsWith("--"));
 const patterns = args.filter((arg) => !arg.startsWith("--"));
 
 if (patterns.length === 0) {
@@ -47,9 +46,6 @@ const result = spawnSync(
   {
     cwd: root,
     stdio: "inherit",
-    env: updateSnapshots
-      ? { ...process.env, UPDATE_SNAPSHOTS: "1" }
-      : process.env,
   },
 );
 
