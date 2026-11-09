@@ -60,22 +60,15 @@ The suites leave these behaviours unpinned:
 - Which files pi reads while the test host loads. Deliberate: no test observes it, because pi swallows a malformed `package.json` in a discovered extension directory, so a read leaves nothing to assert. The host's `noSkills`, `noPromptTemplates`, `noThemes`, `noContextFiles`, `systemPrompt` and `appendSystemPrompt` switches are unpinned for the same reason: they only stop pi reading those files, the host reads none of those resources, and no test outcome depends on them. Setting `systemPrompt` skips the SYSTEM.md lookup and setting `appendSystemPrompt` skips the APPEND_SYSTEM.md lookup, even when the value is empty.
 - The `$HOME/.agents/skills` walk, which the test host cannot stop. On every load pi walks that directory recursively when it exists, following symlinks and reading ignore files in each directory it visits. No loader option stops the walk. Nothing from it loads, because skill files are not read. Only redirecting `HOME` would stop it, and the host does not change process environment variables.
 - The removal of the test host's temp agent directory at process exit. Deliberate: pi writes nothing into it, and observing an exit handler needs a separate process.
-- Most of how `scripts/run-node-test.mjs` picks its files. Unpinned are the error for a `tests/vitest-files.mjs` entry that does not exist, skipping `node_modules`, reading a separate flag value as a file pattern, and passing root-relative paths to `node --test`, which reads each path as a glob pattern, so glob characters in the checkout path stay out of it. Deliberate: the runner only runs the e2e files, none of which is listed in `tests/vitest-files.mjs`, and the unit tests pin its error for a run that is left with no file.
+- Most of how `scripts/run-node-test.mjs` picks its files. Unpinned are the error for a `tests/vitest-files.mjs` entry that does not exist, skipping `node_modules`, reading a separate flag value as a file pattern, and passing root-relative paths to `node --test`, which reads each path as a glob pattern, so glob characters in the checkout path stay out of it. Deliberate: the runner is only called for the e2e files, none of which is listed in `tests/vitest-files.mjs`, and the unit tests pin its error for a run that is left with no file.
 
 ## CI
 
-Pull requests are automatically tested via GitHub Actions. A cross-platform matrix runs on every push and PR:
-
-| OS | Node | Runs |
-|---|---|---|
-| Ubuntu | Floor (Pi's minimum), current LTS | Type check, security audit, unit tests, E2E tests |
-| macOS | Floor (Pi's minimum), current LTS | Type check, security audit, unit tests, E2E tests |
-| Windows | Floor (Pi's minimum), current LTS | Type check, security audit, unit tests, E2E tests |
+Pull requests are automatically tested via GitHub Actions. `.github/workflows/test.yml` defines which OS and Node lanes run and which checks each lane runs; its comments explain the Node version choice.
 
 The floor is the minimum Node.js version Pi requires (the `engines.node` of `@earendil-works/pi-coding-agent`). This package declares no `engines` of its own, because it only runs inside Pi. Both the floor and the current Node.js LTS are tested on Linux, macOS and Windows, because platform-specific code paths can also depend on the Node version. The exact current LTS is written in the CI matrix, the current-Pi job and the publish workflow, and Renovate bumps all of them together: patch and minor releases in a "Node.js" PR, a new LTS major in a separate "major Node.js" PR. Local development runs on the floor: `.node-version` holds it for version managers such as fnm and nodenv, because code that works on the floor almost always works on newer releases, while the reverse is where breakage comes from. When Pi raises its floor, Renovate updates `.node-version`, the floor entry of the CI matrix and the `@types/node` version cap, which keeps the Node types on the floor's major, in one PR.
 
-Snapshot golden files in `tests/snapshots/` are stored with LF line endings (enforced by `.gitattributes`). The `normalizeEOL` helper in the snapshot test file converts `\r\n` to `\n` in the rendered output before it is compared. Vitest's `toMatchFileSnapshot` also handles the other side. When the rendered output has no `\r\n`, it converts a golden file's `\r\n` to `\n`. A CRLF working tree on Windows therefore still compares correctly. If you update snapshots, the CI matrix validates them on all platforms.
-Both E2E suites run on Linux, macOS and Windows.
+Snapshot golden files in `tests/snapshots/` are stored with LF line endings (enforced by `.gitattributes`). The `normalizeEOL` helper in the snapshot test file converts `\r\n` to `\n` in the rendered output before it is compared. Vitest's `toMatchFileSnapshot` also handles the other side. When the rendered output has no `\r\n`, it converts a golden file's `\r\n` to `\n`. A CRLF working tree on Windows therefore still compares correctly. If you update snapshots, CI checks them on every lane of the test matrix.
 
 ## Releasing
 
