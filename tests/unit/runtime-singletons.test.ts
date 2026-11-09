@@ -102,3 +102,26 @@ test("teardown restores the console and singletons, then fails, when a write is 
 	expect(console.warn).toBe(warn);
 	expect(console.error).toBe(error);
 });
+
+test("createTestHarness fails, and changes nothing, when a write is pending on the installed lock", () => {
+	const outer = getSingletons();
+	const h = createTestHarness();
+	const installed = getSingletons();
+	onTestFinished(() => {
+		// Settle the simulated write so the outer teardown does not fail on it.
+		installed.writeLock.pending = 0;
+		h.teardown();
+		expect(getSingletons()).toBe(outer);
+	});
+	installed.writeLock.pending = 1;
+	const { debug, log, warn, error } = console;
+
+	expect(() => createTestHarness()).toThrow(/pending/);
+
+	expect(getSingletons()).toBe(installed);
+	expect(installed.writeLock.pending).toBe(1);
+	expect(console.debug).toBe(debug);
+	expect(console.log).toBe(log);
+	expect(console.warn).toBe(warn);
+	expect(console.error).toBe(error);
+});

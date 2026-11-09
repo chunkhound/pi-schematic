@@ -3,9 +3,10 @@
  *
  * Every non-E2E test that touches module-level singletons creates a harness
  * with `createTestHarness()` and tears it down from `afterEach` or an
- * `onTestFinished` callback.  One call installs a fresh singleton container
- * (keeping the previous write lock and context while a write is pending on
- * them) and captures console output — no per-test patches.
+ * `onTestFinished` callback.  One call installs a fresh singleton container,
+ * its own write lock and context included, and captures console output — no
+ * per-test patches.  It throws, changing nothing, while a write is pending on
+ * the installed write lock.
  *
  * `teardown()` restores the console, then the container that was current at
  * `createTestHarness()` (even while a write is pending), then clears the
@@ -65,6 +66,12 @@ export interface TestHarness {
  */
 export function createTestHarness(): TestHarness {
 	const previousSingletons = getSingletons();
+	const pendingAtStart = previousSingletons.writeLock.pending;
+	if (pendingAtStart > 0) {
+		throw new Error(
+			`createTestHarness: ${pendingAtStart} write(s) still pending on the installed write lock; a previous test or caller did not finish its writes.`,
+		);
+	}
 
 	const singletons: RuntimeSingletons = {
 		writeLock: createWriteLock(),
@@ -77,8 +84,8 @@ export function createTestHarness(): TestHarness {
 	const originalWarn = console.warn;
 	const originalError = console.error;
 
-	// Install the fresh container in one call; a write pending on the previous
-	// lock keeps that lock and context (see the module comment).
+	// Install the fresh container in one call; no write is pending (checked
+	// above), so the harness always runs on its own lock and context.
 	__setSingletons(singletons);
 
 	// Capture every forbidden TUI-corrupting console level for assertions.
