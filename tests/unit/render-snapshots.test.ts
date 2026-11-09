@@ -49,7 +49,7 @@ const theme: Theme = {
 
 // ── Snapshot helpers ──────────────────────────────────────────────────
 
-/** Normalize line endings so golden files (stored with \n) match on Windows (\r\n). */
+/** Normalize the rendered output's line endings to \n before it is compared. */
 function normalizeEOL(s: string): string {
 	return s.replace(/\r?\n/g, "\n");
 }
@@ -61,7 +61,12 @@ function stripOSC(s: string): string {
 
 async function expectGoldenFile(name: string, actual: string): Promise<void> {
 	const cleaned = stripOSC(normalizeEOL(actual));
-	await expect(cleaned, `Snapshot ${name} does not match`).toMatchFileSnapshot(join(SNAPSHOT_DIR, `${name}.txt`));
+	const goldenPath = join(SNAPSHOT_DIR, `${name}.txt`);
+	await expect(
+		cleaned,
+		`Snapshot ${name} does not match golden file ${goldenPath}, or the file is missing. ` +
+			"Run `npm run test:snapshots:update` to rewrite it, or a local `npm test` to write a missing one.",
+	).toMatchFileSnapshot(goldenPath);
 }
 
 function withHarness(run: (state: SchematicState) => Promise<void>): Promise<void> {

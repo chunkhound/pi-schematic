@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { expect, onTestFinished, test } from "vitest";
+import { expect, onTestFinished, test, vi } from "vitest";
 import { createTestHarness } from "../test-utils.js";
 import {
 	__setSingletons,
@@ -88,10 +88,14 @@ test("teardown restores the console and singletons, then fails, when a write is 
 	const outer = getSingletons();
 	const { debug, log, warn, error } = console;
 	const h = createTestHarness();
-	getSingletons().writeLock.pending = 1;
+	const { writeLock, frameScheduler } = getSingletons();
+	writeLock.pending = 1;
+	const clear = vi.spyOn(frameScheduler, "clear");
 
 	expect(() => h.teardown()).toThrow(/pending/);
 
+	expect(writeLock.pending, "teardown leaves the pending write alone").toBe(1);
+	expect(clear, "teardown clears the harness scheduler before it throws").toHaveBeenCalledOnce();
 	expect(getSingletons()).toBe(outer);
 	expect(console.debug).toBe(debug);
 	expect(console.log).toBe(log);
