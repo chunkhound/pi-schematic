@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { expect, onTestFinished, test, vi } from "vitest";
-import { createTestHarness } from "../test-utils.js";
+import { createTestHarness, useTestHarness } from "../test-utils.js";
 import {
 	__setSingletons,
 	createWriteLock,
@@ -48,10 +48,7 @@ test("__setSingletons warns and preserves lock + write context during in-flight 
 });
 
 test("write lock serializes concurrent writers and completes all", async () => {
-	const h = createTestHarness();
-	onTestFinished(() => {
-		h.teardown();
-	});
+	useTestHarness();
 	const s = getSingletons();
 
 	const order: number[] = [];
@@ -113,9 +110,9 @@ test("teardown restores the console and singletons when clearing the harness sch
 		Object.assign(console, { debug, log, warn, error });
 		__setSingletons(outer, { forceWriteLock: true });
 	});
-	getSingletons().frameScheduler.clear = () => {
+	vi.spyOn(getSingletons().frameScheduler, "clear").mockImplementation(() => {
 		throw new Error("boom");
-	};
+	});
 
 	expect(() => h.teardown()).toThrow(/boom/);
 

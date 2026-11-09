@@ -31,14 +31,12 @@ test("watchdog records context usage without user notifications", async () => {
 	expect(state.lastContextPercent).toBe(70);
 });
 
-test("watchdog ignores malformed percentages", async () => {
-	for (const percent of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
-		const state = createState();
-		const pi = await createTestHost((api) => registerWatchdog(api, state));
-		const [handler] = pi.handlers.get("agent_end")!;
-		await handler({}, { hasUI: false, getContextUsage: () => ({ percent }) });
-		expect(state.lastContextPercent).toBeNull();
-	}
+test.for([Number.NaN, Number.POSITIVE_INFINITY, -1])("watchdog ignores malformed percentages: %s", async (percent) => {
+	const state = createState();
+	const pi = await createTestHost((api) => registerWatchdog(api, state));
+	const [handler] = pi.handlers.get("agent_end")!;
+	await handler({}, { hasUI: false, getContextUsage: () => ({ percent }) });
+	expect(state.lastContextPercent).toBeNull();
 });
 
 test("watchdog records overflow percentages", async () => {
@@ -63,9 +61,7 @@ test("context injects watchdog reminder before each LLM call", async () => {
 
 	expect(result.messages).toHaveLength(2);
 	expect(result.messages[0]).toStrictEqual({ role: "user", content: "hi", timestamp: 1 });
-	expect(result.messages[1].role).toBe("custom");
-	expect(result.messages[1].customType).toBe("pi-schematic-watchdog");
-	expect(result.messages[1].display).toBe(false);
+	expect(result.messages[1]).toMatchObject({ role: "custom", customType: "pi-schematic-watchdog", display: false });
 	expect(result.messages[1].content).toMatch(/70%/);
 	expect(result.messages[1].content).toMatch(/oauth/);
 	expect(result.messages[1].content).toMatch(/spawn/i);
@@ -115,9 +111,7 @@ test("context injects a no-topic nudge when context is high", async () => {
 	);
 
 	expect(result.messages).toHaveLength(2);
-	expect(result.messages[1].role).toBe("custom");
-	expect(result.messages[1].customType).toBe("pi-schematic-watchdog");
-	expect(result.messages[1].display).toBe(false);
+	expect(result.messages[1]).toMatchObject({ role: "custom", customType: "pi-schematic-watchdog", display: false });
 	expect(result.messages[1].content).toMatch(/no active notebook topic/i);
 	expect(result.messages[1].content).toMatch(/fresh topic/i);
 	expect(result.messages[1].content).toMatch(/handoff/i);

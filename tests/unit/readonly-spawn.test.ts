@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, onTestFinished, test } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -60,15 +60,12 @@ test("readonly write/edit summary communicates blocked mutations", () => {
 
 // ── Readonly bash guard ──────────────────────────────────────────────
 
-test("readonly bash guard rejects non-string commands", () => {
-	const cwd = process.cwd();
-	for (const command of [undefined, null, 42, { command: "ls" }]) {
-		const result = applyReadonlyBashGuard(command, cwd);
-		expect(result, `expected block for ${String(command)}`).toMatchObject({
-			action: "block",
-			reason: expect.stringMatching(new RegExp(READONLY_INVALID_BASH_COMMAND_REASON)),
-		});
-	}
+test.each([undefined, null, 42, { command: "ls" }])("readonly bash guard rejects non-string commands: %s", (command) => {
+	const result = applyReadonlyBashGuard(command, process.cwd());
+	expect(result, `expected block for ${String(command)}`).toMatchObject({
+		action: "block",
+		reason: expect.stringMatching(new RegExp(READONLY_INVALID_BASH_COMMAND_REASON)),
+	});
 });
 
 test("readonly bash guard blocks non-temp writes and allows temp writes", () => {
@@ -86,7 +83,9 @@ test("readonly bash guard blocks non-temp writes and allows temp writes", () => 
 // ── Readonly child bash tool ─────────────────────────────────────────
 
 function outsideTempPath(label: string): string {
-	return path.join(os.homedir(), `readonly-child-${label}-${process.pid}-${Date.now()}`);
+	const target = path.join(os.homedir(), `readonly-child-${label}-${process.pid}-${Date.now()}`);
+	onTestFinished(() => fs.rmSync(target, { force: true }));
+	return target;
 }
 
 // No ctx: pi's bash tool then skips the session environment, which these tests do not need.
@@ -130,38 +129,30 @@ const skipWithoutDenialPhrase = SANDBOX_DENIAL_PHRASES[process.platform] === und
 
 test.skipIf(!canUseOsSandbox())("sandboxed child bash write outside temp returns the readonly block notice", async () => {
 	const target = outsideTempPath("write");
-	try {
-		const result = await runChildBash(nodeCommand(`require("fs").writeFileSync(${JSON.stringify(target)}, "x")`));
+	const result = await runChildBash(nodeCommand(`require("fs").writeFileSync(${JSON.stringify(target)}, "x")`));
 
-		expect(result.isError).toBe(true);
-		expect(textOf(result), textOf(result)).toContain(READONLY_SANDBOX_BLOCK_NOTICE);
-		const structured = result.structuredContent as { output: string; exit_code: number };
-		const suffix = `\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`;
-		expect(structured.output.slice(-suffix.length), structured.output).toBe(suffix);
-		expect(structured.exit_code).toBe(1);
-		expect(target, "the sandbox must block the write").not.toSatisfy(fs.existsSync);
-	} finally {
-		fs.rmSync(target, { force: true });
-	}
+	expect(result.isError).toBe(true);
+	expect(textOf(result), textOf(result)).toContain(READONLY_SANDBOX_BLOCK_NOTICE);
+	const structured = result.structuredContent as { output: string; exit_code: number };
+	const suffix = `\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`;
+	expect(structured.output.slice(-suffix.length), structured.output).toBe(suffix);
+	expect(structured.exit_code).toBe(1);
+	expect(target, "the sandbox must block the write").not.toSatisfy(fs.existsSync);
 });
 
 test.skipIf(!canUseOsSandbox())("sandboxed child bash error carrying a sandbox denial gets the readonly block notice", async () => {
 	const target = outsideTempPath("abort");
-	try {
-		const command = nodeCommand(
-			`try { require("fs").writeFileSync(${JSON.stringify(target)}, "x") } catch (error) { console.log(error.message) } setInterval(() => {}, 1000)`,
-		);
+	const command = nodeCommand(
+		`try { require("fs").writeFileSync(${JSON.stringify(target)}, "x") } catch (error) { console.log(error.message) } setInterval(() => {}, 1000)`,
+	);
 
-		await expect(runChildBashUntil(command, SANDBOX_DENIAL_PHRASE)).rejects.toSatisfy((error: Error) => {
-			expect(error).toBeInstanceOf(Error);
-			expect(error.message).toMatch(/Command aborted/);
-			expect(error.message.slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), error.message).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
-			return true;
-		});
-		expect(target, "the sandbox must block the write").not.toSatisfy(fs.existsSync);
-	} finally {
-		fs.rmSync(target, { force: true });
-	}
+	await expect(runChildBashUntil(command, SANDBOX_DENIAL_PHRASE)).rejects.toSatisfy((error: Error) => {
+		expect(error).toBeInstanceOf(Error);
+		expect(error.message).toMatch(/Command aborted/);
+		expect(error.message.slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), error.message).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
+		return true;
+	});
+	expect(target, "the sandbox must block the write").not.toSatisfy(fs.existsSync);
 }, 40_000);
 
 test.skipIf(!canUseOsSandbox())("sandboxed child bash success returns its output without the notice", async () => {
@@ -193,45 +184,33 @@ test.skipIf(!canUseOsSandbox())("sandboxed child bash error without a sandbox de
 test("child bash call the readonly guard blocks throws the block reason", async () => {
 	const target = outsideTempPath("blocked");
 
-	try {
-		await expect(runChildBash(`touch ${quoteShellArgument(target)}`)).rejects.toThrow(/Readonly mode:/);
-		expect(target).not.toSatisfy(fs.existsSync);
-	} finally {
-		fs.rmSync(target, { force: true });
-	}
+	await expect(runChildBash(`touch ${quoteShellArgument(target)}`)).rejects.toThrow(/Readonly mode:/);
+	expect(target).not.toSatisfy(fs.existsSync);
 });
 
 test.skipIf(skipWithoutDenialPhrase)("child bash call the readonly guard blocks gets no block notice when its command names the denial phrase", async () => {
 	const target = outsideTempPath("blocked-phrase");
-	try {
-		await expect(runChildBash(`echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(target)}`)).rejects.toSatisfy((error: Error) => {
-			expect(error).toBeInstanceOf(Error);
-			expect(error.message).toMatch(/Readonly mode:/);
-			expect(error.message, error.message).toContain(SANDBOX_DENIAL_PHRASE);
-			expect(error.message, error.message).not.toContain(READONLY_SANDBOX_BLOCK_NOTICE);
-			return true;
-		});
-	} finally {
-		fs.rmSync(target, { force: true });
-	}
+	await expect(runChildBash(`echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(target)}`)).rejects.toSatisfy((error: Error) => {
+		expect(error).toBeInstanceOf(Error);
+		expect(error.message).toMatch(/Readonly mode:/);
+		expect(error.message, error.message).toContain(SANDBOX_DENIAL_PHRASE);
+		expect(error.message, error.message).not.toContain(READONLY_SANDBOX_BLOCK_NOTICE);
+		return true;
+	});
 });
 
 test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("child bash call the readonly guard blocks gets no block notice after a sandboxed call on the same tool", async () => {
 	const target = outsideTempPath("blocked-after-sandboxed");
 	const tool = createReadonlyChildBashTool(process.cwd());
 	const run = (command: string) => tool.execute("child-bash", { command }, undefined, undefined, undefined as any);
-	try {
-		await run(sandboxed("echo sandboxed-first"));
+	await run(sandboxed("echo sandboxed-first"));
 
-		await expect(run(`echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(target)}`)).rejects.toSatisfy((error: Error) => {
-			expect(error).toBeInstanceOf(Error);
-			expect(error.message).toMatch(/Readonly mode:/);
-			expect(error.message, error.message).not.toContain(READONLY_SANDBOX_BLOCK_NOTICE);
-			return true;
-		});
-	} finally {
-		fs.rmSync(target, { force: true });
-	}
+	await expect(run(`echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(target)}`)).rejects.toSatisfy((error: Error) => {
+		expect(error).toBeInstanceOf(Error);
+		expect(error.message).toMatch(/Readonly mode:/);
+		expect(error.message, error.message).not.toContain(READONLY_SANDBOX_BLOCK_NOTICE);
+		return true;
+	});
 });
 
 test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("concurrent child bash calls on one tool get the block notice only on the sandboxed call", async () => {
@@ -239,24 +218,19 @@ test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("concurrent child bas
 	const blockedTarget = outsideTempPath("concurrent-blocked");
 	const tool = createReadonlyChildBashTool(process.cwd());
 	const run = (toolCallId: string, command: string) => tool.execute(toolCallId, { command }, undefined, undefined, undefined as any);
-	try {
-		const [sandboxedResult, blockedResult] = await Promise.allSettled([
-			run("child-bash-sandboxed", nodeCommand(`require("fs").writeFileSync(${JSON.stringify(sandboxedTarget)}, "x")`)),
-			run("child-bash-blocked", `echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(blockedTarget)}`),
-		]);
+	const [sandboxedResult, blockedResult] = await Promise.allSettled([
+		run("child-bash-sandboxed", nodeCommand(`require("fs").writeFileSync(${JSON.stringify(sandboxedTarget)}, "x")`)),
+		run("child-bash-blocked", `echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(blockedTarget)}`),
+	]);
 
-		expect(sandboxedResult.status).toBe("fulfilled");
-		if (sandboxedResult.status !== "fulfilled") expect.unreachable();
-		expect(textOf(sandboxedResult.value).slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), textOf(sandboxedResult.value)).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
-		expect(blockedResult.status).toBe("rejected");
-		if (blockedResult.status !== "rejected") expect.unreachable();
-		expect(blockedResult.reason).toBeInstanceOf(Error);
-		expect(blockedResult.reason.message).toMatch(/Readonly mode:/);
-		expect(blockedResult.reason.message, blockedResult.reason.message).not.toContain(READONLY_SANDBOX_BLOCK_NOTICE);
-	} finally {
-		fs.rmSync(sandboxedTarget, { force: true });
-		fs.rmSync(blockedTarget, { force: true });
-	}
+	expect(sandboxedResult.status).toBe("fulfilled");
+	if (sandboxedResult.status !== "fulfilled") expect.unreachable();
+	expect(textOf(sandboxedResult.value).slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), textOf(sandboxedResult.value)).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
+	expect(blockedResult.status).toBe("rejected");
+	if (blockedResult.status !== "rejected") expect.unreachable();
+	expect(blockedResult.reason).toBeInstanceOf(Error);
+	expect(blockedResult.reason.message).toMatch(/Readonly mode:/);
+	expect(blockedResult.reason.message, blockedResult.reason.message).not.toContain(READONLY_SANDBOX_BLOCK_NOTICE);
 });
 
 test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("sandboxed child bash timeout after a sandbox denial gets the readonly block notice", async () => {

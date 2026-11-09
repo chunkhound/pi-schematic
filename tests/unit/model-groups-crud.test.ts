@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -259,6 +259,7 @@ test("model groups strictly partitions schema and legacy version domains", () =>
 		["thinking", { version: 2, groups: { bad: { models: [{ provider: "p", modelId: "m", thinkingLevel: "turbo" }] } } }, /thinkingLevel/],
 	];
 	for (const [label, raw, message] of invalid) {
+		fs.rmSync(`${projectPath}.bak`, { force: true });
 		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
 		const loaded = loadModelGroups(access(cwd));
 		const issue = loaded.issues.find((candidate) => candidate.scope === "project")!;
@@ -281,6 +282,7 @@ test("legacy constraints recover as schema-invalid instead of crashing load", ()
 	const projectPath = modelGroupsPath("project", cwd);
 	fs.mkdirSync(path.dirname(projectPath), { recursive: true });
 	for (const raw of [{ groups: { legacy: { models: [], constraints: {} } } }, { version: 0, groups: { legacy: { models: [], constraints: {} } } }, { version: 1, groups: { legacy: { models: [], constraints: {} } } }]) {
+		fs.rmSync(`${projectPath}.bak`, { force: true });
 		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
 		const loaded = loadModelGroups(access(cwd));
 		const issue = loaded.issues.find((candidate) => candidate.scope === "project")!;
@@ -321,20 +323,20 @@ test("low-level save permits shape-valid overrides while CRUD rejects union-cap-
 	// CRUD owns the union-cap invariant and must reject the same invalid shape
 	// before any write.
 	// claude supports only text, so an override of image must be rejected by the CRUD gate.
-	let writes = 0;
-	__setModelGroupsFsForTests({ writeFileSync: (_p?: unknown, _d?: unknown, ..._r: unknown[]) => { writes++; fs.writeFileSync(_p as any, _d as any, ...(_r as any)); } });
+	const writeFileSync = vi.fn(fs.writeFileSync);
+	__setModelGroupsFsForTests({ writeFileSync });
 	expect(() => createGroup("project", a, "claude-only", { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["image"] } }, registry())).toThrow(/unsupported modalities: image/);
-	expect(writes).toBe(0);
+	expect(writeFileSync).not.toHaveBeenCalled();
 	__setModelGroupsFsForTests(null);
 
 	createGroup("project", a, "rich", { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["text", "image"] } }, registry());
 	const before = fs.readFileSync(modelGroupsPath("project", cwd), "utf8");
-	let writes2 = 0;
-	__setModelGroupsFsForTests({ writeFileSync: (_p: unknown, _d: unknown, _r: unknown) => { writes2++; fs.writeFileSync(_p as any, _d as any, _r as any); } });
+	const writeFileSync2 = vi.fn(fs.writeFileSync);
+	__setModelGroupsFsForTests({ writeFileSync: writeFileSync2 });
 	// Combined member change: replacing gpt-5 (text+image+reasoning) with claude (text only)
 	// makes the retained override's image unsupported → the gate must reject before any write.
 	expect(() => updateGroup("project", a, "rich", { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["text", "image"] } }, registry())).toThrow(/unsupported modalities: image/);
-	expect(writes2, "rejected update must not write").toBe(0);
+	expect(writeFileSync2, "rejected update must not write").not.toHaveBeenCalled();
 	expect(fs.readFileSync(modelGroupsPath("project", cwd), "utf8")).toBe(before);
 	__setModelGroupsFsForTests(null);
 }));
@@ -387,11 +389,11 @@ test("CRUD rejects unsupported injected overrides before any write", () => withT
 	const ctxModel = { provider: "openai", id: "gpt-ctx", input: ["text"], reasoning: false, contextWindow: 100 };
 	const reg = registry();
 	const modelRegistry: any = { ...reg, find: (provider: string, id: string) => id === "gpt-ctx" ? ctxModel : reg.find(provider, id) };
-	let writes = 0;
-	__setModelGroupsFsForTests({ writeFileSync: (_p?: unknown, _d?: unknown, ..._r: unknown[]) => { writes++; fs.writeFileSync(_p as any, _d as any, ...(_r as any)); } });
+	const writeFileSync = vi.fn(fs.writeFileSync);
+	__setModelGroupsFsForTests({ writeFileSync });
 	try {
 		expect(() => createGroup("project", a, "deep", { models: [{ provider: "openai", modelId: "gpt-ctx" }], constraints: { testMinContext: 200 } }, modelRegistry, injected)).toThrow(/testMinContext override 200 exceeds/);
-		expect(writes, "rejected injected override must not write").toBe(0);
+		expect(writeFileSync, "rejected injected override must not write").not.toHaveBeenCalled();
 	} finally {
 		__setModelGroupsFsForTests(null);
 	}
@@ -419,6 +421,7 @@ test("v2 config load rejects non-array, duplicate, and out-of-vocabulary modalit
 		["out-of-language", { version: 2, groups: { g: { models: [], constraints: { modalities: ["audio"] } } } }, /vocabulary/],
 	];
 	for (const [label, raw, message] of cases) {
+		fs.rmSync(`${projectPath}.bak`, { force: true });
 		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
 		const loaded = loadModelGroups(access(cwd));
 		const issue = loaded.issues.find((candidate) => candidate.scope === "project")!;
@@ -562,8 +565,8 @@ test("version-3 mutations refuse before temp write including loadScopeConfig-bac
 	const sourcePath = modelGroupsPath("project", cwd);
 	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
 	fs.writeFileSync(sourcePath, JSON.stringify({ version: 3, groups: {} }), "utf8");
-	let writes = 0;
-	__setModelGroupsFsForTests({ writeFileSync: () => { writes++; throw new Error("must not write"); } });
+	const writeFileSync = vi.fn(() => { throw new Error("must not write"); });
+	__setModelGroupsFsForTests({ writeFileSync });
 	for (const mutate of [
 		() => saveModelGroups("project", access(cwd), { version: 2, groups: {} }),
 		() => createGroup("project", access(cwd), "blocked", { models: [] }, registry()),
@@ -574,7 +577,7 @@ test("version-3 mutations refuse before temp write including loadScopeConfig-bac
 			return true;
 		}));
 	}
-	expect(writes).toBe(0);
+	expect(writeFileSync).not.toHaveBeenCalled();
 	expect(fs.readFileSync(sourcePath, "utf8")).toBe(JSON.stringify({ version: 3, groups: {} }));
 }));
 
@@ -638,15 +641,15 @@ test("model groups direct save canonicalizes unique keys and rejects empty/colli
 		const groups: Record<string, any> = Object.create(null);
 		for (const key of keys) Object.defineProperty(groups, key, { value: { models: [] }, enumerable: true });
 		const before = fs.readFileSync(modelGroupsPath("project", cwd), "utf8");
-		let writes = 0;
-		__setModelGroupsFsForTests({ writeFileSync: (..._args: any[]) => { writes++; throw new Error("must not write"); } });
+		const writeFileSync = vi.fn(() => { throw new Error("must not write"); });
+		__setModelGroupsFsForTests({ writeFileSync });
 		expect(() => saveModelGroups("project", a, { version: 2, groups })).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
 			expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
 			expect(error.operation).toBe("save");
 			expect(error.phase).toBe("config-validation");
 			return true;
 		}));
-		expect(writes).toBe(0);
+		expect(writeFileSync).not.toHaveBeenCalled();
 		expect(fs.readFileSync(modelGroupsPath("project", cwd), "utf8")).toBe(before);
 		__setModelGroupsFsForTests(null);
 	}

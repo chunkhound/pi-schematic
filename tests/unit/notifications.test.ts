@@ -77,11 +77,9 @@ const allConstants = {
 	READONLY_PENDING_HANDOFF_READONLY_OFF_NOTIFICATION,
 };
 
-test("all constants are non-empty strings", () => {
-	for (const [name, value] of Object.entries(allConstants)) {
-		expect(value, `${name} must be a string`).toBeTypeOf("string");
-		expect(value.trim().length, `${name} must be non-empty`).toBeGreaterThan(0);
-	}
+test.each(Object.entries(allConstants))("all constants are non-empty strings: %s", (name, value) => {
+	expect(value, `${name} must be a string`).toBeTypeOf("string");
+	expect(value.trim().length, `${name} must be non-empty`).toBeGreaterThan(0);
 });
 
 test("composition chain: READONLY_WRITE_EDIT_BASH contains READONLY_BASH_SCOPE", () => {

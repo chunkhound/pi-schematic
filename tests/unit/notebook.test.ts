@@ -1,4 +1,4 @@
-import { expect, onTestFinished, test } from "vitest";
+import { expect, onTestFinished, test, vi } from "vitest";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -32,6 +32,11 @@ async function rehydratePersistedNotebook(pi: TestPI) {
 	const [handler] = restoredPi.handlers.get("session_start")!;
 	await handler({}, { sessionManager: { getBranch: () => persistedBranch(pi) } });
 	return state;
+}
+
+function setPagerRuntime(overrides: Parameters<typeof __setPagerRuntimeForTests>[0]): void {
+	__setPagerRuntimeForTests(overrides);
+	onTestFinished(() => __setPagerRuntimeForTests(null));
 }
 
 // ── Notebook write-size fixtures (issue #42) ──────────────────────────
@@ -483,14 +488,14 @@ test("readonly /notebook boundary notification explains deferred handoff eligibi
 test("/notebook empty overlay renders empty state and closes on input", async () => {
 	const pi = await createTestHost();
 	let overlay: any;
-	let doneCalls = 0;
+	const done = vi.fn();
 
 	await pi.commands.get("notebook")!.handler("", {
 		hasUI: true,
 		ui: {
 			theme,
 			custom: async (build: any) => {
-				overlay = build({ requestRender: () => {} }, theme, {}, () => { doneCalls++; });
+				overlay = build({ requestRender: () => {} }, theme, {}, done);
 			},
 		},
 	});
@@ -499,44 +504,42 @@ test("/notebook empty overlay renders empty state and closes on input", async ()
 	expect(lines).toMatch(/Notebook \(0 pages\)/);
 	expect(lines).toMatch(/\(empty\) — use notebook_write to create pages/);
 	overlay.handleInput("x");
-	expect(doneCalls).toBe(1);
+	expect(done).toHaveBeenCalledOnce();
 });
 
 test("/notebook selection previews the chosen entry when no pager is available", async () => {
-	__setPagerRuntimeForTests({ resolvePager: () => undefined });
-	onTestFinished(() => __setPagerRuntimeForTests(null));
+	setPagerRuntime({ resolvePager: () => undefined });
 
 	const pi = await createTestHost();
 	const notebookWrite = pi.tools.get("notebook_write");
 	await notebookWrite.execute("1", { name: "alpha", content: "body line\nsecond line" }, undefined, undefined, makeTUICtx());
 	let overlay: any;
-	let doneCalls = 0;
+	const done = vi.fn();
 
 	await pi.commands.get("notebook")!.handler("", {
 		hasUI: true,
 		ui: {
 			theme,
 			custom: async (build: any) => {
-				overlay = build({ requestRender: () => {} }, theme, {}, () => { doneCalls++; });
+				overlay = build({ requestRender: () => {} }, theme, {}, done);
 			},
 		},
 	});
 
 	// First Enter selects the entry — shows body inline, done() not yet called
 	overlay.handleInput("\r");
-	expect(doneCalls, "body shown inline, overlay stays open").toBe(0);
+	expect(done, "body shown inline, overlay stays open").not.toHaveBeenCalled();
 	const bodyLines = stripAnsi(overlay.render(120).join("\n"));
 	expect(bodyLines).toMatch(/body line/);
 	expect(bodyLines).toMatch(/alpha/);
 	expect(bodyLines, "an uncut page shows no truncation hint").not.toMatch(/PI_PAGER/);
 	// Second keypress leaves the inline preview
 	overlay.handleInput("\r");
-	expect(doneCalls).toBe(1);
+	expect(done).toHaveBeenCalledOnce();
 });
 
 test("/notebook inline preview hints at $PI_PAGER when it cuts a long page", async () => {
-	__setPagerRuntimeForTests({ resolvePager: () => undefined });
-	onTestFinished(() => __setPagerRuntimeForTests(null));
+	setPagerRuntime({ resolvePager: () => undefined });
 
 	const pi = await createTestHost();
 	const notebookWrite = pi.tools.get("notebook_write");
@@ -604,21 +607,24 @@ test("resolvePager prefers PI_PAGER over PAGER and falls back when it is blank",
 	}
 });
 
+const catAndMoreCases: Array<{ env: NodeJS.ProcessEnv; platform: NodeJS.Platform }> = [
+	{ env: { PI_PAGER: "cat" }, platform: "linux" },
+	{ env: { PAGER: "cat" }, platform: "linux" },
+	{ env: { PI_PAGER: "cat", PAGER: "less" }, platform: "linux" },
+	{ env: { PAGER: "/bin/cat -v" }, platform: "darwin" },
+	{ env: { PAGER: "C:\\tools\\CAT.EXE" }, platform: "win32" },
+	{ env: { PAGER: "more" }, platform: "linux" },
+	{ env: { PI_PAGER: "/usr/bin/more -d", PAGER: "less" }, platform: "linux" },
+	{ env: { PAGER: "C:\\Windows\\System32\\more.com" }, platform: "win32" },
+];
+
+test.for(catAndMoreCases)("resolvePager treats cat and more pagers as no pager so the inline preview is used ($env on $platform)", ({ env, platform }) => {
+	const noProbe = () => expect.unreachable("cat and more must not fall back to less");
+	expect(resolvePager(env, platform, noProbe), `${platform}: ${JSON.stringify(env)}`).toBeUndefined();
+});
+
 test("resolvePager treats cat and more pagers as no pager so the inline preview is used", () => {
 	const noProbe = () => expect.unreachable("cat and more must not fall back to less");
-	const cases: Array<{ env: NodeJS.ProcessEnv; platform: NodeJS.Platform }> = [
-		{ env: { PI_PAGER: "cat" }, platform: "linux" },
-		{ env: { PAGER: "cat" }, platform: "linux" },
-		{ env: { PI_PAGER: "cat", PAGER: "less" }, platform: "linux" },
-		{ env: { PAGER: "/bin/cat -v" }, platform: "darwin" },
-		{ env: { PAGER: "C:\\tools\\CAT.EXE" }, platform: "win32" },
-		{ env: { PAGER: "more" }, platform: "linux" },
-		{ env: { PI_PAGER: "/usr/bin/more -d", PAGER: "less" }, platform: "linux" },
-		{ env: { PAGER: "C:\\Windows\\System32\\more.com" }, platform: "win32" },
-	];
-	for (const { env, platform } of cases) {
-		expect(resolvePager(env, platform, noProbe), `${platform}: ${JSON.stringify(env)}`).toBeUndefined();
-	}
 	// Only the effective pager matters: PI_PAGER still wins over PAGER=cat.
 	expect(resolvePager({ PI_PAGER: "less", PAGER: "cat" }, "linux", noProbe)).toStrictEqual({ cmd: "less", args: ["-+F", "-+X"] });
 });
@@ -732,7 +738,7 @@ test("/notebook enter suspends the TUI, awaits the pager, then restores the TUI 
 	const events: string[] = [];
 	const spawned = createDeferred();
 	const pagerExit = createDeferred();
-	__setPagerRuntimeForTests({
+	setPagerRuntime({
 		resolvePager: () => ({ cmd: "pager", args: [] }),
 		spawnPager: async (body, pager) => {
 			events.push(`spawn:${pager.cmd}:${body}`);
@@ -740,7 +746,6 @@ test("/notebook enter suspends the TUI, awaits the pager, then restores the TUI 
 			await pagerExit.promise;
 		},
 	});
-	onTestFinished(() => __setPagerRuntimeForTests(null));
 
 	const pi = await createTestHost();
 	const notebookWrite = pi.tools.get("notebook_write");
@@ -815,13 +820,12 @@ function enterOnFirstOpen(beforeEnter: () => void | Promise<void> = () => {}) {
 test("/notebook pager interaction installs and removes a SIGINT guard", async () => {
 	const baselineSigint = process.listeners("SIGINT").length;
 	let duringSpawnListenerCount = -1;
-	__setPagerRuntimeForTests({
+	setPagerRuntime({
 		resolvePager: () => ({ cmd: "pager", args: [] }),
 		spawnPager: async () => {
 			duringSpawnListenerCount = process.listeners("SIGINT").length;
 		},
 	});
-	onTestFinished(() => __setPagerRuntimeForTests(null));
 
 	const pi = await createTestHost();
 	const notebookWrite = pi.tools.get("notebook_write");
@@ -835,8 +839,7 @@ test("/notebook pager interaction installs and removes a SIGINT guard", async ()
 
 test("openInPager removes the SIGINT guard even if tui.start throws", async () => {
 	const baselineSigint = process.listeners("SIGINT").length;
-	__setPagerRuntimeForTests({ spawnPager: async () => {} });
-	onTestFinished(() => __setPagerRuntimeForTests(null));
+	setPagerRuntime({ spawnPager: async () => {} });
 
 	const tui = {
 		stop: () => {},
@@ -850,29 +853,27 @@ test("openInPager removes the SIGINT guard even if tui.start throws", async () =
 
 test("openInPager propagates a tui.stop failure without spawning, guarding SIGINT, or restarting", async () => {
 	const baselineSigint = process.listeners("SIGINT").length;
-	let spawned = false;
-	__setPagerRuntimeForTests({ spawnPager: async () => { spawned = true; } });
-	onTestFinished(() => __setPagerRuntimeForTests(null));
+	const spawnPager = vi.fn(async () => {});
+	setPagerRuntime({ spawnPager });
 
-	let started = false;
+	const start = vi.fn();
 	const tui = {
 		stop: () => { throw new Error("stop boom"); },
-		start: () => { started = true; },
+		start,
 		requestRender: () => {},
 	};
 
 	await expect(openInPager(tui as any, "body", { cmd: "pager", args: [] })).rejects.toThrow(/stop boom/);
-	expect(spawned, "pager must not spawn when tui.stop throws").toBe(false);
+	expect(spawnPager, "pager must not spawn when tui.stop throws").not.toHaveBeenCalled();
 	expect(process.listeners("SIGINT"), "SIGINT guard must not leak when tui.stop throws").toHaveLength(baselineSigint);
-	expect(started, "TUI must not restart after a failed stop").toBe(false);
+	expect(start, "TUI must not restart after a failed stop").not.toHaveBeenCalled();
 });
 
 test("/notebook surfaces pager spawn errors as a warning notification", async () => {
-	__setPagerRuntimeForTests({
+	setPagerRuntime({
 		resolvePager: () => ({ cmd: "pager", args: [] }),
 		spawnPager: async () => { throw new Error("boom"); },
 	});
-	onTestFinished(() => __setPagerRuntimeForTests(null));
 
 	const pi = await createTestHost();
 	const notebookWrite = pi.tools.get("notebook_write");
@@ -889,12 +890,11 @@ test("/notebook surfaces pager spawn errors as a warning notification", async ()
 });
 
 test("/notebook reopens the list when the selected page vanished while it was open", async () => {
-	let spawned = false;
-	__setPagerRuntimeForTests({
+	const spawnPager = vi.fn(async () => {});
+	setPagerRuntime({
 		resolvePager: () => ({ cmd: "pager", args: [] }),
-		spawnPager: async () => { spawned = true; },
+		spawnPager,
 	});
-	onTestFinished(() => __setPagerRuntimeForTests(null));
 
 	const pi = await createTestHost();
 	await pi.tools.get("notebook_write").execute("1", { name: "alpha", content: "body" }, undefined, undefined, makeTUICtx());
@@ -917,12 +917,11 @@ test("/notebook reopens the list when the selected page vanished while it was op
 
 	expect(reopens, "list must reopen instead of closing").toHaveLength(1);
 	expect(reopens[0]!).toMatch(/Notebook \(0 pages\)/);
-	expect(spawned, "a vanished page must not open the pager").toBe(false);
+	expect(spawnPager, "a vanished page must not open the pager").not.toHaveBeenCalled();
 });
 
 test("/notebook inline preview returns to the list on any key when no pager is available", async () => {
-	__setPagerRuntimeForTests({ resolvePager: () => undefined });
-	onTestFinished(() => __setPagerRuntimeForTests(null));
+	setPagerRuntime({ resolvePager: () => undefined });
 
 	const pi = await createTestHost();
 	const notebookWrite = pi.tools.get("notebook_write");
@@ -957,24 +956,23 @@ test("/notebook inline preview returns to the list on any key when no pager is a
 });
 
 test("/notebook selecting an empty-content page opens the preview instead of closing the picker", async () => {
-	__setPagerRuntimeForTests({ resolvePager: () => undefined });
-	onTestFinished(() => __setPagerRuntimeForTests(null));
+	setPagerRuntime({ resolvePager: () => undefined });
 
 	const pi = await createTestHost();
 	const notebookWrite = pi.tools.get("notebook_write");
 	await notebookWrite.execute("1", { name: "alpha", content: "" }, undefined, undefined, makeTUICtx());
 
-	let doneCalls = 0;
+	const done = vi.fn();
 	await pi.commands.get("notebook")!.handler("", makeTUICtx({
 		percent: 20,
 		custom: async (build: any) => {
-			const overlay = build({ requestRender: () => {} }, theme, {}, () => { doneCalls++; });
+			const overlay = build({ requestRender: () => {} }, theme, {}, done);
 			overlay.handleInput("\r"); // Enter on the empty-content page
-			expect(doneCalls, "an empty page body must not close the picker early").toBe(0);
+			expect(done, "an empty page body must not close the picker early").not.toHaveBeenCalled();
 			const preview = stripAnsi(overlay.render(120).join("\n"));
 			expect(preview, "inline preview header must show the page name").toMatch(/alpha/);
 			overlay.handleInput(" "); // any key leaves the inline preview
-			expect(doneCalls).toBe(1);
+			expect(done).toHaveBeenCalledOnce();
 		},
 	}));
 });
@@ -1515,20 +1513,12 @@ test("oversized first line rejects a new page without side effects", async () =>
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
 
 	for (const content of [R, UR]) {
-		await expect(saveNotebookPage(pi as any, state, "page", content)).rejects.toSatisfy((error: Error) => {
-			expect(error).toBeInstanceOf(Error);
-			expect(error.message).toBe(rejectMessage("page"));
-			return true;
-		});
+		await expect(saveNotebookPage(pi as any, state, "page", content)).rejects.toThrow(new Error(rejectMessage("page")));
 	}
 
-	let updateCalled = false;
-	await expect(notebookWrite.execute("1", { name: "page", content: R }, undefined, () => { updateCalled = true; }, makeTUICtx({ hasUI: true, record }))).rejects.toSatisfy((error: Error) => {
-		expect(error).toBeInstanceOf(Error);
-		expect(error.message).toBe(rejectMessage("page"));
-		return true;
-	});
-	expect(updateCalled).toBe(false);
+	const onUpdate = vi.fn();
+	await expect(notebookWrite.execute("1", { name: "page", content: R }, undefined, onUpdate, makeTUICtx({ hasUI: true, record }))).rejects.toThrow(new Error(rejectMessage("page")));
+	expect(onUpdate).not.toHaveBeenCalled();
 	expect(state.notebookPages.size).toBe(0);
 	expect(state.epoch).toBe(0);
 	expect(state.discardEpochWatermark).toBe(0);
@@ -1549,11 +1539,7 @@ test("rejected overwrite preserves prior body and clipped flag", async () => {
 
 	await saveNotebookPage(pi as any, state, "page", C);
 	const epochBefore = state.epoch;
-	await expect(saveNotebookPage(pi as any, state, "page", R)).rejects.toSatisfy((error: Error) => {
-		expect(error).toBeInstanceOf(Error);
-		expect(error.message).toBe(rejectMessage("page"));
-		return true;
-	});
+	await expect(saveNotebookPage(pi as any, state, "page", R)).rejects.toThrow(new Error(rejectMessage("page")));
 	expect(state.notebookPages.get("page")).toBe(C);
 	expect(state.epoch).toBe(epochBefore);
 	expect(pi.appendedEntries).toHaveLength(1);
@@ -1563,11 +1549,7 @@ test("rejected overwrite preserves prior body and clipped flag", async () => {
 
 	await saveNotebookPage(pi as any, state, "page", L(2001));
 	const epochClipped = state.epoch;
-	await expect(saveNotebookPage(pi as any, state, "page", R)).rejects.toSatisfy((error: Error) => {
-		expect(error).toBeInstanceOf(Error);
-		expect(error.message).toBe(rejectMessage("page"));
-		return true;
-	});
+	await expect(saveNotebookPage(pi as any, state, "page", R)).rejects.toThrow(new Error(rejectMessage("page")));
 	expect(state.notebookPages.get("page")).toBe(L(2000));
 	expect(state.epoch).toBe(epochClipped);
 	read = await notebookRead.execute("3", { name: "page" }, undefined, undefined, {} as any);
@@ -1587,19 +1569,11 @@ test("blank first line plus oversized line rejects and preserves prior page stat
 	const epochBefore = state.epoch;
 	const entriesBefore = pi.appendedEntries.length;
 
-	await expect(saveNotebookPage(pi as any, state, "page", blankFirstLineOverflow)).rejects.toSatisfy((error: Error) => {
-		expect(error).toBeInstanceOf(Error);
-		expect(error.message).toBe(emptyHeadRejectMessage("page"));
-		return true;
-	});
+	await expect(saveNotebookPage(pi as any, state, "page", blankFirstLineOverflow)).rejects.toThrow(new Error(emptyHeadRejectMessage("page")));
 
-	let updateCalled = false;
-	await expect(notebookWrite.execute("2", { name: "page", content: blankFirstLineOverflow }, undefined, () => { updateCalled = true; }, makeTUICtx({ hasUI: true, record }))).rejects.toSatisfy((error: Error) => {
-		expect(error).toBeInstanceOf(Error);
-		expect(error.message).toBe(emptyHeadRejectMessage("page"));
-		return true;
-	});
-	expect(updateCalled).toBe(false);
+	const onUpdate = vi.fn();
+	await expect(notebookWrite.execute("2", { name: "page", content: blankFirstLineOverflow }, undefined, onUpdate, makeTUICtx({ hasUI: true, record }))).rejects.toThrow(new Error(emptyHeadRejectMessage("page")));
+	expect(onUpdate).not.toHaveBeenCalled();
 	expect(state.notebookPages.get("page")).toBe(C);
 	expect([...state.clippedPages]).not.toContain("page");
 	expect(state.epoch).toBe(epochBefore);
@@ -1611,11 +1585,7 @@ test("blank first line plus oversized line rejects and preserves prior page stat
 	await saveNotebookPage(pi as any, state, "page", L(2001));
 	const epochClipped = state.epoch;
 	const entriesClipped = pi.appendedEntries.length;
-	await expect(saveNotebookPage(pi as any, state, "page", blankFirstLineOverflow)).rejects.toSatisfy((error: Error) => {
-		expect(error).toBeInstanceOf(Error);
-		expect(error.message).toBe(emptyHeadRejectMessage("page"));
-		return true;
-	});
+	await expect(saveNotebookPage(pi as any, state, "page", blankFirstLineOverflow)).rejects.toThrow(new Error(emptyHeadRejectMessage("page")));
 	const read = await notebookRead.execute("3", { name: "page" }, undefined, undefined, {} as any);
 	expect(state.notebookPages.get("page")).toBe(L(2000));
 	expect([...state.clippedPages]).toContain("page");

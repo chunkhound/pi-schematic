@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { CURSOR_MARKER, fuzzyFilter, visibleWidth } from "@earendil-works/pi-tui";
 import { createModelGroupsComponent } from "../../model-groups/tui.js";
 import { ModelGroupsPersistenceError, type ModelGroupsBootValidation, type ResolvedModelGroup } from "../../model-groups/types.js";
@@ -329,9 +329,9 @@ test("model groups TUI modality editor preserves state and notifies on updateGro
 test("model groups TUI text-only modalities screen is inert and states Automatic", () => {
 	const textOnly = group("text-only", { scope: "project", models: [{ provider: "openai", modelId: "gpt-text" }] });
 	textOnly.modalities = { common: ["text"], supported: ["text"], effective: ["text"] };
-	let updateCalls = 0;
+	const updateGroup = vi.fn();
 	const store = {
-		updateGroup: () => { updateCalls++; },
+		updateGroup,
 		listResolvedModelGroups: () => boot([textOnly]),
 	};
 	const { c } = component({ groups: [textOnly], store });
@@ -349,7 +349,7 @@ test("model groups TUI text-only modalities screen is inert and states Automatic
 	expect(screen).not.toMatch(/→/);
 	// Enter/Space on the inert row must not persist anything.
 	press(c, ENTER, " ", ENTER);
-	expect(updateCalls).toBe(0);
+	expect(updateGroup).not.toHaveBeenCalled();
 });
 
 test("model groups TUI empty-group modalities screen claims no capabilities", () => {
@@ -391,19 +391,18 @@ test("model groups TUI computes unique new-group names and opens editor after cr
 
 test("model groups TUI wizard renders provider/model/thinking steps and preserves state on add failure", () => {
 	const messages: string[] = [];
-	let updateCalls = 0;
 	const groups = [group("review", { scope: "project" })];
+	const updateGroup = vi.fn(() => {
+		throw new ModelGroupsPersistenceError({
+			operation: "save",
+			scope: "project",
+			sourcePath: "/tmp/project/.pi/pi-schematic/model-groups.json",
+			phase: "rename",
+			message: "add failed",
+		});
+	});
 	const store = {
-		updateGroup: () => {
-			updateCalls++;
-			throw new ModelGroupsPersistenceError({
-				operation: "save",
-				scope: "project",
-				sourcePath: "/tmp/project/.pi/pi-schematic/model-groups.json",
-				phase: "rename",
-				message: "add failed",
-			});
-		},
+		updateGroup,
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store, notify: (message) => messages.push(message) });
@@ -432,7 +431,7 @@ test("model groups TUI wizard renders provider/model/thinking steps and preserve
 	expect(text).not.toMatch(/Step 4/);
 
 	press(c, ENTER);
-	expect(updateCalls).toBe(1);
+	expect(updateGroup).toHaveBeenCalledOnce();
 	expect(messages).toHaveLength(1);
 	expect(messages[0]).toMatch(/save failed at rename for project scope/);
 	expect(messages[0]).toMatch(/add failed/);
@@ -863,22 +862,22 @@ test("model groups TUI escapes controlled labels, bounds width, and offers nativ
 	expect(selectedThinking).toBe("max");
 });
 
-test("model groups TUI decodes then canonicalizes prototype-sensitive names and rejects malformed escapes", () => {
-	for (const nextName of ["__proto__", "constructor", "toString"]) {
-		let groups = [group("abc", { scope: "project" })];
-		const calls: string[] = [];
-		const notifications: string[] = [];
-		const store = {
-			renameGroup: (_scope: string, _access: any, oldName: string, renamed: string) => { calls.push(`${oldName}->${renamed}`); groups = [group(renamed, { scope: "project" })]; },
-			listResolvedModelGroups: () => boot(groups),
-		};
-		const c = component({ groups, store, notify: (message) => notifications.push(message) }).c;
-		press(c, ENTER, DOWN, DOWN, ENTER, "\u007f", "\u007f", "\u007f", ...[...` ${nextName} `], DOWN);
-		expect(calls).toStrictEqual([`abc->${nextName}`]);
-		expect(rendered(c)).toMatch(new RegExp(nextName.replaceAll("_", "\\_")));
-		expect(notifications).toStrictEqual([]);
-	}
+test.for(["__proto__", "constructor", "toString"])("model groups TUI decodes then canonicalizes prototype-sensitive names: %s", (nextName) => {
+	let groups = [group("abc", { scope: "project" })];
+	const calls: string[] = [];
+	const notifications: string[] = [];
+	const store = {
+		renameGroup: (_scope: string, _access: any, oldName: string, renamed: string) => { calls.push(`${oldName}->${renamed}`); groups = [group(renamed, { scope: "project" })]; },
+		listResolvedModelGroups: () => boot(groups),
+	};
+	const c = component({ groups, store, notify: (message) => notifications.push(message) }).c;
+	press(c, ENTER, DOWN, DOWN, ENTER, "\u007f", "\u007f", "\u007f", ...[...` ${nextName} `], DOWN);
+	expect(calls).toStrictEqual([`abc->${nextName}`]);
+	expect(rendered(c)).toMatch(new RegExp(nextName.replaceAll("_", "\\_")));
+	expect(notifications).toStrictEqual([]);
+});
 
+test("model groups TUI rejects malformed escapes in a rename", () => {
 	const malformedCalls: string[] = [];
 	const notifications: string[] = [];
 	const malformed = component({

@@ -9,7 +9,7 @@
  * eligible.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import os from "node:os";
@@ -90,20 +90,14 @@ const NEXT_INSTRUCTION = "Write the migration guide for the boundary cut.";
 const HANDOFF_CONTEXT = "The design lives in docs/design.md; section 2 is settled.";
 
 let sandboxDir: string;
-let restoreHome: () => void;
-const previousPiOffline = process.env.PI_OFFLINE;
 
 beforeAll(async () => {
 	sandboxDir = await mkdtemp(join(os.tmpdir(), "pi-schematic-handoff-boundary-"));
-	restoreHome = setTempHome(sandboxDir);
-	process.env.PI_OFFLINE = "1";
-});
-
-afterAll(async () => {
-	restoreHome();
-	if (previousPiOffline === undefined) delete process.env.PI_OFFLINE;
-	else process.env.PI_OFFLINE = previousPiOffline;
-	await rm(sandboxDir, { recursive: true, force: true });
+	const restoreHome = setTempHome(sandboxDir);
+	return async () => {
+		restoreHome();
+		await rm(sandboxDir, { recursive: true, force: true });
+	};
 });
 
 /** Narrows `entry` to the session entry type `type`; the type check is the one counted assertion. */
@@ -226,6 +220,7 @@ async function startSession(
 		sessionManager,
 		resourceLoader,
 	});
+	onTestFinished(() => { session.dispose(); });
 	await session.bindExtensions({
 		...(extensions.ui === undefined ? {} : { uiContext: extensions.ui }),
 		onError: (error) => observed.extensionErrors.push(`${error.event}: ${error.error}`),
@@ -285,11 +280,9 @@ async function settle(session: AgentSession, done: Promise<void>, what: string):
 
 /** Wait until `runs` runs have settled; a /handoff command's run starts after prompt() returns, so waitForIdle alone can return before it. */
 async function settleRuns(session: AgentSession, observed: Observed, runs: number): Promise<void> {
-	const deadline = Date.now() + 10_000;
-	while (observed.events.filter((name) => name === "agent_settled").length < runs) {
-		if (Date.now() > deadline) throw new Error(`timed out waiting for ${runs} settled runs`);
-		await new Promise((resolve) => setTimeout(resolve, 5));
-	}
+	await vi.waitFor(() => {
+		expect(observed.events.filter((name) => name === "agent_settled").length, "settled runs").toBeGreaterThanOrEqual(runs);
+	}, { timeout: 10_000, interval: 5 });
 	await session.waitForIdle();
 }
 
@@ -299,12 +292,8 @@ describe("handoff boundary in a real agent session", () => {
 			call(handoffCall()),
 			reply("successor answer"),
 		]);
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.waitForIdle();
-		} finally {
-			session.dispose();
-		}
+		await session.prompt(LARGE_PROMPT);
+		await session.waitForIdle();
 
 		const labels = sessionManager.getBranch().map(entryLabel);
 		expect(labels.slice(-4)).toStrictEqual([
@@ -334,12 +323,8 @@ describe("handoff boundary in a real agent session", () => {
 
 	it("continues the calling run for the successor turn without a new agent start or compaction events", async () => {
 		const { session, observed } = await startSession([call(handoffCall()), reply("successor answer")]);
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.waitForIdle();
-		} finally {
-			session.dispose();
-		}
+		await session.prompt(LARGE_PROMPT);
+		await session.waitForIdle();
 
 		expect(observed.events).toStrictEqual(["before_agent_start", "agent_start", "agent_settled"]);
 		expect(observed.requests).toHaveLength(2);
@@ -347,12 +332,8 @@ describe("handoff boundary in a real agent session", () => {
 
 	it("shows the successor turn only the frame, the successor and the note", async () => {
 		const { session, observed } = await startSession([call(handoffCall()), reply("successor answer")]);
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.waitForIdle();
-		} finally {
-			session.dispose();
-		}
+		await session.prompt(LARGE_PROMPT);
+		await session.waitForIdle();
 
 		const successorRequest = nonSystem(observed.requests[1]).map(messageText);
 		expect(successorRequest, `successor request: ${JSON.stringify(successorRequest.map((text) => text.slice(0, 60)))}`).toHaveLength(3);
@@ -367,12 +348,8 @@ describe("handoff boundary in a real agent session", () => {
 
 	it("lets turn_start read the committed boundary from the branch", async () => {
 		const { session, observed } = await startSession([call(handoffCall()), reply("successor answer")]);
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.waitForIdle();
-		} finally {
-			session.dispose();
-		}
+		await session.prompt(LARGE_PROMPT);
+		await session.waitForIdle();
 
 		expect(observed.branchAtTurnStart).toHaveLength(2);
 		expect(observed.branchAtTurnStart[1].slice(-3)).toStrictEqual([
@@ -384,12 +361,8 @@ describe("handoff boundary in a real agent session", () => {
 
 	it("reports the faux usage of a large prompt as eligible at the handoff call", async () => {
 		const { session, observed } = await startSession([call(handoffCall()), reply("successor answer")]);
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.waitForIdle();
-		} finally {
-			session.dispose();
-		}
+		await session.prompt(LARGE_PROMPT);
+		await session.waitForIdle();
 
 		expect(observed.usageAtHandoffCall).toHaveLength(1);
 		const tokens = observed.usageAtHandoffCall[0]?.tokens;
@@ -401,12 +374,8 @@ describe("handoff boundary in a real agent session", () => {
 	// nudge when pi reports null usage, so the successor of a model-called handoff carries no nudge.
 	it("reports no usage percent at the successor request right after the cut", async () => {
 		const { session, observed } = await startSession([call(handoffCall()), reply("successor answer")]);
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.waitForIdle();
-		} finally {
-			session.dispose();
-		}
+		await session.prompt(LARGE_PROMPT);
+		await session.waitForIdle();
 
 		expect(observed.usageAtContext, "the handoff request and the successor request").toHaveLength(2);
 		expect(observed.usageAtContext[1]?.percent, "usage at the successor request").toBeNull();
@@ -422,13 +391,9 @@ describe("handoff boundary in a real agent session", () => {
 				return fauxAssistantMessage("successor answer");
 			},
 		]);
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.prompt("/handoff finish the report");
-			await settle(session, successorRequested.promise, "the successor request");
-		} finally {
-			session.dispose();
-		}
+		await session.prompt(LARGE_PROMPT);
+		await session.prompt("/handoff finish the report");
+		await settle(session, successorRequested.promise, "the successor request");
 
 		expect(observed.requests).toHaveLength(3);
 		expect(observed.requests[1], "the handoff request was enforced before the cut").toSatisfy(carriesRequiredNudge);
@@ -442,12 +407,8 @@ describe("handoff boundary in a real agent session", () => {
 			const sibling = fauxToolCall("notebook_write", { name: "sibling-page", content: "findings saved before the handoff" }, { id: "call-sibling" });
 			const calls = order === "handoff first" ? [handoffCall(), sibling] : [sibling, handoffCall()];
 			const { session, sessionManager, observed } = await startSession([call(...calls), reply("continued after the refusal")]);
-			try {
-				await session.prompt(LARGE_PROMPT);
-				await session.waitForIdle();
-			} finally {
-				session.dispose();
-			}
+			await session.prompt(LARGE_PROMPT);
+			await session.waitForIdle();
 
 			const handoffResult = toolResultFor(sessionManager, "call-handoff");
 			assertPresent(handoffResult, "the handoff has a tool result");
@@ -475,13 +436,9 @@ describe("handoff boundary in a real agent session", () => {
 			call(fauxToolCall("notebook_index", {}, { id: "call-index" })),
 			reply("successor answer"),
 		]);
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.prompt("hand off now");
-			await session.waitForIdle();
-		} finally {
-			session.dispose();
-		}
+		await session.prompt(LARGE_PROMPT);
+		await session.prompt("hand off now");
+		await session.waitForIdle();
 
 		const labels = sessionManager.getBranch().map(entryLabel);
 		const cutIndex = labels.indexOf("compaction");
@@ -515,17 +472,13 @@ describe("handoff boundary in a real agent session", () => {
 			{ after: [stopContinuation] },
 		);
 		let requestsAfterHandoffRun: number;
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.prompt("/handoff finish the report");
-			await settle(session, handoffRequested.promise, "the handoff run");
-			requestsAfterHandoffRun = observed.requests.length;
-			// The command refuses while a handoff is still staged, so it reports whether the settle completed the cut.
-			await session.prompt("/handoff write the release notes");
-			await settle(session, nextRunRequested.promise, "the next /handoff run");
-		} finally {
-			session.dispose();
-		}
+		await session.prompt(LARGE_PROMPT);
+		await session.prompt("/handoff finish the report");
+		await settle(session, handoffRequested.promise, "the handoff run");
+		requestsAfterHandoffRun = observed.requests.length;
+		// The command refuses while a handoff is still staged, so it reports whether the settle completed the cut.
+		await session.prompt("/handoff write the release notes");
+		await settle(session, nextRunRequested.promise, "the next /handoff run");
 
 		expect(requestsAfterHandoffRun, "the successor turn did not run").toBe(2);
 		expect(entriesOf(sessionManager, "compaction"), "the cut is persisted").toHaveLength(1);
@@ -556,16 +509,12 @@ describe("handoff boundary in a real agent session", () => {
 			{ after: [abortAfterCut], ui: recordingUI(ui) },
 		);
 		let requestsAfterHandoffRun: number;
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.prompt("/handoff finish the report");
-			await settleRuns(session, observed, 2);
-			requestsAfterHandoffRun = observed.requests.length;
-			await session.prompt("continue");
-			await settleRuns(session, observed, 3);
-		} finally {
-			session.dispose();
-		}
+		await session.prompt(LARGE_PROMPT);
+		await session.prompt("/handoff finish the report");
+		await settleRuns(session, observed, 2);
+		requestsAfterHandoffRun = observed.requests.length;
+		await session.prompt("continue");
+		await settleRuns(session, observed, 3);
 
 		expect(abortedAtTurnStart, "the successor turn starts with the signal already aborted").toStrictEqual([false, false, true, false]);
 		expect(requestsAfterHandoffRun, "the aborted successor turn made no provider request").toBe(2);
@@ -600,14 +549,10 @@ describe("handoff boundary in a real agent session", () => {
 			reply("successor answer"),
 			reply("next prompt answer"),
 		]);
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.prompt("hand off now");
-			await session.prompt("next task");
-			await session.waitForIdle();
-		} finally {
-			session.dispose();
-		}
+		await session.prompt(LARGE_PROMPT);
+		await session.prompt("hand off now");
+		await session.prompt("next task");
+		await session.waitForIdle();
 
 		expect(observed.requests).toHaveLength(5);
 		const beforeHandoff = getCurrentSystemPrompt(observed.requests[2]);
@@ -651,12 +596,8 @@ describe("handoff boundary in a real agent session", () => {
 			handoffExecutions += 1;
 			return execute(...args);
 		};
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.waitForIdle();
-		} finally {
-			session.dispose();
-		}
+		await session.prompt(LARGE_PROMPT);
+		await session.waitForIdle();
 
 		expect(outcomes).toHaveLength(1);
 		expect(handoffExecutions, "pi refuses the nested call before the handoff tool runs").toBe(0);
@@ -691,17 +632,13 @@ describe("failed handoff cut in a real agent session", () => {
 			);
 			let runsAfterHandoffRun: number;
 			let requestsAfterHandoffRun: number;
-			try {
-				await session.prompt(LARGE_PROMPT);
-				await session.prompt("/handoff finish the report");
-				await settleRuns(session, observed, 2);
-				runsAfterHandoffRun = observed.events.filter((name) => name === "agent_start").length;
-				requestsAfterHandoffRun = observed.requests.length;
-				await session.prompt("continue");
-				await settleRuns(session, observed, 3);
-			} finally {
-				session.dispose();
-			}
+			await session.prompt(LARGE_PROMPT);
+			await session.prompt("/handoff finish the report");
+			await settleRuns(session, observed, 2);
+			runsAfterHandoffRun = observed.events.filter((name) => name === "agent_start").length;
+			requestsAfterHandoffRun = observed.requests.length;
+			await session.prompt("continue");
+			await settleRuns(session, observed, 3);
 
 			expect(runsAfterHandoffRun, "the first prompt's run and the /handoff run; the failure starts no run").toBe(2);
 			expect(requestsAfterHandoffRun).toBe(1 + variant.requests);
@@ -748,17 +685,13 @@ describe("failed handoff cut in a real agent session", () => {
 			);
 			let requestsAfterHandoffRun: number;
 			let uiAfterHandoffRun: string[];
-			try {
-				await session.prompt(LARGE_PROMPT);
-				await session.prompt("/handoff finish the report");
-				await settleRuns(session, observed, 2);
-				requestsAfterHandoffRun = observed.requests.length;
-				uiAfterHandoffRun = [...ui];
-				await session.prompt(LARGE_PROMPT);
-				await settleRuns(session, observed, 3);
-			} finally {
-				session.dispose();
-			}
+			await session.prompt(LARGE_PROMPT);
+			await session.prompt("/handoff finish the report");
+			await settleRuns(session, observed, 2);
+			requestsAfterHandoffRun = observed.requests.length;
+			uiAfterHandoffRun = [...ui];
+			await session.prompt(LARGE_PROMPT);
+			await settleRuns(session, observed, 3);
 
 			const lostSuccessor = buildNextUserMessage({ nextInstruction: "finish the report", context: HANDOFF_CONTEXT });
 			expect(requestsAfterHandoffRun, "the continuation turn is aborted before it reaches the model").toBe(2);
@@ -801,16 +734,12 @@ describe("failed handoff cut in a real agent session", () => {
 			{ after: [dropSuccessorAndStop], ui: recordingUI(ui) },
 		);
 		let requestsAfterHandoffRun: number;
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.prompt("/handoff finish the report");
-			await settleRuns(session, observed, 2);
-			requestsAfterHandoffRun = observed.requests.length;
-			await session.prompt("continue");
-			await settleRuns(session, observed, 3);
-		} finally {
-			session.dispose();
-		}
+		await session.prompt(LARGE_PROMPT);
+		await session.prompt("/handoff finish the report");
+		await settleRuns(session, observed, 2);
+		requestsAfterHandoffRun = observed.requests.length;
+		await session.prompt("continue");
+		await settleRuns(session, observed, 3);
 
 		expect(requestsAfterHandoffRun, "the stopped continuation made no request").toBe(2);
 		const abortedReplies = sessionManager.getBranch().filter((entry) =>
@@ -847,18 +776,14 @@ describe("failed handoff cut in a real agent session", () => {
 		let runsAfterAbort: number;
 		let requestsAfterAbort: number;
 		let failuresAfterAbort: SessionEntry[];
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.prompt("/handoff finish the report");
-			await settle(session, handoffRequested.promise, "the handoff run");
-			runsAfterAbort = observed.events.filter((name) => name === "agent_start").length;
-			requestsAfterAbort = observed.requests.length;
-			failuresAfterAbort = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE);
-			await session.prompt("continue");
-			await session.waitForIdle();
-		} finally {
-			session.dispose();
-		}
+		await session.prompt(LARGE_PROMPT);
+		await session.prompt("/handoff finish the report");
+		await settle(session, handoffRequested.promise, "the handoff run");
+		runsAfterAbort = observed.events.filter((name) => name === "agent_start").length;
+		requestsAfterAbort = observed.requests.length;
+		failuresAfterAbort = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE);
+		await session.prompt("continue");
+		await session.waitForIdle();
 
 		expect(runsAfterAbort, "the first prompt's run and the aborted /handoff run; no failure run").toBe(2);
 		expect(requestsAfterAbort).toBe(2);
@@ -896,21 +821,17 @@ describe("failed handoff cut in a real agent session", () => {
 			{ after: [dropBoundary], ...(ui === undefined ? {} : { ui: recordingUI(ui) }) },
 		);
 		let uiBeforeLastPrompt: number | undefined;
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.prompt("/handoff finish the report");
-			await settleRuns(session, observed, 2);
-			// Nothing starts a run on its own, so each retry is a user prompt.
-			for (let attempt = 1; attempt < MAX_HANDOFF_ATTEMPTS; attempt++) {
-				await session.prompt("retry");
-				await settleRuns(session, observed, 2 + attempt);
-			}
-			uiBeforeLastPrompt = ui?.length;
-			await session.prompt("after the budget");
-			await settleRuns(session, observed, 2 + MAX_HANDOFF_ATTEMPTS);
-		} finally {
-			session.dispose();
+		await session.prompt(LARGE_PROMPT);
+		await session.prompt("/handoff finish the report");
+		await settleRuns(session, observed, 2);
+		// Nothing starts a run on its own, so each retry is a user prompt.
+		for (let attempt = 1; attempt < MAX_HANDOFF_ATTEMPTS; attempt++) {
+			await session.prompt("retry");
+			await settleRuns(session, observed, 2 + attempt);
 		}
+		uiBeforeLastPrompt = ui?.length;
+		await session.prompt("after the budget");
+		await settleRuns(session, observed, 2 + MAX_HANDOFF_ATTEMPTS);
 		return { sessionManager, observed, nudgedCalls, uiBeforeLastPrompt };
 	}
 
@@ -934,17 +855,13 @@ describe("failed handoff cut in a real agent session", () => {
 		);
 		let requestsAfterHandoffRun: number;
 		let failuresAfterHandoffRun: number;
-		try {
-			await session.prompt(LARGE_PROMPT);
-			await session.prompt("/handoff finish the report");
-			await settleRuns(session, observed, 2);
-			requestsAfterHandoffRun = observed.requests.length;
-			failuresAfterHandoffRun = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE).length;
-			await session.prompt("try again");
-			await settleRuns(session, observed, 3);
-		} finally {
-			session.dispose();
-		}
+		await session.prompt(LARGE_PROMPT);
+		await session.prompt("/handoff finish the report");
+		await settleRuns(session, observed, 2);
+		requestsAfterHandoffRun = observed.requests.length;
+		failuresAfterHandoffRun = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE).length;
+		await session.prompt("try again");
+		await settleRuns(session, observed, 3);
 
 		const second = toolResultFor(sessionManager, "call-second");
 		assertPresent(second, "the second handoff has a tool result");

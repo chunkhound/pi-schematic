@@ -9,7 +9,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import os from "node:os";
-import { expect } from "vitest";
+import { test as base, expect } from "vitest";
 import { createState, resetState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
 import { assertPresent } from "../assertions.js";
@@ -265,6 +265,18 @@ export async function tmpDir(): Promise<string> {
 	return mkdtemp(join(os.tmpdir(), "pi-test-"));
 }
 
+/**
+ * `test` with a `dir` fixture: a fresh temp directory, created only for tests
+ * that take `dir` and removed after the test, also when a check failed.
+ */
+export const testWithDir = base.extend<{ dir: string }>({
+	dir: async ({}, use) => {
+		const dir = await tmpDir();
+		await use(dir);
+		await rm(dir, { recursive: true, force: true });
+	},
+});
+
 export async function withTempHome<T>(run: (homeDir: string) => Promise<T>): Promise<T> {
 	const homeDir = await tmpDir();
 	const restore = setTempHome(homeDir);
@@ -366,7 +378,6 @@ export async function runRealChildInvocation(params: {
 	const resultText = params.resultText ?? `${provider}/${modelId}:${sentinel}`;
 	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 	const previousOpenAiApiKey = process.env.OPENAI_API_KEY;
-	const previousPiOffline = process.env.PI_OFFLINE;
 	const previousFetch = globalThis.fetch;
 	const outboundFetches: string[] = [];
 
@@ -456,7 +467,6 @@ export default function(pi) {
 
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		process.env.OPENAI_API_KEY = "test-openai-key";
-		process.env.PI_OFFLINE = "1";
 		globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
 			outboundFetches.push(input instanceof Request ? input.url : String(input));
 			throw new Error(`offline fixture blocked outbound fetch: ${outboundFetches.at(-1)}`);
@@ -545,8 +555,6 @@ export default function(pi) {
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		if (previousOpenAiApiKey === undefined) delete process.env.OPENAI_API_KEY;
 		else process.env.OPENAI_API_KEY = previousOpenAiApiKey;
-		if (previousPiOffline === undefined) delete process.env.PI_OFFLINE;
-		else process.env.PI_OFFLINE = previousPiOffline;
 		globalThis.fetch = previousFetch;
 		delete (globalThis as any).__agenticE2eProbeCalls;
 		delete (globalThis as any).__agenticE2eStreamCalls;

@@ -17,8 +17,7 @@
  *
  * Usage:
  *
- *   const h = createTestHarness();
- *   onTestFinished(() => { h.teardown(); });
+ *   const h = useTestHarness(); // registers h.teardown() in onTestFinished
  *   // test body: use h.warnings
  *
  * With a cleanup returned from beforeEach, which Vitest registers only when
@@ -40,6 +39,7 @@ import {
 	getSingletons,
 	type RuntimeSingletons,
 } from "../runtime-singletons.js";
+import { onTestFinished } from "vitest";
 import { SpawnFrameScheduler } from "../spawn/renderer.js";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -128,4 +128,16 @@ export function createTestHarness(): TestHarness {
 			}
 		},
 	};
+}
+/**
+ * Creates a harness for the current test and tears it down from
+ * `onTestFinished`, which is registered only after `createTestHarness()`
+ * returned, so a harness that refused to start is not torn down.
+ */
+export function useTestHarness(): TestHarness {
+	const h = createTestHarness();
+	onTestFinished(() => {
+		h.teardown();
+	});
+	return h;
 }

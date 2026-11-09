@@ -35,18 +35,16 @@ test("blocks bash writes outside temp dir", async () => {
 	await assertBlocked(toolCall, `echo "test" > ${outsideTemp}`);
 });
 
-test("blocks malformed bash input without throwing", async () => {
+test.each([undefined, null, 42, false, true, Symbol("test"), BigInt(42), () => {}])("blocks malformed bash input without throwing: %s", async (command) => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 
-	for (const command of [undefined, null, 42, false, true, Symbol("test"), BigInt(42), () => {}]) {
-		const result = await toolCall(
-			{ toolName: "bash", input: { command } } as any,
-			{ cwd: "/workspace" },
-		);
-		expect(result?.block, `expected malformed input to block: ${String(command)}`).toBe(true);
-		expect(result?.reason ?? "").toMatch(/bash command input must be a string/);
-	}
+	const result = await toolCall(
+		{ toolName: "bash", input: { command } } as any,
+		{ cwd: "/workspace" },
+	);
+	expect(result?.block, `expected malformed input to block: ${String(command)}`).toBe(true);
+	expect(result?.reason ?? "").toMatch(/bash command input must be a string/);
 });
 
 test("allows bash reads and non-mutating commands", async () => {

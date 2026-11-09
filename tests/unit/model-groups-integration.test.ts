@@ -290,22 +290,20 @@ test("index session_start does not notify when load and validation issues are ab
 	expect(notifications).toStrictEqual([]);
 }));
 
-test("root-recorded /model-groups rejects RPC and skips JSON/print before custom UI", async () => {
-	for (const mode of ["rpc", "json", "print"] as const) {
-		const pi = await createTestHost();
-		const notifications: string[] = [];
-		let customCalls = 0;
-		await pi.commands.get("model-groups")!.handler("", {
-			mode,
-			hasUI: mode === "rpc",
-			cwd: "/must-not-load",
-			modelRegistry: registry(),
-			isProjectTrusted: () => true,
-			ui: { notify: (message: string) => notifications.push(message), custom: async () => { customCalls++; } },
-		});
-		expect(customCalls, mode).toBe(0);
-		expect(notifications, mode).toStrictEqual(mode === "rpc" ? ["/model-groups requires TUI mode"] : []);
-	}
+test.for(["rpc", "json", "print"] as const)("root-recorded /model-groups rejects RPC and skips JSON/print before custom UI (%s)", async (mode) => {
+	const pi = await createTestHost();
+	const notifications: string[] = [];
+	let customCalls = 0;
+	await pi.commands.get("model-groups")!.handler("", {
+		mode,
+		hasUI: mode === "rpc",
+		cwd: "/must-not-load",
+		modelRegistry: registry(),
+		isProjectTrusted: () => true,
+		ui: { notify: (message: string) => notifications.push(message), custom: async () => { customCalls++; } },
+	});
+	expect(customCalls, mode).toBe(0);
+	expect(notifications, mode).toStrictEqual(mode === "rpc" ? ["/model-groups requires TUI mode"] : []);
 });
 
 test("model groups untrusted root flow never probes project data and publishes global-only state to TUI", async () => withTemp(async ({ cwd }) => {

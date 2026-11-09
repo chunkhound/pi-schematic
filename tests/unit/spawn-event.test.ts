@@ -30,57 +30,50 @@ test("test harness captures every forbidden console output level", () => {
 
 test("frame scheduler requeues a throwing target without diagnostics and recovers", () => {
 	const scheduler = getSingletons().frameScheduler;
-	let failingFlushes = 0;
-	let failingRenders = 0;
-	let healthyFlushes = 0;
-	let healthyRenders = 0;
+	const failingFlushes = vi.fn().mockImplementationOnce(() => { throw new Error("throw once"); });
+	const failingRenders = vi.fn();
+	const healthyFlushes = vi.fn();
+	const healthyRenders = vi.fn();
 	const failing = {
-		flushPendingUpdates() {
-			failingFlushes++;
-			if (failingFlushes === 1) throw new Error("throw once");
-		},
+		flushPendingUpdates: failingFlushes,
 		clearRenderCache() {},
 		flushScheduledRender() {
-			return { requestRender: () => { failingRenders++; }, restoreAfterFailure: () => true };
+			return { requestRender: failingRenders, restoreAfterFailure: () => true };
 		},
 	};
 	const healthy = {
-		flushPendingUpdates() { healthyFlushes++; },
+		flushPendingUpdates: healthyFlushes,
 		clearRenderCache() {},
 		flushScheduledRender() {
-			return { requestRender: () => { healthyRenders++; }, restoreAfterFailure: () => true };
+			return { requestRender: healthyRenders, restoreAfterFailure: () => true };
 		},
 	};
 
 	scheduler.markDirty(failing);
 	scheduler.markDirty(healthy);
 	flushSpawnFrameScheduler();
-	expect(healthyFlushes).toBe(1);
-	expect(healthyRenders).toBe(1);
-	expect(failingRenders).toBe(0);
+	expect(healthyFlushes).toHaveBeenCalledOnce();
+	expect(healthyRenders).toHaveBeenCalledOnce();
+	expect(failingRenders).not.toHaveBeenCalled();
 	expect(h.warnings).toStrictEqual([]);
 
 	flushSpawnFrameScheduler();
-	expect(failingFlushes).toBe(2);
-	expect(failingRenders).toBe(1);
+	expect(failingFlushes).toHaveBeenCalledTimes(2);
+	expect(failingRenders).toHaveBeenCalledOnce();
 	expect(h.warnings).toStrictEqual([]);
-	scheduler.clear();
 });
 
 test("frame scheduler contains invalidate callback failures and continues healthy callbacks", () => {
 	const scheduler = getSingletons().frameScheduler;
-	let failingFlushes = 0;
-	let failingInvalidates = 0;
-	let healthyInvalidates = 0;
+	const failingFlushes = vi.fn();
+	const failingInvalidates = vi.fn().mockImplementationOnce(() => { throw new Error("invalidate once"); });
+	const healthyInvalidates = vi.fn();
 	const failing = {
-		flushPendingUpdates() { failingFlushes++; },
+		flushPendingUpdates: failingFlushes,
 		clearRenderCache() {},
 		flushScheduledRender() {
 			return {
-				requestRender: () => {
-					failingInvalidates++;
-					if (failingInvalidates === 1) throw new Error("invalidate once");
-				},
+				requestRender: failingInvalidates,
 				restoreAfterFailure: () => true,
 			};
 		},
@@ -89,31 +82,28 @@ test("frame scheduler contains invalidate callback failures and continues health
 		flushPendingUpdates() {},
 		clearRenderCache() {},
 		flushScheduledRender() {
-			return { requestRender: () => { healthyInvalidates++; }, restoreAfterFailure: () => true };
+			return { requestRender: healthyInvalidates, restoreAfterFailure: () => true };
 		},
 	};
 
 	scheduler.markDirty(failing);
 	scheduler.markDirty(healthy);
 	expect(() => flushSpawnFrameScheduler()).not.toThrow();
-	expect(failingInvalidates).toBe(1);
-	expect(healthyInvalidates).toBe(1);
+	expect(failingInvalidates).toHaveBeenCalledOnce();
+	expect(healthyInvalidates).toHaveBeenCalledOnce();
 	expect(h.warnings).toStrictEqual([]);
 
 	flushSpawnFrameScheduler();
-	expect(failingFlushes, "callback failure requeues its component").toBe(2);
-	expect(failingInvalidates).toBe(2);
-	expect(healthyInvalidates).toBe(1);
+	expect(failingFlushes, "callback failure requeues its component").toHaveBeenCalledTimes(2);
+	expect(failingInvalidates).toHaveBeenCalledTimes(2);
+	expect(healthyInvalidates).toHaveBeenCalledOnce();
 	expect(h.warnings).toStrictEqual([]);
-	scheduler.clear();
 });
 
 test("frame scheduler creates only one timer for a failed-target recovery frame", () => {
 	const scheduler = getSingletons().frameScheduler;
-	let scheduledTimers = 0;
-	vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void) => {
-		scheduledTimers++;
-		return { callback, id: scheduledTimers } as any;
+	const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void) => {
+		return { callback } as any;
 	}) as typeof setTimeout);
 	vi.spyOn(globalThis, "clearTimeout").mockImplementation((() => {}) as typeof clearTimeout);
 	const failing = {
@@ -124,8 +114,7 @@ test("frame scheduler creates only one timer for a failed-target recovery frame"
 
 	scheduler.markDirty(failing);
 	flushSpawnFrameScheduler();
-	expect(scheduledTimers, "one initial frame and one recovery frame").toBe(2);
-	scheduler.clear();
+	expect(setTimeoutSpy, "one initial frame and one recovery frame").toHaveBeenCalledTimes(2);
 });
 
 test("nested spawn live action tracks tool execution events", async () => {
@@ -235,16 +224,12 @@ test("nested spawn dispose stops event processing", async () => {
 test("nested spawn dispose aborts but does not dispose a claimed live child session", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
-	let abortCalls = 0;
-	let disposeCalls = 0;
+	const abort = vi.fn(async () => {});
+	const dispose = vi.fn();
 	const session = {
 		...createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]),
-		abort: async () => {
-			abortCalls++;
-		},
-		dispose: () => {
-			disposeCalls++;
-		},
+		abort,
+		dispose,
 	} as any;
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -261,8 +246,8 @@ test("nested spawn dispose aborts but does not dispose a claimed live child sess
 
 	component.dispose();
 
-	expect(abortCalls).toBe(1);
-	expect(disposeCalls).toBe(0);
+	expect(abort).toHaveBeenCalledOnce();
+	expect(dispose).not.toHaveBeenCalled();
 	expect([...state.liveChildSessions.keys()]).not.toContain("tool-call-1");
 });
 
@@ -316,12 +301,7 @@ test("nested spawn uses the latest streamed tool-call args before first frame fl
 	) as any;
 
 	// Spy on createToolComponent to capture args while preserving original behavior
-	let createdArgs: any;
-	const original = component.createToolComponent.bind(component);
-	component.createToolComponent = (toolName: string, toolCallId: string, args: any) => {
-		createdArgs = args;
-		return original(toolName, toolCallId, args);
-	};
+	const createToolComponent = vi.spyOn(component, "createToolComponent");
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	emit({
@@ -334,7 +314,7 @@ test("nested spawn uses the latest streamed tool-call args before first frame fl
 	});
 	flushSpawnFrameScheduler();
 
-	expect(createdArgs).toStrictEqual({ value: "new" });
+	expect(createToolComponent.mock.lastCall?.[2]).toStrictEqual({ value: "new" });
 });
 
 test("nested spawn coalesces same-turn child events into one parent invalidate", async () => {
@@ -343,22 +323,22 @@ test("nested spawn coalesces same-turn child events into one parent invalidate",
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
-	let invalidateCalls = 0;
+	const invalidate = vi.fn();
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
 		{ expanded: false },
 		theme,
-		createRenderContext({ invalidate: () => { invalidateCalls++; } }),
+		createRenderContext({ invalidate }),
 	) as any;
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "file1" }] } });
 	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "file2" }] } });
 
-	expect(invalidateCalls, "child events do not invalidate synchronously").toBe(0);
+	expect(invalidate, "child events do not invalidate synchronously").not.toHaveBeenCalled();
 	flushSpawnFrameScheduler();
-	expect(invalidateCalls, "same-turn events coalesce into one invalidate").toBe(1);
+	expect(invalidate, "same-turn events coalesce into one invalidate").toHaveBeenCalledOnce();
 
 	const lines = component.render(120);
 	expect(lines).toContainEqual(expect.stringContaining("file2"));
@@ -370,28 +350,23 @@ test("nested spawn retries a throw-once parent invalidate without a new child ev
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
-	let invalidateCalls = 0;
+	const invalidate = vi.fn().mockImplementationOnce(() => { throw new Error("invalidate once"); });
 
 	childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
 		{ expanded: false },
 		theme,
-		createRenderContext({
-			invalidate: () => {
-				invalidateCalls++;
-				if (invalidateCalls === 1) throw new Error("invalidate once");
-			},
-		}),
+		createRenderContext({ invalidate }),
 	);
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	expect(() => flushSpawnFrameScheduler()).not.toThrow();
-	expect(invalidateCalls).toBe(1);
+	expect(invalidate).toHaveBeenCalledOnce();
 
 	flushSpawnFrameScheduler();
-	expect(invalidateCalls, "failed invalidate retries on the recovery frame").toBe(2);
+	expect(invalidate, "failed invalidate retries on the recovery frame").toHaveBeenCalledTimes(2);
 	flushSpawnFrameScheduler();
-	expect(invalidateCalls, "successful retry consumes the queued render").toBe(2);
+	expect(invalidate, "successful retry consumes the queued render").toHaveBeenCalledTimes(2);
 	expect(h.warnings).toStrictEqual([]);
 });
 
@@ -401,27 +376,24 @@ test("nested spawn does not restore a failed invalidate after disposal", async (
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
-	let invalidateCalls = 0;
 	let component: any;
+	const invalidate = vi.fn(() => {
+		component.dispose();
+		throw new Error("invalidate after disposal");
+	});
 
 	component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
 		{ expanded: false },
 		theme,
-		createRenderContext({
-			invalidate: () => {
-				invalidateCalls++;
-				component.dispose();
-				throw new Error("invalidate after disposal");
-			},
-		}),
+		createRenderContext({ invalidate }),
 	) as any;
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	expect(() => flushSpawnFrameScheduler()).not.toThrow();
-	expect(invalidateCalls).toBe(1);
+	expect(invalidate).toHaveBeenCalledOnce();
 	flushSpawnFrameScheduler();
-	expect(invalidateCalls, "dispose prevents stale render restoration").toBe(1);
+	expect(invalidate, "dispose prevents stale render restoration").toHaveBeenCalledOnce();
 	expect(h.warnings).toStrictEqual([]);
 });
 
@@ -443,16 +415,16 @@ test("nested spawn ignores child renderer invalidations during parent rebuild", 
 		: undefined;
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
-	let invalidateCalls = 0;
+	const invalidate = vi.fn();
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
 		{ expanded: false },
 		theme,
-		createRenderContext({ invalidate: () => { invalidateCalls++; } }),
+		createRenderContext({ invalidate }),
 	) as any;
 	flushSpawnFrameScheduler();
-	expect(invalidateCalls, "initial empty attach does not invalidate").toBe(0);
+	expect(invalidate, "initial empty attach does not invalidate").not.toHaveBeenCalled();
 
 	(session as any).messages = [{
 		role: "assistant",
@@ -461,7 +433,7 @@ test("nested spawn ignores child renderer invalidations during parent rebuild", 
 	component.invalidate();
 	flushSpawnFrameScheduler();
 
-	expect(invalidateCalls, "child renderer invalidate requests stay inside spawn rebuild").toBe(0);
+	expect(invalidate, "child renderer invalidate requests stay inside spawn rebuild").not.toHaveBeenCalled();
 });
 
 test("nested spawn shared scheduler calls each distinct invalidate once per frame", async () => {
@@ -473,20 +445,20 @@ test("nested spawn shared scheduler calls each distinct invalidate once per fram
 	state.liveChildSessions.set("tool-call-1", first.session);
 	state.childSessions.set("tool-call-2", second.session);
 	state.liveChildSessions.set("tool-call-2", second.session);
-	let firstInvalidates = 0;
-	let secondInvalidates = 0;
+	const firstInvalidates = vi.fn();
+	const secondInvalidates = vi.fn();
 
 	const firstComponent = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
 		{ expanded: false },
 		theme,
-		createRenderContext({ toolCallId: "tool-call-1", invalidate: () => { firstInvalidates++; } }),
+		createRenderContext({ toolCallId: "tool-call-1", invalidate: firstInvalidates }),
 	) as any;
 	const secondComponent = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
 		{ expanded: false },
 		theme,
-		createRenderContext({ toolCallId: "tool-call-2", invalidate: () => { secondInvalidates++; } }),
+		createRenderContext({ toolCallId: "tool-call-2", invalidate: secondInvalidates }),
 	) as any;
 
 	first.emit({ type: "message_start", message: { role: "assistant", content: [] } });
@@ -494,11 +466,11 @@ test("nested spawn shared scheduler calls each distinct invalidate once per fram
 	second.emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	second.emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "second latest" }] } });
 
-	expect(firstInvalidates, "shared scheduler defers parent invalidate").toBe(0);
-	expect(secondInvalidates, "shared scheduler defers parent invalidate").toBe(0);
+	expect(firstInvalidates, "shared scheduler defers parent invalidate").not.toHaveBeenCalled();
+	expect(secondInvalidates, "shared scheduler defers parent invalidate").not.toHaveBeenCalled();
 	flushSpawnFrameScheduler();
-	expect(firstInvalidates).toBe(1);
-	expect(secondInvalidates).toBe(1);
+	expect(firstInvalidates).toHaveBeenCalledOnce();
+	expect(secondInvalidates).toHaveBeenCalledOnce();
 
 	expect(firstComponent.render(120)).toContainEqual(expect.stringContaining("first latest"));
 	expect(secondComponent.render(120)).toContainEqual(expect.stringContaining("second latest"));
@@ -513,8 +485,7 @@ test("nested spawn shared scheduler still coalesces duplicate invalidate callbac
 	state.liveChildSessions.set("tool-call-1", first.session);
 	state.childSessions.set("tool-call-2", second.session);
 	state.liveChildSessions.set("tool-call-2", second.session);
-	let invalidateCalls = 0;
-	const invalidate = () => { invalidateCalls++; };
+	const invalidate = vi.fn();
 
 	childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
@@ -532,7 +503,7 @@ test("nested spawn shared scheduler still coalesces duplicate invalidate callbac
 	first.emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	second.emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	flushSpawnFrameScheduler();
-	expect(invalidateCalls, "identical callbacks still coalesce").toBe(1);
+	expect(invalidate, "identical callbacks still coalesce").toHaveBeenCalledOnce();
 });
 
 test("nested spawn renders state changes across frame boundaries", async () => {
@@ -568,17 +539,17 @@ test("nested spawn dispose cancels pending and further invalidates after cleanup
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
-	let invalidateCalls = 0;
+	const invalidate = vi.fn();
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
 		{ expanded: false },
 		theme,
-		createRenderContext({ invalidate: () => { invalidateCalls++; } }),
+		createRenderContext({ invalidate }),
 	) as any;
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	expect(invalidateCalls, "event does not invalidate synchronously").toBe(0);
+	expect(invalidate, "event does not invalidate synchronously").not.toHaveBeenCalled();
 
 	component.dispose();
 	flushSpawnFrameScheduler();
@@ -586,7 +557,7 @@ test("nested spawn dispose cancels pending and further invalidates after cleanup
 	// After dispose, emitting more events does not call invalidate
 	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "after" }] } });
 	flushSpawnFrameScheduler();
-	expect(invalidateCalls, "dispose cancels pending and future invalidates").toBe(0);
+	expect(invalidate, "dispose cancels pending and future invalidates").not.toHaveBeenCalled();
 
 	// Render still works after dispose without crashing
 	const lines = component.render(120);

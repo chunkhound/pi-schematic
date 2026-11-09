@@ -5,7 +5,7 @@
  * that must hold after every operation on a pure SchematicState.
  */
 
-import { expect, onTestFinished, test } from "vitest";
+import { expect, test } from "vitest";
 import * as fc from "fast-check";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
@@ -16,7 +16,7 @@ import {
 	clearActiveNotebookTopic,
 } from "../../notebook/topic.js";
 import { saveNotebookPage } from "../../notebook/store.js";
-import { createTestHarness } from "../test-utils.js";
+import { useTestHarness } from "../test-utils.js";
 
 // ── Mock ExtensionAPI ─────────────────────────────────────────────────
 
@@ -143,10 +143,7 @@ function assertResetClears(state: SchematicState): void {
 // ── Properties ────────────────────────────────────────────────────────
 
 test("Property 1: Topic-source coupling invariant", async () => {
-	const h = createTestHarness();
-	onTestFinished(() => {
-		h.teardown();
-	});
+	useTestHarness();
 	await fc.assert(
 		fc.asyncProperty(
 			fc.array(
@@ -171,10 +168,7 @@ test("Property 1: Topic-source coupling invariant", async () => {
 });
 
 test("Property 2: Child session containment invariant", async () => {
-	const h = createTestHarness();
-	onTestFinished(() => {
-		h.teardown();
-	});
+	useTestHarness();
 	await fc.assert(
 		fc.asyncProperty(
 			fc.array(
@@ -198,10 +192,7 @@ test("Property 2: Child session containment invariant", async () => {
 });
 
 test("Property 3: childSessionEpoch only changes on reset", async () => {
-	const h = createTestHarness();
-	onTestFinished(() => {
-		h.teardown();
-	});
+	useTestHarness();
 	await fc.assert(
 		fc.asyncProperty(
 			fc.array(
@@ -250,10 +241,7 @@ test("Property 3: childSessionEpoch only changes on reset", async () => {
 });
 
 test("Property 4: Reset clears all state fields", async () => {
-	const h = createTestHarness();
-	onTestFinished(() => {
-		h.teardown();
-	});
+	useTestHarness();
 	await fc.assert(
 		fc.asyncProperty(
 			fc.array(
@@ -309,10 +297,7 @@ test("Property 4: Reset clears all state fields", async () => {
 });
 
 test("Property 5: Epoch counter — set to 1 on first savePage", async () => {
-	const h = createTestHarness();
-	onTestFinished(() => {
-		h.teardown();
-	});
+	useTestHarness();
 	await fc.assert(
 		fc.asyncProperty(
 			fc.array(
@@ -436,10 +421,7 @@ test("clipped page flags stay contained and reset clears them", async () => {
 });
 
 test("Property 6: childSessionEpoch monotonicity (never decreases)", async () => {
-	const h = createTestHarness();
-	onTestFinished(() => {
-		h.teardown();
-	});
+	useTestHarness();
 	await fc.assert(
 		fc.asyncProperty(
 			fc.array(
@@ -470,10 +452,7 @@ test("Property 6: childSessionEpoch monotonicity (never decreases)", async () =>
 });
 
 test("Property 7: clipped pages are a subset of notebook pages", async () => {
-	const h = createTestHarness();
-	onTestFinished(() => {
-		h.teardown();
-	});
+	useTestHarness();
 	await fc.assert(
 		fc.asyncProperty(
 			fc.array(

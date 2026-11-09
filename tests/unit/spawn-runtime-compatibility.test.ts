@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, onTestFinished, test, vi } from "vitest";
 import { assertPresent } from "../assertions.js";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -141,38 +141,32 @@ test("executeSpawn rejects immediately when no model is configured", async () =>
 
 test("a parent-transient selected model fails explicitly in the real child runtime without fallback", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-schematic-transient-"));
+	onTestFinished(() => rm(root, { recursive: true, force: true }));
 	const cwd = join(root, "project");
 	const agentDir = join(root, "agent");
-	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-	try {
-		await mkdir(cwd, { recursive: true });
-		await mkdir(agentDir, { recursive: true });
-		process.env.PI_CODING_AGENT_DIR = agentDir;
-		const pi = await createTestHost();
-		const state = createState();
-		const model = {
-			id: "transient-model",
-			name: "Transient Parent Model",
-			provider: "transient-parent",
-			api: "transient-parent-api",
-			reasoning: false,
-			input: ["text"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 128000,
-			maxTokens: 1024,
-		};
-		const result = await executeSpawn(
-			"spawn-transient", pi as any, { model, cwd } as any, state,
-			{ prompt: "work" }, undefined, undefined, "medium",
-		);
+	await mkdir(cwd, { recursive: true });
+	await mkdir(agentDir, { recursive: true });
+	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
+	const pi = await createTestHost();
+	const state = createState();
+	const model = {
+		id: "transient-model",
+		name: "Transient Parent Model",
+		provider: "transient-parent",
+		api: "transient-parent-api",
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 128000,
+		maxTokens: 1024,
+	};
+	const result = await executeSpawn(
+		"spawn-transient", pi as any, { model, cwd } as any, state,
+		{ prompt: "work" }, undefined, undefined, "medium",
+	);
 
-		expect(result.isError).toBe(true);
-		expect(result.content[0].text).toMatch(/No API key found for transient-parent/);
-	} finally {
-		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-		await rm(root, { recursive: true, force: true });
-	}
+	expect(result.isError).toBe(true);
+	expect(result.content[0].text).toMatch(/No API key found for transient-parent/);
 });
 
 // ── Real-invocation contract coverage (no session mocks) ──────────
@@ -250,80 +244,77 @@ test("real child publishes the session stats contract shape", async () => {
 // 8. Usage parity: the usage spawn returns matches Pi's own session stats on a real child session.
 test("real child usage matches the session stats across assistant, tool result, usage, compaction and branch-summary entries", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-schematic-usage-parity-"));
-	const previousPiOffline = process.env.PI_OFFLINE;
+	onTestFinished(() => rm(root, { recursive: true, force: true }));
 	const faux = fauxProvider();
-	try {
-		process.env.PI_OFFLINE = "1";
-		const usageOf = (input: number, output: number, cacheRead: number, cacheWrite: number, total: number) => ({
-			input, output, cacheRead, cacheWrite, totalTokens: total,
-			cost: { input: total / 1024, output: 0, cacheRead: 0, cacheWrite: 0, total: total / 1024 },
-		});
-		faux.setResponses([fauxAssistantMessage("child done")]);
-		// The faux provider replaces a scripted usage with its own estimate, so read the assistant usage it recorded.
-		let assistant!: Usage;
-		let piStats!: SessionStats;
-		const modelRuntime = await ModelRuntime.create({ authPath: join(root, "auth.json"), modelsPath: null, refreshOnCreate: false });
-		modelRuntime.registerNativeProvider(faux.provider);
-		const resourceLoader = new DefaultResourceLoader({
-			cwd: root, agentDir: root, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-		});
-		await resourceLoader.reload();
-		const model = faux.getModel();
-		const pi = await createTestHost();
-		const state = createState();
-		const result = await executeSpawn(
-			"spawn-usage-parity", pi as any, { model, cwd: root } as any, state,
-			{ prompt: "work" }, undefined, undefined, "medium",
-			async (config) => {
-				const created = await createAgentSession({ ...config, agentDir: root, modelRuntime, resourceLoader });
-				const { session } = created;
-				const runPrompt = session.prompt.bind(session);
-				// Entries beyond assistant messages that Pi's stats also count, written through the real session manager.
-				session.prompt = async (...args: Parameters<typeof runPrompt>) => {
-					await runPrompt(...args);
-					assistant = session.messages.filter((message) => message.role === "assistant").at(-1)!.usage;
-					const manager = session.sessionManager;
-					manager.appendMessage({
-						role: "toolResult", toolCallId: "parity-tool", toolName: "parity_probe", content: [{ type: "text", text: "ok" }],
-						usage: usageOf(11, 2, 0, 0, 13), isError: false, timestamp: Date.now(),
-					});
-					manager.appendUsage("title", model.provider, model.id, usageOf(30, 3, 1, 0, 34));
-					manager.appendCompaction("summary", null, 500, undefined, false, usageOf(200, 20, 0, 4, 224));
-					manager.branchWithSummary(null, "branch", undefined, false, usageOf(7, 1, 0, 0, 8));
-					piStats = session.getSessionStats();
-				};
-				return created;
-			},
-		);
+	const usageOf = (input: number, output: number, cacheRead: number, cacheWrite: number, total: number) => ({
+		input, output, cacheRead, cacheWrite, totalTokens: total,
+		cost: { input: total / 1024, output: 0, cacheRead: 0, cacheWrite: 0, total: total / 1024 },
+	});
+	faux.setResponses([fauxAssistantMessage("child done")]);
+	// The faux provider replaces a scripted usage with its own estimate, so read the assistant usage it recorded.
+	let assistant!: Usage;
+	let piStats!: SessionStats;
+	const modelRuntime = await ModelRuntime.create({ authPath: join(root, "auth.json"), modelsPath: null, refreshOnCreate: false });
+	modelRuntime.registerNativeProvider(faux.provider);
+	const resourceLoader = new DefaultResourceLoader({
+		cwd: root, agentDir: root, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+	});
+	await resourceLoader.reload();
+	const model = faux.getModel();
+	const pi = await createTestHost();
+	const state = createState();
+	const result = await executeSpawn(
+		"spawn-usage-parity", pi as any, { model, cwd: root } as any, state,
+		{ prompt: "work" }, undefined, undefined, "medium",
+		async (config) => {
+			const created = await createAgentSession({ ...config, agentDir: root, modelRuntime, resourceLoader });
+			const { session } = created;
+			const runPrompt = session.prompt.bind(session);
+			// Entries beyond assistant messages that Pi's stats also count, written through the real session manager.
+			session.prompt = async (...args: Parameters<typeof runPrompt>) => {
+				await runPrompt(...args);
+				assistant = session.messages.filter((message) => message.role === "assistant").at(-1)!.usage;
+				const manager = session.sessionManager;
+				manager.appendMessage({
+					role: "toolResult", toolCallId: "parity-tool", toolName: "parity_probe", content: [{ type: "text", text: "ok" }],
+					usage: usageOf(11, 2, 0, 0, 13), isError: false, timestamp: Date.now(),
+				});
+				manager.appendUsage("title", model.provider, model.id, usageOf(30, 3, 1, 0, 34));
+				manager.appendCompaction("summary", null, 500, undefined, false, usageOf(200, 20, 0, 4, 224));
+				manager.branchWithSummary(null, "branch", undefined, false, usageOf(7, 1, 0, 0, 8));
+				piStats = session.getSessionStats();
+			};
+			return created;
+		},
+	);
 
-		const stats = result.details.stats;
-		expect((result as any).isError).toBeUndefined();
-		// Hand-computed extras on top of the assistant usage: tool result 11/2/0/0 + usage entry 30/3/1/0 + compaction 200/20/0/4 + branch summary 7/1/0/0 = 248/26/1/4, cost 279/1024.
-		expect(result.usage.input).toBe(assistant.input + 248);
-		expect(result.usage.output).toBe(assistant.output + 26);
-		expect(result.usage.cacheRead).toBe(assistant.cacheRead + 1);
-		expect(result.usage.cacheWrite).toBe(assistant.cacheWrite + 4);
-		expect(result.usage.totalTokens).toBe(assistant.totalTokens + 279);
-		// The faux provider always reports zero cost for an assistant message, so this covers the extras' cost only.
-		expect(result.usage.cost.total).toBe(0.2724609375);
-		expect(stats).toStrictEqual({
-			inputTokens: piStats.tokens.input,
-			outputTokens: piStats.tokens.output,
-			cacheReadTokens: piStats.tokens.cacheRead,
-			cacheWriteTokens: piStats.tokens.cacheWrite,
-			totalTokens: piStats.tokens.total,
-			cost: piStats.cost,
-			turns: piStats.assistantMessages,
-		});
-		expect(result.usage.input).toBe(piStats.tokens.input);
-		expect(result.usage.output).toBe(piStats.tokens.output);
-		expect(result.usage.cacheRead).toBe(piStats.tokens.cacheRead);
-		expect(result.usage.cacheWrite).toBe(piStats.tokens.cacheWrite);
-		expect(result.usage.cost.total).toBe(piStats.cost);
-		// Provider-reported usage.totalTokens need not match Pi's four-field stats total.
-	} finally {
-		if (previousPiOffline === undefined) delete process.env.PI_OFFLINE;
-		else process.env.PI_OFFLINE = previousPiOffline;
-		await rm(root, { recursive: true, force: true });
-	}
+	const stats = result.details.stats;
+	expect((result as any).isError).toBeUndefined();
+	// Hand-computed extras on top of the assistant usage: tool result 11/2/0/0 + usage entry 30/3/1/0 + compaction 200/20/0/4 + branch summary 7/1/0/0 = 248/26/1/4, cost 279/1024.
+	// The faux provider always reports zero cost for an assistant message, so cost.total covers the extras' cost only.
+	expect(result.usage).toMatchObject({
+		input: assistant.input + 248,
+		output: assistant.output + 26,
+		cacheRead: assistant.cacheRead + 1,
+		cacheWrite: assistant.cacheWrite + 4,
+		totalTokens: assistant.totalTokens + 279,
+		cost: { total: 0.2724609375 },
+	});
+	expect(stats).toStrictEqual({
+		inputTokens: piStats.tokens.input,
+		outputTokens: piStats.tokens.output,
+		cacheReadTokens: piStats.tokens.cacheRead,
+		cacheWriteTokens: piStats.tokens.cacheWrite,
+		totalTokens: piStats.tokens.total,
+		cost: piStats.cost,
+		turns: piStats.assistantMessages,
+	});
+	expect(result.usage).toMatchObject({
+		input: piStats.tokens.input,
+		output: piStats.tokens.output,
+		cacheRead: piStats.tokens.cacheRead,
+		cacheWrite: piStats.tokens.cacheWrite,
+		cost: { total: piStats.cost },
+	});
+	// Provider-reported usage.totalTokens need not match Pi's four-field stats total.
 });

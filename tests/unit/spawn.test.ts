@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { assertPresent } from "../assertions.js";
 import { readFile } from "node:fs/promises";
@@ -670,14 +670,14 @@ test("an undefined optional child usage field is treated as absent", async () =>
 
 test("a completed spawn preserves its text when child entries cannot be read", async () => {
 	const entriesError = new Error("entries unavailable");
-	let disposeCalls = 0;
-	const result = await executeWithEntries(() => { throw entriesError; }, { dispose: () => { disposeCalls++; } });
+	const dispose = vi.fn();
+	const result = await executeWithEntries(() => { throw entriesError; }, { dispose });
 
 	expect(result.content[0].text).toBe("child result");
 	expect(result.details.statsUnavailable).toBe(true);
 	expect(result.details.stats).toBeUndefined();
 	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
-	expect(disposeCalls, "the child session is disposed when the entries cannot be read").toBe(1);
+	expect(dispose, "the child session is disposed when the entries cannot be read").toHaveBeenCalledOnce();
 });
 
 test("a completed spawn keeps its text with zero usage when a child usage cannot be summed", async () => {
@@ -1204,14 +1204,14 @@ test("UI spawn notifies when cleanup also fails after a primary failure", async 
 });
 
 test("UI spawn names both failures when the cleanup notice throws", async () => {
-	let notifyCalls = 0;
+	const notify = vi.fn(() => { throw new Error("notify exploded"); });
 	const { execution, state } = await executeWithFailingCleanup(new Error("prompt failed"), new Error("dispose failed"), {
 		hasUI: true,
-		ui: { notify: () => { notifyCalls++; throw new Error("notify exploded"); } },
+		ui: { notify },
 	});
 
 	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", EMPTY_CHILD_USAGE);
-	expect(notifyCalls).toBe(1);
+	expect(notify).toHaveBeenCalledOnce();
 	assertChildRegistriesCleared(state);
 });
 
@@ -1263,7 +1263,9 @@ test("executeSpawn propagates unusable-group errors before creating child work",
 		models: [{ provider: "openai", modelId: "missing" }],
 		validation: { unavailableRefs: [], shadowedByProject: false, degraded: true },
 	} as any];
-	let factoryCalls = 0;
+	const sessionFactory = vi.fn(async () => {
+		throw new Error("sessionFactory must not be called");
+	});
 
 	await expect(
 		executeSpawn(
@@ -1282,10 +1284,7 @@ test("executeSpawn propagates unusable-group errors before creating child work",
 			undefined,
 			undefined,
 			"medium",
-			async () => {
-				factoryCalls++;
-				throw new Error("sessionFactory must not be called");
-			},
+			sessionFactory,
 		),
 	).rejects.toSatisfy((error: unknown) => {
 		expect(error, "route error must propagate without wrapping").toBeInstanceOf(SpawnRouteError);
@@ -1296,7 +1295,7 @@ test("executeSpawn propagates unusable-group errors before creating child work",
 		return true;
 	});
 
-	expect(factoryCalls, "sessionFactory must not be called on routing failure").toBe(0);
+	expect(sessionFactory, "sessionFactory must not be called on routing failure").not.toHaveBeenCalled();
 	expect(state.childSessions.size, "no child session registered").toBe(0);
 	expect(state.liveChildSessions.size, "no live child session registered").toBe(0);
 });
@@ -1309,27 +1308,27 @@ test("executeSpawn propagates missing modalities before creating child work", as
 		modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
 		validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
 	}];
-	let factoryCalls = 0;
+	const sessionFactory = vi.fn(async () => { throw new Error("must not create child"); });
 	await expect(executeSpawn("missing-modality", pi as any, {
 		model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
 		modelRegistry: { find: (_provider: string, id: string) => ({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
-	} as any, state, { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, "medium", async () => { factoryCalls++; throw new Error("must not create child"); })).rejects.toSatisfy((error: unknown) => {
+	} as any, state, { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, "medium", sessionFactory)).rejects.toSatisfy((error: unknown) => {
 		expect(error).toBeInstanceOf(SpawnRouteError);
 		expect((error as SpawnRouteError).reason).toBe("missing-modality");
 		return true;
 	});
-	expect(factoryCalls).toBe(0);
+	expect(sessionFactory).not.toHaveBeenCalled();
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("executeSpawn rejects unknown requirements before factory or session publication", async () => {
-	const pi = await createTestHost((_api) => {}); const state = createState(); let factoryCalls = 0;
+	const pi = await createTestHost((_api) => {}); const state = createState(); const sessionFactory = vi.fn(async () => { throw new Error("must not create child"); });
 	await expect(executeSpawn("unknown-constraint", pi as any, {
 		model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
 		modelRegistry: { find: () => undefined, hasConfiguredAuth: () => false },
-	} as any, state, { prompt: "Do the task", constraints: { unknown: {} } }, undefined, undefined, "medium", async () => { factoryCalls++; throw new Error("must not create child"); })).rejects.toThrow(/Unknown spawn constraint/);
-	expect(factoryCalls).toBe(0); expect(state.childSessions.size).toBe(0); expect(state.liveChildSessions.size).toBe(0);
+	} as any, state, { prompt: "Do the task", constraints: { unknown: {} } }, undefined, undefined, "medium", sessionFactory)).rejects.toThrow(/Unknown spawn constraint/);
+	expect(sessionFactory).not.toHaveBeenCalled(); expect(state.childSessions.size).toBe(0); expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("registered spawn tool rejects missing modalities before creating child work", async () => {
@@ -1339,8 +1338,8 @@ test("registered spawn tool rejects missing modalities before creating child wor
 		modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
 		validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
 	}];
-	let factoryCalls = 0;
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, (async () => { factoryCalls++; throw new Error("sessionFactory must not be called"); }) as any), { activeTools: ["read", "bash", "spawn"] });
+	const sessionFactory = vi.fn(async () => { throw new Error("sessionFactory must not be called"); });
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, sessionFactory as any), { activeTools: ["read", "bash", "spawn"] });
 
 	await expect(
 		pi.tools.get("spawn").execute("registered-missing-modality", { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, {
@@ -1354,17 +1353,17 @@ test("registered spawn tool rejects missing modalities before creating child wor
 		expect(routeError.reason).toBe("missing-modality");
 		return true;
 	});
-	expect(factoryCalls).toBe(0);
+	expect(sessionFactory).not.toHaveBeenCalled();
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("registered spawn tool rejects injected scalar group and model requirements before publication", async () => {
-	const state = createState(); let factoryCalls = 0;
+	const state = createState(); const sessionFactory = vi.fn(async () => { throw new Error("sessionFactory must not be called"); });
 	state.modelGroups.groups = [
 		{ name: "small", scope: "project", sourcePath: "<test>", models: [{ provider: "openai", modelId: "small" }], modalities: { common: ["text"], supported: ["text"], effective: ["text"] }, validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] } },
 	];
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, (async () => { factoryCalls++; throw new Error("sessionFactory must not be called"); }) as any, createConstraintRegistry([testMinContext])), { activeTools: ["spawn"] });
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, sessionFactory as any, createConstraintRegistry([testMinContext])), { activeTools: ["spawn"] });
 	await expect(
 		pi.tools.get("spawn").execute("registered-scalar", { prompt: "Do the task", group: "small", constraints: { testMinContext: 20 } }, undefined, undefined, {
 			model: { provider: "openai", id: "parent", input: ["text"], reasoning: false, contextWindow: 100 }, cwd: "/tmp",
@@ -1380,7 +1379,7 @@ test("registered spawn tool rejects injected scalar group and model requirements
 		expect(routeError.missingFromModel).toHaveLength(0);
 		return true;
 	});
-	expect(factoryCalls).toBe(0); expect(state.childSessions.size).toBe(0); expect(state.liveChildSessions.size).toBe(0);
+	expect(sessionFactory).not.toHaveBeenCalled(); expect(state.childSessions.size).toBe(0); expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("registered spawn tool schema accepts injected scalar requirements", async () => {
@@ -1448,7 +1447,6 @@ test("spawn constraints description enumerates injected registry keys", async ()
 
 test("executeSpawn forwards inherited constraints to routing and succeeds when satisfied", async () => {
 	const state = createState();
-	let factoryCalls = 0;
 	const session = {
 		messages: [] as any[],
 		prompt: async () => {
@@ -1457,14 +1455,15 @@ test("executeSpawn forwards inherited constraints to routing and succeeds when s
 		abort: async () => {},
 		sessionManager: { getEntries: () => [] },
 	};
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, (async () => { factoryCalls++; return { session: session as any }; }) as any), { activeTools: ["read", "spawn"] });
+	const sessionFactory = vi.fn(async () => ({ session: session as any, extensionsResult: undefined as any }));
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, sessionFactory as any), { activeTools: ["read", "spawn"] });
 	const result = await executeSpawn("spawn-inherited-rm", pi as any, {
 		model: { provider: "openai", id: "parent", input: ["text", "image"], reasoning: false }, cwd: "/tmp",
 		modelRegistry: { find: (_p: string, id: string) => ({ provider: "openai", id, input: ["text", "image"], reasoning: false }), hasConfiguredAuth: () => true },
-	} as any, state, { prompt: "Do the task", constraints: { modalities: { required: ["text", "image"] } } }, undefined, undefined, "medium", async () => { factoryCalls++; return { session: session as any, extensionsResult: undefined as any }; });
+	} as any, state, { prompt: "Do the task", constraints: { modalities: { required: ["text", "image"] } } }, undefined, undefined, "medium", sessionFactory);
 	expect(result.details.outcome).toBe("success");
 	expect(result.details.route).toStrictEqual({ status: "inherited" });
-	expect(factoryCalls, "inherited route with satisfied requirements creates one child").toBe(1);
+	expect(sessionFactory, "inherited route with satisfied requirements creates one child").toHaveBeenCalledOnce();
 });
 
 test("spawn renderResult transfers session ownership out of shared state", async () => {
@@ -1541,10 +1540,12 @@ test("spawn render shows success state when stats are unavailable", async () => 
 test("spawn execute aborts child session when signal fires during execution", async () => {
 	const state = createState();
 
-	let abortCalled = false;
-	let disposeCalls = 0;
+	const dispose = vi.fn();
 	let resolvePrompt!: () => void;
 	let promptStarted!: () => void;
+	const abort = vi.fn(async () => {
+		resolvePrompt();
+	});
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
 	const mockFactory = async () => {
 		const session = {
@@ -1554,11 +1555,8 @@ test("spawn execute aborts child session when signal fires during execution", as
 				await new Promise<void>((resolve) => { resolvePrompt = resolve; });
 				session.messages = [{ role: "assistant", content: [{ type: "text", text: "aborted mid-flight" }] }];
 			},
-			abort: async () => {
-				abortCalled = true;
-				resolvePrompt();
-			},
-			dispose: () => { disposeCalls++; },
+			abort,
+			dispose,
 			sessionManager: { getEntries: () => [] },
 		};
 		return { session: session as any };
@@ -1579,13 +1577,13 @@ test("spawn execute aborts child session when signal fires during execution", as
 	controller.abort();
 
 	const result = await executePromise;
-	expect(abortCalled).toBe(true);
+	expect(abort).toHaveBeenCalled();
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
 	expect(result.content[0].text).toBe("Child agent aborted: This operation was aborted\n\naborted mid-flight");
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.isError).toBe(true);
-	expect(disposeCalls, "mid-prompt abort disposes exactly once").toBe(1);
+	expect(dispose, "mid-prompt abort disposes exactly once").toHaveBeenCalledOnce();
 });
 
 test("a completed child error after parent cancellation is reported as aborted", async () => {
@@ -1621,8 +1619,10 @@ test("a completed child error after parent cancellation is reported as aborted",
 test("spawn execute swallows prompt rejection when signal aborts mid-flight", async () => {
 	const state = createState();
 	const controller = new AbortController();
-	let abortCalled = false;
-	let disposeCalls = 0;
+	const abort = vi.fn(async () => {
+		rejectPrompt(Object.assign(new Error("aborted"), { name: "AbortError" }));
+	});
+	const dispose = vi.fn();
 	let promptStarted!: () => void;
 	let rejectPrompt!: (err: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
@@ -1632,11 +1632,8 @@ test("spawn execute swallows prompt rejection when signal aborts mid-flight", as
 				promptStarted();
 				await new Promise<void>((_, reject) => { rejectPrompt = reject; });
 			},
-			abort: async () => {
-				abortCalled = true;
-				rejectPrompt(Object.assign(new Error("aborted"), { name: "AbortError" }));
-			},
-			dispose: () => { disposeCalls++; },
+			abort,
+			dispose,
 		}) };
 	};
 	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactory as any), { activeTools: ["read", "bash", "spawn"] });
@@ -1651,19 +1648,19 @@ test("spawn execute swallows prompt rejection when signal aborts mid-flight", as
 	await started;
 	controller.abort();
 	const result = await executePromise;
-	expect(abortCalled).toBe(true);
+	expect(abort).toHaveBeenCalled();
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.isError).toBe(true);
 	expect(result.content[0].text).toBe("Child agent aborted: This operation was aborted");
-	expect(disposeCalls, "mid-prompt abort disposes exactly once").toBe(1);
+	expect(dispose, "mid-prompt abort disposes exactly once").toHaveBeenCalledOnce();
 });
 
 test("a real prompt failure that races with a parent abort keeps its text under the aborted outcome", async () => {
 	const state = createState();
 	const controller = new AbortController();
-	let disposeCalls = 0;
+	const dispose = vi.fn();
 	let promptStarted!: () => void;
 	let rejectPrompt!: (error: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
@@ -1673,7 +1670,7 @@ test("a real prompt failure that races with a parent abort keeps its text under 
 			promptStarted();
 			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
 		},
-		dispose: () => { disposeCalls++; },
+		dispose,
 	}), extensionsResult: undefined as any })), { activeTools: ["read", "bash", "spawn"] });
 
 	const execution = pi.tools.get("spawn").execute(
@@ -1689,7 +1686,7 @@ test("a real prompt failure that races with a parent abort keeps its text under 
 	expect(result.content).toStrictEqual([{ type: "text", text: "prompt failed despite abort" }]);
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
-	expect(disposeCalls).toBe(1);
+	expect(dispose).toHaveBeenCalledOnce();
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
 });
@@ -1697,8 +1694,8 @@ test("a real prompt failure that races with a parent abort keeps its text under 
 test("spawn invalidation wins the abort and prompt-rejection race", async () => {
 	const state = createState();
 	const controller = new AbortController();
-	let abortCalls = 0;
-	let disposeCalls = 0;
+	const abort = vi.fn(async () => {});
+	const dispose = vi.fn();
 	let promptStarted!: () => void;
 	let rejectPrompt!: (error: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
@@ -1707,8 +1704,8 @@ test("spawn invalidation wins the abort and prompt-rejection race", async () => 
 			promptStarted();
 			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
 		},
-		abort: async () => { abortCalls++; },
-		dispose: () => { disposeCalls++; },
+		abort,
+		dispose,
 	}) });
 	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactory as any), { activeTools: ["read", "bash", "spawn"] });
 
@@ -1722,15 +1719,15 @@ test("spawn invalidation wins the abort and prompt-rejection race", async () => 
 	rejectPrompt(new Error("prompt rejected after abort and reset"));
 
 	assertErrorResult(await execution, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
-	expect(abortCalls, "signal cancellation and reset share one abort").toBe(1);
-	expect(disposeCalls, "the raced child disposes exactly once").toBe(1);
+	expect(abort, "signal cancellation and reset share one abort").toHaveBeenCalledOnce();
+	expect(dispose, "the raced child disposes exactly once").toHaveBeenCalledOnce();
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("executeSpawn reports the invalidation and abort failure when abort rejects during active-prompt reset", async () => {
 	const state = createState();
-	let disposeCalls = 0;
+	const dispose = vi.fn();
 	let promptStarted!: () => void;
 	let rejectPrompt!: (error: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
@@ -1741,7 +1738,7 @@ test("executeSpawn reports the invalidation and abort failure when abort rejects
 			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
 		},
 		abort: async () => { throw abortError; },
-		dispose: () => { disposeCalls++; },
+		dispose,
 	}), extensionsResult: undefined as any });
 	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactory as any), { activeTools: ["read", "bash", "spawn"] });
 
@@ -1754,16 +1751,16 @@ test("executeSpawn reports the invalidation and abort failure when abort rejects
 	rejectPrompt(new Error("prompt rejected"));
 
 	assertErrorResult(await execution, "Spawn invalidated by reset; child abort failed.", EMPTY_CHILD_USAGE);
-	expect(disposeCalls, "the aborted child disposes exactly once").toBe(1);
+	expect(dispose, "the aborted child disposes exactly once").toHaveBeenCalledOnce();
 	assertChildRegistriesCleared(state);
 });
 
 test("reset before registration returns the invalidation and abort failure", async () => {
 	const state = createState();
-	let abortCalls = 0;
-	let disposeCalls = 0;
+	const dispose = vi.fn();
 	let factoryCalled = false;
 	const abortError = new Error("abort failed");
+	const abort = vi.fn(async () => { throw abortError; });
 	const factoryReady = createDeferred();
 	const mockFactory = async () => {
 		factoryCalled = true;
@@ -1773,8 +1770,8 @@ test("reset before registration returns the invalidation and abort failure", asy
 			session: {
 				messages: [] as any[],
 				prompt: async () => {},
-				abort: async () => { abortCalls++; throw abortError; },
-				dispose: () => { disposeCalls++; },
+				abort,
+				dispose,
 				sessionManager: { getEntries: () => [] },
 			} as any,
 		};
@@ -1794,24 +1791,24 @@ test("reset before registration returns the invalidation and abort failure", asy
 
 	assertErrorResult(await execution, "Spawn invalidated by reset; child abort failed.", EMPTY_CHILD_USAGE);
 	expect(factoryCalled, "factory was called").toBe(true);
-	expect(abortCalls, "abort was called exactly once").toBe(1);
-	expect(disposeCalls, "child disposed exactly once").toBe(1);
+	expect(abort, "abort was called exactly once").toHaveBeenCalledOnce();
+	expect(dispose, "child disposed exactly once").toHaveBeenCalledOnce();
 	assertChildRegistriesCleared(state);
 });
 
 test("reset during prompt reports a failed abort once through the UI", async () => {
 	const state = createState();
-	let abortCalls = 0;
-	let disposeCalls = 0;
+	const dispose = vi.fn();
 	const abortError = new Error("abort failed");
+	const abort = vi.fn(async () => { throw abortError; });
 	const notifications: Array<[string, string]> = [];
 	const mockFactory = async () => ({ session: mockSessionFactory({
 		prompt: async () => {
 			promptStarted();
 			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
 		},
-		abort: async () => { abortCalls++; throw abortError; },
-		dispose: () => { disposeCalls++; },
+		abort,
+		dispose,
 	}), extensionsResult: undefined as any });
 	let promptStarted!: () => void;
 	let rejectPrompt!: (error: Error) => void;
@@ -1831,8 +1828,8 @@ test("reset during prompt reports a failed abort once through the UI", async () 
 
 	assertErrorResult(await execution, "Spawn invalidated by reset; child abort failed.", EMPTY_CHILD_USAGE);
 	expect(notifications).toStrictEqual([["Spawn cleanup failed: abort failed", "error"]]);
-	expect(abortCalls).toBe(1);
-	expect(disposeCalls).toBe(1);
+	expect(abort).toHaveBeenCalledOnce();
+	expect(dispose).toHaveBeenCalledOnce();
 	assertChildRegistriesCleared(state);
 });
 
@@ -1843,7 +1840,7 @@ test("a throwing notice for a failed reset abort does not emit an unhandled reje
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
 	const abortError = new Error("abort failed");
 	const notifyError = new Error("notify exploded");
-	let notifyCalls = 0;
+	const notify = vi.fn(() => { throw notifyError; });
 	const unhandled: unknown[] = [];
 	const onUnhandled = (reason: unknown) => unhandled.push(reason);
 	process.on("unhandledRejection", onUnhandled);
@@ -1863,7 +1860,7 @@ test("a throwing notice for a failed reset abort does not emit an unhandled reje
 			{ prompt: "Do the task" },
 			undefined,
 			undefined,
-			{ model: { id: "mock-model" }, cwd: "/tmp", hasUI: true, ui: { notify: () => { notifyCalls++; throw notifyError; } } } as any,
+			{ model: { id: "mock-model" }, cwd: "/tmp", hasUI: true, ui: { notify } } as any,
 		);
 		await started;
 		resetState(state);
@@ -1873,7 +1870,7 @@ test("a throwing notice for a failed reset abort does not emit an unhandled reje
 		// Give any detached microtasks a chance to flush
 		await new Promise((resolve) => setImmediate(resolve));
 
-		expect(notifyCalls).toBe(1);
+		expect(notify).toHaveBeenCalledOnce();
 		expect(unhandled, `no unhandled abort rejections: ${unhandled.map((e) => String(e)).join(", ")}`).toHaveLength(0);
 		assertChildRegistriesCleared(state);
 	} finally {
@@ -2155,7 +2152,7 @@ test("executeSpawn detects stale session before session creation", async () => {
 		resolveFactory = resolve;
 	});
 	let factoryCalled = false;
-	let abortCalls = 0;
+	const abort = vi.fn(async () => {});
 
 	const executePromise = executeSpawn(
 		"spawn-1",
@@ -2173,7 +2170,7 @@ test("executeSpawn detects stale session before session creation", async () => {
 				session: {
 					messages: [] as any[],
 					prompt: async () => {},
-					abort: async () => { abortCalls++; },
+					abort,
 					sessionManager: { getEntries: () => [] },
 				} as any,
 				extensionsResult: undefined as any,
@@ -2188,7 +2185,7 @@ test("executeSpawn detects stale session before session creation", async () => {
 
 	assertErrorResult(await executePromise, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
 	expect(factoryCalled).toBe(true);
-	expect(abortCalls).toBe(1);
+	expect(abort).toHaveBeenCalledOnce();
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
 });
@@ -2196,9 +2193,9 @@ test("executeSpawn detects stale session before session creation", async () => {
 test("executeSpawn does not prompt when onUpdate synchronously resets the child epoch", async () => {
 	const pi = await createTestHost((_api) => {}, { activeTools: ["read", "bash", "spawn"] });
 	const state = createState();
-	let promptCalls = 0;
-	let abortCalls = 0;
-	let disposeCalls = 0;
+	const abort = vi.fn(async () => {});
+	const dispose = vi.fn();
+	const prompt = vi.fn(async () => {});
 
 	const execution = executeSpawn(
 		"spawn-1",
@@ -2210,16 +2207,16 @@ test("executeSpawn does not prompt when onUpdate synchronously resets the child 
 		() => { resetState(state); },
 		"medium",
 		mockFactoryWith({
-			prompt: async () => { promptCalls++; },
-			abort: async () => { abortCalls++; },
-			dispose: () => { disposeCalls++; },
+			prompt,
+			abort,
+			dispose,
 		}),
 	);
 
 	assertErrorResult(await execution, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
-	expect(promptCalls).toBe(0);
-	expect(abortCalls).toBe(1);
-	expect(disposeCalls).toBe(1);
+	expect(prompt).not.toHaveBeenCalled();
+	expect(abort).toHaveBeenCalledOnce();
+	expect(dispose).toHaveBeenCalledOnce();
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
 });
@@ -2229,9 +2226,9 @@ test("executeSpawn does not prompt when onUpdate synchronously aborts the signal
 	const state = createState();
 	const controller = new AbortController();
 	const reason = new Error("cancelled during update");
-	let promptCalls = 0;
-	let abortCalls = 0;
-	let disposeCalls = 0;
+	const abort = vi.fn(async () => {});
+	const dispose = vi.fn();
+	const prompt = vi.fn(async () => {});
 
 	const execution = executeSpawn(
 		"spawn-1",
@@ -2243,9 +2240,9 @@ test("executeSpawn does not prompt when onUpdate synchronously aborts the signal
 		() => { controller.abort(reason); },
 		"medium",
 		mockFactoryWith({
-			prompt: async () => { promptCalls++; },
-			abort: async () => { abortCalls++; },
-			dispose: () => { disposeCalls++; },
+			prompt,
+			abort,
+			dispose,
 		}),
 	);
 
@@ -2254,9 +2251,9 @@ test("executeSpawn does not prompt when onUpdate synchronously aborts the signal
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.content[0].text).toBe("Child agent aborted: cancelled during update");
 	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
-	expect(promptCalls).toBe(0);
-	expect(abortCalls).toBe(1);
-	expect(disposeCalls).toBe(1);
+	expect(prompt).not.toHaveBeenCalled();
+	expect(abort).toHaveBeenCalledOnce();
+	expect(dispose).toHaveBeenCalledOnce();
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
 });
@@ -2266,7 +2263,7 @@ test("an abort during a running update notifies a failed child abort once", asyn
 	const state = createState();
 	const controller = new AbortController();
 	const notifications: string[] = [];
-	let promptCalls = 0;
+	const prompt = vi.fn(async () => {});
 	const result = await executeSpawn(
 		"spawn-update-abort-failure", pi as any,
 		{ model: { id: "mock-model" }, cwd: "/tmp", hasUI: true,
@@ -2274,7 +2271,7 @@ test("an abort during a running update notifies a failed child abort once", asyn
 		state, { prompt: "Do the task" }, controller.signal,
 		() => { controller.abort(new Error("cancelled during update")); }, "medium",
 		mockFactoryWith({
-			prompt: async () => { promptCalls++; },
+			prompt,
 			abort: async () => { throw new Error("abort failed"); },
 		}),
 	);
@@ -2283,14 +2280,14 @@ test("an abort during a running update notifies a failed child abort once", asyn
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.content[0].text).toBe("abort failed");
 	expect(notifications).toStrictEqual(["Spawn cleanup failed: abort failed"]);
-	expect(promptCalls).toBe(0);
+	expect(prompt).not.toHaveBeenCalled();
 });
 
 test("reset during a running update reports one failed abort", async () => {
 	const pi = await createTestHost((_api) => {});
 	const state = createState();
 	const notifications: string[] = [];
-	let promptCalls = 0;
+	const prompt = vi.fn(async () => {});
 	const result = await executeSpawn(
 		"spawn-reset-abort-failure", pi as any,
 		{ model: { id: "mock-model" }, cwd: "/tmp", hasUI: true,
@@ -2298,14 +2295,14 @@ test("reset during a running update reports one failed abort", async () => {
 		state, { prompt: "Do the task" }, undefined,
 		() => { resetState(state); }, "medium",
 		mockFactoryWith({
-			prompt: async () => { promptCalls++; },
+			prompt,
 			abort: async () => { throw new Error("abort failed"); },
 		}),
 	);
 
 	assertErrorResult(result, "Spawn invalidated by reset; child abort failed.", EMPTY_CHILD_USAGE);
 	expect(notifications).toStrictEqual(["Spawn cleanup failed: abort failed"]);
-	expect(promptCalls).toBe(0);
+	expect(prompt).not.toHaveBeenCalled();
 });
 
 test("executeSpawn aborts stale child when resetState fires during prompt", async () => {
@@ -2315,8 +2312,10 @@ test("executeSpawn aborts stale child when resetState fires during prompt", asyn
 	let rejectPrompt!: (err: Error) => void;
 	let resolvePromptStarted!: () => void;
 	const promptStartedPromise = new Promise<void>((r) => { resolvePromptStarted = r; });
-	let abortCalls = 0;
-	let disposeCalls = 0;
+	const abort = vi.fn(async () => {
+		rejectPrompt?.(new Error("aborted"));
+	});
+	const dispose = vi.fn();
 
 	const executePromise = executeSpawn(
 		"spawn-1",
@@ -2337,11 +2336,8 @@ test("executeSpawn aborts stale child when resetState fires during prompt", asyn
 						rejectPrompt = reject;
 					});
 				},
-				abort: async () => {
-					abortCalls++;
-					rejectPrompt?.(new Error("aborted"));
-				},
-				dispose: () => { disposeCalls++; },
+				abort,
+				dispose,
 				sessionManager: { getEntries: () => [] },
 			} as any,
 		}),
@@ -2353,10 +2349,10 @@ test("executeSpawn aborts stale child when resetState fires during prompt", asyn
 	resetState(state);
 
 	assertErrorResult(await executePromise, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
-	expect(abortCalls, "reset and invalidation share one abort").toBe(1);
+	expect(abort, "reset and invalidation share one abort").toHaveBeenCalledOnce();
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
-	expect(disposeCalls, "prompt-reset invalidation disposes exactly once").toBe(1);
+	expect(dispose, "prompt-reset invalidation disposes exactly once").toHaveBeenCalledOnce();
 });
 
 test("executeSpawn suppresses a successful stale prompt that ignores reset abort", async () => {
@@ -2365,8 +2361,8 @@ test("executeSpawn suppresses a successful stale prompt that ignores reset abort
 	let resolvePrompt!: () => void;
 	let promptStarted!: () => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
-	let abortCalls = 0;
-	let disposeCalls = 0;
+	const abort = vi.fn(async () => {});
+	const dispose = vi.fn();
 	const updates: unknown[] = [];
 	const session = {
 		messages: [] as any[],
@@ -2375,8 +2371,8 @@ test("executeSpawn suppresses a successful stale prompt that ignores reset abort
 			await new Promise<void>((resolve) => { resolvePrompt = resolve; });
 			session.messages = [{ role: "assistant", content: [{ type: "text", text: "stale success" }] }];
 		},
-		abort: async () => { abortCalls++; },
-		dispose: () => { disposeCalls++; },
+		abort,
+		dispose,
 		sessionManager: { getEntries: () => [] },
 	};
 
@@ -2397,8 +2393,8 @@ test("executeSpawn suppresses a successful stale prompt that ignores reset abort
 	resolvePrompt();
 
 	assertErrorResult(await execution, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
-	expect(abortCalls).toBe(1);
-	expect(disposeCalls).toBe(1);
+	expect(abort).toHaveBeenCalledOnce();
+	expect(dispose).toHaveBeenCalledOnce();
 	expect(updates, "no stale completion update is published").toHaveLength(1);
 	expect((updates[0] as any).content).toStrictEqual([]);
 	expect(state.childSessions.size).toBe(0);
@@ -2434,15 +2430,15 @@ test("nested spawn setExpanded and setShowImages no-op when value matches", asyn
 
 test("resetState aborts and clears child session registries", () => {
 	const state = createState();
-	let abortCalls = 0;
+	const abort = vi.fn(async () => {});
 	const session = {
 		...createSession([]),
-		abort: async () => { abortCalls++; },
+		abort,
 	} as any;
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 	resetState(state);
-	expect(abortCalls).toBe(1);
+	expect(abort).toHaveBeenCalledOnce();
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
 });
@@ -2450,10 +2446,10 @@ test("resetState aborts and clears child session registries", () => {
 test("resetState aborts a claimed child session after render ownership transfer", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
-	let abortCalls = 0;
+	const abort = vi.fn(async () => {});
 	const session = {
 		...createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]),
-		abort: async () => { abortCalls++; },
+		abort,
 	} as any;
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -2470,17 +2466,17 @@ test("resetState aborts a claimed child session after render ownership transfer"
 
 	resetState(state);
 
-	expect(abortCalls).toBe(1);
+	expect(abort).toHaveBeenCalledOnce();
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("abortAndClearChildSessions deduplicates sessions across both maps", () => {
 	const state = createState();
-	let abortCalls = 0;
+	const abort = vi.fn(async () => {});
 	const mockSession = {
 		messages: [],
-		abort: async () => { abortCalls++; },
+		abort,
 	} as any;
 
 	state.childSessions.set("tc-1", mockSession);
@@ -2488,7 +2484,7 @@ test("abortAndClearChildSessions deduplicates sessions across both maps", () => 
 
 	resetState(state);
 
-	expect(abortCalls).toBe(1);
+	expect(abort).toHaveBeenCalledOnce();
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
 });

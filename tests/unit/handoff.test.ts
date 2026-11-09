@@ -249,16 +249,8 @@ test("handoff is rejected while another handoff is staged, and /handoff reports 
 	const { ctx } = makeCtx();
 	await executeHandoff(pi, ctx, { nextInstruction: "first task" }, "first");
 
-	await expect(executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second")).rejects.toSatisfy((error: Error) => {
-		expect(error).toBeInstanceOf(Error);
-		expect(error.message).toBe(HANDOFF_ALREADY_STAGED);
-		return true;
-	});
-	await expect(pi.commands.get("handoff")!.handler("replacement direction", { hasUI: false, isIdle: () => true } as any)).rejects.toSatisfy((error: Error) => {
-		expect(error).toBeInstanceOf(Error);
-		expect(error.message).toBe(HANDOFF_COMMAND_BUSY);
-		return true;
-	});
+	await expect(executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second")).rejects.toThrow(new Error(HANDOFF_ALREADY_STAGED));
+	await expect(pi.commands.get("handoff")!.handler("replacement direction", { hasUI: false, isIdle: () => true } as any)).rejects.toThrow(new Error(HANDOFF_COMMAND_BUSY));
 
 	expect(state.stagedHandoff?.nextInstruction, "the first staged request must survive").toBe("first task");
 	expect(state.stagedHandoff?.toolCallId).toBe("first");
@@ -341,39 +333,35 @@ test("the discard epoch moves past the discard watermark", async () => {
 	expect(result.entries.map((entry: any) => entry.data?.epoch).slice(0, 3)).toStrictEqual([1, 4, 4]);
 });
 
-test("turn_end adds no notebook entries when discardPages is empty or names no page", async () => {
-	for (const discardPages of [[], ["ghost"]]) {
-		const { pi } = await boundaryHost((s) => {
-			s.epoch = 1;
-			s.notebookPages.set("keep", "durable");
-		});
-		await executeHandoff(pi, makeCtx().ctx, { nextInstruction: "go", discardPages });
+test.for([{ discardPages: [] }, { discardPages: ["ghost"] }])("turn_end adds no notebook entries when discardPages is empty or names no page (when discardPages is $discardPages)", async ({ discardPages }) => {
+	const { pi } = await boundaryHost((s) => {
+		s.epoch = 1;
+		s.notebookPages.set("keep", "durable");
+	});
+	await executeHandoff(pi, makeCtx().ctx, { nextInstruction: "go", discardPages });
 
-		const result = await endTurn(pi, makeCtx().ctx);
+	const result = await endTurn(pi, makeCtx().ctx);
 
-		expect(result.entries.map((entry: any) => entry.type), `discardPages ${JSON.stringify(discardPages)}`).toStrictEqual(["compaction", "custom_message", "custom_message"]);
-	}
+	expect(result.entries.map((entry: any) => entry.type), `discardPages ${JSON.stringify(discardPages)}`).toStrictEqual(["compaction", "custom_message", "custom_message"]);
 });
 
-test("turn_end declines the cut when the run was aborted, the turn failed, or the handoff result is unusable", async () => {
-	const cases: Array<{ name: string; reason: string; ctx?: { aborted: boolean }; event: Parameters<typeof turnEndEvent>[0] }> = [
-		{ name: "ctx.signal aborted", reason: REASON_ABORTED, ctx: { aborted: true }, event: {} },
-		{ name: "outcome aborted", reason: REASON_ABORTED, event: { outcome: "aborted" } },
-		{ name: "outcome error", reason: REASON_TURN_FAILED, event: { outcome: "error" } },
-		{ name: "result missing", reason: REASON_RESULT_MISSING, event: { toolResults: [] } },
-		{ name: "result for another call", reason: REASON_RESULT_MISSING, event: { toolResults: [handoffToolResult("other-call")] } },
-		{ name: "result is an error", reason: REASON_RESULT_MISSING, event: { toolResults: [handoffToolResult("call-1", true)] } },
-	];
-	for (const { name, reason, ctx, event } of cases) {
-		const { state, pi } = await boundaryHost();
-		await executeHandoff(pi, makeCtx().ctx);
+const declineCases: Array<{ name: string; reason: string; ctx?: { aborted: boolean }; event: Parameters<typeof turnEndEvent>[0] }> = [
+	{ name: "ctx.signal aborted", reason: REASON_ABORTED, ctx: { aborted: true }, event: {} },
+	{ name: "outcome aborted", reason: REASON_ABORTED, event: { outcome: "aborted" } },
+	{ name: "outcome error", reason: REASON_TURN_FAILED, event: { outcome: "error" } },
+	{ name: "result missing", reason: REASON_RESULT_MISSING, event: { toolResults: [] } },
+	{ name: "result for another call", reason: REASON_RESULT_MISSING, event: { toolResults: [handoffToolResult("other-call")] } },
+	{ name: "result is an error", reason: REASON_RESULT_MISSING, event: { toolResults: [handoffToolResult("call-1", true)] } },
+];
 
-		const results = await callHandlers(pi, "turn_end", turnEndEvent({ toolResults: [handoffToolResult("call-1")], ...event }), makeCtx(ctx).ctx);
+test.for(declineCases)("turn_end declines the cut when $name", async ({ name, reason, ctx, event }) => {
+	const { state, pi } = await boundaryHost();
+	await executeHandoff(pi, makeCtx().ctx);
 
-		expect(results, name).toStrictEqual([undefined]);
-		expect(state.stagedHandoff?.phase, name).toBe("declined");
-		expect(state.stagedHandoff?.declineReason, name).toBe(reason);
-	}
+	const results = await callHandlers(pi, "turn_end", turnEndEvent({ toolResults: [handoffToolResult("call-1")], ...event }), makeCtx(ctx).ctx);
+
+	expect(results, name).toStrictEqual([undefined]);
+	expect(state.stagedHandoff).toMatchObject({ phase: "declined", declineReason: reason });
 });
 
 test("turn_end without a staged handoff returns nothing", async () => {
@@ -845,11 +833,7 @@ test("session_tree invalidates a staged handoff and the handoff refusals", async
 	const { ctx } = makeCtx();
 	await executeHandoff(pi, ctx, { nextInstruction: "first task" }, "first");
 	await callHandlers(pi, "message_end", assistantMessage({ id: "h1", name: "handoff" }, { id: "w1", name: "write" }), ctx);
-	await expect(executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second")).rejects.toSatisfy((error: Error) => {
-		expect(error).toBeInstanceOf(Error);
-		expect(error.message).toBe(HANDOFF_ALREADY_STAGED);
-		return true;
-	});
+	await expect(executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second")).rejects.toThrow(new Error(HANDOFF_ALREADY_STAGED));
 	expect((await toolCall(pi, "h1", "handoff")).block).toBe(true);
 
 	await emitAll(pi, "session_tree", { type: "session_tree" }, ctx);

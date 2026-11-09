@@ -7,12 +7,12 @@
  * before_agent_start handler reads global model groups from
  * `pi-schematic/model-groups.json` under pi's `getAgentDir()`, whose default
  * is `join(homedir(), CONFIG_DIR_NAME, "agent")`; HOME isolates that default
- * while PI_CODING_AGENT_DIR is unset, which setTempHome ensures. PI_OFFLINE=1 keeps
- * ModelRuntime from fetching over the network. The faux provider needs no
+ * while PI_CODING_AGENT_DIR is unset, which setTempHome ensures. vitest.config.ts sets
+ * PI_OFFLINE=1, which keeps ModelRuntime from fetching over the network. The faux provider needs no
  * credentials.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import os from "node:os";
@@ -36,20 +36,14 @@ import { buildNudge } from "../../watchdog.js";
 import { createDeferred, setTempHome } from "./helpers.js";
 
 let sandboxDir: string;
-let restoreHome: () => void;
-const previousPiOffline = process.env.PI_OFFLINE;
 
 beforeAll(async () => {
 	sandboxDir = await mkdtemp(join(os.tmpdir(), "pi-schematic-prompt-sections-"));
-	restoreHome = setTempHome(sandboxDir);
-	process.env.PI_OFFLINE = "1";
-});
-
-afterAll(async () => {
-	restoreHome();
-	if (previousPiOffline === undefined) delete process.env.PI_OFFLINE;
-	else process.env.PI_OFFLINE = previousPiOffline;
-	await rm(sandboxDir, { recursive: true, force: true });
+	const restoreHome = setTempHome(sandboxDir);
+	return async () => {
+		restoreHome();
+		await rm(sandboxDir, { recursive: true, force: true });
+	};
 });
 
 describe("prompt sections in a real agent session", () => {

@@ -57,14 +57,12 @@ test("updateIndicators handles null context usage", () => {
 	expect(s, "null usage shows --%").toContain("--%");
 });
 
-test("updateIndicators treats malformed percentages as unavailable", () => {
-	for (const percent of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
-		const state = createState();
-		const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-		updateIndicators(makeTUICtx({ percent, record }), state);
-		expect(record.statuses.get("pi-schematic-ctx")).toContain("--%");
-		expect(record.widgets.get("pi-schematic-warning")).toBeUndefined();
-	}
+test.for([Number.NaN, Number.POSITIVE_INFINITY, -1])("updateIndicators treats malformed percentages as unavailable: %s", (percent) => {
+	const state = createState();
+	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
+	updateIndicators(makeTUICtx({ percent, record }), state);
+	expect(record.statuses.get("pi-schematic-ctx")).toContain("--%");
+	expect(record.widgets.get("pi-schematic-warning")).toBeUndefined();
 });
 
 test("updateIndicators preserves overflow context percentages", () => {

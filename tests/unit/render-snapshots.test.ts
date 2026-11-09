@@ -10,7 +10,7 @@
 
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, onTestFinished, test } from "vitest";
+import { expect, test } from "vitest";
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { createState, type SchematicState } from "../../state.js";
@@ -19,7 +19,7 @@ import {
 	renderSpawnResult,
 } from "../../spawn/renderer.js";
 import { updateIndicators } from "../../tui.js";
-import { createTestHarness } from "../test-utils.js";
+import { useTestHarness } from "../test-utils.js";
 import { createSession, makeTUICtx } from "./helpers.js";
 
 // ── Paths ─────────────────────────────────────────────────────────────
@@ -70,10 +70,7 @@ async function expectGoldenFile(name: string, actual: string): Promise<void> {
 }
 
 function withHarness(run: (state: SchematicState) => Promise<void>): Promise<void> {
-	const harness = createTestHarness();
-	onTestFinished(() => {
-		harness.teardown();
-	});
+	useTestHarness();
 	const state = createState();
 	return run(state);
 }
@@ -270,32 +267,12 @@ test("nested expanded matches snapshot", () => withHarness(async (state) => {
 // 9–11: Context indicator snapshots
 // ═══════════════════════════════════════════════════════════════════════
 
-test("context indicator at 30% matches snapshot", async () => {
+test.for([30, 50, 70])("context indicator at %i% matches snapshot", async (percent) => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = makeTUICtx({ percent: 30, record });
+	const ctx = makeTUICtx({ percent, record });
 
 	updateIndicators(ctx, state);
 	const status = record.statuses.get("pi-schematic-ctx") ?? "";
-	await expectGoldenFile("indicator-30", status);
-});
-
-test("context indicator at 50% matches snapshot", async () => {
-	const state = createState();
-	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = makeTUICtx({ percent: 50, record });
-
-	updateIndicators(ctx, state);
-	const status = record.statuses.get("pi-schematic-ctx") ?? "";
-	await expectGoldenFile("indicator-50", status);
-});
-
-test("context indicator at 70% matches snapshot", async () => {
-	const state = createState();
-	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = makeTUICtx({ percent: 70, record });
-
-	updateIndicators(ctx, state);
-	const status = record.statuses.get("pi-schematic-ctx") ?? "";
-	await expectGoldenFile("indicator-70", status);
+	await expectGoldenFile(`indicator-${percent}`, status);
 });
