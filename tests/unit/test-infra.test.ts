@@ -1,5 +1,6 @@
 // Tests for the test infrastructure itself: the shared Node child runner, the node:test runner
-// script, the compat lane's test lists, and the run-wide config that keeps parameterized test
+// script, the unit test list in tests/vitest-files.mjs (every unit file on disk is listed and every
+// entry exists), the compat lane's test lists, and the run-wide config that keeps parameterized test
 // titles whole.
 
 import { globSync } from "node:fs";
@@ -56,6 +57,8 @@ describe("tests/vitest-files.mjs", () => {
 		const onDisk = globSync("tests/unit/**/*.test.ts", { cwd: REPO_ROOT }).map((file) => file.split(sep).join("/"));
 		const unlisted = onDisk.filter((file) => !VITEST_FILES.includes(file)).sort();
 		expect(unlisted).toStrictEqual([]);
+		const missing = VITEST_FILES.filter((file) => !onDisk.includes(file)).sort();
+		expect(missing).toStrictEqual([]);
 	});
 });
 

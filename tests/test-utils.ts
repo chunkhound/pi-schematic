@@ -77,8 +77,8 @@ export function createTestHarness(): TestHarness {
 	const originalWarn = console.warn;
 	const originalError = console.error;
 
-	// Atomic swap: replace the production singleton container (write lock,
-	// context, frame scheduler) in one call.
+	// Install the fresh container in one call; a write pending on the previous
+	// lock keeps that lock and context (see the module comment).
 	__setSingletons(singletons);
 
 	// Capture every forbidden TUI-corrupting console level for assertions.

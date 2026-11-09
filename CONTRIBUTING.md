@@ -40,7 +40,7 @@ Before submitting, check that your change:
 
 ## Tests
 
-The unit suite under `tests/unit/` runs on Vitest, in the `unit` project of `vitest.config.ts`. That project runs the files listed in `tests/vitest-files.mjs`, so add a new unit test file to that list, or `npm test` never runs it. The e2e suites under `tests/e2e/` run on `node:test` through `scripts/run-node-test.mjs`. Run one unit file with `npx vitest run --project unit tests/unit/<name>.test.ts`, and one e2e file with `node ./scripts/run-node-test.mjs tests/e2e/<name>.test.ts`. The `node:test` runner takes a flag with a value only as `--flag=value`; a separate value is read as a file pattern.
+The unit suite under `tests/unit/` runs on Vitest, in the `unit` project of `vitest.config.ts`. That project runs the files listed in `tests/vitest-files.mjs`, so add a new unit test file to that list: `npm test` fails until it is listed, and fails for a listed path that has no file. The e2e suites under `tests/e2e/` run on `node:test` through `scripts/run-node-test.mjs`. Run one unit file with `npx vitest run --project unit tests/unit/<name>.test.ts`, and one e2e file with `node ./scripts/run-node-test.mjs tests/e2e/<name>.test.ts`. The `node:test` runner takes a flag with a value only as `--flag=value`; a separate value is read as a file pattern.
 
 - `npm test` — runs the unit suite (`vitest run --project unit`). Arguments after `--` go to Vitest, so a file filter works there too. A render snapshot whose golden file is missing is written locally and fails under CI.
 - `npm run test:snapshots:check` — runs only the render-snapshot tests with `--update=none`; fails on a missing or differing golden file in `tests/snapshots/`.
