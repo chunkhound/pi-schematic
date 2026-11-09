@@ -277,7 +277,7 @@ export class RealHost {
 			};
 			const { client, events } = await startClient(clientOptions);
 			return new RealHost(root, logPath, client, events);
-		}, () => removeRoot(root));
+		}, () => { removeRoot(root); });
 	}
 
 	get notifications(): Notification[] {
@@ -364,7 +364,7 @@ export class RealHost {
 	close(): Promise<void> {
 		this.closing ??= withCleanup(
 			() => withCleanup(() => this.assertNoUnexpectedRuns(), () => this.client.stop()),
-			() => removeRoot(this.root),
+			() => { removeRoot(this.root); },
 		);
 		return this.closing;
 	}

@@ -85,7 +85,7 @@ test("readonly bash guard blocks non-temp writes and allows temp writes", () => 
 
 function outsideTempPath(label: string): string {
 	const target = path.join(os.homedir(), `readonly-child-${label}-${process.pid}-${Date.now()}`);
-	onTestFinished(() => fs.rmSync(target, { force: true }));
+	onTestFinished(() => { fs.rmSync(target, { force: true }); });
 	return target;
 }
 

@@ -273,7 +273,7 @@ function carriesRequiredNudge(request: Message[]): boolean {
 async function settle(session: AgentSession, done: Promise<void>, what: string): Promise<void> {
 	await Promise.race([
 		done,
-		new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`timed out waiting for ${what}`)), 10_000).unref()),
+		new Promise<never>((_, reject) => setTimeout(() => { reject(new Error(`timed out waiting for ${what}`)); }, 10_000).unref()),
 	]);
 	await session.waitForIdle();
 }

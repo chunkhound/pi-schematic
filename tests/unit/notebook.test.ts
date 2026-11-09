@@ -28,7 +28,7 @@ function persistedBranch(pi: TestPI): object[] {
 
 async function rehydratePersistedNotebook(pi: TestPI) {
 	const state = createState();
-	const restoredPi = await createTestHost((api) => registerNotebookRehydration(api, state));
+	const restoredPi = await createTestHost((api) => { registerNotebookRehydration(api, state); });
 	const [handler] = restoredPi.handlers.get("session_start")!;
 	await handler({}, { sessionManager: { getBranch: () => persistedBranch(pi) } });
 	return state;
@@ -36,7 +36,7 @@ async function rehydratePersistedNotebook(pi: TestPI) {
 
 function setPagerRuntime(overrides: Parameters<typeof __setPagerRuntimeForTests>[0]): void {
 	__setPagerRuntimeForTests(overrides);
-	onTestFinished(() => __setPagerRuntimeForTests(null));
+	onTestFinished(() => { __setPagerRuntimeForTests(null); });
 }
 
 // ── Notebook write-size fixtures (issue #42) ──────────────────────────
@@ -95,7 +95,7 @@ function readBase(name: string, body: string): string {
 
 test("notebook rehydration rebuilds the latest epoch and enables notebook tools", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerNotebookRehydration(api, state));
+	const pi = await createTestHost((api) => { registerNotebookRehydration(api, state); });
 	const [handler] = pi.handlers.get("session_start")!;
 
 	await handler(
@@ -120,7 +120,7 @@ test("notebook rehydration rebuilds the latest epoch and enables notebook tools"
 test("notebook rehydration rebuilds from the latest persisted epoch and avoids duplicate active tools", async () => {
 	const state = createState();
 	state.epoch = 7;
-	const pi = await createTestHost((api) => registerNotebookRehydration(api, state), { activeTools: ["read", "notebook_read", "notebook_index"] });
+	const pi = await createTestHost((api) => { registerNotebookRehydration(api, state); }, { activeTools: ["read", "notebook_read", "notebook_index"] });
 	const [handler] = pi.handlers.get("session_start")!;
 
 	await handler(
@@ -146,7 +146,7 @@ test("notebook rehydration clears stale in-memory notebook state when persisted 
 	const state = createState();
 	state.epoch = 7;
 	state.notebookPages.set("stale", "stale body");
-	const pi = await createTestHost((api) => registerNotebookRehydration(api, state));
+	const pi = await createTestHost((api) => { registerNotebookRehydration(api, state); });
 	const [handler] = pi.handlers.get("session_start")!;
 
 	await handler(
@@ -165,7 +165,7 @@ test("notebook rehydration clears stale in-memory notebook state when persisted 
 
 test("notebook rehydration ignores null and malformed branch entries", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerNotebookRehydration(api, state));
+	const pi = await createTestHost((api) => { registerNotebookRehydration(api, state); });
 	const [handler] = pi.handlers.get("session_start")!;
 
 	await handler(
@@ -190,7 +190,7 @@ test("notebook rehydration ignores null and malformed branch entries", async () 
 
 test("future-version notebook entries have zero effect on rehydrated state", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerNotebookRehydration(api, state));
+	const pi = await createTestHost((api) => { registerNotebookRehydration(api, state); });
 	const [handler] = pi.handlers.get("session_start")!;
 
 	// Real writes through the real store (both land at epoch 1).
@@ -218,7 +218,7 @@ test("future-version notebook entries have zero effect on rehydrated state", asy
 
 test("pre-versioned entries without a version field rehydrate on parity", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerNotebookRehydration(api, state));
+	const pi = await createTestHost((api) => { registerNotebookRehydration(api, state); });
 	const [handler] = pi.handlers.get("session_start")!;
 
 	// Real writes through the real store, then strip the version discriminator
@@ -1073,7 +1073,7 @@ test("saveNotebookPage stays non-reentrant across runtime singleton swaps", asyn
 				await saveNotebookPage(pi, state, "inner", "inner");
 			}),
 			new Promise<never>((_, reject) => {
-				setTimeout(() => reject(new Error("timeout")), 1000);
+				setTimeout(() => { reject(new Error("timeout")); }, 1000);
 			}),
 		])).rejects.toThrow(/not reentrant/i);
 		expect(state.notebookPages.size).toBe(0);
@@ -1311,7 +1311,7 @@ test("survivors staged without their closing generation marker stay invisible to
 
 test("rehydration uses only the active session branch", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerNotebookRehydration(api, state));
+	const pi = await createTestHost((api) => { registerNotebookRehydration(api, state); });
 	const [handler] = pi.handlers.get("session_start")!;
 
 	await handler({}, { sessionManager: { getBranch: () => [
@@ -1638,7 +1638,7 @@ test("complete overwrite clears a durable clipped flag", async () => {
 
 test("legacy page entries without clipped read as false", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerNotebookRehydration(api, state));
+	const pi = await createTestHost((api) => { registerNotebookRehydration(api, state); });
 	const [handler] = pi.handlers.get("session_start")!;
 	await handler({}, { sessionManager: { getBranch: () => [
 		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "v1", content: C } },

@@ -154,7 +154,7 @@ describe("prompt sections in a real agent session", () => {
 			await session.prompt("/handoff finish the report");
 			await Promise.race([
 				handoffRunRequested.promise,
-				new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the /handoff run sent no provider request")), 5_000).unref()),
+				new Promise<never>((_, reject) => setTimeout(() => { reject(new Error("the /handoff run sent no provider request")); }, 5_000).unref()),
 			]);
 			await session.waitForIdle();
 		} finally {

@@ -495,7 +495,7 @@ export default function(pi) {
 				state.notebookPages.set(pageName, pageContent);
 			}
 		}
-		const pi = await createTestHost((api) => registerSpawnTool(api, state), {
+		const pi = await createTestHost((api) => { registerSpawnTool(api, state); }, {
 			toolSources: { agentic_e2e_probe: "project" },
 			activeTools,
 			allTools: activeTools,

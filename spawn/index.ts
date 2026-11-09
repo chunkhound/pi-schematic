@@ -205,7 +205,7 @@ function createSpawnAbortContext(state: SchematicState, session: AgentSession, c
 	const invalidatedError = new Error("Spawn invalidated by reset.");
 	let wasAborted = false;
 	let reported: Promise<void> | undefined;
-	const clearChildSession = () => clearSpawnSession(state, toolCallId, session);
+	const clearChildSession = () => { clearSpawnSession(state, toolCallId, session); };
 	const abortChild = () => {
 		wasAborted = true;
 		const p = abortChildSession(state, session);

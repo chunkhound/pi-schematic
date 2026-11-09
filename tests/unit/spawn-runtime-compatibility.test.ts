@@ -102,7 +102,7 @@ test("spawn routes through the public registry and keeps source boundaries exact
 
 test("spawn schema advertises the thinking levels as a plain string enum and rejects other values", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerSpawnTool(api, state));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 	const tool = pi.tools.get("spawn");
 	const thinkingSchema = JSON.parse(JSON.stringify(tool.parameters)).properties.thinking;
 	expect(thinkingSchema.type).toBe("string");
@@ -114,7 +114,7 @@ test("spawn schema advertises the thinking levels as a plain string enum and rej
 });
 
 test.for([...THINKING_LEVELS])("spawn schema accepts thinking: %s", async (thinking) => {
-	const pi = await createTestHost((api) => registerSpawnTool(api, createState()));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, createState()); });
 	expect(Value.Check(pi.tools.get("spawn").parameters, { prompt: "work", thinking })).toBe(true);
 });
 

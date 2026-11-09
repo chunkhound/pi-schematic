@@ -368,9 +368,9 @@ async function applyModelGroupRoute(
 	commandRef: string,
 ): Promise<boolean> {
 	const groupName = selection.group!;
-	const onError = () => ctx.ui.notify(
+	const onError = () => { ctx.ui.notify(
 		buildModelGroupSetModelErrorNotification(groupName, route.provider, route.modelId, commandRef), "error",
-	);
+	); };
 	if (!await safeSetModel(pi, route.model, onError)) {return true;}
 	const thinking = selection.thinking ? clampThinkingLevel(route.model, selection.thinking) : route.thinking;
 	recordModelGroupSwitch(ctx, pi, route, groupName, thinking, commandRef);
@@ -515,7 +515,7 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.registerCommand("readonly", {
 		description: READONLY_COMMAND_DESCRIPTION,
-		handler: async (_args, ctx) => toggleReadonly(ctx),
+		handler: async (_args, ctx) => { toggleReadonly(ctx); },
 	});
 
 	pi.registerShortcut("ctrl+shift+r", {
@@ -748,7 +748,7 @@ export default function (pi: ExtensionAPI): void {
 
 					return {
 						render: (w) => container.render(w),
-						invalidate: () => container.invalidate(),
+						invalidate: () => { container.invalidate(); },
 						handleInput: (data) => {
 							if (finished) {return;}
 							if (!selectList) {

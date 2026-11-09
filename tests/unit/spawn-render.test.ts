@@ -30,7 +30,7 @@ import { createTestHarness, type TestHarness } from "../test-utils.js";
 let h: TestHarness;
 
 async function makeChildSpawnTool(state: any) {
-	const pi = await createTestHost((api) => registerSpawnTool(api, state));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 	return pi.tools.get("spawn");
 }
 

@@ -544,7 +544,7 @@ export function createModelGroupsComponent(
 				const inputWithoutPrompt = inputLine.startsWith("> ") ? inputLine.slice(2) : inputLine;
 				return [truncateToWidth(`${clippedPrefix}${inputWithoutPrompt}`, width, "")];
 			},
-			invalidate: () => groupNameInput.invalidate(),
+			invalidate: () => { groupNameInput.invalidate(); },
 		};
 	}
 

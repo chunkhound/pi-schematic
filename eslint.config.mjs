@@ -154,7 +154,6 @@ export default defineConfig([
 	{
 		// Files outside the tsconfig are linted without type information.
 		files: ["**/*.mjs", "**/*.js"],
-		extends: [tseslint.configs.disableTypeChecked],
 		languageOptions: { globals: globals.node },
 		rules: {
 			// @eslint/js recommended rules that typescript-eslint leaves to the compiler in TypeScript files
@@ -201,6 +200,7 @@ export default defineConfig([
 			"@typescript-eslint/no-array-constructor": "error",
 			"@typescript-eslint/no-array-delete": "error",
 			"@typescript-eslint/no-confusing-non-null-assertion": "error",
+			"@typescript-eslint/no-confusing-void-expression": "error",
 			"@typescript-eslint/no-deprecated": "error",
 			"@typescript-eslint/no-duplicate-enum-values": "error",
 			"@typescript-eslint/no-duplicate-type-constituents": "error",

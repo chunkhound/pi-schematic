@@ -14,7 +14,7 @@ import { STATUS_KEY_HANDOFF } from "../../tui.js";
 
 test("watchdog records context usage without user notifications", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerWatchdog(api, state));
+	const pi = await createTestHost((api) => { registerWatchdog(api, state); });
 	const [handler] = pi.handlers.get("agent_end")!;
 
 	const notifications: string[] = [];
@@ -33,7 +33,7 @@ test("watchdog records context usage without user notifications", async () => {
 
 test.for([Number.NaN, Number.POSITIVE_INFINITY, -1])("watchdog ignores malformed percentages: %s", async (percent) => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerWatchdog(api, state));
+	const pi = await createTestHost((api) => { registerWatchdog(api, state); });
 	const [handler] = pi.handlers.get("agent_end")!;
 	await handler({}, { hasUI: false, getContextUsage: () => ({ percent }) });
 	expect(state.lastContextPercent).toBeNull();
@@ -41,7 +41,7 @@ test.for([Number.NaN, Number.POSITIVE_INFINITY, -1])("watchdog ignores malformed
 
 test("watchdog records overflow percentages", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerWatchdog(api, state));
+	const pi = await createTestHost((api) => { registerWatchdog(api, state); });
 	const [handler] = pi.handlers.get("agent_end")!;
 	await handler({}, { hasUI: false, getContextUsage: () => ({ percent: 125 }) });
 	expect(state.lastContextPercent).toBe(125);
@@ -574,7 +574,7 @@ test("a run nudged only to keep working does not count", async () => {
 
 test("agent_settled does not record context usage", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerWatchdog(api, state));
+	const pi = await createTestHost((api) => { registerWatchdog(api, state); });
 	const [handler] = pi.handlers.get("agent_settled")!;
 
 	await handler({ type: "agent_settled" }, { hasUI: false, getContextUsage: () => ({ percent: 70 }) });

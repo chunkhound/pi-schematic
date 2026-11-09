@@ -430,7 +430,7 @@ test.skipIf(!canUseOsSandbox())("sandboxed output streams while the command runs
 				chunks.push(chunk);
 			});
 			child.on("error", reject);
-			child.on("close", () => resolve(Buffer.concat(chunks).toString()));
+			child.on("close", () => { resolve(Buffer.concat(chunks).toString()); });
 		});
 
 		expect(stdout).toBe("firstsecond");

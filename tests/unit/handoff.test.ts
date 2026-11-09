@@ -175,7 +175,7 @@ test("/handoff requires a direction", async () => {
 // ── Staging (the handoff tool) ───────────────────────────────────────
 
 test("handoff stages the request, marks it called, shows progress and appends nothing", async () => {
-	const { state, pi } = await boundaryHost((s) => requestHandoff(s));
+	const { state, pi } = await boundaryHost((s) => { requestHandoff(s); });
 	const { ctx, statuses } = makeCtx();
 
 	const result = await executeHandoff(pi, ctx, {
@@ -515,7 +515,7 @@ test("a completed handoff leaves the readonly nudge off when readonly is off", a
 });
 
 test("turn_start leaves a handoff staged until its turn_end has run", async () => {
-	const { state, pi } = await boundaryHost((s) => requestHandoff(s));
+	const { state, pi } = await boundaryHost((s) => { requestHandoff(s); });
 	const { ctx, notifications } = makeCtx();
 	await executeHandoff(pi, ctx);
 
@@ -527,7 +527,7 @@ test("turn_start leaves a handoff staged until its turn_end has run", async () =
 });
 
 test("turn_start without the cut on the branch fails the handoff and keeps the request retryable", async () => {
-	const { state, pi } = await boundaryHost((s) => requestHandoff(s, "implement auth"));
+	const { state, pi } = await boundaryHost((s) => { requestHandoff(s, "implement auth"); });
 	const { ctx, statuses, notifications } = makeCtx();
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, ctx);
@@ -555,7 +555,7 @@ test("turn_start without the cut on the branch fails the handoff and keeps the r
 });
 
 test("a failed handoff shows the waiting status when usage becomes unavailable", async () => {
-	const { pi } = await boundaryHost((s) => requestHandoff(s));
+	const { pi } = await boundaryHost((s) => { requestHandoff(s); });
 	const { ctx, statuses, session } = makeCtx();
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, ctx);
@@ -615,7 +615,7 @@ for (const { attemptsBefore, nudged, requestSurvives } of [
 }
 
 test("agent_settled with the cut on the branch completes with the successor-did-not-run warning", async () => {
-	const { state, pi } = await boundaryHost((s) => requestHandoff(s));
+	const { state, pi } = await boundaryHost((s) => { requestHandoff(s); });
 	const { ctx, notifications, session } = makeCtx();
 	await executeHandoff(pi, ctx);
 	session.branch = persist((await endTurn(pi, ctx)).entries);
@@ -629,7 +629,7 @@ test("agent_settled with the cut on the branch completes with the successor-did-
 });
 
 test("agent_settled fails a declined handoff with its decline reason in a displayed message and starts no run", async () => {
-	const { state, pi } = await boundaryHost((s) => requestHandoff(s));
+	const { state, pi } = await boundaryHost((s) => { requestHandoff(s); });
 	const { ctx, notifications } = makeCtx();
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, ctx, { toolResults: [] });
@@ -642,7 +642,7 @@ test("agent_settled fails a declined handoff with its decline reason in a displa
 });
 
 test("agent_settled fails a handoff whose turn_end never ran", async () => {
-	const { state, pi } = await boundaryHost((s) => requestHandoff(s));
+	const { state, pi } = await boundaryHost((s) => { requestHandoff(s); });
 	const { ctx, notifications } = makeCtx();
 	await executeHandoff(pi, ctx);
 
@@ -654,7 +654,7 @@ test("agent_settled fails a handoff whose turn_end never ran", async () => {
 });
 
 test("a handoff declined for an abort fails at agent_settled with a displayed message and starts no run", async () => {
-	const { state, pi } = await boundaryHost((s) => requestHandoff(s));
+	const { state, pi } = await boundaryHost((s) => { requestHandoff(s); });
 	const { ctx, notifications } = makeCtx();
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, makeCtx({ aborted: true }).ctx);
@@ -739,7 +739,7 @@ test("a handoff whose branch holds only an earlier handoff's cut fails as not pe
 });
 
 test("agent_settled after a handoff completed at turn_start sends and notifies nothing", async () => {
-	const { pi } = await boundaryHost((s) => requestHandoff(s));
+	const { pi } = await boundaryHost((s) => { requestHandoff(s); });
 	const { ctx, notifications, session } = makeCtx({ hasUI: true });
 	await executeHandoff(pi, ctx);
 	session.branch = persist((await endTurn(pi, ctx)).entries);
@@ -859,7 +859,7 @@ test("after a failed cut the run refuses further handoff calls until the agent s
 });
 
 test("a declined handoff resolved at turn_start fails without starting a run and refuses a repeat call", async () => {
-	const { state, pi } = await boundaryHost((s) => requestHandoff(s));
+	const { state, pi } = await boundaryHost((s) => { requestHandoff(s); });
 	const { ctx } = makeCtx();
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, ctx, { toolResults: [handoffToolResult("call-1", true)] });
@@ -1144,7 +1144,7 @@ test("buildNextUserMessage carries the instruction verbatim and the context seco
 });
 
 test("buildNextUserMessage preserves instruction bytes and normalizes context padding", async () => {
-	await fc.assert(
+	fc.assert(
 		fc.property(
 			// Blank instructions are rejected by validateHandoffRequest before the builder runs.
 			fc.string({ minLength: 1 }).filter((value) => value.trim().length > 0),

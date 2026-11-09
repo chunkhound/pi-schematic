@@ -236,7 +236,7 @@ function stampAccessors(api: ExtensionAPI, extension: Extension, state: HostStat
 	Object.defineProperty(pi, "tools", { get: () => deriveTools(extension), configurable: true });
 	Object.defineProperty(pi, "activeTools", {
 		get: () => state.activeTools,
-		set: (tools: string[]) => applyActiveTools(state, tools),
+		set: (tools: string[]) => { applyActiveTools(state, tools); },
 		configurable: true,
 	});
 	pi.setCommands = (commands: SlashCommandInfo[]) => {

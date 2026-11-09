@@ -221,7 +221,7 @@ function handBuiltContext(vitest: TestContext): {
 	vitest.onTestFinished(async () => {
 		await finish();
 	});
-	return { t, abort: (reason) => controller.abort(reason), registered: () => callbacks.length, finish };
+	return { t, abort: (reason) => { controller.abort(reason); }, registered: () => callbacks.length, finish };
 }
 
 /** The CLI process of every host started from here on, taken when `RealHost.start` returns it; `RpcClient` keeps it private. */
@@ -687,7 +687,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		// The harness HOME and project live under the OS temp dir, which the sandbox lets writes into,
 		// so the target sits under the real home directory of the test process instead.
 		const target = join(os.homedir(), `pi-schematic-e2e-readonly-${process.pid}-${Date.now()}`);
-		t.onTestFinished(() => rmSync(target, { force: true }));
+		t.onTestFinished(() => { rmSync(target, { force: true }); });
 		return withRealHost(t, async (host) => {
 			const script = `require("fs").writeFileSync(${JSON.stringify(target)}, "x")`;
 			await host.command("/readonly");
@@ -763,7 +763,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			const entered = deferred();
 			const release = deferred();
 			// Runs before the registered finish, so a test that fails early does not hold the body.
-			vitest.onTestFinished(() => release.resolve());
+			vitest.onTestFinished(() => { release.resolve(); });
 			const running = withRealHost(t, async (host) => {
 				try {
 					entered.resolve();

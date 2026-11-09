@@ -96,7 +96,7 @@ function contextTexts(messages: readonly { content?: unknown }[]): string[] {
 export default function realHostProbe(pi: ExtensionAPI): void {
 	const logPath = process.env[PROBE_LOG_ENV_VAR];
 	if (!logPath) {throw new Error(`${PROBE_LOG_ENV_VAR} is not set`);}
-	const log = (record: ProbeRecord) => appendFileSync(logPath, JSON.stringify(record) + "\n");
+	const log = (record: ProbeRecord) => { appendFileSync(logPath, JSON.stringify(record) + "\n"); };
 
 	let armedScript: ScriptedStep[] | null = null;
 	let runScript: ScriptedStep[] | null = null;
@@ -144,13 +144,13 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	const awaitQuiet = async (ctx: ExtensionCommandContext, deadlineMs: number): Promise<void> => {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const deadline = new Promise<"deadline">((resolve) => {
-			timer = setTimeout(() => resolve("deadline"), deadlineMs);
+			timer = setTimeout(() => { resolve("deadline"); }, deadlineMs);
 		});
 		const fail = (reason: string) => new Error(`/e2e-barrier ${reason}; outstanding: ${outstanding(ctx).join("; ") || "nothing"}`);
 		try {
 			for (;;) {
 				// Subscribed before the checks, so an event between them is not missed.
-				const changed = new Promise<"changed">((resolve) => wakeBarriers.push(() => resolve("changed")));
+				const changed = new Promise<"changed">((resolve) => wakeBarriers.push(() => { resolve("changed"); }));
 				const idle = ctx.waitForIdle().then(() => "idle" as const);
 				if (await Promise.race([idle, deadline]) === "deadline") {throw fail(`timed out after ${deadlineMs} ms waiting for idle`);}
 				if (accountingErrors.length > 0) {throw fail(`cannot account for: ${accountingErrors.join("; ")}`);}
@@ -339,10 +339,10 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 			if (rest.length > 0) {throw new Error(`/e2e-barrier expects "<id> <deadlineMs>", got: ${args}`);}
 			const id = parseBarrierArgument(idText, "id", args);
 			const deadlineMs = parseBarrierArgument(deadlineText, "deadlineMs", args);
-			const report = (outcome: BarrierReport) => ctx.ui.setStatus(PROBE_BARRIER_STATUS_KEY, JSON.stringify(outcome));
+			const report = (outcome: BarrierReport) => { ctx.ui.setStatus(PROBE_BARRIER_STATUS_KEY, JSON.stringify(outcome)); };
 			void awaitQuiet(ctx, deadlineMs).then(
-				() => report({ id, failure: null }),
-				(error: unknown) => report({ id, failure: error instanceof Error ? error.message : String(error) }),
+				() => { report({ id, failure: null }); },
+				(error: unknown) => { report({ id, failure: error instanceof Error ? error.message : String(error) }); },
 			);
 		},
 	});

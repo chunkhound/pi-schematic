@@ -10,7 +10,7 @@ import { createTestHarness, type TestHarness } from "../test-utils.js";
 let h: TestHarness;
 
 async function makeChildSpawnTool(state: any) {
-	const pi = await createTestHost((api) => registerSpawnTool(api, state));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 	return pi.tools.get("spawn");
 }
 
@@ -88,7 +88,7 @@ test("frame scheduler contains invalidate callback failures and continues health
 
 	scheduler.markDirty(failing);
 	scheduler.markDirty(healthy);
-	expect(() => flushSpawnFrameScheduler()).not.toThrow();
+	expect(() => { flushSpawnFrameScheduler(); }).not.toThrow();
 	expect(failingInvalidates).toHaveBeenCalledOnce();
 	expect(healthyInvalidates).toHaveBeenCalledOnce();
 	expect(h.warnings).toStrictEqual([]);
@@ -360,7 +360,7 @@ test("nested spawn retries a throw-once parent invalidate without a new child ev
 	);
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	expect(() => flushSpawnFrameScheduler()).not.toThrow();
+	expect(() => { flushSpawnFrameScheduler(); }).not.toThrow();
 	expect(invalidate).toHaveBeenCalledOnce();
 
 	flushSpawnFrameScheduler();
@@ -389,7 +389,7 @@ test("nested spawn does not restore a failed invalidate after disposal", async (
 	);
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	expect(() => flushSpawnFrameScheduler()).not.toThrow();
+	expect(() => { flushSpawnFrameScheduler(); }).not.toThrow();
 	expect(invalidate).toHaveBeenCalledOnce();
 	flushSpawnFrameScheduler();
 	expect(invalidate, "dispose prevents stale render restoration").toHaveBeenCalledOnce();

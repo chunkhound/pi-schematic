@@ -349,7 +349,7 @@ export class SpawnFrameScheduler {
 	markDirty(component: SpawnFrameTarget): void {
 		this.dirtyComponents.add(component);
 		if (!this.frameTimer) {
-			this.frameTimer = setTimeout(() => this.flush(), this.frameMs);
+			this.frameTimer = setTimeout(() => { this.flush(); }, this.frameMs);
 		}
 	}
 
@@ -428,7 +428,7 @@ export class SpawnFrameScheduler {
 		// If more components were dirtied during flush, schedule another frame.
 		// A callback may already have called markDirty(), so retain that timer.
 		if (this.dirtyComponents.size > 0 && !this.frameTimer) {
-			this.frameTimer = setTimeout(() => this.flush(), this.frameMs);
+			this.frameTimer = setTimeout(() => { this.flush(); }, this.frameMs);
 		}
 	}
 }

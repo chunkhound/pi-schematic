@@ -89,7 +89,7 @@ test("teardown restores the console and singletons, then fails, when a write is 
 	writeLock.pending = 1;
 	const clear = vi.spyOn(frameScheduler, "clear");
 
-	expect(() => h.teardown()).toThrow(/pending/);
+	expect(() => { h.teardown(); }).toThrow(/pending/);
 
 	expect(writeLock.pending, "teardown leaves the pending write alone").toBe(1);
 	expect(clear, "teardown clears the harness scheduler before it throws").toHaveBeenCalledOnce();
@@ -114,7 +114,7 @@ test("teardown restores the console and singletons when clearing the harness sch
 		throw new Error("boom");
 	});
 
-	expect(() => h.teardown()).toThrow(/boom/);
+	expect(() => { h.teardown(); }).toThrow(/boom/);
 
 	expect(getSingletons()).toBe(outer);
 	expect(console.debug).toBe(debug);

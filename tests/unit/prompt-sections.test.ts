@@ -41,7 +41,7 @@ test("omits a section whose body is empty", () => {
 for (const name of ["schematic", "schematic_model_groups"]) {
 	test(`accepts names with the schematic prefix: ${name}`, () => {
 		const registry = createPromptSectionRegistry();
-		expect(() => registry.register({ name, render: () => "body" })).not.toThrow();
+		expect(() => { registry.register({ name, render: () => "body" }); }).not.toThrow();
 		expect(registry.render()).toStrictEqual([{ name, body: "body" }]);
 	});
 }
@@ -56,7 +56,7 @@ for (const { name, reason } of [
 ]) {
 	test(`rejects names outside the schematic prefix: ${name} (${reason})`, () => {
 		const registry = createPromptSectionRegistry();
-		expect(() => registry.register({ name, render: () => "body" })).toThrow(/Invalid schematic prompt section name/);
+		expect(() => { registry.register({ name, render: () => "body" }); }).toThrow(/Invalid schematic prompt section name/);
 	});
 }
 
@@ -64,7 +64,7 @@ test("rejects a duplicate section name", () => {
 	const registry = createPromptSectionRegistry();
 	registry.register({ name: "schematic_topic", render: () => "first" });
 
-	expect(() => registry.register({ name: "schematic_topic", render: () => "second" })).toThrow(
+	expect(() => { registry.register({ name: "schematic_topic", render: () => "second" }); }).toThrow(
 		/Duplicate schematic prompt section/,
 	);
 });

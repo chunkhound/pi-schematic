@@ -24,7 +24,7 @@ test("topic helpers manage the active notebook topic lifecycle", () => {
 
 test("notebook_topic_set establishes a fresh topic, is idempotent, and refuses overrides", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerNotebookTopicTool(api, state));
+	const pi = await createTestHost((api) => { registerNotebookTopicTool(api, state); });
 
 	const tool = pi.tools.get("notebook_topic_set");
 	const first = await tool.execute("1", { topic: "OAuth" });
@@ -43,7 +43,7 @@ test("notebook_topic_set establishes a fresh topic, is idempotent, and refuses o
 
 test("notebook_topic_set preserves human authority, stays idempotent for equal topics, and rejects empty normalized topics", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerNotebookTopicTool(api, state));
+	const pi = await createTestHost((api) => { registerNotebookTopicTool(api, state); });
 	const tool = pi.tools.get("notebook_topic_set");
 
 	setActiveNotebookTopic(state, "oauth", "human");
@@ -54,7 +54,7 @@ test("notebook_topic_set preserves human authority, stays idempotent for equal t
 	await expect(tool.execute("2", { topic: "billing" })).rejects.toThrow(/human-set notebook topic is authoritative/i);
 
 	const freshState = createState();
-	const freshPi = await createTestHost((api) => registerNotebookTopicTool(api, freshState));
+	const freshPi = await createTestHost((api) => { registerNotebookTopicTool(api, freshState); });
 	const freshTool = freshPi.tools.get("notebook_topic_set");
 	await expect(freshTool.execute("3", { topic: "@@@" })).rejects.toThrow(/notebook topic cannot be empty/i);
 });

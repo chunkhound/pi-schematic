@@ -106,7 +106,7 @@ export function spawnPager(body: string, pager: ResolvedPager): Promise<void> {
 			if (code === "ENOENT") {reject(new Error(`${pager.cmd} not found`));}
 			else {reject(err);}
 		});
-		child.on("close", () => resolve());
+		child.on("close", () => { resolve(); });
 		// Windows (libuv) reports a closed read end as EOF rather than EPIPE.
 		child.stdin?.on("error", (err) => {
 			const code = (err as NodeJS.ErrnoException).code;
