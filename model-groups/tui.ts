@@ -96,7 +96,7 @@ export function createModelGroupsComponent(
 		loadIssues: [] as ModelGroupsBootValidation["loadIssues"],
 		editKey: null as string | null,
 		editName: "",
-		editScope: (access.policy === "global-project" ? "project" : "global") as ModelGroupScope,
+		editScope: (access.policy === "global-project" ? "project" : "global"),
 		editDraft: null as ModelGroupDef | null,
 		activeTextInput: null as null | "group-name",
 		modelEditIndex: 0,
@@ -170,9 +170,9 @@ export function createModelGroupsComponent(
 
 	function uniqueNewGroupName(): string {
 		const existing = new Set(state.groups.map((group) => group.name));
-		if (!existing.has("new-group")) return "new-group";
+		if (!existing.has("new-group")) {return "new-group";}
 		let index = 2;
-		while (existing.has(`new-group-${index}`)) index++;
+		while (existing.has(`new-group-${index}`)) {index++;}
 		return `new-group-${index}`;
 	}
 
@@ -182,7 +182,7 @@ export function createModelGroupsComponent(
 
 	function commitName(): boolean {
 		const group = currentEditGroup();
-		if (!group) return false;
+		if (!group) {return false;}
 		state.editName = groupNameInput.getValue();
 		const decoded = decodeDisplayLabel(state.editName);
 		if (!decoded.ok) {
@@ -207,7 +207,7 @@ export function createModelGroupsComponent(
 			store.renameGroup(group.scope, access, group.name, nextName);
 			refresh();
 			const renamed = state.groups.find((candidate) => candidate.name === nextName && candidate.scope === group.scope);
-			if (renamed) openEditor(renamed);
+			if (renamed) {openEditor(renamed);}
 			return true;
 		} catch (error) {
 			notifyError(error);
@@ -221,15 +221,15 @@ export function createModelGroupsComponent(
 
 	function switchScope(newScope: ModelGroupScope): void {
 		const group = currentEditGroup();
-		if (!group || newScope === group.scope) return;
-		if (!commitName()) return;
+		if (!group || newScope === group.scope) {return;}
+		if (!commitName()) {return;}
 		const confirmed = currentEditGroup();
-		if (!confirmed) return;
+		if (!confirmed) {return;}
 		try {
 			store.moveGroup(access, confirmed.name, newScope);
 			refresh();
 			const moved = state.groups.find((candidate) => candidate.name === confirmed.name && candidate.scope === newScope);
-			if (moved) openEditor(moved);
+			if (moved) {openEditor(moved);}
 		} catch (error) {
 			notifyError(error);
 		}
@@ -238,7 +238,7 @@ export function createModelGroupsComponent(
 	/** Persist the draft, refresh state, and re-resolve the updated group. No navigation. */
 	function persistDraft(def: ModelGroupDef): ResolvedModelGroup | undefined {
 		const group = currentEditGroup();
-		if (!group) return undefined;
+		if (!group) {return undefined;}
 		try {
 			store.updateGroup(group.scope, access, group.name, def, modelRegistry);
 			refresh();
@@ -251,7 +251,7 @@ export function createModelGroupsComponent(
 
 	function updateDraft(def: ModelGroupDef, afterSuccess: () => void): void {
 		const updated = persistDraft(def);
-		if (!updated) return; // error already notified; do not navigate
+		if (!updated) {return;} // error already notified; do not navigate
 		openEditor(updated);
 		afterSuccess();
 	}
@@ -282,11 +282,11 @@ export function createModelGroupsComponent(
 	}
 
 	function currentWizardModel(): Model<Api> | undefined {
-		return modelRegistry.find(state.wizardProvider, state.wizardModelId) as Model<Api> | undefined;
+		return modelRegistry.find(state.wizardProvider, state.wizardModelId);
 	}
 
-	function thinkingOptionsFor(model: Model<Api> | undefined): Array<ModelThinkingLevel | undefined> {
-		if (!model) return [undefined];
+	function thinkingOptionsFor(model: Model<Api> | undefined): (ModelThinkingLevel | undefined)[] {
+		if (!model) {return [undefined];}
 		const supported = getSupportedThinkingLevels(model).filter((level) => model.reasoning || level !== "off");
 		return [undefined, ...supported];
 	}
@@ -299,11 +299,11 @@ export function createModelGroupsComponent(
 	// reordering `thinkingOptionsFor` cannot silently move the stale row (and, in
 	// particular, cannot park it next to `Remove model`). `maxRow`, selection and
 	// rendering all share this list so their row indices can never drift apart.
-	function modelEditThinkingOptions(found: Model<Api> | undefined, configured: ModelThinkingLevel | undefined): Array<ModelThinkingLevel | undefined> {
+	function modelEditThinkingOptions(found: Model<Api> | undefined, configured: ModelThinkingLevel | undefined): (ModelThinkingLevel | undefined)[] {
 		const options = thinkingOptionsFor(found);
-		if (options.includes(configured)) return options;
+		if (options.includes(configured)) {return options;}
 		const inheritIndex = options.indexOf(undefined);
-		if (inheritIndex < 0) return [configured, ...options];
+		if (inheritIndex < 0) {return [configured, ...options];}
 		return [...options.slice(0, inheritIndex + 1), configured, ...options.slice(inheritIndex + 1)];
 	}
 
@@ -322,17 +322,17 @@ export function createModelGroupsComponent(
 		const group = currentEditGroup();
 		const evaluation = group?.evaluations?.find((candidate) => productionConstraintRegistry.get(candidate.key)?.editor.kind === "multi-select");
 		const descriptor = evaluation && productionConstraintRegistry.get(evaluation.key);
-		if (descriptor && evaluation) return { descriptor, evaluation };
+		if (descriptor && evaluation) {return { descriptor, evaluation };}
 		// Test/store adapters that predate generic evaluations retain the production descriptor's compatibility projection.
 		const compatibilityDescriptor = productionConstraintRegistry.descriptors.find((candidate) => candidate.editor.kind === "multi-select");
-		if (!group || !compatibilityDescriptor) return undefined;
+		if (!group || !compatibilityDescriptor) {return undefined;}
 		const reconciled = compatibilityDescriptor.reconcile({ aggregate: group.modalities, override: state.editDraft?.constraints?.modalities });
 		return { descriptor: compatibilityDescriptor, evaluation: { key: compatibilityDescriptor.key, aggregate: group.modalities, effective: reconciled.effective, diagnostics: reconciled.diagnostics } };
 	}
 
 	function modalityEditorRows(): readonly ConstraintEditorRow[] {
 		const editor = activeConstraintEditor();
-		if (!editor) return [];
+		if (!editor) {return [];}
 		// The modalities hand-edit screen is rebuilt around disabling capabilities
 		// from the union: only the toggleable media rows remain (no Automatic
 		// selector row). Text is the required base when the group's members support
@@ -350,7 +350,7 @@ export function createModelGroupsComponent(
 			case "MODALITIES": return Math.max(0, modalityEditorRows().length - 1);
 			case "MODEL_EDIT": {
 				const reference = state.editDraft?.models[state.modelEditIndex];
-				const model = modelRegistry.find(reference?.provider ?? "", reference?.modelId ?? "") as Model<Api> | undefined;
+				const model = modelRegistry.find(reference?.provider ?? "", reference?.modelId ?? "");
 				return modelEditThinkingOptions(model, reference?.thinkingLevel).length;
 			}
 			case "WIZARD_PROVIDER": return Math.max(0, allProviders().length - 1);
@@ -374,12 +374,12 @@ export function createModelGroupsComponent(
 						store.createGroup(scope, access, name, { models: [] }, modelRegistry);
 						refresh();
 						const created = state.groups.find((group) => group.name === name && group.scope === scope);
-						if (created) openEditor(created);
+						if (created) {openEditor(created);}
 					} catch (error) { notifyError(error); }
 					return;
 				}
 				const group = selectedGroup();
-				if (group) openEditor(group);
+				if (group) {openEditor(group);}
 				return;
 			}
 			case "EDITOR": {
@@ -387,13 +387,13 @@ export function createModelGroupsComponent(
 				if ((access.policy === "global-project" && state.row === 1) || (access.policy === "global-only" && state.row === 0)) { switchScope("global"); return; }
 				if (state.row === nameRow()) { state.activeTextInput = "group-name"; syncInputFocus(); return; }
 				if (state.row === modalityRow()) { state.screen = "MODALITIES"; state.row = 0; return; }
-				if (!commitName()) return;
+				if (!commitName()) {return;}
 				const modelIndex = state.row - modelStartRow();
 				if (state.editDraft && modelIndex < state.editDraft.models.length) {
 					const reference = state.editDraft.models[modelIndex];
 					state.modelEditIndex = modelIndex;
 					state.screen = "MODEL_EDIT";
-					const found = modelRegistry.find(reference.provider, reference.modelId) as Model<Api> | undefined;
+					const found = modelRegistry.find(reference.provider, reference.modelId);
 					state.row = modelEditRowFor(found, reference.thinkingLevel);
 				} else {
 					resetModelSearch();
@@ -403,11 +403,11 @@ export function createModelGroupsComponent(
 				return;
 			}
 			case "MODALITIES": {
-				if (!state.editDraft) return;
+				if (!state.editDraft) {return;}
 				const editor = activeConstraintEditor();
 				const selected = modalityEditorRows()[state.row];
 				// No toggle rows (text-only / unresolvable) → Enter/Space are inert.
-				if (!editor || !selected || selected.kind !== "toggle") return;
+				if (!editor || !selected || selected.kind !== "toggle") {return;}
 				const next = cloneDef(state.editDraft);
 				const base = [...(editor.evaluation.effective as ModelGroupModality[])];
 				const pressed = selected.value as ModelGroupModality;
@@ -420,8 +420,8 @@ export function createModelGroupsComponent(
 				if (orderedModalities(toggled).join(",") === supported.join(",")) {
 					// Re-enabling back to the full union returns the group to Automatic:
 					// no override is stored, so no spawn ceiling attaches to a non-limit.
-					if (next.constraints) delete next.constraints[editor.descriptor.key];
-					if (next.constraints && Object.keys(next.constraints).length === 0) delete next.constraints;
+					if (next.constraints) {delete next.constraints[editor.descriptor.key];}
+					if (next.constraints && Object.keys(next.constraints).length === 0) {delete next.constraints;}
 				} else {
 					(next.constraints ??= {})[editor.descriptor.key] = toggled;
 				}
@@ -440,8 +440,8 @@ export function createModelGroupsComponent(
 			}
 			case "MODEL_EDIT": {
 				const model = state.editDraft?.models[state.modelEditIndex];
-				if (!state.editDraft || !model) return;
-				const found = modelRegistry.find(model.provider, model.modelId) as Model<Api> | undefined;
+				if (!state.editDraft || !model) {return;}
+				const found = modelRegistry.find(model.provider, model.modelId);
 				const options = modelEditThinkingOptions(found, model.thinkingLevel);
 				if (state.row >= options.length) {
 					const next = cloneDef(state.editDraft);
@@ -451,14 +451,14 @@ export function createModelGroupsComponent(
 				}
 				const next = cloneDef(state.editDraft);
 				const level = options[state.row];
-				if (level === undefined) delete next.models[state.modelEditIndex].thinkingLevel;
-				else next.models[state.modelEditIndex].thinkingLevel = level;
+				if (level === undefined) {delete next.models[state.modelEditIndex].thinkingLevel;}
+				else {next.models[state.modelEditIndex].thinkingLevel = level;}
 				updateDraft(next, () => { state.screen = "EDITOR"; state.row = 0; });
 				return;
 			}
 			case "WIZARD_PROVIDER": {
 				const provider = allProviders()[state.row];
-				if (!provider) return;
+				if (!provider) {return;}
 				state.wizardProvider = provider;
 				resetModelSearch();
 				state.screen = "WIZARD_MODEL";
@@ -468,11 +468,11 @@ export function createModelGroupsComponent(
 			}
 			case "WIZARD_MODEL": return; // Model activation is owned by the same-build filtered SelectList callback.
 			case "WIZARD_THINKING": {
-				if (!state.editDraft) return;
+				if (!state.editDraft) {return;}
 				const level = thinkingOptionsFor(currentWizardModel())[state.row];
 				const next = cloneDef(state.editDraft);
 				const entry = { provider: state.wizardProvider, modelId: state.wizardModelId } as { provider: string; modelId: string; thinkingLevel?: ModelThinkingLevel };
-				if (level !== undefined) entry.thinkingLevel = level;
+				if (level !== undefined) {entry.thinkingLevel = level;}
 				next.models.push(entry);
 				updateDraft(next, () => { resetModelSearch(); state.screen = "EDITOR"; state.row = 0; });
 				return;
@@ -509,7 +509,7 @@ export function createModelGroupsComponent(
 	function deleteAction(): void {
 		if (state.screen === "LIST") {
 			const group = selectedGroup();
-			if (!group) return;
+			if (!group) {return;}
 			state.deleteKey = groupKey(group);
 			state.screen = "DELETE_CONFIRM";
 			state.row = 0;
@@ -520,7 +520,7 @@ export function createModelGroupsComponent(
 	}
 
 	function selectableLine(selected: boolean, primary: string, suffix = ""): string {
-		if (!selected) return `  ${primary}${suffix}`;
+		if (!selected) {return `  ${primary}${suffix}`;}
 		return `${theme.fg("accent", "→")} ${theme.fg("accent", primary)}${suffix}`;
 	}
 
@@ -531,7 +531,7 @@ export function createModelGroupsComponent(
 	function groupNameLineComponent(): Component {
 		return {
 			render: (width: number) => {
-				if (width <= 0) return [""];
+				if (width <= 0) {return [""];}
 				const selected = state.row === nameRow();
 				const prefix = selectableLine(selected, "Name:", " ");
 				if (state.activeTextInput !== "group-name") {
@@ -619,16 +619,16 @@ export function createModelGroupsComponent(
 
 	function tailOfWidth(text: string, maxWidth: number): string {
 		const width = visibleWidth(text);
-		if (width <= maxWidth) return text;
+		if (width <= maxWidth) {return text;}
 		return sliceByColumn(text, Math.max(0, width - maxWidth), maxWidth, true);
 	}
 
 	function truncateModelRow(context: SelectListTruncatePrimaryContext): string {
 		const { text, maxWidth, isSelected } = context;
-		if (maxWidth <= 0) return "";
+		if (maxWidth <= 0) {return "";}
 		if (visibleWidth(text) <= maxWidth) {
 			const slash = text.lastIndexOf("/");
-			if (isSelected || slash < 0) return text;
+			if (isSelected || slash < 0) {return text;}
 			return `${dim(text.slice(0, slash + 1))}${text.slice(slash + 1)}`;
 		}
 		const slash = text.lastIndexOf("/");
@@ -663,7 +663,7 @@ export function createModelGroupsComponent(
 		select.onSelectionChange = (item) => { state.row = Number(item.value); syncInputFocus(); };
 		select.onSelect = (item) => {
 			const model = models[Number(item.value)];
-			if (!model) return;
+			if (!model) {return;}
 			state.row = Number(item.value);
 			state.wizardModelId = model.id;
 			state.screen = "WIZARD_THINKING";
@@ -684,14 +684,14 @@ export function createModelGroupsComponent(
 		container.addChild(textLine(legend));
 		const items: SelectItem[] = state.groups.map((group, index) => {
 			const tags: string[] = [];
-			if (group.validation.degraded) tags.push("⚠ degraded");
-			if (group.validation.unavailableRefs.length > 0) tags.push("✗ unavailable");
-			if (group.validation.shadowedByProject) tags.push("project override");
+			if (group.validation.degraded) {tags.push("⚠ degraded");}
+			if (group.validation.unavailableRefs.length > 0) {tags.push("✗ unavailable");}
+			if (group.validation.shadowedByProject) {tags.push("project override");}
 			const models = group.models.map((model) => thinkingLabel(model.thinkingLevel)).join(", ") || "empty";
-			if (group.evaluations) tags.push(...presentConstraintDiagnosticRecords(group.evaluations, productionConstraintRegistry).map((diagnostic) => diagnostic.text));
+			if (group.evaluations) {tags.push(...presentConstraintDiagnosticRecords(group.evaluations, productionConstraintRegistry).map((diagnostic) => diagnostic.text));}
 			else {
-				if (group.validation.emptyCommonModalities) tags.push("⚠ no common modalities");
-				if (group.validation.unsupportedOverrideModalities.length > 0) tags.push(`⚠ stale modality override: ${group.validation.unsupportedOverrideModalities.join(", ")}`);
+				if (group.validation.emptyCommonModalities) {tags.push("⚠ no common modalities");}
+				if (group.validation.unsupportedOverrideModalities.length > 0) {tags.push(`⚠ stale modality override: ${group.validation.unsupportedOverrideModalities.join(", ")}`);}
 			}
 			const description = modalityDescription(group.scope, group.models.length, models, tags.join(" · "), group.modalities?.effective);
 			return { value: String(index), label: escapeDisplayLabel(group.name), description };
@@ -733,7 +733,7 @@ export function createModelGroupsComponent(
 
 		state.editDraft?.models.forEach((model, index) => {
 			const available = isModelUsable(modelRegistry, model.provider, model.modelId) ? "available" : "unavailable";
-			const found = modelRegistry.find(model.provider, model.modelId) as Model<Api> | undefined;
+			const found = modelRegistry.find(model.provider, model.modelId);
 			// Per-model capability chip, mirroring the Add-model picker (D2). Unresolved
 			// members have no fact, so they render without a chip.
 			const chip = found ? modalityLetterRun(getModalitiesModelFact(found)) : "";
@@ -768,7 +768,7 @@ export function createModelGroupsComponent(
 			container.addChild(textLine(`  ${theme.fg(MODALITY_FG.text, MODALITY_LETTER.text)}${dim(" text  [required]")}`));
 		}
 		for (const [index, row] of rows.entries()) {
-			if (row.kind !== "toggle") continue;
+			if (row.kind !== "toggle") {continue;}
 			const modality = row.value as ModelGroupModality;
 			const letter = theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality]);
 			const stateText = row.active ? "[on]" : "[off]";
@@ -780,7 +780,7 @@ export function createModelGroupsComponent(
 				: `  ${letter}${dim(` ${row.label}  ${stateText}`)}`;
 			container.addChild(textLine(label));
 		}
-		if (rows.length === 0) container.addChild(textLine(theme.fg("dim", "  No optional media capabilities available.")));
+		if (rows.length === 0) {container.addChild(textLine(theme.fg("dim", "  No optional media capabilities available.")));}
 		// Single editable row screens drop arrow navigation — toggling + Esc is the whole flow.
 		container.addChild(textLine(theme.fg("dim", rows.length > 1 ? "↑↓ navigate • Enter/Space toggle • Esc back" : rows.length === 1 ? "Enter/Space toggle • Esc back" : "Esc back")));
 		// Single dynamic status: Automatic uses the union; an override limits the media set.
@@ -795,7 +795,7 @@ export function createModelGroupsComponent(
 		const container = new Container();
 		const model = state.editDraft?.models[state.modelEditIndex];
 		if (!model) { container.addChild(textLine("Model not found")); return container; }
-		const found = modelRegistry.find(model.provider, model.modelId) as Model<Api> | undefined;
+		const found = modelRegistry.find(model.provider, model.modelId);
 		container.addChild(textLine(theme.fg("accent", "Edit model")));
 		container.addChild(textLine(`Provider: ${escapeDisplayLabel(model.provider)}`));
 		container.addChild(textLine(`Model ID: ${escapeDisplayLabel(model.modelId)}`));
@@ -823,10 +823,10 @@ export function createModelGroupsComponent(
 				const lines = [dim("Selected:")];
 				if (width > 2) {
 					lines.push(truncateToWidth(`  ${theme.fg("accent", full)}`, width, MODEL_ROW_ELLIPSIS));
-					if (name !== undefined) lines.push(truncateToWidth(`  ${dim(name)}`, width, MODEL_ROW_ELLIPSIS));
+					if (name !== undefined) {lines.push(truncateToWidth(`  ${dim(name)}`, width, MODEL_ROW_ELLIPSIS));}
 				} else {
 					lines.push(theme.fg("accent", full));
-					if (name !== undefined) lines.push(dim(name));
+					if (name !== undefined) {lines.push(dim(name));}
 				}
 				return lines;
 			},
@@ -870,18 +870,18 @@ export function createModelGroupsComponent(
 		const otherScope = group ? state.groups.some((candidate) => candidate.name === group.name && candidate.scope !== group.scope) : false;
 		container.addChild(textLine(theme.fg("warning", "Delete Model Group?")));
 		container.addChild(textLine(group ? `${escapeDisplayLabel(group.name)} [${group.scope}] with ${group.models.length} models` : "Missing group"));
-		if (otherScope) container.addChild(textLine("Same-name group in the other scope remains unaffected."));
+		if (otherScope) {container.addChild(textLine("Same-name group in the other scope remains unaffected."));}
 		container.addChild(textLine(selectableLine(state.row === 0, "Keep group")));
 		container.addChild(textLine(selectableLine(state.row === 1, "Delete group")));
 		return container;
 	}
 
 	function activeComponent(): Component {
-		if (state.screen === "LIST") return renderListComponent();
-		if (state.screen === "EDITOR") return renderEditorComponent();
-		if (state.screen === "MODALITIES") return renderModalitiesComponent();
-		if (state.screen === "MODEL_EDIT") return renderModelEditComponent();
-		if (state.screen === "DELETE_CONFIRM") return renderDeleteComponent();
+		if (state.screen === "LIST") {return renderListComponent();}
+		if (state.screen === "EDITOR") {return renderEditorComponent();}
+		if (state.screen === "MODALITIES") {return renderModalitiesComponent();}
+		if (state.screen === "MODEL_EDIT") {return renderModelEditComponent();}
+		if (state.screen === "DELETE_CONFIRM") {return renderDeleteComponent();}
 		return renderWizardComponent();
 	}
 
@@ -894,7 +894,7 @@ export function createModelGroupsComponent(
 		},
 		invalidate: () => { groupNameInput.invalidate(); modelSearchInput.invalidate(); },
 		handleInput: (data: string) => {
-			if (state.finished) return;
+			if (state.finished) {return;}
 			if (state.screen === "WIZARD_MODEL") {
 				const queryBefore = modelSearchInput.getValue();
 				if (isEsc(data)) {
@@ -933,7 +933,7 @@ export function createModelGroupsComponent(
 				tui.requestRender();
 				return;
 			}
-			if (isDeleteChord(data) && (state.screen === "LIST" || state.screen === "MODEL_EDIT")) deleteAction();
+			if (isDeleteChord(data) && (state.screen === "LIST" || state.screen === "MODEL_EDIT")) {deleteAction();}
 			else if (activeSelect && (state.screen === "LIST" || state.screen.startsWith("WIZARD_")) && (isUp(data) || isDown(data))) {
 				const previousRow = state.row;
 				activeSelect.handleInput(data);
@@ -941,12 +941,12 @@ export function createModelGroupsComponent(
 				clampRow();
 				activeSelect.setSelectedIndex(state.row);
 			}
-			else if (activeSelect && (state.screen === "LIST" || state.screen.startsWith("WIZARD_")) && isEnter(data)) activate();
+			else if (activeSelect && (state.screen === "LIST" || state.screen.startsWith("WIZARD_")) && isEnter(data)) {activate();}
 			else if (isUp(data)) { state.row--; clampRow(); }
 			else if (isDown(data)) { state.row++; clampRow(); }
-			else if (state.screen === "MODALITIES" && isSpace(data)) activate();
-			else if (isLeft(data) || isEsc(data)) goBack();
-			else if (isEnter(data)) activate();
+			else if (state.screen === "MODALITIES" && isSpace(data)) {activate();}
+			else if (isLeft(data) || isEsc(data)) {goBack();}
+			else if (isEnter(data)) {activate();}
 			syncInputFocus();
 			tui.requestRender();
 		},

@@ -39,7 +39,7 @@ export function evaluateModelRequirement(
 	model: ConstraintMemberResolution["members"][number]["model"],
 	requirement: unknown,
 ): ConstraintViolation | undefined {
-	if (!model) return { key: descriptor.key, scope: "model", satisfaction: { satisfied: false, missing: "unresolved" } };
+	if (!model) {return { key: descriptor.key, scope: "model", satisfaction: { satisfied: false, missing: "unresolved" } };}
 	const satisfaction = descriptor.modelSatisfies({ fact: descriptor.modelFact(model), requirement });
 	return satisfaction.satisfied ? undefined : { key: descriptor.key, scope: "model", satisfaction };
 }

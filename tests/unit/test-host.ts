@@ -54,10 +54,10 @@ async function importInternal<T>(relativePath: string, exportNames: readonly str
 	return mod as T;
 }
 
-type InternalSystemPrompt = {
+interface InternalSystemPrompt {
 	normalizeBuildSystemPromptOptions(input: BuildSystemPromptOptions): NormalizedBuildSystemPromptOptions;
 	buildSystemPrompt(input: BuildSystemPromptOptions): string;
-};
+}
 
 const { normalizeBuildSystemPromptOptions, buildSystemPrompt } = await importInternal<InternalSystemPrompt>(
 	"core/system-prompt.js",
@@ -77,9 +77,9 @@ export interface TestAccessors {
 	tools: TestToolMap;
 	commands: Map<string, any>;
 	shortcuts: Map<string, any>;
-	sentUserMessages: Array<{ content: any; options?: any }>;
-	sentMessages: Array<{ message: any; options?: any }>;
-	appendedEntries: Array<{ customType: string; data: any }>;
+	sentUserMessages: { content: any; options?: any }[];
+	sentMessages: { message: any; options?: any }[];
+	appendedEntries: { customType: string; data: any }[];
 	activeTools: string[];
 	setCommands(commands: any[]): void;
 }
@@ -111,9 +111,9 @@ interface HostState {
 	toolSources: Map<string, string>;
 	commands: any[];
 	thinkingLevel: ThinkingLevel;
-	sentUserMessages: Array<{ content: any; options?: any }>;
-	sentMessages: Array<{ message: any; options?: any }>;
-	appendedEntries: Array<{ customType: string; data: any }>;
+	sentUserMessages: { content: any; options?: any }[];
+	sentMessages: { message: any; options?: any }[];
+	appendedEntries: { customType: string; data: any }[];
 }
 
 function defaultToolSource(): string {
@@ -124,7 +124,7 @@ function applyActiveTools(state: HostState, tools: string[]): void {
 	state.activeTools.length = 0;
 	state.activeTools.push(...tools);
 	for (const name of tools) {
-		if (!state.toolSources.has(name)) state.toolSources.set(name, defaultToolSource());
+		if (!state.toolSources.has(name)) {state.toolSources.set(name, defaultToolSource());}
 	}
 }
 
@@ -132,7 +132,7 @@ function applyAllTools(state: HostState, tools: string[]): void {
 	state.allToolNames.length = 0;
 	state.allToolNames.push(...tools);
 	for (const name of tools) {
-		if (!state.toolSources.has(name)) state.toolSources.set(name, defaultToolSource());
+		if (!state.toolSources.has(name)) {state.toolSources.set(name, defaultToolSource());}
 	}
 }
 
@@ -166,9 +166,9 @@ function createHostState(seed: TestHostSeed): HostState {
 		sentMessages: [],
 		appendedEntries: [],
 	};
-	for (const [name, source] of Object.entries(seed.toolSources ?? {})) state.toolSources.set(name, source);
-	if (seed.activeTools) applyActiveTools(state, seed.activeTools);
-	if (seed.allTools) applyAllTools(state, seed.allTools);
+	for (const [name, source] of Object.entries(seed.toolSources ?? {})) {state.toolSources.set(name, source);}
+	if (seed.activeTools) {applyActiveTools(state, seed.activeTools);}
+	if (seed.allTools) {applyAllTools(state, seed.allTools);}
 	return state;
 }
 
@@ -227,9 +227,9 @@ function deriveTools(extension: Extension): TestToolMap {
 
 function stampAccessors(api: ExtensionAPI, extension: Extension, state: HostState): TestPI {
 	const pi = api as TestPI;
-	pi.handlers = extension.handlers as unknown as Map<string, any[]>;
-	pi.commands = extension.commands as unknown as Map<string, any>;
-	pi.shortcuts = extension.shortcuts as unknown as Map<string, any>;
+	pi.handlers = extension.handlers;
+	pi.commands = extension.commands;
+	pi.shortcuts = extension.shortcuts;
 	pi.sentUserMessages = state.sentUserMessages;
 	pi.sentMessages = state.sentMessages;
 	pi.appendedEntries = state.appendedEntries;
@@ -332,7 +332,7 @@ export async function createTestHost(
 	const cwd = seed.cwd ?? process.cwd();
 	const state = createHostState(seed);
 	const { apis, extensions } = await loadExtensions([factory], state, cwd);
-	return stampAccessors(apis[0]!, extensions[0]!, state);
+	return stampAccessors(apis[0], extensions[0], state);
 }
 
 /**
@@ -389,6 +389,6 @@ export async function emitBeforeAgentStart(init: {
 		errors.push(error);
 	});
 	const result = await runner.emitBeforeAgentStart({ messageType: "user", prompt: "" }, { cwd });
-	if (errors.length > 0) throw new AggregateError(errors, "before_agent_start handler failed");
+	if (errors.length > 0) {throw new AggregateError(errors, "before_agent_start handler failed");}
 	return { result, prompt: buildSystemPrompt(result.systemPromptOptions) };
 }

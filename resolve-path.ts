@@ -13,7 +13,7 @@ export function resolveRealPath(p: string): string {
 		return fs.realpathSync(p);
 	} catch {
 		const parent = path.dirname(p);
-		if (parent === p) return p; // hit root
+		if (parent === p) {return p;} // hit root
 		try {
 			const realParent = fs.realpathSync(parent);
 			return path.join(realParent, path.basename(p));

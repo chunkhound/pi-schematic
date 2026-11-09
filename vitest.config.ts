@@ -9,7 +9,7 @@ export default defineConfig({
 			name: "pi-shared-packages",
 			enforce: "pre",
 			async resolveId(source, _importer, options) {
-				if (!PI_SHARED_PACKAGES.test(source)) return null;
+				if (!PI_SHARED_PACKAGES.test(source)) {return null;}
 				const resolved = await this.resolve(source, piManifestPath, { ...options, skipSelf: true });
 				if (resolved === null) {
 					throw new Error(

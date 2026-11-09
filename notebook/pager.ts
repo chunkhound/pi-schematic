@@ -56,7 +56,7 @@ export function resolvePager(
 		const [cmd, ...args] = raw.split(/\s+/);
 		if (cmd) {
 			const executable = platform === "win32" ? win32.basename(cmd).toLowerCase().replace(/\.(exe|com)$/, "") : posix.basename(cmd);
-			if (executable === "cat" || executable === "more") return undefined;
+			if (executable === "cat" || executable === "more") {return undefined;}
 			// Injected args go last, but before any end-of-options marker.
 			const endOfOptions = args.indexOf("--");
 			const at = endOfOptions === -1 ? args.length : endOfOptions;
@@ -73,8 +73,8 @@ export function resolvePager(
 	}
 	// Skip probing on Windows: `command -v` isn't standard and less is
 	// rarely present. Respect $PI_PAGER/$PAGER above, otherwise fall through.
-	if (platform === "win32") return undefined;
-	if (hasLess()) return { cmd: "less", args: ["-R", ...LESS_KEEP_OPEN] };
+	if (platform === "win32") {return undefined;}
+	if (hasLess()) {return { cmd: "less", args: ["-R", ...LESS_KEEP_OPEN] };}
 	return undefined;
 }
 
@@ -103,14 +103,14 @@ export function spawnPager(body: string, pager: ResolvedPager): Promise<void> {
 			: spawn(pager.cmd, pager.args, { stdio });
 		child.on("error", (err) => {
 			const code = (err as NodeJS.ErrnoException).code;
-			if (code === "ENOENT") reject(new Error(`${pager.cmd} not found`));
-			else reject(err);
+			if (code === "ENOENT") {reject(new Error(`${pager.cmd} not found`));}
+			else {reject(err);}
 		});
 		child.on("close", () => resolve());
 		// Windows (libuv) reports a closed read end as EOF rather than EPIPE.
 		child.stdin?.on("error", (err) => {
 			const code = (err as NodeJS.ErrnoException).code;
-			if (code !== "EPIPE" && code !== "EOF") reject(err);
+			if (code !== "EPIPE" && code !== "EOF") {reject(err);}
 		});
 		child.stdin?.end(body);
 	});

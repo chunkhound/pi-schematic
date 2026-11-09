@@ -47,6 +47,9 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      - name: Lint
+        run: npm run lint
+
       - name: Security audit
         run: npx audit-ci --config audit-ci.jsonc
 

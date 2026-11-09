@@ -12,23 +12,23 @@ import { expect, test } from "vitest";
 import { REPO_ROOT, REPO_ROOT_URL } from "../paths.js";
 import { CHILD_TIMEOUT_MS, spawnNode } from "./spawn-node.js";
 
-type AuditRecord = {
+interface AuditRecord {
 	active: boolean;
 	expiry: string;
 	notes: string;
-};
+}
 
-type AuditConfig = {
+interface AuditConfig {
 	$schema: string;
 	moderate: boolean;
-	allowlist: Array<Record<string, AuditRecord>>;
-};
+	allowlist: Record<string, AuditRecord>[];
+}
 
-type PackageJson = {
+interface PackageJson {
 	version: string;
 	peerDependencies: Record<string, string>;
 	devDependencies: Record<string, string>;
-};
+}
 
 const AUDIT_SCHEMA = "https://github.com/IBM/audit-ci/raw/main/docs/schema.json";
 const AUDIT_CONFIG_PATH = new URL("audit-ci.jsonc", REPO_ROOT_URL);
@@ -90,7 +90,7 @@ function stepBlock(workflow: string, step: string): string {
 	return workflow.slice(afterName, end);
 }
 
-function allowlistEntries(config: AuditConfig): Array<[string, AuditRecord]> {
+function allowlistEntries(config: AuditConfig): [string, AuditRecord][] {
 	return config.allowlist.map((entry) => {
 		const [key, value] = Object.entries(entry)[0] ?? [];
 		expect(key, "allowlist entry must define exactly one scoped advisory path").toBeTruthy();

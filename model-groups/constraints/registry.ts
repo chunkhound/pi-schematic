@@ -10,7 +10,7 @@ export function createConstraintRegistry(descriptors: readonly AnyConstraintDesc
 	const ordered = [...descriptors].sort((left, right) => left.order - right.order || left.key.localeCompare(right.key));
 	const keys = new Set<string>();
 	for (const descriptor of ordered) {
-		if (keys.has(descriptor.key)) throw new Error(`Duplicate model-group constraint key: ${descriptor.key}.`);
+		if (keys.has(descriptor.key)) {throw new Error(`Duplicate model-group constraint key: ${descriptor.key}.`);}
 		keys.add(descriptor.key);
 	}
 	return { descriptors: ordered, get: (key) => ordered.find((descriptor) => descriptor.key === key) };

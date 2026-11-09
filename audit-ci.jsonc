@@ -54,7 +54,7 @@
     {
       "GHSA-g3hv-75wg-m249": {
         "active": true,
-        "notes": "minimatch: DoS via globparts amplification (CVE-2026-118764). npm audit affected range: <11.0.1. Installed 10.2.6 under @earendil-works/pi-coding-agent@1.2.0 (npm ls). Transitive in the pinned test host (devDependency); no fix within the pinned 1.2.0 host.",
+        "notes": "minimatch: DoS via globparts amplification (CVE-2026-118764). npm audit affected range: <11.0.1. Installed 10.2.6 as one deduped copy, under @earendil-works/pi-coding-agent@1.2.0 and also required by the lint toolchain: eslint@10.14.0 (^10.2.6), @eslint/config-array@0.23.5 (^10.2.4), @typescript-eslint/typescript-estree@8.72.2 (^10.2.2) and eslint-plugin-import-x@4.18.1 (^9.0.3 || ^10.1.2 || ^11.0.1) (npm ls). Transitive in the pinned test host and the lint toolchain (devDependencies); no fix within the pinned 1.2.0 host.",
         "expiry": "2027-01-31"
       }
     },

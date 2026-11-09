@@ -148,9 +148,9 @@ test("Property 1: Topic-source coupling invariant", async () => {
 		fc.asyncProperty(
 			fc.array(
 				fc.oneof(
-					fc.constant({ type: "reset" } as StateAction),
+					fc.constant({ type: "reset" }),
 					fc.record({ type: fc.constant("setTopic"), name: arbTopicName }),
-					fc.constant({ type: "clearTopic" } as StateAction),
+					fc.constant({ type: "clearTopic" }),
 					fc.record({ type: fc.constant("savePage"), name: arbPageName }),
 				),
 				{ maxLength: 30 },
@@ -173,9 +173,9 @@ test("Property 2: Child session containment invariant", async () => {
 		fc.asyncProperty(
 			fc.array(
 				fc.oneof(
-					fc.constant({ type: "reset" } as StateAction),
+					fc.constant({ type: "reset" }),
 					fc.record({ type: fc.constant("addChildSession"), id: arbSessionId }),
-					fc.constant({ type: "abortChildren" } as StateAction),
+					fc.constant({ type: "abortChildren" }),
 				),
 				{ maxLength: 30 },
 			),
@@ -197,11 +197,11 @@ test("Property 3: childSessionEpoch only changes on reset", async () => {
 		fc.asyncProperty(
 			fc.array(
 				fc.oneof(
-					fc.constant({ type: "reset" } as StateAction),
+					fc.constant({ type: "reset" }),
 					fc.record({ type: fc.constant("setTopic"), name: arbTopicName }),
-					fc.constant({ type: "clearTopic" } as StateAction),
+					fc.constant({ type: "clearTopic" }),
 					fc.record({ type: fc.constant("savePage"), name: arbPageName }),
-					fc.constant({ type: "abortChildren" } as StateAction),
+					fc.constant({ type: "abortChildren" }),
 				),
 				{ maxLength: 30 },
 			),
@@ -246,12 +246,12 @@ test("Property 4: Reset clears all state fields", async () => {
 		fc.asyncProperty(
 			fc.array(
 				fc.oneof(
-					fc.constant({ type: "reset" } as StateAction),
+					fc.constant({ type: "reset" }),
 					fc.record({ type: fc.constant("setTopic"), name: arbTopicName }),
-					fc.constant({ type: "clearTopic" } as StateAction),
+					fc.constant({ type: "clearTopic" }),
 					fc.record({ type: fc.constant("savePage"), name: arbPageName }),
 					fc.record({ type: fc.constant("addChildSession"), id: arbSessionId }),
-					fc.constant({ type: "abortChildren" } as StateAction),
+					fc.constant({ type: "abortChildren" }),
 				),
 				{ maxLength: 30 },
 			),
@@ -302,9 +302,9 @@ test("Property 5: Epoch counter — set to 1 on first savePage", async () => {
 		fc.asyncProperty(
 			fc.array(
 				fc.oneof(
-					fc.constant({ type: "reset" } as StateAction),
+					fc.constant({ type: "reset" }),
 					fc.record({ type: fc.constant("savePage"), name: arbPageName }),
-					fc.constant({ type: "clearTopic" } as StateAction),
+					fc.constant({ type: "clearTopic" }),
 				),
 				{ maxLength: 30 },
 			),
@@ -426,9 +426,9 @@ test("Property 6: childSessionEpoch monotonicity (never decreases)", async () =>
 		fc.asyncProperty(
 			fc.array(
 				fc.oneof(
-					fc.constant({ type: "reset" } as StateAction),
+					fc.constant({ type: "reset" }),
 					fc.record({ type: fc.constant("setTopic"), name: arbTopicName }),
-					fc.constant({ type: "clearTopic" } as StateAction),
+					fc.constant({ type: "clearTopic" }),
 					fc.record({ type: fc.constant("savePage"), name: arbPageName }),
 				),
 				{ maxLength: 30 },
@@ -457,7 +457,7 @@ test("Property 7: clipped pages are a subset of notebook pages", async () => {
 		fc.asyncProperty(
 			fc.array(
 				fc.oneof(
-					fc.constant({ type: "reset" } as StateAction),
+					fc.constant({ type: "reset" }),
 					fc.record({ type: fc.constant("savePage"), name: arbPageName }),
 					fc.record({ type: fc.constant("saveClippedPage"), name: arbPageName }),
 				),

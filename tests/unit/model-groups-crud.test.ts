@@ -234,7 +234,7 @@ test("model groups persistence failures throw typed errors and preserve committe
 
 	createGroup("global", access(cwd), "move-me", { models: [] }, registry());
 	let writes = 0;
-	__setModelGroupsFsForTests({ renameSync: (from, to) => { writes++; if (writes === 2) throw new Error("source denied"); fs.renameSync(from, to); } });
+	__setModelGroupsFsForTests({ renameSync: (from, to) => { writes++; if (writes === 2) {throw new Error("source denied");} fs.renameSync(from, to); } });
 	expect(() => moveGroup(access(cwd), "move-me", "project")).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
 		expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
 		expect(error.partialMove).toBe("target-written-source-retained");
@@ -246,7 +246,7 @@ test("model groups persistence failures throw typed errors and preserve committe
 test("model groups strictly partitions schema and legacy version domains", () => withTemp(({ cwd }) => {
 	const projectPath = modelGroupsPath("project", cwd);
 	fs.mkdirSync(path.dirname(projectPath), { recursive: true });
-	const invalid: Array<[string, unknown, RegExp]> = [
+	const invalid: [string, unknown, RegExp][] = [
 		["root", [], /root/], ["version type", { version: "1", groups: {} }, /version/],
 		["negative", { version: -1, groups: {} }, /version/], ["fraction low", { version: 0.5, groups: {} }, /version/],
 		["fraction high", { version: 1.5, groups: {} }, /version/], ["groups", { version: 2, groups: [] }, /groups/],
@@ -409,13 +409,13 @@ test("opaque constraint values are deep-cloned on load — no aliasing between s
 	const merged = loaded.merged.find((g) => g.name === "deep")!;
 	(merged.constraints!.testMinContext as { min: number }).min = 99;
 	expect((loaded.configs.project.groups.deep.constraints!.testMinContext as { min: number }).min, "mutating the merged view must not alias the store copy").toBe(5);
-	expect(merged.constraints!.testMinContext, "nested constraint values must be distinct objects").not.toBe((loaded.configs.project.groups.deep.constraints!.testMinContext as unknown));
+	expect(merged.constraints!.testMinContext, "nested constraint values must be distinct objects").not.toBe((loaded.configs.project.groups.deep.constraints!.testMinContext));
 }));
 
 test("v2 config load rejects non-array, duplicate, and out-of-vocabulary modality constraints", () => withTemp(({ cwd }) => {
 	const projectPath = modelGroupsPath("project", cwd);
 	fs.mkdirSync(path.dirname(projectPath), { recursive: true });
-	const cases: Array<[string, unknown, RegExp]> = [
+	const cases: [string, unknown, RegExp][] = [
 		["non-array", { version: 2, groups: { g: { models: [], constraints: { modalities: { text: true } } } } }, /modalities/],
 		["duplicate", { version: 2, groups: { g: { models: [], constraints: { modalities: ["text", "text"] } } } }, /unique/],
 		["out-of-language", { version: 2, groups: { g: { models: [], constraints: { modalities: ["audio"] } } } }, /vocabulary/],
@@ -477,7 +477,7 @@ test("malformed legacy modalityOverride loads opaquely and is dropped on a v2 wr
 test("v2 constraint envelope preserves explicit empty and opaque slots canonically", () => withTemp(({ cwd }) => {
 	const sourcePath = modelGroupsPath("project", cwd);
 	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-	const fixtures: Array<[string, any, string[] | undefined]> = [
+	const fixtures: [string, any, string[] | undefined][] = [
 		["generic", { constraints: { modalities: ["reasoning", "text"] } }, ["text", "reasoning"]],
 		["empty", { constraints: { modalities: [] } }, []],
 		["automatic", {}, undefined],
@@ -485,7 +485,7 @@ test("v2 constraint envelope preserves explicit empty and opaque slots canonical
 	fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: Object.fromEntries(fixtures.map(([name, envelope]) => [name, { models: [{ provider: "openai", modelId: "gpt-5" }], ...envelope }])) }), "utf8");
 	const loaded = loadModelGroups(access(cwd));
 	expect(loaded.issues).toHaveLength(0);
-	for (const [name, _envelope, expected] of fixtures) expect(loaded.configs.project.groups[name].constraints?.modalities, name).toStrictEqual(expected);
+	for (const [name, _envelope, expected] of fixtures) {expect(loaded.configs.project.groups[name].constraints?.modalities, name).toStrictEqual(expected);}
 	saveModelGroups("project", access(cwd), loaded.configs.project);
 	const persisted = read("project", cwd);
 	for (const [name, _envelope, expected] of fixtures) {
@@ -558,7 +558,7 @@ test("store normalization strips runtime-derived group keys while preserving opa
 	expect(Object.keys(persisted).sort()).toStrictEqual(["constraints", "models", "opaqueSentinel"]);
 	expect(persisted.constraints.modalities).toStrictEqual(["text", "image"]);
 	expect(persisted.opaqueSentinel).toStrictEqual({ keep: true });
-	for (const key of ["name", "scope", "sourcePath", "modalities", "validation"]) expect(Object.getOwnPropertyNames(persisted)).not.toContain(key);
+	for (const key of ["name", "scope", "sourcePath", "modalities", "validation"]) {expect(Object.getOwnPropertyNames(persisted)).not.toContain(key);}
 }));
 
 test("version-3 mutations refuse before temp write including loadScopeConfig-backed CRUD", () => withTemp(({ cwd }) => {
@@ -601,8 +601,8 @@ test("model groups use branded paths, global-only access, canonical own keys, an
 	const raw = '{"version":1,"groups":{" __proto__ ":{"models":[{"provider":"p","modelId":"proto","thinkingLevel":"max"}]},"constructor":{"models":[]},"toString":{"models":[]}}}';
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), raw, "utf8");
-	let loaded = loadModelGroups(access(cwd));
-	for (const name of ["__proto__", "constructor", "toString"]) expect(Object.getOwnPropertyNames(loaded.configs.project.groups)).toContain(name);
+	const loaded = loadModelGroups(access(cwd));
+	for (const name of ["__proto__", "constructor", "toString"]) {expect(Object.getOwnPropertyNames(loaded.configs.project.groups)).toContain(name);}
 	expect(loaded.configs.project.groups.__proto__.models[0].thinkingLevel).toBe("max");
 	saveModelGroups("project", access(cwd), loaded.configs.project);
 	const persisted = read("project", cwd);
@@ -639,7 +639,7 @@ test("model groups direct save canonicalizes unique keys and rejects empty/colli
 	expect(Object.keys(read("project", cwd).groups)).toStrictEqual(["unique"]);
 	for (const keys of [["   "], ["same", " same "]]) {
 		const groups: Record<string, any> = Object.create(null);
-		for (const key of keys) Object.defineProperty(groups, key, { value: { models: [] }, enumerable: true });
+		for (const key of keys) {Object.defineProperty(groups, key, { value: { models: [] }, enumerable: true });}
 		const before = fs.readFileSync(modelGroupsPath("project", cwd), "utf8");
 		const writeFileSync = vi.fn(() => { throw new Error("must not write"); });
 		__setModelGroupsFsForTests({ writeFileSync });
@@ -720,7 +720,7 @@ function pointAgentDirAtProjectConfigThroughSymlink(cwd: string): void {
 function pointAgentDirAtProjectConfigInOtherCase(cwd: string): boolean {
 	fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
 	const upperCased = path.join(cwd, ".PI");
-	if (!fs.existsSync(upperCased)) return false;
+	if (!fs.existsSync(upperCased)) {return false;}
 	process.env.PI_CODING_AGENT_DIR = upperCased;
 	return true;
 }

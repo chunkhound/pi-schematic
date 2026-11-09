@@ -105,7 +105,7 @@ test("frame scheduler creates only one timer for a failed-target recovery frame"
 	const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void) => {
 		return { callback } as any;
 	}) as typeof setTimeout);
-	vi.spyOn(globalThis, "clearTimeout").mockImplementation((() => {}) as typeof clearTimeout);
+	vi.spyOn(globalThis, "clearTimeout").mockImplementation((() => {}));
 	const failing = {
 		flushPendingUpdates() { throw new Error("retry later"); },
 		clearRenderCache() {},
@@ -129,7 +129,7 @@ test("nested spawn live action tracks tool execution events", async () => {
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	// message_start → thinking
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
@@ -164,7 +164,7 @@ test("nested spawn handleEvent recovers from malformed events", async () => {
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	// Emit a malformed event that will throw inside handleEvent
 	emit({ type: "message_start", message: null });
@@ -187,7 +187,7 @@ test("nested spawn message_end with aborted stopReason clears pending tools", as
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	// Start an assistant message
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
@@ -210,7 +210,7 @@ test("nested spawn dispose stops event processing", async () => {
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	component.dispose();
 
@@ -239,7 +239,7 @@ test("nested spawn dispose aborts but does not dispose a claimed live child sess
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
 	expect([...state.liveChildSessions.keys()]).toContain("tool-call-1");
@@ -263,7 +263,7 @@ test("nested spawn rapid events collapse to last state", async () => {
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	// Start a tool execution
 	emit({ type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } });
@@ -298,7 +298,7 @@ test("nested spawn uses the latest streamed tool-call args before first frame fl
 		{ expanded: true },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	// Spy on createToolComponent to capture args while preserving original behavior
 	const createToolComponent = vi.spyOn(component, "createToolComponent");
@@ -330,7 +330,7 @@ test("nested spawn coalesces same-turn child events into one parent invalidate",
 		{ expanded: false },
 		theme,
 		createRenderContext({ invalidate }),
-	) as any;
+	);
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "file1" }] } });
@@ -376,18 +376,17 @@ test("nested spawn does not restore a failed invalidate after disposal", async (
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
-	let component: any;
 	const invalidate = vi.fn(() => {
 		component.dispose();
 		throw new Error("invalidate after disposal");
 	});
 
-	component = childSpawnTool.renderResult(
+	const component: any = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
 		{ expanded: false },
 		theme,
 		createRenderContext({ invalidate }),
-	) as any;
+	);
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	expect(() => flushSpawnFrameScheduler()).not.toThrow();
@@ -422,7 +421,7 @@ test("nested spawn ignores child renderer invalidations during parent rebuild", 
 		{ expanded: false },
 		theme,
 		createRenderContext({ invalidate }),
-	) as any;
+	);
 	flushSpawnFrameScheduler();
 	expect(invalidate, "initial empty attach does not invalidate").not.toHaveBeenCalled();
 
@@ -453,13 +452,13 @@ test("nested spawn shared scheduler calls each distinct invalidate once per fram
 		{ expanded: false },
 		theme,
 		createRenderContext({ toolCallId: "tool-call-1", invalidate: firstInvalidates }),
-	) as any;
+	);
 	const secondComponent = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
 		{ expanded: false },
 		theme,
 		createRenderContext({ toolCallId: "tool-call-2", invalidate: secondInvalidates }),
-	) as any;
+	);
 
 	first.emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	first.emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "first latest" }] } });
@@ -518,7 +517,7 @@ test("nested spawn renders state changes across frame boundaries", async () => {
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	// First batch: message_start sets thinking state, flush triggers render
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
@@ -546,7 +545,7 @@ test("nested spawn dispose cancels pending and further invalidates after cleanup
 		{ expanded: false },
 		theme,
 		createRenderContext({ invalidate }),
-	) as any;
+	);
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	expect(invalidate, "event does not invalidate synchronously").not.toHaveBeenCalled();
@@ -576,7 +575,7 @@ test("nested spawn recovers batching state after event handler error", async () 
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	// Bad event triggers an error in handleMessageStart (null message)
 	// catch block must call resetRenderBatching() so the flag resets
@@ -601,7 +600,7 @@ test("handleEvent gracefully degrades with null message events", async () => {
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	// asToolResult is exercised indirectly through tool_execution_update
 	// with null partialResult — the runtime guard should handle it without crashing

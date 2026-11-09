@@ -67,7 +67,7 @@
       "groupName": "Node.js"
     },
     {
-      "matchPackageNames": ["typescript"],
+      "matchPackageNames": ["typescript", "@typescript/typescript6"],
       "groupName": "TypeScript"
     },
     {

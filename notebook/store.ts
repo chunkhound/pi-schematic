@@ -64,7 +64,7 @@ export function formatPagePreview(content: string): string {
 
 export function formatPageList(state: SchematicState): string {
 	const names = getPageNames(state);
-	if (names.length === 0) return "";
+	if (names.length === 0) {return "";}
 
 	return names
 		.map((name) => {
@@ -81,7 +81,7 @@ export function formatPageList(state: SchematicState): string {
  */
 export function formatPageTuiPreview(content: string, clipped: boolean): string {
 	const preview = formatPagePreview(content);
-	if (!clipped) return preview;
+	if (!clipped) {return preview;}
 	return preview ? `${preview} [truncated]` : "[truncated]";
 }
 
@@ -95,7 +95,7 @@ export function formatByteCap(bytes: number): string {
 		["MiB", 1024 * 1024],
 		["KiB", 1024],
 	] as const) {
-		if (bytes % size === 0) return `${bytes / size} ${unit} (${bytes} bytes)`;
+		if (bytes % size === 0) {return `${bytes / size} ${unit} (${bytes} bytes)`;}
 	}
 	return `${bytes} bytes`;
 }
@@ -157,8 +157,8 @@ export async function saveNotebookPage(
 		}
 
 		state.notebookPages.set(name, truncated.content);
-		if (clipped) state.clippedPages.add(name);
-		else state.clippedPages.delete(name);
+		if (clipped) {state.clippedPages.add(name);}
+		else {state.clippedPages.delete(name);}
 		pi.appendEntry("notebook-entry", {
 			version: NOTEBOOK_ENTRY_VERSION,
 			epoch: state.epoch,
@@ -190,14 +190,14 @@ export function buildNotebookDiscardDrafts(
 	names: readonly string[],
 ): { drafts: CustomEntryDraft[]; discarded: number } {
 	const deleted = new Set(names.filter((name) => state.notebookPages.has(name)));
-	if (deleted.size === 0) return { drafts: [], discarded: 0 };
+	if (deleted.size === 0) {return { drafts: [], discarded: 0 };}
 
 	const nextEpoch = Math.max(state.epoch, state.discardEpochWatermark) + 1;
 	const drafts: CustomEntryDraft[] = [
 		{ type: "custom", customType: "notebook-generation", data: { version: NOTEBOOK_ENTRY_VERSION, epoch: state.epoch } },
 	];
 	for (const [name, content] of state.notebookPages) {
-		if (deleted.has(name)) continue;
+		if (deleted.has(name)) {continue;}
 		drafts.push({
 			type: "custom",
 			customType: "notebook-entry",

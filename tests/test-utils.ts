@@ -46,7 +46,7 @@ import { SpawnFrameScheduler } from "../spawn/renderer.js";
 
 export interface TestHarness {
 	/** Captured console.debug/log/warn/error calls. */
-	warnings: Array<{ level: string; args: unknown[] }>;
+	warnings: { level: string; args: unknown[] }[];
 	/**
 	 * Restore the console, then the singletons that were current at
 	 * createTestHarness() whether or not a write is pending, then clear the
@@ -83,7 +83,7 @@ export function createTestHarness(): TestHarness {
 		writeContext: new AsyncLocalStorage<true>(),
 		frameScheduler: new SpawnFrameScheduler(),
 	};
-	const warnings: Array<{ level: string; args: unknown[] }> = [];
+	const warnings: { level: string; args: unknown[] }[] = [];
 	const originalDebug = console.debug;
 	const originalLog = console.log;
 	const originalWarn = console.warn;

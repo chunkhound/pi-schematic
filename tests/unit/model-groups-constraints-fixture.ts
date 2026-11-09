@@ -1,8 +1,8 @@
 import { Type } from "typebox";
 import type { ConstraintDescriptor } from "../../model-groups/constraints/types.js";
 
-type TestMinContextAggregate = { automatic: number | null; supported: number | null };
-type TestMaxBudgetAggregate = { automatic: number | null; supported: number | null };
+interface TestMinContextAggregate { automatic: number | null; supported: number | null }
+interface TestMaxBudgetAggregate { automatic: number | null; supported: number | null }
 
 const positiveIntegerCodec = {
 	decode: (value: unknown, path: string) => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? { ok: true as const, value } : { ok: false as const, message: `${path} must be a positive safe integer` },
@@ -20,7 +20,7 @@ export const testMinContext: ConstraintDescriptor<"testMinContext", number, Test
 		return { automatic: members.length && facts.length === members.length ? Math.min(...facts) : null, supported: facts.length ? Math.max(...facts) : null };
 	},
 	reconcile: ({ aggregate, override }) => {
-		if (override === undefined) return { effective: aggregate.automatic, diagnostics: aggregate.automatic === null ? [{ key: "testMinContext", code: "unknown-automatic" }] : [] };
+		if (override === undefined) {return { effective: aggregate.automatic, diagnostics: aggregate.automatic === null ? [{ key: "testMinContext", code: "unknown-automatic" }] : [] };}
 		return override <= (aggregate.supported ?? 0)
 			? { effective: override, diagnostics: [] }
 			: { effective: null, diagnostics: [{ key: "testMinContext", code: "unsupported-override", details: override }] };
@@ -29,7 +29,7 @@ export const testMinContext: ConstraintDescriptor<"testMinContext", number, Test
 	modelSatisfies: ({ fact, requirement }) => fact >= requirement ? { satisfied: true } : { satisfied: false, unsatisfied: requirement },
 	persistence: { override: positiveIntegerCodec },
 	assertOverrideSupported({ evaluation, override }) {
-		if (override === undefined) return;
+		if (override === undefined) {return;}
 		if (evaluation.diagnostics.some((diagnostic) => diagnostic.code === "unsupported-override")) {
 			throw new Error(`Model group testMinContext override ${override} exceeds the supported context for this group.`);
 		}
@@ -57,7 +57,7 @@ export const testMaxBudget: ConstraintDescriptor<"testMaxBudget", number, TestMa
 		return { automatic: members.length && facts.length === members.length ? Math.max(...facts) : null, supported: facts.length ? Math.min(...facts) : null };
 	},
 	reconcile: ({ aggregate, override }) => {
-		if (override === undefined) return { effective: aggregate.automatic, diagnostics: aggregate.automatic === null ? [{ key: "testMaxBudget", code: "unknown-automatic" }] : [] };
+		if (override === undefined) {return { effective: aggregate.automatic, diagnostics: aggregate.automatic === null ? [{ key: "testMaxBudget", code: "unknown-automatic" }] : [] };}
 		return override <= (aggregate.supported ?? 0)
 			? { effective: override, diagnostics: [] }
 			: { effective: null, diagnostics: [{ key: "testMaxBudget", code: "unsupported-override", details: override }] };
@@ -66,7 +66,7 @@ export const testMaxBudget: ConstraintDescriptor<"testMaxBudget", number, TestMa
 	modelSatisfies: ({ fact, requirement }) => fact <= requirement ? { satisfied: true } : { satisfied: false, unsatisfied: requirement },
 	persistence: { override: positiveIntegerCodec },
 	assertOverrideSupported({ evaluation, override }) {
-		if (override === undefined) return;
+		if (override === undefined) {return;}
 		if (evaluation.diagnostics.some((diagnostic) => diagnostic.code === "unsupported-override")) {
 			throw new Error(`Model group testMaxBudget override ${override} exceeds the supported budget for this group.`);
 		}

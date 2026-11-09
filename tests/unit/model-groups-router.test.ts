@@ -107,7 +107,7 @@ test("capability pre-selection excludes unauthenticated capable models and picks
 test("known group missing effective modality and inherited fallback reject requirements", () => {
 	const parent = model("p", "parent"); const text = model("p", "text"); const g = group("text", { models: [{ provider: "p", modelId: "text" }] });
 	expect(() => resolveSpawnModelRoute({ requestedGroup: "text", constraints: { modalities: { required: ["image"] } }, groups: [g], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent, text]) })).toThrow(expect.toSatisfy((error: unknown) => error instanceof SpawnRouteError && error.missingFromGroup[0] === "image"));
-	expect(() => resolveSpawnModelRoute({ requestedGroup: "unknown", constraints: { modalities: { required: ["image"] } }, groups: [], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent]) })).toThrow(expect.toSatisfy((error: unknown) => error instanceof SpawnRouteError && error.group === "unknown" && /Spawn model/.test(error.message)));
+	expect(() => resolveSpawnModelRoute({ requestedGroup: "unknown", constraints: { modalities: { required: ["image"] } }, groups: [], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent]) })).toThrow(expect.toSatisfy((error: unknown) => error instanceof SpawnRouteError && error.group === "unknown" && error.message.includes('Spawn model')));
 });
 
 test("injected scalar requirements use generic violations, not modality arrays", () => {
@@ -164,7 +164,7 @@ test("plain inherited route honors requiredModalities with empty-array no-op", (
 	// Parent satisfies all requirements → inherited route succeeds.
 	expect(resolveSpawnModelRoute({ constraints: { modalities: { required: ["text", "image"] } }, groups: [], parentModel: rich, parentThinking: "medium", modelRegistry: registry([rich]) }).status).toBe("inherited");
 	// Parent lacks a required modality → missing-modality with the parent model details.
-	expect(() => resolveSpawnModelRoute({ constraints: { modalities: { required: ["image"] } }, groups: [], parentModel: text, parentThinking: "medium", modelRegistry: registry([text]) })).toThrow(expect.toSatisfy((error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.group === "<inherited>" && error.missingFromModel[0] === "image" && error.missingFromGroup.length === 0 && /Spawn model/.test(error.message)));
+	expect(() => resolveSpawnModelRoute({ constraints: { modalities: { required: ["image"] } }, groups: [], parentModel: text, parentThinking: "medium", modelRegistry: registry([text]) })).toThrow(expect.toSatisfy((error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.group === "<inherited>" && error.missingFromModel[0] === "image" && error.missingFromGroup.length === 0 && error.message.includes('Spawn model')));
 });
 
 test("explicit group override carries a modality ceiling even when caller declares no requirement", () => {

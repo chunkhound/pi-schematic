@@ -76,7 +76,7 @@ async function handoffCommand(host: RealHost, direction: string, args: ScriptedC
 }
 
 function userText(entry: SessionEntry): string | null {
-	if (entry.type !== "message" || entry.message.role !== "user") return null;
+	if (entry.type !== "message" || entry.message.role !== "user") {return null;}
 	return messageText(entry.message.content);
 }
 
@@ -198,7 +198,7 @@ function handBuiltContext(vitest: TestContext): {
 	finish: () => Promise<unknown[]>;
 } {
 	const controller = new AbortController();
-	const callbacks: Array<Parameters<TestContext["onTestFinished"]>[0]> = [];
+	const callbacks: Parameters<TestContext["onTestFinished"]>[0][] = [];
 	const context: Pick<TestContext, "signal" | "onTestFinished"> = {
 		signal: controller.signal,
 		onTestFinished: (fn) => {

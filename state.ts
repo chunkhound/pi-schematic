@@ -163,7 +163,7 @@ export interface SchematicState {
 	 * Enqueued in `input`, drained in `before_agent_start` until the first real
 	 * readonly decision, cleared on session reset.
 	 */
-	pendingReadonlyCommands: Array<{ type: "skill" | "command"; name: string }>;
+	pendingReadonlyCommands: { type: "skill" | "command"; name: string }[];
 
 	/**
 	 * Last context-percentage band at which the watchdog nudge was delivered.
@@ -278,7 +278,7 @@ export function invalidateHandoffState(state: SchematicState): void {
 /** Return the session's single shared abort operation, starting it if necessary. */
 export function abortChildSession(state: SchematicState, session: AgentSession): Promise<void> {
 	const existing = state.childAbortPromises.get(session);
-	if (existing) return existing;
+	if (existing) {return existing;}
 
 	let resolve!: () => void;
 	let reject!: (error: unknown) => void;

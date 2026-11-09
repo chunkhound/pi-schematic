@@ -11,7 +11,7 @@ const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 
 /** Package.json of the installed pi-coding-agent; test module resolution uses its directory as the parent. */
 export const piManifestPath = findPackageJSON(PI_PACKAGE, import.meta.url);
-if (piManifestPath === undefined) throw new Error(`Cannot find the package.json of ${PI_PACKAGE}`);
+if (piManifestPath === undefined) {throw new Error(`Cannot find the package.json of ${PI_PACKAGE}`);}
 
 /** Packages pi loads itself, so the extension must share pi's instances of them. */
 export const PI_SHARED_PACKAGES = /^(?:@earendil-works\/(?:pi-ai|pi-tui|pi-agent-core)|typebox)(?:\/.*)?$/;

@@ -60,7 +60,7 @@ import {
 function getLastAssistantMessage(messages: AgentSession["messages"]): AssistantMessage | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
-		if (msg.role === "assistant") return msg;
+		if (msg.role === "assistant") {return msg;}
 	}
 	return undefined;
 }
@@ -74,23 +74,23 @@ function describeAbort(reason: unknown): string {
 }
 
 function notifyCleanupFailure(ctx: ExtensionContext, error: unknown): void {
-	if (!ctx.hasUI) return;
+	if (!ctx.hasUI) {return;}
 	ctx.ui.notify(`Spawn cleanup failed: ${failureMessage(error)}`, "error");
 }
 
 /** Ignore Pi's AbortError only when the current child was cancelled without a reset. */
 function shouldSwallowPromptError(error: unknown, isStale: () => boolean, wasAborted: boolean): boolean {
-	if (isStale()) return false;
-	if (!wasAborted) return false;
+	if (isStale()) {return false;}
+	if (!wasAborted) {return false;}
 	// Pi contracts AbortError via AbortSignal standard
 	return (error as Error)?.name === "AbortError";
 }
 
-type ChildAccounting = {
+interface ChildAccounting {
 	usage: Usage;
 	/** Absent when the child's entries could not be read or summed. */
 	stats?: Record<string, number>;
-};
+}
 
 function emptyChildUsage(): Usage {
 	return {
@@ -154,14 +154,14 @@ function collectChildAccounting(session: Pick<AgentSession, "sessionManager">): 
 		let assistantTurns = 0;
 		for (const entry of session.sessionManager.getEntries()) {
 			if (entry.type === "usage") {
-				if (entry.usage) usage = combineUsage(usage, entry.usage);
+				if (entry.usage) {usage = combineUsage(usage, entry.usage);}
 			} else if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage) {
 				usage = combineUsage(usage, entry.usage);
 			} else if (entry.type === "message") {
 				const message = entry.message;
 				if (message.role === "assistant") {
 					assistantTurns++;
-					if (message.usage) usage = combineUsage(usage, message.usage);
+					if (message.usage) {usage = combineUsage(usage, message.usage);}
 				} else if (message.role === "toolResult" && message.usage) {
 					usage = combineUsage(usage, message.usage);
 				}
@@ -181,7 +181,7 @@ function collectChildAccounting(session: Pick<AgentSession, "sessionManager">): 
 function cutToUtf8Bytes(text: string, maxBytes: number): string {
 	const bytes = Buffer.from(text, "utf8");
 	let end = Math.min(maxBytes, bytes.length);
-	while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+	while (end > 0 && (bytes[end] & 0xc0) === 0x80) {end--;}
 	return bytes.subarray(0, end).toString("utf8");
 }
 
@@ -189,7 +189,7 @@ function limitResultText(text: string): { text: string; truncated: boolean } {
 	const lines = text.split("\n");
 	const lineLimited = lines.length > DEFAULT_MAX_LINES ? lines.slice(0, DEFAULT_MAX_LINES).join("\n") : text;
 	const truncated = lineLimited !== text || Buffer.byteLength(lineLimited, "utf8") > DEFAULT_MAX_BYTES;
-	if (!truncated) return { text, truncated: false };
+	if (!truncated) {return { text, truncated: false };}
 	const limitedText = cutToUtf8Bytes(lineLimited, DEFAULT_MAX_BYTES);
 	const marker = `[Result truncated to ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. ` +
 		`Spawn a new child with a narrower request if more is needed.]`;
@@ -197,8 +197,8 @@ function limitResultText(text: string): { text: string; truncated: boolean } {
 }
 
 function clearSpawnSession(state: SchematicState, toolCallId: string, session: AgentSession): void {
-	if (state.childSessions.get(toolCallId) === session) state.childSessions.delete(toolCallId);
-	if (state.liveChildSessions.get(toolCallId) === session) state.liveChildSessions.delete(toolCallId);
+	if (state.childSessions.get(toolCallId) === session) {state.childSessions.delete(toolCallId);}
+	if (state.liveChildSessions.get(toolCallId) === session) {state.liveChildSessions.delete(toolCallId);}
 }
 
 function createSpawnAbortContext(state: SchematicState, session: AgentSession, ctx: ExtensionContext, toolCallId: string) {
@@ -312,11 +312,11 @@ export function createReadonlyChildBashTool(
 			} catch (error) {
 				if (record.sandboxed && error instanceof Error) {
 					const message = appendSandboxBlockNotice(error.message);
-					if (message !== undefined) error.message = message;
+					if (message !== undefined) {error.message = message;}
 				}
 				throw error;
 			}
-			if (!record.sandboxed) return result;
+			if (!record.sandboxed) {return result;}
 			const noticed = appendSandboxBlockNoticeToResult(result);
 			return noticed === undefined ? result : { ...result, ...noticed };
 		},
@@ -342,7 +342,7 @@ function spawnPromptGuidelines(constraintRegistry: ConstraintRegistry): string[]
 		`Declare constraints when the delegated task needs ${MODEL_GROUP_MODALITY_PROSE} capability; do not work around a missing required modality with third-party tools.`,
 		`A constraint is keyed by its exact name (${constraintKeys.join(", ")}); values must match the key's schema — unknown keys or invalid values are rejected before any child is created.`,
 		"A specified group is binding: if the operator asks for a specific group and it lacks a needed capability, do NOT substitute a different group or inherit the parent model. Stop and report to the operator that the named group cannot satisfy the task, and ask how to proceed.",
-		`Pass modality requirements as constraints: { modalities: { required: [\"text\", ...] } } — modalities is an object whose only key is \"required\" (an array of modality names), not a bare array, and constraints itself is a JSON object, not a JSON string. Valid entries are exactly text, image, or reasoning — do not invent capability names (e.g. \"code\"). Invalid shapes are rejected before any child is created.`,
+		`Pass modality requirements as constraints: { modalities: { required: ["text", ...] } } — modalities is an object whose only key is "required" (an array of modality names), not a bare array, and constraints itself is a JSON object, not a JSON string. Valid entries are exactly text, image, or reasoning — do not invent capability names (e.g. "code"). Invalid shapes are rejected before any child is created.`,
 	];
 }
 
@@ -397,13 +397,13 @@ export interface SpawnParameters { prompt: string; group?: string; constraints?:
 /** Validate the public constraint envelope once, rejecting unknown keys before routing. */
 export function normalizeSpawnRequirements(params: Pick<SpawnParameters, "constraints">, registry: ConstraintRegistry = productionConstraintRegistry): SpawnConstraintRequirements {
 	const raw = params.constraints;
-	if (raw !== undefined && (!raw || typeof raw !== "object" || Array.isArray(raw))) throw new Error("Spawn constraints must be an object.");
+	if (raw !== undefined && (!raw || typeof raw !== "object" || Array.isArray(raw))) {throw new Error("Spawn constraints must be an object.");}
 	const normalized: SpawnConstraintRequirements = {};
 	for (const [key, value] of Object.entries(raw ?? {})) {
 		const descriptor = registry.get(key);
-		if (!descriptor) throw new Error(`Unknown spawn constraint requirement '${key}'.`);
+		if (!descriptor) {throw new Error(`Unknown spawn constraint requirement '${key}'.`);}
 		const decoded = descriptor.requirement.decode(value, `constraints.${key}`);
-		if (!decoded.ok) throw new Error(decoded.message);
+		if (!decoded.ok) {throw new Error(decoded.message);}
 		// Keep the envelope shape: resolveSpawnModelRoute is the single decoder of
 		// requirement values (schema-shaped envelope in, engine value out), so the
 		// router never sees raw/partial shapes that could bypass descriptor validation.
@@ -433,8 +433,7 @@ export function executeSpawn(
 	sessionFactory: typeof createAgentSession = createAgentSession,
 	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
 ): Promise<SpawnToolResult> {
-	let execution!: Promise<SpawnToolResult>;
-	execution = (async () => {
+	const execution: Promise<SpawnToolResult> = (async () => {
 		const parentModel = ctx.model;
 		if (!parentModel) {
 			throw new Error("No model configured. Cannot spawn child agent.");
@@ -520,7 +519,7 @@ export function executeSpawn(
 		`${notebookListing}\n\n` +
 		`If you write notebook pages, store only durable shared memory for the parent and future contexts. ` +
 		`Keep transient task state in your final reply to the parent.\n\n` +
-		`${capabilityNotice}` +
+		capabilityNotice +
 		`## Task\n\n${params.prompt}${readonlyNotice}\n\n` +
 		`When complete, provide a concise summary of findings. ` +
 		`Keep the result under ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}.`;
@@ -548,7 +547,7 @@ export function executeSpawn(
 		...buildBaseDetails(truncated, outcome),
 		...(accounting.stats ? { stats: accounting.stats } : { statsUnavailable: true }),
 	});
-	type ChildRun = { content: TextContent[]; truncated: boolean; outcome: SpawnOutcome };
+	interface ChildRun { content: TextContent[]; truncated: boolean; outcome: SpawnOutcome }
 
 	const abortContext = createSpawnAbortContext(state, session, ctx, toolCallId);
 	const { invalidatedError, abortChild, clearChildSession, abortAndInvalidate } = abortContext;
@@ -599,7 +598,7 @@ export function executeSpawn(
 				try {
 					await session.prompt(fullPrompt);
 				} catch (error) {
-					if (!shouldSwallowPromptError(error, isStale, abortContext.wasAborted)) throw error;
+					if (!shouldSwallowPromptError(error, isStale, abortContext.wasAborted)) {throw error;}
 				}
 			} catch (error) {
 				clearChildSession();
@@ -654,7 +653,7 @@ export function executeSpawn(
 			try {
 				// AgentSession always provides dispose(); the guard keeps intentionally
 				// partial test doubles compatible with the public session boundary.
-				if (typeof session.dispose === "function") session.dispose();
+				if (typeof session.dispose === "function") {session.dispose();}
 			} catch (cleanupError) {
 				if (!primary) {
 					throw cleanupError;

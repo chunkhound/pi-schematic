@@ -87,7 +87,7 @@ process.stdout.write("READY\n");
 const rl = createInterface({ input: process.stdin });
 for await (const line of rl) {
 	const trimmed = line.trim();
-	if (!trimmed) continue;
+	if (!trimmed) {continue;}
 
 	if (trimmed === "exit") {
 		process.exit(0);

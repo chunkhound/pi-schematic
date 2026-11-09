@@ -70,7 +70,7 @@ function rendered(c: { render: (width: number) => string[] }, width = 100): stri
 function selectRenderedLabel(c: { handleInput?: (data: string) => void; render: (width: number) => string[] }, label: string): void {
 	for (let i = 0; i < 32; i++) {
 		const selected = stripAnsi(rendered(c)).split("\n").find((line) => line.includes("→"));
-		if (selected?.includes(label)) return;
+		if (selected?.includes(label)) {return;}
 		press(c, DOWN);
 	}
 	expect.unreachable(`did not select rendered label: ${label}`);
@@ -162,8 +162,8 @@ test("model groups TUI renders modality labels, warnings, and stale override cho
 	expect(rendered(c)).toMatch(/Capabilities/);
 	expect(rendered(c)).toMatch(/Models/);
 	press(c, DOWN, DOWN, DOWN, ENTER);
-	expect(rendered(c)).toMatch(/T text  \[required\]/);
-	expect(rendered(c)).toMatch(/I image  \[on\]/);
+	expect(rendered(c)).toMatch(/T text {2}\[required\]/);
+	expect(rendered(c)).toMatch(/I image {2}\[on\]/);
 	// The group carries a persisted override (text, image, reasoning) → status reflects it.
 	expect(rendered(c)).toMatch(/Override — media limited to text, image/);
 	expect(rendered(c)).not.toMatch(/reasoning/);
@@ -222,7 +222,7 @@ test("model groups TUI editor rows show per-model capability chips and modalitie
 	press(c, ENTER);
 	const modalities = stripAnsi(rendered(c));
 	// Text is a non-toggleable required base; no Automatic selector row remains.
-	expect(modalities).toMatch(/T text  \[required\]/);
+	expect(modalities).toMatch(/T text {2}\[required\]/);
 	expect(modalities).toMatch(/Automatic — using every capability its members support/);
 	expect(modalities).not.toMatch(/Automatic \(/);
 	expect(modalities).not.toMatch(/required base/);
@@ -230,12 +230,12 @@ test("model groups TUI editor rows show per-model capability chips and modalitie
 	expect(modalities).toMatch(/Enter\/Space toggle • Esc back/);
 	expect(modalities).not.toMatch(/↑↓ navigate/);
 	expect(modalities).not.toMatch(/Enter\/Space toggles/);
-	expect(modalities).toMatch(/I image  \[on\]/);
+	expect(modalities).toMatch(/I image {2}\[on\]/);
 	selectRenderedLabel(c, "I image");
 	press(c, ENTER);
 	const afterOverride = stripAnsi(rendered(c));
 	expect(afterOverride).toMatch(/Override — media limited to text/);
-	expect(afterOverride).toMatch(/I image  \[off\]/);
+	expect(afterOverride).toMatch(/I image {2}\[off\]/);
 });
 
 test("model groups TUI modality editor commits override and Automatic through updateGroup", () => {
@@ -244,7 +244,7 @@ test("model groups TUI modality editor commits override and Automatic through up
 	// Automatic groups open with their union capability set active; un-toggling a
 	// supported capability writes a subtractive override excluding it.
 	review.modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image", "reasoning"] };
-	const calls: Array<{ scope: string; name: string; def: any }> = [];
+	const calls: { scope: string; name: string; def: any }[] = [];
 	let groups = [review];
 	// Mock mirrors production reconciliation: an override narrows effective to its
 	// supported list; automatic stays at the union.
@@ -271,7 +271,7 @@ test("model groups TUI modality editor commits override and Automatic through up
 	expect(calls[0].def.constraints.modalities).toStrictEqual(["text", "reasoning"]);
 	expect(calls[0].def.opaqueTopLevel, "TUI edits retain opaque top-level group keys").toStrictEqual({ preserve: true });
 	expect(rendered(c), "toggle stays on the modalities screen").toMatch(/Modalities/);
-	expect(rendered(c)).toMatch(/I image  \[off\]/);
+	expect(rendered(c)).toMatch(/I image {2}\[off\]/);
 	expect(rendered(c)).toMatch(/Override — media limited to text/);
 	// Re-enabling the capability back to the full union returns the group to Automatic
 	// (no stored override, so no spawn ceiling attaches to a non-limit).
@@ -288,7 +288,7 @@ test("model groups TUI modality editor commits override and Automatic through up
 test("model groups TUI Space also toggles a modality and stays on screen", () => {
 	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] });
 	review.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
-	const calls: Array<{ scope: string; name: string; def: any }> = [];
+	const calls: { scope: string; name: string; def: any }[] = [];
 	let groups = [review];
 	const reconciledEffective = (def: any, supported: string[]) => {
 		const base = Array.isArray(def.constraints?.modalities) ? def.constraints.modalities.filter((m: string) => supported.includes(m)) : [...supported];
@@ -312,17 +312,17 @@ test("model groups TUI Space also toggles a modality and stays on screen", () =>
 	expect(calls).toHaveLength(1);
 	expect(calls[0].def.constraints.modalities).toStrictEqual(["text"]);
 	expect(rendered(c), "space toggle stays on the modalities screen").toMatch(/Modalities/);
-	expect(rendered(c)).toMatch(/I image  \[off\]/);
+	expect(rendered(c)).toMatch(/I image {2}\[off\]/);
 });
 
 test("model groups TUI modality editor preserves state and notifies on updateGroup failure", () => {
 	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] });
 	review.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text"] };
 	const messages: string[] = [];
-	let failing = true;
+	const failing = true;
 	const store = {
 		updateGroup: (_scope: string, _cwd: string, _name: string, def: any) => {
-			if (failing) throw new ModelGroupsPersistenceError({ operation: "save", scope: "project", sourcePath: "/tmp/.pi/pi-schematic/model-groups.json", phase: "rename", message: "modality write denied" });
+			if (failing) {throw new ModelGroupsPersistenceError({ operation: "save", scope: "project", sourcePath: "/tmp/.pi/pi-schematic/model-groups.json", phase: "rename", message: "modality write denied" });}
 			review.constraints = def.constraints ? { ...def.constraints, ...(Array.isArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) } : undefined;
 		},
 		listResolvedModelGroups: () => boot([review]),
@@ -348,7 +348,7 @@ test("model groups TUI text-only modalities screen is inert and states Automatic
 	press(c, ENTER);
 	const screen = stripAnsi(rendered(c));
 	// No toggleable media rows: only the required text row, no toggle nav, no selection.
-	expect(screen).toMatch(/T text  \[required\]/);
+	expect(screen).toMatch(/T text {2}\[required\]/);
 	expect(screen).toMatch(/No optional media capabilities available/);
 	expect(screen).toMatch(/Automatic — using every capability its members support/);
 	expect(screen).toMatch(/Esc back/);
@@ -374,7 +374,7 @@ test("model groups TUI empty-group modalities screen claims no capabilities", ()
 	// The engine derives no supported/effective modalities for zero members, so the
 	// editor must not claim the text base capability — the empty state is the truth.
 	expect(screen).toMatch(/Modalities — empty/);
-	expect(screen, "empty groups must not claim the text base capability").not.toMatch(/text  \[required\]/);
+	expect(screen, "empty groups must not claim the text base capability").not.toMatch(/text {2}\[required\]/);
 	expect(screen).toMatch(/No optional media capabilities available/);
 	expect(screen).toMatch(/Automatic — using every capability its members support/);
 	expect(screen).toMatch(/Esc back/);
@@ -526,7 +526,7 @@ test("model groups TUI selected markers and primary labels use accent token", ()
 	const modalitiesC = component({ groups: [g], renderTheme: accentTheme }).c;
 	press(modalitiesC, ENTER, DOWN, DOWN, DOWN, ENTER);
 	// The selected capability row is accent-highlighted; the modality letter keeps its own color.
-	expect(rendered(modalitiesC)).toMatch(/<accent>→<\/accent> I<accent> image  \[on\]<\/accent>/);
+	expect(rendered(modalitiesC)).toMatch(/<accent>→<\/accent> I<accent> image {2}\[on\]<\/accent>/);
 	expect(rendered(modalitiesC)).toMatch(/Enter\/Space toggle • Esc back/);
 
 	const deleteConfirm = component({ groups: [group("review", { scope: "project" })], renderTheme: accentTheme }).c;
@@ -704,13 +704,13 @@ test("model groups TUI renders name editing inline and preserves edit/commit tra
 	expect(calls).toStrictEqual(["abc->abcd"]);
 	text = rendered(c);
 	expect(text).toMatch(/Model Group: abcd/);
-	expect(text).toMatch(/  Name: abcd/);
+	expect(text).toMatch(/ {2}Name: abcd/);
 	expect(text).not.toContain(FAKE_CURSOR_START);
 	expect(text).not.toContain(CURSOR_MARKER);
 
 	press(c, DOWN, DOWN, ENTER, "e", ENTER); // Enter also commits and exits edit mode
 	expect(calls).toStrictEqual(["abc->abcd", "abcd->abcde"]);
-	expect(rendered(c)).toMatch(/  Name: abcde/);
+	expect(rendered(c)).toMatch(/ {2}Name: abcde/);
 	expect(rendered(c)).not.toContain(CURSOR_MARKER);
 
 	press(c, DOWN, DOWN, ENTER, "f", DOWN, DOWN); // row-change flushes the pending rename before moving
@@ -922,7 +922,7 @@ test("model groups TUI keeps every screen width-bounded without wrapping logical
 		expect(lines).toHaveLength(inactiveWideCount);
 		expect(lines.filter((line) => !(visibleWidth(line) <= width))).toStrictEqual([]);
 		expect(lines.join("\n")).not.toContain(CURSOR_MARKER);
-		if (width === 12) expect(stripAnsi(lines.join("\n"))).toMatch(/界e\u0301/);
+		if (width === 12) {expect(stripAnsi(lines.join("\n"))).toMatch(/界e\u0301/);}
 	}
 	press(c, ENTER, "\u0001"); // active group-name input with cursor at line start
 	const activeWideCount = c.render(200).length;
@@ -931,7 +931,7 @@ test("model groups TUI keeps every screen width-bounded without wrapping logical
 		expect(lines).toHaveLength(activeWideCount);
 		expect(lines.filter((line) => !(visibleWidth(line) <= width))).toStrictEqual([]);
 		expect(lines.join("\n")).toContain(CURSOR_MARKER);
-		if (width === 12) expect(stripAnsi(lines.join("\n")).replaceAll(CURSOR_MARKER, "")).toMatch(/界e\u0301/);
+		if (width === 12) {expect(stripAnsi(lines.join("\n")).replaceAll(CURSOR_MARKER, "")).toMatch(/界e\u0301/);}
 	}
 	press(c, DOWN, ENTER);
 	assertScreen(c); // MODALITIES (from the name row, Down lands on the Modalities row)
@@ -1016,7 +1016,7 @@ test("model groups TUI handles Model activation immediately after Provider trans
 	pressAndRender(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
 	expect(rendered(c)).toMatch(/Add model — Step 1\/3 Provider/);
 
-	for (const input of [ENTER, ENTER]) c.handleInput?.(input);
+	for (const input of [ENTER, ENTER]) {c.handleInput?.(input);}
 	expect(rendered(c)).toMatch(/Add model — Step 3\/3 Thinking/);
 	pressAndRender(c, ENTER);
 	expect(persisted).toStrictEqual([{ provider: "openai", modelId: "model-0" }]);
@@ -1037,7 +1037,7 @@ test("model groups TUI replaces Thinking control with Model control before rende
 	pressAndRender(c, ENTER);
 	expect(rendered(c)).toMatch(/Add model — Step 3\/3 Thinking/);
 
-	for (const input of [LEFT, DOWN, ENTER]) c.handleInput?.(input);
+	for (const input of [LEFT, DOWN, ENTER]) {c.handleInput?.(input);}
 	expect(rendered(c)).toMatch(/Add model — Step 3\/3 Thinking/);
 	pressAndRender(c, ENTER);
 	expect(persisted).toStrictEqual([{ provider: "openai", modelId: "model-1" }]);
@@ -1056,7 +1056,7 @@ test("model groups TUI keeps Model selection live across rapid query, navigation
 	const models = Array.from({ length: 3 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: false }));
 	const c = atSearchableModel(models, store);
 
-	for (const input of ["m", "o", "d", "e", "l", DOWN, ENTER]) c.handleInput?.(input);
+	for (const input of ["m", "o", "d", "e", "l", DOWN, ENTER]) {c.handleInput?.(input);}
 	expect(rendered(c)).toMatch(/Add model — Step 3\/3 Thinking/);
 	pressAndRender(c, ENTER);
 	expect(persisted).toStrictEqual([{ provider: "openai", modelId: "model-1" }]);
@@ -1184,7 +1184,7 @@ test("model groups TUI directly proves every non-Model screen remains search-fre
 	expect(rendered(c)).toMatch(/Edit model/); // MODEL_EDIT.
 	expect(rendered(c)).not.toContain(CURSOR_MARKER);
 	pressAndRender(c, ESC, ...Array(20).fill(DOWN), ENTER);
-	let text = rendered(c);
+	const text = rendered(c);
 	expect(text).toMatch(/Step 1\/3 Provider/); // WIZARD_PROVIDER remains uncapped.
 	expect(text).toMatch(/provider-11/);
 	expect(text).not.toContain(CURSOR_MARKER);
@@ -1224,7 +1224,7 @@ test("model groups TUI focuses the searchable Model Input only on the focused Mo
 	const models = [{ provider: "openai\u001b[31m", id: "a-very-long-model-id\nline", name: "find-me", reasoning: true }];
 	const c = atSearchableModel(models);
 	c.focused = true;
-	let text = rendered(c, 18);
+	const text = rendered(c, 18);
 	expect(text).toContain(CURSOR_MARKER);
 	expect(c.render(18).filter((line) => !(visibleWidth(line) <= 18))).toStrictEqual([]);
 	expect(text).not.toMatch(/\u001b\[31m.*a-very/);
@@ -1316,7 +1316,7 @@ test("model groups TUI MODEL_EDIT opens on a mid-list configured level and marks
 	// Exactly one row carries the current marker, and it is the configured supported level.
 	expect(text.match(/✓ current/g) ?? []).toHaveLength(1);
 	expect(text).toMatch(/Thinking: medium ✓ current/);
-	expect(text).toMatch(/^  Thinking: inherit$/m);
+	expect(text).toMatch(/^ {2}Thinking: inherit$/m);
 	expect(text).not.toMatch(/Thinking: inherit ✓ current/);
 	// Enter on the current row must write the same value — never silently reset to inherit.
 	press(c, ENTER);
@@ -1339,7 +1339,7 @@ test("model groups TUI MODEL_EDIT stale level on an available model keeps its ro
 	expect(text.match(/Thinking: high/g) ?? []).toHaveLength(1);
 	expect(text).toMatch(/→ Thinking: high/);
 	expect(text).toMatch(/Thinking: high ⚠ current, unavailable/);
-	expect(text).toMatch(/^  Thinking: inherit$/m);
+	expect(text).toMatch(/^ {2}Thinking: inherit$/m);
 	expect(text).not.toMatch(/Thinking: inherit ⚠ current, unavailable/);
 	// Row layout: the stale row sits directly after inherit and directly before Remove model.
 	const lines = stripAnsi(text).split("\n");
@@ -1409,7 +1409,7 @@ test("model groups TUI MODEL_EDIT stale level on an unavailable model keeps Stat
 	expect(text.match(/Thinking: max/g) ?? []).toHaveLength(1);
 	expect(text).toMatch(/→ Thinking: max/);
 	expect(text).toMatch(/Thinking: max ⚠ current, unavailable/);
-	expect(text).toMatch(/^  Thinking: inherit$/m);
+	expect(text).toMatch(/^ {2}Thinking: inherit$/m);
 	expect(text).not.toMatch(/Thinking: inherit ⚠ current, unavailable/);
 	// Enter from the stale row writes the same configured value back.
 	press(c, ENTER);
@@ -1534,7 +1534,7 @@ test("model groups TUI MODEL_EDIT treats a stale off level on a non-reasoning mo
 	const text = rendered(c);
 	expect(text).toMatch(/→ Thinking: off/);
 	expect(text).toMatch(/Thinking: off ⚠ current, unavailable/);
-	expect(text).toMatch(/^  Thinking: inherit$/m);
+	expect(text).toMatch(/^ {2}Thinking: inherit$/m);
 	press(c, ENTER);
 	expect(calls).toHaveLength(1);
 	expect(calls[0].models[0].thinkingLevel).toBe("off");

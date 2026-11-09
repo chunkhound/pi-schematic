@@ -8,7 +8,7 @@ export function registerModelGroupsCommand(pi: ExtensionAPI, state: SchematicSta
 		description: "Manage Model Groups",
 		handler: async (_args, ctx) => {
 			if (ctx.mode !== "tui") {
-				if (ctx.mode === "rpc") ctx.ui.notify("/model-groups requires TUI mode");
+				if (ctx.mode === "rpc") {ctx.ui.notify("/model-groups requires TUI mode");}
 				return;
 			}
 			if (!ctx.cwd || !ctx.modelRegistry) {

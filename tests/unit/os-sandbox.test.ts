@@ -21,7 +21,7 @@ import { expectSuffix } from "../assertions.js";
 const NOTICE_SUFFIX = `\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`;
 
 function hasPosixShell(): boolean {
-	if (process.platform === "win32") return false;
+	if (process.platform === "win32") {return false;}
 	try {
 		execFileSync("/bin/sh", ["-c", "true"], { stdio: "ignore", timeout: 2000 });
 		return true;
@@ -426,7 +426,7 @@ test.skipIf(!canUseOsSandbox())("sandboxed output streams while the command runs
 			const child = spawn("/bin/bash", ["-c", wrapCommandWithOsSandbox(command)], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
 			const chunks: Buffer[] = [];
 			child.stdout.on("data", (chunk: Buffer) => {
-				if (chunks.length === 0) fs.writeFileSync(flag, "");
+				if (chunks.length === 0) {fs.writeFileSync(flag, "");}
 				chunks.push(chunk);
 			});
 			child.on("error", reject);

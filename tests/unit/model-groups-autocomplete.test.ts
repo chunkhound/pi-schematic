@@ -112,7 +112,7 @@ test("#group autocomplete prepends colored effective modal letters when a colori
 	expect(description, "text suppressed when image present").not.toMatch(/<syntaxKeyword>T<\/syntaxKeyword>/);
 	expect(description, "reasoning excluded").not.toMatch(/R<\//);
 	// Muted wrappers around the gaps and the appended per-model route details.
-	expect(description).toMatch(/<muted>  <\/muted><muted>google\/gemini-2\.5-pro • high<\/muted>/);
+	expect(description).toMatch(/<muted> {2}<\/muted><muted>google\/gemini-2\.5-pro • high<\/muted>/);
 	expect(delegated).toBe(0);
 });
 

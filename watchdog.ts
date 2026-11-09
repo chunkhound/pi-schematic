@@ -105,8 +105,8 @@ No active notebook topic is set. ${noTopicUrgency}`;
 /** Pick the watchdog message; `handoffRequiredNow` marks the eligible required-handoff nudge. */
 function selectNudge(state: NudgeState, percent: number | null, eligible: boolean): { text: string; handoffRequiredNow: boolean } {
 	const pct = percent === null ? null : Math.round(percent);
-	if (state.pendingRequestedHandoff) return { text: buildRequestedHandoffNudge(state, eligible), handoffRequiredNow: eligible };
-	if (state.pendingTopicBoundaryHint) return { text: buildBoundaryNudge(state, eligible), handoffRequiredNow: false };
+	if (state.pendingRequestedHandoff) {return { text: buildRequestedHandoffNudge(state, eligible), handoffRequiredNow: eligible };}
+	if (state.pendingTopicBoundaryHint) {return { text: buildBoundaryNudge(state, eligible), handoffRequiredNow: false };}
 	return { text: buildDefaultNudge(pct, state.activeNotebookTopic, eligible), handoffRequiredNow: false };
 }
 
@@ -121,7 +121,7 @@ export function buildNudge(state: NudgeState, percent: number | null, eligible: 
  */
 export function buildAndRecordNudge(state: NudgeState, percent: number | null, eligible: boolean): string {
 	const { text, handoffRequiredNow } = selectNudge(state, percent, eligible);
-	if (handoffRequiredNow) state.pendingRequestedHandoff!.eligibleNudgeDelivered = true;
+	if (handoffRequiredNow) {state.pendingRequestedHandoff!.eligibleNudgeDelivered = true;}
 	return text;
 }
 
@@ -146,11 +146,11 @@ export function registerWatchdog(pi: ExtensionAPI, state: SchematicState): void 
 		// exhausted enforcement attempts should clear it. A run counts only when
 		// the context hook sent the hand-off-now nudge; the flag is per run.
 		const requestedHandoff = state.pendingRequestedHandoff;
-		if (!requestedHandoff) return;
+		if (!requestedHandoff) {return;}
 		const counts = settleCountsAttempt(requestedHandoff);
 		const exhausted = settleExhaustsHandoffBudget(requestedHandoff);
 		requestedHandoff.eligibleNudgeDelivered = false;
-		if (counts) requestedHandoff.enforcementAttempts += 1;
+		if (counts) {requestedHandoff.enforcementAttempts += 1;}
 		if (exhausted) {
 			const notice = buildHandoffCancellationNotice(state.readonlyEnabled);
 			state.pendingRequestedHandoff = null;

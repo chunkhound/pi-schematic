@@ -40,7 +40,7 @@ test.each([undefined, null, 42, false, true, Symbol("test"), BigInt(42), () => {
 	await enableReadonly(pi);
 
 	const result = await toolCall(
-		{ toolName: "bash", input: { command } } as any,
+		{ toolName: "bash", input: { command } },
 		{ cwd: "/workspace" },
 	);
 	expect(result?.block, `expected malformed input to block: ${String(command)}`).toBe(true);

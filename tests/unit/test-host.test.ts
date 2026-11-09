@@ -48,7 +48,7 @@ test("a factory's event handler is registered on the host", async () => {
 		});
 	});
 	const handlers = pi.handlers.get("tool_call") ?? [];
-	for (const registered of handlers) await registered("probe-event", {});
+	for (const registered of handlers) {await registered("probe-event", {});}
 
 	expect(handlers).toHaveLength(1);
 	expect(seen).toStrictEqual(["probe-event"]);
@@ -129,7 +129,7 @@ function assertLoadErrorMessage(error: Error, expected: RegExp[]): void {
 	expect(lines[0]).toBe("pi reported extension load errors:");
 	expect(lines).toHaveLength(expected.length + 1);
 	for (const [index, pattern] of expected.entries()) {
-		const line = lines[index + 1]!;
+		const line = lines[index + 1];
 		expect(line).toMatch(/^[^\n]+: [^\n]+$/);
 		expect(line).toMatch(pattern);
 	}

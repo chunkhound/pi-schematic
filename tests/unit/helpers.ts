@@ -40,8 +40,8 @@ export const ansiTheme = {
 const HOME_ENV_KEYS = ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"] as const;
 
 function restoreEnv(key: string, value: string | undefined): void {
-	if (value === undefined) delete process.env[key];
-	else process.env[key] = value;
+	if (value === undefined) {delete process.env[key];}
+	else {process.env[key] = value;}
 }
 
 // pi resolves its agent directory from PI_CODING_AGENT_DIR before HOME, so the home helpers clear
@@ -55,7 +55,7 @@ export function setTempHome(home: string): () => void {
 	delete process.env.HOMEPATH;
 	delete process.env[AGENT_DIR_ENV_KEY];
 	return () => {
-		for (const key of HOME_ENV_KEYS) restoreEnv(key, snapshot[key]);
+		for (const key of HOME_ENV_KEYS) {restoreEnv(key, snapshot[key]);}
 		restoreEnv(AGENT_DIR_ENV_KEY, previousAgentDir);
 	};
 }
@@ -135,7 +135,7 @@ export function createDeferred() {
  */
 export async function emitAll(pi: TestPI, event: string, payload: unknown, ctx: unknown): Promise<void> {
 	const handlers = pi.handlers.get(event);
-	if (!handlers?.length) throw new Error(`No handlers registered for "${event}"`);
+	if (!handlers?.length) {throw new Error(`No handlers registered for "${event}"`);}
 	for (const handler of handlers) {
 		await handler(payload, ctx);
 	}
@@ -148,7 +148,7 @@ export async function emitAll(pi: TestPI, event: string, payload: unknown, ctx: 
  */
 export async function callHandlers(pi: TestPI, event: string, payload: unknown, ctx: unknown): Promise<unknown[]> {
 	const handlers = pi.handlers.get(event);
-	if (!handlers?.length) throw new Error(`No handlers registered for "${event}"`);
+	if (!handlers?.length) {throw new Error(`No handlers registered for "${event}"`);}
 	const results: unknown[] = [];
 	for (const handler of handlers) {
 		results.push(await handler(payload, ctx));
@@ -215,7 +215,7 @@ export async function registerReadonlyPI(): Promise<{ pi: TestPI; toolCall: Tool
 	const toolCall: ToolCall = async (event, ctx) => {
 		for (const handler of handlers) {
 			const result = await handler(event, ctx);
-			if (result?.block) return result;
+			if (result?.block) {return result;}
 		}
 		return undefined;
 	};
@@ -470,7 +470,7 @@ export default function(pi) {
 		globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
 			outboundFetches.push(input instanceof Request ? input.url : String(input));
 			throw new Error(`offline fixture blocked outbound fetch: ${outboundFetches.at(-1)}`);
-		}) as typeof fetch;
+		});
 		(globalThis as any).__agenticE2eProbeCalls = 0;
 		(globalThis as any).__agenticE2eStreamCalls = 0;
 		(globalThis as any).__agenticE2eToolSets = [];
@@ -501,7 +501,7 @@ export default function(pi) {
 			allTools: activeTools,
 		});
 		const controller = new AbortController();
-		if (params.abortBeforeStart) controller.abort(new Error("fixture abort"));
+		if (params.abortBeforeStart) {controller.abort(new Error("fixture abort"));}
 		// Expose live references for the provider (separate module scope) to act on.
 		(globalThis as any).__agenticE2eState = state;
 		(globalThis as any).__agenticE2eController = controller;
@@ -551,10 +551,10 @@ export default function(pi) {
 			observedThinking: (globalThis as any).__agenticE2eThinking ?? [],
 		};
 	} finally {
-		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-		if (previousOpenAiApiKey === undefined) delete process.env.OPENAI_API_KEY;
-		else process.env.OPENAI_API_KEY = previousOpenAiApiKey;
+		if (previousAgentDir === undefined) {delete process.env.PI_CODING_AGENT_DIR;}
+		else {process.env.PI_CODING_AGENT_DIR = previousAgentDir;}
+		if (previousOpenAiApiKey === undefined) {delete process.env.OPENAI_API_KEY;}
+		else {process.env.OPENAI_API_KEY = previousOpenAiApiKey;}
 		globalThis.fetch = previousFetch;
 		delete (globalThis as any).__agenticE2eProbeCalls;
 		delete (globalThis as any).__agenticE2eStreamCalls;

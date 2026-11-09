@@ -45,7 +45,7 @@ import { createTestHost, type TestPI } from "./test-host.js";
 function assertSuccessorTurn(content: string, input: { nextInstruction: string; context?: string }): void {
 	const expected = [`## Next instruction\n\n${input.nextInstruction}`];
 	const context = input.context?.trim();
-	if (context) expected.push(`## Context\n\n${context}`);
+	if (context) {expected.push(`## Context\n\n${context}`);}
 	const prefix = expected.join("\n\n");
 	expectPrefix(content, prefix, "successor turn must start with the delivered instruction and context:");
 }
@@ -58,7 +58,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 function makeCtx(options: { usage?: Usage; aborted?: boolean; hasUI?: boolean } = {}) {
 	const statuses = new Map<string, string | undefined>();
 	const widgets = new Map<string, string[] | undefined>();
-	const notifications: Array<{ message: string; level: string }> = [];
+	const notifications: { message: string; level: string }[] = [];
 	const session = { branch: [] as any[], usage: options.usage === undefined ? ELIGIBLE_USAGE : options.usage };
 	const ctx: any = {
 		hasUI: options.hasUI ?? true,
@@ -241,8 +241,8 @@ test("handoff with no pending direction requires nextInstruction but not context
 	await executeHandoff(pi, ctx, { nextInstruction: "  Ship the fix  " });
 
 	// Surrounding whitespace is trimmed.
-	expect((state.stagedHandoff as SchematicState["stagedHandoff"])?.nextInstruction).toBe("Ship the fix");
-	expect((state.stagedHandoff as SchematicState["stagedHandoff"])?.context).toBe("");
+	expect((state.stagedHandoff)?.nextInstruction).toBe("Ship the fix");
+	expect((state.stagedHandoff)?.context).toBe("");
 });
 
 test("handoff is rejected while another handoff is staged, and /handoff reports it busy", async () => {
@@ -346,7 +346,7 @@ test.for([{ discardPages: [] }, { discardPages: ["ghost"] }])("turn_end adds no 
 	expect(result.entries.map((entry: any) => entry.type), `discardPages ${JSON.stringify(discardPages)}`).toStrictEqual(["compaction", "custom_message", "custom_message"]);
 });
 
-const declineCases: Array<{ name: string; reason: string; ctx?: { aborted: boolean }; event: Parameters<typeof turnEndEvent>[0] }> = [
+const declineCases: { name: string; reason: string; ctx?: { aborted: boolean }; event: Parameters<typeof turnEndEvent>[0] }[] = [
 	{ name: "ctx.signal aborted", reason: REASON_ABORTED, ctx: { aborted: true }, event: {} },
 	{ name: "outcome aborted", reason: REASON_ABORTED, event: { outcome: "aborted" } },
 	{ name: "outcome error", reason: REASON_TURN_FAILED, event: { outcome: "error" } },
@@ -603,8 +603,8 @@ for (const { attemptsBefore, nudged, requestSurvives } of [
 
 		await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 
-		if (requestSurvives) expect(state.pendingRequestedHandoff).not.toBeNull();
-		else expect(state.pendingRequestedHandoff).toBeNull();
+		if (requestSurvives) {expect(state.pendingRequestedHandoff).not.toBeNull();}
+		else {expect(state.pendingRequestedHandoff).toBeNull();}
 		expect(pi.sentMessages).toHaveLength(1);
 		expectSuffix(pi.sentMessages[0].message.content, requestSurvives
 			? "The required handoff remains pending; retry when context usage is eligible."
@@ -756,7 +756,7 @@ test("agent_settled after a handoff completed at turn_start sends and notifies n
 
 // ── Sibling refusal ──────────────────────────────────────────────────
 
-function assistantMessage(...calls: Array<{ id: string; name: string }>) {
+function assistantMessage(...calls: { id: string; name: string }[]) {
 	return {
 		type: "message_end",
 		message: {
@@ -930,7 +930,7 @@ test("unready runs do not consume the enforcement budget", async () => {
 	const pi = await createTestHost();
 	const warnings: string[] = [];
 	const small = makeCtx({ usage: { tokens: 5000, percent: 2.5, contextWindow: 200000 } });
-	small.ctx.ui.notify = (message: string, level: string) => { if (level === "warning") warnings.push(message); };
+	small.ctx.ui.notify = (message: string, level: string) => { if (level === "warning") {warnings.push(message);} };
 	await pi.commands.get("handoff")!.handler("continue work", { hasUI: false, isIdle: () => true } as any);
 
 	for (let run = 0; run < MAX_HANDOFF_ATTEMPTS; run++) {
@@ -1152,7 +1152,7 @@ test("buildNextUserMessage preserves instruction bytes and normalizes context pa
 			(instruction, context) => {
 				const message = buildNextUserMessage({ nextInstruction: instruction, context });
 				expectPrefix(message, `## Next instruction\n\n${instruction}`, "the instruction must open the message byte-for-byte");
-				if (context.trim()) expect(message, "non-blank context must be preserved in the message").toContain(context.trim());
+				if (context.trim()) {expect(message, "non-blank context must be preserved in the message").toContain(context.trim());}
 				expect(message, "context padding must not change the delivered message").toBe(buildNextUserMessage({ nextInstruction: instruction, context: ` \n${context} ` }));
 			},
 		),
@@ -1212,7 +1212,7 @@ test("a small-session rejection keeps the pending request and states it in the e
 		registerHandoffTool(api, state);
 	});
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "🤝 Handoff in progress"]]);
-	const notifications: Array<{ message: string; level: string }> = [];
+	const notifications: { message: string; level: string }[] = [];
 
 	await expect(pi.tools.get("handoff").execute(
 			"1",
@@ -1428,7 +1428,7 @@ test("an unavailable-usage rejection keeps the pending request and states it in 
 		registerHandoffTool(api, state);
 	});
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "🤝 Handoff in progress"]]);
-	const notifications: Array<{ message: string; level: string }> = [];
+	const notifications: { message: string; level: string }[] = [];
 
 	await expect(pi.tools.get("handoff").execute(
 			"1",

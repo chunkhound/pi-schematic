@@ -33,7 +33,7 @@ function statIfExists(dir: string): fs.BigIntStats | undefined {
 	try {
 		return fsOps.statSync(dir, { bigint: true });
 	} catch (cause) {
-		if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		if ((cause as NodeJS.ErrnoException).code === "ENOENT") {return undefined;}
 		throw cause;
 	}
 }
@@ -44,12 +44,12 @@ function scopesShareConfigDir(cwd: string): boolean {
 	const globalDir = statIfExists(path.dirname(path.dirname(globalFile)));
 	const projectDir = statIfExists(path.dirname(path.dirname(projectFile)));
 	// Some filesystems (FAT/exFAT) report ino 0 for every entry, so identity is unknown there.
-	if (!globalDir || !projectDir || globalDir.ino === 0n || projectDir.ino === 0n) return path.resolve(globalFile) === path.resolve(projectFile);
+	if (!globalDir || !projectDir || globalDir.ino === 0n || projectDir.ino === 0n) {return path.resolve(globalFile) === path.resolve(projectFile);}
 	return globalDir.dev === projectDir.dev && globalDir.ino === projectDir.ino;
 }
 // A PI_CODING_AGENT_DIR that is <cwd>/<config dir>, by path, symlink, or a case-insensitive name, makes the two scopes one file; reading it as both would duplicate every group.
 function effectivePolicy(access: ModelGroupsAccess): ModelGroupsAccessPolicy {
-	if (access.policy === "global-project" && scopesShareConfigDir(access.cwd)) return "global-only";
+	if (access.policy === "global-project" && scopesShareConfigDir(access.cwd)) {return "global-only";}
 	return access.policy;
 }
 /** Builds the access for a session; the project scope is unavailable when untrusted or when it resolves to the global file. */
@@ -58,33 +58,33 @@ export function createModelGroupsAccess(cwd: string, projectTrusted: boolean): M
 	return { cwd, policy: effectivePolicy(access) };
 }
 function projectScopeEnabled(access: ModelGroupsAccess): boolean { return effectivePolicy(access) === "global-project"; }
-function assertScopeAllowed(scope: ModelGroupScope, access: ModelGroupsAccess): void { if (scope === "project" && !projectScopeEnabled(access)) throw new Error("Project Model Groups are unavailable in global-only mode"); }
+function assertScopeAllowed(scope: ModelGroupScope, access: ModelGroupsAccess): void { if (scope === "project" && !projectScopeEnabled(access)) {throw new Error("Project Model Groups are unavailable in global-only mode");} }
 function persistenceError(details: ConstructorParameters<typeof ModelGroupsPersistenceError>[0]): ModelGroupsPersistenceError { return new ModelGroupsPersistenceError(details); }
 function validateModelEntry(value: unknown, at: string): { ok: true; model: ModelGroupModel } | { ok: false; message: string } {
-	if (!isPlainRecord(value)) return { ok: false, message: `${at} must be an object` };
-	if (typeof value.provider !== "string" || !value.provider) return { ok: false, message: `${at}.provider must be a non-empty string` };
-	if (typeof value.modelId !== "string" || !value.modelId) return { ok: false, message: `${at}.modelId must be a non-empty string` };
-	if (value.thinkingLevel !== undefined && !isThinkingLevel(value.thinkingLevel)) return { ok: false, message: `${at}.thinkingLevel is invalid` };
+	if (!isPlainRecord(value)) {return { ok: false, message: `${at} must be an object` };}
+	if (typeof value.provider !== "string" || !value.provider) {return { ok: false, message: `${at}.provider must be a non-empty string` };}
+	if (typeof value.modelId !== "string" || !value.modelId) {return { ok: false, message: `${at}.modelId must be a non-empty string` };}
+	if (value.thinkingLevel !== undefined && !isThinkingLevel(value.thinkingLevel)) {return { ok: false, message: `${at}.thinkingLevel is invalid` };}
 	const model = { ...value, provider: value.provider, modelId: value.modelId } as ModelGroupModel;
-	if (value.thinkingLevel === undefined) delete (model as any).thinkingLevel;
+	if (value.thinkingLevel === undefined) {delete (model as any).thinkingLevel;}
 	return { ok: true, model };
 }
 function normalizeOverrideEnvelope(rawDef: Record<string, unknown>, sourceVersion: number, rawName: string, registry: ConstraintRegistry): { ok: true; constraints?: Record<string, unknown> } | { ok: false; message: string } {
 	if (sourceVersion < 2) {
-		if (Object.hasOwn(rawDef, "constraints")) return { ok: false, message: `group ${rawName}.constraints is unsupported in legacy config` };
+		if (Object.hasOwn(rawDef, "constraints")) {return { ok: false, message: `group ${rawName}.constraints is unsupported in legacy config` };}
 		return { ok: true };
 	}
-	if (rawDef.constraints !== undefined && !isPlainRecord(rawDef.constraints)) return { ok: false, message: `group ${rawName}.constraints must be an object` };
-	const constraints = rawDef.constraints === undefined ? undefined : { ...rawDef.constraints as Record<string, unknown> };
+	if (rawDef.constraints !== undefined && !isPlainRecord(rawDef.constraints)) {return { ok: false, message: `group ${rawName}.constraints must be an object` };}
+	const constraints = rawDef.constraints === undefined ? undefined : { ...rawDef.constraints };
 	// Registry-iterated persisted-value normalization: every present known key is
 	// decoded (shape/vocabulary validation) and re-encoded (canonical form) through
 	// its descriptor's persistence codec. Keys the registry does not know stay
 	// opaque — they are neither validated nor dropped.
 	if (constraints) {
 		for (const descriptor of registry.descriptors) {
-			if (!Object.hasOwn(constraints, descriptor.key)) continue;
+			if (!Object.hasOwn(constraints, descriptor.key)) {continue;}
 			const decoded = descriptor.persistence.override.decode(constraints[descriptor.key], `group ${rawName}.constraints.${descriptor.key}`);
-			if (!decoded.ok) return decoded;
+			if (!decoded.ok) {return decoded;}
 			constraints[descriptor.key] = descriptor.persistence.override.encode(decoded.value);
 		}
 	}
@@ -94,8 +94,8 @@ function normalizeGroups(rawGroups: Record<string, unknown>, sourceVersion: numb
 	const groups = ownGroups();
 	for (const rawName of Object.keys(rawGroups)) {
 		const name = canonicalizeModelGroupName(rawName);
-		if (!name) return { ok: false, message: "group name must not be empty after trimming" };
-		if (hasOwnGroup(groups, name)) return { ok: false, message: `group keys collide after trimming at '${name}'` };
+		if (!name) {return { ok: false, message: "group name must not be empty after trimming" };}
+		if (hasOwnGroup(groups, name)) {return { ok: false, message: `group keys collide after trimming at '${name}'` };}
 
 		const rawDef = rawGroups[rawName];
 		if (!isPlainRecord(rawDef) || !Array.isArray(rawDef.models)) {
@@ -105,11 +105,11 @@ function normalizeGroups(rawGroups: Record<string, unknown>, sourceVersion: numb
 		const models: ModelGroupModel[] = [];
 		for (let i = 0; i < rawDef.models.length; i++) {
 			const result = validateModelEntry(rawDef.models[i], `group ${rawName}.models[${i}]`);
-			if (!result.ok) return result;
+			if (!result.ok) {return result;}
 			models.push(result.model);
 		}
 		const envelope = normalizeOverrideEnvelope(rawDef, sourceVersion, rawName, registry);
-		if (!envelope.ok) return envelope;
+		if (!envelope.ok) {return envelope;}
 		// Strip runtime-derived fields while retaining opaque config keys and the v2 envelope.
 		const { name: _name, scope: _scope, sourcePath: _sourcePath, modalities: _modalities, validation: _validation, models: _rawModels, constraints: _constraints, modalityOverride: _modalityOverride, ...configDef } = rawDef;
 		const { ok: _ok, ...normalizedEnvelope } = envelope;
@@ -123,15 +123,15 @@ function normalizeGroups(rawGroups: Record<string, unknown>, sourceVersion: numb
 	return { ok: true, groups };
 }
 function validateConfig(raw: unknown, registry: ConstraintRegistry): { ok: true; config: ModelGroupsConfig } | { ok: false; message: string } {
-	if (!isPlainRecord(raw) || !isPlainRecord(raw.groups)) return { ok: false, message: !isPlainRecord(raw) ? "config root must be an object" : "groups must be an object" };
+	if (!isPlainRecord(raw) || !isPlainRecord(raw.groups)) {return { ok: false, message: !isPlainRecord(raw) ? "config root must be an object" : "groups must be an object" };}
 	const sourceVersion = raw.version === undefined || raw.version === 0 ? 1 : raw.version;
-	if (typeof sourceVersion !== "number" || !Number.isInteger(sourceVersion) || sourceVersion < 1) return { ok: false, message: "version must be a non-negative supported integer (only missing/0 normalize)" };
-	if (sourceVersion > CURRENT_VERSION) return { ok: false, message: `unsupported version ${sourceVersion}` };
+	if (typeof sourceVersion !== "number" || !Number.isInteger(sourceVersion) || sourceVersion < 1) {return { ok: false, message: "version must be a non-negative supported integer (only missing/0 normalize)" };}
+	if (sourceVersion > CURRENT_VERSION) {return { ok: false, message: `unsupported version ${sourceVersion}` };}
 	const normalized = normalizeGroups(raw.groups, sourceVersion, registry); return normalized.ok ? { ok: true, config: { version: CURRENT_VERSION, groups: normalized.groups } } : normalized;
 }
 function backupAndIssue(scope: ModelGroupScope, sourcePath: string, kind: ModelGroupsLoadIssue["kind"], message: string, version?: number): ModelGroupsLoadIssue {
 	const issue: ModelGroupsLoadIssue = { scope, sourcePath, kind, message, backupPath: `${sourcePath}.bak`, version };
-	if (kind === "unsupported-version") return issue;
+	if (kind === "unsupported-version") {return issue;}
 	try {
 		fsOps.copyFileSync(sourcePath, issue.backupPath!);
 	} catch (cause) {
@@ -143,7 +143,7 @@ function backupAndIssue(scope: ModelGroupScope, sourcePath: string, kind: ModelG
 function loadScope(scope: ModelGroupScope, access: ModelGroupsAccess, registry: ConstraintRegistry): { config: ModelGroupsConfig; issue?: ModelGroupsLoadIssue } {
 	assertScopeAllowed(scope, access);
 	const sourcePath = modelGroupsPath(scope, access.cwd);
-	if (!fsOps.existsSync(sourcePath)) return { config: emptyConfig() };
+	if (!fsOps.existsSync(sourcePath)) {return { config: emptyConfig() };}
 
 	let parsed: unknown;
 	try {
@@ -198,7 +198,7 @@ export function loadModelGroups(access: ModelGroupsAccess, constraintRegistry: C
 	};
 }
 function normalizeSaveConfig(scope: ModelGroupScope, sourcePath: string, config: ModelGroupsConfig, registry: ConstraintRegistry): ModelGroupsConfig {
-	const normalized = normalizeGroups(config.groups as any, 2, registry);
+	const normalized = normalizeGroups(config.groups, 2, registry);
 	if (!normalized.ok) {
 		throw persistenceError({ operation: "save", scope, sourcePath, phase: "config-validation", message: normalized.message });
 	}
@@ -220,7 +220,7 @@ export function saveModelGroups(scope: ModelGroupScope, access: ModelGroupsAcces
 				raw = parsed;
 			}
 		} catch (cause) {
-			if (cause instanceof ModelGroupsPersistenceError) throw cause;
+			if (cause instanceof ModelGroupsPersistenceError) {throw cause;}
 		}
 	}
 
@@ -265,19 +265,19 @@ function loadScopeConfig(scope: ModelGroupScope, access: ModelGroupsAccess, regi
 		throw persistenceError({
 			operation: "save",
 			scope,
-			sourcePath: loaded.issue!.sourcePath,
-			targetPath: loaded.issue!.backupPath,
+			sourcePath: loaded.issue.sourcePath,
+			targetPath: loaded.issue.backupPath,
 			phase: loaded.issue?.kind === "unsupported-version" ? "config-validation" : "load-recovery",
-			message: `Refusing to overwrite ${scope} model-groups config after ${loaded.issue!.kind} recovery because ${loaded.issue!.message}`,
+			message: `Refusing to overwrite ${scope} model-groups config after ${loaded.issue.kind} recovery because ${loaded.issue.message}`,
 			cause: loaded.issue,
 		});
 	}
 	return loaded.config;
 }
-function canonicalName(raw: string): string { const name = canonicalizeModelGroupName(raw); if (!name) throw new Error("Model group name is required"); return name; }
+function canonicalName(raw: string): string { const name = canonicalizeModelGroupName(raw); if (!name) {throw new Error("Model group name is required");} return name; }
 function normalizeMutationDef(def: ModelGroupDef, registry: ConstraintRegistry): ModelGroupDef {
 	const normalized = normalizeGroups({ group: def }, CURRENT_VERSION, registry);
-	if (!normalized.ok) throw persistenceError({ operation: "save", phase: "config-validation", message: normalized.message });
+	if (!normalized.ok) {throw persistenceError({ operation: "save", phase: "config-validation", message: normalized.message });}
 	return normalized.groups.group;
 }
 /** CRUD-only cap enforcement: every authored override present in the def must be
@@ -286,7 +286,7 @@ function assertMutationOverridesSupported(def: ModelGroupDef, modelRegistry: Pic
 	const resolution = resolveConstraintMembers(def.models, modelRegistry);
 	for (const descriptor of registry.descriptors) {
 		const override = def.constraints?.[descriptor.key];
-		if (override === undefined) continue;
+		if (override === undefined) {continue;}
 		const evaluation = evaluateConstraint(descriptor, resolution, override);
 		descriptor.assertOverrideSupported?.({ evaluation, override });
 	}
@@ -295,7 +295,7 @@ export function createGroup(scope: ModelGroupScope, access: ModelGroupsAccess, r
 	assertScopeAllowed(scope, access);
 	const name = canonicalName(rawName);
 	const config = loadScopeConfig(scope, access, constraintRegistry);
-	if (hasOwnGroup(config.groups, name)) throw new Error(`Model group '${name}' already exists in ${scope} scope`);
+	if (hasOwnGroup(config.groups, name)) {throw new Error(`Model group '${name}' already exists in ${scope} scope`);}
 	const normalizedDef = normalizeMutationDef(def, constraintRegistry);
 	assertMutationOverridesSupported(normalizedDef, modelRegistry, constraintRegistry);
 	defineGroup(config.groups, name, normalizedDef);
@@ -305,7 +305,7 @@ export function updateGroup(scope: ModelGroupScope, access: ModelGroupsAccess, r
 	assertScopeAllowed(scope, access);
 	const name = canonicalName(rawName);
 	const config = loadScopeConfig(scope, access, constraintRegistry);
-	if (!hasOwnGroup(config.groups, name)) throw new Error(`Model group '${name}' does not exist in ${scope} scope`);
+	if (!hasOwnGroup(config.groups, name)) {throw new Error(`Model group '${name}' does not exist in ${scope} scope`);}
 	const normalizedDef = normalizeMutationDef(def, constraintRegistry);
 	assertMutationOverridesSupported(normalizedDef, modelRegistry, constraintRegistry);
 	defineGroup(config.groups, name, normalizedDef);
@@ -315,9 +315,9 @@ export function renameGroup(scope: ModelGroupScope, access: ModelGroupsAccess, o
 	const config = loadScopeConfig(scope, access);
 	const a = canonicalName(old);
 	const b = canonicalName(next);
-	if (a === b) return;
-	if (!hasOwnGroup(config.groups, a)) throw new Error(`Model group '${a}' does not exist in ${scope} scope`);
-	if (hasOwnGroup(config.groups, b)) throw new Error(`Model group '${b}' already exists in ${scope} scope`);
+	if (a === b) {return;}
+	if (!hasOwnGroup(config.groups, a)) {throw new Error(`Model group '${a}' does not exist in ${scope} scope`);}
+	if (hasOwnGroup(config.groups, b)) {throw new Error(`Model group '${b}' already exists in ${scope} scope`);}
 	const def = config.groups[a];
 	delete config.groups[a];
 	defineGroup(config.groups, b, def);
@@ -326,7 +326,7 @@ export function renameGroup(scope: ModelGroupScope, access: ModelGroupsAccess, o
 export function deleteGroup(scope: ModelGroupScope, access: ModelGroupsAccess, rawName: string): { otherScopeHasOverride: boolean } {
 	const config = loadScopeConfig(scope, access);
 	const name = canonicalName(rawName);
-	if (!hasOwnGroup(config.groups, name)) throw new Error(`Model group '${name}' does not exist in ${scope} scope`);
+	if (!hasOwnGroup(config.groups, name)) {throw new Error(`Model group '${name}' does not exist in ${scope} scope`);}
 	delete config.groups[name];
 	const other = projectScopeEnabled(access) ? loadScopeConfig(scope === "global" ? "project" : "global", access) : emptyConfig();
 	try {
@@ -344,8 +344,8 @@ export function moveGroup(access: ModelGroupsAccess, rawName: string, newScope: 
 	const oldScope: ModelGroupScope = newScope === "project" ? "global" : "project";
 	const source = loadScopeConfig(oldScope, access);
 	const target = loadScopeConfig(newScope, access);
-	if (!hasOwnGroup(source.groups, name)) throw new Error(`Model group '${name}' does not exist in ${oldScope} scope`);
-	if (hasOwnGroup(target.groups, name)) throw new Error(`Model group '${name}' already exists in ${newScope} scope`);
+	if (!hasOwnGroup(source.groups, name)) {throw new Error(`Model group '${name}' does not exist in ${oldScope} scope`);}
+	if (hasOwnGroup(target.groups, name)) {throw new Error(`Model group '${name}' already exists in ${newScope} scope`);}
 	defineGroup(target.groups, name, source.groups[name]);
 	try {
 		saveModelGroups(newScope, access, target);

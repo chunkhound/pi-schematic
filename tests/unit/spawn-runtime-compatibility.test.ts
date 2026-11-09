@@ -172,7 +172,7 @@ test("a parent-transient selected model fails explicitly in the real child runti
 		maxTokens: 1024,
 	};
 	const result = await executeSpawn(
-		"spawn-transient", pi as any, { model, cwd } as any, state,
+		"spawn-transient", pi, { model, cwd } as any, state,
 		{ prompt: "work" }, undefined, undefined, "medium",
 	);
 
@@ -275,7 +275,7 @@ test("real child usage matches the session stats across assistant, tool result, 
 	const pi = await createTestHost();
 	const state = createState();
 	const result = await executeSpawn(
-		"spawn-usage-parity", pi as any, { model, cwd: root } as any, state,
+		"spawn-usage-parity", pi, { model, cwd: root } as any, state,
 		{ prompt: "work" }, undefined, undefined, "medium",
 		async (config) => {
 			const created = await createAgentSession({ ...config, agentDir: root, modelRuntime, resourceLoader });

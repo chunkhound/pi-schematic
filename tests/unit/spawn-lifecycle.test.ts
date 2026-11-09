@@ -80,7 +80,7 @@ test("nested spawn dispose shares the deduplicated abort promise with other abor
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	// Another abort path (spawn invalidation, /reset) already started the shared abort.
 	const sharedAbort = abortChildSession(state, session);
@@ -111,7 +111,7 @@ test("nested spawn dispose registers its abort in the shared dedup map", async (
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	component.dispose();
 	expect(abort).toHaveBeenCalledOnce();
@@ -139,7 +139,7 @@ test("nested spawn dispose is identity-guarded against a replaced live session",
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	// A newer child claimed the toolCallId slot before disposal.
 	const replacement = createSubscribableSession([]).session;
@@ -154,7 +154,6 @@ test("nested spawn dispose is identity-guarded against a replaced live session",
 test("nested spawn dispose survives re-entrant dispose from abort", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
-	let component: any;
 	const abort = vi.fn(async () => {
 		// Synchronous re-entrant dispose from within abort must be a no-op.
 		component.dispose();
@@ -166,12 +165,12 @@ test("nested spawn dispose survives re-entrant dispose from abort", async () => 
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 
-	component = childSpawnTool.renderResult(
+	const component: any = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	component.dispose();
 
@@ -194,7 +193,7 @@ test("nested spawn drops events after resetState bumps child epoch", async () =>
 		{ expanded: false },
 		theme,
 		createRenderContext({ invalidate }),
-	) as any;
+	);
 	const before = component.render(120);
 
 	resetState(state);
@@ -218,7 +217,7 @@ test("nested spawn drops events when session is replaced in live state", async (
 		{ expanded: false },
 		theme,
 		createRenderContext({ invalidate }),
-	) as any;
+	);
 	const before = component.render(120);
 
 	const replacementSession = createSubscribableSession([]).session;
@@ -243,7 +242,7 @@ test("nested spawn completed-session deletion stays stale even if the toolCallId
 		{ expanded: false },
 		theme,
 		createRenderContext({ invalidate }),
-	) as any;
+	);
 	const before = component.render(120);
 
 	state.liveChildSessions.delete("tool-call-1");
@@ -273,7 +272,7 @@ test("nested spawn drops late events after live registry deletion", async () => 
 		{ expanded: false },
 		theme,
 		createRenderContext({ invalidate }),
-	) as any;
+	);
 	const before = component.render(120);
 
 	state.liveChildSessions.delete("tool-call-1");
@@ -297,7 +296,7 @@ test("nested spawn reattach resets render guard for the new session", async () =
 		{ expanded: false },
 		theme,
 		createRenderContext({ invalidate }),
-	) as any;
+	);
 
 	first.emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	flushSpawnFrameScheduler();
@@ -312,7 +311,7 @@ test("nested spawn reattach resets render guard for the new session", async () =
 		{ expanded: false },
 		theme,
 		createRenderContext({ lastComponent: component, invalidate }),
-	) as any;
+	);
 
 	second.emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "replacement 2" }] } });
 	flushSpawnFrameScheduler();
@@ -333,7 +332,7 @@ test("nested spawn dispose then reattach streams new session events", async () =
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	first.emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	flushSpawnFrameScheduler();
@@ -350,7 +349,7 @@ test("nested spawn dispose then reattach streams new session events", async () =
 		{ expanded: false },
 		theme,
 		createRenderContext({ lastComponent: component }),
-	) as any;
+	);
 
 	second.emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	second.emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "session B output" }] } });

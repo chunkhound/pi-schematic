@@ -131,7 +131,7 @@ test("spawn result success matches snapshot", () => withHarness(async (state) =>
 		state,
 	);
 
-	const rtb = new RenderTestBackend().render(component as any, SNAP_WIDTH);
+	const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
 	await expectGoldenFile("spawn-result-success", rtb.toSnapshot());
 }));
 
@@ -152,7 +152,7 @@ test("spawn result error matches snapshot", () => withHarness(async (state) => {
 		state,
 	);
 
-	const rtb = new RenderTestBackend().render(component as any, SNAP_WIDTH);
+	const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
 	await expectGoldenFile("spawn-result-error", rtb.toSnapshot());
 }));
 
@@ -173,7 +173,7 @@ test("spawn result aborted matches snapshot", () => withHarness(async (state) =>
 		state,
 	);
 
-	const rtb = new RenderTestBackend().render(component as any, SNAP_WIDTH);
+	const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
 	await expectGoldenFile("spawn-result-aborted", rtb.toSnapshot());
 }));
 
@@ -196,7 +196,7 @@ test("nested collapsed running matches snapshot", () => withHarness(async (state
 		state,
 	);
 
-	const rtb = new RenderTestBackend().render(component as any, SNAP_WIDTH);
+	const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
 	await expectGoldenFile("nested-collapsed-running", rtb.toSnapshot());
 }));
 
@@ -225,7 +225,7 @@ test("nested collapsed success matches snapshot", () => withHarness(async (state
 		state,
 	);
 
-	const rtb = new RenderTestBackend().render(component as any, SNAP_WIDTH);
+	const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
 	await expectGoldenFile("nested-collapsed-success", rtb.toSnapshot());
 }));
 
@@ -254,7 +254,7 @@ test("nested expanded matches snapshot", () => withHarness(async (state) => {
 		state,
 	);
 
-	const rtb = new RenderTestBackend().render(component as any, SNAP_WIDTH);
+	const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
 	await expectGoldenFile("nested-expanded", rtb.toSnapshot());
 }));
 

@@ -41,7 +41,7 @@ async function dispatchTool(
 	ctx: Record<string, unknown>,
 ): Promise<any> {
 	const blocked = await toolCall(event, ctx);
-	if (blocked?.block) return blocked;
+	if (blocked?.block) {return blocked;}
 	return pi.tools.get(event.toolName).execute(event.toolCallId, event.input, undefined, undefined, ctx);
 }
 
@@ -675,7 +675,7 @@ test("session resume restores readonly enforcement from persisted state", async 
 		{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } },
 	];
 
-	await sessionStart({ reason: "resume" }, makeReadonlyResumeCtx(branch) as any);
+	await sessionStart({ reason: "resume" }, makeReadonlyResumeCtx(branch));
 
 	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
 	expect(await toolCall({ toolName: "read", input: { path: "/tmp/x" } }, {})).toBeUndefined();

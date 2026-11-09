@@ -130,8 +130,8 @@ test("context nudges at band crossings and after a below-30% reset", async () =>
 			{ messages: [{ role: "user", content: `at ${percent}`, timestamp: percent }] },
 			{ getContextUsage: () => ({ percent }) },
 		);
-		if (shouldNudge) expect(result, `watchdog nudge at ${percent}%`).toBeDefined();
-		else expect(result, `watchdog nudge at ${percent}%`).toBeUndefined();
+		if (shouldNudge) {expect(result, `watchdog nudge at ${percent}%`).toBeDefined();}
+		else {expect(result, `watchdog nudge at ${percent}%`).toBeUndefined();}
 	}
 });
 
@@ -466,14 +466,14 @@ test("a continued run cancels only after MAX_HANDOFF_ATTEMPTS settled runs", asy
 
 	for (let run = 1; run < MAX_HANDOFF_ATTEMPTS; run++) {
 		deliverEligibleNudge(state);
-		for (let i = 0; i < 3; i++) await agentEnd({}, ctx);
+		for (let i = 0; i < 3; i++) {await agentEnd({}, ctx);}
 		await agentSettled({ type: "agent_settled" }, ctx);
 		assertPresent(state.pendingRequestedHandoff, `handoff must remain pending after settled run ${run}`);
 		expect(notifications, "cancellation must not notify early").toStrictEqual([]);
 	}
 
 	deliverEligibleNudge(state);
-	for (let i = 0; i < 3; i++) await agentEnd({}, ctx);
+	for (let i = 0; i < 3; i++) {await agentEnd({}, ctx);}
 	await agentSettled({ type: "agent_settled" }, ctx);
 	expect(state.pendingRequestedHandoff).toBeNull();
 	expect(statuses.get(STATUS_KEY_HANDOFF)).toBeUndefined();
@@ -521,7 +521,7 @@ async function createRequestedHandoffSession() {
 	const ctxAt = (usage: unknown) => ({
 		hasUI: true,
 		ui: {
-			notify: (message: string, level: string) => { if (level === "warning") warnings.push(message); },
+			notify: (message: string, level: string) => { if (level === "warning") {warnings.push(message);} },
 			theme: { fg: (_name: string, text: string) => text },
 			setStatus: () => {},
 			setWidget: () => {},
@@ -739,7 +739,7 @@ test("watchdog band-crossing: nudge iff context enters a higher band", async () 
 						const currentBand: number = raw < 50 ? 0 : raw < 70 ? 1 : 2;
 						const shouldNudge: boolean = lastBand === null || currentBand > lastBand;
 						expect(didNudge, `${raw}% band ${lastBand}→${currentBand}: nudge=${didNudge}`).toBe(shouldNudge);
-						if (didNudge) lastBand = currentBand;
+						if (didNudge) {lastBand = currentBand;}
 					}
 				}
 			},

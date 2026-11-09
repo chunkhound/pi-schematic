@@ -11,7 +11,7 @@ function ordered(values: Iterable<ModelGroupModality>): ModelGroupModality[] {
 function modalityCodec(): ConstraintCodec<ModelGroupModality[]> {
 	return {
 		decode(value, path) {
-			if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !MODEL_GROUP_MODALITIES.includes(item as ModelGroupModality)) || new Set(value).size !== value.length) return { ok: false, message: `${path} must be a unique modality vocabulary array` };
+			if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !MODEL_GROUP_MODALITIES.includes(item as ModelGroupModality)) || new Set(value).size !== value.length) {return { ok: false, message: `${path} must be a unique modality vocabulary array` };}
 			return { ok: true, value: ordered(value as ModelGroupModality[]) };
 		},
 		encode: (value) => [...value],
@@ -25,7 +25,7 @@ function satisfaction(missing: ModelGroupModality[]): ConstraintSatisfaction {
 }
 
 export function getModalitiesModelFact(model: Model<Api>): ModelGroupModality[] {
-	return ordered([...(Array.isArray(model.input) ? model.input as ModelGroupModality[] : []), ...(model.reasoning === true ? ["reasoning" as const] : [])]);
+	return ordered([...(Array.isArray(model.input) ? model.input as ModelGroupModality[] : []), ...(model.reasoning ? ["reasoning" as const] : [])]);
 }
 
 export const modalitiesConstraint: ConstraintDescriptor<"modalities", ModelGroupModality[], ModelGroupModalities, ModelGroupModality[], ModelGroupModality[], ModelGroupModality[]> = {
@@ -75,8 +75,8 @@ export const modalitiesConstraint: ConstraintDescriptor<"modalities", ModelGroup
 	},
 	requirement: {
 		decode(value, path) {
-			if (!value || typeof value !== "object" || Array.isArray(value) || !("required" in value)) return { ok: false, message: `${path} must be an object with required modalities` };
-			return modalityCodec().decode((value as { required: unknown }).required, `${path}.required`);
+			if (!value || typeof value !== "object" || Array.isArray(value) || !("required" in value)) {return { ok: false, message: `${path} must be an object with required modalities` };}
+			return modalityCodec().decode((value).required, `${path}.required`);
 		},
 		encode: (value) => ({ required: [...value] }),
 		equals: (left, right) => modalityCodec().equals(left, right),
@@ -106,9 +106,9 @@ export function deriveModalitiesEvaluation(
 }
 
 export function assertModalitiesOverrideSupported(evaluation: ConstraintEvaluation<ModelGroupModalities, ModelGroupModality[]>, override: ModelGroupModality[] | undefined): void {
-	if (override === undefined) return;
+	if (override === undefined) {return;}
 	const missing = evaluation.diagnostics.find((diagnostic) => diagnostic.code === "unsupported-override")?.details as ModelGroupModality[] | undefined;
-	if (missing?.length) throw new Error(`Model group modality override includes unsupported modalities: ${missing.join(", ")}.`);
+	if (missing?.length) {throw new Error(`Model group modality override includes unsupported modalities: ${missing.join(", ")}.`);}
 }
 
 export function getMissingModalitiesFromModel(model: Model<Api>, required: readonly ModelGroupModality[]): ModelGroupModality[] {
