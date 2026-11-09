@@ -2,6 +2,9 @@
 // project. A new file under tests/unit must be added here: the test-infra test, and so `npm test`,
 // fails until it is listed, and fails for an entry that has no file. The e2e files are not listed
 // and run on node:test through scripts/run-node-test.mjs, which leaves the listed files out.
+// TODO: remove this list, together with its test in tests/unit/test-infra.test.ts, once the e2e
+// suites run on Vitest and scripts/run-node-test.mjs is gone; the unit project then includes
+// tests/unit/**/*.test.ts by glob.
 
 /** Repository-relative paths of the test files that run on Vitest. */
 export const VITEST_FILES = [

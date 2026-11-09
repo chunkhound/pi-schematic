@@ -52,6 +52,7 @@ describe("run-node-test", () => {
 	});
 });
 
+// TODO: remove with tests/vitest-files.mjs once the unit project includes its files by glob.
 describe("tests/vitest-files.mjs", () => {
 	test("lists every unit test file under tests/unit", () => {
 		const onDisk = globSync("tests/unit/**/*.test.ts", { cwd: REPO_ROOT }).map((file) => file.split(sep).join("/"));
