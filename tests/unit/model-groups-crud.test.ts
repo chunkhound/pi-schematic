@@ -50,10 +50,10 @@ test("model groups store creates, round-trips, validates, renames, updates, dele
 	createGroup("project", access(cwd), "inherit-roundtrip", { models: [{ provider: "anthropic", modelId: "claude" }] }, registry());
 	const inheritLoaded = loadModelGroups(access(cwd)).configs.project.groups["inherit-roundtrip"].models[0];
 	expect(inheritLoaded.thinkingLevel).toBeUndefined();
-	expect(Object.keys(inheritLoaded)).not.toContain("thinkingLevel");
+	expect(Object.getOwnPropertyNames(inheritLoaded)).not.toContain("thinkingLevel");
 	const inheritPersisted = read("project", cwd).groups["inherit-roundtrip"].models[0];
 	expect(inheritPersisted.thinkingLevel).toBeUndefined();
-	expect(Object.keys(inheritPersisted)).not.toContain("thinkingLevel");
+	expect(Object.getOwnPropertyNames(inheritPersisted)).not.toContain("thinkingLevel");
 
 	updateGroup("project", access(cwd), "review", { models: [{ provider: "openai", modelId: "gpt-5", thinkingLevel: "high" }] }, registry());
 	renameGroup("project", access(cwd), "review", "reviewers");
@@ -88,7 +88,7 @@ test("model groups load recovery handles malformed, schema-invalid, unsupported 
 	fs.writeFileSync(modelGroupsPath("global", cwd), "{not json", "utf8");
 	let loaded = loadModelGroups(access(cwd));
 	expect(loaded.issues[0].kind).toBe("corrupt-json");
-	expect(fs.existsSync(`${modelGroupsPath("global", cwd)}.bak`)).toBe(true);
+	expect(`${modelGroupsPath("global", cwd)}.bak`).toSatisfy(fs.existsSync);
 
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { bad: { models: [{ provider: 1 }] } } }), "utf8");
@@ -99,7 +99,7 @@ test("model groups load recovery handles malformed, schema-invalid, unsupported 
 	expect(schemaIssue.sourcePath).toBe(modelGroupsPath("project", cwd));
 	expect(schemaIssue.backupPath).toBe(`${modelGroupsPath("project", cwd)}.bak`);
 	expect(schemaIssue.message).toMatch(/provider/);
-	expect(fs.existsSync(schemaIssue.backupPath!)).toBe(true);
+	expect(schemaIssue.backupPath!).toSatisfy(fs.existsSync);
 	expect(Object.keys(loaded.configs.project.groups).length).toBe(0);
 
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 99, groups: {} }), "utf8");
@@ -149,7 +149,7 @@ test("model groups rename failure removes the generated temp file and preserves 
 
 	expect(generatedTempPath).not.toBe("");
 	expect(fs.readFileSync(sourcePath)).toStrictEqual(committedBytes);
-	expect(fs.existsSync(generatedTempPath)).toBe(false);
+	expect(generatedTempPath).not.toSatisfy(fs.existsSync);
 	expect(fs.readdirSync(path.dirname(sourcePath)).filter((name) => /^model-groups\.json\.\d+\.\d+\.tmp$/.test(name))).toStrictEqual([]);
 }));
 
@@ -164,7 +164,7 @@ test("model groups rename cleanup failure remains supplemental to the original t
 	__setModelGroupsFsForTests({
 		renameSync: (from) => {
 			generatedTempPath = String(from);
-			expect(fs.existsSync(generatedTempPath)).toBe(true);
+			expect(generatedTempPath).toSatisfy(fs.existsSync);
 			throw renameCause;
 		},
 		unlinkSync: (target) => {
@@ -185,7 +185,7 @@ test("model groups rename cleanup failure remains supplemental to the original t
 
 	expect(generatedTempPath).not.toBe("");
 	expect(fs.readFileSync(sourcePath)).toStrictEqual(committedBytes);
-	expect(fs.existsSync(generatedTempPath)).toBe(true);
+	expect(generatedTempPath).toSatisfy(fs.existsSync);
 }));
 
 test("model groups persistence failures throw typed errors and preserve committed state", () => withTemp(({ cwd }) => {
@@ -264,7 +264,7 @@ test("model groups strictly partitions schema and legacy version domains", () =>
 		const issue = loaded.issues.find((candidate) => candidate.scope === "project")!;
 		expect(issue.kind, label).toBe("schema-invalid");
 		expect(issue.message, label).toMatch(message);
-		expect(fs.existsSync(`${projectPath}.bak`), label).toBe(true);
+		expect(`${projectPath}.bak`, label).toSatisfy(fs.existsSync);
 		expect(Object.keys(loaded.configs.project.groups).length, label).toBe(0);
 	}
 	for (const raw of [{ groups: { legacy: { models: [] } } }, { version: 0, groups: { legacy: { models: [] } } }]) {
@@ -286,7 +286,7 @@ test("legacy constraints recover as schema-invalid instead of crashing load", ()
 		const issue = loaded.issues.find((candidate) => candidate.scope === "project")!;
 		expect(issue.kind).toBe("schema-invalid");
 		expect(issue.message).toMatch(/constraints/);
-		expect(fs.existsSync(`${projectPath}.bak`)).toBe(true);
+		expect(`${projectPath}.bak`).toSatisfy(fs.existsSync);
 		expect(Object.keys(loaded.configs.project.groups).length).toBe(0);
 	}
 }));
@@ -374,7 +374,7 @@ test("injected persisted values are validated on save and malformed values trigg
 	expect(loaded.issues.length).toBe(1);
 	expect(loaded.issues[0].kind).toBe("schema-invalid");
 	expect(loaded.issues[0].message).toMatch(/testMinContext must be a positive safe integer/);
-	expect(fs.existsSync(`${sourcePath}.bak`), "malformed injected value must back up like any schema-invalid config").toBe(true);
+	expect(`${sourcePath}.bak`, "malformed injected value must back up like any schema-invalid config").toSatisfy(fs.existsSync);
 }));
 
 test("CRUD rejects unsupported injected overrides before any write", () => withTemp(({ cwd }) => {
@@ -420,7 +420,7 @@ test("v2 config load rejects non-array, duplicate, and out-of-vocabulary modalit
 		const issue = loaded.issues.find((candidate) => candidate.scope === "project")!;
 		expect(issue.kind, label).toBe("schema-invalid");
 		expect(issue.message, label).toMatch(message);
-		expect(fs.existsSync(`${projectPath}.bak`), label).toBe(true);
+		expect(`${projectPath}.bak`, label).toSatisfy(fs.existsSync);
 	}
 }));
 
@@ -438,7 +438,7 @@ test("v1 migration is in-memory until the first successful mutation writes v2 wi
 	updateGroup("project", access(cwd), "legacy", { models: [{ provider: "anthropic", modelId: "claude" }] }, registry());
 	const persisted = read("project", cwd);
 	expect(persisted.version).toBe(2);
-	expect(Object.keys(persisted.groups.legacy)).not.toContain("modalityOverride");
+	expect(Object.getOwnPropertyNames(persisted.groups.legacy)).not.toContain("modalityOverride");
 }));
 
 test("legacy modalityOverride is opaque and not interpreted", () => withTemp(({ cwd }) => {
@@ -448,10 +448,10 @@ test("legacy modalityOverride is opaque and not interpreted", () => withTemp(({ 
 	fs.writeFileSync(sourcePath, v1Bytes, "utf8");
 	const loaded = loadModelGroups(access(cwd));
 	expect(loaded.configs.project.groups.legacy.constraints).toBeUndefined();
-	expect(Object.keys(loaded.configs.project.groups.legacy)).toContain("modalityOverride");
+	expect(Object.getOwnPropertyNames(loaded.configs.project.groups.legacy)).toContain("modalityOverride");
 	expect(fs.readFileSync(sourcePath, "utf8")).toBe(v1Bytes);
 	saveModelGroups("project", access(cwd), loaded.configs.project);
-	expect(Object.keys(read("project", cwd).groups.legacy)).not.toContain("modalityOverride");
+	expect(Object.getOwnPropertyNames(read("project", cwd).groups.legacy)).not.toContain("modalityOverride");
 }));
 
 test("malformed legacy modalityOverride loads opaquely and is dropped on a v2 write", () => withTemp(({ cwd }) => {
@@ -464,7 +464,7 @@ test("malformed legacy modalityOverride loads opaquely and is dropped on a v2 wr
 	expect((loaded.configs.project.groups.legacy as any).modalityOverride).toBe("not-an-array");
 	expect(fs.readFileSync(sourcePath, "utf8")).toBe(v1Bytes);
 	saveModelGroups("project", access(cwd), loaded.configs.project);
-	expect(Object.keys(read("project", cwd).groups.legacy)).not.toContain("modalityOverride");
+	expect(Object.getOwnPropertyNames(read("project", cwd).groups.legacy)).not.toContain("modalityOverride");
 }));
 
 test("v2 constraint envelope preserves explicit empty and opaque slots canonically", () => withTemp(({ cwd }) => {
@@ -484,7 +484,7 @@ test("v2 constraint envelope preserves explicit empty and opaque slots canonical
 	for (const [name, _envelope, expected] of fixtures) {
 		const group = persisted.groups[name];
 		if (expected === undefined) {
-			expect(Object.keys(group), name).not.toContain("constraints");
+			expect(Object.getOwnPropertyNames(group), name).not.toContain("constraints");
 		} else {
 			expect(group.constraints.modalities, name).toStrictEqual(expected);
 		}
@@ -507,7 +507,7 @@ test("v2 drops stale modalityOverride rather than reinterpreting it", () => with
 	expect(loaded.issues.length).toBe(0);
 	expect(loaded.configs.project.groups.stale.constraints).toBeUndefined();
 	saveModelGroups("project", access(cwd), loaded.configs.project);
-	expect(Object.keys(read("project", cwd).groups.stale)).not.toContain("modalityOverride");
+	expect(Object.getOwnPropertyNames(read("project", cwd).groups.stale)).not.toContain("modalityOverride");
 }));
 
 test("v2 normalization preserves opaque root group and model keys through load save and update", () => withTemp(({ cwd }) => {
@@ -551,7 +551,7 @@ test("store normalization strips runtime-derived group keys while preserving opa
 	expect(Object.keys(persisted).sort()).toStrictEqual(["constraints", "models", "opaqueSentinel"]);
 	expect(persisted.constraints.modalities).toStrictEqual(["text", "image"]);
 	expect(persisted.opaqueSentinel).toStrictEqual({ keep: true });
-	for (const key of ["name", "scope", "sourcePath", "modalities", "validation"]) expect(Object.keys(persisted)).not.toContain(key);
+	for (const key of ["name", "scope", "sourcePath", "modalities", "validation"]) expect(Object.getOwnPropertyNames(persisted)).not.toContain(key);
 }));
 
 test("version-3 mutations refuse before temp write including loadScopeConfig-backed CRUD", () => withTemp(({ cwd }) => {
@@ -595,7 +595,7 @@ test("model groups use branded paths, global-only access, canonical own keys, an
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), raw, "utf8");
 	let loaded = loadModelGroups(access(cwd));
-	for (const name of ["__proto__", "constructor", "toString"]) expect(Object.keys(loaded.configs.project.groups)).toContain(name);
+	for (const name of ["__proto__", "constructor", "toString"]) expect(Object.getOwnPropertyNames(loaded.configs.project.groups)).toContain(name);
 	expect(loaded.configs.project.groups.__proto__.models[0].thinkingLevel).toBe("max");
 	saveModelGroups("project", access(cwd), loaded.configs.project);
 	const persisted = read("project", cwd);
@@ -607,7 +607,7 @@ test("model groups use branded paths, global-only access, canonical own keys, an
 		createGroup("global", access(cwd), ` ${name} `, { models: [] }, registry());
 		updateGroup("global", access(cwd), name, { models: [{ provider: "p", modelId: name }] }, registry());
 		moveGroup(access(cwd), name, "project");
-		expect(Object.keys(read("project", cwd).groups)).toContain(name);
+		expect(Object.getOwnPropertyNames(read("project", cwd).groups)).toContain(name);
 		deleteGroup("project", access(cwd), name);
 	}
 
@@ -655,7 +655,7 @@ test("global model groups file lives under PI_CODING_AGENT_DIR when it is set", 
 	createGroup("global", access(cwd), "relocated", { models: [] }, registry());
 
 	expect(JSON.parse(fs.readFileSync(expectedPath, "utf8")).groups.relocated.models).toStrictEqual([]);
-	expect(fs.existsSync(path.join(home, ".pi"))).toBe(false);
+	expect(path.join(home, ".pi")).not.toSatisfy(fs.existsSync);
 })));
 
 test("global model groups file defaults to the home agent dir when PI_CODING_AGENT_DIR is unset", () => withTemp(({ cwd, home }) => {
@@ -691,7 +691,7 @@ test("a project config dir that is the agent dir refuses project-scope writes", 
 	const sharedPath = pointAgentDirAtProjectConfig(cwd);
 
 	expect(() => createGroup("project", access(cwd, "global-project"), "local", { models: [] }, registry())).toThrow(/unavailable in global-only mode/);
-	expect(fs.existsSync(sharedPath)).toBe(false);
+	expect(sharedPath).not.toSatisfy(fs.existsSync);
 }));
 
 test("a trusted session whose project config dir is the agent dir gets global-only access", () => withTemp(({ cwd }) => {
@@ -752,7 +752,7 @@ test("an agent dir symlinked to the project config dir refuses project-scope wri
 	pointAgentDirAtProjectConfigThroughSymlink(cwd);
 
 	expect(() => createGroup("project", access(cwd, "global-project"), "local", { models: [] }, registry())).toThrow(/unavailable in global-only mode/);
-	expect(fs.existsSync(path.join(cwd, ".pi", "pi-schematic", "model-groups.json"))).toBe(false);
+	expect(path.join(cwd, ".pi", "pi-schematic", "model-groups.json")).not.toSatisfy(fs.existsSync);
 }));
 
 test("an agent dir naming the project config dir in another case loads its groups once, as global", ({ skip }) => withTemp(({ cwd }) => {
@@ -772,5 +772,5 @@ test("an agent dir naming the project config dir in another case refuses project
 	}
 
 	expect(() => createGroup("project", access(cwd, "global-project"), "local", { models: [] }, registry())).toThrow(/unavailable in global-only mode/);
-	expect(fs.existsSync(path.join(cwd, ".pi", "pi-schematic", "model-groups.json"))).toBe(false);
+	expect(path.join(cwd, ".pi", "pi-schematic", "model-groups.json")).not.toSatisfy(fs.existsSync);
 }));

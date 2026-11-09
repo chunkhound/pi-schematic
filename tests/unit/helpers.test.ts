@@ -25,7 +25,7 @@ async function withPriorAgentDir(prior: string | undefined, body: () => Promise<
 }
 
 function assertAgentDirRestored(prior: string | undefined): void {
-	if (prior === undefined) expect(KEY in process.env).toBe(false);
+	if (prior === undefined) expect(process.env).not.toHaveProperty([KEY]);
 	else expect(process.env[KEY]).toBe(prior);
 }
 
@@ -57,11 +57,11 @@ for (const { label, prior } of priors) {
 
 	test(`withTempHome clears PI_CODING_AGENT_DIR during the run and restores ${label} value`, async () => {
 		await withPriorAgentDir(prior, async () => {
-			let presentDuringRun: boolean | undefined;
+			let envDuringRun: NodeJS.ProcessEnv | undefined;
 			await withTempHome(async () => {
-				presentDuringRun = KEY in process.env;
+				envDuringRun = { ...process.env };
 			});
-			expect(presentDuringRun).toBe(false);
+			expect(envDuringRun).not.toHaveProperty([KEY]);
 			assertAgentDirRestored(prior);
 		});
 	});
@@ -76,9 +76,9 @@ for (const { label, prior } of priors) {
 	test(`setTempHome clears PI_CODING_AGENT_DIR until its restore function restores ${label} value`, async () => {
 		await withPriorAgentDir(prior, async () => {
 			const restoreHome = setTempHome("/temp/home");
-			const presentWhileSet = KEY in process.env;
+			const envWhileSet = { ...process.env };
 			restoreHome();
-			expect(presentWhileSet).toBe(false);
+			expect(envWhileSet).not.toHaveProperty([KEY]);
 			assertAgentDirRestored(prior);
 		});
 	});

@@ -138,7 +138,7 @@ test.skipIf(!canUseOsSandbox())("sandboxed child bash write outside temp returns
 		const structured = result.structuredContent as { output: string; exit_code: number };
 		expect(structured.output.endsWith(`\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`), structured.output).toBe(true);
 		expect(structured.exit_code).toBe(1);
-		expect(fs.existsSync(target), "the sandbox must block the write").toBe(false);
+		expect(target, "the sandbox must block the write").not.toSatisfy(fs.existsSync);
 	} finally {
 		fs.rmSync(target, { force: true });
 	}
@@ -157,7 +157,7 @@ test.skipIf(!canUseOsSandbox())("sandboxed child bash error carrying a sandbox d
 			expect(error.message.endsWith(READONLY_SANDBOX_BLOCK_NOTICE), error.message).toBe(true);
 			return true;
 		});
-		expect(fs.existsSync(target), "the sandbox must block the write").toBe(false);
+		expect(target, "the sandbox must block the write").not.toSatisfy(fs.existsSync);
 	} finally {
 		fs.rmSync(target, { force: true });
 	}
@@ -194,7 +194,7 @@ test("child bash call the readonly guard blocks throws the block reason", async 
 
 	try {
 		await expect(runChildBash(`touch ${quoteShellArgument(target)}`)).rejects.toThrow(/Readonly mode:/);
-		expect(fs.existsSync(target)).toBe(false);
+		expect(target).not.toSatisfy(fs.existsSync);
 	} finally {
 		fs.rmSync(target, { force: true });
 	}
@@ -278,7 +278,7 @@ test("child bash call resolves a relative write against the execution cwd", asyn
 		const result = await tool.execute("child-bash", { command: "touch relative-target" }, undefined, undefined, ctx as any);
 
 		expect(result.isError, textOf(result)).toBeUndefined();
-		expect(fs.readdirSync(executionCwd)).toContain("relative-target");
+		expect(path.join(executionCwd, "relative-target")).toSatisfy(fs.existsSync);
 	} finally {
 		fs.rmSync(executionCwd, { recursive: true, force: true });
 	}

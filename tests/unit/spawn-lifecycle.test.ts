@@ -269,7 +269,7 @@ test("nested spawn completed-session deletion stays stale even if the toolCallId
 	const afterReuse = component.render(120);
 	expect(invalidateCalls, "toolCallId reuse should not revive a completed stale session").toBe(0);
 	expect(afterReuse, "toolCallId reuse should keep the old rendered state frozen").toStrictEqual(before);
-	expect(afterReuse.every((l: string) => !l.includes("should be dropped")), "toolCallId reuse should not admit stale text updates").toBe(true);
+	expect(afterReuse.filter((l: string) => l.includes("should be dropped")), "toolCallId reuse should not admit stale text updates").toStrictEqual([]);
 });
 
 test("nested spawn drops late events after live registry deletion", async () => {
@@ -330,7 +330,7 @@ test("nested spawn reattach resets render guard for the new session", async () =
 	flushSpawnFrameScheduler();
 	expect(invalidateCalls, "second session event triggers another invalidate after reattach").toBe(2);
 	const lines = sameComponent.render(120);
-	expect(lines.some((l: string) => l.includes("replacement 2"))).toBe(true);
+	expect(lines).toContainEqual(expect.stringContaining("replacement 2"));
 });
 
 test("nested spawn dispose then reattach streams new session events", async () => {
@@ -369,6 +369,6 @@ test("nested spawn dispose then reattach streams new session events", async () =
 	flushSpawnFrameScheduler();
 
 	const lines = reattached.render(120);
-	expect(lines.some((l: string) => l.includes("session B output")), "reattached component should render events from the new session").toBe(true);
-	expect(lines.some((l: string) => l.includes("first")), "reattached component should not show stale content from disposed session").toBe(false);
+	expect(lines, "reattached component should render events from the new session").toContainEqual(expect.stringContaining("session B output"));
+	expect(lines, "reattached component should not show stale content from disposed session").not.toContainEqual(expect.stringContaining("first"));
 });

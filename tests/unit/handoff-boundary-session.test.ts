@@ -394,6 +394,7 @@ describe("handoff boundary in a real agent session", () => {
 
 		expect(observed.usageAtHandoffCall.length).toBe(1);
 		const tokens = observed.usageAtHandoffCall[0]?.tokens;
+		expect(tokens, `usage at the handoff call: ${String(tokens)}`).toBeTypeOf("number");
 		expect(tokens, `usage at the handoff call: ${String(tokens)}`).toBeGreaterThanOrEqual(MIN_HANDOFF_TOKENS);
 	});
 

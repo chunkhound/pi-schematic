@@ -307,9 +307,9 @@ test("child notebook tools reject stale access after reset", async () => {
 	const [notebookWrite, notebookRead, notebookIndex] = createNotebookToolDefinitions(pi as any, state, { isStale: () => stale });
 
 	stale = true;
-	await expect(() => notebookWrite.execute("1", { name: "entry-a", content: "alpha" }, undefined, undefined, {} as any)).rejects.toThrow(/invalidated by reset/i);
-	await expect(() => notebookRead.execute("2", { name: "entry-a" }, undefined, undefined, {} as any)).rejects.toThrow(/invalidated by reset/i);
-	await expect(() => notebookIndex.execute("3", {}, undefined, undefined, {} as any)).rejects.toThrow(/invalidated by reset/i);
+	await expect(notebookWrite.execute("1", { name: "entry-a", content: "alpha" }, undefined, undefined, {} as any)).rejects.toThrow(/invalidated by reset/i);
+	await expect(notebookRead.execute("2", { name: "entry-a" }, undefined, undefined, {} as any)).rejects.toThrow(/invalidated by reset/i);
+	await expect(notebookIndex.execute("3", {}, undefined, undefined, {} as any)).rejects.toThrow(/invalidated by reset/i);
 	expect(state.notebookPages.get("entry-a")).toBe("alpha");
 	expect(pi.appendedEntries.length).toBe(0);
 });
@@ -682,7 +682,6 @@ test("resolvePager leaves other pagers and wrappers unchanged", () => {
 test("spawnPager rejects with a readable error when the pager binary is missing", async ({ skip }) => {
 	if (process.platform === "win32") {
 		skip("shell: true reports a missing binary only as a cmd.exe exit code");
-		return;
 	}
 	await expect(spawnPager("body", { cmd: "pi-schematic-definitely-missing-xyz", args: [] })).rejects.toThrow(/pi-schematic-definitely-missing-xyz not found/);
 });
@@ -1047,9 +1046,9 @@ test("saveNotebookPage rejects true reentrancy explicitly", async () => {
 	const pi = await createTestHost();
 	const state = createState();
 
-	await expect(() => saveNotebookPage(pi as any, state, "outer", "outer", async () => {
-			await saveNotebookPage(pi as any, state, "inner", "inner");
-		})).rejects.toThrow(/not reentrant/i);
+	await expect(saveNotebookPage(pi as any, state, "outer", "outer", async () => {
+		await saveNotebookPage(pi as any, state, "inner", "inner");
+	})).rejects.toThrow(/not reentrant/i);
 	expect(state.notebookPages.size).toBe(0);
 });
 
@@ -1059,19 +1058,19 @@ test("saveNotebookPage stays non-reentrant across runtime singleton swaps", asyn
 	const previousSingletons = getSingletons();
 
 	try {
-		await expect(() => Promise.race([
-				saveNotebookPage(pi as any, state, "outer", "outer", async () => {
-					__setSingletons({
-						writeLock: createWriteLock(),
-						writeContext: new AsyncLocalStorage<true>(),
-						frameScheduler: getSingletons().frameScheduler,
-					});
-					await saveNotebookPage(pi as any, state, "inner", "inner");
-				}),
-				new Promise<never>((_, reject) => {
-					setTimeout(() => reject(new Error("timeout")), 1000);
-				}),
-			])).rejects.toThrow(/not reentrant/i);
+		await expect(Promise.race([
+			saveNotebookPage(pi as any, state, "outer", "outer", async () => {
+				__setSingletons({
+					writeLock: createWriteLock(),
+					writeContext: new AsyncLocalStorage<true>(),
+					frameScheduler: getSingletons().frameScheduler,
+				});
+				await saveNotebookPage(pi as any, state, "inner", "inner");
+			}),
+			new Promise<never>((_, reject) => {
+				setTimeout(() => reject(new Error("timeout")), 1000);
+			}),
+		])).rejects.toThrow(/not reentrant/i);
 		expect(state.notebookPages.size).toBe(0);
 	} finally {
 		resetNotebookWriteLock();
@@ -1083,9 +1082,9 @@ test("saveNotebookPage releases the lock when assertWritable throws", async () =
 	const pi = await createTestHost();
 	const state = createState();
 
-	await expect(() => saveNotebookPage(pi as any, state, "broken", "value", async () => {
-			throw new Error("blocked");
-		})).rejects.toThrow(/blocked/);
+	await expect(saveNotebookPage(pi as any, state, "broken", "value", async () => {
+		throw new Error("blocked");
+	})).rejects.toThrow(/blocked/);
 	await expect(saveNotebookPage(pi as any, state, "fresh", "value")).resolves.not.toThrow();
 	expect(state.notebookPages.get("fresh")).toBe("value");
 });
@@ -1148,7 +1147,7 @@ test("notebook tool definitions include prompt hints when withPromptHints is tru
 
 	for (const tool of tools) {
 		expect(typeof tool.promptSnippet, `${tool.name} should have promptSnippet when withPromptHints=true`).toBe("string");
-		expect(tool.promptGuidelines, `${tool.name} should have promptGuidelines when withPromptHints=true`).toBeInstanceOf(Array);
+		expect(tool.promptGuidelines, `${tool.name} should have promptGuidelines when withPromptHints=true`).toSatisfy(Array.isArray);
 	}
 	const notebookWrite = tools.find(t => t.name === "notebook_write")!;
 	const notebookRead = tools.find(t => t.name === "notebook_read")!;
@@ -1509,11 +1508,11 @@ test("oversized first line rejects a new page without side effects", async () =>
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
 
 	for (const content of [R, UR]) {
-		await expect(() => saveNotebookPage(pi as any, state, "page", content)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === rejectMessage("page"));
+		await expect(saveNotebookPage(pi as any, state, "page", content)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === rejectMessage("page"));
 	}
 
 	let updateCalled = false;
-	await expect(() => notebookWrite.execute("1", { name: "page", content: R }, undefined, () => { updateCalled = true; }, makeTUICtx({ hasUI: true, record }))).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === rejectMessage("page"));
+	await expect(notebookWrite.execute("1", { name: "page", content: R }, undefined, () => { updateCalled = true; }, makeTUICtx({ hasUI: true, record }))).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === rejectMessage("page"));
 	expect(updateCalled).toBe(false);
 	expect(state.notebookPages.size).toBe(0);
 	expect(state.epoch).toBe(0);
@@ -1535,7 +1534,7 @@ test("rejected overwrite preserves prior body and clipped flag", async () => {
 
 	await saveNotebookPage(pi as any, state, "page", C);
 	const epochBefore = state.epoch;
-	await expect(() => saveNotebookPage(pi as any, state, "page", R)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === rejectMessage("page"));
+	await expect(saveNotebookPage(pi as any, state, "page", R)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === rejectMessage("page"));
 	expect(state.notebookPages.get("page")).toBe(C);
 	expect(state.epoch).toBe(epochBefore);
 	expect(pi.appendedEntries.length).toBe(1);
@@ -1545,7 +1544,7 @@ test("rejected overwrite preserves prior body and clipped flag", async () => {
 
 	await saveNotebookPage(pi as any, state, "page", L(2001));
 	const epochClipped = state.epoch;
-	await expect(() => saveNotebookPage(pi as any, state, "page", R)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === rejectMessage("page"));
+	await expect(saveNotebookPage(pi as any, state, "page", R)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === rejectMessage("page"));
 	expect(state.notebookPages.get("page")).toBe(L(2000));
 	expect(state.epoch).toBe(epochClipped);
 	read = await notebookRead.execute("3", { name: "page" }, undefined, undefined, {} as any);
@@ -1564,10 +1563,10 @@ test("blank first line plus oversized line rejects and preserves prior page stat
 	const epochBefore = state.epoch;
 	const entriesBefore = pi.appendedEntries.length;
 
-	await expect(() => saveNotebookPage(pi as any, state, "page", blankFirstLineOverflow)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === emptyHeadRejectMessage("page"));
+	await expect(saveNotebookPage(pi as any, state, "page", blankFirstLineOverflow)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === emptyHeadRejectMessage("page"));
 
 	let updateCalled = false;
-	await expect(() => notebookWrite.execute("2", { name: "page", content: blankFirstLineOverflow }, undefined, () => { updateCalled = true; }, makeTUICtx({ hasUI: true, record }))).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === emptyHeadRejectMessage("page"));
+	await expect(notebookWrite.execute("2", { name: "page", content: blankFirstLineOverflow }, undefined, () => { updateCalled = true; }, makeTUICtx({ hasUI: true, record }))).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === emptyHeadRejectMessage("page"));
 	expect(updateCalled).toBe(false);
 	expect(state.notebookPages.get("page")).toBe(C);
 	expect(state.clippedPages.has("page")).toBe(false);
@@ -1580,7 +1579,7 @@ test("blank first line plus oversized line rejects and preserves prior page stat
 	await saveNotebookPage(pi as any, state, "page", L(2001));
 	const epochClipped = state.epoch;
 	const entriesClipped = pi.appendedEntries.length;
-	await expect(() => saveNotebookPage(pi as any, state, "page", blankFirstLineOverflow)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === emptyHeadRejectMessage("page"));
+	await expect(saveNotebookPage(pi as any, state, "page", blankFirstLineOverflow)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === emptyHeadRejectMessage("page"));
 	const read = await notebookRead.execute("3", { name: "page" }, undefined, undefined, {} as any);
 	expect(state.notebookPages.get("page")).toBe(L(2000));
 	expect(state.clippedPages.has("page")).toBe(true);

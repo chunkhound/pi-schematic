@@ -46,7 +46,7 @@ test("real child output is truncated at the public line limit", async () => {
 	expect(text).toMatch(/^line 0/);
 	// Pins Pi's public limits on purpose, so a change to them in Pi fails here.
 	expect(text).toMatch(/\[Result truncated to 2000 lines \/ 50 KiB \(51200 bytes\)\. Spawn a new child with a narrower request if more is needed\.\]/);
-	expect(text.includes("line 2099")).toBe(false);
+	expect(text).not.toContain("line 2099");
 });
 
 test("real child abort before prompt returns an aborted result without a running update", async () => {
@@ -204,13 +204,13 @@ test("real child prompt includes injected notebook pages", async () => {
 		prompt: "Do the task.",
 		notebookPages: { "entry-a": "preview line\nfull body" },
 	});
-	expect(proof.observedMessages.some((message) => message.includes("entry-a: preview line")), "child prompt must include the injected notebook page preview").toBe(true);
+	expect(proof.observedMessages, "child prompt must include the injected notebook page preview").toContainEqual(expect.stringContaining("entry-a: preview line"));
 });
 
 // 3b. No notebook pages -> the explicit 'No notebook pages.' branch.
 test("real child prompt uses the 'No notebook pages.' branch when state is empty", async () => {
 	const proof = await runRealChildInvocation({ prompt: "Do the task." });
-	expect(proof.observedMessages.some((message) => message.includes("No notebook pages.")), "empty notebook must produce the 'No notebook pages.' branch").toBe(true);
+	expect(proof.observedMessages, "empty notebook must produce the 'No notebook pages.' branch").toContainEqual(expect.stringContaining("No notebook pages."));
 });
 
 // 4. childSessions cleared after a successful spawn.

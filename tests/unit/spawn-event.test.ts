@@ -146,22 +146,22 @@ test("nested spawn live action tracks tool execution events", async () => {
 	// message_start → thinking
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	let lines = component.render(120);
-	expect(lines.some((l: string) => l.includes("thinking")), `expected thinking, got: ${lines.join("\n")}`).toBe(true);
+	expect(lines, `expected thinking, got: ${lines.join("\n")}`).toContainEqual(expect.stringContaining("thinking"));
 
 	// message_update with text → live preview
 	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "writing code now" }] } });
 	lines = component.render(120);
-	expect(lines.some((l: string) => l.includes("writing code now")), `expected live text preview, got: ${lines.join("\n")}`).toBe(true);
+	expect(lines, `expected live text preview, got: ${lines.join("\n")}`).toContainEqual(expect.stringContaining("writing code now"));
 
 	// message_end → success marker in identity line
 	emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "summary" }], stopReason: "end_turn" } });
 	lines = component.render(120);
-	expect(lines.some((l: string) => l.includes("✅")), `expected success marker, got: ${lines.join("\n")}`).toBe(true);
+	expect(lines, `expected success marker, got: ${lines.join("\n")}`).toContainEqual(expect.stringContaining("✅"));
 
 	// Tool events degrade gracefully in minimal test env and still update live action
 	emit({ type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } });
 	lines = component.render(120);
-	expect(lines.some((l: string) => l.includes("[bash]")), `expected tool live action, got: ${lines.join("\n")}`).toBe(true);
+	expect(lines, `expected tool live action, got: ${lines.join("\n")}`).toContainEqual(expect.stringContaining("[bash]"));
 });
 
 test("nested spawn handleEvent recovers from malformed events", async () => {
@@ -184,7 +184,7 @@ test("nested spawn handleEvent recovers from malformed events", async () => {
 	// Subsequent valid events still process
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	const lines = component.render(120);
-	expect(lines.some((l: string) => l.includes("thinking")), `expected thinking after recovery, got: ${lines.join("\n")}`).toBe(true);
+	expect(lines, `expected thinking after recovery, got: ${lines.join("\n")}`).toContainEqual(expect.stringContaining("thinking"));
 });
 
 test("nested spawn message_end with aborted stopReason clears pending tools", async () => {
@@ -207,7 +207,7 @@ test("nested spawn message_end with aborted stopReason clears pending tools", as
 	emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "partial" }], stopReason: "aborted", errorMessage: "killed" } });
 
 	const lines = component.render(120);
-	expect(lines.some((l: string) => l.includes("aborted")), `expected aborted, got: ${lines.join("\n")}`).toBe(true);
+	expect(lines, `expected aborted, got: ${lines.join("\n")}`).toContainEqual(expect.stringContaining("aborted"));
 });
 
 test("nested spawn dispose stops event processing", async () => {
@@ -230,7 +230,7 @@ test("nested spawn dispose stops event processing", async () => {
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	const after = component.render(120);
 
-	expect(after.every((line: string) => !line.includes("thinking")), `unexpected post-dispose update: ${after.join("\n")}`).toBe(true);
+	expect(after.filter((line: string) => line.includes("thinking")), `unexpected post-dispose update: ${after.join("\n")}`).toStrictEqual([]);
 });
 
 test("nested spawn dispose aborts but does not dispose a claimed live child session", async () => {
@@ -291,13 +291,13 @@ test("nested spawn rapid events collapse to last state", async () => {
 
 	// Single render should reflect last state
 	const lines = component.render(120);
-	expect(lines.some((l: string) => l.includes("file3"))).toBe(true);
+	expect(lines).toContainEqual(expect.stringContaining("file3"));
 
 	// End the tool and verify final state
 	emit({ type: "tool_execution_end", toolCallId: "tc-1", result: { content: [{ type: "text", text: "done" }] }, isError: false });
 
 	const finalLines = component.render(120);
-	expect(finalLines.some((l: string) => l.includes("✓"))).toBe(true);
+	expect(finalLines).toContainEqual(expect.stringContaining("✓"));
 });
 
 // Verifies pendingToolCallCreations accumulation: the last streamed args
@@ -362,7 +362,7 @@ test("nested spawn coalesces same-turn child events into one parent invalidate",
 	expect(invalidateCalls, "same-turn events coalesce into one invalidate").toBe(1);
 
 	const lines = component.render(120);
-	expect(lines.some((l: string) => l.includes("file2"))).toBe(true);
+	expect(lines).toContainEqual(expect.stringContaining("file2"));
 });
 
 test("nested spawn retries a throw-once parent invalidate without a new child event", async () => {
@@ -501,8 +501,8 @@ test("nested spawn shared scheduler calls each distinct invalidate once per fram
 	expect(firstInvalidates).toBe(1);
 	expect(secondInvalidates).toBe(1);
 
-	expect(firstComponent.render(120).some((l: string) => l.includes("first latest"))).toBe(true);
-	expect(secondComponent.render(120).some((l: string) => l.includes("second latest"))).toBe(true);
+	expect(firstComponent.render(120)).toContainEqual(expect.stringContaining("first latest"));
+	expect(secondComponent.render(120)).toContainEqual(expect.stringContaining("second latest"));
 });
 
 test("nested spawn shared scheduler still coalesces duplicate invalidate callbacks", async () => {
@@ -554,13 +554,13 @@ test("nested spawn renders state changes across frame boundaries", async () => {
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	flushSpawnFrameScheduler();
 	const firstLines = component.render(120);
-	expect(firstLines.some((l: string) => l.includes("thinking"))).toBe(true);
+	expect(firstLines).toContainEqual(expect.stringContaining("thinking"));
 
 	// Second batch: message_update with new text, flush triggers new render
 	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "batch 2" }] } });
 	flushSpawnFrameScheduler();
 	const secondLines = component.render(120);
-	expect(secondLines.some((l: string) => l.includes("batch 2"))).toBe(true);
+	expect(secondLines).toContainEqual(expect.stringContaining("batch 2"));
 });
 
 test("nested spawn dispose cancels pending and further invalidates after cleanup", async () => {
@@ -616,7 +616,7 @@ test("nested spawn recovers batching state after event handler error", async () 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	flushSpawnFrameScheduler();
 	const lines = component.render(120);
-	expect(lines.some((l: string) => l.includes("thinking")), "error recovery should allow subsequent events to render").toBe(true);
+	expect(lines, "error recovery should allow subsequent events to render").toContainEqual(expect.stringContaining("thinking"));
 });
 
 test("handleEvent gracefully degrades with null message events", async () => {
@@ -641,5 +641,5 @@ test("handleEvent gracefully degrades with null message events", async () => {
 
 	// No crash = asToolResult guard works
 	const lines = component.render(120);
-	expect(lines).toBeInstanceOf(Array);
+	expect(lines).toSatisfy(Array.isArray);
 });
