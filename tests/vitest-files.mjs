@@ -1,6 +1,7 @@
-// The test files that run on Vitest. vitest.config.ts runs exactly these in its unit project, and
-// scripts/run-node-test.mjs leaves them out of the node:test run. The list is temporary while the
-// suite moves to Vitest; every other test file still runs on node:test.
+// The unit test files, all of which run on Vitest: vitest.config.ts runs exactly these in its unit
+// project. A new file under tests/unit must be added here, or `npm test` never runs it; the test-infra
+// test fails until it is listed. The e2e files are not listed and run on node:test through
+// scripts/run-node-test.mjs, which leaves the listed files out.
 
 /** Repository-relative paths of the test files that run on Vitest. */
 export const VITEST_FILES = [

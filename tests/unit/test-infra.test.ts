@@ -2,9 +2,11 @@
 // script, the compat lane's test lists, and the run-wide config that keeps parameterized test
 // titles whole.
 
-import { join } from "node:path";
+import { globSync } from "node:fs";
+import { join, sep } from "node:path";
 import { describe, expect, test } from "vitest";
 import { REPO_ROOT, REPO_ROOT_URL } from "../paths.js";
+import { VITEST_FILES } from "../vitest-files.mjs";
 import { spawnNode } from "./spawn-node.js";
 
 const { assertCompatTestLists, COMPAT_NODE_TEST_FILES, COMPAT_VITEST_FILES } = await import(
@@ -46,6 +48,14 @@ describe("run-node-test", () => {
 		const result = spawnNode(["scripts/run-node-test.mjs", "tests/unit/thinking-levels.test.ts"], { cwd: REPO_ROOT });
 		expect(result.status).not.toBe(0);
 		expect(result.stderr).toMatch(/Every file matching tests\/unit\/thinking-levels\.test\.ts runs on Vitest/);
+	});
+});
+
+describe("tests/vitest-files.mjs", () => {
+	test("lists every unit test file under tests/unit", () => {
+		const onDisk = globSync("tests/unit/**/*.test.ts", { cwd: REPO_ROOT }).map((file) => file.split(sep).join("/"));
+		const unlisted = onDisk.filter((file) => !VITEST_FILES.includes(file)).sort();
+		expect(unlisted).toStrictEqual([]);
 	});
 });
 
