@@ -181,7 +181,7 @@ test("model-group frontmatter triggers model switch for /skill:name command", as
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/skill:quick", source: "interactive" }, ctx);
 
-		expect(setModelCalls.length).toBe(1);
+		expect(setModelCalls).toHaveLength(1);
 		expect(setModelCalls[0].provider).toBe("anthropic");
 		expect(notifications.map((n) => n.message)).toContainEqual(expect.stringMatching(/Model changed.*fast.*\/skill:quick/));
 	} finally {
@@ -274,7 +274,7 @@ test("empty model-group (SpawnRouteError) blocks execution with error", async ()
 		const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
 		expect(result).toStrictEqual({ action: "handled" });
-		expect(setModelCalls.length).toBe(0);
+		expect(setModelCalls).toHaveLength(0);
 		expect(notifications.find((n) => n.level === "error")?.message ?? "").toMatch(/empty/);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
@@ -572,7 +572,7 @@ test("valid model applies when model-group frontmatter is invalid", async () => 
 		expect(result).toStrictEqual({ action: "continue" });
 		expect(setModelCalls.map((model) => model.id)).toStrictEqual(["gpt-4o"]);
 		const warnings = notifications.filter((notification) => notification.level === "warning");
-		expect(warnings.length).toBe(1);
+		expect(warnings).toHaveLength(1);
 		expect(warnings[0]?.message ?? "").toMatch(/`model-group`/);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
@@ -899,8 +899,8 @@ test("streaming blocks model selection without mutation", async () => withTemp(a
 	for (const scenario of cases) {
 		const run = await runPromptInput(cwd, scenario.frontmatter, "success", scenario.streamingBehavior);
 		expect(run.result).toStrictEqual({ action: "handled" });
-		expect(run.modelCalls.length).toBe(0);
-		expect(run.thinkingCalls.length).toBe(0);
+		expect(run.modelCalls).toHaveLength(0);
+		expect(run.thinkingCalls).toHaveLength(0);
 		expect(run.notifications.map((item) => item.level)).toContain("warning");
 		expect(modelSelectionEntries(run.pi)).toStrictEqual([]);
 	}

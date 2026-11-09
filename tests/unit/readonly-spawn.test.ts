@@ -126,7 +126,7 @@ function runChildBashUntil(command: string, marker: string) {
 }
 
 const SANDBOX_DENIAL_PHRASE = SANDBOX_DENIAL_PHRASES[process.platform] ?? "";
-const hasDenialPhrase = { skip: SANDBOX_DENIAL_PHRASES[process.platform] === undefined };
+const skipWithoutDenialPhrase = SANDBOX_DENIAL_PHRASES[process.platform] === undefined;
 
 test.skipIf(!canUseOsSandbox())("sandboxed child bash write outside temp returns the readonly block notice", async () => {
 	const target = outsideTempPath("write");
@@ -200,7 +200,7 @@ test("child bash call the readonly guard blocks throws the block reason", async 
 	}
 });
 
-test.skipIf(hasDenialPhrase.skip)("child bash call the readonly guard blocks gets no block notice when its command names the denial phrase", async () => {
+test.skipIf(skipWithoutDenialPhrase)("child bash call the readonly guard blocks gets no block notice when its command names the denial phrase", async () => {
 	const target = outsideTempPath("blocked-phrase");
 	try {
 		await expect(runChildBash(`echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(target)}`)).rejects.toSatisfy((error: Error) => {
@@ -215,7 +215,7 @@ test.skipIf(hasDenialPhrase.skip)("child bash call the readonly guard blocks get
 	}
 });
 
-test.skipIf(!canUseOsSandbox() || SANDBOX_DENIAL_PHRASES[process.platform] === undefined)("child bash call the readonly guard blocks gets no block notice after a sandboxed call on the same tool", async () => {
+test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("child bash call the readonly guard blocks gets no block notice after a sandboxed call on the same tool", async () => {
 	const target = outsideTempPath("blocked-after-sandboxed");
 	const tool = createReadonlyChildBashTool(process.cwd());
 	const run = (command: string) => tool.execute("child-bash", { command }, undefined, undefined, undefined as any);
@@ -233,7 +233,7 @@ test.skipIf(!canUseOsSandbox() || SANDBOX_DENIAL_PHRASES[process.platform] === u
 	}
 });
 
-test.skipIf(!canUseOsSandbox() || SANDBOX_DENIAL_PHRASES[process.platform] === undefined)("concurrent child bash calls on one tool get the block notice only on the sandboxed call", async () => {
+test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("concurrent child bash calls on one tool get the block notice only on the sandboxed call", async () => {
 	const sandboxedTarget = outsideTempPath("concurrent-sandboxed");
 	const blockedTarget = outsideTempPath("concurrent-blocked");
 	const tool = createReadonlyChildBashTool(process.cwd());
@@ -258,7 +258,7 @@ test.skipIf(!canUseOsSandbox() || SANDBOX_DENIAL_PHRASES[process.platform] === u
 	}
 });
 
-test.skipIf(!canUseOsSandbox() || hasDenialPhrase.skip)("sandboxed child bash timeout after a sandbox denial gets the readonly block notice", async () => {
+test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("sandboxed child bash timeout after a sandbox denial gets the readonly block notice", async () => {
 	const command = sandboxed(`echo '${SANDBOX_DENIAL_PHRASE}'; while :; do sleep 1; done`);
 
 	await expect(runChildBash(command, { timeout: 1 })).rejects.toSatisfy((error: Error) => {

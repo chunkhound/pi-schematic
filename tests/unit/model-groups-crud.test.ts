@@ -42,7 +42,7 @@ function registry(available = new Set(["openai:gpt-5", "anthropic:claude"])): an
 }
 
 test("model groups store creates, round-trips, validates, renames, updates, deletes, and moves", () => withTemp(({ cwd }) => {
-	expect(Object.keys(loadModelGroups(access(cwd)).configs.project.groups).length).toBe(0);
+	expect(Object.keys(loadModelGroups(access(cwd)).configs.project.groups)).toHaveLength(0);
 	createGroup("project", access(cwd), "review", { models: [] }, registry());
 	expect(read("project", cwd).groups.review.models).toStrictEqual([]);
 	expect(() => createGroup("project", access(cwd), "review", { models: [] }, registry())).toThrow(/already exists/);
@@ -100,7 +100,7 @@ test("model groups load recovery handles malformed, schema-invalid, unsupported 
 	expect(schemaIssue.backupPath).toBe(`${modelGroupsPath("project", cwd)}.bak`);
 	expect(schemaIssue.message).toMatch(/provider/);
 	expect(schemaIssue.backupPath!).toSatisfy(fs.existsSync);
-	expect(Object.keys(loaded.configs.project.groups).length).toBe(0);
+	expect(Object.keys(loaded.configs.project.groups)).toHaveLength(0);
 
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 99, groups: {} }), "utf8");
 	loaded = loadModelGroups(access(cwd));
@@ -202,7 +202,7 @@ test("model groups persistence failures throw typed errors and preserve committe
 	}));
 	__setModelGroupsFsForTests(null);
 	expect(read("project", cwd).groups.keep).toBeTruthy();
-	expect(read("project", cwd).groups.keep.models.length).toBe(0);
+	expect(read("project", cwd).groups.keep.models).toHaveLength(0);
 
 	__setModelGroupsFsForTests({ renameSync: () => { throw new Error("rename denied"); } });
 	expect(() => saveModelGroups("project", access(cwd), { version: 2, groups: { drop: { models: [] } } })).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
@@ -270,7 +270,7 @@ test("model groups strictly partitions schema and legacy version domains", () =>
 	for (const raw of [{ groups: { legacy: { models: [] } } }, { version: 0, groups: { legacy: { models: [] } } }]) {
 		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
 		const loaded = loadModelGroups(access(cwd));
-		expect(loaded.issues.length).toBe(0);
+		expect(loaded.issues).toHaveLength(0);
 		expect(loaded.configs.project.version).toBe(2);
 		updateGroup("project", access(cwd), "legacy", { models: [] }, registry());
 		expect(read("project", cwd).version).toBe(2);
@@ -287,7 +287,7 @@ test("legacy constraints recover as schema-invalid instead of crashing load", ()
 		expect(issue.kind).toBe("schema-invalid");
 		expect(issue.message).toMatch(/constraints/);
 		expect(`${projectPath}.bak`).toSatisfy(fs.existsSync);
-		expect(Object.keys(loaded.configs.project.groups).length).toBe(0);
+		expect(Object.keys(loaded.configs.project.groups)).toHaveLength(0);
 	}
 }));
 
@@ -351,7 +351,7 @@ test("injected descriptors get persisted validation and CRUD cap enforcement thr
 	expect(read("project", cwd).groups.deep.constraints).toStrictEqual({ testMinContext: 5 });
 	// Load with the same registry decodes/validates the persisted value.
 	const loaded = loadModelGroups(a, injected);
-	expect(loaded.issues.length).toBe(0);
+	expect(loaded.issues).toHaveLength(0);
 	expect(loaded.configs.project.groups.deep.constraints?.testMinContext).toBe(5);
 	// Boot validation with the same registry carries the injected descriptor's evaluation.
 	const resolved = validateModelGroups(loaded, modelRegistry, injected);
@@ -367,11 +367,15 @@ test("injected persisted values are validated on save and malformed values trigg
 	const sourcePath = modelGroupsPath("project", cwd);
 	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
 	// Save-side rejection: an invalid injected value cannot be persisted.
-	expect(() => saveModelGroups("project", a, { version: 2, groups: { g: { models: [], constraints: { testMinContext: -3 } } } }, injected)).toThrow(expect.toSatisfy((error: unknown) => error instanceof ModelGroupsPersistenceError && /testMinContext must be a positive safe integer/.test(error.message)));
+	expect(() => saveModelGroups("project", a, { version: 2, groups: { g: { models: [], constraints: { testMinContext: -3 } } } }, injected)).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
+		expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
+		expect(error.message).toMatch(/testMinContext must be a positive safe integer/);
+		return true;
+	}));
 	// Load-side recovery: a hand-edited malformed value is schema-invalid and backed up.
 	fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: { g: { models: [], constraints: { testMinContext: "nope" } } } }), "utf8");
 	const loaded = loadModelGroups(a, injected);
-	expect(loaded.issues.length).toBe(1);
+	expect(loaded.issues).toHaveLength(1);
 	expect(loaded.issues[0].kind).toBe("schema-invalid");
 	expect(loaded.issues[0].message).toMatch(/testMinContext must be a positive safe integer/);
 	expect(`${sourcePath}.bak`, "malformed injected value must back up like any schema-invalid config").toSatisfy(fs.existsSync);
@@ -460,7 +464,7 @@ test("malformed legacy modalityOverride loads opaquely and is dropped on a v2 wr
 	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
 	fs.writeFileSync(sourcePath, v1Bytes, "utf8");
 	const loaded = loadModelGroups(access(cwd));
-	expect(loaded.issues.length).toBe(0);
+	expect(loaded.issues).toHaveLength(0);
 	expect((loaded.configs.project.groups.legacy as any).modalityOverride).toBe("not-an-array");
 	expect(fs.readFileSync(sourcePath, "utf8")).toBe(v1Bytes);
 	saveModelGroups("project", access(cwd), loaded.configs.project);
@@ -477,7 +481,7 @@ test("v2 constraint envelope preserves explicit empty and opaque slots canonical
 	];
 	fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: Object.fromEntries(fixtures.map(([name, envelope]) => [name, { models: [{ provider: "openai", modelId: "gpt-5" }], ...envelope }])) }), "utf8");
 	const loaded = loadModelGroups(access(cwd));
-	expect(loaded.issues.length).toBe(0);
+	expect(loaded.issues).toHaveLength(0);
 	for (const [name, _envelope, expected] of fixtures) expect(loaded.configs.project.groups[name].constraints?.modalities, name).toStrictEqual(expected);
 	saveModelGroups("project", access(cwd), loaded.configs.project);
 	const persisted = read("project", cwd);
@@ -504,7 +508,7 @@ test("v2 drops stale modalityOverride rather than reinterpreting it", () => with
 	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
 	fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: { stale: { models: [], modalityOverride: ["image"] } } }), "utf8");
 	const loaded = loadModelGroups(access(cwd));
-	expect(loaded.issues.length).toBe(0);
+	expect(loaded.issues).toHaveLength(0);
 	expect(loaded.configs.project.groups.stale.constraints).toBeUndefined();
 	saveModelGroups("project", access(cwd), loaded.configs.project);
 	expect(Object.getOwnPropertyNames(read("project", cwd).groups.stale)).not.toContain("modalityOverride");

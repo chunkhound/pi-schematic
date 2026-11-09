@@ -14,10 +14,10 @@ test("the context primer states the notebook, topic, and handoff contracts", () 
 	const topicParts = primer.split("### Active notebook topic");
 	const handoffParts = primer.split("### Handoff");
 	const rulesParts = primer.split("### Rules");
-	expect(notebookParts.length).toBe(2);
-	expect(topicParts.length).toBe(2);
-	expect(handoffParts.length).toBe(2);
-	expect(rulesParts.length).toBe(2);
+	expect(notebookParts).toHaveLength(2);
+	expect(topicParts).toHaveLength(2);
+	expect(handoffParts).toHaveLength(2);
+	expect(rulesParts).toHaveLength(2);
 
 	const notebookSection = notebookParts[1].split("### Active notebook topic")[0];
 	const topicSection = topicParts[1].split("### Handoff")[0];

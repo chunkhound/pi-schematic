@@ -129,7 +129,7 @@ test("readonly: false frontmatter keeps readonly disabled and stays silent when 
 
 		expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
 		expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
-		expect(notifications.length).toBe(0);
+		expect(notifications).toHaveLength(0);
 		const contextResult = await contextHook({ messages: [] }, { getContextUsage: () => ({ percent: 40 }) });
 		expect(contextResult.messages.find((message: any) => /readonly/i.test(message.content ?? ""))).toBeUndefined();
 	} finally {
@@ -200,7 +200,7 @@ test("unknown /command does not delay the next valid prompt frontmatter toggle",
 		await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 		const entries = pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-readonly");
-		expect(entries.length).toBe(1);
+		expect(entries).toHaveLength(1);
 		expect(entries[0]?.data.enabled).toBe(true);
 		expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
 	} finally {
@@ -453,13 +453,13 @@ test("streaming readonly frontmatter is blocked without a delayed toggle", async
 			const result = await inputHandler({ text, source: "interactive", streamingBehavior: scenario.streamingBehavior }, ctx);
 			expect(result).toStrictEqual({ action: "handled" });
 			expect(Boolean((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block)).toBe(!scenario.readonly);
-			expect(pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-readonly").length).toBe(readonlyEntries);
+			expect(pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-readonly")).toHaveLength(readonlyEntries);
 			expect(notifications.at(-1)?.message ?? "").toMatch(/readonly frontmatter requires an idle agent/i);
 
 			await inputHandler({ text: "unrelated prompt", source: "interactive" }, ctx);
 			await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 			expect(Boolean((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block)).toBe(!scenario.readonly);
-			expect(pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-readonly").length).toBe(readonlyEntries);
+			expect(pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-readonly")).toHaveLength(readonlyEntries);
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}
@@ -510,7 +510,7 @@ test("non-prompt slash commands do not delay the next prompt frontmatter toggle"
 		await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 		const entries = pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-readonly");
-		expect(entries.length).toBe(1);
+		expect(entries).toHaveLength(1);
 		expect(entries[0]?.data.enabled).toBe(true);
 		expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
 	} finally {
@@ -719,7 +719,7 @@ test("prompt without readonly frontmatter stays a silent no-op through the defer
 		expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
 		expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
 		expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
-		expect(notifications.length).toBe(0);
+		expect(notifications).toHaveLength(0);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -741,7 +741,7 @@ test("skill without readonly frontmatter stays a silent no-op through the deferr
 		expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
 		expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
 		expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
-		expect(notifications.length).toBe(0);
+		expect(notifications).toHaveLength(0);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -763,7 +763,7 @@ test("/readonly bypasses deferred frontmatter lookup", async () => {
 
 		expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
 		expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
-		expect(notifications.length).toBe(0);
+		expect(notifications).toHaveLength(0);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -785,7 +785,7 @@ test("/handoff bypasses deferred frontmatter lookup", async () => {
 
 		expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
 		expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
-		expect(notifications.length).toBe(0);
+		expect(notifications).toHaveLength(0);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -811,7 +811,7 @@ test("/notebook bypasses deferred frontmatter lookup", async () => {
 
 		expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
 		expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
-		expect(notifications.length).toBe(0);
+		expect(notifications).toHaveLength(0);
 	} finally {
 		await rm(workspace, { recursive: true, force: true });
 	}
@@ -878,7 +878,7 @@ test("deferred readonly enable emits a one-shot context nudge", async () => {
 		await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 		const firstResult = await contextHook({ messages: [] }, { getContextUsage: () => ({ percent: 20 }) });
-		expect(firstResult.messages.filter((message: any) => message.customType === "pi-schematic-readonly-nudge").length).toBe(1);
+		expect(firstResult.messages.filter((message: any) => message.customType === "pi-schematic-readonly-nudge")).toHaveLength(1);
 		expect(firstResult.messages.find((message: any) => message.customType === "pi-schematic-readonly-nudge")?.content ?? "").toMatch(/\[readonly\]/);
 
 		const secondResult = await contextHook({ messages: [] }, { getContextUsage: () => ({ percent: 20 }) });
@@ -904,7 +904,7 @@ test("deferred readonly disable emits a one-shot context nudge", async () => {
 		await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 		const firstResult = await contextHook({ messages: [] }, { getContextUsage: () => ({ percent: 40 }) });
-		expect(firstResult.messages.filter((message: any) => message.customType === "pi-schematic-readonly-nudge").length).toBe(1);
+		expect(firstResult.messages.filter((message: any) => message.customType === "pi-schematic-readonly-nudge")).toHaveLength(1);
 		expect(firstResult.messages.find((message: any) => message.customType === "pi-schematic-readonly-nudge")?.content ?? "").toMatch(/\[readonly\] disabled/);
 
 		const secondResult = await contextHook({ messages: [] }, { getContextUsage: () => ({ percent: 40 }) });
@@ -928,7 +928,7 @@ test("one readonly entry is appended per consumed queued toggle", async () => {
 		await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 		const entries = pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-readonly");
-		expect(entries.length).toBe(1);
+		expect(entries).toHaveLength(1);
 		expect(entries[0].data.enabled).toBe(true);
 	} finally {
 		await rm(dir, { recursive: true, force: true });

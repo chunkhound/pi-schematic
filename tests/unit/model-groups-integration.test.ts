@@ -268,7 +268,7 @@ test("session_start registers Model Groups autocomplete provider when UI support
 		getContextUsage: () => ({ percent: 10 }),
 		ui: { theme, notify: () => {}, setStatus: () => {}, setWidget: () => {}, addAutocompleteProvider: (factory: AutocompleteProviderFactory) => providers.push(factory) },
 	});
-	expect(providers.length).toBe(1);
+	expect(providers).toHaveLength(1);
 }));
 
 test("index session_start does not notify when load and validation issues are absent", async () => withTemp(async ({ cwd }) => {

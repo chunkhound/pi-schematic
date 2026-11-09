@@ -283,7 +283,7 @@ test("notebook tools add/get/list return stable contract details", async () => {
 	const addResult = await notebookWrite.execute("1", { name: "entry-a", content: "first line\nsecond line" }, undefined, undefined, {} as any);
 	expect(addResult.details).toStrictEqual({ entries: ["entry-a"], preview: "first line", truncation: null, clipped: false });
 	expect(state.notebookPages.get("entry-a")).toBe("first line\nsecond line");
-	expect(pi.appendedEntries.length).toBe(1);
+	expect(pi.appendedEntries).toHaveLength(1);
 	expect(pi.appendedEntries[0].customType).toBe("notebook-entry");
 	expect(pi.appendedEntries[0].data.name).toBe("entry-a");
 
@@ -311,7 +311,7 @@ test("child notebook tools reject stale access after reset", async () => {
 	await expect(notebookRead.execute("2", { name: "entry-a" }, undefined, undefined, {} as any)).rejects.toThrow(/invalidated by reset/i);
 	await expect(notebookIndex.execute("3", {}, undefined, undefined, {} as any)).rejects.toThrow(/invalidated by reset/i);
 	expect(state.notebookPages.get("entry-a")).toBe("alpha");
-	expect(pi.appendedEntries.length).toBe(0);
+	expect(pi.appendedEntries).toHaveLength(0);
 });
 
 test("child notebook_write succeeds while child session is fresh", async () => {
@@ -322,7 +322,7 @@ test("child notebook_write succeeds while child session is fresh", async () => {
 	const result = await notebookWrite.execute("1", { name: "entry-a", content: "alpha" }, undefined, undefined, {} as any);
 	expect(result.details).toStrictEqual({ entries: ["entry-a"], preview: "alpha", truncation: null, clipped: false });
 	expect(state.notebookPages.get("entry-a")).toBe("alpha");
-	expect(pi.appendedEntries.length).toBe(1);
+	expect(pi.appendedEntries).toHaveLength(1);
 });
 
 test("notebook_read reports not found with current page names", async () => {
@@ -453,7 +453,7 @@ test("/notebook <topic> notifies with info on first set and warning on boundary 
 	expect(notifications[1].message).toMatch(/Active notebook topic changed: oauth → billing/);
 	expect(notifications[1].level).toBe("warning");
 	expect(statuses.get(STATUS_KEY_TOPIC)).toBe("🧭 billing");
-	expect(widgets.get(WIDGET_KEY_WARNING)).toBe(undefined);
+	expect(widgets.get(WIDGET_KEY_WARNING)).toBeUndefined();
 });
 
 test("readonly /notebook boundary notification explains deferred handoff eligibility", async () => {
@@ -588,9 +588,9 @@ test("resolvePager keeps fallback less interactive without changing LESS", () =>
 		expect(env).toStrictEqual({ PI_PAGER: PAGER, PAGER, LESS: "-FRX" });
 	}
 	expect(resolvePager({}, "darwin", () => true)).toStrictEqual({ cmd: "less", args: ["-R", "-+F", "-+X"] });
-	expect(resolvePager({}, "linux", () => false)).toBe(undefined);
+	expect(resolvePager({}, "linux", () => false)).toBeUndefined();
 	// Windows never probes less — $PI_PAGER/$PAGER are the only way to get a pager.
-	expect(resolvePager({}, "win32", () => expect.unreachable("must not probe on Windows"))).toBe(undefined);
+	expect(resolvePager({}, "win32", () => expect.unreachable("must not probe on Windows"))).toBeUndefined();
 });
 
 test("resolvePager prefers PI_PAGER over PAGER and falls back when it is blank", () => {
@@ -615,7 +615,7 @@ test("resolvePager treats cat and more pagers as no pager so the inline preview 
 		{ env: { PAGER: "C:\\Windows\\System32\\more.com" }, platform: "win32" },
 	];
 	for (const { env, platform } of cases) {
-		expect(resolvePager(env, platform, noProbe), `${platform}: ${JSON.stringify(env)}`).toBe(undefined);
+		expect(resolvePager(env, platform, noProbe), `${platform}: ${JSON.stringify(env)}`).toBeUndefined();
 	}
 	// Only the effective pager matters: PI_PAGER still wins over PAGER=cat.
 	expect(resolvePager({ PI_PAGER: "less", PAGER: "cat" }, "linux", noProbe)).toStrictEqual({ cmd: "less", args: ["-+F", "-+X"] });
@@ -1181,8 +1181,8 @@ test("notebook tool definitions omit prompt hints by default", async () => {
 	const tools = createNotebookToolDefinitions(pi as any, state);
 
 	for (const tool of tools) {
-		expect(tool.promptSnippet, `${tool.name} should not have promptSnippet by default`).toBe(undefined);
-		expect(tool.promptGuidelines, `${tool.name} should not have promptGuidelines by default`).toBe(undefined);
+		expect(tool.promptSnippet, `${tool.name} should not have promptSnippet by default`).toBeUndefined();
+		expect(tool.promptGuidelines, `${tool.name} should not have promptGuidelines by default`).toBeUndefined();
 	}
 });
 
@@ -1508,16 +1508,24 @@ test("oversized first line rejects a new page without side effects", async () =>
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
 
 	for (const content of [R, UR]) {
-		await expect(saveNotebookPage(pi as any, state, "page", content)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === rejectMessage("page"));
+		await expect(saveNotebookPage(pi as any, state, "page", content)).rejects.toSatisfy((error: Error) => {
+			expect(error).toBeInstanceOf(Error);
+			expect(error.message).toBe(rejectMessage("page"));
+			return true;
+		});
 	}
 
 	let updateCalled = false;
-	await expect(notebookWrite.execute("1", { name: "page", content: R }, undefined, () => { updateCalled = true; }, makeTUICtx({ hasUI: true, record }))).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === rejectMessage("page"));
+	await expect(notebookWrite.execute("1", { name: "page", content: R }, undefined, () => { updateCalled = true; }, makeTUICtx({ hasUI: true, record }))).rejects.toSatisfy((error: Error) => {
+		expect(error).toBeInstanceOf(Error);
+		expect(error.message).toBe(rejectMessage("page"));
+		return true;
+	});
 	expect(updateCalled).toBe(false);
 	expect(state.notebookPages.size).toBe(0);
 	expect(state.epoch).toBe(0);
 	expect(state.discardEpochWatermark).toBe(0);
-	expect(pi.appendedEntries.length).toBe(0);
+	expect(pi.appendedEntries).toHaveLength(0);
 	expect(record.statuses.size).toBe(0);
 	expect(record.widgets.size).toBe(0);
 
@@ -1534,17 +1542,25 @@ test("rejected overwrite preserves prior body and clipped flag", async () => {
 
 	await saveNotebookPage(pi as any, state, "page", C);
 	const epochBefore = state.epoch;
-	await expect(saveNotebookPage(pi as any, state, "page", R)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === rejectMessage("page"));
+	await expect(saveNotebookPage(pi as any, state, "page", R)).rejects.toSatisfy((error: Error) => {
+		expect(error).toBeInstanceOf(Error);
+		expect(error.message).toBe(rejectMessage("page"));
+		return true;
+	});
 	expect(state.notebookPages.get("page")).toBe(C);
 	expect(state.epoch).toBe(epochBefore);
-	expect(pi.appendedEntries.length).toBe(1);
+	expect(pi.appendedEntries).toHaveLength(1);
 	let read = await notebookRead.execute("2", { name: "page" }, undefined, undefined, {} as any);
 	expect((read.content[0] as any).text).toBe(readBase("page", C));
 	expect((read.details as any).clipped).toBe(false);
 
 	await saveNotebookPage(pi as any, state, "page", L(2001));
 	const epochClipped = state.epoch;
-	await expect(saveNotebookPage(pi as any, state, "page", R)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === rejectMessage("page"));
+	await expect(saveNotebookPage(pi as any, state, "page", R)).rejects.toSatisfy((error: Error) => {
+		expect(error).toBeInstanceOf(Error);
+		expect(error.message).toBe(rejectMessage("page"));
+		return true;
+	});
 	expect(state.notebookPages.get("page")).toBe(L(2000));
 	expect(state.epoch).toBe(epochClipped);
 	read = await notebookRead.execute("3", { name: "page" }, undefined, undefined, {} as any);
@@ -1563,15 +1579,23 @@ test("blank first line plus oversized line rejects and preserves prior page stat
 	const epochBefore = state.epoch;
 	const entriesBefore = pi.appendedEntries.length;
 
-	await expect(saveNotebookPage(pi as any, state, "page", blankFirstLineOverflow)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === emptyHeadRejectMessage("page"));
+	await expect(saveNotebookPage(pi as any, state, "page", blankFirstLineOverflow)).rejects.toSatisfy((error: Error) => {
+		expect(error).toBeInstanceOf(Error);
+		expect(error.message).toBe(emptyHeadRejectMessage("page"));
+		return true;
+	});
 
 	let updateCalled = false;
-	await expect(notebookWrite.execute("2", { name: "page", content: blankFirstLineOverflow }, undefined, () => { updateCalled = true; }, makeTUICtx({ hasUI: true, record }))).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === emptyHeadRejectMessage("page"));
+	await expect(notebookWrite.execute("2", { name: "page", content: blankFirstLineOverflow }, undefined, () => { updateCalled = true; }, makeTUICtx({ hasUI: true, record }))).rejects.toSatisfy((error: Error) => {
+		expect(error).toBeInstanceOf(Error);
+		expect(error.message).toBe(emptyHeadRejectMessage("page"));
+		return true;
+	});
 	expect(updateCalled).toBe(false);
 	expect(state.notebookPages.get("page")).toBe(C);
 	expect(state.clippedPages.has("page")).toBe(false);
 	expect(state.epoch).toBe(epochBefore);
-	expect(pi.appendedEntries.length).toBe(entriesBefore);
+	expect(pi.appendedEntries).toHaveLength(entriesBefore);
 	expect(record.statuses.size).toBe(0);
 	expect(record.widgets.size).toBe(0);
 
@@ -1579,12 +1603,16 @@ test("blank first line plus oversized line rejects and preserves prior page stat
 	await saveNotebookPage(pi as any, state, "page", L(2001));
 	const epochClipped = state.epoch;
 	const entriesClipped = pi.appendedEntries.length;
-	await expect(saveNotebookPage(pi as any, state, "page", blankFirstLineOverflow)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === emptyHeadRejectMessage("page"));
+	await expect(saveNotebookPage(pi as any, state, "page", blankFirstLineOverflow)).rejects.toSatisfy((error: Error) => {
+		expect(error).toBeInstanceOf(Error);
+		expect(error.message).toBe(emptyHeadRejectMessage("page"));
+		return true;
+	});
 	const read = await notebookRead.execute("3", { name: "page" }, undefined, undefined, {} as any);
 	expect(state.notebookPages.get("page")).toBe(L(2000));
 	expect(state.clippedPages.has("page")).toBe(true);
 	expect(state.epoch).toBe(epochClipped);
-	expect(pi.appendedEntries.length).toBe(entriesClipped);
+	expect(pi.appendedEntries).toHaveLength(entriesClipped);
 	expect((read.details as any).body).toBe(L(2000));
 	expect((read.details as any).clipped).toBe(true);
 
@@ -1738,7 +1766,7 @@ test("line overflow retains exactly 2000 whole lines", async () => {
 	const state = createState();
 	await saveNotebookPage(pi as any, state, "page", L(2001));
 	expect(state.notebookPages.get("page")).toBe(L(2000));
-	expect(state.notebookPages.get("page")!.split("\n").length).toBe(2000);
+	expect(state.notebookPages.get("page")!.split("\n")).toHaveLength(2000);
 });
 
 test("byte overflow preserves the first whole line in ASCII and UTF-8", async () => {

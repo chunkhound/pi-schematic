@@ -141,7 +141,7 @@ test("/handoff sends the direction back through the LLM without opening the edit
 		toolCalled: false,
 		nextInstruction: "implement auth",
 	});
-	expect(pi.sentUserMessages.length).toBe(1);
+	expect(pi.sentUserMessages).toHaveLength(1);
 	expect(pi.sentUserMessages[0].content).toMatch(/<next-instruction>\nimplement auth\n<\/next-instruction>/);
 	expect(pi.sentUserMessages[0].content).toMatch(/Do NOT start this instruction/);
 	expect(pi.sentUserMessages[0].content).toMatch(/discarded at compaction/);
@@ -151,7 +151,7 @@ test("/handoff sends the direction back through the LLM without opening the edit
 	expect(pi.sentUserMessages[0].content).toMatch(/A real handoff is required in the current session/);
 	expect(pi.sentUserMessages[0].content).not.toMatch(/User explicitly requested|\/handoff/);
 	expect(pi.sentUserMessages[0].content).not.toMatch(/\bbrief\b/i);
-	expect(pi.sentUserMessages[0].options).toBe(undefined);
+	expect(pi.sentUserMessages[0].options).toBeUndefined();
 });
 
 test("/handoff requires a direction", async () => {
@@ -249,8 +249,16 @@ test("handoff is rejected while another handoff is staged, and /handoff reports 
 	const { ctx } = makeCtx();
 	await executeHandoff(pi, ctx, { nextInstruction: "first task" }, "first");
 
-	await expect(executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second")).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === HANDOFF_ALREADY_STAGED);
-	await expect(pi.commands.get("handoff")!.handler("replacement direction", { hasUI: false, isIdle: () => true } as any)).rejects.toSatisfy((error: unknown) => error instanceof Error && error.message === HANDOFF_COMMAND_BUSY);
+	await expect(executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second")).rejects.toSatisfy((error: Error) => {
+		expect(error).toBeInstanceOf(Error);
+		expect(error.message).toBe(HANDOFF_ALREADY_STAGED);
+		return true;
+	});
+	await expect(pi.commands.get("handoff")!.handler("replacement direction", { hasUI: false, isIdle: () => true } as any)).rejects.toSatisfy((error: Error) => {
+		expect(error).toBeInstanceOf(Error);
+		expect(error.message).toBe(HANDOFF_COMMAND_BUSY);
+		return true;
+	});
 
 	expect(state.stagedHandoff?.nextInstruction, "the first staged request must survive").toBe("first task");
 	expect(state.stagedHandoff?.toolCallId).toBe("first");
@@ -400,11 +408,11 @@ test("turn_start with the cut on the branch completes the handoff", async () => 
 	expect(state.readonlyNudgePending).toBe(true);
 	expect([...state.notebookPages], "pages follow what the branch persisted").toStrictEqual([["keep", "durable"]]);
 	expect(state.epoch).toBe(2);
-	expect(statuses.get(STATUS_KEY_HANDOFF), "the in-progress status the tool set is cleared").toBe(undefined);
+	expect(statuses.get(STATUS_KEY_HANDOFF), "the in-progress status the tool set is cleared").toBeUndefined();
 	expect(notifications).toStrictEqual([{ message: "Handoff complete. Notebook: 1 page kept, 1 discarded.", level: "info" }]);
 	expect(statuses.get(STATUS_KEY_TOPIC), "the topic indicator shows the cleared topic").toBe("🧭 -");
 	expect(statuses.get(STATUS_KEY_NOTEBOOK), "the notebook indicator shows the kept pages").toBe("📒 1");
-	expect(widgets.get(WIDGET_KEY_WARNING), "the high-context warning is cleared").toBe(undefined);
+	expect(widgets.get(WIDGET_KEY_WARNING), "the high-context warning is cleared").toBeUndefined();
 	expect(pi.sentUserMessages).toStrictEqual([]);
 	expect(pi.sentMessages).toStrictEqual([]);
 });
@@ -578,9 +586,9 @@ test("a failed handoff without a pending request clears the status and says noth
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
 	expect(state.pendingRequestedHandoff).toBe(null);
-	expect(statuses.get(STATUS_KEY_HANDOFF), "the in-progress status the tool set is cleared").toBe(undefined);
+	expect(statuses.get(STATUS_KEY_HANDOFF), "the in-progress status the tool set is cleared").toBeUndefined();
 	expect(pi.sentUserMessages).toStrictEqual([]);
-	expect(pi.sentMessages.length).toBe(1);
+	expect(pi.sentMessages).toHaveLength(1);
 	expect(pi.sentMessages[0].message.customType).toBe("pi-schematic-handoff-failed");
 	expect(pi.sentMessages[0].message.display).toBe(true);
 	expect(pi.sentMessages[0].message.content).toMatch(/No required handoff remains pending; retry when ready\.$/);
@@ -607,7 +615,7 @@ for (const { attemptsBefore, nudged, requestSurvives } of [
 		await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 
 		expect(state.pendingRequestedHandoff !== null).toBe(requestSurvives);
-		expect(pi.sentMessages.length).toBe(1);
+		expect(pi.sentMessages).toHaveLength(1);
 		expect(pi.sentMessages[0].message.content).toMatch(requestSurvives
 			? /The required handoff remains pending; retry when context usage is eligible\.$/
 			: /No required handoff remains pending; retry when ready\.$/);
@@ -780,7 +788,7 @@ test("in a message holding only handoff calls, the first runs and the others are
 		{ id: "h2", name: "handoff" },
 	), makeCtx().ctx);
 
-	expect(await toolCall(pi, "h1", "handoff")).toBe(undefined);
+	expect(await toolCall(pi, "h1", "handoff")).toBeUndefined();
 	expect(await toolCall(pi, "h2", "handoff")).toStrictEqual({ block: true, reason: HANDOFF_EXTRA_CALL_REFUSAL, terminate: true });
 });
 
@@ -795,16 +803,16 @@ test("every handoff sharing a message with other calls is refused and the other 
 
 	expect(await toolCall(pi, "h1", "handoff")).toStrictEqual({ block: true, reason: HANDOFF_NOT_ALONE_REFUSAL, terminate: true });
 	expect(await toolCall(pi, "h2", "handoff")).toStrictEqual({ block: true, reason: HANDOFF_NOT_ALONE_REFUSAL, terminate: true });
-	expect(await toolCall(pi, "w1", "write")).toBe(undefined);
-	expect(await toolCall(pi, "n1", "notebook_write")).toBe(undefined);
+	expect(await toolCall(pi, "w1", "write")).toBeUndefined();
+	expect(await toolCall(pi, "n1", "notebook_write")).toBeUndefined();
 });
 
 test("calls in an assistant message without handoff are not refused", async () => {
 	const { pi } = await boundaryHost();
 	await callHandlers(pi, "message_end", assistantMessage({ id: "w1", name: "write" }, { id: "r1", name: "read" }), makeCtx().ctx);
 
-	expect(await toolCall(pi, "w1", "write")).toBe(undefined);
-	expect(await toolCall(pi, "r1", "read")).toBe(undefined);
+	expect(await toolCall(pi, "w1", "write")).toBeUndefined();
+	expect(await toolCall(pi, "r1", "read")).toBeUndefined();
 });
 
 test("refusals last until the next assistant message and are not cleared by other messages", async () => {
@@ -816,7 +824,7 @@ test("refusals last until the next assistant message and are not cleared by othe
 	expect((await toolCall(pi, "h1", "handoff")).block, "a tool result message must not clear refusals").toBe(true);
 
 	await callHandlers(pi, "message_end", assistantMessage({ id: "w2", name: "write" }), ctx);
-	expect(await toolCall(pi, "h1", "handoff"), "the next assistant message clears the previous refusals").toBe(undefined);
+	expect(await toolCall(pi, "h1", "handoff"), "the next assistant message clears the previous refusals").toBeUndefined();
 });
 
 test("turn_end clears the refusals", async () => {
@@ -826,7 +834,7 @@ test("turn_end clears the refusals", async () => {
 
 	await callHandlers(pi, "turn_end", turnEndEvent(), ctx);
 
-	expect(await toolCall(pi, "h1", "handoff")).toBe(undefined);
+	expect(await toolCall(pi, "h1", "handoff")).toBeUndefined();
 });
 
 // ── session_tree ─────────────────────────────────────────────────────
@@ -836,14 +844,17 @@ test("session_tree invalidates a staged handoff and the handoff refusals", async
 	const { ctx } = makeCtx();
 	await executeHandoff(pi, ctx, { nextInstruction: "first task" }, "first");
 	await callHandlers(pi, "message_end", assistantMessage({ id: "h1", name: "handoff" }, { id: "w1", name: "write" }), ctx);
-	await expect(executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second")).rejects.toSatisfy((error: unknown) =>
-		error instanceof Error && error.message === HANDOFF_ALREADY_STAGED);
+	await expect(executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second")).rejects.toSatisfy((error: Error) => {
+		expect(error).toBeInstanceOf(Error);
+		expect(error.message).toBe(HANDOFF_ALREADY_STAGED);
+		return true;
+	});
 	expect((await toolCall(pi, "h1", "handoff")).block).toBe(true);
 
 	await emitAll(pi, "session_tree", { type: "session_tree" }, ctx);
 
 	await executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second");
-	expect(await toolCall(pi, "h1", "handoff")).toBe(undefined);
+	expect(await toolCall(pi, "h1", "handoff")).toBeUndefined();
 });
 
 test("after a failed cut the run refuses further handoff calls until the agent settles", async () => {
@@ -854,11 +865,11 @@ test("after a failed cut the run refuses further handoff calls until the agent s
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
 	expect(await toolCall(pi, "again", "handoff")).toStrictEqual({ block: true, reason: HANDOFF_FAILED_IN_RUN_REFUSAL, terminate: true });
-	expect(await toolCall(pi, "w1", "write"), "other tools are not refused for the failed cut").toBe(undefined);
+	expect(await toolCall(pi, "w1", "write"), "other tools are not refused for the failed cut").toBeUndefined();
 
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 
-	expect(await toolCall(pi, "again", "handoff")).toBe(undefined);
+	expect(await toolCall(pi, "again", "handoff")).toBeUndefined();
 });
 
 test("a declined handoff resolved at turn_start fails without starting a run and refuses a repeat call", async () => {
@@ -883,7 +894,7 @@ test("session_tree clears the failed-in-run refusal", async () => {
 
 	await emitAll(pi, "session_tree", { type: "session_tree" }, ctx);
 
-	expect(await toolCall(pi, "again", "handoff")).toBe(undefined);
+	expect(await toolCall(pi, "again", "handoff")).toBeUndefined();
 });
 
 test("the handoff tool definition declares model-only exposure", async () => {
@@ -958,7 +969,7 @@ test("a completed handoff clears the requested-handoff nudge", async () => {
 	await emitAll(pi, "turn_start", { type: "turn_start" }, eligible.ctx);
 
 	assertSuccessorTurn(result.entries[1].content, { nextInstruction: "continue work" });
-	expect(await watchdogNudge(pi, eligible.ctx), "a completed handoff leaves no requested-handoff nudge").toBe(undefined);
+	expect(await watchdogNudge(pi, eligible.ctx), "a completed handoff leaves no requested-handoff nudge").toBeUndefined();
 });
 
 test("/handoff sets the handoff status indicator", async () => {
@@ -1177,9 +1188,12 @@ test("handoff tool rejects an empty nextInstruction with context usage", async (
 			undefined,
 			undefined,
 			{ getContextUsage: () => ({ percent: 42 }) },
-		)).rejects.toSatisfy((error: unknown) => error instanceof Error &&
-			error.message.includes("Empty handoff nextInstruction rejected") &&
-			error.message.includes("42%"));
+		)).rejects.toSatisfy((error: Error) => {
+			expect(error).toBeInstanceOf(Error);
+			expect(error.message).toContain("Empty handoff nextInstruction rejected");
+			expect(error.message).toContain("42%");
+			return true;
+		});
 
 	expect(state.stagedHandoff, "an empty instruction must not stage").toBe(null);
 	expect(pi.sentUserMessages, "the error result is the only report; nothing queues for a later turn").toStrictEqual([]);
@@ -1197,11 +1211,13 @@ test("handoff tool rejects small session with clear error", async () => {
 			undefined,
 			undefined,
 			{ getContextUsage: () => ({ tokens: 5000, percent: 2.5, contextWindow: 200000 }) },
-		)).rejects.toSatisfy((error: unknown) =>
-			error instanceof Error &&
-			error.message.includes("handoff unavailable yet") &&
-			error.message.includes("~3% (5000 tokens)") &&
-			error.message.includes("Continue working"));
+		)).rejects.toSatisfy((error: Error) => {
+			expect(error).toBeInstanceOf(Error);
+			expect(error.message).toContain("handoff unavailable yet");
+			expect(error.message).toContain("~3% (5000 tokens)");
+			expect(error.message).toContain("Continue working");
+			return true;
+		});
 
 	expect(state.stagedHandoff, "small-session rejection must not stage").toBe(null);
 });
@@ -1228,9 +1244,12 @@ test("a small-session rejection keeps the pending request and states it in the e
 				},
 				getContextUsage: () => ({ tokens: 5000, percent: 2.5, contextWindow: 200000 }),
 			},
-		)).rejects.toSatisfy((error: unknown) => error instanceof Error &&
-			error.message.includes("handoff unavailable yet") &&
-			error.message.includes("The required handoff remains pending"));
+		)).rejects.toSatisfy((error: Error) => {
+			expect(error).toBeInstanceOf(Error);
+			expect(error.message).toContain("handoff unavailable yet");
+			expect(error.message).toContain("The required handoff remains pending");
+			return true;
+		});
 
 	expect(state.pendingRequestedHandoff).toStrictEqual({
 		toolCalled: false,
@@ -1255,11 +1274,13 @@ test("handoff tool rejects small session with null percent without crashing", as
 			undefined,
 			undefined,
 			{ getContextUsage: () => ({ tokens: 5000, percent: null, contextWindow: 200000 }) },
-		)).rejects.toSatisfy((error: unknown) =>
-			error instanceof Error &&
-			error.message.includes("handoff unavailable yet") &&
-			error.message.includes("(5000 tokens)") &&
-			error.message.includes("Continue working"));
+		)).rejects.toSatisfy((error: Error) => {
+			expect(error).toBeInstanceOf(Error);
+			expect(error.message).toContain("handoff unavailable yet");
+			expect(error.message).toContain("(5000 tokens)");
+			expect(error.message).toContain("Continue working");
+			return true;
+		});
 
 	expect(state.stagedHandoff, "null-percent rejection must not stage").toBe(null);
 });
@@ -1276,11 +1297,13 @@ test("handoff tool rejects small session estimated from percent when tokens are 
 			undefined,
 			undefined,
 			{ getContextUsage: () => ({ tokens: null, percent: 10, contextWindow: 200000 }) },
-		)).rejects.toSatisfy((error: unknown) =>
-			error instanceof Error &&
-			error.message.includes("handoff unavailable yet") &&
-			error.message.includes("~20000 tokens estimated from context usage") &&
-			error.message.includes("Continue working"));
+		)).rejects.toSatisfy((error: Error) => {
+			expect(error).toBeInstanceOf(Error);
+			expect(error.message).toContain("handoff unavailable yet");
+			expect(error.message).toContain("~20000 tokens estimated from context usage");
+			expect(error.message).toContain("Continue working");
+			return true;
+		});
 
 	expect(state.stagedHandoff, "estimated small-session rejection must not stage").toBe(null);
 });
@@ -1333,11 +1356,13 @@ test("handoff tool rejects session just below the 30000-token minimum", async ()
 			undefined,
 			undefined,
 			{ getContextUsage: () => ({ tokens: 29999, percent: 15, contextWindow: 200000 }) },
-		)).rejects.toSatisfy((error: unknown) =>
-			error instanceof Error &&
-			error.message.includes("handoff unavailable yet") &&
-			error.message.includes("29999 tokens") &&
-			error.message.includes("Continue working"));
+		)).rejects.toSatisfy((error: Error) => {
+			expect(error).toBeInstanceOf(Error);
+			expect(error.message).toContain("handoff unavailable yet");
+			expect(error.message).toContain("29999 tokens");
+			expect(error.message).toContain("Continue working");
+			return true;
+		});
 
 	expect(state.stagedHandoff, "just-below-boundary rejection must not stage").toBe(null);
 });
@@ -1354,9 +1379,12 @@ test("handoff tool rejects a whitespace-only nextInstruction", async () => {
 			undefined,
 			undefined,
 			{ getContextUsage: () => null },
-		)).rejects.toSatisfy((error: unknown) => error instanceof Error &&
-			error.message.includes("Empty handoff nextInstruction rejected") &&
-			error.message.includes("Context at ?"));
+		)).rejects.toSatisfy((error: Error) => {
+			expect(error).toBeInstanceOf(Error);
+			expect(error.message).toContain("Empty handoff nextInstruction rejected");
+			expect(error.message).toContain("Context at ?");
+			return true;
+		});
 
 	expect(state.stagedHandoff).toBe(null);
 });
@@ -1400,9 +1428,12 @@ test("handoff tool rejects when context usage is unavailable", async () => {
 			undefined,
 			undefined,
 			{ getContextUsage: () => null },
-		)).rejects.toSatisfy((error: unknown) => error instanceof Error &&
-			error.message.includes("Context usage unavailable") &&
-			error.message.includes("rejected"));
+		)).rejects.toSatisfy((error: Error) => {
+			expect(error).toBeInstanceOf(Error);
+			expect(error.message).toContain("Context usage unavailable");
+			expect(error.message).toContain("rejected");
+			return true;
+		});
 
 	expect(state.stagedHandoff, "unavailable usage must not stage").toBe(null);
 });
@@ -1429,9 +1460,12 @@ test("an unavailable-usage rejection keeps the pending request and states it in 
 				},
 				getContextUsage: () => null,
 			},
-		)).rejects.toSatisfy((error: unknown) => error instanceof Error &&
-			error.message.includes("Context usage unavailable") &&
-			error.message.includes("The required handoff remains pending"));
+		)).rejects.toSatisfy((error: Error) => {
+			expect(error).toBeInstanceOf(Error);
+			expect(error.message).toContain("Context usage unavailable");
+			expect(error.message).toContain("The required handoff remains pending");
+			return true;
+		});
 
 	expect(state.pendingRequestedHandoff).toStrictEqual({
 		toolCalled: false,
@@ -1456,9 +1490,12 @@ test("handoff tool rejects when context usage cannot be estimated", async () => 
 			undefined,
 			undefined,
 			{ getContextUsage: () => ({ tokens: null, percent: 20, contextWindow: null }) },
-		)).rejects.toSatisfy((error: unknown) => error instanceof Error &&
-			error.message.includes("Context usage unavailable") &&
-			error.message.includes("Continue working"));
+		)).rejects.toSatisfy((error: Error) => {
+			expect(error).toBeInstanceOf(Error);
+			expect(error.message).toContain("Context usage unavailable");
+			expect(error.message).toContain("Continue working");
+			return true;
+		});
 
 	expect(state.stagedHandoff, "unestimable usage must not stage").toBe(null);
 });
@@ -1479,7 +1516,7 @@ test("session_start new clears stale handoff status and warning widget", async (
 	};
 	await emitAll(pi, "session_start", { reason: "new" }, ctx);
 
-	expect(statuses.get(STATUS_KEY_HANDOFF)).toBe(undefined);
-	expect(widgets.get(WIDGET_KEY_WARNING)).toBe(undefined);
+	expect(statuses.get(STATUS_KEY_HANDOFF)).toBeUndefined();
+	expect(widgets.get(WIDGET_KEY_WARNING)).toBeUndefined();
 });
 

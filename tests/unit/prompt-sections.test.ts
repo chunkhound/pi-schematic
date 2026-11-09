@@ -99,7 +99,7 @@ test("writes rendered sections into the prompt options", () => {
 test("leaves the prompt unforced when no earlier handler forced it", () => {
 	const event = createBeforeAgentStartEvent();
 
-	expect(applyPromptSections(event, rendered)).toBe(undefined);
+	expect(applyPromptSections(event, rendered)).toBeUndefined();
 });
 
 test("appends section bodies to a prompt an earlier handler forced", () => {
@@ -131,7 +131,7 @@ test("keeps a section written by a later extension (regression #45)", async () =
 
 	const { result, prompt } = await emitBeforeAgentStart({ after: [probe] });
 
-	expect(result.systemPromptOptions.forceSystemPrompt).toBe(undefined);
+	expect(result.systemPromptOptions.forceSystemPrompt).toBeUndefined();
 	expect(prompt).toContain("<probe>\nPROBE-SECTION\n</probe>");
 	expect(prompt).toContain("<schematic>");
 });

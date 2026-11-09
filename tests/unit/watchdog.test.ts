@@ -61,7 +61,7 @@ test("context injects watchdog reminder before each LLM call", async () => {
 		},
 	);
 
-	expect(result.messages.length).toBe(2);
+	expect(result.messages).toHaveLength(2);
 	expect(result.messages[0]).toStrictEqual({ role: "user", content: "hi", timestamp: 1 });
 	expect(result.messages[1].role).toBe("custom");
 	expect(result.messages[1].customType).toBe("pi-schematic-watchdog");
@@ -101,7 +101,7 @@ test("context treats malformed percentages as unavailable", async () => {
 			{ messages: [{ role: "user", content: "hi", timestamp: 1 }] },
 			{ getContextUsage: () => ({ percent }) },
 		);
-		expect(result).toBe(undefined);
+		expect(result).toBeUndefined();
 	}
 });
 
@@ -114,7 +114,7 @@ test("context injects a no-topic nudge when context is high", async () => {
 		{ getContextUsage: () => ({ percent: 70 }) },
 	);
 
-	expect(result.messages.length).toBe(2);
+	expect(result.messages).toHaveLength(2);
 	expect(result.messages[1].role).toBe("custom");
 	expect(result.messages[1].customType).toBe("pi-schematic-watchdog");
 	expect(result.messages[1].display).toBe(false);
@@ -159,7 +159,7 @@ test("context consumes a boundary hint after the first injected nudge", async ()
 		{ messages: [{ role: "user", content: "hi", timestamp: 2 }] },
 		{ getContextUsage: () => ({ percent: 20 }) },
 	);
-	expect(second).toBe(undefined);
+	expect(second).toBeUndefined();
 });
 
 
@@ -386,7 +386,7 @@ test("watchdog auto-cancels a required handoff after enough unanswered settled r
 	deliverEligibleNudge(state);
 	await handler({}, ctx);
 	expect(state.pendingRequestedHandoff, "pending handoff should be auto-cancelled").toBe(null);
-	expect(statuses.get(STATUS_KEY_HANDOFF), "cancellation should clear the handoff status").toBe(undefined);
+	expect(statuses.get(STATUS_KEY_HANDOFF), "cancellation should clear the handoff status").toBeUndefined();
 	expect(notifications.length, "user should receive a cancellation notification").toBeGreaterThan(0);
 	expect(notifications[0] as string, "notification should mention cancellation without source-specific wording").toMatch(/Required handoff cancelled/i);
 	expect(notifications[0] as string).not.toMatch(/user-requested|temporary bypass/i);
@@ -481,8 +481,8 @@ test("a continued run cancels only after MAX_HANDOFF_ATTEMPTS settled runs", asy
 	for (let i = 0; i < 3; i++) await agentEnd({}, ctx);
 	await agentSettled({ type: "agent_settled" }, ctx);
 	expect(state.pendingRequestedHandoff).toBe(null);
-	expect(statuses.get(STATUS_KEY_HANDOFF)).toBe(undefined);
-	expect(notifications.length).toBe(1);
+	expect(statuses.get(STATUS_KEY_HANDOFF)).toBeUndefined();
+	expect(notifications).toHaveLength(1);
 	expect(notifications[0].level).toBe("warning");
 	expect(notifications[0].message).toMatch(/Required handoff cancelled/i);
 });
@@ -561,7 +561,7 @@ test("a run nudged while eligible counts when it settles after compaction", asyn
 
 	await runContextHook(eligibleUsage());
 	await settle(postCompactionUsage);
-	expect(warnings.length).toBe(1);
+	expect(warnings).toHaveLength(1);
 	expect(warnings[0]).toMatch(/Required handoff cancelled/i);
 });
 
@@ -614,7 +614,7 @@ test("context hook suppresses watchdog after readonly toggle nudge is drained", 
 			{ messages: [{ role: "user", content: `second at ${percent}`, timestamp: percent }] },
 			{ getContextUsage: () => ({ percent }) },
 		);
-		expect(result, `watchdog must be suppressed at ${percent}% in readonly mode`).toBe(undefined);
+		expect(result, `watchdog must be suppressed at ${percent}% in readonly mode`).toBeUndefined();
 	}
 });
 
@@ -628,7 +628,7 @@ test("context injects a readonly-mode nudge after toggle", async () => {
 		{ getContextUsage: () => null },
 	);
 
-	expect(result.messages.length).toBe(2);
+	expect(result.messages).toHaveLength(2);
 	expect(result.messages[1].customType).toBe("pi-schematic-readonly-nudge");
 	expect(result.messages[1].content).toMatch(/readonly/i);
 	expect(result.messages[1].content).toMatch(/write\/edit\/powershell blocked/i);
@@ -714,7 +714,7 @@ test("eligible readonly human topic boundary auto-creates handoff bypass equival
 	expect(watchdogMessage.content).toMatch(/temporary handoff exception active/i);
 
 	const blockResult = await toolCall({ toolName: "handoff", input: {} }, { cwd: "/tmp" });
-	expect(blockResult, "handoff tool should be unblocked after topic boundary creates bypass").toBe(undefined);
+	expect(blockResult, "handoff tool should be unblocked after topic boundary creates bypass").toBeUndefined();
 });
 
 test("watchdog band-crossing: nudge iff context enters a higher band", async () => {

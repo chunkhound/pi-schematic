@@ -113,7 +113,7 @@ test("spawn execute passes broad active registered tool formula to child session
 	expect(seenConfig.cwd).toBe(requestedCwd);
 	expect(seenConfig.sessionManager.getCwd(), "child session manager resolves ctx.cwd through Pi's native path semantics").toBe(resolve(requestedCwd));
 	expect(seenConfig.sessionManager.isPersisted(), "child transcript remains in-memory and isolated").toBe(false);
-	expect(seenConfig.sessionManager.getSessionFile(), "child transcript has no parent session file").toBe(undefined);
+	expect(seenConfig.sessionManager.getSessionFile(), "child transcript has no parent session file").toBeUndefined();
 	expect(seenConfig.sessionManager.getEntries(), "child transcript starts independently empty").toStrictEqual([]);
 	expect(new Set(seenConfig.tools)).toStrictEqual(new Set(["read", "bash", "project_search", "notebook_write", "notebook_read", "notebook_index"]));
 	expect(seenConfig.customTools.map((tool: any) => tool.name)).toStrictEqual(["notebook_write", "notebook_read", "notebook_index"]);
@@ -176,8 +176,8 @@ test("spawn execute composes Model Group routing with readonly child guards", as
 
 	expect(seenConfig.model).toBe(routedModel);
 	expect(seenConfig.thinkingLevel).toBe("low");
-	expect(seenConfig.modelRegistry).toBe(undefined);
-	expect(seenConfig.authStorage).toBe(undefined);
+	expect(seenConfig.modelRegistry).toBeUndefined();
+	expect(seenConfig.authStorage).toBeUndefined();
 	expect(new Set(seenConfig.tools)).toStrictEqual(new Set(["read", "bash", "notebook_write", "notebook_read", "notebook_index"]));
 	expect(seenConfig.customTools).toContainEqual(expect.objectContaining({ name: "bash" }));
 	expect(seenConfig.tools).not.toContain("write");
@@ -564,7 +564,7 @@ test("spawn execute derives result stats from the child entries", async () => {
 		cost: 0.5,
 		turns: 1,
 	});
-	expect(result.details.statsUnavailable).toBe(undefined);
+	expect(result.details.statsUnavailable).toBeUndefined();
 });
 
 // ── Child usage ──────────────────────────────────────────────────────
@@ -624,7 +624,7 @@ test("spawn execute returns the child usage summed over every counted entry kind
 		totalTokens: 111110,
 		cost: { input: 55555, output: 66666, cacheRead: 77777, cacheWrite: 88888, total: 288886 },
 	});
-	expect(result.details.statsUnavailable).toBe(undefined);
+	expect(result.details.statsUnavailable).toBeUndefined();
 });
 
 test("spawn execute omits cacheWrite1h and reasoning when no counted usage reports them", async () => {
@@ -666,7 +666,7 @@ test("an undefined optional child usage field is treated as absent", async () =>
 		totalTokens: 13,
 		cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 },
 	});
-	expect(result.details.statsUnavailable).toBe(undefined);
+	expect(result.details.statsUnavailable).toBeUndefined();
 });
 
 test("a completed spawn preserves its text when child entries cannot be read", async () => {
@@ -676,7 +676,7 @@ test("a completed spawn preserves its text when child entries cannot be read", a
 
 	expect(result.content[0].text).toBe("child result");
 	expect(result.details.statsUnavailable).toBe(true);
-	expect(result.details.stats).toBe(undefined);
+	expect(result.details.stats).toBeUndefined();
 	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
 	expect(disposeCalls, "the child session is disposed when the entries cannot be read").toBe(1);
 });
@@ -694,9 +694,9 @@ test("a completed spawn keeps its text with zero usage when a child usage cannot
 	]);
 
 	expect(result.content[0].text).toBe("child result");
-	expect(result.isError).toBe(undefined);
+	expect(result.isError).toBeUndefined();
 	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
-	expect(result.details.stats).toBe(undefined);
+	expect(result.details.stats).toBeUndefined();
 	expect(result.details.statsUnavailable).toBe(true);
 });
 
@@ -718,7 +718,7 @@ test("fractional nonnegative child cost remains available", async () => {
 		usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3,
 			cost: { input: 0.1, output: 0.2, cacheRead: 0, cacheWrite: 0, total: 0.3 } } })]);
 
-	expect(result.details.statsUnavailable).toBe(undefined);
+	expect(result.details.statsUnavailable).toBeUndefined();
 	expect(result.usage.cost.total).toBe(0.3);
 });
 
@@ -765,7 +765,7 @@ test("spawn execute skips an entry whose usage is null and sums the rest", async
 		totalTokens: 10,
 		cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, total: 3 },
 	});
-	expect(result.details.statsUnavailable).toBe(undefined);
+	expect(result.details.statsUnavailable).toBeUndefined();
 });
 
 test("aborted spawn returns the partial child usage", async () => {
@@ -984,7 +984,7 @@ test("a failed spawn whose child entries cannot be read returns its own error wi
 	const result = await host.execute("spawn-unreadable");
 
 	assertErrorResult(result, "prompt failed", EMPTY_CHILD_USAGE);
-	expect(result.details.stats).toBe(undefined);
+	expect(result.details.stats).toBeUndefined();
 	expect(result.details.statsUnavailable).toBe(true);
 });
 
@@ -1314,7 +1314,11 @@ test("executeSpawn propagates missing modalities before creating child work", as
 	await expect(executeSpawn("missing-modality", pi as any, {
 		model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
 		modelRegistry: { find: (_provider: string, id: string) => ({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
-	} as any, state, { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, "medium", async () => { factoryCalls++; throw new Error("must not create child"); })).rejects.toSatisfy((error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality");
+	} as any, state, { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, "medium", async () => { factoryCalls++; throw new Error("must not create child"); })).rejects.toSatisfy((error: unknown) => {
+		expect(error).toBeInstanceOf(SpawnRouteError);
+		expect((error as SpawnRouteError).reason).toBe("missing-modality");
+		return true;
+	});
 	expect(factoryCalls).toBe(0);
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
@@ -1367,7 +1371,16 @@ test("registered spawn tool rejects injected scalar group and model requirements
 			model: { provider: "openai", id: "parent", input: ["text"], reasoning: false, contextWindow: 100 }, cwd: "/tmp",
 			modelRegistry: { find: (_provider: string, id: string) => ({ provider: "openai", id, input: ["text"], reasoning: false, contextWindow: id === "small" ? 10 : 100 }), hasConfiguredAuth: () => true },
 		} as any),
-	).rejects.toSatisfy((error: unknown) => error instanceof SpawnRouteError && error.reason === "constraint-unsatisfied" && error.constraintUnsatisfied?.length === 2 && error.missingModalities.length === 0 && error.missingFromGroup.length === 0 && error.missingFromModel.length === 0);
+	).rejects.toSatisfy((error: unknown) => {
+		expect(error).toBeInstanceOf(SpawnRouteError);
+		const routeError = error as SpawnRouteError;
+		expect(routeError.reason).toBe("constraint-unsatisfied");
+		expect(routeError.constraintUnsatisfied).toHaveLength(2);
+		expect(routeError.missingModalities).toHaveLength(0);
+		expect(routeError.missingFromGroup).toHaveLength(0);
+		expect(routeError.missingFromModel).toHaveLength(0);
+		return true;
+	});
 	expect(factoryCalls).toBe(0); expect(state.childSessions.size).toBe(0); expect(state.liveChildSessions.size).toBe(0);
 });
 
@@ -2043,7 +2056,7 @@ test("nested spawn rebuildFromSession quietly tolerates missing tool definitions
 	expect(lines).toContainEqual(expect.stringContaining("⚠ m • low"));
 	expect(lines).toContainEqual(expect.stringContaining("error"));
 	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
-	expect(h.warnings.length).toBe(0);
+	expect(h.warnings).toHaveLength(0);
 });
 
 test("nested spawn attachSession recovers from subscribe throwing", async () => {
@@ -2518,7 +2531,7 @@ test("registerSpawnTool registers a tool with correct name and metadata", async 
 	const constraints = (tool.parameters as any).properties.constraints;
 	expect(constraints.type).toBe("object");
 	expect(constraints.properties.modalities).toBeTruthy();
-	expect(tool.executionMode, "spawn should not be sequential").toBe(undefined);
+	expect(tool.executionMode, "spawn should not be sequential").toBeUndefined();
 });
 
 test("renderSpawnResult handles result with no details field", () => {

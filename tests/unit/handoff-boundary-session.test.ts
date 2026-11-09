@@ -342,7 +342,7 @@ describe("handoff boundary in a real agent session", () => {
 		}
 
 		expect(observed.events).toStrictEqual(["before_agent_start", "agent_start", "agent_settled"]);
-		expect(observed.requests.length).toBe(2);
+		expect(observed.requests).toHaveLength(2);
 	});
 
 	it("shows the successor turn only the frame, the successor and the note", async () => {
@@ -374,7 +374,7 @@ describe("handoff boundary in a real agent session", () => {
 			session.dispose();
 		}
 
-		expect(observed.branchAtTurnStart.length).toBe(2);
+		expect(observed.branchAtTurnStart).toHaveLength(2);
 		expect(observed.branchAtTurnStart[1].slice(-3)).toStrictEqual([
 			"compaction",
 			`custom_message:${HANDOFF_SUCCESSOR_CUSTOM_TYPE}`,
@@ -391,7 +391,7 @@ describe("handoff boundary in a real agent session", () => {
 			session.dispose();
 		}
 
-		expect(observed.usageAtHandoffCall.length).toBe(1);
+		expect(observed.usageAtHandoffCall).toHaveLength(1);
 		const tokens = observed.usageAtHandoffCall[0]?.tokens;
 		expect(tokens, `usage at the handoff call: ${String(tokens)}`).toBeTypeOf("number");
 		expect(tokens, `usage at the handoff call: ${String(tokens)}`).toBeGreaterThanOrEqual(MIN_HANDOFF_TOKENS);
@@ -430,7 +430,7 @@ describe("handoff boundary in a real agent session", () => {
 			session.dispose();
 		}
 
-		expect(observed.requests.length).toBe(3);
+		expect(observed.requests).toHaveLength(3);
 		expect(observed.requests[1], "the handoff request was enforced before the cut").toSatisfy(carriesRequiredNudge);
 		const successorRequest = nonSystem(observed.requests[2]).map(messageText);
 		expect(successorRequest[1]).toBe(buildNextUserMessage({ nextInstruction: "finish the report", context: HANDOFF_CONTEXT }));
@@ -609,7 +609,7 @@ describe("handoff boundary in a real agent session", () => {
 			session.dispose();
 		}
 
-		expect(observed.requests.length).toBe(5);
+		expect(observed.requests).toHaveLength(5);
 		const beforeHandoff = getCurrentSystemPrompt(observed.requests[2]);
 		expect(beforeHandoff, beforeHandoff).toContain("Current topic: `oauth`");
 		expect(beforeHandoff, beforeHandoff).toContain("  stale: obsolete finding");
@@ -658,14 +658,14 @@ describe("handoff boundary in a real agent session", () => {
 			session.dispose();
 		}
 
-		expect(outcomes.length).toBe(1);
+		expect(outcomes).toHaveLength(1);
 		expect(handoffExecutions, "pi refuses the nested call before the handoff tool runs").toBe(0);
 		expect(outcomes[0].isError, outcomes[0].text).toBe(true);
 		expect(toolResultFor(sessionManager, "call-nested")?.isError).toBe(false);
 		expect(entriesOf(sessionManager, "compaction"), "no cut is written").toStrictEqual([]);
 		expect(entriesOf(sessionManager, "custom_message", HANDOFF_SUCCESSOR_CUSTOM_TYPE)).toStrictEqual([]);
 		expect(entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE), "nothing was staged, so nothing fails at settle").toStrictEqual([]);
-		expect(observed.requests.length).toBe(2);
+		expect(observed.requests).toHaveLength(2);
 		expect(observed.extensionErrors).toStrictEqual([]);
 	});
 });
@@ -707,7 +707,7 @@ describe("failed handoff cut in a real agent session", () => {
 			expect(requestsAfterHandoffRun).toBe(1 + variant.requests);
 			expect(entriesOf(sessionManager, "compaction"), "no cut on the branch").toStrictEqual([]);
 			const failures = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE);
-			expect(failures.length).toBe(1);
+			expect(failures).toHaveLength(1);
 			const [failure] = failures;
 			assertEntryType(failure, "custom_message");
 			expect(failure.content).toBe(guidance);
@@ -763,7 +763,7 @@ describe("failed handoff cut in a real agent session", () => {
 			const lostSuccessor = buildNextUserMessage({ nextInstruction: "finish the report", context: HANDOFF_CONTEXT });
 			expect(requestsAfterHandoffRun, "the continuation turn is aborted before it reaches the model").toBe(2);
 			const failures = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE);
-			expect(failures.length).toBe(1);
+			expect(failures).toHaveLength(1);
 			const [failure] = failures;
 			assertEntryType(failure, "custom_message");
 			expect(typeof failure.content).toBe("string");
@@ -817,7 +817,7 @@ describe("failed handoff cut in a real agent session", () => {
 			entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason === "aborted");
 		expect(abortedReplies, "nothing was aborted").toStrictEqual([]);
 		const failures = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE);
-		expect(failures.length).toBe(1);
+		expect(failures).toHaveLength(1);
 		const [failure] = failures;
 		assertEntryType(failure, "custom_message");
 		expect(typeof failure.content).toBe("string");

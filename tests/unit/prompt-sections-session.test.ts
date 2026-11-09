@@ -99,7 +99,7 @@ describe("prompt sections in a real agent session", () => {
 			session.dispose();
 		}
 
-		expect(systemMessagesPerRequest.length).toBe(3);
+		expect(systemMessagesPerRequest).toHaveLength(3);
 		const firstRequestSectionNames = systemMessagesPerRequest[0].flatMap((message) => Object.keys(message.sections ?? {}));
 		expect(firstRequestSectionNames, `first request sections: ${firstRequestSectionNames.join(", ")}`).toContain("schematic");
 		const secondRunPatches = systemMessagesPerRequest[2].slice(systemMessagesPerRequest[1].length);
@@ -167,7 +167,7 @@ describe("prompt sections in a real agent session", () => {
 			session.dispose();
 		}
 
-		expect(requests.length).toBe(3);
+		expect(requests).toHaveLength(3);
 		const handoffRunRequest = requests[2];
 		const nudgeFirstLine = buildNudge({
 			activeNotebookTopic: null,

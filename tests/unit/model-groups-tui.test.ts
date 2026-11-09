@@ -259,7 +259,7 @@ test("model groups TUI modality editor commits override and Automatic through up
 	expect(rendered(c)).toMatch(/Modalities/);
 	selectRenderedLabel(c, "I image");
 	press(c, ENTER);
-	expect(calls.length).toBe(1);
+	expect(calls).toHaveLength(1);
 	expect(calls[0].def.constraints.modalities).toStrictEqual(["text", "reasoning"]);
 	expect(calls[0].def.opaqueTopLevel, "TUI edits retain opaque top-level group keys").toStrictEqual({ preserve: true });
 	expect(rendered(c), "toggle stays on the modalities screen").toMatch(/Modalities/);
@@ -269,7 +269,7 @@ test("model groups TUI modality editor commits override and Automatic through up
 	// (no stored override, so no spawn ceiling attaches to a non-limit).
 	selectRenderedLabel(c, "I image");
 	press(c, ENTER);
-	expect(calls.length).toBe(2);
+	expect(calls).toHaveLength(2);
 	expect(calls[1].def.constraints?.modalities).toBeUndefined();
 	expect(rendered(c), "re-enable also stays on the modalities screen").toMatch(/Modalities/);
 	expect(rendered(c)).toMatch(/Automatic — using every capability its members support/);
@@ -301,7 +301,7 @@ test("model groups TUI Space also toggles a modality and stays on screen", () =>
 	expect(rendered(c)).toMatch(/Modalities/);
 	selectRenderedLabel(c, "I image");
 	press(c, " ");
-	expect(calls.length).toBe(1);
+	expect(calls).toHaveLength(1);
 	expect(calls[0].def.constraints.modalities).toStrictEqual(["text"]);
 	expect(rendered(c), "space toggle stays on the modalities screen").toMatch(/Modalities/);
 	expect(rendered(c)).toMatch(/I image  \[off\]/);
@@ -433,7 +433,7 @@ test("model groups TUI wizard renders provider/model/thinking steps and preserve
 
 	press(c, ENTER);
 	expect(updateCalls).toBe(1);
-	expect(messages.length).toBe(1);
+	expect(messages).toHaveLength(1);
 	expect(messages[0]).toMatch(/save failed at rename for project scope/);
 	expect(messages[0]).toMatch(/add failed/);
 	text = rendered(c);
@@ -612,7 +612,7 @@ test("model groups TUI MODEL_EDIT shows an unsupported/unavailable current level
 	press(c, ENTER);
 	// Assert a NEW persist happened; `calls.at(-1)` alone would also pass if the
 	// second Enter did nothing and simply re-read the first call's value.
-	expect(calls.length).toBe(2);
+	expect(calls).toHaveLength(2);
 	expect(calls.at(-1)).toStrictEqual("anthropic/claude/high,missing/nope/max");
 });
 
@@ -788,7 +788,7 @@ test("model groups TUI notifies and keeps visible state on persistence errors", 
 	c.handleInput?.("\r");
 	c.handleInput?.("2");
 	c.handleInput?.("\u001b"); // Escape preserves persistence-error handling and exits name input
-	expect(messages.length).toBe(1);
+	expect(messages).toHaveLength(1);
 	expect(messages[0]).toMatch(/save failed at temp-write for project scope/);
 	expect(messages[0]).toMatch(/source: \/tmp\/project\/\.pi\/pi-schematic\/model-groups\.json/);
 	expect(messages[0]).toMatch(/target: \/tmp\/project\/\.pi\/pi-schematic\/model-groups\.json\.123\.tmp/);
@@ -828,7 +828,7 @@ test("model groups TUI clamps final add row and enforces global-only access", ()
 	press(c, DOWN, DOWN);
 	expect(rendered(c)).toMatch(/→ \+ Add group/);
 	press(c, ENTER);
-	expect(calls.length).toBe(1);
+	expect(calls).toHaveLength(1);
 	expect(calls[0].scope).toBe("global");
 	expect(calls[0].access).toStrictEqual({ cwd: "/tmp/project", policy: "global-only" });
 	expect(calls[0].def).toStrictEqual({ models: [] });
@@ -888,7 +888,7 @@ test("model groups TUI decodes then canonicalizes prototype-sensitive names and 
 	}).c;
 	press(malformed, ENTER, DOWN, DOWN, ENTER, "\\", ESC);
 	expect(malformedCalls).toStrictEqual([]);
-	expect(notifications.length).toBe(1);
+	expect(notifications).toHaveLength(1);
 	expect(rendered(malformed)).toMatch(/→ Name: abc/);
 	expect(rendered(malformed)).not.toContain(CURSOR_MARKER);
 });
@@ -897,7 +897,7 @@ test("model groups TUI keeps every screen width-bounded without wrapping logical
 	const assertScreen = (c: ReturnType<typeof component>["c"]) => {
 		const wideCount = c.render(200).length;
 		const narrow = c.render(12);
-		expect(narrow.length).toBe(wideCount);
+		expect(narrow).toHaveLength(wideCount);
 		expect(narrow.filter((line) => !(visibleWidth(line) <= 12))).toStrictEqual([]);
 	};
 	const longModel = { provider: "openai", modelId: "gpt-5", thinkingLevel: "max" as const };
@@ -910,7 +910,7 @@ test("model groups TUI keeps every screen width-bounded without wrapping logical
 	const inactiveWideCount = c.render(200).length;
 	for (const width of [1, 2, 12]) {
 		const lines = c.render(width);
-		expect(lines.length).toBe(inactiveWideCount);
+		expect(lines).toHaveLength(inactiveWideCount);
 		expect(lines.filter((line) => !(visibleWidth(line) <= width))).toStrictEqual([]);
 		expect(lines.join("\n")).not.toContain(CURSOR_MARKER);
 		if (width === 12) expect(stripAnsi(lines.join("\n"))).toMatch(/界e\u0301/);
@@ -919,7 +919,7 @@ test("model groups TUI keeps every screen width-bounded without wrapping logical
 	const activeWideCount = c.render(200).length;
 	for (const width of [1, 2, 12]) {
 		const lines = c.render(width);
-		expect(lines.length).toBe(activeWideCount);
+		expect(lines).toHaveLength(activeWideCount);
 		expect(lines.filter((line) => !(visibleWidth(line) <= width))).toStrictEqual([]);
 		expect(lines.join("\n")).toContain(CURSOR_MARKER);
 		if (width === 12) expect(stripAnsi(lines.join("\n")).replaceAll(CURSOR_MARKER, "")).toMatch(/界e\u0301/);
@@ -983,8 +983,8 @@ test("model groups TUI fuzzy search excludes synthetic provider-space-id matches
 		`${candidate.provider} ${candidate.id}`,
 		candidate.name,
 	].join(" "));
-	expect(approvedFields.length).toBe(0);
-	expect(withSyntheticProviderSpaceId.length).toBe(1);
+	expect(approvedFields).toHaveLength(0);
+	expect(withSyntheticProviderSpaceId).toHaveLength(1);
 
 	const c = atSearchableModel([model]);
 	pressAndRender(c, ...query);
@@ -1280,7 +1280,7 @@ test("model groups TUI persistence notifications escape each hostile dynamic fie
 		notify: (message) => notifications.push(message),
 	}).c;
 	press(c, ENTER, DOWN, DOWN, ENTER, "x", ENTER);
-	expect(notifications.length).toBe(1);
+	expect(notifications).toHaveLength(1);
 	expect(notifications[0]).toMatch(/source\\n\\x1B/);
 	expect(notifications[0]).toMatch(/target\\n\\x1B/);
 	expect(notifications[0]).toMatch(/message\\n\\x1B/);
@@ -1311,7 +1311,7 @@ test("model groups TUI MODEL_EDIT opens on a mid-list configured level and marks
 	expect(text).not.toMatch(/Thinking: inherit ✓ current/);
 	// Enter on the current row must write the same value — never silently reset to inherit.
 	press(c, ENTER);
-	expect(calls.length).toBe(1);
+	expect(calls).toHaveLength(1);
 	expect(calls[0].models[0].thinkingLevel).toBe("medium");
 	expect(rendered(c)).toMatch(/Model Group: review/);
 });
@@ -1349,7 +1349,7 @@ test("model groups TUI MODEL_EDIT stale level on an available model keeps its ro
 	expect(selectedLine()).toMatch(/Remove model/);
 	press(c, ENTER);
 	// Enter on the final row removes the member in the stale-value case.
-	expect(calls.length).toBe(1);
+	expect(calls).toHaveLength(1);
 	expect(calls[0].models).toStrictEqual([]);
 	expect(rendered(c)).toMatch(/Model Group: review/);
 });
@@ -1382,7 +1382,7 @@ test("model groups TUI MODEL_EDIT keeps an unsupported level after inherit when 
 	// Regression guard: append-at-end would move the stale row next to Remove model.
 	expect(removeRow).not.toBe(staleRow + 1);
 	press(c, ENTER);
-	expect(calls.length).toBe(1);
+	expect(calls).toHaveLength(1);
 	expect(calls[0].models[0].thinkingLevel).toBe("medium");
 });
 
@@ -1404,7 +1404,7 @@ test("model groups TUI MODEL_EDIT stale level on an unavailable model keeps Stat
 	expect(text).not.toMatch(/Thinking: inherit ⚠ current, unavailable/);
 	// Enter from the stale row writes the same configured value back.
 	press(c, ENTER);
-	expect(calls.length).toBe(1);
+	expect(calls).toHaveLength(1);
 	expect(calls[0].models[0].thinkingLevel).toBe("max");
 	expect(rendered(c)).toMatch(/Model Group: review/);
 });
@@ -1445,7 +1445,7 @@ test("model groups TUI MODEL_EDIT clamps DOWN on Remove model and D removes a st
 	expect(rendered(c)).toMatch(/→ Remove model/);
 	expect(rendered(c)).not.toMatch(/→ Thinking: inherit/);
 	press(c, "D");
-	expect(calls.length).toBe(1);
+	expect(calls).toHaveLength(1);
 	expect(calls[0].models).toStrictEqual([]);
 	expect(rendered(c)).toMatch(/Model Group: review/);
 });
@@ -1464,7 +1464,7 @@ test("model groups TUI MODEL_EDIT dropping a stale level back to inherit deliber
 	press(c, UP);
 	expect(stripAnsi(rendered(c)).split("\n").find((line) => line.includes("→"))!).toMatch(/Thinking: inherit/);
 	press(c, ENTER);
-	expect(calls.length).toBe(1);
+	expect(calls).toHaveLength(1);
 	expect(calls[0].models[0]).not.toHaveProperty("thinkingLevel");
 	expect(rendered(c)).toMatch(/Model Group: review/);
 });
@@ -1484,7 +1484,7 @@ test("model groups TUI MODEL_EDIT marks the default inherit row current when no 
 	expect(text.match(/✓ current/g)?.length).toBe(1);
 	expect(text).not.toMatch(/⚠ current, unavailable/);
 	press(c, ENTER);
-	expect(calls.length).toBe(1);
+	expect(calls).toHaveLength(1);
 	expect(calls[0].models[0]).not.toHaveProperty("thinkingLevel");
 	expect(rendered(c)).toMatch(/Model Group: review/);
 });
@@ -1507,7 +1507,7 @@ test("model groups TUI MODEL_EDIT opens on a supported level for a registered-bu
 	expect(text).toMatch(/Thinking: high ✓ current/);
 	expect(text).not.toMatch(/⚠ current, unavailable/);
 	press(c, ENTER);
-	expect(calls.length).toBe(1);
+	expect(calls).toHaveLength(1);
 	expect(calls[0].models[0].thinkingLevel).toBe("high");
 });
 
@@ -1527,7 +1527,7 @@ test("model groups TUI MODEL_EDIT treats a stale off level on a non-reasoning mo
 	expect(text).toMatch(/Thinking: off ⚠ current, unavailable/);
 	expect(text).toMatch(/^  Thinking: inherit$/m);
 	press(c, ENTER);
-	expect(calls.length).toBe(1);
+	expect(calls).toHaveLength(1);
 	expect(calls[0].models[0].thinkingLevel).toBe("off");
 	expect(rendered(c)).toMatch(/Model Group: review/);
 });

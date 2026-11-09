@@ -59,7 +59,7 @@ test("real child abort before prompt returns an aborted result without a running
 	expect(proof.result.content).toStrictEqual([{ type: "text", text: "Child agent aborted: fixture abort" }]);
 	expect(proof.result.details.outcome).toBe("aborted");
 	expect(proof.result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
-	expect(proof.updates.length).toBe(0);
+	expect(proof.updates).toHaveLength(0);
 });
 
 test("real child reset during its running update invalidates the session", async () => {
@@ -76,7 +76,7 @@ test("concurrent real children both complete", async () => {
 		prompt: "unused",
 		prompts: ["first task", "second task"],
 	});
-	expect(proof.results.length).toBe(2);
+	expect(proof.results).toHaveLength(2);
 	for (const result of proof.results) {
 		expect(result.content[0].text).toBe(proof.expectedText);
 		expect(result.details.model).toBe(proof.modelId);
@@ -296,7 +296,7 @@ test("real child usage matches the session stats across assistant, tool result, 
 		);
 
 		const stats = result.details.stats;
-		expect((result as any).isError).toBe(undefined);
+		expect((result as any).isError).toBeUndefined();
 		// Hand-computed extras on top of the assistant usage: tool result 11/2/0/0 + usage entry 30/3/1/0 + compaction 200/20/0/4 + branch summary 7/1/0/0 = 248/26/1/4, cost 279/1024.
 		expect(result.usage.input).toBe(assistant.input + 248);
 		expect(result.usage.output).toBe(assistant.output + 26);
