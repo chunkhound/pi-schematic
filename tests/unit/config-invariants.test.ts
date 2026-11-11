@@ -161,11 +161,14 @@ test.for([
 	expect(eolViolations(eolReportLine(index, worktree))).toHaveLength(1);
 });
 
+test("the EOL report check accepts LF text and non-text files", () => {
+	expect(eolViolations(eolReportLine("lf", "lf")), "clean LF report must pass").toStrictEqual([]);
+	expect(eolViolations("i/none    w/none    -text\tlogo.gif"), "non-text files must not be flagged").toStrictEqual([]);
+});
+
 test("repository text has one LF line-ending contract", () => {
 	const rules = readText(GITATTRIBUTES_PATH).split("\n").map((line) => line.trim()).filter((line) => line !== "" && !line.startsWith("#"));
 	expect(rules, "all text must check out with LF; see .gitattributes").toStrictEqual(["* text=auto eol=lf"]);
-	expect(eolViolations(eolReportLine("lf", "lf")), "clean LF report must pass").toStrictEqual([]);
-	expect(eolViolations("i/none    w/none    -text\tlogo.gif"), "non-text files must not be flagged").toStrictEqual([]);
 	// spawnNode runs only node; the same deadline keeps a stalled git child from hanging the worker.
 	const result = spawnSync("git", ["ls-files", "--eol"], { cwd: REPO_ROOT, encoding: "utf8", timeout: CHILD_TIMEOUT_MS, killSignal: "SIGKILL" });
 	expect(result.error, `git ls-files --eol did not run: ${result.error?.message}`).toBeUndefined();
@@ -176,7 +179,9 @@ test("repository text has one LF line-ending contract", () => {
 
 test("README names the current Pi floor", () => {
 	const readme = readText(README_PATH);
-	expect(readme, "README must name the Pi floor").toContain(`Pi ${EXPECTED_PI_VERSION}`);
+	// The optional group matches the linked form, `[Pi](https://pi.dev) 1.2.0`.
+	const versions = new Set(Array.from(readme.matchAll(/Pi(?:\]\([^)]*\))? (\d+\.\d+\.\d+)/g), (match) => match[1]));
+	expect([...versions], "every Pi version mention in README must name the Pi floor").toStrictEqual([EXPECTED_PI_VERSION]);
 	expect(readme, "README still names the retired Pi floor").not.toMatch(/0\.99\.2/);
 });
 
