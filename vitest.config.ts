@@ -1,6 +1,5 @@
 import { defineConfig } from "vitest/config";
 import { PI_SHARED_PACKAGES, piManifestPath } from "./pi-packages.mjs";
-import { VITEST_FILES } from "./tests/vitest-files.mjs";
 
 // pi's packages resolve from pi's manifest; see pi-packages.mjs for the rationale. Vitest
 // externalizes a path under node_modules to native import(), so the extension shares pi's copies.
@@ -28,14 +27,28 @@ export default defineConfig({
 		restoreMocks: true,
 		// 0 disables truncation, so test names built from test.each/test.for rows stay whole.
 		taskTitleValueFormatTruncate: 0,
+		coverage: {
+			provider: "v8",
+			reporter: ["text", "lcov"],
+			include: ["*.ts", "handoff/**/*.ts", "model-groups/**/*.ts", "notebook/**/*.ts", "spawn/**/*.ts", "time/**/*.ts"],
+			exclude: ["vitest.config.ts"],
+		},
 		projects: [
 			{
 				test: {
 					name: "unit",
-					// Only the files listed in tests/vitest-files.mjs run here.
-					include: [...VITEST_FILES],
+					include: ["tests/unit/**/*.test.ts"],
 					testTimeout: 30_000,
 					hookTimeout: 30_000,
+				},
+			},
+			{
+				test: {
+					name: "e2e",
+					include: ["tests/e2e/**/*.test.ts"],
+					// 0 disables the timeout: an e2e test or hook bounds its own waits.
+					testTimeout: 0,
+					hookTimeout: 0,
 				},
 			},
 		],
