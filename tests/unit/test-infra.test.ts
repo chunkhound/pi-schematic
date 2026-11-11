@@ -1,5 +1,6 @@
 // Tests for the test infrastructure itself: the shared Node child runner, the compat lane check that
-// every test file it runs exists and belongs to its project, and the run-wide config that keeps parameterized test titles whole.
+// every test file it runs exists and belongs to its project, and the run-wide config that keeps
+// parameterized test titles whole.
 
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -54,6 +55,12 @@ describe("compat lane test files", () => {
 	test("a list naming an existing file outside the project fails with that file's path", () => {
 		expect(() => assertCompatTestFiles("unit", ["tests/unit/spawn.test.ts", "tests/e2e/basic.test.ts"])).toThrow(
 			new Error("The compat lane lists test files outside the unit project: tests/e2e/basic.test.ts"),
+		);
+	});
+
+	test("a list naming an existing non-test file inside the project fails with that file's path", () => {
+		expect(() => assertCompatTestFiles("unit", ["tests/unit/spawn.test.ts", "tests/unit/helpers.ts"])).toThrow(
+			new Error("The compat lane lists test files outside the unit project: tests/unit/helpers.ts"),
 		);
 	});
 });
