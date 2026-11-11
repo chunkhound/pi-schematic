@@ -5,6 +5,7 @@ import { createCompatCopy, latestPiDependencies, prepareCompatCopy, resolveLates
 import { repoRootFromScript, runChecked, runNpmWithRetry } from "./compat-process.mjs";
 import { assertSynchronizedPackageVersions } from "./dependency-graph-assertions.mjs";
 
+const ROOT = repoRootFromScript(import.meta.url);
 const PI_SYNC_PACKAGES = ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"];
 
 // The unit tests the compat lane runs in the Vitest unit project.
@@ -32,36 +33,28 @@ export const COMPAT_UNIT_FILES = [
   "tests/unit/pi-module-identity.test.ts",
   "tests/unit/test-host.test.ts",
 ];
-// The end-to-end suites the compat lane runs in the Vitest e2e project.
-const COMPAT_E2E_FILES = [
-  "tests/e2e/basic.test.ts",
-  "tests/e2e/real-host.test.ts",
-];
 
 // Vitest ignores a file filter that matches no file when another filter matches, so a listed file
-// that does not exist, or that its project does not include, would silently not run while the lane
-// passes. Each project runs `tests/<project>/**/*.test.ts`. Paths are relative to the repository
+// that does not exist, or that the unit project does not include, would silently not run while the
+// lane passes. The unit project runs `tests/unit/**/*.test.ts`. Paths are relative to the repository
 // root, whatever the working directory.
-export function assertCompatTestFiles(project, files) {
-  const root = repoRootFromScript(import.meta.url);
-  const missing = files.filter((file) => !existsSync(join(root, file)));
+export function assertCompatTestFiles(files) {
+  const missing = files.filter((file) => !existsSync(join(ROOT, file)));
   if (missing.length > 0) {
     throw new Error(`The compat lane lists test files that do not exist: ${missing.join(", ")}`);
   }
-  const outside = files.filter((file) => !(file.startsWith(`tests/${project}/`) && file.endsWith(".test.ts")));
+  const outside = files.filter((file) => !(file.startsWith("tests/unit/") && file.endsWith(".test.ts")));
   if (outside.length > 0) {
-    throw new Error(`The compat lane lists test files outside the ${project} project: ${outside.join(", ")}`);
+    throw new Error(`The compat lane lists test files outside the unit project: ${outside.join(", ")}`);
   }
 }
 
 const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
 
 async function main() {
-  assertCompatTestFiles("unit", COMPAT_UNIT_FILES);
-  assertCompatTestFiles("e2e", COMPAT_E2E_FILES);
-  const root = repoRootFromScript(import.meta.url);
+  assertCompatTestFiles(COMPAT_UNIT_FILES);
   const artifactDir = process.env.COMPAT_ARTIFACT_DIR;
-  const { temp, copy } = createCompatCopy(root, "pi-schematic-current-");
+  const { temp, copy } = createCompatCopy(ROOT, "pi-schematic-current-");
 
   try {
     prepareCompatCopy(copy);
@@ -82,7 +75,7 @@ async function main() {
     await runNpmWithRetry(copy, ["run", "typecheck"]);
     await runNpmWithRetry(copy, ["exec", "audit-ci", "--", "--config", "audit-ci.jsonc"]);
     runChecked(process.execPath, ["./node_modules/vitest/vitest.mjs", "run", "--project", "unit", ...COMPAT_UNIT_FILES], { cwd: copy });
-    runChecked(process.execPath, ["./node_modules/vitest/vitest.mjs", "run", "--project", "e2e", ...COMPAT_E2E_FILES], { cwd: copy });
+    runChecked(process.execPath, ["./node_modules/vitest/vitest.mjs", "run", "--project", "e2e"], { cwd: copy });
     writeCompatArtifacts(artifactDir, copy, { piVersion, typeboxVersion: latestPi.typeboxVersion });
     process.stdout.write(`Current synchronized Pi compatibility passed at ${piVersion}.\n`);
   } catch (error) {

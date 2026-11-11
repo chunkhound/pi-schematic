@@ -1,6 +1,6 @@
 // Tests for the test infrastructure itself: the shared Node child runner, the compat lane check that
-// every test file it runs exists and belongs to its project, and the run-wide config that keeps
-// parameterized test titles whole.
+// every file on its unit list exists and belongs to the unit project, and the run-wide config that
+// keeps parameterized test titles whole.
 
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -43,23 +43,23 @@ describe("spawnNode", () => {
 
 describe("compat lane test files", () => {
 	test("every file on the unit list exists and belongs to the unit project", () => {
-		expect(() => assertCompatTestFiles("unit", COMPAT_UNIT_FILES)).not.toThrow();
+		expect(() => assertCompatTestFiles(COMPAT_UNIT_FILES)).not.toThrow();
 	});
 
 	test("a list naming a missing file fails with that file's path", () => {
-		expect(() => assertCompatTestFiles("unit", ["tests/unit/spawn.test.ts", "tests/unit/missing.test.ts"])).toThrow(
+		expect(() => assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/unit/missing.test.ts"])).toThrow(
 			new Error("The compat lane lists test files that do not exist: tests/unit/missing.test.ts"),
 		);
 	});
 
 	test("a list naming an existing file outside the project fails with that file's path", () => {
-		expect(() => assertCompatTestFiles("unit", ["tests/unit/spawn.test.ts", "tests/e2e/basic.test.ts"])).toThrow(
+		expect(() => assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/e2e/basic.test.ts"])).toThrow(
 			new Error("The compat lane lists test files outside the unit project: tests/e2e/basic.test.ts"),
 		);
 	});
 
 	test("a list naming an existing non-test file inside the project fails with that file's path", () => {
-		expect(() => assertCompatTestFiles("unit", ["tests/unit/spawn.test.ts", "tests/unit/helpers.ts"])).toThrow(
+		expect(() => assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/unit/helpers.ts"])).toThrow(
 			new Error("The compat lane lists test files outside the unit project: tests/unit/helpers.ts"),
 		);
 	});
