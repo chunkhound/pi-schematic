@@ -213,21 +213,18 @@ export class RealHost {
 	readonly projectDir: string;
 	private readonly root: string;
 	private readonly logPath: string;
-	private options: RpcClientOptions;
 	private closing: Promise<void> | null = null;
 	/** Barrier phases begun — one per step, one for `close()`; the rounds of a step share its phase. */
 	private barrierPhases = 0;
 	/** `/e2e-barrier` commands sent; every round reports under its own id. */
 	private barrierRounds = 0;
-	/** Runs counted inside step windows, and runs of clients replaced by restart(). */
+	/** Runs counted inside step windows. */
 	private stepRuns = 0;
-	private runsBeforeRestart = 0;
 
-	private constructor(root: string, logPath: string, options: RpcClientOptions, client: RpcClient, events: RpcEvent[]) {
+	private constructor(root: string, logPath: string, client: RpcClient, events: RpcEvent[]) {
 		this.root = root;
 		this.logPath = logPath;
 		this.projectDir = join(root, "project");
-		this.options = options;
 		this.client = client;
 		this.events = events;
 	}
@@ -279,7 +276,7 @@ export class RealHost {
 				args,
 			};
 			const { client, events } = await startClient(clientOptions);
-			return new RealHost(root, logPath, clientOptions, client, events);
+			return new RealHost(root, logPath, client, events);
 		}, () => removeRoot(root));
 	}
 
@@ -360,24 +357,6 @@ export class RealHost {
 		await this.step(mark, `navigate to ${entryId}`, runs);
 	}
 
-	/** Stop the CLI and start a new one on the same session file, temp root and probe log. */
-	async restart(): Promise<void> {
-		const { sessionFile } = await this.client.getState();
-		if (!sessionFile || !existsSync(sessionFile)) {
-			throw new Error(`restart() needs a session file on disk (${sessionFile}); pi writes it only after a user or assistant message`);
-		}
-		await this.client.stop();
-		const args = [...(this.options.args ?? [])];
-		const sessionIndex = args.indexOf("--session");
-		if (sessionIndex !== -1) args.splice(sessionIndex, 2);
-		args.push("--session", sessionFile);
-		this.options = { ...this.options, args };
-		const { client, events } = await startClient(this.options);
-		this.runsBeforeRestart += countRuns(this.events);
-		this.client = client;
-		this.events = events;
-	}
-
 	/**
 	 * Wait for outstanding work and fail on any run no step expected, then stop the CLI and
 	 * remove the temp root. Runs once: every call returns the first call's outcome.
@@ -393,7 +372,7 @@ export class RealHost {
 	private async assertNoUnexpectedRuns(): Promise<void> {
 		this.startBarrierPhase();
 		await this.barrier(REAL_HOST_TIMEOUT_MS);
-		const unexpected = this.runsBeforeRestart + countRuns(this.events) - this.stepRuns;
+		const unexpected = countRuns(this.events) - this.stepRuns;
 		if (unexpected !== 0) throw new Error(`${unexpected} run(s) started outside every step; no step expected them`);
 	}
 
