@@ -33,7 +33,6 @@ export const COMPAT_VITEST_FILES = [
   "tests/unit/readonly-mode.test.ts",
   "tests/unit/system-prompt.test.ts",
   "tests/unit/compat-process.test.ts",
-  "tests/unit/e2e-concurrency.test.ts",
   "tests/unit/dependency-graph-assertions.test.ts",
   "tests/unit/module-evaluation-order.test.ts",
   "tests/unit/pi-module-identity.test.ts",

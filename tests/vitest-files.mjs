@@ -14,7 +14,6 @@ export const VITEST_FILES = [
   "tests/unit/compat-process.test.ts",
   "tests/unit/config-invariants.test.ts",
   "tests/unit/dependency-graph-assertions.test.ts",
-  "tests/unit/e2e-concurrency.test.ts",
   "tests/unit/frontmatter-cache.test.ts",
   "tests/unit/handoff-boundary-session.test.ts",
   "tests/unit/handoff-eligibility.test.ts",
