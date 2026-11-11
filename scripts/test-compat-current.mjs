@@ -39,20 +39,26 @@ const COMPAT_E2E_FILES = [
 ];
 
 // Vitest ignores a file filter that matches no file when another filter matches, so a listed file
-// that does not exist would silently not run while the lane passes. Paths are relative to the
-// repository root, whatever the working directory.
-export function assertTestFilesExist(files) {
+// that does not exist, or that its project does not include, would silently not run while the lane
+// passes. Each project runs `tests/<project>/**/*.test.ts`. Paths are relative to the repository
+// root, whatever the working directory.
+export function assertCompatTestFiles(project, files) {
   const root = repoRootFromScript(import.meta.url);
   const missing = files.filter((file) => !existsSync(join(root, file)));
   if (missing.length > 0) {
     throw new Error(`The compat lane lists test files that do not exist: ${missing.join(", ")}`);
+  }
+  const outside = files.filter((file) => !(file.startsWith(`tests/${project}/`) && file.endsWith(".test.ts")));
+  if (outside.length > 0) {
+    throw new Error(`The compat lane lists test files outside the ${project} project: ${outside.join(", ")}`);
   }
 }
 
 const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
 
 async function main() {
-  assertTestFilesExist([...COMPAT_UNIT_FILES, ...COMPAT_E2E_FILES]);
+  assertCompatTestFiles("unit", COMPAT_UNIT_FILES);
+  assertCompatTestFiles("e2e", COMPAT_E2E_FILES);
   const root = repoRootFromScript(import.meta.url);
   const artifactDir = process.env.COMPAT_ARTIFACT_DIR;
   const { temp, copy } = createCompatCopy(root, "pi-schematic-current-");
