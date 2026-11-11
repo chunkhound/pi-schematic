@@ -64,7 +64,7 @@ The suites leave these behaviours unpinned:
 
 ## CI
 
-Pull requests are automatically tested via GitHub Actions. `.github/workflows/test.yml` defines which OS and Node lanes run and which checks each lane runs; its comments explain the Node version choice.
+Pull requests are automatically tested via GitHub Actions. `.github/workflows/test.yml` defines which OS and Node lanes run and which checks each lane runs.
 
 The floor is the minimum Node.js version Pi requires (the `engines.node` of `@earendil-works/pi-coding-agent`). This package declares no `engines` of its own, because it only runs inside Pi. Both the floor and the current Node.js LTS are tested on Linux, macOS and Windows, because platform-specific code paths can also depend on the Node version. The exact current LTS is written in the CI matrix, the current-Pi job and the publish workflow, and Renovate bumps all of them together: patch and minor releases in a "Node.js" PR, a new LTS major in a separate "major Node.js" PR. Local development runs on the floor: `.node-version` holds it for version managers such as fnm and nodenv, because code that works on the floor almost always works on newer releases, while the reverse is where breakage comes from. When Pi raises its floor, Renovate updates `.node-version`, the floor entry of the CI matrix and the `@types/node` version cap, which keeps the Node types on the floor's major, in one PR.
 
