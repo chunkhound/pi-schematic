@@ -559,14 +559,31 @@ export function startRealHost(options?: RealHostOptions): Promise<RealHost> {
 }
 
 /**
- * Start a host and run `run` against it, then close it. The close also hangs off `t`'s
- * `onTestFinished` with no timeout: Vitest does not cancel a timed-out test body, so only a
- * finish callback still runs then. `close()` runs once however many of these paths reach it.
- * The inline close keeps a cleanup error visible next to a body failure; a close error from
- * the callback is added to the test's errors, also when the test already failed or timed out.
+ * Start a host and run `run` against it, then close it inline. A close error is reported
+ * exactly once: alone after a passing body, next to the body error after a failing one.
+ * The close also hangs off `t`'s `onTestFinished` with no timeout, because Vitest does not
+ * cancel a timed-out test body and only a finish callback still runs then. The callback always
+ * awaits `host.close()` (memoized, so the host closes once), so the test does not finish while
+ * a close is still running. It rethrows the close error unless the inline close had already
+ * settled when the callback started, because then the error reached the test through the body.
+ * A timed-out or abandoned body therefore still gets its close error among the test's errors.
  */
 export async function withRealHost(t: TestContext, run: (host: RealHost) => Promise<void>, options?: RealHostOptions): Promise<void> {
 	const host = await startRealHost(options);
-	t.onTestFinished(() => host.close(), 0);
-	await withCleanup(() => run(host), () => host.close());
+	let inlineCloseSettled = false;
+	t.onTestFinished(async () => {
+		const reportedByBody = inlineCloseSettled;
+		try {
+			await host.close();
+		} catch (error) {
+			if (!reportedByBody) throw error;
+		}
+	}, 0);
+	await withCleanup(() => run(host), async () => {
+		try {
+			await host.close();
+		} finally {
+			inlineCloseSettled = true;
+		}
+	});
 }
