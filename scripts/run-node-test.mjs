@@ -7,16 +7,17 @@ import { VITEST_FILES } from "../tests/vitest-files.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
 const args = process.argv.slice(2);
-const updateSnapshots = args.includes("--update-snapshots");
-const flags = args.filter((arg) => arg.startsWith("--") && arg !== "--update-snapshots");
+const flags = args.filter((arg) => arg.startsWith("--"));
 const patterns = args.filter((arg) => !arg.startsWith("--"));
 
 if (patterns.length === 0) {
   throw new Error("Pass at least one test file or glob pattern.");
 }
 
-// The files listed in tests/vitest-files.mjs run on Vitest, so this runner drops them from the
-// files its patterns match. The exclusion is temporary while the suite moves to Vitest.
+// The files listed in tests/vitest-files.mjs run on Vitest. This runner drops them from the files
+// its patterns match, so a unit file passed by mistake does not run here as well. Its callers
+// (`npm run test:e2e` and the compat lane) pass only e2e files; the exclusion goes when those
+// move to Vitest.
 const vitestFiles = new Set(VITEST_FILES.map((file) => resolve(root, file)));
 for (const file of vitestFiles) {
   if (!existsSync(file)) throw new Error(`tests/vitest-files.mjs lists ${file}, which does not exist.`);
@@ -47,9 +48,6 @@ const result = spawnSync(
   {
     cwd: root,
     stdio: "inherit",
-    env: updateSnapshots
-      ? { ...process.env, UPDATE_SNAPSHOTS: "1" }
-      : process.env,
   },
 );
 

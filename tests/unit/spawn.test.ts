@@ -1,6 +1,6 @@
-import test, { afterEach, beforeEach } from "node:test";
+import { beforeEach, expect, test, vi } from "vitest";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type SessionEntry } from "@earendil-works/pi-coding-agent";
-import assert from "node:assert/strict";
+import { assertPresent } from "../assertions.js";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createState, resetState } from "../../state.js";
@@ -61,10 +61,9 @@ async function makeChildSpawnTool(state: any) {
 
 beforeEach(() => {
 	h = createTestHarness();
-});
-
-afterEach(() => {
-	h.teardown();
+	return () => {
+		h.teardown();
+	};
 });
 
 async function executeWithFailingCleanup(primaryFailure: unknown, cleanupFailure: unknown, context: Record<string, unknown> = {}) {
@@ -86,8 +85,8 @@ async function executeWithFailingCleanup(primaryFailure: unknown, cleanupFailure
 }
 
 function assertChildRegistriesCleared(state: ReturnType<typeof createState>): void {
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
 }
 
 test("spawn execute passes broad active registered tool formula to child session", async () => {
@@ -108,22 +107,15 @@ test("spawn execute passes broad active registered tool formula to child session
 		{ model: { id: "mock-model" }, cwd: requestedCwd },
 	);
 
-	assert.equal(seenConfig.model.id, "mock-model");
-	assert.equal(seenConfig.thinkingLevel, "high");
-	assert.equal(seenConfig.cwd, requestedCwd);
-	assert.equal(
-		seenConfig.sessionManager.getCwd(),
-		resolve(requestedCwd),
-		"child session manager resolves ctx.cwd through Pi's native path semantics",
-	);
-	assert.equal(seenConfig.sessionManager.isPersisted(), false, "child transcript remains in-memory and isolated");
-	assert.equal(seenConfig.sessionManager.getSessionFile(), undefined, "child transcript has no parent session file");
-	assert.deepEqual(seenConfig.sessionManager.getEntries(), [], "child transcript starts independently empty");
-	assert.deepEqual(
-		new Set(seenConfig.tools),
-		new Set(["read", "bash", "project_search", "notebook_write", "notebook_read", "notebook_index"]),
-	);
-	assert.deepEqual(seenConfig.customTools.map((tool: any) => tool.name), ["notebook_write", "notebook_read", "notebook_index"]);
+	expect(seenConfig.model.id).toBe("mock-model");
+	expect(seenConfig.thinkingLevel).toBe("high");
+	expect(seenConfig.cwd).toBe(requestedCwd);
+	expect(seenConfig.sessionManager.getCwd(), "child session manager resolves ctx.cwd through Pi's native path semantics").toBe(resolve(requestedCwd));
+	expect(seenConfig.sessionManager.isPersisted(), "child transcript remains in-memory and isolated").toBe(false);
+	expect(seenConfig.sessionManager.getSessionFile(), "child transcript has no parent session file").toBeUndefined();
+	expect(seenConfig.sessionManager.getEntries(), "child transcript starts independently empty").toStrictEqual([]);
+	expect(new Set(seenConfig.tools)).toStrictEqual(new Set(["read", "bash", "project_search", "notebook_write", "notebook_read", "notebook_index"]));
+	expect(seenConfig.customTools.map((tool: any) => tool.name)).toStrictEqual(["notebook_write", "notebook_read", "notebook_index"]);
 });
 
 test("spawn forwards requested thinking and reports the session effective thinking", async () => {
@@ -143,10 +135,10 @@ test("spawn forwards requested thinking and reports the session effective thinki
 		{ model: { id: "non-reasoning-model", reasoning: false }, cwd: "/tmp" },
 	);
 
-	assert.equal(seenConfig.thinkingLevel, "max", "requested thinking is forwarded unchanged");
-	assert.equal(updates[0].details.thinking, "off", "running details report Pi's effective thinking");
-	assert.equal(result.details.thinking, "off", "final details report Pi's effective thinking");
-	assert.deepEqual(result.details.route, { status: "inherited" });
+	expect(seenConfig.thinkingLevel, "requested thinking is forwarded unchanged").toBe("max");
+	expect(updates[0].details.thinking, "running details report Pi's effective thinking").toBe("off");
+	expect(result.details.thinking, "final details report Pi's effective thinking").toBe("off");
+	expect(result.details.route).toStrictEqual({ status: "inherited" });
 });
 
 test("spawn execute composes Model Group routing with readonly child guards", async () => {
@@ -181,23 +173,20 @@ test("spawn execute composes Model Group routing with readonly child guards", as
 		{ model: { provider: "openai", id: "parent" }, cwd: "/tmp", modelRegistry: parentRegistry },
 	);
 
-	assert.equal(seenConfig.model, routedModel);
-	assert.equal(seenConfig.thinkingLevel, "low");
-	assert.equal(seenConfig.modelRegistry, undefined);
-	assert.equal(seenConfig.authStorage, undefined);
-	assert.deepEqual(
-		new Set(seenConfig.tools),
-		new Set(["read", "bash", "notebook_write", "notebook_read", "notebook_index"]),
-	);
-	assert.ok(seenConfig.customTools.some((tool: any) => tool.name === "bash"));
-	assert.ok(!seenConfig.tools.includes("write"));
-	assert.ok(!seenConfig.tools.includes("edit"));
-	assert.ok(!seenConfig.tools.includes("powershell"));
-	assert.ok(!seenConfig.tools.includes("spawn"));
-	assert.ok(!seenConfig.tools.includes("handoff"));
-	assert.match(seenPrompt, /inherit readonly authority/i);
-	assert.ok(seenPrompt.includes(READONLY_WRITE_EDIT_SUMMARY));
-	assert.deepEqual(result.details.route, { status: "routed", group: "review", provider: "openai", modelId: "gpt-routed" });
+	expect(seenConfig.model).toBe(routedModel);
+	expect(seenConfig.thinkingLevel).toBe("low");
+	expect(seenConfig.modelRegistry).toBeUndefined();
+	expect(seenConfig.authStorage).toBeUndefined();
+	expect(new Set(seenConfig.tools)).toStrictEqual(new Set(["read", "bash", "notebook_write", "notebook_read", "notebook_index"]));
+	expect(seenConfig.customTools).toContainEqual(expect.objectContaining({ name: "bash" }));
+	expect(seenConfig.tools).not.toContain("write");
+	expect(seenConfig.tools).not.toContain("edit");
+	expect(seenConfig.tools).not.toContain("powershell");
+	expect(seenConfig.tools).not.toContain("spawn");
+	expect(seenConfig.tools).not.toContain("handoff");
+	expect(seenPrompt).toMatch(/inherit readonly authority/i);
+	expect(seenPrompt).toContain(READONLY_WRITE_EDIT_SUMMARY);
+	expect(result.details.route).toStrictEqual({ status: "routed", group: "review", provider: "openai", modelId: "gpt-routed" });
 });
 
 test("readonly child without a bash tool gets the no-shell summary and no bash rules", async () => {
@@ -217,8 +206,8 @@ test("readonly child without a bash tool gets the no-shell summary and no bash r
 		{ model: { provider: "openai", id: "parent" }, cwd: "/tmp" },
 	);
 
-	assert.ok(seenPrompt.includes(READONLY_NO_SHELL_SUMMARY));
-	assert.ok(!seenPrompt.includes(READONLY_BASH_SCOPE));
+	expect(seenPrompt).toContain(READONLY_NO_SHELL_SUMMARY);
+	expect(seenPrompt).not.toContain(READONLY_BASH_SCOPE);
 });
 
 test("spawn routes capability requirements to capable members via random selection on the filtered pool", async () => {
@@ -254,7 +243,7 @@ test("spawn routes capability requirements to capable members via random selecti
 	} finally {
 		Math.random = originalRandom;
 	}
-	assert.deepEqual(seenModels, ["gpt-cap-a", "gpt-cap-b"], "each spawn draws a capable member from the filtered pool; non-capable members are never selected");
+	expect(seenModels, "each spawn draws a capable member from the filtered pool; non-capable members are never selected").toStrictEqual(["gpt-cap-a", "gpt-cap-b"]);
 });
 
 test("spawn injects a capability ceiling notice for a routed group with image disabled", async () => {
@@ -289,9 +278,9 @@ test("spawn injects a capability ceiling notice for a routed group with image di
 		undefined,
 		{ model: { provider: "openai", id: "parent" }, cwd: "/tmp", modelRegistry: parentRegistry },
 	);
-	assert.match(seenPrompt, /## Model Group capability ceiling/i);
-	assert.match(seenPrompt, /image input is disabled/i);
-	assert.match(seenPrompt, /report the capability mismatch/i);
+	expect(seenPrompt).toMatch(/## Model Group capability ceiling/i);
+	expect(seenPrompt).toMatch(/image input is disabled/i);
+	expect(seenPrompt).toMatch(/report the capability mismatch/i);
 });
 
 test("spawn injects descriptor-provided scalar capability ceilings", async () => {
@@ -313,8 +302,8 @@ test("spawn injects descriptor-provided scalar capability ceilings", async () =>
 		model: { provider: "openai", id: "parent", contextWindow: 100 }, cwd: "/tmp",
 		modelRegistry: { find: (_provider: string, id: string) => id === "small" ? small : id === "large" ? large : undefined, hasConfiguredAuth: () => true },
 	} as any);
-	assert.match(seenPrompt, /## Model Group capability ceiling/i);
-	assert.match(seenPrompt, /minimum context is capped at 50 tokens/i);
+	expect(seenPrompt).toMatch(/## Model Group capability ceiling/i);
+	expect(seenPrompt).toMatch(/minimum context is capped at 50 tokens/i);
 });
 
 test("spawn execute builds prompt with notebook pages and task", async () => {
@@ -335,12 +324,12 @@ test("spawn execute builds prompt with notebook pages and task", async () => {
 	);
 
 	// Verify user-facing invariants: task text is included, notebook pages are referenced
-	assert.match(seenPrompt, /Do the task/);
-	assert.match(seenPrompt, /entry-a: preview line/);
-	assert.match(seenPrompt, /durable shared memory for the parent and future contexts/i);
-	assert.doesNotMatch(seenPrompt, /durable grounding/i);
+	expect(seenPrompt).toMatch(/Do the task/);
+	expect(seenPrompt).toMatch(/entry-a: preview line/);
+	expect(seenPrompt).toMatch(/durable shared memory for the parent and future contexts/i);
+	expect(seenPrompt).not.toMatch(/durable grounding/i);
 	const limitLine = `Keep the result under ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}.`;
-	assert.equal(seenPrompt.slice(-limitLine.length), limitLine);
+	expect(seenPrompt.slice(-limitLine.length)).toBe(limitLine);
 });
 
 test("spawn emits no capability notice when the routed group has no explicit override", async () => {
@@ -368,8 +357,8 @@ test("spawn emits no capability notice when the routed group has no explicit ove
 		undefined,
 		{ model: { provider: "openai", id: "parent" }, cwd: "/tmp", modelRegistry: parentRegistry },
 	);
-	assert.doesNotMatch(seenPrompt, /capability ceiling/i);
-	assert.doesNotMatch(seenPrompt, /image input is disabled/i);
+	expect(seenPrompt).not.toMatch(/capability ceiling/i);
+	expect(seenPrompt).not.toMatch(/image input is disabled/i);
 });
 
 // ── Build child tool names ─────────────────────────────────────────
@@ -377,7 +366,7 @@ test("spawn emits no capability notice when the routed group has no explicit ove
 test("child tool names inherit active registered builtins and exclude recursive controls", async () => {
 	const state = createState();
 	const childTools = createChildTools(await createTestHost(), state);
-	assert.equal(childTools.some(t => t.name === "spawn"), false);
+	expect(childTools.map((t) => t.name)).not.toContain("spawn");
 	const childToolNames = buildChildToolNames(
 		["read", "bash", "spawn", "handoff", "future_tool"],
 		childTools,
@@ -389,10 +378,10 @@ test("child tool names inherit active registered builtins and exclude recursive 
 			{ name: "future_tool", sourceInfo: { source: "project" } },
 		] as any,
 	);
-	assert.equal(childToolNames.includes("read"), true);
-	assert.equal(childToolNames.includes("bash"), true);
-	assert.equal(childToolNames.includes("spawn"), false);
-	assert.equal(childToolNames.includes("handoff"), false);
+	expect(childToolNames).toContain("read");
+	expect(childToolNames).toContain("bash");
+	expect(childToolNames).not.toContain("spawn");
+	expect(childToolNames).not.toContain("handoff");
 });
 
 test("child tool names inherit active registered MCP extension tools", async () => {
@@ -407,8 +396,8 @@ test("child tool names inherit active registered MCP extension tools", async () 
 			{ name: "mcp_status", sourceInfo: { source: "extension" } },
 		] as any,
 	);
-	assert.equal(toolNames.includes("chunkhound_code_research"), true);
-	assert.equal(toolNames.includes("mcp_status"), true);
+	expect(toolNames).toContain("chunkhound_code_research");
+	expect(toolNames).toContain("mcp_status");
 });
 
 test("child tool names inherit active registered project package and local extension tools", async () => {
@@ -423,9 +412,9 @@ test("child tool names inherit active registered project package and local exten
 			{ name: "local_helper", sourceInfo: { source: "local" } },
 		] as any,
 	);
-	assert.equal(toolNames.includes("project_search"), true);
-	assert.equal(toolNames.includes("package_lint"), true);
-	assert.equal(toolNames.includes("local_helper"), true);
+	expect(toolNames).toContain("project_search");
+	expect(toolNames).toContain("package_lint");
+	expect(toolNames).toContain("local_helper");
 });
 
 test("child tool names exclude inactive registered and active phantom tools", async () => {
@@ -439,50 +428,50 @@ test("child tool names exclude inactive registered and active phantom tools", as
 			{ name: "inactive_registered", sourceInfo: { source: "extension" } },
 		] as any,
 	);
-	assert.equal(toolNames.includes("read"), true);
-	assert.equal(toolNames.includes("inactive_registered"), false);
-	assert.equal(toolNames.includes("active_phantom"), false);
-	assert.ok(toolNames.includes("notebook_write"));
-	assert.ok(toolNames.includes("notebook_read"));
-	assert.ok(toolNames.includes("notebook_index"));
-	assert.equal(toolNames.includes("handoff"), false);
-	assert.equal(toolNames.includes("spawn"), false);
+	expect(toolNames).toContain("read");
+	expect(toolNames).not.toContain("inactive_registered");
+	expect(toolNames).not.toContain("active_phantom");
+	expect(toolNames).toContain("notebook_write");
+	expect(toolNames).toContain("notebook_read");
+	expect(toolNames).toContain("notebook_index");
+	expect(toolNames).not.toContain("handoff");
+	expect(toolNames).not.toContain("spawn");
 });
 
 test("buildChildToolNames (2-arg fallback) removes spawn and handoff from inherited tools", () => {
 	const result = buildChildToolNames(["read", "bash", "spawn", "handoff"], []);
-	assert.ok(!result.includes("spawn"), "spawn must be filtered out");
-	assert.ok(!result.includes("handoff"), "handoff must be filtered out");
-	assert.ok(result.includes("read"), "read must be preserved");
-	assert.ok(result.includes("bash"), "bash must be preserved");
+	expect(result, "spawn must be filtered out").not.toContain("spawn");
+	expect(result, "handoff must be filtered out").not.toContain("handoff");
+	expect(result, "read must be preserved").toContain("read");
+	expect(result, "bash must be preserved").toContain("bash");
 });
 
 test("buildChildToolNames (2-arg fallback) preserves non-spawn/handoff tools", () => {
 	const result = buildChildToolNames(["read", "bash", "write", "edit"], []);
-	assert.deepEqual(result.sort(), ["bash", "edit", "read", "write"]);
+	expect(result.sort()).toStrictEqual(["bash", "edit", "read", "write"]);
 });
 
 test("buildChildToolNames (2-arg fallback) adds custom child tools to the list", () => {
 	const result = buildChildToolNames(["read"], [{ name: "custom-tool", description: "", parameters: {}, label: "", execute: async () => ({ content: [], details: undefined }) }]);
-	assert.ok(result.includes("custom-tool"), "custom child tool must be added");
-	assert.ok(result.includes("read"), "inherited tool must be preserved");
+	expect(result, "custom child tool must be added").toContain("custom-tool");
+	expect(result, "inherited tool must be preserved").toContain("read");
 });
 
 test("buildChildToolNames (2-arg fallback) deduplicates overlapping inherited and custom names", () => {
 	const result = buildChildToolNames(["read", "bash"], [{ name: "bash", description: "", parameters: {}, label: "", execute: async () => ({ content: [], details: undefined }) }]);
-	assert.deepEqual(result, ["read", "bash"]);
+	expect(result).toStrictEqual(["read", "bash"]);
 });
 
 test("buildChildToolNames (2-arg fallback) handles empty parent tool names", () => {
-	assert.deepEqual(buildChildToolNames([], [{ name: "only-child", description: "", parameters: {}, label: "", execute: async () => ({ content: [], details: undefined }) }]), ["only-child"]);
+	expect(buildChildToolNames([], [{ name: "only-child", description: "", parameters: {}, label: "", execute: async () => ({ content: [], details: undefined }) }])).toStrictEqual(["only-child"]);
 });
 
 test("buildChildToolNames (2-arg fallback) handles empty custom tools", () => {
-	assert.deepEqual(buildChildToolNames(["read", "bash"], []), ["read", "bash"]);
+	expect(buildChildToolNames(["read", "bash"], [])).toStrictEqual(["read", "bash"]);
 });
 
 test("buildChildToolNames (2-arg fallback) handles both empty inputs", () => {
-	assert.deepEqual(buildChildToolNames([], []), []);
+	expect(buildChildToolNames([], [])).toStrictEqual([]);
 });
 
 // ── Render tests ─────────────────────────────────────────────────────
@@ -503,8 +492,8 @@ test("spawn renderResult falls back to static text when no live session is store
 	) as any;
 
 	const lines = result.render(120);
-	assert.ok(lines.some((l: string) => l.includes("m • low")));
-	assert.ok(lines.some((l: string) => l.includes("fallback output")));
+	expect(lines).toContainEqual(expect.stringContaining("m • low"));
+	expect(lines).toContainEqual(expect.stringContaining("fallback output"));
 });
 
 test("spawn renderResult distinguishes aborted and error outcomes", async () => {
@@ -533,10 +522,10 @@ test("spawn renderResult distinguishes aborted and error outcomes", async () => 
 
 	const abortedLines = aborted.render(120);
 	const errorLines = error.render(120);
-	assert.ok(abortedLines.some((l: string) => l.includes("✗ m • low")));
-	assert.ok(abortedLines.some((l: string) => l.includes("aborted")));
-	assert.ok(errorLines.some((l: string) => l.includes("⚠ m • low")));
-	assert.ok(errorLines.some((l: string) => l.includes("error")));
+	expect(abortedLines).toContainEqual(expect.stringContaining("✗ m • low"));
+	expect(abortedLines).toContainEqual(expect.stringContaining("aborted"));
+	expect(errorLines).toContainEqual(expect.stringContaining("⚠ m • low"));
+	expect(errorLines).toContainEqual(expect.stringContaining("error"));
 });
 
 test("spawn execute derives result stats from the child entries", async () => {
@@ -559,13 +548,13 @@ test("spawn execute derives result stats from the child entries", async () => {
 		{ model: { id: "mock-model" }, cwd: "/tmp" },
 	);
 
-	assert.deepEqual(updates, [{
+	expect(updates).toStrictEqual([{
 		content: [],
 		details: { model: "mock-model", thinking: "high", truncated: false, outcome: "running", route: { status: "inherited" } },
 	}]);
-	assert.equal(result.content[0].text, "child result");
-	assert.equal(result.details.outcome, "success");
-	assert.deepEqual(result.details.stats, {
+	expect(result.content[0].text).toBe("child result");
+	expect(result.details.outcome).toBe("success");
+	expect(result.details.stats).toStrictEqual({
 		inputTokens: 11,
 		outputTokens: 22,
 		cacheReadTokens: 3,
@@ -574,7 +563,7 @@ test("spawn execute derives result stats from the child entries", async () => {
 		cost: 0.5,
 		turns: 1,
 	});
-	assert.equal(result.details.statsUnavailable, undefined);
+	expect(result.details.statsUnavailable).toBeUndefined();
 });
 
 // ── Child usage ──────────────────────────────────────────────────────
@@ -624,7 +613,7 @@ test("spawn execute returns the child usage summed over every counted entry kind
 	];
 	const result = await executeWithEntries(() => entries);
 
-	assert.deepEqual(result.usage, {
+	expect(result.usage).toStrictEqual({
 		input: 11111,
 		output: 22222,
 		cacheRead: 33333,
@@ -634,7 +623,7 @@ test("spawn execute returns the child usage summed over every counted entry kind
 		totalTokens: 111110,
 		cost: { input: 55555, output: 66666, cacheRead: 77777, cacheWrite: 88888, total: 288886 },
 	});
-	assert.equal(result.details.statsUnavailable, undefined);
+	expect(result.details.statsUnavailable).toBeUndefined();
 });
 
 test("spawn execute omits cacheWrite1h and reasoning when no counted usage reports them", async () => {
@@ -649,7 +638,7 @@ test("spawn execute omits cacheWrite1h and reasoning when no counted usage repor
 		} as unknown as SessionEntry,
 	]);
 
-	assert.deepEqual(result.usage, {
+	expect(result.usage).toStrictEqual({
 		input: 8,
 		output: 3,
 		cacheRead: 2,
@@ -657,8 +646,8 @@ test("spawn execute omits cacheWrite1h and reasoning when no counted usage repor
 		totalTokens: 13,
 		cost: { input: 2, output: 2, cacheRead: 1, cacheWrite: 0, total: 5 },
 	});
-	assert.equal("cacheWrite1h" in result.usage, false);
-	assert.equal("reasoning" in result.usage, false);
+	expect(result.usage).not.toHaveProperty("cacheWrite1h");
+	expect(result.usage).not.toHaveProperty("reasoning");
 });
 
 test("an undefined optional child usage field is treated as absent", async () => {
@@ -668,7 +657,7 @@ test("an undefined optional child usage field is treated as absent", async () =>
 			cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 } },
 	})]);
 
-	assert.deepEqual(result.usage, {
+	expect(result.usage).toStrictEqual({
 		input: 7,
 		output: 3,
 		cacheRead: 2,
@@ -676,19 +665,19 @@ test("an undefined optional child usage field is treated as absent", async () =>
 		totalTokens: 13,
 		cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 },
 	});
-	assert.equal(result.details.statsUnavailable, undefined);
+	expect(result.details.statsUnavailable).toBeUndefined();
 });
 
 test("a completed spawn preserves its text when child entries cannot be read", async () => {
 	const entriesError = new Error("entries unavailable");
-	let disposeCalls = 0;
-	const result = await executeWithEntries(() => { throw entriesError; }, { dispose: () => { disposeCalls++; } });
+	const dispose = vi.fn();
+	const result = await executeWithEntries(() => { throw entriesError; }, { dispose });
 
-	assert.equal(result.content[0].text, "child result");
-	assert.equal(result.details.statsUnavailable, true);
-	assert.equal(result.details.stats, undefined);
-	assert.deepEqual(result.usage, EMPTY_CHILD_USAGE);
-	assert.equal(disposeCalls, 1, "the child session is disposed when the entries cannot be read");
+	expect(result.content[0].text).toBe("child result");
+	expect(result.details.statsUnavailable).toBe(true);
+	expect(result.details.stats).toBeUndefined();
+	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
+	expect(dispose, "the child session is disposed when the entries cannot be read").toHaveBeenCalledOnce();
 });
 
 test("a completed spawn keeps its text with zero usage when a child usage cannot be summed", async () => {
@@ -703,11 +692,11 @@ test("a completed spawn keeps its text with zero usage when a child usage cannot
 		}),
 	]);
 
-	assert.equal(result.content[0].text, "child result");
-	assert.equal(result.isError, undefined);
-	assert.deepEqual(result.usage, EMPTY_CHILD_USAGE);
-	assert.equal(result.details.stats, undefined);
-	assert.equal(result.details.statsUnavailable, true);
+	expect(result.content[0].text).toBe("child result");
+	expect(result.isError).toBeUndefined();
+	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
+	expect(result.details.stats).toBeUndefined();
+	expect(result.details.statsUnavailable).toBe(true);
 });
 
 test("child turns count assistants but not users or tool results", async () => {
@@ -720,7 +709,7 @@ test("child turns count assistants but not users or tool results", async () => {
 		messageEntry("tool-output", { role: "toolResult", content: [] }),
 	]);
 
-	assert.equal(result.details.stats?.turns, 1);
+	expect(result.details.stats?.turns).toBe(1);
 });
 
 test("fractional nonnegative child cost remains available", async () => {
@@ -728,8 +717,8 @@ test("fractional nonnegative child cost remains available", async () => {
 		usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3,
 			cost: { input: 0.1, output: 0.2, cacheRead: 0, cacheWrite: 0, total: 0.3 } } })]);
 
-	assert.equal(result.details.statsUnavailable, undefined);
-	assert.equal(result.usage.cost.total, 0.3);
+	expect(result.details.statsUnavailable).toBeUndefined();
+	expect(result.usage.cost.total).toBe(0.3);
 });
 
 test("spawn execute counts a compaction or branch summary only when it carries usage", async () => {
@@ -746,7 +735,7 @@ test("spawn execute counts a compaction or branch summary only when it carries u
 		}),
 	]);
 
-	assert.deepEqual(result.usage, {
+	expect(result.usage).toStrictEqual({
 		input: 7,
 		output: 3,
 		cacheRead: 0,
@@ -767,7 +756,7 @@ test("spawn execute skips an entry whose usage is null and sums the rest", async
 		}),
 	]);
 
-	assert.deepEqual(result.usage, {
+	expect(result.usage).toStrictEqual({
 		input: 7,
 		output: 3,
 		cacheRead: 0,
@@ -775,7 +764,7 @@ test("spawn execute skips an entry whose usage is null and sums the rest", async
 		totalTokens: 10,
 		cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, total: 3 },
 	});
-	assert.equal(result.details.statsUnavailable, undefined);
+	expect(result.details.statsUnavailable).toBeUndefined();
 });
 
 test("aborted spawn returns the partial child usage", async () => {
@@ -813,10 +802,10 @@ test("aborted spawn returns the partial child usage", async () => {
 	controller.abort();
 	const result = await execution;
 
-	assert.equal(result.details.outcome, "aborted");
-	assert.equal(result.isError, true);
-	assert.equal(result.content[0].text, "Child agent aborted: This operation was aborted");
-	assert.deepEqual(result.usage, {
+	expect(result.details.outcome).toBe("aborted");
+	expect(result.isError).toBe(true);
+	expect(result.content[0].text).toBe("Child agent aborted: This operation was aborted");
+	expect(result.usage).toStrictEqual({
 		input: 100,
 		output: 7,
 		cacheRead: 10,
@@ -832,9 +821,9 @@ test("a child model error keeps its failure message and earlier partial text", a
 		{ role: "assistant", content: [], stopReason: "error", errorMessage: "provider failed" },
 	] });
 
-	assert.equal(result.isError, true);
-	assert.equal(result.details.outcome, "error");
-	assert.equal(result.content[0].text, "Child agent failed: provider failed\n\npartial answer");
+	expect(result.isError).toBe(true);
+	expect(result.details.outcome).toBe("error");
+	expect(result.content[0].text).toBe("Child agent failed: provider failed\n\npartial answer");
 });
 
 test("a child model error without text still names the failure", async () => {
@@ -842,9 +831,9 @@ test("a child model error without text still names the failure", async () => {
 		{ role: "assistant", content: [], stopReason: "error" },
 	] });
 
-	assert.equal(result.isError, true);
-	assert.equal(result.details.outcome, "error");
-	assert.equal(result.content[0].text, "Child agent failed: no error message");
+	expect(result.isError).toBe(true);
+	expect(result.details.outcome).toBe("error");
+	expect(result.content[0].text).toBe("Child agent failed: no error message");
 });
 
 test("a child abort includes its reported error message", async () => {
@@ -852,9 +841,9 @@ test("a child abort includes its reported error message", async () => {
 		{ role: "assistant", content: [], stopReason: "aborted", errorMessage: "cancelled by provider" },
 	] });
 
-	assert.equal(result.isError, true);
-	assert.equal(result.details.outcome, "aborted");
-	assert.equal(result.content[0].text, "Child agent aborted: cancelled by provider");
+	expect(result.isError).toBe(true);
+	expect(result.details.outcome).toBe("aborted");
+	expect(result.content[0].text).toBe("Child agent aborted: cancelled by provider");
 });
 
 test("a failed child abort during the prompt is reported through the UI notice", async () => {
@@ -881,10 +870,10 @@ test("a failed child abort during the prompt is reported through the UI notice",
 	controller.abort();
 
 	const result = await execution;
-	assert.equal(result.isError, true);
-	assert.equal(result.details.outcome, "aborted");
-	assert.equal(result.content[0].text, "Child agent aborted: This operation was aborted\n\nchild result");
-	assert.deepEqual(notifications, ["Spawn cleanup failed: abort failed"]);
+	expect(result.isError).toBe(true);
+	expect(result.details.outcome).toBe("aborted");
+	expect(result.content[0].text).toBe("Child agent aborted: This operation was aborted\n\nchild result");
+	expect(notifications).toStrictEqual(["Spawn cleanup failed: abort failed"]);
 });
 
 // ── Usage of a spawn that fails ──────────────────────────────────────
@@ -946,22 +935,22 @@ async function hostWithFailedUsage(opts: NonNullable<Parameters<typeof mockSessi
 test("a spawn whose child prompt fails returns an error result with the child usage read once", async () => {
 	const host = await hostWithFailedUsage({ prompt: async () => { throw new Error("prompt failed"); } });
 
-	assert.deepEqual(await host.execute("spawn-prompt-error"), failedSpawnResult("prompt failed"));
-	assert.equal(host.entryReads, 1);
+	expect(await host.execute("spawn-prompt-error")).toStrictEqual(failedSpawnResult("prompt failed"));
+	expect(host.entryReads).toBe(1);
 	assertChildRegistriesCleared(host.state);
 });
 
 test("a spawn whose child prompt rejects with a non-Error value returns its string form as an error result", async () => {
 	const host = await hostWithFailedUsage({ prompt: async () => { throw "boom-string"; } });
 
-	assert.deepEqual(await host.execute("spawn-prompt-non-error"), failedSpawnResult("boom-string"));
+	expect(await host.execute("spawn-prompt-non-error")).toStrictEqual(failedSpawnResult("boom-string"));
 	assertChildRegistriesCleared(host.state);
 });
 
 test("a spawn whose child produces no output returns an error result with the child usage", async () => {
 	const host = await hostWithFailedUsage({ prompt: async () => {}, result: [] });
 
-	assert.deepEqual(await host.execute("spawn-no-output"), failedSpawnResult("Child agent produced no output."));
+	expect(await host.execute("spawn-no-output")).toStrictEqual(failedSpawnResult("Child agent produced no output."));
 	assertChildRegistriesCleared(host.state);
 });
 
@@ -971,8 +960,8 @@ test("a completed spawn whose dispose fails returns the dispose error with the c
 		dispose: () => { throw new Error("dispose failed"); },
 	});
 
-	assert.deepEqual(await host.execute("spawn-dispose-failure"), failedSpawnResult("dispose failed"));
-	assert.equal(host.entryReads, 1);
+	expect(await host.execute("spawn-dispose-failure")).toStrictEqual(failedSpawnResult("dispose failed"));
+	expect(host.entryReads).toBe(1);
 	assertChildRegistriesCleared(host.state);
 });
 
@@ -981,7 +970,7 @@ test("a spawn invalidated by a reset after its prompt started returns an error r
 	const host = await hostWithFailedUsage({ prompt: async () => { resetInPrompt.run(); } });
 	resetInPrompt.run = () => resetState(host.state);
 
-	assert.deepEqual(await host.execute("spawn-reset-mid-run"), failedSpawnResult("Spawn invalidated by reset."));
+	expect(await host.execute("spawn-reset-mid-run")).toStrictEqual(failedSpawnResult("Spawn invalidated by reset."));
 	assertChildRegistriesCleared(host.state);
 });
 
@@ -994,8 +983,8 @@ test("a failed spawn whose child entries cannot be read returns its own error wi
 	const result = await host.execute("spawn-unreadable");
 
 	assertErrorResult(result, "prompt failed", EMPTY_CHILD_USAGE);
-	assert.equal(result.details.stats, undefined);
-	assert.equal(result.details.statsUnavailable, true);
+	expect(result.details.stats).toBeUndefined();
+	expect(result.details.statsUnavailable).toBe(true);
 });
 
 test("a parent abort between child creation and the prompt returns an aborted result", async () => {
@@ -1006,8 +995,8 @@ test("a parent abort between child creation and the prompt returns an aborted re
 	const host = await hostWithFailedUsage({ prompt: async () => { prompts++; } });
 
 	const result = await host.execute("spawn-aborted-early", undefined, controller.signal);
-	assert.equal(result.isError, true);
-	assert.deepEqual(result.details, {
+	expect(result.isError).toBe(true);
+	expect(result.details).toStrictEqual({
 		model: "mock-model",
 		thinking: "high",
 		truncated: false,
@@ -1015,10 +1004,10 @@ test("a parent abort between child creation and the prompt returns an aborted re
 		route: { status: "inherited" },
 		stats: { inputTokens: 80, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 1, totalTokens: 95, cost: 13, turns: 2 },
 	});
-	assert.equal(result.content[0].text, "Child agent aborted: aborted before start");
-	assert.deepEqual(result.usage, FAILED_CHILD_USAGE);
-	assert.equal(prompts, 0);
-	assert.equal(host.entryReads, 1);
+	expect(result.content[0].text).toBe("Child agent aborted: aborted before start");
+	expect(result.usage).toStrictEqual(FAILED_CHILD_USAGE);
+	expect(prompts).toBe(0);
+	expect(host.entryReads).toBe(1);
 });
 
 // ── Result truncation ───────────────────────────────────────────────
@@ -1034,34 +1023,34 @@ async function executeWithChildText(text: string) {
 
 test("spawn result over the line limit keeps the first lines up to the limit and names the limits", async () => {
 	const lines = Array.from({ length: DEFAULT_MAX_LINES + 1 }, (_, i) => `line ${i}`);
-	assert.ok(Buffer.byteLength(lines.slice(0, DEFAULT_MAX_LINES).join("\n")) <= DEFAULT_MAX_BYTES, "kept lines must fit in the byte limit");
+	expect(Buffer.byteLength(lines.slice(0, DEFAULT_MAX_LINES).join("\n")), "kept lines must fit in the byte limit").toBeLessThanOrEqual(DEFAULT_MAX_BYTES);
 	const result = await executeWithChildText(lines.join("\n"));
 
-	assert.equal(result.details.truncated, true);
-	assert.equal(result.content[0].text, lines.slice(0, DEFAULT_MAX_LINES).join("\n") + TRUNCATION_MARKER);
+	expect(result.details.truncated).toBe(true);
+	expect(result.content[0].text).toBe(lines.slice(0, DEFAULT_MAX_LINES).join("\n") + TRUNCATION_MARKER);
 });
 
 test("spawn result at the line limit is not truncated", async () => {
 	const text = Array(DEFAULT_MAX_LINES).fill("x").join("\n");
-	assert.ok(Buffer.byteLength(text) <= DEFAULT_MAX_BYTES, "text must fit in the byte limit");
+	expect(Buffer.byteLength(text), "text must fit in the byte limit").toBeLessThanOrEqual(DEFAULT_MAX_BYTES);
 	const result = await executeWithChildText(text);
 
-	assert.equal(result.details.truncated, false);
+	expect(result.details.truncated).toBe(false);
 });
 
 test("spawn result at the byte limit is not truncated", async () => {
 	const result = await executeWithChildText("a".repeat(DEFAULT_MAX_BYTES));
 
-	assert.equal(result.details.truncated, false);
-	assert.equal(result.content[0].text, "a".repeat(DEFAULT_MAX_BYTES));
+	expect(result.details.truncated).toBe(false);
+	expect(result.content[0].text).toBe("a".repeat(DEFAULT_MAX_BYTES));
 });
 
 test("spawn result retains an untruncated lone surrogate", async () => {
 	const text = "ab\uD800cd";
 	const result = await executeWithChildText(text);
 
-	assert.equal(result.details.truncated, false);
-	assert.equal(result.content[0].text, text);
+	expect(result.details.truncated).toBe(false);
+	expect(result.content[0].text).toBe(text);
 });
 
 for (const { name, input, precondition, expectedText } of [
@@ -1079,14 +1068,14 @@ for (const { name, input, precondition, expectedText } of [
 		name: "spawn result cuts an oversized line of 3-byte characters on a character boundary",
 		input: "語".repeat(FITTING_3_BYTE_CHARS + 1),
 		// The precondition puts the byte limit inside a character, so the cut must back off.
-		precondition: () => assert.notEqual(DEFAULT_MAX_BYTES % 3, 0, "byte limit must not be a multiple of 3"),
+		precondition: () => expect(DEFAULT_MAX_BYTES % 3, "byte limit must not be a multiple of 3").not.toBe(0),
 		expectedText: "語".repeat(FITTING_3_BYTE_CHARS) + TRUNCATION_MARKER,
 	},
 	{
 		name: "spawn result cuts an oversized line of surrogate pairs without splitting one",
 		input: "x" + "😀".repeat(FITTING_EMOJI + 1),
 		// The precondition puts the byte limit inside an emoji, so the cut must back off.
-		precondition: () => assert.notEqual((DEFAULT_MAX_BYTES - 1) % 4, 0, "byte limit minus 1 must not be a multiple of 4"),
+		precondition: () => expect((DEFAULT_MAX_BYTES - 1) % 4, "byte limit minus 1 must not be a multiple of 4").not.toBe(0),
 		expectedText: "x" + "😀".repeat(FITTING_EMOJI) + TRUNCATION_MARKER,
 	},
 ]) {
@@ -1094,8 +1083,8 @@ for (const { name, input, precondition, expectedText } of [
 		precondition?.();
 		const result = await executeWithChildText(input);
 
-		assert.equal(result.details.truncated, true);
-		assert.equal(result.content[0].text, expectedText);
+		expect(result.details.truncated).toBe(true);
+		expect(result.content[0].text).toBe(expectedText);
 	});
 }
 
@@ -1104,36 +1093,36 @@ test("a long prompt failure is truncated at the result byte limit", async () => 
 
 	const result = await host.execute("spawn-long-error");
 
-	assert.equal(result.isError, true);
-	assert.equal(result.details.truncated, true);
-	assert.equal(result.content[0].text, "a".repeat(DEFAULT_MAX_BYTES) + TRUNCATION_MARKER);
+	expect(result.isError).toBe(true);
+	expect(result.details.truncated).toBe(true);
+	expect(result.content[0].text).toBe("a".repeat(DEFAULT_MAX_BYTES) + TRUNCATION_MARKER);
 });
 
 test("spawn result trims a trailing newline before applying result limits", async () => {
 	const expected = Array(DEFAULT_MAX_LINES).fill("x").join("\n");
-	assert.ok(Buffer.byteLength(expected) <= DEFAULT_MAX_BYTES, "trimmed text must fit in the byte limit");
+	expect(Buffer.byteLength(expected), "trimmed text must fit in the byte limit").toBeLessThanOrEqual(DEFAULT_MAX_BYTES);
 	const result = await executeWithChildText("x\n".repeat(DEFAULT_MAX_LINES));
 
-	assert.equal(result.content[0].text, expected);
+	expect(result.content[0].text).toBe(expected);
 });
 
 test("spawn result over the byte limit keeps the byte-limited head", async () => {
 	const line = "a".repeat(99);
 	// Each line takes 100 bytes with its newline, so these lines pass the byte limit; the precondition keeps them within the line limit.
 	const lineCount = Math.ceil(DEFAULT_MAX_BYTES / 100) + 1;
-	assert.ok(lineCount <= DEFAULT_MAX_LINES, "lines must stay within the line limit");
+	expect(lineCount, "lines must stay within the line limit").toBeLessThanOrEqual(DEFAULT_MAX_LINES);
 	const result = await executeWithChildText(Array(lineCount).fill(line).join("\n"));
 
-	assert.equal(result.details.truncated, true);
-	assert.equal(Buffer.byteLength(result.content[0].text.slice(0, -TRUNCATION_MARKER.length)), DEFAULT_MAX_BYTES);
+	expect(result.details.truncated).toBe(true);
+	expect(Buffer.byteLength(result.content[0].text.slice(0, -TRUNCATION_MARKER.length))).toBe(DEFAULT_MAX_BYTES);
 });
 
 test("spawn result keeps a UTF-8-safe head when a multi-byte line straddles the byte limit", async () => {
 	// DEFAULT_MAX_BYTES - 3 bytes, a newline and two 3-byte euro signs end 4 bytes past the limit, which falls inside the first euro sign.
 	const result = await executeWithChildText("a".repeat(DEFAULT_MAX_BYTES - 3) + "\n€€");
 
-	assert.equal(result.details.truncated, true);
-	assert.equal(result.content[0].text, "a".repeat(DEFAULT_MAX_BYTES - 3) + "\n" + TRUNCATION_MARKER);
+	expect(result.details.truncated).toBe(true);
+	expect(result.content[0].text).toBe("a".repeat(DEFAULT_MAX_BYTES - 3) + "\n" + TRUNCATION_MARKER);
 });
 
 test("spawn result with CRLF lines keeps the exact byte-limited prefix", async () => {
@@ -1141,21 +1130,21 @@ test("spawn result with CRLF lines keeps the exact byte-limited prefix", async (
 	// The preconditions keep the lines within the line limit and put the byte limit between a CR and its LF.
 	// The text is ASCII, so its first DEFAULT_MAX_BYTES characters are its first DEFAULT_MAX_BYTES bytes.
 	const lineCount = Math.ceil(DEFAULT_MAX_BYTES / 100) + 1;
-	assert.ok(lineCount <= DEFAULT_MAX_LINES, "lines must stay within the line limit");
-	assert.equal(DEFAULT_MAX_BYTES % 100, 0, "byte limit must be a multiple of 100");
+	expect(lineCount, "lines must stay within the line limit").toBeLessThanOrEqual(DEFAULT_MAX_LINES);
+	expect(DEFAULT_MAX_BYTES % 100, "byte limit must be a multiple of 100").toBe(0);
 	const text = "c".repeat(99) + "\r\n" + Array(lineCount - 1).fill("b".repeat(98)).join("\r\n");
 	const result = await executeWithChildText(text);
 
-	assert.equal(result.details.truncated, true);
-	assert.equal(result.content[0].text, text.slice(0, DEFAULT_MAX_BYTES) + TRUNCATION_MARKER);
+	expect(result.details.truncated).toBe(true);
+	expect(result.content[0].text).toBe(text.slice(0, DEFAULT_MAX_BYTES) + TRUNCATION_MARKER);
 });
 
 test("spawn result retains the byte-limited prefix of a long second line", async () => {
 	const result = await executeWithChildText(`short\n${"b".repeat(DEFAULT_MAX_BYTES)}`);
 	const content = result.content[0].text.slice(0, -TRUNCATION_MARKER.length);
 
-	assert.equal(Buffer.byteLength(content), DEFAULT_MAX_BYTES);
-	assert.match(content, /^short\nb+/);
+	expect(Buffer.byteLength(content)).toBe(DEFAULT_MAX_BYTES);
+	expect(content).toMatch(/^short\nb+/);
 });
 
 test("headless spawn aggregates Error and cleanup failures without mutating the primary error", async () => {
@@ -1166,7 +1155,7 @@ test("headless spawn aggregates Error and cleanup failures without mutating the 
 	const { execution, state } = await executeWithFailingCleanup(primaryFailure, cleanupFailure);
 
 	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", EMPTY_CHILD_USAGE);
-	assert.equal(primaryFailure.cause, originalCause);
+	expect(primaryFailure.cause).toBe(originalCause);
 	assertChildRegistriesCleared(state);
 });
 
@@ -1198,7 +1187,7 @@ test("a prompt pre-check failure resolves with zero usage before an agent run st
 		"No API key found for test-provider.",
 		EMPTY_CHILD_USAGE,
 	);
-	assert.equal(entryReads, 1);
+	expect(entryReads).toBe(1);
 	assertChildRegistriesCleared(state);
 });
 
@@ -1210,19 +1199,19 @@ test("UI spawn notifies when cleanup also fails after a primary failure", async 
 	});
 
 	assertErrorResult(await execution, "prompt failed", EMPTY_CHILD_USAGE);
-	assert.deepEqual(notifications, [["Spawn cleanup failed: dispose failed", "error"]]);
+	expect(notifications).toStrictEqual([["Spawn cleanup failed: dispose failed", "error"]]);
 	assertChildRegistriesCleared(state);
 });
 
 test("UI spawn names both failures when the cleanup notice throws", async () => {
-	let notifyCalls = 0;
+	const notify = vi.fn(() => { throw new Error("notify exploded"); });
 	const { execution, state } = await executeWithFailingCleanup(new Error("prompt failed"), new Error("dispose failed"), {
 		hasUI: true,
-		ui: { notify: () => { notifyCalls++; throw new Error("notify exploded"); } },
+		ui: { notify },
 	});
 
 	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", EMPTY_CHILD_USAGE);
-	assert.equal(notifyCalls, 1);
+	expect(notify).toHaveBeenCalledOnce();
 	assertChildRegistriesCleared(state);
 });
 
@@ -1240,31 +1229,27 @@ test("spawn execute clears childSessions after successful completion when unrend
 		{ model: { id: "mock-model" }, cwd: "/tmp" },
 	);
 
-	assert.equal(result.content[0].text, "child result");
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	expect(result.content[0].text).toBe("child result");
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("spawn execute fails explicitly without a configured model", async () => {
 	const host = await hostWithFailedUsage({});
-	await assert.rejects(
-		() => host.execute("spawn-1", { cwd: "/tmp" }),
-		/No model configured\. Cannot spawn child agent\./,
-	);
-	assert.equal(host.entryReads, 0);
+	await expect(host.execute("spawn-1", { cwd: "/tmp" })).rejects.toThrow(/No model configured\. Cannot spawn child agent\./);
+	expect(host.entryReads).toBe(0);
 });
 
 test("a rejecting child session factory rejects spawn before a session exists", async () => {
 	const pi = await createTestHost((_api) => {});
 	const state = createState();
 
-	await assert.rejects(
-		() => executeSpawn("spawn-factory-rejection", pi as any,
+	await expect(
+		executeSpawn("spawn-factory-rejection", pi as any,
 			{ model: { id: "mock-model" }, cwd: "/tmp" } as any,
 			state, { prompt: "Do the task" }, undefined, undefined, "medium",
 			async () => { throw new Error("factory unavailable"); }),
-		/factory unavailable/,
-	);
+	).rejects.toThrow(/factory unavailable/);
 	assertChildRegistriesCleared(state);
 });
 
@@ -1278,10 +1263,12 @@ test("executeSpawn propagates unusable-group errors before creating child work",
 		models: [{ provider: "openai", modelId: "missing" }],
 		validation: { unavailableRefs: [], shadowedByProject: false, degraded: true },
 	} as any];
-	let factoryCalls = 0;
+	const sessionFactory = vi.fn(async () => {
+		throw new Error("sessionFactory must not be called");
+	});
 
-	await assert.rejects(
-		() => executeSpawn(
+	await expect(
+		executeSpawn(
 			"spawn-route-error",
 			pi as any,
 			{
@@ -1297,23 +1284,20 @@ test("executeSpawn propagates unusable-group errors before creating child work",
 			undefined,
 			undefined,
 			"medium",
-			async () => {
-				factoryCalls++;
-				throw new Error("sessionFactory must not be called");
-			},
+			sessionFactory,
 		),
-		(error: unknown) => {
-			assert.ok(error instanceof SpawnRouteError, "route error must propagate without wrapping");
-			assert.equal(error.kind, "unusable-group");
-			assert.equal(error.group, "broken");
-			assert.equal(error.reason, "no-usable-models");
-			return true;
-		},
-	);
+	).rejects.toSatisfy((error: unknown) => {
+		expect(error, "route error must propagate without wrapping").toBeInstanceOf(SpawnRouteError);
+		const routeError = error as SpawnRouteError;
+		expect(routeError.kind).toBe("unusable-group");
+		expect(routeError.group).toBe("broken");
+		expect(routeError.reason).toBe("no-usable-models");
+		return true;
+	});
 
-	assert.equal(factoryCalls, 0, "sessionFactory must not be called on routing failure");
-	assert.equal(state.childSessions.size, 0, "no child session registered");
-	assert.equal(state.liveChildSessions.size, 0, "no live child session registered");
+	expect(sessionFactory, "sessionFactory must not be called on routing failure").not.toHaveBeenCalled();
+	expect(state.childSessions.size, "no child session registered").toBe(0);
+	expect(state.liveChildSessions.size, "no live child session registered").toBe(0);
 });
 
 test("executeSpawn propagates missing modalities before creating child work", async () => {
@@ -1324,23 +1308,27 @@ test("executeSpawn propagates missing modalities before creating child work", as
 		modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
 		validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
 	}];
-	let factoryCalls = 0;
-	await assert.rejects(() => executeSpawn("missing-modality", pi as any, {
+	const sessionFactory = vi.fn(async () => { throw new Error("must not create child"); });
+	await expect(executeSpawn("missing-modality", pi as any, {
 		model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
 		modelRegistry: { find: (_provider: string, id: string) => ({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
-	} as any, state, { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, "medium", async () => { factoryCalls++; throw new Error("must not create child"); }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality");
-	assert.equal(factoryCalls, 0);
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	} as any, state, { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, "medium", sessionFactory)).rejects.toSatisfy((error: unknown) => {
+		expect(error).toBeInstanceOf(SpawnRouteError);
+		expect((error as SpawnRouteError).reason).toBe("missing-modality");
+		return true;
+	});
+	expect(sessionFactory).not.toHaveBeenCalled();
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("executeSpawn rejects unknown requirements before factory or session publication", async () => {
-	const pi = await createTestHost((_api) => {}); const state = createState(); let factoryCalls = 0;
-	await assert.rejects(() => executeSpawn("unknown-constraint", pi as any, {
+	const pi = await createTestHost((_api) => {}); const state = createState(); const sessionFactory = vi.fn(async () => { throw new Error("must not create child"); });
+	await expect(executeSpawn("unknown-constraint", pi as any, {
 		model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
 		modelRegistry: { find: () => undefined, hasConfiguredAuth: () => false },
-	} as any, state, { prompt: "Do the task", constraints: { unknown: {} } }, undefined, undefined, "medium", async () => { factoryCalls++; throw new Error("must not create child"); }), /Unknown spawn constraint/);
-	assert.equal(factoryCalls, 0); assert.equal(state.childSessions.size, 0); assert.equal(state.liveChildSessions.size, 0);
+	} as any, state, { prompt: "Do the task", constraints: { unknown: {} } }, undefined, undefined, "medium", sessionFactory)).rejects.toThrow(/Unknown spawn constraint/);
+	expect(sessionFactory).not.toHaveBeenCalled(); expect(state.childSessions.size).toBe(0); expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("registered spawn tool rejects missing modalities before creating child work", async () => {
@@ -1350,84 +1338,80 @@ test("registered spawn tool rejects missing modalities before creating child wor
 		modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
 		validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
 	}];
-	let factoryCalls = 0;
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, (async () => { factoryCalls++; throw new Error("sessionFactory must not be called"); }) as any), { activeTools: ["read", "bash", "spawn"] });
+	const sessionFactory = vi.fn(async () => { throw new Error("sessionFactory must not be called"); });
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, sessionFactory as any), { activeTools: ["read", "bash", "spawn"] });
 
-	await assert.rejects(
-		() => pi.tools.get("spawn").execute("registered-missing-modality", { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, {
+	await expect(
+		pi.tools.get("spawn").execute("registered-missing-modality", { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, {
 			model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
 			modelRegistry: { find: (_provider: string, id: string) => ({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
 		} as any),
-		(error: unknown) => {
-			assert.ok(error instanceof SpawnRouteError);
-			assert.equal(error.kind, "unusable-group");
-			assert.equal(error.reason, "missing-modality");
-			return true;
-		},
-	);
-	assert.equal(factoryCalls, 0);
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	).rejects.toSatisfy((error: unknown) => {
+		expect(error).toBeInstanceOf(SpawnRouteError);
+		const routeError = error as SpawnRouteError;
+		expect(routeError.kind).toBe("unusable-group");
+		expect(routeError.reason).toBe("missing-modality");
+		return true;
+	});
+	expect(sessionFactory).not.toHaveBeenCalled();
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("registered spawn tool rejects injected scalar group and model requirements before publication", async () => {
-	const state = createState(); let factoryCalls = 0;
+	const state = createState(); const sessionFactory = vi.fn(async () => { throw new Error("sessionFactory must not be called"); });
 	state.modelGroups.groups = [
 		{ name: "small", scope: "project", sourcePath: "<test>", models: [{ provider: "openai", modelId: "small" }], modalities: { common: ["text"], supported: ["text"], effective: ["text"] }, validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] } },
 	];
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, (async () => { factoryCalls++; throw new Error("sessionFactory must not be called"); }) as any, createConstraintRegistry([testMinContext])), { activeTools: ["spawn"] });
-	await assert.rejects(
-		() => pi.tools.get("spawn").execute("registered-scalar", { prompt: "Do the task", group: "small", constraints: { testMinContext: 20 } }, undefined, undefined, {
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, sessionFactory as any, createConstraintRegistry([testMinContext])), { activeTools: ["spawn"] });
+	await expect(
+		pi.tools.get("spawn").execute("registered-scalar", { prompt: "Do the task", group: "small", constraints: { testMinContext: 20 } }, undefined, undefined, {
 			model: { provider: "openai", id: "parent", input: ["text"], reasoning: false, contextWindow: 100 }, cwd: "/tmp",
 			modelRegistry: { find: (_provider: string, id: string) => ({ provider: "openai", id, input: ["text"], reasoning: false, contextWindow: id === "small" ? 10 : 100 }), hasConfiguredAuth: () => true },
 		} as any),
-		(error: unknown) => error instanceof SpawnRouteError && error.reason === "constraint-unsatisfied" && error.constraintUnsatisfied?.length === 2 && error.missingModalities.length === 0 && error.missingFromGroup.length === 0 && error.missingFromModel.length === 0,
-	);
-	assert.equal(factoryCalls, 0); assert.equal(state.childSessions.size, 0); assert.equal(state.liveChildSessions.size, 0);
+	).rejects.toSatisfy((error: unknown) => {
+		expect(error).toBeInstanceOf(SpawnRouteError);
+		const routeError = error as SpawnRouteError;
+		expect(routeError.reason).toBe("constraint-unsatisfied");
+		expect(routeError.constraintUnsatisfied).toHaveLength(2);
+		expect(routeError.missingModalities).toHaveLength(0);
+		expect(routeError.missingFromGroup).toHaveLength(0);
+		expect(routeError.missingFromModel).toHaveLength(0);
+		return true;
+	});
+	expect(sessionFactory).not.toHaveBeenCalled(); expect(state.childSessions.size).toBe(0); expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("registered spawn tool schema accepts injected scalar requirements", async () => {
 	const pi = await createTestHost((api) => registerSpawnTool(api, createState(), undefined, createConstraintRegistry([testMinContext])));
 	const schema = pi.tools.get("spawn").parameters;
-	assert.equal(
-		Value.Check(schema, { prompt: "Do the task", constraints: { testMinContext: 20 } }),
-		true,
-		"the registered schema accepts an injected descriptor's scalar requirement",
-	);
-	assert.equal(
-		Value.Check(schema, { prompt: "Do the task", constraints: { testMinContext: 0 } }),
-		false,
-		"the injected descriptor retains its requirement schema",
-	);
-	assert.equal(
-		Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["text"] } } }),
-		false,
-		"the injected registry, not the production registry, defines the registered schema",
-	);
+	expect(Value.Check(schema, { prompt: "Do the task", constraints: { testMinContext: 20 } }), "the registered schema accepts an injected descriptor's scalar requirement").toBe(true);
+	expect(Value.Check(schema, { prompt: "Do the task", constraints: { testMinContext: 0 } }), "the injected descriptor retains its requirement schema").toBe(false);
+	expect(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["text"] } } }), "the injected registry, not the production registry, defines the registered schema").toBe(false);
 });
 
 test("registered spawn tool schema advertises thinking as a plain string enum of the thinking levels", async () => {
 	const pi = await createTestHost((api) => registerSpawnTool(api, createState()));
 	const schema = pi.tools.get("spawn").parameters;
 	const thinking = JSON.parse(JSON.stringify(schema.properties.thinking));
-	assert.equal(thinking.type, "string");
-	assert.deepEqual(thinking.enum, [...THINKING_LEVELS]);
+	expect(thinking.type).toBe("string");
+	expect(thinking.enum).toStrictEqual([...THINKING_LEVELS]);
 });
 
 test("registered spawn tool schema rejects an unknown thinking level", async () => {
 	const pi = await createTestHost((api) => registerSpawnTool(api, createState()));
 	const schema = pi.tools.get("spawn").parameters;
-	assert.equal(Value.Check(schema, { prompt: "Do the task", thinking: "extreme" }), false);
+	expect(Value.Check(schema, { prompt: "Do the task", thinking: "extreme" })).toBe(false);
 });
 
 test("spawn requirements validate the canonical envelope and keep its shape", () => {
-	assert.deepEqual(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image", "text"] } } }), { modalities: { required: ["image", "text"] } });
-	assert.deepEqual(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image"] } } }), { modalities: { required: ["image"] } });
-	assert.throws(() => normalizeSpawnRequirements({ constraints: { unknown: {} } }), /Unknown spawn constraint/);
-	assert.throws(() => normalizeSpawnRequirements({ constraints: "{\"modalities\":{\"required\":[\"text\"]}}" as any }), /must be an object/);
-	assert.throws(() => normalizeSpawnRequirements({ constraints: { modalities: ["text"] } }), /must be an object with required modalities/);
-	assert.throws(() => normalizeSpawnRequirements({ constraints: { modalities: ["required", ["text"]] } }), /must be an object with required modalities/);
-	assert.deepEqual(normalizeSpawnRequirements({}), normalizeSpawnRequirements({ constraints: {}}));
+	expect(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image", "text"] } } })).toStrictEqual({ modalities: { required: ["image", "text"] } });
+	expect(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image"] } } })).toStrictEqual({ modalities: { required: ["image"] } });
+	expect(() => normalizeSpawnRequirements({ constraints: { unknown: {} } })).toThrow(/Unknown spawn constraint/);
+	expect(() => normalizeSpawnRequirements({ constraints: "{\"modalities\":{\"required\":[\"text\"]}}" as any })).toThrow(/must be an object/);
+	expect(() => normalizeSpawnRequirements({ constraints: { modalities: ["text"] } })).toThrow(/must be an object with required modalities/);
+	expect(() => normalizeSpawnRequirements({ constraints: { modalities: ["required", ["text"]] } })).toThrow(/must be an object with required modalities/);
+	expect(normalizeSpawnRequirements({})).toStrictEqual(normalizeSpawnRequirements({ constraints: {}}));
 });
 
 test("spawn tool schema validates constraints via Value.Check", async () => {
@@ -1435,35 +1419,34 @@ test("spawn tool schema validates constraints via Value.Check", async () => {
 	const pi = await createTestHost((api) => registerSpawnTool(api, state));
 	const tool = pi.tools.get("spawn");
 	const schema = (tool as any).parameters;
-	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["text", "image"] } } }), true, "valid generic envelope accepted");
-	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { unknown: {} } }), false, "unknown generic requirement rejected");
-	assert.equal(Value.Check(schema, { prompt: "Do the task" }), true, "omitted constraints allowed");
-	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: [] } } }), true, "empty array allowed");
-	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["text", "text"] } } }), false, "duplicates rejected");
-	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["audio"] } } }), false, "out-of-vocabulary rejected");
-	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: "text" } }), false, "non-object requirement rejected");
-	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: "{\"modalities\":{\"required\":[\"text\"]}}" }), false, "stringified constraints rejected");
-	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: ["text", "image"] } }), false, "bare-array modalities rejected");
-	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: ["required", ["text"]] } }), false, "array-with-embedded-required rejected");
+	expect(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["text", "image"] } } }), "valid generic envelope accepted").toBe(true);
+	expect(Value.Check(schema, { prompt: "Do the task", constraints: { unknown: {} } }), "unknown generic requirement rejected").toBe(false);
+	expect(Value.Check(schema, { prompt: "Do the task" }), "omitted constraints allowed").toBe(true);
+	expect(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: [] } } }), "empty array allowed").toBe(true);
+	expect(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["text", "text"] } } }), "duplicates rejected").toBe(false);
+	expect(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["audio"] } } }), "out-of-vocabulary rejected").toBe(false);
+	expect(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: "text" } }), "non-object requirement rejected").toBe(false);
+	expect(Value.Check(schema, { prompt: "Do the task", constraints: "{\"modalities\":{\"required\":[\"text\"]}}" }), "stringified constraints rejected").toBe(false);
+	expect(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: ["text", "image"] } }), "bare-array modalities rejected").toBe(false);
+	expect(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: ["required", ["text"]] } }), "array-with-embedded-required rejected").toBe(false);
 });
 
 test("spawn constraints description enumerates the registry keys (production)", async () => {
 	const pi = await createTestHost((api) => registerSpawnTool(api, createState()));
 	const parameters = (pi.tools.get("spawn") as any).parameters;
 	const constraintsDesc = parameters.properties.constraints.description as string;
-	assert.ok(constraintsDesc.includes("Keys: modalities"), "description names the production constraint key");
+	expect(constraintsDesc, "description names the production constraint key").toContain("Keys: modalities");
 });
 
 test("spawn constraints description enumerates injected registry keys", async () => {
 	const pi = await createTestHost((api) => registerSpawnTool(api, createState(), undefined, createConstraintRegistry([testMinContext])));
 	const parameters = (pi.tools.get("spawn") as any).parameters;
 	const constraintsDesc = parameters.properties.constraints.description as string;
-	assert.ok(constraintsDesc.includes("Keys: testMinContext"), "description names the injected registry's constraint key");
+	expect(constraintsDesc, "description names the injected registry's constraint key").toContain("Keys: testMinContext");
 });
 
 test("executeSpawn forwards inherited constraints to routing and succeeds when satisfied", async () => {
 	const state = createState();
-	let factoryCalls = 0;
 	const session = {
 		messages: [] as any[],
 		prompt: async () => {
@@ -1472,14 +1455,15 @@ test("executeSpawn forwards inherited constraints to routing and succeeds when s
 		abort: async () => {},
 		sessionManager: { getEntries: () => [] },
 	};
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, (async () => { factoryCalls++; return { session: session as any }; }) as any), { activeTools: ["read", "spawn"] });
+	const sessionFactory = vi.fn(async () => ({ session: session as any, extensionsResult: undefined as any }));
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, sessionFactory as any), { activeTools: ["read", "spawn"] });
 	const result = await executeSpawn("spawn-inherited-rm", pi as any, {
 		model: { provider: "openai", id: "parent", input: ["text", "image"], reasoning: false }, cwd: "/tmp",
 		modelRegistry: { find: (_p: string, id: string) => ({ provider: "openai", id, input: ["text", "image"], reasoning: false }), hasConfiguredAuth: () => true },
-	} as any, state, { prompt: "Do the task", constraints: { modalities: { required: ["text", "image"] } } }, undefined, undefined, "medium", async () => { factoryCalls++; return { session: session as any, extensionsResult: undefined as any }; });
-	assert.equal(result.details.outcome, "success");
-	assert.deepEqual(result.details.route, { status: "inherited" });
-	assert.equal(factoryCalls, 1, "inherited route with satisfied requirements creates one child");
+	} as any, state, { prompt: "Do the task", constraints: { modalities: { required: ["text", "image"] } } }, undefined, undefined, "medium", sessionFactory);
+	expect(result.details.outcome).toBe("success");
+	expect(result.details.route).toStrictEqual({ status: "inherited" });
+	expect(sessionFactory, "inherited route with satisfied requirements creates one child").toHaveBeenCalledOnce();
 });
 
 test("spawn renderResult transfers session ownership out of shared state", async () => {
@@ -1499,9 +1483,9 @@ test("spawn renderResult transfers session ownership out of shared state", async
 		createRenderContext(),
 	) as any;
 
-	assert.equal(state.childSessions.has("tool-call-1"), false);
+	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
 	const lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("hello")));
+	expect(lines).toContainEqual(expect.stringContaining("hello"));
 });
 
 test("spawn renderResult reuses lastComponent", async () => {
@@ -1526,7 +1510,7 @@ test("spawn renderResult reuses lastComponent", async () => {
 		theme,
 		createRenderContext({ lastComponent: first }),
 	);
-	assert.equal(first, second);
+	expect(first).toBe(second);
 });
 
 test("spawn render shows success state when stats are unavailable", async () => {
@@ -1548,18 +1532,20 @@ test("spawn render shows success state when stats are unavailable", async () => 
 	) as any;
 
 	const lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("✅ mock-model • medium")));
-	assert.ok(lines.some((l: string) => l.includes("stats unavailable")));
-	assert.equal(lines.some((l: string) => l.includes("initializing")), false);
+	expect(lines).toContainEqual(expect.stringContaining("✅ mock-model • medium"));
+	expect(lines).toContainEqual(expect.stringContaining("stats unavailable"));
+	expect(lines).not.toContainEqual(expect.stringContaining("initializing"));
 });
 
 test("spawn execute aborts child session when signal fires during execution", async () => {
 	const state = createState();
 
-	let abortCalled = false;
-	let disposeCalls = 0;
+	const dispose = vi.fn();
 	let resolvePrompt!: () => void;
 	let promptStarted!: () => void;
+	const abort = vi.fn(async () => {
+		resolvePrompt();
+	});
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
 	const mockFactory = async () => {
 		const session = {
@@ -1569,11 +1555,8 @@ test("spawn execute aborts child session when signal fires during execution", as
 				await new Promise<void>((resolve) => { resolvePrompt = resolve; });
 				session.messages = [{ role: "assistant", content: [{ type: "text", text: "aborted mid-flight" }] }];
 			},
-			abort: async () => {
-				abortCalled = true;
-				resolvePrompt();
-			},
-			dispose: () => { disposeCalls++; },
+			abort,
+			dispose,
 			sessionManager: { getEntries: () => [] },
 		};
 		return { session: session as any };
@@ -1594,13 +1577,13 @@ test("spawn execute aborts child session when signal fires during execution", as
 	controller.abort();
 
 	const result = await executePromise;
-	assert.equal(abortCalled, true);
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
-	assert.equal(result.content[0].text, "Child agent aborted: This operation was aborted\n\naborted mid-flight");
-	assert.equal(result.details.outcome, "aborted");
-	assert.equal(result.isError, true);
-	assert.equal(disposeCalls, 1, "mid-prompt abort disposes exactly once");
+	expect(abort).toHaveBeenCalled();
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
+	expect(result.content[0].text).toBe("Child agent aborted: This operation was aborted\n\naborted mid-flight");
+	expect(result.details.outcome).toBe("aborted");
+	expect(result.isError).toBe(true);
+	expect(dispose, "mid-prompt abort disposes exactly once").toHaveBeenCalledOnce();
 });
 
 test("a completed child error after parent cancellation is reported as aborted", async () => {
@@ -1628,16 +1611,18 @@ test("a completed child error after parent cancellation is reported as aborted",
 	controller.abort(new Error("parent cancelled"));
 
 	const result = await execution;
-	assert.equal(result.isError, true);
-	assert.equal(result.details.outcome, "aborted");
-	assert.equal(result.content[0].text, "Child agent aborted: parent cancelled");
+	expect(result.isError).toBe(true);
+	expect(result.details.outcome).toBe("aborted");
+	expect(result.content[0].text).toBe("Child agent aborted: parent cancelled");
 });
 
 test("spawn execute swallows prompt rejection when signal aborts mid-flight", async () => {
 	const state = createState();
 	const controller = new AbortController();
-	let abortCalled = false;
-	let disposeCalls = 0;
+	const abort = vi.fn(async () => {
+		rejectPrompt(Object.assign(new Error("aborted"), { name: "AbortError" }));
+	});
+	const dispose = vi.fn();
 	let promptStarted!: () => void;
 	let rejectPrompt!: (err: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
@@ -1647,11 +1632,8 @@ test("spawn execute swallows prompt rejection when signal aborts mid-flight", as
 				promptStarted();
 				await new Promise<void>((_, reject) => { rejectPrompt = reject; });
 			},
-			abort: async () => {
-				abortCalled = true;
-				rejectPrompt(Object.assign(new Error("aborted"), { name: "AbortError" }));
-			},
-			dispose: () => { disposeCalls++; },
+			abort,
+			dispose,
 		}) };
 	};
 	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactory as any), { activeTools: ["read", "bash", "spawn"] });
@@ -1666,19 +1648,19 @@ test("spawn execute swallows prompt rejection when signal aborts mid-flight", as
 	await started;
 	controller.abort();
 	const result = await executePromise;
-	assert.equal(abortCalled, true);
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
-	assert.equal(result.details.outcome, "aborted");
-	assert.equal(result.isError, true);
-	assert.equal(result.content[0].text, "Child agent aborted: This operation was aborted");
-	assert.equal(disposeCalls, 1, "mid-prompt abort disposes exactly once");
+	expect(abort).toHaveBeenCalled();
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
+	expect(result.details.outcome).toBe("aborted");
+	expect(result.isError).toBe(true);
+	expect(result.content[0].text).toBe("Child agent aborted: This operation was aborted");
+	expect(dispose, "mid-prompt abort disposes exactly once").toHaveBeenCalledOnce();
 });
 
 test("a real prompt failure that races with a parent abort keeps its text under the aborted outcome", async () => {
 	const state = createState();
 	const controller = new AbortController();
-	let disposeCalls = 0;
+	const dispose = vi.fn();
 	let promptStarted!: () => void;
 	let rejectPrompt!: (error: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
@@ -1688,7 +1670,7 @@ test("a real prompt failure that races with a parent abort keeps its text under 
 			promptStarted();
 			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
 		},
-		dispose: () => { disposeCalls++; },
+		dispose,
 	}), extensionsResult: undefined as any })), { activeTools: ["read", "bash", "spawn"] });
 
 	const execution = pi.tools.get("spawn").execute(
@@ -1700,20 +1682,20 @@ test("a real prompt failure that races with a parent abort keeps its text under 
 	rejectPrompt(promptError);
 
 	const result = await execution;
-	assert.equal(result.isError, true);
-	assert.deepEqual(result.content, [{ type: "text", text: "prompt failed despite abort" }]);
-	assert.equal(result.details.outcome, "aborted");
-	assert.deepEqual(result.usage, EMPTY_CHILD_USAGE);
-	assert.equal(disposeCalls, 1);
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	expect(result.isError).toBe(true);
+	expect(result.content).toStrictEqual([{ type: "text", text: "prompt failed despite abort" }]);
+	expect(result.details.outcome).toBe("aborted");
+	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
+	expect(dispose).toHaveBeenCalledOnce();
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("spawn invalidation wins the abort and prompt-rejection race", async () => {
 	const state = createState();
 	const controller = new AbortController();
-	let abortCalls = 0;
-	let disposeCalls = 0;
+	const abort = vi.fn(async () => {});
+	const dispose = vi.fn();
 	let promptStarted!: () => void;
 	let rejectPrompt!: (error: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
@@ -1722,8 +1704,8 @@ test("spawn invalidation wins the abort and prompt-rejection race", async () => 
 			promptStarted();
 			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
 		},
-		abort: async () => { abortCalls++; },
-		dispose: () => { disposeCalls++; },
+		abort,
+		dispose,
 	}) });
 	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactory as any), { activeTools: ["read", "bash", "spawn"] });
 
@@ -1737,15 +1719,15 @@ test("spawn invalidation wins the abort and prompt-rejection race", async () => 
 	rejectPrompt(new Error("prompt rejected after abort and reset"));
 
 	assertErrorResult(await execution, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
-	assert.equal(abortCalls, 1, "signal cancellation and reset share one abort");
-	assert.equal(disposeCalls, 1, "the raced child disposes exactly once");
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	expect(abort, "signal cancellation and reset share one abort").toHaveBeenCalledOnce();
+	expect(dispose, "the raced child disposes exactly once").toHaveBeenCalledOnce();
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("executeSpawn reports the invalidation and abort failure when abort rejects during active-prompt reset", async () => {
 	const state = createState();
-	let disposeCalls = 0;
+	const dispose = vi.fn();
 	let promptStarted!: () => void;
 	let rejectPrompt!: (error: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
@@ -1756,7 +1738,7 @@ test("executeSpawn reports the invalidation and abort failure when abort rejects
 			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
 		},
 		abort: async () => { throw abortError; },
-		dispose: () => { disposeCalls++; },
+		dispose,
 	}), extensionsResult: undefined as any });
 	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactory as any), { activeTools: ["read", "bash", "spawn"] });
 
@@ -1769,16 +1751,16 @@ test("executeSpawn reports the invalidation and abort failure when abort rejects
 	rejectPrompt(new Error("prompt rejected"));
 
 	assertErrorResult(await execution, "Spawn invalidated by reset; child abort failed.", EMPTY_CHILD_USAGE);
-	assert.equal(disposeCalls, 1, "the aborted child disposes exactly once");
+	expect(dispose, "the aborted child disposes exactly once").toHaveBeenCalledOnce();
 	assertChildRegistriesCleared(state);
 });
 
 test("reset before registration returns the invalidation and abort failure", async () => {
 	const state = createState();
-	let abortCalls = 0;
-	let disposeCalls = 0;
+	const dispose = vi.fn();
 	let factoryCalled = false;
 	const abortError = new Error("abort failed");
+	const abort = vi.fn(async () => { throw abortError; });
 	const factoryReady = createDeferred();
 	const mockFactory = async () => {
 		factoryCalled = true;
@@ -1788,8 +1770,8 @@ test("reset before registration returns the invalidation and abort failure", asy
 			session: {
 				messages: [] as any[],
 				prompt: async () => {},
-				abort: async () => { abortCalls++; throw abortError; },
-				dispose: () => { disposeCalls++; },
+				abort,
+				dispose,
 				sessionManager: { getEntries: () => [] },
 			} as any,
 		};
@@ -1808,25 +1790,25 @@ test("reset before registration returns the invalidation and abort failure", asy
 	factoryReady.resolve();
 
 	assertErrorResult(await execution, "Spawn invalidated by reset; child abort failed.", EMPTY_CHILD_USAGE);
-	assert.equal(factoryCalled, true, "factory was called");
-	assert.equal(abortCalls, 1, "abort was called exactly once");
-	assert.equal(disposeCalls, 1, "child disposed exactly once");
+	expect(factoryCalled, "factory was called").toBe(true);
+	expect(abort, "abort was called exactly once").toHaveBeenCalledOnce();
+	expect(dispose, "child disposed exactly once").toHaveBeenCalledOnce();
 	assertChildRegistriesCleared(state);
 });
 
 test("reset during prompt reports a failed abort once through the UI", async () => {
 	const state = createState();
-	let abortCalls = 0;
-	let disposeCalls = 0;
+	const dispose = vi.fn();
 	const abortError = new Error("abort failed");
+	const abort = vi.fn(async () => { throw abortError; });
 	const notifications: Array<[string, string]> = [];
 	const mockFactory = async () => ({ session: mockSessionFactory({
 		prompt: async () => {
 			promptStarted();
 			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
 		},
-		abort: async () => { abortCalls++; throw abortError; },
-		dispose: () => { disposeCalls++; },
+		abort,
+		dispose,
 	}), extensionsResult: undefined as any });
 	let promptStarted!: () => void;
 	let rejectPrompt!: (error: Error) => void;
@@ -1845,9 +1827,9 @@ test("reset during prompt reports a failed abort once through the UI", async () 
 	rejectPrompt(new Error("prompt rejected"));
 
 	assertErrorResult(await execution, "Spawn invalidated by reset; child abort failed.", EMPTY_CHILD_USAGE);
-	assert.deepEqual(notifications, [["Spawn cleanup failed: abort failed", "error"]]);
-	assert.equal(abortCalls, 1);
-	assert.equal(disposeCalls, 1);
+	expect(notifications).toStrictEqual([["Spawn cleanup failed: abort failed", "error"]]);
+	expect(abort).toHaveBeenCalledOnce();
+	expect(dispose).toHaveBeenCalledOnce();
 	assertChildRegistriesCleared(state);
 });
 
@@ -1858,7 +1840,7 @@ test("a throwing notice for a failed reset abort does not emit an unhandled reje
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
 	const abortError = new Error("abort failed");
 	const notifyError = new Error("notify exploded");
-	let notifyCalls = 0;
+	const notify = vi.fn(() => { throw notifyError; });
 	const unhandled: unknown[] = [];
 	const onUnhandled = (reason: unknown) => unhandled.push(reason);
 	process.on("unhandledRejection", onUnhandled);
@@ -1878,7 +1860,7 @@ test("a throwing notice for a failed reset abort does not emit an unhandled reje
 			{ prompt: "Do the task" },
 			undefined,
 			undefined,
-			{ model: { id: "mock-model" }, cwd: "/tmp", hasUI: true, ui: { notify: () => { notifyCalls++; throw notifyError; } } } as any,
+			{ model: { id: "mock-model" }, cwd: "/tmp", hasUI: true, ui: { notify } } as any,
 		);
 		await started;
 		resetState(state);
@@ -1888,8 +1870,8 @@ test("a throwing notice for a failed reset abort does not emit an unhandled reje
 		// Give any detached microtasks a chance to flush
 		await new Promise((resolve) => setImmediate(resolve));
 
-		assert.equal(notifyCalls, 1);
-		assert.equal(unhandled.length, 0, `no unhandled abort rejections: ${unhandled.map((e) => String(e)).join(", ")}`);
+		expect(notify).toHaveBeenCalledOnce();
+		expect(unhandled, `no unhandled abort rejections: ${unhandled.map((e) => String(e)).join(", ")}`).toHaveLength(0);
 		assertChildRegistriesCleared(state);
 	} finally {
 		process.removeListener("unhandledRejection", onUnhandled);
@@ -1906,46 +1888,46 @@ test("spawn renderCall shows prompt preview and optional routing controls", asyn
 	// Collapsed: short prompt
 	const collapsed = tool.renderCall({ prompt: "Do X" }, theme, { expanded: false });
 	const collapsedLines = collapsed.render(120);
-	assert.ok(collapsedLines.some((l: string) => l.includes("spawn")));
-	assert.ok(collapsedLines.some((l: string) => l.includes("Do X")));
+	expect(collapsedLines).toContainEqual(expect.stringContaining("spawn"));
+	expect(collapsedLines).toContainEqual(expect.stringContaining("Do X"));
 
 	// Collapsed: long prompt shows truncation hint
 	const longPrompt = Array.from({ length: 10 }, (_, i) => `Line ${i}`).join("\n");
 	const truncated = tool.renderCall({ prompt: longPrompt }, theme, { expanded: false });
 	const truncatedLines = truncated.render(120);
-	assert.ok(truncatedLines.some((l: string) => l.includes("more lines")));
+	expect(truncatedLines).toContainEqual(expect.stringContaining("more lines"));
 
 	// Explicit thinking is shown without a group; grouped calls show only the route.
 	const withThinking = tool.renderCall({ prompt: "Do X", thinking: "high" }, theme, { expanded: false });
 	const thinkingLines = withThinking.render(120);
-	assert.ok(thinkingLines.some((l: string) => l.includes("high")));
+	expect(thinkingLines).toContainEqual(expect.stringContaining("high"));
 	const withWhitespaceGroup = tool.renderCall(
 		{ prompt: "Do X", group: " \t ", thinking: "high" },
 		theme,
 		{ expanded: false },
 	);
-	assert.ok(withWhitespaceGroup.render(120).some((l: string) => l.includes("high")));
+	expect(withWhitespaceGroup.render(120)).toContainEqual(expect.stringContaining("high"));
 	const withRouting = tool.renderCall(
 		{ prompt: "Do X", group: "review", thinking: "max" },
 		theme,
 		{ expanded: false },
 	);
 	const routingLines = withRouting.render(120);
-	assert.ok(routingLines.some((l: string) => l.includes("review")));
-	assert.ok(routingLines.every((l: string) => !l.includes("max")));
+	expect(routingLines).toContainEqual(expect.stringContaining("review"));
+	expect(routingLines).not.toContainEqual(expect.stringContaining("max"));
 	const withEscapedGroup = tool.renderCall(
 		{ prompt: "Do X", group: "review\n\u001b" },
 		theme,
 		{ expanded: false },
 	);
 	const escapedGroupLines = withEscapedGroup.render(120);
-	assert.ok(escapedGroupLines.some((line: string) => line.includes("review\\n\\x1B")));
-	assert.ok(escapedGroupLines.every((line: string) => !line.includes("\u001b")));
+	expect(escapedGroupLines).toContainEqual(expect.stringContaining("review\\n\\x1B"));
+	expect(escapedGroupLines).not.toContainEqual(expect.stringContaining("\u001b"));
 
 	// Expanded: shows full prompt
 	const expanded = tool.renderCall({ prompt: longPrompt }, theme, { expanded: true });
 	const expandedLines = expanded.render(120);
-	assert.ok(!expandedLines.some((l: string) => l.includes("more lines")));
+	expect(expandedLines).not.toContainEqual(expect.stringContaining("more lines"));
 });
 
 test("nested spawn invalidate rebuilds from the attached session transcript", async () => {
@@ -1964,15 +1946,15 @@ test("nested spawn invalidate rebuilds from the attached session transcript", as
 	) as any;
 
 	const firstRender = component.render(120);
-	assert.ok(firstRender.some((l: string) => l.includes("before")));
+	expect(firstRender).toContainEqual(expect.stringContaining("before"));
 
 	(session.messages[0] as any).content[0].text = "after";
 	component.invalidate();
 
 	const secondRender = component.render(120);
-	assert.notEqual(firstRender, secondRender);
-	assert.ok(secondRender.some((l: string) => l.includes("after")));
-	assert.equal(secondRender.some((l: string) => l.includes("before")), false);
+	expect(firstRender).not.toBe(secondRender);
+	expect(secondRender).toContainEqual(expect.stringContaining("after"));
+	expect(secondRender).not.toContainEqual(expect.stringContaining("before"));
 });
 
 test("nested spawn attachSession rebuilds after appended session messages", async () => {
@@ -1990,7 +1972,7 @@ test("nested spawn attachSession rebuilds after appended session messages", asyn
 	) as any;
 
 	const firstRender = component.render(120);
-	assert.ok(firstRender.some((l: string) => l.includes("before")));
+	expect(firstRender).toContainEqual(expect.stringContaining("before"));
 
 	state.childSessions.set("tool-call-1", createSession([
 		{ role: "assistant", content: [{ type: "text", text: "before" }] },
@@ -2004,8 +1986,8 @@ test("nested spawn attachSession rebuilds after appended session messages", asyn
 	) as any;
 
 	const secondRender = sameComponent.render(120);
-	assert.notEqual(firstRender, secondRender);
-	assert.ok(secondRender.some((l: string) => l.includes("after")));
+	expect(firstRender).not.toBe(secondRender);
+	expect(secondRender).toContainEqual(expect.stringContaining("after"));
 });
 
 test("nested spawn attachSession rebuilds after replacing session transcript structure", async () => {
@@ -2023,7 +2005,7 @@ test("nested spawn attachSession rebuilds after replacing session transcript str
 	) as any;
 
 	const firstRender = component.render(120);
-	assert.ok(firstRender.some((l: string) => l.includes("before")));
+	expect(firstRender).toContainEqual(expect.stringContaining("before"));
 
 	state.childSessions.set("tool-call-1", createSession([
 		{ role: "user", content: [{ type: "text", text: "new task" }] },
@@ -2037,9 +2019,9 @@ test("nested spawn attachSession rebuilds after replacing session transcript str
 	) as any;
 
 	const secondRender = sameComponent.render(120);
-	assert.notEqual(firstRender, secondRender);
-	assert.ok(secondRender.some((l: string) => l.includes("replacement")));
-	assert.equal(secondRender.some((l: string) => l.includes("before")), false);
+	expect(firstRender).not.toBe(secondRender);
+	expect(secondRender).toContainEqual(expect.stringContaining("replacement"));
+	expect(secondRender).not.toContainEqual(expect.stringContaining("before"));
 });
 
 test("nested spawn rebuildFromSession quietly tolerates missing tool definitions", async () => {
@@ -2067,10 +2049,10 @@ test("nested spawn rebuildFromSession quietly tolerates missing tool definitions
 	) as any;
 
 	const lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("⚠ m • low")));
-	assert.ok(lines.some((l: string) => l.includes("error")));
-	assert.equal(state.childSessions.has("tool-call-1"), false);
-	assert.equal(h.warnings.length, 0);
+	expect(lines).toContainEqual(expect.stringContaining("⚠ m • low"));
+	expect(lines).toContainEqual(expect.stringContaining("error"));
+	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
+	expect(h.warnings).toHaveLength(0);
 });
 
 test("nested spawn attachSession recovers from subscribe throwing", async () => {
@@ -2093,9 +2075,9 @@ test("nested spawn attachSession recovers from subscribe throwing", async () => 
 		createRenderContext(),
 	) as any;
 
-	assert.equal(state.childSessions.has("tool-call-1"), false);
+	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
 	const lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("hello")));
+	expect(lines).toContainEqual(expect.stringContaining("hello"));
 });
 
 test("concurrent spawn executions produce independent results", async () => {
@@ -2149,16 +2131,16 @@ test("concurrent spawn executions produce independent results", async () => {
 	);
 
 	await Promise.all([startedA, startedB]);
-	assert.deepEqual(started.sort(), ["task A", "task B"]);
+	expect(started.sort()).toStrictEqual(["task A", "task B"]);
 	resolveA();
 	resolveB();
 
 	const [r1, r2] = await Promise.all([resultP1, resultP2]);
 
-	assert.equal(r1.content[0].text, "result-alpha");
-	assert.equal(r2.content[0].text, "result-beta");
-	assert.equal(state.childSessions.has("spawn-A"), false);
-	assert.equal(state.childSessions.has("spawn-B"), false);
+	expect(r1.content[0].text).toBe("result-alpha");
+	expect(r2.content[0].text).toBe("result-beta");
+	expect([...state.childSessions.keys()]).not.toContain("spawn-A");
+	expect([...state.childSessions.keys()]).not.toContain("spawn-B");
 });
 
 test("executeSpawn detects stale session before session creation", async () => {
@@ -2170,7 +2152,7 @@ test("executeSpawn detects stale session before session creation", async () => {
 		resolveFactory = resolve;
 	});
 	let factoryCalled = false;
-	let abortCalls = 0;
+	const abort = vi.fn(async () => {});
 
 	const executePromise = executeSpawn(
 		"spawn-1",
@@ -2188,7 +2170,7 @@ test("executeSpawn detects stale session before session creation", async () => {
 				session: {
 					messages: [] as any[],
 					prompt: async () => {},
-					abort: async () => { abortCalls++; },
+					abort,
 					sessionManager: { getEntries: () => [] },
 				} as any,
 				extensionsResult: undefined as any,
@@ -2202,18 +2184,18 @@ test("executeSpawn detects stale session before session creation", async () => {
 	resolveFactory({});
 
 	assertErrorResult(await executePromise, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
-	assert.equal(factoryCalled, true);
-	assert.equal(abortCalls, 1);
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	expect(factoryCalled).toBe(true);
+	expect(abort).toHaveBeenCalledOnce();
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("executeSpawn does not prompt when onUpdate synchronously resets the child epoch", async () => {
 	const pi = await createTestHost((_api) => {}, { activeTools: ["read", "bash", "spawn"] });
 	const state = createState();
-	let promptCalls = 0;
-	let abortCalls = 0;
-	let disposeCalls = 0;
+	const abort = vi.fn(async () => {});
+	const dispose = vi.fn();
+	const prompt = vi.fn(async () => {});
 
 	const execution = executeSpawn(
 		"spawn-1",
@@ -2225,18 +2207,18 @@ test("executeSpawn does not prompt when onUpdate synchronously resets the child 
 		() => { resetState(state); },
 		"medium",
 		mockFactoryWith({
-			prompt: async () => { promptCalls++; },
-			abort: async () => { abortCalls++; },
-			dispose: () => { disposeCalls++; },
+			prompt,
+			abort,
+			dispose,
 		}),
 	);
 
 	assertErrorResult(await execution, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
-	assert.equal(promptCalls, 0);
-	assert.equal(abortCalls >= 1, true);
-	assert.equal(disposeCalls, 1);
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	expect(prompt).not.toHaveBeenCalled();
+	expect(abort).toHaveBeenCalledOnce();
+	expect(dispose).toHaveBeenCalledOnce();
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("executeSpawn does not prompt when onUpdate synchronously aborts the signal", async () => {
@@ -2244,9 +2226,9 @@ test("executeSpawn does not prompt when onUpdate synchronously aborts the signal
 	const state = createState();
 	const controller = new AbortController();
 	const reason = new Error("cancelled during update");
-	let promptCalls = 0;
-	let abortCalls = 0;
-	let disposeCalls = 0;
+	const abort = vi.fn(async () => {});
+	const dispose = vi.fn();
+	const prompt = vi.fn(async () => {});
 
 	const execution = executeSpawn(
 		"spawn-1",
@@ -2258,22 +2240,22 @@ test("executeSpawn does not prompt when onUpdate synchronously aborts the signal
 		() => { controller.abort(reason); },
 		"medium",
 		mockFactoryWith({
-			prompt: async () => { promptCalls++; },
-			abort: async () => { abortCalls++; },
-			dispose: () => { disposeCalls++; },
+			prompt,
+			abort,
+			dispose,
 		}),
 	);
 
 	const result = await execution;
-	assert.equal(result.isError, true);
-	assert.equal(result.details.outcome, "aborted");
-	assert.equal(result.content[0].text, "Child agent aborted: cancelled during update");
-	assert.deepEqual(result.usage, EMPTY_CHILD_USAGE);
-	assert.equal(promptCalls, 0);
-	assert.equal(abortCalls, 1);
-	assert.equal(disposeCalls, 1);
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	expect(result.isError).toBe(true);
+	expect(result.details.outcome).toBe("aborted");
+	expect(result.content[0].text).toBe("Child agent aborted: cancelled during update");
+	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
+	expect(prompt).not.toHaveBeenCalled();
+	expect(abort).toHaveBeenCalledOnce();
+	expect(dispose).toHaveBeenCalledOnce();
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("an abort during a running update notifies a failed child abort once", async () => {
@@ -2281,7 +2263,7 @@ test("an abort during a running update notifies a failed child abort once", asyn
 	const state = createState();
 	const controller = new AbortController();
 	const notifications: string[] = [];
-	let promptCalls = 0;
+	const prompt = vi.fn(async () => {});
 	const result = await executeSpawn(
 		"spawn-update-abort-failure", pi as any,
 		{ model: { id: "mock-model" }, cwd: "/tmp", hasUI: true,
@@ -2289,23 +2271,23 @@ test("an abort during a running update notifies a failed child abort once", asyn
 		state, { prompt: "Do the task" }, controller.signal,
 		() => { controller.abort(new Error("cancelled during update")); }, "medium",
 		mockFactoryWith({
-			prompt: async () => { promptCalls++; },
+			prompt,
 			abort: async () => { throw new Error("abort failed"); },
 		}),
 	);
 
-	assert.equal(result.isError, true);
-	assert.equal(result.details.outcome, "aborted");
-	assert.equal(result.content[0].text, "abort failed");
-	assert.deepEqual(notifications, ["Spawn cleanup failed: abort failed"]);
-	assert.equal(promptCalls, 0);
+	expect(result.isError).toBe(true);
+	expect(result.details.outcome).toBe("aborted");
+	expect(result.content[0].text).toBe("abort failed");
+	expect(notifications).toStrictEqual(["Spawn cleanup failed: abort failed"]);
+	expect(prompt).not.toHaveBeenCalled();
 });
 
 test("reset during a running update reports one failed abort", async () => {
 	const pi = await createTestHost((_api) => {});
 	const state = createState();
 	const notifications: string[] = [];
-	let promptCalls = 0;
+	const prompt = vi.fn(async () => {});
 	const result = await executeSpawn(
 		"spawn-reset-abort-failure", pi as any,
 		{ model: { id: "mock-model" }, cwd: "/tmp", hasUI: true,
@@ -2313,14 +2295,14 @@ test("reset during a running update reports one failed abort", async () => {
 		state, { prompt: "Do the task" }, undefined,
 		() => { resetState(state); }, "medium",
 		mockFactoryWith({
-			prompt: async () => { promptCalls++; },
+			prompt,
 			abort: async () => { throw new Error("abort failed"); },
 		}),
 	);
 
 	assertErrorResult(result, "Spawn invalidated by reset; child abort failed.", EMPTY_CHILD_USAGE);
-	assert.deepEqual(notifications, ["Spawn cleanup failed: abort failed"]);
-	assert.equal(promptCalls, 0);
+	expect(notifications).toStrictEqual(["Spawn cleanup failed: abort failed"]);
+	expect(prompt).not.toHaveBeenCalled();
 });
 
 test("executeSpawn aborts stale child when resetState fires during prompt", async () => {
@@ -2330,8 +2312,10 @@ test("executeSpawn aborts stale child when resetState fires during prompt", asyn
 	let rejectPrompt!: (err: Error) => void;
 	let resolvePromptStarted!: () => void;
 	const promptStartedPromise = new Promise<void>((r) => { resolvePromptStarted = r; });
-	let abortCalls = 0;
-	let disposeCalls = 0;
+	const abort = vi.fn(async () => {
+		rejectPrompt?.(new Error("aborted"));
+	});
+	const dispose = vi.fn();
 
 	const executePromise = executeSpawn(
 		"spawn-1",
@@ -2352,11 +2336,8 @@ test("executeSpawn aborts stale child when resetState fires during prompt", asyn
 						rejectPrompt = reject;
 					});
 				},
-				abort: async () => {
-					abortCalls++;
-					rejectPrompt?.(new Error("aborted"));
-				},
-				dispose: () => { disposeCalls++; },
+				abort,
+				dispose,
 				sessionManager: { getEntries: () => [] },
 			} as any,
 		}),
@@ -2368,10 +2349,10 @@ test("executeSpawn aborts stale child when resetState fires during prompt", asyn
 	resetState(state);
 
 	assertErrorResult(await executePromise, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
-	assert.equal(abortCalls, 1, "reset and invalidation share one abort");
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
-	assert.equal(disposeCalls, 1, "prompt-reset invalidation disposes exactly once");
+	expect(abort, "reset and invalidation share one abort").toHaveBeenCalledOnce();
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
+	expect(dispose, "prompt-reset invalidation disposes exactly once").toHaveBeenCalledOnce();
 });
 
 test("executeSpawn suppresses a successful stale prompt that ignores reset abort", async () => {
@@ -2380,8 +2361,8 @@ test("executeSpawn suppresses a successful stale prompt that ignores reset abort
 	let resolvePrompt!: () => void;
 	let promptStarted!: () => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
-	let abortCalls = 0;
-	let disposeCalls = 0;
+	const abort = vi.fn(async () => {});
+	const dispose = vi.fn();
 	const updates: unknown[] = [];
 	const session = {
 		messages: [] as any[],
@@ -2390,8 +2371,8 @@ test("executeSpawn suppresses a successful stale prompt that ignores reset abort
 			await new Promise<void>((resolve) => { resolvePrompt = resolve; });
 			session.messages = [{ role: "assistant", content: [{ type: "text", text: "stale success" }] }];
 		},
-		abort: async () => { abortCalls++; },
-		dispose: () => { disposeCalls++; },
+		abort,
+		dispose,
 		sessionManager: { getEntries: () => [] },
 	};
 
@@ -2412,12 +2393,12 @@ test("executeSpawn suppresses a successful stale prompt that ignores reset abort
 	resolvePrompt();
 
 	assertErrorResult(await execution, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
-	assert.equal(abortCalls >= 1, true);
-	assert.equal(disposeCalls, 1);
-	assert.equal(updates.length, 1, "no stale completion update is published");
-	assert.deepEqual((updates[0] as any).content, []);
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	expect(abort).toHaveBeenCalledOnce();
+	expect(dispose).toHaveBeenCalledOnce();
+	expect(updates, "no stale completion update is published").toHaveLength(1);
+	expect((updates[0] as any).content).toStrictEqual([]);
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
 });
 
 
@@ -2442,33 +2423,33 @@ test("nested spawn setExpanded and setShowImages no-op when value matches", asyn
 	component.setShowImages(false);
 
 	const lines = component.render(120);
-	assert.ok(lines.some((l: string) => l.includes("hello")));
+	expect(lines).toContainEqual(expect.stringContaining("hello"));
 });
 
 // ── State management tests ───────────────────────────────────────────
 
 test("resetState aborts and clears child session registries", () => {
 	const state = createState();
-	let abortCalls = 0;
+	const abort = vi.fn(async () => {});
 	const session = {
 		...createSession([]),
-		abort: async () => { abortCalls++; },
+		abort,
 	} as any;
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 	resetState(state);
-	assert.equal(abortCalls, 1);
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	expect(abort).toHaveBeenCalledOnce();
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("resetState aborts a claimed child session after render ownership transfer", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
-	let abortCalls = 0;
+	const abort = vi.fn(async () => {});
 	const session = {
 		...createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]),
-		abort: async () => { abortCalls++; },
+		abort,
 	} as any;
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -2480,22 +2461,22 @@ test("resetState aborts a claimed child session after render ownership transfer"
 		createRenderContext(),
 	);
 
-	assert.equal(state.childSessions.has("tool-call-1"), false);
-	assert.equal(state.liveChildSessions.has("tool-call-1"), true);
+	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
+	expect([...state.liveChildSessions.keys()]).toContain("tool-call-1");
 
 	resetState(state);
 
-	assert.equal(abortCalls, 1);
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	expect(abort).toHaveBeenCalledOnce();
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
 });
 
 test("abortAndClearChildSessions deduplicates sessions across both maps", () => {
 	const state = createState();
-	let abortCalls = 0;
+	const abort = vi.fn(async () => {});
 	const mockSession = {
 		messages: [],
-		abort: async () => { abortCalls++; },
+		abort,
 	} as any;
 
 	state.childSessions.set("tc-1", mockSession);
@@ -2503,9 +2484,9 @@ test("abortAndClearChildSessions deduplicates sessions across both maps", () => 
 
 	resetState(state);
 
-	assert.equal(abortCalls, 1);
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	expect(abort).toHaveBeenCalledOnce();
+	expect(state.childSessions.size).toBe(0);
+	expect(state.liveChildSessions.size).toBe(0);
 });
 
 // ── Tool registration tests ──────────────────────────────────────────
@@ -2515,12 +2496,12 @@ test("spawn tool definitions include prompt hints when registered", async () => 
 	const pi = await createTestHost((api) => registerSpawnTool(api, state));
 
 	const spawnTool = pi.tools.get("spawn")!;
-	assert.ok(typeof spawnTool.promptSnippet === "string", "spawn should have promptSnippet");
-	assert.ok(spawnTool.promptSnippet!.length > 10, "spawn promptSnippet should be non-trivial");
-	assert.ok(Array.isArray(spawnTool.promptGuidelines), "spawn should have promptGuidelines");
-	assert.ok(spawnTool.promptGuidelines!.length > 0, "spawn promptGuidelines should be non-empty");
+	expect(spawnTool.promptSnippet, "spawn should have promptSnippet").toBeTypeOf("string");
+	expect(spawnTool.promptSnippet!.length, "spawn promptSnippet should be non-trivial").toBeGreaterThan(10);
+	expect(spawnTool.promptGuidelines, "spawn should have promptGuidelines").toSatisfy(Array.isArray);
+	expect(spawnTool.promptGuidelines!.length, "spawn promptGuidelines should be non-empty").toBeGreaterThan(0);
 	for (const g of spawnTool.promptGuidelines!) {
-		assert.ok(g.length > 10, "each spawn guideline should be non-trivial");
+		expect(g.length, "each spawn guideline should be non-trivial").toBeGreaterThan(10);
 	}
 });
 
@@ -2529,23 +2510,24 @@ test("registerSpawnTool registers a tool with correct name and metadata", async 
 	const pi = await createTestHost((api) => registerSpawnTool(api, state));
 
 	const tool = pi.tools.get("spawn");
-	assert.ok(tool, "spawn tool should be registered");
-	assert.equal(tool.name, "spawn");
-	assert.equal(tool.label, "Spawn");
-	assert.equal(typeof tool.description, "string");
-	assert.match(tool.description, /active registered tools executable in the child session/);
-	assert.match(tool.description, /shared notebook tools/);
-	assert.match(tool.description, /cannot spawn or handoff/);
-	assert.doesNotMatch(tool.description, /supported built-in tools/);
-	assert.equal(typeof tool.execute, "function");
-	assert.equal(typeof tool.renderCall, "function");
-	assert.equal(typeof tool.renderResult, "function");
-	assert.equal(tool.renderShell, "self");
-	assert.ok(tool.parameters, "should have parameters");
+	assertPresent(tool, "spawn tool should be registered");
+	expect(tool.name).toBe("spawn");
+	expect(tool.label).toBe("Spawn");
+	expect(tool.description).toBeTypeOf("string");
+	expect(tool.description).toMatch(/active registered tools executable in the child session/);
+	expect(tool.description).toMatch(/shared notebook tools/);
+	expect(tool.description).toMatch(/cannot spawn or handoff/);
+	expect(tool.description).not.toMatch(/supported built-in tools/);
+	expect(tool.execute).toBeTypeOf("function");
+	expect(tool.renderCall).toBeTypeOf("function");
+	expect(tool.renderResult).toBeTypeOf("function");
+	expect(tool.renderShell).toBe("self");
+	assertPresent(tool.parameters, "should have parameters");
 	const constraints = (tool.parameters as any).properties.constraints;
-	assert.equal(constraints.type, "object");
-	assert.ok(constraints.properties.modalities);
-	assert.equal(tool.executionMode, undefined, "spawn should not be sequential");
+	expect(constraints.type).toBe("object");
+	expect(constraints.properties.modalities).toBeTypeOf("object");
+	expect(constraints.properties.modalities).not.toBeNull();
+	expect(tool.executionMode, "spawn should not be sequential").toBeUndefined();
 });
 
 test("renderSpawnResult handles result with no details field", () => {
@@ -2557,10 +2539,10 @@ test("renderSpawnResult handles result with no details field", () => {
 		{ toolCallId: "tc-1", invalidate: () => {}, showImages: false },
 		state,
 	);
-	assert.ok(result, "renderSpawnResult should return a component");
+	assertPresent(result, "renderSpawnResult should return a component");
 	const lines = (result as any).render(120);
-	assert.ok(Array.isArray(lines), "render should return an array of lines");
-	assert.ok(lines.some((l: string) => l.includes("hello")), `expected 'hello' in output, got: ${lines.join("\n")}`);
+	expect(lines, "render should return an array of lines").toSatisfy(Array.isArray);
+	expect(lines, `expected 'hello' in output, got: ${lines.join("\n")}`).toContainEqual(expect.stringContaining("hello"));
 });
 
 test("spawn docs document active registered inheritance", async () => {
@@ -2569,14 +2551,14 @@ test("spawn docs document active registered inheritance", async () => {
 	const spawnSection = /\| \*\*Spawn\*\* \|[^\|]*\|/.exec(readme)?.[0] ?? "";
 	const v040 = /## \[0\.4\.0\][\s\S]*?## \[0\.3\.0\]/.exec(changelog)?.[0] ?? "";
 
-	assert.match(spawnSection, /active registered (parent )?tools executable in the child session/);
-	assert.match(spawnSection, /MCP\/extension tools such as ChunkHound/);
-	assert.match(spawnSection, /[Cc]hild-local notebook tools/);
-	assert.match(spawnSection, /cannot spawn grandchildren or handoff/);
-	assert.doesNotMatch(spawnSection, /built-in tools only/);
-	assert.match(v040, /active registered parent tools/);
-	assert.match(v040, /spawn and handoff/);
-	assert.match(v040, /notebook tools/);
+	expect(spawnSection).toMatch(/active registered (parent )?tools executable in the child session/);
+	expect(spawnSection).toMatch(/MCP\/extension tools such as ChunkHound/);
+	expect(spawnSection).toMatch(/[Cc]hild-local notebook tools/);
+	expect(spawnSection).toMatch(/cannot spawn grandchildren or handoff/);
+	expect(spawnSection).not.toMatch(/built-in tools only/);
+	expect(v040).toMatch(/active registered parent tools/);
+	expect(v040).toMatch(/spawn and handoff/);
+	expect(v040).toMatch(/notebook tools/);
 });
 
 // ── Abort cleanup and dispose failure coverage ───────────────────────
@@ -2607,11 +2589,11 @@ test("spawn abort before its prompt returns the failed abort and notifies the UI
 		"medium",
 		async () => ({ session: session as any, extensionsResult: undefined as any }),
 	);
-	assert.equal(result.isError, true);
-	assert.equal(result.details.outcome, "aborted");
-	assert.equal(result.content[0].text, "abort failed");
-	assert.deepEqual(result.usage, EMPTY_CHILD_USAGE);
-	assert.deepEqual(notifications, [["Spawn cleanup failed: abort failed", "error"]]);
+	expect(result.isError).toBe(true);
+	expect(result.details.outcome).toBe("aborted");
+	expect(result.content[0].text).toBe("abort failed");
+	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
+	expect(notifications).toStrictEqual([["Spawn cleanup failed: abort failed", "error"]]);
 });
 
 test("a completed UI spawn whose dispose fails returns the dispose error without a notice", async () => {
@@ -2628,8 +2610,8 @@ test("a completed UI spawn whose dispose fails returns the dispose error without
 		ui: { notify: (m: string, l: string) => { notifications.push([m, l]); } },
 	});
 
-	assert.deepEqual(result, failedSpawnResult("dispose failed"));
-	assert.deepEqual(notifications, []);
+	expect(result).toStrictEqual(failedSpawnResult("dispose failed"));
+	expect(notifications).toStrictEqual([]);
 	assertChildRegistriesCleared(host.state);
 });
 

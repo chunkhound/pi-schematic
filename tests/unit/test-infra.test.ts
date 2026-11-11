@@ -1,10 +1,13 @@
 // Tests for the test infrastructure itself: the shared Node child runner, the node:test runner
-// script, the compat lane's test lists, and the run-wide config that keeps parameterized test
+// script, the unit test list in tests/vitest-files.mjs (every unit file on disk is listed and every
+// entry exists), the compat lane's test lists, and the run-wide config that keeps parameterized test
 // titles whole.
 
-import { join } from "node:path";
+import { globSync } from "node:fs";
+import { join, sep } from "node:path";
 import { describe, expect, test } from "vitest";
 import { REPO_ROOT, REPO_ROOT_URL } from "../paths.js";
+import { VITEST_FILES } from "../vitest-files.mjs";
 import { spawnNode } from "./spawn-node.js";
 
 const { assertCompatTestLists, COMPAT_NODE_TEST_FILES, COMPAT_VITEST_FILES } = await import(
@@ -49,6 +52,21 @@ describe("run-node-test", () => {
 	});
 });
 
+// TODO(#88): remove with tests/vitest-files.mjs once the unit project includes its files by glob.
+describe("tests/vitest-files.mjs", () => {
+	const onDisk = globSync("tests/unit/**/*.test.ts", { cwd: REPO_ROOT }).map((file) => file.split(sep).join("/"));
+
+	test("lists every unit test file under tests/unit", () => {
+		const unlisted = onDisk.filter((file) => !VITEST_FILES.includes(file)).sort();
+		expect(unlisted, "missing from tests/vitest-files.mjs").toStrictEqual([]);
+	});
+
+	test("lists only files that exist", () => {
+		const missing = VITEST_FILES.filter((file) => !onDisk.includes(file)).sort();
+		expect(missing, "listed in tests/vitest-files.mjs but missing on disk").toStrictEqual([]);
+	});
+});
+
 describe("compat lane test lists", () => {
 	test("put every file on the runner tests/vitest-files.mjs assigns it", () => {
 		expect(() => assertCompatTestLists(COMPAT_NODE_TEST_FILES, COMPAT_VITEST_FILES)).not.toThrow();
@@ -56,8 +74,8 @@ describe("compat lane test lists", () => {
 
 	test("reject a Vitest file on the node:test list and a node:test file on the Vitest list", () => {
 		expect(() =>
-			assertCompatTestLists(["tests/unit/thinking-levels.test.ts"], ["tests/unit/spawn.test.ts"]),
-		).toThrow(/lists tests\/unit\/thinking-levels\.test\.ts, tests\/unit\/spawn\.test\.ts for the wrong runner/);
+			assertCompatTestLists(["tests/unit/thinking-levels.test.ts"], ["tests/e2e/basic.test.ts"]),
+		).toThrow(/lists tests\/unit\/thinking-levels\.test\.ts, tests\/e2e\/basic\.test\.ts for the wrong runner/);
 	});
 });
 

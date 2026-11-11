@@ -16,7 +16,7 @@ import {
 	clearActiveNotebookTopic,
 } from "../../notebook/topic.js";
 import { saveNotebookPage } from "../../notebook/store.js";
-import { createTestHarness } from "../test-utils.js";
+import { useTestHarness } from "../test-utils.js";
 
 // ── Mock ExtensionAPI ─────────────────────────────────────────────────
 
@@ -87,31 +87,31 @@ async function apply(
 function assertTopicSourceCoupling(state: SchematicState): void {
 	const msg = `topic=${state.activeNotebookTopic} source=${state.activeNotebookTopicSource}`;
 	if (state.activeNotebookTopic === null) {
-		expect(state.activeNotebookTopicSource, `topic null → source null: ${msg}`).toBe(null);
+		expect(state.activeNotebookTopicSource, `topic null → source null: ${msg}`).toBeNull();
 	} else {
-		expect(state.activeNotebookTopicSource, `topic set → source set: ${msg}`).not.toBe(null);
+		expect(state.activeNotebookTopicSource, `topic set → source set: ${msg}`).not.toBeNull();
 	}
 	// Bidirectional: source null → topic null too
 	if (state.activeNotebookTopicSource === null) {
-		expect(state.activeNotebookTopic, `source null → topic null: ${msg}`).toBe(null);
+		expect(state.activeNotebookTopic, `source null → topic null: ${msg}`).toBeNull();
 	}
 }
 
 function assertChildSessionContainment(state: SchematicState): void {
 	for (const key of state.childSessions.keys()) {
 		expect(
-			state.liveChildSessions.has(key),
+			[...state.liveChildSessions.keys()],
 			`childSessions key "${key}" must be in liveChildSessions`,
-		).toBe(true);
+		).toContain(key);
 	}
 }
 
 function assertClippedPagesContained(state: SchematicState): void {
 	for (const name of state.clippedPages) {
 		expect(
-			state.notebookPages.has(name),
+			[...state.notebookPages.keys()],
 			`clipped page "${name}" must exist in notebookPages`,
-		).toBe(true);
+		).toContain(name);
 	}
 }
 
@@ -121,248 +121,228 @@ function assertResetClears(state: SchematicState): void {
 	expect(state.childSessions.size, "childSessions must be empty after reset").toBe(0);
 	expect(state.liveChildSessions.size, "liveChildSessions must be empty after reset").toBe(0);
 	expect(state.epoch, "epoch must be 0 after reset").toBe(0);
-	expect(state.activeNotebookTopic, "topic must be null after reset").toBe(null);
-	expect(state.activeNotebookTopicSource, "topic source must be null after reset").toBe(null);
-	expect(state.stagedHandoff, "stagedHandoff must be null after reset").toBe(null);
+	expect(state.activeNotebookTopic, "topic must be null after reset").toBeNull();
+	expect(state.activeNotebookTopicSource, "topic source must be null after reset").toBeNull();
+	expect(state.stagedHandoff, "stagedHandoff must be null after reset").toBeNull();
 	expect(state.handoffRefusals.size, "handoffRefusals must be empty after reset").toBe(0);
-	expect(state.pendingRequestedHandoff, "pendingRequestedHandoff must be null after reset").toBe(null);
-	expect(state.pendingTopicBoundaryHint, "pendingTopicBoundaryHint must be null after reset").toBe(null);
-	expect(state.modelGroups.groups.length, "modelGroups.groups must be empty after reset").toBe(0);
-	expect(state.modelGroups.validation, "modelGroups.validation must be null after reset").toBe(null);
+	expect(state.pendingRequestedHandoff, "pendingRequestedHandoff must be null after reset").toBeNull();
+	expect(state.pendingTopicBoundaryHint, "pendingTopicBoundaryHint must be null after reset").toBeNull();
+	expect(state.modelGroups.groups, "modelGroups.groups must be empty after reset").toHaveLength(0);
+	expect(state.modelGroups.validation, "modelGroups.validation must be null after reset").toBeNull();
 	expect(state.readonlyEnabled, "readonlyEnabled must be false after reset").toBe(false);
 	expect(state.readonlyNudgePending, "readonlyNudgePending must be false after reset").toBe(false);
 	expect(state.frontmatterSkillCache.size, "frontmatterSkillCache must be empty after reset").toBe(0);
 	expect(state.frontmatterPromptCache.size, "frontmatterPromptCache must be empty after reset").toBe(0);
 	expect(state.frontmatterSkillIssues.size, "frontmatterSkillIssues must be empty after reset").toBe(0);
 	expect(state.frontmatterPromptIssues.size, "frontmatterPromptIssues must be empty after reset").toBe(0);
-	expect(state.pendingReadonlyCommands.length, "pendingReadonlyCommands must be empty after reset").toBe(0);
-	expect(state.lastWatchdogBand, "lastWatchdogBand must be null after reset").toBe(null);
+	expect(state.pendingReadonlyCommands, "pendingReadonlyCommands must be empty after reset").toHaveLength(0);
+	expect(state.lastWatchdogBand, "lastWatchdogBand must be null after reset").toBeNull();
 	expect(state.sandboxedBashCallIds.size, "sandboxedBashCallIds must be empty after reset").toBe(0);
 }
 
 // ── Properties ────────────────────────────────────────────────────────
 
 test("Property 1: Topic-source coupling invariant", async () => {
-	const h = createTestHarness();
-	try {
-		await fc.assert(
-			fc.asyncProperty(
-				fc.array(
-					fc.oneof(
-						fc.constant({ type: "reset" } as StateAction),
-						fc.record({ type: fc.constant("setTopic"), name: arbTopicName }),
-						fc.constant({ type: "clearTopic" } as StateAction),
-						fc.record({ type: fc.constant("savePage"), name: arbPageName }),
-					),
-					{ maxLength: 30 },
+	useTestHarness();
+	await fc.assert(
+		fc.asyncProperty(
+			fc.array(
+				fc.oneof(
+					fc.constant({ type: "reset" } as StateAction),
+					fc.record({ type: fc.constant("setTopic"), name: arbTopicName }),
+					fc.constant({ type: "clearTopic" } as StateAction),
+					fc.record({ type: fc.constant("savePage"), name: arbPageName }),
 				),
-				async (actions) => {
-					const state = createState();
-					for (const action of actions) {
-						await apply(state, action);
-						assertTopicSourceCoupling(state);
-					}
-				},
+				{ maxLength: 30 },
 			),
-			{ numRuns: 100 },
-		);
-	} finally {
-		h.teardown();
-	}
+			async (actions) => {
+				const state = createState();
+				for (const action of actions) {
+					await apply(state, action);
+					assertTopicSourceCoupling(state);
+				}
+			},
+		),
+		{ numRuns: 100 },
+	);
 });
 
 test("Property 2: Child session containment invariant", async () => {
-	const h = createTestHarness();
-	try {
-		await fc.assert(
-			fc.asyncProperty(
-				fc.array(
-					fc.oneof(
-						fc.constant({ type: "reset" } as StateAction),
-						fc.record({ type: fc.constant("addChildSession"), id: arbSessionId }),
-						fc.constant({ type: "abortChildren" } as StateAction),
-					),
-					{ maxLength: 30 },
+	useTestHarness();
+	await fc.assert(
+		fc.asyncProperty(
+			fc.array(
+				fc.oneof(
+					fc.constant({ type: "reset" } as StateAction),
+					fc.record({ type: fc.constant("addChildSession"), id: arbSessionId }),
+					fc.constant({ type: "abortChildren" } as StateAction),
 				),
-				async (actions) => {
-					const state = createState();
-					for (const action of actions) {
-						await apply(state, action);
-						assertChildSessionContainment(state);
-					}
-				},
+				{ maxLength: 30 },
 			),
-			{ numRuns: 100 },
-		);
-	} finally {
-		h.teardown();
-	}
+			async (actions) => {
+				const state = createState();
+				for (const action of actions) {
+					await apply(state, action);
+					assertChildSessionContainment(state);
+				}
+			},
+		),
+		{ numRuns: 100 },
+	);
 });
 
 test("Property 3: childSessionEpoch only changes on reset", async () => {
-	const h = createTestHarness();
-	try {
-		await fc.assert(
-			fc.asyncProperty(
-				fc.array(
-					fc.oneof(
-						fc.constant({ type: "reset" } as StateAction),
-						fc.record({ type: fc.constant("setTopic"), name: arbTopicName }),
-						fc.constant({ type: "clearTopic" } as StateAction),
-						fc.record({ type: fc.constant("savePage"), name: arbPageName }),
-						fc.constant({ type: "abortChildren" } as StateAction),
-					),
-					{ maxLength: 30 },
+	useTestHarness();
+	await fc.assert(
+		fc.asyncProperty(
+			fc.array(
+				fc.oneof(
+					fc.constant({ type: "reset" } as StateAction),
+					fc.record({ type: fc.constant("setTopic"), name: arbTopicName }),
+					fc.constant({ type: "clearTopic" } as StateAction),
+					fc.record({ type: fc.constant("savePage"), name: arbPageName }),
+					fc.constant({ type: "abortChildren" } as StateAction),
 				),
-				async (actions) => {
-					const state = createState();
-					let expectedChildEpoch: number | null = null;
+				{ maxLength: 30 },
+			),
+			async (actions) => {
+				const state = createState();
+				let expectedChildEpoch: number | null = null;
 
-					for (const action of actions) {
-						const prevChildEpoch = state.childSessionEpoch;
-						await apply(state, action);
+				for (const action of actions) {
+					const prevChildEpoch = state.childSessionEpoch;
+					await apply(state, action);
 
-						if (action.type === "reset") {
-							// After reset, childSessionEpoch should have incremented
-							if (expectedChildEpoch === null) {
-								expectedChildEpoch = prevChildEpoch + 1;
-							} else {
-								expectedChildEpoch = state.childSessionEpoch;
-							}
-							expect(
-								state.childSessionEpoch,
-								`childSessionEpoch must be ${expectedChildEpoch} after reset (prev=${prevChildEpoch})`,
-							).toBe(expectedChildEpoch);
-							expectedChildEpoch = state.childSessionEpoch;
+					if (action.type === "reset") {
+						// After reset, childSessionEpoch should have incremented
+						if (expectedChildEpoch === null) {
+							expectedChildEpoch = prevChildEpoch + 1;
 						} else {
-							// Non-reset: childSessionEpoch must be unchanged
-							expect(
-								state.childSessionEpoch,
-								`childSessionEpoch must not change on ${action.type} action`,
-							).toBe(prevChildEpoch);
 							expectedChildEpoch = state.childSessionEpoch;
 						}
+						expect(
+							state.childSessionEpoch,
+							`childSessionEpoch must be ${expectedChildEpoch} after reset (prev=${prevChildEpoch})`,
+						).toBe(expectedChildEpoch);
+						expectedChildEpoch = state.childSessionEpoch;
+					} else {
+						// Non-reset: childSessionEpoch must be unchanged
+						expect(
+							state.childSessionEpoch,
+							`childSessionEpoch must not change on ${action.type} action`,
+						).toBe(prevChildEpoch);
+						expectedChildEpoch = state.childSessionEpoch;
 					}
-				},
-			),
-			{ numRuns: 100 },
-		);
-	} finally {
-		h.teardown();
-	}
+				}
+			},
+		),
+		{ numRuns: 100 },
+	);
 });
 
 test("Property 4: Reset clears all state fields", async () => {
-	const h = createTestHarness();
-	try {
-		await fc.assert(
-			fc.asyncProperty(
-				fc.array(
-					fc.oneof(
-						fc.constant({ type: "reset" } as StateAction),
-						fc.record({ type: fc.constant("setTopic"), name: arbTopicName }),
-						fc.constant({ type: "clearTopic" } as StateAction),
-						fc.record({ type: fc.constant("savePage"), name: arbPageName }),
-						fc.record({ type: fc.constant("addChildSession"), id: arbSessionId }),
-						fc.constant({ type: "abortChildren" } as StateAction),
-					),
-					{ maxLength: 30 },
+	useTestHarness();
+	await fc.assert(
+		fc.asyncProperty(
+			fc.array(
+				fc.oneof(
+					fc.constant({ type: "reset" } as StateAction),
+					fc.record({ type: fc.constant("setTopic"), name: arbTopicName }),
+					fc.constant({ type: "clearTopic" } as StateAction),
+					fc.record({ type: fc.constant("savePage"), name: arbPageName }),
+					fc.record({ type: fc.constant("addChildSession"), id: arbSessionId }),
+					fc.constant({ type: "abortChildren" } as StateAction),
 				),
-				async (actions) => {
-					const state = createState();
-
-					for (const action of actions) {
-						await apply(state, action);
-
-						// After every reset, assert full clear
-						if (action.type === "reset") {
-							assertResetClears(state);
-						}
-					}
-
-					// Also test explicitly: create fresh state, perform some work, then reset
-					const s2 = createState();
-					setActiveNotebookTopic(s2, "test-topic", "agent");
-					await saveNotebookPage(mockPi, s2, "my-page", "some content");
-					s2.readonlyEnabled = true;
-					s2.readonlyNudgePending = true;
-					s2.frontmatterSkillCache.set("skill-a", { readonly: true, modelGroup: null, explicitModel: null, explicitThinking: null, mtimeMs: 1, filePath: "/tmp/skill-a.md" });
-					s2.frontmatterPromptCache.set("prompt-a", { readonly: false, modelGroup: null, explicitModel: null, explicitThinking: null, mtimeMs: 1, filePath: "/tmp/prompt-a.md" });
-					s2.frontmatterSkillIssues.set("skill-b", { kind: "invalid-readonly-value", filePath: "/tmp/skill-b.md" });
-					s2.frontmatterPromptIssues.set("prompt-b", { kind: "unreadable-file", filePath: "/tmp/prompt-b.md" });
-					s2.pendingReadonlyCommands.push({ type: "skill", name: "skill-a" });
-					s2.sandboxedBashCallIds.add("bash-call-1");
-					s2.modelGroups.groups = [{
-						name: "stale",
-						scope: "project",
-						sourcePath: "<project>",
-						models: [],
-						modalities: { common: [], supported: [], effective: [] },
-						validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
-					}];
-					s2.modelGroups.validation = { groups: s2.modelGroups.groups, loadIssues: [] };
-					resetState(s2);
-					assertResetClears(s2);
-				},
+				{ maxLength: 30 },
 			),
-			{ numRuns: 100 },
-		);
-	} finally {
-		h.teardown();
-	}
+			async (actions) => {
+				const state = createState();
+
+				for (const action of actions) {
+					await apply(state, action);
+
+					// After every reset, assert full clear
+					if (action.type === "reset") {
+						assertResetClears(state);
+					}
+				}
+
+				// Also test explicitly: create fresh state, perform some work, then reset
+				const s2 = createState();
+				setActiveNotebookTopic(s2, "test-topic", "agent");
+				await saveNotebookPage(mockPi, s2, "my-page", "some content");
+				s2.readonlyEnabled = true;
+				s2.readonlyNudgePending = true;
+				s2.frontmatterSkillCache.set("skill-a", { readonly: true, modelGroup: null, explicitModel: null, explicitThinking: null, mtimeMs: 1, filePath: "/tmp/skill-a.md" });
+				s2.frontmatterPromptCache.set("prompt-a", { readonly: false, modelGroup: null, explicitModel: null, explicitThinking: null, mtimeMs: 1, filePath: "/tmp/prompt-a.md" });
+				s2.frontmatterSkillIssues.set("skill-b", { kind: "invalid-readonly-value", filePath: "/tmp/skill-b.md" });
+				s2.frontmatterPromptIssues.set("prompt-b", { kind: "unreadable-file", filePath: "/tmp/prompt-b.md" });
+				s2.pendingReadonlyCommands.push({ type: "skill", name: "skill-a" });
+				s2.sandboxedBashCallIds.add("bash-call-1");
+				s2.modelGroups.groups = [{
+					name: "stale",
+					scope: "project",
+					sourcePath: "<project>",
+					models: [],
+					modalities: { common: [], supported: [], effective: [] },
+					validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
+				}];
+				s2.modelGroups.validation = { groups: s2.modelGroups.groups, loadIssues: [] };
+				resetState(s2);
+				assertResetClears(s2);
+			},
+		),
+		{ numRuns: 100 },
+	);
 });
 
 test("Property 5: Epoch counter — set to 1 on first savePage", async () => {
-	const h = createTestHarness();
-	try {
-		await fc.assert(
-			fc.asyncProperty(
-				fc.array(
-					fc.oneof(
-						fc.constant({ type: "reset" } as StateAction),
-						fc.record({ type: fc.constant("savePage"), name: arbPageName }),
-						fc.constant({ type: "clearTopic" } as StateAction),
-					),
-					{ maxLength: 30 },
+	useTestHarness();
+	await fc.assert(
+		fc.asyncProperty(
+			fc.array(
+				fc.oneof(
+					fc.constant({ type: "reset" } as StateAction),
+					fc.record({ type: fc.constant("savePage"), name: arbPageName }),
+					fc.constant({ type: "clearTopic" } as StateAction),
 				),
-				async (actions) => {
-					const state = createState();
-
-					expect(state.epoch, "epoch must be 0 on fresh state").toBe(0);
-
-					for (const action of actions) {
-						const prevEpoch: number = state.epoch;
-						await apply(state, action);
-
-						if (action.type === "savePage") {
-							// After first savePage, epoch transitions from 0 to 1
-							// After subsequent saves, epoch is unchanged (set once)
-							expect(
-								state.epoch,
-								`epoch must be > 0 after savePage, got ${state.epoch}`,
-							).toBeGreaterThan(0);
-							if (prevEpoch === 0) {
-								// First write: epoch transitions from 0 to 1
-								expect(state.epoch, "epoch must be 1 after first savePage").toBe(1);
-							} else {
-								// Subsequent writes: epoch unchanged
-								expect(state.epoch, "epoch must not change on subsequent savePage").toBe(prevEpoch);
-							}
-						} else if (action.type === "reset") {
-							// Reset sets epoch to 0
-							expect(state.epoch, "epoch must be 0 after reset").toBe(0);
-						} else {
-							// Non-save, non-reset: epoch unchanged
-							expect(state.epoch, "epoch unchanged on non-save/non-reset actions").toBe(prevEpoch);
-						}
-					}
-				},
+				{ maxLength: 30 },
 			),
-			{ numRuns: 100 },
-		);
-	} finally {
-		h.teardown();
-	}
+			async (actions) => {
+				const state = createState();
+
+				expect(state.epoch, "epoch must be 0 on fresh state").toBe(0);
+
+				for (const action of actions) {
+					const prevEpoch: number = state.epoch;
+					await apply(state, action);
+
+					if (action.type === "savePage") {
+						// After first savePage, epoch transitions from 0 to 1
+						// After subsequent saves, epoch is unchanged (set once)
+						expect(
+							state.epoch,
+							`epoch must be > 0 after savePage, got ${state.epoch}`,
+						).toBeGreaterThan(0);
+						if (prevEpoch === 0) {
+							// First write: epoch transitions from 0 to 1
+							expect(state.epoch, "epoch must be 1 after first savePage").toBe(1);
+						} else {
+							// Subsequent writes: epoch unchanged
+							expect(state.epoch, "epoch must not change on subsequent savePage").toBe(prevEpoch);
+						}
+					} else if (action.type === "reset") {
+						// Reset sets epoch to 0
+						expect(state.epoch, "epoch must be 0 after reset").toBe(0);
+					} else {
+						// Non-save, non-reset: epoch unchanged
+						expect(state.epoch, "epoch unchanged on non-save/non-reset actions").toBe(prevEpoch);
+					}
+				}
+			},
+		),
+		{ numRuns: 100 },
+	);
 });
 
 const STAGED_HANDOFF: NonNullable<SchematicState["stagedHandoff"]> = {
@@ -378,7 +358,7 @@ const STAGED_HANDOFF: NonNullable<SchematicState["stagedHandoff"]> = {
 
 test("a new state has no staged handoff and no refusals", () => {
 	const state = createState();
-	expect(state.stagedHandoff).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
 	expect(state.handoffRefusals.size).toBe(0);
 });
 
@@ -389,7 +369,7 @@ test("reset clears a staged handoff and the refusals, keeping the refusal map id
 	refusals.set("call-2", "refused");
 	state.handoffFailedInRun = true;
 	resetState(state);
-	expect(state.stagedHandoff).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
 	expect(state.handoffFailedInRun).toBe(false);
 	expect(state.handoffRefusals.size).toBe(0);
 	expect(state.handoffRefusals).toBe(refusals);
@@ -413,12 +393,12 @@ test("invalidateHandoffState clears the staged handoff, the refusals and the pen
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 1, eligibleNudgeDelivered: false, nextInstruction: null };
 	state.handoffFailedInRun = true;
 	invalidateHandoffState(state);
-	expect(state.stagedHandoff).toBe(null);
+	expect(state.stagedHandoff).toBeNull();
 	expect(state.handoffFailedInRun).toBe(false);
 	expect(state.handoffRefusals.size).toBe(0);
 	expect(state.handoffRefusals).toBe(refusals);
-	expect(state.pendingRequestedHandoff).toBe(null);
-	expect(state.pendingTopicBoundaryHint).toBe(null);
+	expect(state.pendingRequestedHandoff).toBeNull();
+	expect(state.pendingTopicBoundaryHint).toBeNull();
 });
 
 test("reset clears deferred readonly frontmatter commands", () => {
@@ -426,14 +406,14 @@ test("reset clears deferred readonly frontmatter commands", () => {
 	state.pendingReadonlyCommands.push({ type: "skill", name: "a" });
 
 	resetState(state);
-	expect(state.pendingReadonlyCommands.length, "readonly queue cleared").toBe(0);
+	expect(state.pendingReadonlyCommands, "readonly queue cleared").toHaveLength(0);
 });
 
 test("clipped page flags stay contained and reset clears them", async () => {
 	const state = createState();
 	await saveNotebookPage(mockPi, state, "clipped-page", CLIPPED_BODY);
 	assertClippedPagesContained(state);
-	expect(state.clippedPages.has("clipped-page"), "oversized write must flag the page clipped").toBe(true);
+	expect([...state.clippedPages], "oversized write must flag the page clipped").toContain("clipped-page");
 
 	resetState(state);
 	assertClippedPagesContained(state);
@@ -441,70 +421,62 @@ test("clipped page flags stay contained and reset clears them", async () => {
 });
 
 test("Property 6: childSessionEpoch monotonicity (never decreases)", async () => {
-	const h = createTestHarness();
-	try {
-		await fc.assert(
-			fc.asyncProperty(
-				fc.array(
-					fc.oneof(
-						fc.constant({ type: "reset" } as StateAction),
-						fc.record({ type: fc.constant("setTopic"), name: arbTopicName }),
-						fc.constant({ type: "clearTopic" } as StateAction),
-						fc.record({ type: fc.constant("savePage"), name: arbPageName }),
-					),
-					{ maxLength: 30 },
+	useTestHarness();
+	await fc.assert(
+		fc.asyncProperty(
+			fc.array(
+				fc.oneof(
+					fc.constant({ type: "reset" } as StateAction),
+					fc.record({ type: fc.constant("setTopic"), name: arbTopicName }),
+					fc.constant({ type: "clearTopic" } as StateAction),
+					fc.record({ type: fc.constant("savePage"), name: arbPageName }),
 				),
-				async (actions) => {
-					const state = createState();
-					let maxSeenEpoch = 0;
-
-					for (const action of actions) {
-						await apply(state, action);
-						expect(
-							state.childSessionEpoch,
-							`childSessionEpoch must never decrease: was ${maxSeenEpoch}, got ${state.childSessionEpoch}`,
-						).toBeGreaterThanOrEqual(maxSeenEpoch);
-						maxSeenEpoch = Math.max(maxSeenEpoch, state.childSessionEpoch);
-					}
-				},
+				{ maxLength: 30 },
 			),
-			{ numRuns: 100 },
-		);
-	} finally {
-		h.teardown();
-	}
+			async (actions) => {
+				const state = createState();
+				let maxSeenEpoch = 0;
+
+				for (const action of actions) {
+					await apply(state, action);
+					expect(
+						state.childSessionEpoch,
+						`childSessionEpoch must never decrease: was ${maxSeenEpoch}, got ${state.childSessionEpoch}`,
+					).toBeGreaterThanOrEqual(maxSeenEpoch);
+					maxSeenEpoch = Math.max(maxSeenEpoch, state.childSessionEpoch);
+				}
+			},
+		),
+		{ numRuns: 100 },
+	);
 });
 
 test("Property 7: clipped pages are a subset of notebook pages", async () => {
-	const h = createTestHarness();
-	try {
-		await fc.assert(
-			fc.asyncProperty(
-				fc.array(
-					fc.oneof(
-						fc.constant({ type: "reset" } as StateAction),
-						fc.record({ type: fc.constant("savePage"), name: arbPageName }),
-						fc.record({ type: fc.constant("saveClippedPage"), name: arbPageName }),
-					),
-					{ maxLength: 30 },
+	useTestHarness();
+	await fc.assert(
+		fc.asyncProperty(
+			fc.array(
+				fc.oneof(
+					fc.constant({ type: "reset" } as StateAction),
+					fc.record({ type: fc.constant("savePage"), name: arbPageName }),
+					fc.record({ type: fc.constant("saveClippedPage"), name: arbPageName }),
 				),
-				async (actions) => {
-					const state = createState();
-					for (const action of actions) {
-						await apply(state, action);
-						assertClippedPagesContained(state);
-						if (action.type === "saveClippedPage") {
-							expect(
-								state.clippedPages.has(action.name),
-								`clipped write "${action.name}" must set the clipped flag`,
-							).toBe(true);
-						}
-					}
-				},
+				{ maxLength: 30 },
 			),
-			{ numRuns: 100 },
-		);
-	} finally {
-		h.teardown();
-	}
+			async (actions) => {
+				const state = createState();
+				for (const action of actions) {
+					await apply(state, action);
+					assertClippedPagesContained(state);
+					if (action.type === "saveClippedPage") {
+						expect(
+							[...state.clippedPages],
+							`clipped write "${action.name}" must set the clipped flag`,
+						).toContain(action.name);
+					}
+				}
+			},
+		),
+		{ numRuns: 100 },
+	);
 });

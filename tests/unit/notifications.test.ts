@@ -5,8 +5,7 @@
  * would cascade to downstream constants. These tests catch that cheaply.
  */
 
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import { applyReadonlyBashGuard, classifyBashCommand } from "../../readonly-bash.js";
 import { registerReadonlyPI } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
@@ -78,47 +77,45 @@ const allConstants = {
 	READONLY_PENDING_HANDOFF_READONLY_OFF_NOTIFICATION,
 };
 
-test("all constants are non-empty strings", () => {
-	for (const [name, value] of Object.entries(allConstants)) {
-		assert.equal(typeof value, "string", `${name} must be a string`);
-		assert.ok(value.trim().length > 0, `${name} must be non-empty`);
-	}
+test.each(Object.entries(allConstants))("all constants are non-empty strings: %s", (name, value) => {
+	expect(value, `${name} must be a string`).toBeTypeOf("string");
+	expect(value.trim().length, `${name} must be non-empty`).toBeGreaterThan(0);
 });
 
 test("composition chain: READONLY_WRITE_EDIT_BASH contains READONLY_BASH_SCOPE", () => {
-	assert.ok(READONLY_WRITE_EDIT_BASH.includes(READONLY_BASH_SCOPE));
+	expect(READONLY_WRITE_EDIT_BASH).toContain(READONLY_BASH_SCOPE);
 });
 
 test("composition chain: READONLY_ENABLED_STATUS contains READONLY_BASH_SCOPE", () => {
-	assert.ok(READONLY_ENABLED_STATUS.includes(READONLY_BASH_SCOPE));
+	expect(READONLY_ENABLED_STATUS).toContain(READONLY_BASH_SCOPE);
 });
 
 test("summary constants use [readonly] prefix", () => {
-	assert.ok(READONLY_WRITE_EDIT_SUMMARY.startsWith("[readonly]"));
-	assert.ok(READONLY_NO_SHELL_SUMMARY.startsWith("[readonly]"));
-	assert.ok(READONLY_ACTIVE_SUMMARY.startsWith("[readonly]"));
-	assert.ok(READONLY_HANDOFF_EXCEPTION_SUMMARY.startsWith("[readonly]"));
-	assert.ok(READONLY_ENABLED_STATUS.startsWith("[readonly]"));
-	assert.ok(READONLY_DISABLED_SUMMARY.startsWith("[readonly]"));
+	expect(READONLY_WRITE_EDIT_SUMMARY.slice(0, "[readonly]".length)).toBe("[readonly]");
+	expect(READONLY_NO_SHELL_SUMMARY.slice(0, "[readonly]".length)).toBe("[readonly]");
+	expect(READONLY_ACTIVE_SUMMARY.slice(0, "[readonly]".length)).toBe("[readonly]");
+	expect(READONLY_HANDOFF_EXCEPTION_SUMMARY.slice(0, "[readonly]".length)).toBe("[readonly]");
+	expect(READONLY_ENABLED_STATUS.slice(0, "[readonly]".length)).toBe("[readonly]");
+	expect(READONLY_DISABLED_SUMMARY.slice(0, "[readonly]".length)).toBe("[readonly]");
 });
 
 test("block reasons use 'Readonly mode:' prefix", () => {
-	assert.ok(READONLY_WRITE_EDIT_BLOCK_REASON.startsWith("Readonly mode:"));
-	assert.ok(READONLY_POWERSHELL_BLOCK_REASON.startsWith("Readonly mode:"));
-	assert.match(READONLY_POWERSHELL_BLOCK_REASON, /powershell/);
-	assert.ok(READONLY_HANDOFF_BLOCK_REASON.startsWith("Readonly mode:"));
-	assert.ok(buildReadonlyBashBlockReason("test", "cmd").startsWith("Readonly mode:"));
+	expect(READONLY_WRITE_EDIT_BLOCK_REASON.slice(0, "Readonly mode:".length)).toBe("Readonly mode:");
+	expect(READONLY_POWERSHELL_BLOCK_REASON.slice(0, "Readonly mode:".length)).toBe("Readonly mode:");
+	expect(READONLY_POWERSHELL_BLOCK_REASON).toMatch(/powershell/);
+	expect(READONLY_HANDOFF_BLOCK_REASON.slice(0, "Readonly mode:".length)).toBe("Readonly mode:");
+	expect(buildReadonlyBashBlockReason("test", "cmd").slice(0, "Readonly mode:".length)).toBe("Readonly mode:");
 });
 
 test("bash guard uses centralized readonly block copy", () => {
 	const command = "touch /outside-temp-file";
 	const result = applyReadonlyBashGuard(command, process.cwd());
-	assert.equal(result.action, "block");
+	expect(result.action).toBe("block");
 	if (result.action === "block") {
 		const verdict = classifyBashCommand(command, process.cwd());
-		assert.equal(verdict.ok, false);
+		expect(verdict.ok).toBe(false);
 		if (verdict.ok === false) {
-			assert.equal(result.reason, buildReadonlyBashBlockReason(verdict.reason, command));
+			expect(result.reason).toBe(buildReadonlyBashBlockReason(verdict.reason, command));
 		}
 	}
 });
@@ -136,114 +133,110 @@ test("parent readonly tool-call consumer uses centralized block copy", async () 
 		},
 	} as any);
 	const result = await toolCall({ toolName: "write", input: {} }, {});
-	assert.deepEqual(result, { block: true, reason: READONLY_WRITE_EDIT_BLOCK_REASON });
+	expect(result).toStrictEqual({ block: true, reason: READONLY_WRITE_EDIT_BLOCK_REASON });
 	const handoffResult = await toolCall({ toolName: "handoff", input: {} }, {});
-	assert.deepEqual(handoffResult, { block: true, reason: READONLY_HANDOFF_BLOCK_REASON });
+	expect(handoffResult).toStrictEqual({ block: true, reason: READONLY_HANDOFF_BLOCK_REASON });
 });
 
 test("LLM-facing handoff copy reflects both readonly bypass triggers", () => {
-	assert.match(READONLY_HANDOFF_BLOCK_REASON, /explicit \/handoff/i);
-	assert.match(READONLY_HANDOFF_BLOCK_REASON, /human topic boundary/i);
-	assert.match(READONLY_HANDOFF_EXCEPTION_SUMMARY, /temporary handoff exception active/i);
-	assert.match(READONLY_HANDOFF_EXCEPTION_SUMMARY, /write\/edit\/powershell remain blocked/i);
-	assert.doesNotMatch(READONLY_HANDOFF_EXCEPTION_SUMMARY, /for this turn|this request only/i);
-	assert.match(READONLY_HANDOFF_EXCEPTION_NOTIFICATION, /write\/edit\/powershell remain blocked/i);
-	assert.doesNotMatch(READONLY_HANDOFF_EXCEPTION_NOTIFICATION, /for this turn/i);
+	expect(READONLY_HANDOFF_BLOCK_REASON).toMatch(/explicit \/handoff/i);
+	expect(READONLY_HANDOFF_BLOCK_REASON).toMatch(/human topic boundary/i);
+	expect(READONLY_HANDOFF_EXCEPTION_SUMMARY).toMatch(/temporary handoff exception active/i);
+	expect(READONLY_HANDOFF_EXCEPTION_SUMMARY).toMatch(/write\/edit\/powershell remain blocked/i);
+	expect(READONLY_HANDOFF_EXCEPTION_SUMMARY).not.toMatch(/for this turn|this request only/i);
+	expect(READONLY_HANDOFF_EXCEPTION_NOTIFICATION).toMatch(/write\/edit\/powershell remain blocked/i);
+	expect(READONLY_HANDOFF_EXCEPTION_NOTIFICATION).not.toMatch(/for this turn/i);
 });
 
 test("shared readonly fragments keep copy aligned across contexts", () => {
-	assert.match(READONLY_HANDOFF_BLOCK_REASON, new RegExp(READONLY_HANDOFF_TRIGGER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
-	assert.match(READONLY_HANDOFF_EXCEPTION_NOTIFICATION, /fresh context resumes in readonly mode/i);
-	assert.match(buildReadonlyRequestedHandoffContinuation(), /fresh context resumes in readonly mode/i);
-	assert.match(buildReadonlyHandoffWaitNotice(), /readonly remains active/i);
-	assert.ok(buildReadonlyHandoffCommandNotice().includes(READONLY_NEXT_CONTEXT_RESUMES),
-		"the /handoff notice must reuse the shared readonly continuation sentence");
-	assert.match(buildReadonlyTopicBoundaryNotification("oauth", "billing"), /handoff exception activates.*once the context is ready/i);
-	assert.match(buildReadonlyDisabledContextSuffix(42), /42%/);
-	assert.match(READONLY_NON_TEMP_MUTATION_SCOPE, /non-temp bash filesystem mutations/i);
-	assert.match(READONLY_HANDOFF_TRIGGER, /human topic boundary/i);
-	assert.match(READONLY_NEXT_CONTEXT_RESUMES, /readonly mode/i);
-	assert.match(READONLY_PENDING_HANDOFF_READONLY_ON_NOTIFICATION, /resume in readonly mode/i);
-	assert.match(READONLY_PENDING_HANDOFF_READONLY_OFF_NOTIFICATION, /will not resume in readonly mode/i);
-	assert.match(READONLY_HANDOFF_RETRY_ADVICE, /temporary readonly exception/i);
-	assert.match(READONLY_CHILD_AUTHORITY_NOTE, /inherit readonly authority/i);
-	assert.equal(buildReadonlyFrontmatterNotification(true, "/review"), "Readonly mode enabled via `/review` frontmatter");
-	assert.equal(buildReadonlyFrontmatterNotification(false, "/review"), "Readonly mode disabled via `/review` frontmatter");
-	assert.match(buildStreamingModelSelectionBlockedNotification("/review"), /model-selection frontmatter requires an idle agent/i);
-	assert.match(buildStreamingReadonlyFrontmatterBlockedNotification("/review"), /readonly frontmatter requires an idle agent/i);
-	assert.match(buildReadonlyPackageManagerBlockReason("npm", "install"), /blocked in readonly mode/i);
-	assert.match(buildReadonlySandboxPathError("/tmp/'bad"), /cannot safely escape/i);
+	expect(READONLY_HANDOFF_BLOCK_REASON).toMatch(new RegExp(READONLY_HANDOFF_TRIGGER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+	expect(READONLY_HANDOFF_EXCEPTION_NOTIFICATION).toMatch(/fresh context resumes in readonly mode/i);
+	expect(buildReadonlyRequestedHandoffContinuation()).toMatch(/fresh context resumes in readonly mode/i);
+	expect(buildReadonlyHandoffWaitNotice()).toMatch(/readonly remains active/i);
+	expect(buildReadonlyHandoffCommandNotice(), "the /handoff notice must reuse the shared readonly continuation sentence").toContain(READONLY_NEXT_CONTEXT_RESUMES);
+	expect(buildReadonlyTopicBoundaryNotification("oauth", "billing")).toMatch(/handoff exception activates.*once the context is ready/i);
+	expect(buildReadonlyDisabledContextSuffix(42)).toMatch(/42%/);
+	expect(READONLY_NON_TEMP_MUTATION_SCOPE).toMatch(/non-temp bash filesystem mutations/i);
+	expect(READONLY_HANDOFF_TRIGGER).toMatch(/human topic boundary/i);
+	expect(READONLY_NEXT_CONTEXT_RESUMES).toMatch(/readonly mode/i);
+	expect(READONLY_PENDING_HANDOFF_READONLY_ON_NOTIFICATION).toMatch(/resume in readonly mode/i);
+	expect(READONLY_PENDING_HANDOFF_READONLY_OFF_NOTIFICATION).toMatch(/will not resume in readonly mode/i);
+	expect(READONLY_HANDOFF_RETRY_ADVICE).toMatch(/temporary readonly exception/i);
+	expect(READONLY_CHILD_AUTHORITY_NOTE).toMatch(/inherit readonly authority/i);
+	expect(buildReadonlyFrontmatterNotification(true, "/review")).toBe("Readonly mode enabled via `/review` frontmatter");
+	expect(buildReadonlyFrontmatterNotification(false, "/review")).toBe("Readonly mode disabled via `/review` frontmatter");
+	expect(buildStreamingModelSelectionBlockedNotification("/review")).toMatch(/model-selection frontmatter requires an idle agent/i);
+	expect(buildStreamingReadonlyFrontmatterBlockedNotification("/review")).toMatch(/readonly frontmatter requires an idle agent/i);
+	expect(buildReadonlyPackageManagerBlockReason("npm", "install")).toMatch(/blocked in readonly mode/i);
+	expect(buildReadonlySandboxPathError("/tmp/'bad")).toMatch(/cannot safely escape/i);
 });
 
 test("readonly command consumes the centralized description", async () => {
 	const pi = await createTestHost();
-	assert.equal(pi.commands.get("readonly")?.description, READONLY_COMMAND_DESCRIPTION);
+	expect(pi.commands.get("readonly")?.description).toBe(READONLY_COMMAND_DESCRIPTION);
 });
 
 // ── Model group / model / thinking frontmatter builders ───────────
 
 test("buildModelGroupNotification includes group, model, and command ref", () => {
 	const msg = buildModelGroupNotification("reviewer", "openai", "gpt-4o", "/review");
-	assert.equal(msg, "Model changed to openai/gpt-4o via group `reviewer` from `/review` frontmatter");
+	expect(msg).toBe("Model changed to openai/gpt-4o via group `reviewer` from `/review` frontmatter");
 });
 
 test("buildModelGroupErrorNotification includes group and detail", () => {
 	const msg = buildModelGroupErrorNotification("reviewer", "/review", "not defined");
-	assert.equal(msg, "Cannot execute `/review`: Model Group `reviewer` error — not defined.");
+	expect(msg).toBe("Cannot execute `/review`: Model Group `reviewer` error — not defined.");
 });
 
 test("buildModelGroupSetModelErrorNotification includes group, model, and command ref", () => {
 	const msg = buildModelGroupSetModelErrorNotification("reviewer", "openai", "gpt-4o", "/review");
-	assert.equal(msg, "Cannot execute `/review`: failed to switch to routed model openai/gpt-4o from group `reviewer`.");
+	expect(msg).toBe("Cannot execute `/review`: failed to switch to routed model openai/gpt-4o from group `reviewer`.");
 });
 
 test("buildModelFrontmatterNotification includes model and command ref", () => {
 	const msg = buildModelFrontmatterNotification("openai", "gpt-4o", "/review");
-	assert.equal(msg, "Model switched to openai/gpt-4o via `/review` frontmatter");
+	expect(msg).toBe("Model switched to openai/gpt-4o via `/review` frontmatter");
 });
 
 test("buildModelGroupOverrideWarningNotification includes group and command ref", () => {
 	const msg = buildModelGroupOverrideWarningNotification("reviewer", "/review");
-	assert.equal(msg, "Model Group `reviewer` overridden by explicit `model` from `/review` frontmatter");
+	expect(msg).toBe("Model Group `reviewer` overridden by explicit `model` from `/review` frontmatter");
 });
 
 test("buildThinkingFrontmatterNotification includes level and command ref", () => {
 	const msg = buildThinkingFrontmatterNotification("high", "/review");
-	assert.equal(msg, "Thinking level set to high via `/review` frontmatter");
+	expect(msg).toBe("Thinking level set to high via `/review` frontmatter");
 });
 
 test("buildModelFrontmatterErrorNotification includes model and detail", () => {
 	const msg = buildModelFrontmatterErrorNotification("openai", "gpt-4o", "/review", "not found in registry");
-	assert.equal(msg, "Cannot execute `/review`: model openai/gpt-4o not found in registry.");
+	expect(msg).toBe("Cannot execute `/review`: model openai/gpt-4o not found in registry.");
 });
 
 test("buildModelFrontmatterSetModelErrorNotification includes model and command ref", () => {
 	const msg = buildModelFrontmatterSetModelErrorNotification("openai", "gpt-4o", "/review");
-	assert.equal(msg, "Cannot execute `/review`: failed to switch to model openai/gpt-4o.");
+	expect(msg).toBe("Cannot execute `/review`: failed to switch to model openai/gpt-4o.");
 });
 
 test("buildModelFrontmatterAuthErrorNotification includes model and command ref", () => {
 	const msg = buildModelFrontmatterAuthErrorNotification("openai", "gpt-4o", "/review");
-	assert.equal(msg, "Cannot execute `/review`: no API key for model openai/gpt-4o.");
+	expect(msg).toBe("Cannot execute `/review`: no API key for model openai/gpt-4o.");
 });
 
 test("streaming model-selection notification explains the idle-agent requirement", () => {
-	assert.equal(
-		buildStreamingModelSelectionBlockedNotification("/review"),
-		"Cannot execute `/review` during streaming: model-selection frontmatter requires an idle agent.",
-	);
+	expect(buildStreamingModelSelectionBlockedNotification("/review")).toBe("Cannot execute `/review` during streaming: model-selection frontmatter requires an idle agent.");
 });
 
 test("model-group builders include commandRef in output", () => {
-	assert.ok(buildModelGroupNotification("g", "p", "m", "/cmd").includes("/cmd"));
-	assert.ok(buildModelGroupErrorNotification("g", "/cmd", "d").includes("/cmd"));
-	assert.ok(buildModelGroupSetModelErrorNotification("g", "p", "m", "/cmd").includes("/cmd"));
+	expect(buildModelGroupNotification("g", "p", "m", "/cmd")).toContain("/cmd");
+	expect(buildModelGroupErrorNotification("g", "/cmd", "d")).toContain("/cmd");
+	expect(buildModelGroupSetModelErrorNotification("g", "p", "m", "/cmd")).toContain("/cmd");
 });
 
 test("model frontmatter builders include commandRef in output", () => {
-	assert.ok(buildModelFrontmatterNotification("p", "m", "/cmd").includes("/cmd"));
-	assert.ok(buildModelGroupOverrideWarningNotification("g", "/cmd").includes("/cmd"));
-	assert.ok(buildModelFrontmatterErrorNotification("p", "m", "/cmd", "d").includes("/cmd"));
-	assert.ok(buildModelFrontmatterSetModelErrorNotification("p", "m", "/cmd").includes("/cmd"));
-	assert.ok(buildModelFrontmatterAuthErrorNotification("p", "m", "/cmd").includes("/cmd"));
+	expect(buildModelFrontmatterNotification("p", "m", "/cmd")).toContain("/cmd");
+	expect(buildModelGroupOverrideWarningNotification("g", "/cmd")).toContain("/cmd");
+	expect(buildModelFrontmatterErrorNotification("p", "m", "/cmd", "d")).toContain("/cmd");
+	expect(buildModelFrontmatterSetModelErrorNotification("p", "m", "/cmd")).toContain("/cmd");
+	expect(buildModelFrontmatterAuthErrorNotification("p", "m", "/cmd")).toContain("/cmd");
 });
