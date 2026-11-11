@@ -156,7 +156,7 @@ function describeError(error: unknown): string {
  * Run `body`; when it throws, run `cleanup` and rethrow the body's error. A cleanup
  * error never hides it: both are thrown together as an AggregateError.
  */
-async function cleanupOnFailure<T>(body: () => Promise<T>, cleanup: () => unknown): Promise<T> {
+export async function cleanupOnFailure<T>(body: () => Promise<T>, cleanup: () => unknown): Promise<T> {
 	try {
 		return await body();
 	} catch (failure) {

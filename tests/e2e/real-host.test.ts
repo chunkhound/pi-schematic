@@ -37,6 +37,7 @@ import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { buildNudge, MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
 import { assertPresent } from "../assertions.js";
 import {
+	cleanupOnFailure,
 	messageText,
 	projectStatuses,
 	RealHost,
@@ -229,10 +230,13 @@ function captureHostChildren(): ChildProcess[] {
 	const start = RealHost.start.bind(RealHost);
 	vi.spyOn(RealHost, "start").mockImplementation(async (options) => {
 		const host = await start(options);
-		const child = (host.client as unknown as { process: ChildProcess | null }).process;
-		assertPresent(child, "the started host has a CLI process");
-		children.push(child);
-		return host;
+		// withRealHost does not close a host whose start rejected, so close it here.
+		return cleanupOnFailure(async () => {
+			const child = (host.client as unknown as { process: ChildProcess | null }).process;
+			assertPresent(child, "the started host has a CLI process");
+			children.push(child);
+			return host;
+		}, () => host.close());
 	});
 	return children;
 }
@@ -768,7 +772,8 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 					bodySettled = true;
 				}
 			});
-			await entered.promise;
+			// A start error rejects running before the body is entered; the race fails the test with it at once.
+			await Promise.race([entered.promise, running]);
 			abort(new Error("hand-built timeout"));
 			const finishing = finish();
 			// Released only after the callbacks have started, so a close that does not wait for the body begins first.
@@ -797,6 +802,44 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			expect(await finish(), "the callbacks threw nothing").toStrictEqual([]);
 			expect(stop, "the host closed once").toHaveBeenCalledOnce();
 			expectOneExitedChild(children);
+		});
+
+		it("a start error rejects withRealHost, the body never runs and the finish callback throws nothing", async (vitest) => {
+			const startError = new Error("hand-built start failure");
+			const start = vi.spyOn(RealHost, "start").mockRejectedValue(startError);
+			vitest.onTestFinished(() => {
+				start.mockRestore();
+			});
+			const { t, finish } = handBuiltContext(vitest);
+			let bodyRan = false;
+			const running = withRealHost(t, async () => {
+				bodyRan = true;
+			});
+			await expect(running, "withRealHost rejects with the start error").rejects.toBe(startError);
+			expect(bodyRan, "the body never ran").toBe(false);
+			expect(await finish(), "the callbacks threw nothing").toStrictEqual([]);
+		});
+
+		it("a start error after a timeout during start is thrown from the finish callback", async (vitest) => {
+			const startError = new Error("hand-built start failure");
+			let rejectStart!: (error: Error) => void;
+			const starting = new Promise<RealHost>((_resolve, reject) => {
+				rejectStart = reject;
+			});
+			const start = vi.spyOn(RealHost, "start").mockReturnValue(starting);
+			vitest.onTestFinished(() => {
+				start.mockRestore();
+			});
+			const { t, abort, finish } = handBuiltContext(vitest);
+			let bodyRan = false;
+			const running = withRealHost(t, async () => {
+				bodyRan = true;
+			});
+			abort(new Error("hand-built timeout"));
+			rejectStart(startError);
+			await expect(running, "withRealHost rejects with the start error").rejects.toBe(startError);
+			expect(bodyRan, "the body never ran").toBe(false);
+			expect(await finish(), "the start error, once").toStrictEqual([startError]);
 		});
 
 		it("a close error after a passing body is thrown from the finish callback once", async (vitest) => {
