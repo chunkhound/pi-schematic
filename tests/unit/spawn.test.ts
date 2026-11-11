@@ -2633,3 +2633,114 @@ test("a completed UI spawn whose dispose fails returns the dispose error without
 	assertChildRegistriesCleared(host.state);
 });
 
+
+test("spawn retries a failed routed member with a fresh random draw over the remaining pool", async () => {
+	const state = createState();
+	const failModel = { provider: "openai", id: "gpt-fail", reasoning: true, input: ["text"] };
+	const okModel = { provider: "openai", id: "gpt-ok", reasoning: true, input: ["text"] };
+	state.modelGroups.groups = [{
+		name: "retry",
+		scope: "project",
+		sourcePath: "<project>",
+		models: [
+			{ provider: "openai", modelId: "gpt-fail" },
+			{ provider: "openai", modelId: "gpt-ok" },
+		],
+		modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
+	} as any];
+	const seenModels: string[] = [];
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, async (config: any) => {
+		seenModels.push(config.model.id);
+		if (config.model.id === "gpt-fail") {
+			return {
+				session: mockSessionFactory({ result: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "provider boom" }] }),
+				extensionsResult: undefined as any,
+			};
+		}
+		return { session: mockSessionFactory({ prompt: async () => {} }), extensionsResult: undefined as any };
+	}), { activeTools: ["read", "bash", "spawn"] });
+	const ctx = { model: { provider: "openai", id: "parent" }, cwd: "/tmp", modelRegistry: {
+		find: (_p: string, id: string) => id === "gpt-fail" ? failModel : id === "gpt-ok" ? okModel : undefined,
+		hasConfiguredAuth: (m: any) => m === failModel || m === okModel,
+	} } as any;
+	const originalRandom = Math.random;
+	let draw = 0;
+	Math.random = () => (draw++ === 0 ? 0.05 : 0.95); // first draw lands on gpt-fail; retry re-draw on gpt-ok
+	try {
+		const result = await pi.tools.get("spawn").execute("spawn-retry", { prompt: "t", group: "retry" }, undefined, undefined, ctx);
+		assert.deepEqual(seenModels, ["gpt-fail", "gpt-ok"], "failed member is retried with a different member");
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details.outcome, "success");
+		assert.equal(result.details.route?.status, "routed");
+		assert.equal(result.details.route?.modelId, "gpt-ok");
+	} finally {
+		Math.random = originalRandom;
+	}
+});
+
+test("spawn retries until the pool is exhausted and surfaces the last failure", async () => {
+	const state = createState();
+	const failA = { provider: "openai", id: "gpt-fail-a", reasoning: true, input: ["text"] };
+	const failB = { provider: "openai", id: "gpt-fail-b", reasoning: true, input: ["text"] };
+	state.modelGroups.groups = [{
+		name: "all-fail",
+		scope: "project",
+		sourcePath: "<project>",
+		models: [
+			{ provider: "openai", modelId: "gpt-fail-a" },
+			{ provider: "openai", modelId: "gpt-fail-b" },
+		],
+		modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
+	} as any];
+	const seenModels: string[] = [];
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, async (config: any) => {
+		seenModels.push(config.model.id);
+		return {
+			session: mockSessionFactory({ result: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "boom" }] }),
+			extensionsResult: undefined as any,
+		};
+	}), { activeTools: ["read", "bash", "spawn"] });
+	const ctx = { model: { provider: "openai", id: "parent" }, cwd: "/tmp", modelRegistry: {
+		find: (_p: string, id: string) => id === "gpt-fail-a" ? failA : id === "gpt-fail-b" ? failB : undefined,
+		hasConfiguredAuth: (m: any) => m === failA || m === failB,
+	} } as any;
+	const originalRandom = Math.random;
+	let draw = 0;
+	Math.random = () => (draw++ === 0 ? 0.05 : 0.95);
+	try {
+		const result = await pi.tools.get("spawn").execute("spawn-all-fail", { prompt: "t", group: "all-fail" }, undefined, undefined, ctx);
+		assert.deepEqual(seenModels, ["gpt-fail-a", "gpt-fail-b"], "both members are attempted before failing");
+		assert.equal(result.isError, true);
+		assert.equal(result.details.outcome, "error");
+		assert.equal(result.details.route?.modelId, "gpt-fail-b");
+	} finally {
+		Math.random = originalRandom;
+	}
+});
+
+test("spawn does not retry a single-member group", async () => {
+	const state = createState();
+	const onlyModel = { provider: "openai", id: "gpt-only", reasoning: true, input: ["text"] };
+	state.modelGroups.groups = [{
+		name: "solo",
+		scope: "project",
+		sourcePath: "<project>",
+		models: [{ provider: "openai", modelId: "gpt-only" }],
+		modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
+	} as any];
+	const seenModels: string[] = [];
+	const pi = await createTestHost((api) => registerSpawnTool(api, state, async (config: any) => {
+		seenModels.push(config.model.id);
+		return {
+			session: mockSessionFactory({ result: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "boom" }] }),
+			extensionsResult: undefined as any,
+		};
+	}), { activeTools: ["read", "bash", "spawn"] });
+	const result = await pi.tools.get("spawn").execute("spawn-solo", { prompt: "t", group: "solo" }, undefined, undefined, {
+		model: { provider: "openai", id: "parent" }, cwd: "/tmp",
+		modelRegistry: { find: () => onlyModel, hasConfiguredAuth: () => true },
+	} as any);
+	assert.deepEqual(seenModels, ["gpt-only"], "single-member group runs exactly one attempt");
+	assert.equal(result.isError, true);
+	assert.equal(result.details.outcome, "error");
+});

@@ -36,7 +36,7 @@ import { Type } from "typebox";
 import { abortChildSession, type SchematicState } from "../state.js";
 import { formatByteCap, formatPageList } from "../notebook/store.js";
 import { createNotebookToolDefinitions } from "../notebook/tools.js";
-import { resolveSpawnModelRoute } from "../model-groups/router.js";
+import { listSpawnCandidateKeys, resolveSpawnModelRoute, spawnMemberKey, type SpawnModelRoute, type SpawnRouteOptions } from "../model-groups/router.js";
 import { productionConstraintRegistry, type ConstraintRegistry } from "../model-groups/constraints/registry.js";
 import { MODEL_GROUP_MODALITY_PROSE } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
@@ -412,6 +412,51 @@ export function normalizeSpawnRequirements(params: Pick<SpawnParameters, "constr
 }
 
 /**
+ * Model-group retry orchestration: failures after a child session ran may be
+ * retried with a fresh random draw over the remaining usable/capable pool,
+ * excluding the model that just failed. Groups of size 1, inherited routes,
+ * and unknown-fallback routes fail without retry. Route/constraint failures
+ * that occur before a child session exists still throw (never retried).
+ */
+async function runSpawnAttemptsWithRetry(
+	routeOptions: Omit<SpawnRouteOptions, "exclude">,
+	firstRoute: SpawnModelRoute,
+	runAttempt: (route: SpawnModelRoute) => Promise<{ outcome: SpawnOutcome; result: SpawnToolResult }>,
+	signal: AbortSignal | undefined,
+	isStale: () => boolean,
+): Promise<SpawnToolResult> {
+	const candidateKeys = listSpawnCandidateKeys(routeOptions);
+	const retriable = firstRoute.status === "routed" && candidateKeys !== undefined && candidateKeys.length > 1;
+	if (!retriable) {
+		const attempt = await runAttempt(firstRoute);
+		return attempt.result;
+	}
+
+	const tried = new Set<string>();
+	let lastAttempt: { outcome: SpawnOutcome; result: SpawnToolResult } | undefined;
+	// The already-resolved `firstRoute` is the first attempt: use it as-is so the
+	// first draw stays identical to the non-retry path. Only after a failure
+	// do we re-resolve with the failed member excluded.
+	let attemptRoute: SpawnModelRoute = firstRoute;
+	for (;;) {
+		const attempt = await runAttempt(attemptRoute);
+		if (attempt.outcome !== "error" || isStale() || signal?.aborted) {
+			return attempt.result;
+		}
+		lastAttempt = attempt;
+		tried.add(spawnMemberKey(attemptRoute.provider, attemptRoute.modelId));
+		if (tried.size >= candidateKeys!.length) return attempt.result;
+		try {
+			attemptRoute = resolveSpawnModelRoute({ ...routeOptions, exclude: tried });
+		} catch (error) {
+			// Pool exhausted — every usable member has already failed; surface the last failure.
+			if (lastAttempt) return lastAttempt.result;
+			throw error;
+		}
+	}
+}
+
+/**
  * Runs a child session for a spawn invocation. Failures before a child session
  * exists, including "No model configured", route resolution, constraint
  * validation, and session-factory failures, throw. Every later failure resolves
@@ -441,7 +486,7 @@ export function executeSpawn(
 
 		const inheritedChildThinking: ModelThinkingLevel = params.thinking ?? defaultThinking;
 		const constraints = normalizeSpawnRequirements(params, constraintRegistry);
-		const route = resolveSpawnModelRoute({
+		const routeOptions: Omit<SpawnRouteOptions, "exclude"> = {
 			requestedGroup: params.group,
 			constraints,
 			groups: state.modelGroups.groups,
@@ -449,253 +494,279 @@ export function executeSpawn(
 			parentThinking: inheritedChildThinking,
 			modelRegistry: ctx.modelRegistry,
 			constraintRegistry,
-		});
-		const childModel = route.model;
-		const requestedChildThinking: ModelThinkingLevel = route.thinking;
-		const routeDetails: SpawnResultDetails["route"] = route.status === "routed"
-			? {
-					status: "routed",
-					group: route.groupName ?? route.requestedGroup ?? params.group?.trim() ?? "",
-					provider: route.provider,
-					modelId: route.modelId,
-				}
-			: route.status === "unknown-fallback"
+		};
+		const route = resolveSpawnModelRoute(routeOptions);
+		// Shared child environment is model-independent; computed once.
+		const childSessionEpoch = state.childSessionEpoch;
+		const isStale = () => state.childSessionEpoch !== childSessionEpoch;
+		const childTools = createChildTools(pi, state, { isStale });
+		const parentToolNames = pi.getActiveTools();
+		const childToolNames = buildChildToolNames(parentToolNames, childTools, pi.getAllTools());
+		// Children: readonly vs non-readonly tool strategy differs from the parent.
+		// Parent keeps write/edit/powershell in the tool list and blocks at call
+		// time to avoid context-cache misses (index.ts). Children start with a
+		// fresh context — no cache to preserve — so we remove write/edit/powershell
+		// from the tool list entirely (cleaner than advertising tools that always
+		// error). The readonly bash guard (sandbox-exec/bwrap or classifyBashCommand
+		// fallback) still propagates to children via createReadonlyChildBashTool
+		// below.
+		//
+		// This is a guardrail for a coding agent, not a security boundary.
+		const effectiveChildTools = [
+			...childTools,
+			...(state.readonlyEnabled && childToolNames.includes("bash")
+				? [createReadonlyChildBashTool(ctx.cwd)]
+				: []),
+		];
+
+		const effectiveToolNames = filterReadonlyToolNames(childToolNames, state.readonlyEnabled);
+
+		const listing = formatPageList(state);
+		const notebookListing = listing
+			? "Available notebook pages:\n" + listing
+			: "No notebook pages.";
+		const readonlySummary = effectiveToolNames.includes("bash")
+			? `${READONLY_WRITE_EDIT_SUMMARY}.`
+			: READONLY_NO_SHELL_SUMMARY;
+		const readonlyNotice = state.readonlyEnabled
+			? `\n\n${readonlySummary}`
+			: "";
+		const authorityNote = state.readonlyEnabled
+			? READONLY_CHILD_AUTHORITY_NOTE
+			: "You have the same authority as the parent.";
+
+		/**
+		 * Run a single child attempt against one routed model. Never retries
+		 * internally: it returns the outcome so the caller's retry loop can
+		 * decide whether to re-draw a different group member.
+		 */
+		async function runAttempt(route: SpawnModelRoute): Promise<{
+			outcome: SpawnOutcome;
+			result: SpawnToolResult;
+		}> {
+			const childModel = route.model;
+			const requestedChildThinking: ModelThinkingLevel = route.thinking;
+			const routeDetails: SpawnResultDetails["route"] = route.status === "routed"
 				? {
-						status: "unknown-fallback",
-						requestedGroup: route.requestedGroup ?? params.group?.trim() ?? "",
+						status: "routed",
+						group: route.groupName ?? route.requestedGroup ?? params.group?.trim() ?? "",
 						provider: route.provider,
 						modelId: route.modelId,
 					}
-				: { status: "inherited" };
+				: route.status === "unknown-fallback"
+					? {
+							status: "unknown-fallback",
+							requestedGroup: route.requestedGroup ?? params.group?.trim() ?? "",
+							provider: route.provider,
+							modelId: route.modelId,
+						}
+					: { status: "inherited" };
 
-	const childSessionEpoch = state.childSessionEpoch;
-	const isStale = () => state.childSessionEpoch !== childSessionEpoch;
-	const childTools = createChildTools(pi, state, { isStale });
-	const parentToolNames = pi.getActiveTools();
-	const childToolNames = buildChildToolNames(parentToolNames, childTools, pi.getAllTools());
-	// Children: readonly vs non-readonly tool strategy differs from the parent.
-	// Parent keeps write/edit/powershell in the tool list and blocks at call
-	// time to avoid context-cache misses (index.ts). Children start with a
-	// fresh context — no cache to preserve — so we remove write/edit/powershell
-	// from the tool list entirely (cleaner than advertising tools that always
-	// error). The readonly bash guard (sandbox-exec/bwrap or classifyBashCommand
-	// fallback) still propagates to children via createReadonlyChildBashTool
-	// below.
-	//
-	// This is a guardrail for a coding agent, not a security boundary.
-	const effectiveChildTools = [
-		...childTools,
-		...(state.readonlyEnabled && childToolNames.includes("bash")
-			? [createReadonlyChildBashTool(ctx.cwd)]
-			: []),
-	];
+			// Constraint descriptors own child-facing orientation for explicit group
+			// ceilings; spawn only presents the generic notes supplied by the route.
+			const capabilityNotice =
+				route.status === "routed" && route.groupCapabilityCeilings?.length
+					? `\n\n## Model Group capability ceiling\n${route.groupCapabilityCeilings.join("\n")}\n\n`
+					: "";
+			const fullPrompt =
+				`You are a focused child agent spawned by a parent agent. ` +
+				`${authorityNote} ` +
+				`Children cannot spawn further children. ` +
+				`Your result will be read by the parent, so be concise and complete.\n\n` +
+				`${notebookListing}\n\n` +
+				`If you write notebook pages, store only durable shared memory for the parent and future contexts. ` +
+				`Keep transient task state in your final reply to the parent.\n\n` +
+				`${capabilityNotice}` +
+				`## Task\n\n${params.prompt}${readonlyNotice}\n\n` +
+				`When complete, provide a concise summary of findings. ` +
+				`Keep the result under ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}.`;
 
-	const effectiveToolNames = filterReadonlyToolNames(childToolNames, state.readonlyEnabled);
-
-	const listing = formatPageList(state);
-	const notebookListing = listing
-		? "Available notebook pages:\n" + listing
-		: "No notebook pages.";
-	const readonlySummary = effectiveToolNames.includes("bash")
-		? `${READONLY_WRITE_EDIT_SUMMARY}.`
-		: READONLY_NO_SHELL_SUMMARY;
-	const readonlyNotice = state.readonlyEnabled
-		? `\n\n${readonlySummary}`
-		: "";
-	const authorityNote = state.readonlyEnabled
-		? READONLY_CHILD_AUTHORITY_NOTE
-		: "You have the same authority as the parent.";
-	// Constraint descriptors own child-facing orientation for explicit group
-	// ceilings; spawn only presents the generic notes supplied by the route.
-	const capabilityNotice =
-		route.status === "routed" && route.groupCapabilityCeilings?.length
-			? `\n\n## Model Group capability ceiling\n${route.groupCapabilityCeilings.join("\n")}\n\n`
-			: "";
-	const fullPrompt =
-		`You are a focused child agent spawned by a parent agent. ` +
-		`${authorityNote} ` +
-		`Children cannot spawn further children. ` +
-		`Your result will be read by the parent, so be concise and complete.\n\n` +
-		`${notebookListing}\n\n` +
-		`If you write notebook pages, store only durable shared memory for the parent and future contexts. ` +
-		`Keep transient task state in your final reply to the parent.\n\n` +
-		`${capabilityNotice}` +
-		`## Task\n\n${params.prompt}${readonlyNotice}\n\n` +
-		`When complete, provide a concise summary of findings. ` +
-		`Keep the result under ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}.`;
-
-	const { session } = await sessionFactory({
-		sessionManager: SessionManager.inMemory(ctx.cwd),
-		model: childModel,
-		thinkingLevel: requestedChildThinking,
-		cwd: ctx.cwd,
-		tools: effectiveToolNames,
-		customTools: effectiveChildTools,
-	});
-	// Pi clamps unsupported requested levels during session creation. Report the
-	// public session value so child details describe what actually runs. The
-	// fallback keeps intentionally partial session test doubles compatible.
-	const effectiveChildThinking = () => session.thinkingLevel ?? requestedChildThinking;
-	const buildBaseDetails = (truncated: boolean, outcome: SpawnOutcome): SpawnResultDetails => ({
-		model: childModel.id,
-		thinking: effectiveChildThinking(),
-		truncated,
-		outcome,
-		route: routeDetails,
-	});
-	const buildResultDetails = (truncated: boolean, outcome: SpawnOutcome, accounting: ChildAccounting): SpawnResultDetails => ({
-		...buildBaseDetails(truncated, outcome),
-		...(accounting.stats ? { stats: accounting.stats } : { statsUnavailable: true }),
-	});
-	type ChildRun = { content: TextContent[]; truncated: boolean; outcome: SpawnOutcome };
-
-	const abortContext = createSpawnAbortContext(state, session, ctx, toolCallId);
-	const { invalidatedError, abortChild, clearChildSession, abortAndInvalidate } = abortContext;
-	// Node's EventTarget raises a listener's rejected promise as an uncaught exception;
-	// abortChild already reports the rejection through the UI notice.
-	const onSignalAbort = () => { void abortChild(); };
-	const abortBeforePrompt = async (abortedSignal: AbortSignal): Promise<never> => {
-		await abortChild();
-		throw new Error(describeAbort(abortedSignal.reason));
-	};
-
-	const runChild = async (): Promise<ChildRun> => {
-		let primary: { error: unknown } | undefined;
-		try {
-			if (isStale()) {
-				await abortAndInvalidate();
-			}
-
-			// liveChildSessions must be set before childSessions so the renderer can
-			// attach with a fully-published live ownership record.
-			state.liveChildSessions.set(toolCallId, session);
-			state.childSessions.set(toolCallId, session);
-
-			try {
-				if (signal?.aborted) {
-					await abortBeforePrompt(signal);
-				}
-
-				if (isStale()) {
-					await abortAndInvalidate();
-				}
-
-				// Register before publishing the running update: onUpdate is component code
-				// and may synchronously abort or reset this child.
-				signal?.addEventListener("abort", onSignalAbort, { once: true });
-				onUpdate?.({
-					content: [],
-					details: buildBaseDetails(false, "running"),
-				});
-
-				if (signal?.aborted) {
-					await abortBeforePrompt(signal);
-				}
-				if (isStale()) {
-					await abortAndInvalidate();
-				}
-
-				try {
-					await session.prompt(fullPrompt);
-				} catch (error) {
-					if (!shouldSwallowPromptError(error, isStale, abortContext.wasAborted)) throw error;
-				}
-			} catch (error) {
-				clearChildSession();
-				if (isStale()) {
-					await abortAndInvalidate();
-				}
-				throw error;
-			} finally {
-				signal?.removeEventListener("abort", onSignalAbort);
-			}
-
-			if (isStale()) {
-				await abortAndInvalidate();
-			}
-
-			const lastAssistant = getLastAssistantMessage(session.messages);
-			const outcome = abortContext.wasAborted ? "aborted" : getStopReasonOutcome(lastAssistant?.stopReason) ?? "success";
-			const resultText = getLastAssistantText(session.messages);
-			if (!resultText && outcome === "success") {
-				throw new Error("Child agent produced no output.");
-			}
-			const errorMessage = lastAssistant?.errorMessage;
-			const failureLine = outcome === "error"
-				? `Child agent failed: ${errorMessage || "no error message"}`
-				: outcome === "aborted"
-					? describeAbort(signal?.aborted ? signal.reason : errorMessage || undefined)
-					: undefined;
-			const fullText = failureLine === undefined ? resultText : `${failureLine}${resultText ? `\n\n${resultText}` : ""}`;
-			const { text: finalText, truncated } = limitResultText(fullText);
-
-			// Execution should not retain live children after completion. If the TUI
-			// already rendered the child, it still owns the session object itself.
-			// Clearing here intentionally makes the component's dispose() a no-op for
-			// liveChildSessions — the child already completed so there's nothing to abort.
-			clearChildSession();
-
-			if (isStale()) {
-				// This late reset has no live child to abort; earlier resets report abort failures.
-				throw invalidatedError;
-			}
-
-			return {
-				content: [{ type: "text" as const, text: finalText }] as TextContent[],
+			const { session } = await sessionFactory({
+				sessionManager: SessionManager.inMemory(ctx.cwd),
+				model: childModel,
+				thinkingLevel: requestedChildThinking,
+				cwd: ctx.cwd,
+				tools: effectiveToolNames,
+				customTools: effectiveChildTools,
+			});
+			// Pi clamps unsupported requested levels during session creation. Report the
+			// public session value so child details describe what actually runs. The
+			// fallback keeps intentionally partial session test doubles compatible.
+			const effectiveChildThinking = () => session.thinkingLevel ?? requestedChildThinking;
+			const buildBaseDetails = (truncated: boolean, outcome: SpawnOutcome): SpawnResultDetails => ({
+				model: childModel.id,
+				thinking: effectiveChildThinking(),
 				truncated,
 				outcome,
+				route: routeDetails,
+			});
+			const buildResultDetails = (truncated: boolean, outcome: SpawnOutcome, accounting: ChildAccounting): SpawnResultDetails => ({
+				...buildBaseDetails(truncated, outcome),
+				...(accounting.stats ? { stats: accounting.stats } : { statsUnavailable: true }),
+			});
+			type ChildRun = { content: TextContent[]; truncated: boolean; outcome: SpawnOutcome };
+
+			const abortContext = createSpawnAbortContext(state, session, ctx, toolCallId);
+			const { invalidatedError, abortChild, clearChildSession, abortAndInvalidate } = abortContext;
+			// Node's EventTarget raises a listener's rejected promise as an uncaught exception;
+			// abortChild already reports the rejection through the UI notice.
+			const onSignalAbort = () => { void abortChild(); };
+			const abortBeforePrompt = async (abortedSignal: AbortSignal): Promise<never> => {
+				await abortChild();
+				throw new Error(describeAbort(abortedSignal.reason));
 			};
-		} catch (error) {
-			primary = { error };
-			throw error;
-		} finally {
-			clearChildSession();
-			try {
-				// AgentSession always provides dispose(); the guard keeps intentionally
-				// partial test doubles compatible with the public session boundary.
-				if (typeof session.dispose === "function") session.dispose();
-			} catch (cleanupError) {
-				if (!primary) {
-					throw cleanupError;
-				}
-				let notified = false;
-				if (ctx.hasUI) {
+
+			const runChild = async (): Promise<ChildRun> => {
+				let primary: { error: unknown } | undefined;
+				try {
+					if (isStale()) {
+						await abortAndInvalidate();
+					}
+
+					// liveChildSessions must be set before childSessions so the renderer can
+					// attach with a fully-published live ownership record.
+					state.liveChildSessions.set(toolCallId, session);
+					state.childSessions.set(toolCallId, session);
+
 					try {
-						notifyCleanupFailure(ctx, cleanupError);
-						notified = true;
-					} catch {
-						// A throwing notice falls through to the combined text, which keeps both failures.
+						if (signal?.aborted) {
+							await abortBeforePrompt(signal);
+						}
+
+						if (isStale()) {
+							await abortAndInvalidate();
+						}
+
+						// Register before publishing the running update: onUpdate is component code
+						// and may synchronously abort or reset this child.
+						signal?.addEventListener("abort", onSignalAbort, { once: true });
+						onUpdate?.({
+							content: [],
+							details: buildBaseDetails(false, "running"),
+						});
+
+						if (signal?.aborted) {
+							await abortBeforePrompt(signal);
+						}
+						if (isStale()) {
+							await abortAndInvalidate();
+						}
+
+						try {
+							await session.prompt(fullPrompt);
+						} catch (error) {
+							if (!shouldSwallowPromptError(error, isStale, abortContext.wasAborted)) throw error;
+						}
+					} catch (error) {
+						clearChildSession();
+						if (isStale()) {
+							await abortAndInvalidate();
+						}
+						throw error;
+					} finally {
+						signal?.removeEventListener("abort", onSignalAbort);
+					}
+
+					if (isStale()) {
+						await abortAndInvalidate();
+					}
+
+					const lastAssistant = getLastAssistantMessage(session.messages);
+					const outcome = abortContext.wasAborted ? "aborted" : getStopReasonOutcome(lastAssistant?.stopReason) ?? "success";
+					const resultText = getLastAssistantText(session.messages);
+					if (!resultText && outcome === "success") {
+						throw new Error("Child agent produced no output.");
+					}
+					const errorMessage = lastAssistant?.errorMessage;
+					const failureLine = outcome === "error"
+						? `Child agent failed: ${errorMessage || "no error message"}`
+						: outcome === "aborted"
+							? describeAbort(signal?.aborted ? signal.reason : errorMessage || undefined)
+							: undefined;
+					const fullText = failureLine === undefined ? resultText : `${failureLine}${resultText ? `\n\n${resultText}` : ""}`;
+					const { text: finalText, truncated } = limitResultText(fullText);
+
+					// Execution should not retain live children after completion. If the TUI
+					// already rendered the child, it still owns the session object itself.
+					// Clearing here intentionally makes the component's dispose() a no-op for
+					// liveChildSessions — the child already completed so there's nothing to abort.
+					clearChildSession();
+
+					if (isStale()) {
+						// This late reset has no live child to abort; earlier resets report abort failures.
+						throw invalidatedError;
+					}
+
+					return {
+						content: [{ type: "text" as const, text: finalText }] as TextContent[],
+						truncated,
+						outcome,
+					};
+				} catch (error) {
+					primary = { error };
+					throw error;
+				} finally {
+					clearChildSession();
+					try {
+						// AgentSession always provides dispose(); the guard keeps intentionally
+						// partial test doubles compatible with the public session boundary.
+						if (typeof session.dispose === "function") session.dispose();
+					} catch (cleanupError) {
+						if (!primary) {
+							throw cleanupError;
+						}
+						let notified = false;
+						if (ctx.hasUI) {
+							try {
+								notifyCleanupFailure(ctx, cleanupError);
+								notified = true;
+							} catch {
+								// A throwing notice falls through to the combined text, which keeps both failures.
+							}
+						}
+						if (!notified) {
+							// Without a cleanup notice the result names both failures.
+							throw new Error(`Spawn failed and cleanup failed: ${failureMessage(primary.error)}; ${failureMessage(cleanupError)}`);
+						}
 					}
 				}
-				if (!notified) {
-					// Without a cleanup notice the result names both failures.
-					throw new Error(`Spawn failed and cleanup failed: ${failureMessage(primary.error)}; ${failureMessage(cleanupError)}`);
-				}
-			}
-		}
-	};
+			};
 
-	let completed: ChildRun;
-	try {
-		completed = await runChild();
-	} catch (error) {
-		const accounting = collectChildAccounting(session);
-		const { text, truncated } = limitResultText(failureMessage(error));
-		const outcome = signal?.aborted && !isStale() ? "aborted" : "error";
-		return {
-			content: [{ type: "text" as const, text }] as TextContent[],
-			details: buildResultDetails(truncated, outcome, accounting),
-			usage: accounting.usage,
-			isError: true as const,
-		};
-	}
-	const accounting = collectChildAccounting(session);
-	return {
-		content: completed.content,
-		details: buildResultDetails(completed.truncated, completed.outcome, accounting),
-		usage: accounting.usage,
-		...(completed.outcome !== "success" ? { isError: true as const } : {}),
-	};
+			let completed: ChildRun;
+			try {
+				completed = await runChild();
+			} catch (error) {
+				const accounting = collectChildAccounting(session);
+				const { text, truncated } = limitResultText(failureMessage(error));
+				const outcome = signal?.aborted && !isStale() ? "aborted" : "error";
+				return {
+					outcome,
+					result: {
+						content: [{ type: "text" as const, text }] as TextContent[],
+						details: buildResultDetails(truncated, outcome, accounting),
+						usage: accounting.usage,
+						isError: true as const,
+					},
+				};
+			}
+			const accounting = collectChildAccounting(session);
+			return {
+				outcome: completed.outcome,
+				result: {
+					content: completed.content,
+					details: buildResultDetails(completed.truncated, completed.outcome, accounting),
+					usage: accounting.usage,
+					...(completed.outcome !== "success" ? { isError: true as const } : {}),
+				},
+			};
+		}
+
+		// ── Model-group retry: re-draw from the remaining pool on failure ──
+		// Route/constraint failures before a child session exists still throw
+		// (handled inside runAttempt's caller path); retry only applies to
+		// failures after a child session ran, and only for routed groups with
+		// more than one usable/capable member.
+		return runSpawnAttemptsWithRetry(routeOptions, route, runAttempt, signal, isStale);
 	})();
 	return execution;
 }
