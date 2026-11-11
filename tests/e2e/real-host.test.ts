@@ -4,11 +4,12 @@
  * follow-up handling, compaction, branch lineage and tree navigation are pi's own.
  */
 
+import type { ChildProcess } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import os from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
-import type { CompactionEntry, CustomMessageEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it, vi, type TestContext } from "vitest";
+import { RpcClient, type CompactionEntry, type CustomMessageEntry, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
 	HANDOFF_IN_PROGRESS_STATUS,
 	HANDOFF_REQUIRED_STATUS,
@@ -38,11 +39,11 @@ import { assertPresent } from "../assertions.js";
 import {
 	messageText,
 	projectStatuses,
+	RealHost,
 	REAL_HOST_TEST_TIMEOUT_MS,
 	SCHEMATIC_ENTRY,
 	toolResults,
 	withRealHost,
-	type RealHost,
 	type RpcEvent,
 } from "./real-host.js";
 import {
@@ -182,6 +183,73 @@ function onlyResult<T>(results: T[], label: string): T {
 	return results[0];
 }
 
+/**
+ * A context for driving `withRealHost` by hand: `abort` stands in for a Vitest timeout, and
+ * `finish` runs the collected finish callbacks newest first, as Vitest does, and returns what
+ * each of them threw; later calls return that first outcome and run nothing. `finish` is also
+ * registered on `vitest`, the test's own context, so the host closes even when the test fails
+ * before its own call.
+ */
+function handBuiltContext(vitest: TestContext): {
+	t: TestContext;
+	abort: (reason: Error) => void;
+	registered: () => number;
+	finish: () => Promise<unknown[]>;
+} {
+	const controller = new AbortController();
+	const callbacks: Array<Parameters<TestContext["onTestFinished"]>[0]> = [];
+	const context: Pick<TestContext, "signal" | "onTestFinished"> = {
+		signal: controller.signal,
+		onTestFinished: (fn) => {
+			callbacks.push(fn);
+		},
+	};
+	const t = context as TestContext;
+	let finished: Promise<unknown[]> | undefined;
+	const finish = () => finished ??= (async () => {
+		const errors: unknown[] = [];
+		for (const callback of [...callbacks].reverse()) {
+			try {
+				await callback(t);
+			} catch (error) {
+				errors.push(error);
+			}
+		}
+		return errors;
+	})();
+	vitest.onTestFinished(async () => {
+		await finish();
+	});
+	return { t, abort: (reason) => controller.abort(reason), registered: () => callbacks.length, finish };
+}
+
+/** The CLI process of every host started from here on, taken when `RealHost.start` returns it; `RpcClient` keeps it private. */
+function captureHostChildren(): ChildProcess[] {
+	const children: ChildProcess[] = [];
+	const start = RealHost.start.bind(RealHost);
+	vi.spyOn(RealHost, "start").mockImplementation(async (options) => {
+		const host = await start(options);
+		const child = (host.client as unknown as { process: ChildProcess | null }).process;
+		assertPresent(child, "the started host has a CLI process");
+		children.push(child);
+		return host;
+	});
+	return children;
+}
+
+/** Asserts that exactly one host started and that its CLI process has exited. */
+function expectOneExitedChild(children: ChildProcess[]): void {
+	expect(children.map((child) => child.exitCode !== null || child.signalCode !== null), "one host started and its CLI exited").toStrictEqual([true]);
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+	let resolve!: () => void;
+	const promise = new Promise<void>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}
+
 describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, () => {
 	it("host starts and extension registers", async (t) => withRealHost(t, async (host) => {
 		await host.command("/" + PROBE_COMMAND.tools);
@@ -209,7 +277,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		], 1);
 		const { entries } = await host.entries();
 		const spawn = onlyResult(toolResults(entries, "spawn"), "spawn");
-		expect(spawn, spawn.text).toMatchObject({ isError: false, text: CHILD_REPLY_TEXT });
+		expect(spawn).toMatchObject({ isError: false, text: CHILD_REPLY_TEXT });
 
 		const stats = await host.client.getSessionStats();
 		// Two parent assistant messages report 50000 input tokens each; the child reports
@@ -227,7 +295,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		], 1);
 		const { entries } = await host.entries();
 		const spawn = onlyResult(toolResults(entries, "spawn"), "spawn");
-		expect(spawn, spawn.text).toMatchObject({ isError: true, text: "Child agent produced no output." });
+		expect(spawn).toMatchObject({ isError: true, text: "Child agent produced no output." });
 
 		const stats = await host.client.getSessionStats();
 		// Two parent assistant messages report 50000 input tokens each; the child's one empty
@@ -285,7 +353,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		const { entries } = await host.entries();
 		const result = onlyResult(toolResults(entries, "notebook_topic_set"), "notebook_topic_set");
 		expect(result.isError).toBe(true);
-		expect(result.text, result.text).toContain("authoritative");
+		expect(result.text).toContain("authoritative");
 	}));
 
 	it("agent-set topic works when unset", async (t) => withRealHost(t, async (host) => {
@@ -293,7 +361,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		const { entries } = await host.entries();
 		const result = onlyResult(toolResults(entries, "notebook_topic_set"), "notebook_topic_set");
 		expect(result.text.slice(0, "Active notebook topic:".length), result.text).toBe("Active notebook topic:");
-		expect(result.text, result.text).toContain("fresh-agent-topic");
+		expect(result.text).toContain("fresh-agent-topic");
 	}));
 
 	it("handoff tool rejects a missing instruction", async (t) => withRealHost(t, async (host) => {
@@ -301,7 +369,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		const { entries } = await host.entries();
 		const result = onlyResult(toolResults(entries, "handoff"), "handoff");
 		expect(result.isError).toBe(true);
-		expect(result.text, result.text).toContain("Empty handoff nextInstruction rejected");
+		expect(result.text).toContain("Empty handoff nextInstruction rejected");
 		expect(entries.filter((entry) => userText(entry)?.includes("Handoff failed")), "no failure follow-up user message").toHaveLength(0);
 		expect(customMessages(entries, HANDOFF_FAILED_CUSTOM_TYPE), "no failure message").toHaveLength(0);
 	}));
@@ -376,17 +444,14 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		const cut = onlyHandoffCut(entries);
 		const handoffResultIndexes = entries.flatMap((entry, index) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "handoff" ? [index] : []);
 		const lonePosition = handoffResultIndexes[1];
-		assertPresent(lonePosition, "the lone handoff result exists");
 		const cutIndex = entries.indexOf(cut);
-		expect(cutIndex, "the cut is among the entries").not.toBe(-1);
 		expect(cutIndex, "the cut follows the lone handoff, not the refused one").toBeGreaterThan(lonePosition);
 		onlyCustomMessage(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE);
 		expect(customMessages(entries, HANDOFF_FAILED_CUSTOM_TYPE), "the refusal stages nothing, so nothing fails").toHaveLength(0);
 		const read = onlyResult(toolResults(entries, "notebook_read"), "notebook_read");
 		expect(read.isError, "the page written before the cut can be read after it").toBe(false);
-		expect(read.text, read.text).toContain("survives the cut");
+		expect(read.text).toContain("survives the cut");
 		const readIndex = entries.findIndex((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "notebook_read");
-		expect(readIndex, "the page read is among the entries").not.toBe(-1);
 		expect(readIndex, "the page is read after the cut").toBeGreaterThan(cutIndex);
 	}));
 
@@ -508,7 +573,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		).toHaveLength(1);
 		const read = onlyResult(toolResults(entries, "notebook_read"), "notebook_read");
 		expect(read.isError, "the page is still in the notebook after the cut").toBe(false);
-		expect(read.text, read.text).toContain("page three");
+		expect(read.text).toContain("page three");
 	}));
 
 	it("readonly is re-announced in the run after a handoff whose successor was dropped", async (t) => withRealHost(t, async (host) => {
@@ -676,4 +741,77 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		).toHaveLength(1);
 		expect(handoffResults[1], "handoff is blocked again after the cut").toMatchObject({ isError: true, text: READONLY_HANDOFF_BLOCK_REASON });
 	}));
+
+	describe("withRealHost closes its host from the finish callback", () => {
+		it("after a timeout in the body, the body settles against the live host before the host closes once", async (vitest) => {
+			const children = captureHostChildren();
+			const stop = vi.spyOn(RpcClient.prototype, "stop");
+			const close = RealHost.prototype.close;
+			let bodySettled = false;
+			const bodySettledAtClose: boolean[] = [];
+			vi.spyOn(RealHost.prototype, "close").mockImplementation(function (this: RealHost) {
+				bodySettledAtClose.push(bodySettled);
+				return close.call(this);
+			});
+			const { t, abort, finish } = handBuiltContext(vitest);
+			const entered = deferred();
+			const release = deferred();
+			// Runs before the registered finish, so a test that fails early does not hold the body.
+			vitest.onTestFinished(() => release.resolve());
+			const running = withRealHost(t, async (host) => {
+				try {
+					entered.resolve();
+					await release.promise;
+					await host.entries();
+				} finally {
+					bodySettled = true;
+				}
+			});
+			await entered.promise;
+			abort(new Error("hand-built timeout"));
+			const finishing = finish();
+			// Released only after the callbacks have started, so a close that does not wait for the body begins first.
+			setTimeout(release.resolve, 0);
+			expect(await finishing, "the callbacks threw nothing").toStrictEqual([]);
+			await running;
+			expect(bodySettledAtClose, "the host closed once, after the body settled").toStrictEqual([true]);
+			expect(stop, "the CLI stopped once").toHaveBeenCalledOnce();
+			expectOneExitedChild(children);
+		});
+
+		it("after a timeout during start, the body never runs and the host closes once", async (vitest) => {
+			const children = captureHostChildren();
+			const stop = vi.spyOn(RpcClient.prototype, "stop");
+			const { t, abort, registered, finish } = handBuiltContext(vitest);
+			const reason = new Error("hand-built timeout");
+			let bodyRan = false;
+			const running = withRealHost(t, async () => {
+				bodyRan = true;
+			});
+			// A callback registered only once start settled would never run after a real timeout during start.
+			expect(registered(), "the finish callback is registered before start settles").toBe(1);
+			abort(reason);
+			await expect(running, "withRealHost rejects with the abort reason").rejects.toBe(reason);
+			expect(bodyRan, "the body never ran").toBe(false);
+			expect(await finish(), "the callbacks threw nothing").toStrictEqual([]);
+			expect(stop, "the host closed once").toHaveBeenCalledOnce();
+			expectOneExitedChild(children);
+		});
+
+		it("a close error after a passing body is thrown from the finish callback once", async (vitest) => {
+			const children = captureHostChildren();
+			const stop = vi.spyOn(RpcClient.prototype, "stop");
+			const close = RealHost.prototype.close;
+			const closeError = new Error("hand-built close failure");
+			vi.spyOn(RealHost.prototype, "close").mockImplementation(async function (this: RealHost) {
+				await close.call(this);
+				throw closeError;
+			});
+			const { t, finish } = handBuiltContext(vitest);
+			await withRealHost(t, async () => {});
+			expect(await finish(), "the close error, once").toStrictEqual([closeError]);
+			expect(stop, "the host closed once").toHaveBeenCalledOnce();
+			expectOneExitedChild(children);
+		});
+	});
 });

@@ -372,15 +372,7 @@ export class RealHost {
 		if (sessionIndex !== -1) args.splice(sessionIndex, 2);
 		args.push("--session", sessionFile);
 		this.options = { ...this.options, args };
-		// A timed-out test body keeps running after its finish callback closed the host; whatever the
-		// new CLI wrote into the removed root, and the CLI itself when it started, is cleared here.
-		const { client, events } = await cleanupOnFailure(() => startClient(this.options), () => {
-			if (this.closing) removeRoot(this.root);
-		});
-		if (this.closing) {
-			await withCleanup(() => client.stop(), () => removeRoot(this.root));
-			throw new Error("restart() finished after close(); the new CLI was stopped");
-		}
+		const { client, events } = await startClient(this.options);
 		this.runsBeforeRestart += countRuns(this.events);
 		this.client = client;
 		this.events = events;
@@ -564,8 +556,9 @@ export function startRealHost(options?: RealHostOptions): Promise<RealHost> {
  * Start a host and run `run` against it. The host closes once, from `t`'s finish callback,
  * whether the test passed, failed or timed out, a timeout during start included; a close error
  * is reported among the test's errors once. A body whose test timed out during start is not run.
- * After closing, the callback waits for the body to settle, so a timed-out body does not run into
- * the next test; a host wait still pending then may only end at its own deadline.
+ * The callback waits for the body to settle before it closes the host, so a timed-out body
+ * finishes its step against a live host, bounded by its own deadlines, and does not run into the
+ * next test.
  */
 export async function withRealHost(t: TestContext, run: (host: RealHost) => Promise<void>, options?: RealHostOptions): Promise<void> {
 	const starting = startRealHost(options);
@@ -579,11 +572,8 @@ export async function withRealHost(t: TestContext, run: (host: RealHost) => Prom
 			if (t.signal.aborted) throw error;
 			return; // the start error already reached the test through the body
 		}
-		try {
-			await host.close();
-		} finally {
-			await body?.catch(() => {});
-		}
+		await body?.catch(() => {});
+		await host.close();
 	}, 0);
 	const host = await starting;
 	if (t.signal.aborted) throw t.signal.reason;
