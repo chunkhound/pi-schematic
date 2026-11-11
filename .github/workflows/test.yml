@@ -1,8 +1,7 @@
 # Cross-platform CI for pi-schematic
 #
-# Runs the full unit suite on Linux, macOS, and Windows
-# on the minimum Node.js version required by pi coding agent. Snapshot
-# tests verify TUI render output against golden files.
+# Runs the full unit suite on Linux, macOS, and Windows, each on the minimum
+# Node.js version required by pi coding agent and on the current Node.js LTS. Snapshot tests verify TUI render output against golden files.
 
 name: test
 
@@ -24,25 +23,21 @@ on:
 
 jobs:
   # ── Cross-platform test matrix ──────────────────────────────────────
-  # Node 22 (minimum) is tested only on Linux — the primary platform and the only one
-  # guaranteed to have the oldest toolchain. macOS and Windows test Node 24 (latest)
-  # to catch regressions in the newest runtime. This asymmetry is intentional: it
-  # balances CI cost with meaningful coverage while ensuring the minimum version works
-  # correctly on the platform most likely to encounter toolchain edge cases.
+  # Every platform runs two tracks: the floor (Pi's minimum Node.js version) and the
+  # current Node.js LTS, both as exact versions. Platform-specific code paths
+  # (Windows shell spawning, path handling) can depend on the Node version too.
   test:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false          # report every combination, don't cancel
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        track: [floor, newest]
         include:
-          - os: ubuntu-latest
-            node-version: "22.19.0" # exact supported floor on primary platform
-          - os: ubuntu-latest
-            node-version: "24"    # latest on primary platform
-          - os: macos-latest
-            node-version: "24"    # latest on macOS
-          - os: windows-latest
-            node-version: "24"    # latest on Windows
+          - track: floor
+            node-version: "22.19.0"
+          - track: newest
+            node-version: "26.13.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -75,18 +70,18 @@ jobs:
 
       # The packed extension is exercised from a foreign cwd with the latest host.
       - name: Packed latest Pi host contract
-        if: (matrix.os == 'ubuntu-latest' && matrix.node-version == '22.19.0') || matrix.os == 'windows-latest'
+        if: (matrix.os == 'ubuntu-latest' && matrix.track == 'floor') || matrix.os == 'windows-latest'
         working-directory: ${{ runner.temp }}
         env:
-          COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/packed-host-diagnostics-${{ matrix.os }}-node-${{ matrix.node-version }}
+          COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/packed-host-diagnostics-${{ matrix.os }}-${{ matrix.track }}
         run: node "${{ github.workspace }}/scripts/test-package-host.mjs"
 
       - name: Upload packed host diagnostics
-        if: always() && ((matrix.os == 'ubuntu-latest' && matrix.node-version == '22.19.0') || matrix.os == 'windows-latest')
+        if: always() && ((matrix.os == 'ubuntu-latest' && matrix.track == 'floor') || matrix.os == 'windows-latest')
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: packed-host-diagnostics-${{ matrix.os }}-node-${{ matrix.node-version }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/packed-host-diagnostics-${{ matrix.os }}-node-${{ matrix.node-version }}
+          name: packed-host-diagnostics-${{ matrix.os }}-${{ matrix.track }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/packed-host-diagnostics-${{ matrix.os }}-${{ matrix.track }}
           if-no-files-found: warn
           overwrite: true
           retention-days: 30
@@ -95,18 +90,18 @@ jobs:
       # diagnostics are captured for both the packed and current-Pi paths. !cancelled()
       # (not always()) avoids running on explicit workflow cancellation.
       - name: Synchronized current Pi compatibility on Windows
-        if: matrix.os == 'windows-latest' && !cancelled()
+        if: matrix.os == 'windows-latest' && !cancelled() && matrix.track == 'newest'
         working-directory: ${{ runner.temp }}
         env:
-          COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/current-pi-diagnostics-windows-node-24
+          COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/current-pi-diagnostics-windows-newest
         run: node "${{ github.workspace }}/scripts/test-compat-current.mjs"
 
       - name: Upload current Pi diagnostics on Windows
-        if: always() && matrix.os == 'windows-latest'
+        if: always() && matrix.os == 'windows-latest' && matrix.track == 'newest'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: current-pi-diagnostics-windows-node-24-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/current-pi-diagnostics-windows-node-24
+          name: current-pi-diagnostics-windows-newest-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/current-pi-diagnostics-windows-newest
           if-no-files-found: warn
           overwrite: true
           retention-days: 30
@@ -116,7 +111,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: test-results-${{ matrix.os }}-node-${{ matrix.node-version }}
+          name: test-results-${{ matrix.os }}-${{ matrix.track }}
           path: |
             tests/snapshots/
           retention-days: 30
@@ -127,20 +122,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: "26.13.0"
           cache: "npm"
       - run: npm ci
       - name: Synchronized current Pi compatibility
         working-directory: ${{ runner.temp }}
         env:
-          COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/current-pi-diagnostics-ubuntu-node-24
+          COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/current-pi-diagnostics-ubuntu-newest
         run: node "${{ github.workspace }}/scripts/test-compat-current.mjs"
       - name: Upload current Pi diagnostics
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: current-pi-diagnostics-ubuntu-node-24-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/current-pi-diagnostics-ubuntu-node-24
+          name: current-pi-diagnostics-ubuntu-newest-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/current-pi-diagnostics-ubuntu-newest
           if-no-files-found: warn
           overwrite: true
           retention-days: 30

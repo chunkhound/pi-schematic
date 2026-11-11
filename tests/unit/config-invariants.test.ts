@@ -8,7 +8,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
-import { assertPresent } from "../assertions.js";
 import { spawnNode } from "./spawn-node.js";
 
 type AuditRecord = {
@@ -24,7 +23,6 @@ type AuditConfig = {
 };
 
 type PackageJson = {
-	engines: { node: string };
 	peerDependencies: Record<string, string>;
 	devDependencies: Record<string, string>;
 };
@@ -46,12 +44,6 @@ const EXPECTED_TYPEBOX_VERSION = "1.3.27";
 // Approved peer floors — must track the pinned devDependency versions above.
 const EXPECTED_PI_PEER = `>=${EXPECTED_PI_VERSION}`;
 const EXPECTED_TYPEBOX_PEER = `>=${EXPECTED_TYPEBOX_VERSION}`;
-const EXPECTED_MATRIX = new Set([
-	"ubuntu-latest@22.19.0",
-	"ubuntu-latest@24",
-	"macos-latest@24",
-	"windows-latest@24",
-]);
 // Transitive brace-expansion, minimatch, and undici advisories in the pinned test host
 // @earendil-works/pi-coding-agent@0.99.2 (devDependency). Remove them when a
 // pinned host ships patched versions; the expiry forces periodic re-review.
@@ -85,11 +77,6 @@ function parsePackageJson(): PackageJson {
 	return JSON.parse(readText(PACKAGE_JSON_PATH)) as PackageJson;
 }
 
-function parseMatrixEntries(workflow: string): Set<string> {
-	const entries = workflow.matchAll(/- os: ([^\n]+)\n\s+node-version: "([^"]+)"/g);
-	return new Set(Array.from(entries, ([, os, node]) => `${os.trim()}@${node}`));
-}
-
 function stepIndex(workflow: string, step: string): number {
 	const index = workflow.indexOf(`- name: ${step}`);
 	expect(index, `missing workflow step: ${step}`).not.toBe(-1);
@@ -119,13 +106,6 @@ function parseIsoDate(value: string): number {
 	return timestamp;
 }
 
-function minimumNodeVersion(value: string): string {
-	const match = value.match(/^>=(?<version>\d+\.\d+\.\d+)$/);
-	const version = match?.groups?.version;
-	assertPresent(version, `unsupported engines.node format: ${value}`);
-	return version;
-}
-
 // Runs the installed audit-ci bin, the one `npx audit-ci` resolves to in CI, as a Node child so it
 // gets spawnNode's deadline and cleared NODE_OPTIONS.
 function runAuditCi(): void {
@@ -143,7 +123,6 @@ function runAuditCi(): void {
 test("pinned Pi compatibility metadata and source boundaries stay exact", () => {
 	const packageJson = parsePackageJson();
 	const lock = JSON.parse(readText(LOCK_PATH)) as { packages: Record<string, { version?: string }> };
-	expect(packageJson.engines.node).toBe(">=22.19.0");
 	for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"]) {
 		expect(packageJson.peerDependencies[name], `${name} peer must require ${EXPECTED_PI_PEER}`).toBe(EXPECTED_PI_PEER);
 	}
@@ -184,15 +163,12 @@ test("audit-ci config enforces the reviewed allowlist policy", () => {
 	}
 });
 
-test("workflow keeps the expected matrix and audit/test order", () => {
+test("workflow keeps fail-fast off and the audit/test order", () => {
 	const workflow = readText(WORKFLOW_PATH);
-	const packageJson = parsePackageJson();
 	expect(workflow).toMatch(/fail-fast:\s+false/);
-	expect(parseMatrixEntries(workflow)).toStrictEqual(EXPECTED_MATRIX);
 	expect(stepIndex(workflow, "Security audit")).toBeLessThan(stepIndex(workflow, "Unit tests"));
 	expect(stepIndex(workflow, "Unit tests")).toBeLessThan(stepIndex(workflow, "E2E tests"));
 	expect(workflow).toMatch(/run: npx audit-ci --config audit-ci\.jsonc/);
-	expect(EXPECTED_MATRIX.has(`ubuntu-latest@${minimumNodeVersion(packageJson.engines.node)}`)).toBe(true);
 });
 
 

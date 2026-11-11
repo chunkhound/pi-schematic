@@ -68,12 +68,11 @@ Pull requests are automatically tested via GitHub Actions. A cross-platform matr
 
 | OS | Node | Runs |
 |---|---|---|
-| Ubuntu | 22 (minimum) | Type check, security audit, unit tests, E2E tests |
-| Ubuntu | 24 | Type check, security audit, unit tests, E2E tests |
-| macOS | 24 | Unit tests, E2E tests |
-| Windows | 24 | Unit tests, E2E tests |
+| Ubuntu | Floor (Pi's minimum), current LTS | Type check, security audit, unit tests, E2E tests |
+| macOS | Floor (Pi's minimum), current LTS | Type check, security audit, unit tests, E2E tests |
+| Windows | Floor (Pi's minimum), current LTS | Type check, security audit, unit tests, E2E tests |
 
-Node 22 (minimum) is tested only on Linux — the primary platform and the only one guaranteed to have the oldest toolchain. macOS and Windows test Node 24 (latest) to catch regressions in the newest runtime while balancing CI cost.
+The floor is the minimum Node.js version Pi requires (the `engines.node` of `@earendil-works/pi-coding-agent`). This package declares no `engines` of its own, because it only runs inside Pi. Both the floor and the current Node.js LTS are tested on Linux, macOS and Windows, because platform-specific code paths can also depend on the Node version. The exact current LTS is written in the CI matrix, the current-Pi job and the publish workflow, and Renovate bumps all of them together: patch and minor releases in a "Node.js" PR, a new LTS major in a separate "major Node.js" PR. Local development runs on the floor: `.node-version` holds it for version managers such as fnm and nodenv, because code that works on the floor almost always works on newer releases, while the reverse is where breakage comes from. When Pi raises its floor, Renovate updates `.node-version`, the floor entry of the CI matrix and the `@types/node` version cap, which keeps the Node types on the floor's major, in one PR.
 
 Snapshot golden files in `tests/snapshots/` are stored with LF line endings (enforced by `.gitattributes`). The `normalizeEOL` helper in the snapshot test file normalizes `\r\n` to `\n` on read, so Windows developers get correct comparisons even if their working tree has CRLF. If you update snapshots, the CI matrix validates them on all platforms.
 Both E2E suites run on Linux, macOS and Windows.
