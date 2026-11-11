@@ -49,18 +49,13 @@ const theme: Theme = {
 
 // ── Snapshot helpers ──────────────────────────────────────────────────
 
-/** Normalize the rendered output's line endings to \n before it is compared. */
-function normalizeEOL(s: string): string {
-	return s.replace(/\r?\n/g, "\n");
-}
-
 /** Strip OSC terminal escape sequences for portable snapshot comparison. */
 function stripOSC(s: string): string {
 	return s.replace(/\u001b\]133;[A-Z][^\u0007]*\u0007/g, "");
 }
 
 async function expectGoldenFile(name: string, actual: string): Promise<void> {
-	const cleaned = stripOSC(normalizeEOL(actual));
+	const cleaned = stripOSC(actual);
 	const goldenPath = join(SNAPSHOT_DIR, `${name}.txt`);
 	await expect(
 		cleaned,
