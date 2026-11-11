@@ -174,7 +174,7 @@ test("repository text has one LF line-ending contract", () => {
 	expect(result.error, `git ls-files --eol did not run: ${result.error?.message}`).toBeUndefined();
 	expect(result.status, `git ls-files --eol failed: ${result.stderr}`).toBe(0);
 	expect(result.stdout, "git ls-files --eol must report i/lf and w/lf").toMatch(/i\/lf\s+w\/lf/);
-	expect(eolViolations(result.stdout), "tracked text must be LF; stale Windows checkout recovery: git checkout -- .").toStrictEqual([]);
+	expect(eolViolations(result.stdout), "tracked text must be LF; stale Windows checkout recovery (discards uncommitted changes, so commit or stash first): git rm --cached -r . && git reset --hard").toStrictEqual([]);
 });
 
 test("README names the current Pi floor", () => {
