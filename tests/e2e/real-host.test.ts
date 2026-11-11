@@ -152,16 +152,14 @@ function eventsOfType(events: RpcEvent[], type: string): RpcEvent[] {
 	return events.filter((event) => event.type === type);
 }
 
-/** Notices of a required handoff the watchdog cancelled. */
-function handoffCancellations(host: RealHost): string[] {
-	return host.notifications
-		.filter((notification) => notification.message.startsWith("Required handoff cancelled"))
-		.map((notification) => notification.message);
-}
-
 /** Messages of the host's notifications that start with `prefix`. */
 function notificationsStartingWith(host: RealHost, prefix: string): string[] {
 	return host.notifications.map((notification) => notification.message).filter((message) => message.startsWith(prefix));
+}
+
+/** Notices of a required handoff the watchdog cancelled. */
+function handoffCancellations(host: RealHost): string[] {
+	return notificationsStartingWith(host, "Required handoff cancelled");
 }
 
 /**
@@ -210,8 +208,7 @@ describe("pi-schematic real-host E2E", () => {
 		], 1);
 		const { entries } = await host.entries();
 		const spawn = onlyResult(toolResults(entries, "spawn"), "spawn");
-		expect(spawn.isError, spawn.text).toBe(false);
-		expect(spawn.text).toBe(CHILD_REPLY_TEXT);
+		expect(spawn, spawn.text).toMatchObject({ isError: false, text: CHILD_REPLY_TEXT });
 
 		const stats = await host.client.getSessionStats();
 		// Two parent assistant messages report 50000 input tokens each; the child reports
@@ -229,8 +226,7 @@ describe("pi-schematic real-host E2E", () => {
 		], 1);
 		const { entries } = await host.entries();
 		const spawn = onlyResult(toolResults(entries, "spawn"), "spawn");
-		expect(spawn.isError, spawn.text).toBe(true);
-		expect(spawn.text).toBe("Child agent produced no output.");
+		expect(spawn, spawn.text).toMatchObject({ isError: true, text: "Child agent produced no output." });
 
 		const stats = await host.client.getSessionStats();
 		// Two parent assistant messages report 50000 input tokens each; the child's one empty
@@ -321,12 +317,13 @@ describe("pi-schematic real-host E2E", () => {
 		const cut = onlyHandoffCut(entries);
 		expect(cut.firstKeptEntryId, "the cut retains no earlier entry").toBe(cut.id);
 		const successor = onlyCustomMessage(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE);
-		expect(successor.parentId, "the successor is the cut's child").toBe(cut.id);
-		expect(successor.content).toBe(buildNextUserMessage({ nextInstruction: "continue readonly work", context: "mid-task state" }));
-		expect(successor.display, "the successor is shown").toBe(true);
+		expect(successor, "the successor is the cut's shown child").toMatchObject({
+			parentId: cut.id,
+			content: buildNextUserMessage({ nextInstruction: "continue readonly work", context: "mid-task state" }),
+			display: true,
+		});
 		const note = onlyCustomMessage(entries, HANDOFF_NOTE_CUSTOM_TYPE);
-		expect(note.parentId, "the note follows the successor").toBe(successor.id);
-		expect(note.display, "the note is hidden").toBe(false);
+		expect(note, "the note follows the successor and is hidden").toMatchObject({ parentId: successor.id, display: false });
 		const handoffRun = host.events.slice(mark);
 		expect(cutAppendedIndexes(handoffRun), "the cut arrives as one entry_appended event").toHaveLength(1);
 		expect(eventsOfType(handoffRun, "compaction_end"), "the cut fires no compaction_end").toHaveLength(0);
@@ -373,8 +370,7 @@ describe("pi-schematic real-host E2E", () => {
 		const handoffResults = toolResults(entries, "handoff");
 		expect(handoffResults, "one refused and one landed handoff result").toHaveLength(2);
 		const [refused, landed] = handoffResults;
-		expect(refused.isError, "the handoff sharing its message is refused as an error").toBe(true);
-		expect(refused.text, "the refusal names the not-alone rule").toBe(HANDOFF_NOT_ALONE_REFUSAL);
+		expect(refused, "the handoff sharing its message is refused as an error naming the not-alone rule").toMatchObject({ isError: true, text: HANDOFF_NOT_ALONE_REFUSAL });
 		expect(landed.text, "the run continued to the lone handoff").toBe(HANDOFF_STAGED_RESULT);
 		const cut = onlyHandoffCut(entries);
 		const handoffResultIndexes = entries.flatMap((entry, index) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "handoff" ? [index] : []);
@@ -434,7 +430,7 @@ describe("pi-schematic real-host E2E", () => {
 			"failure notified",
 		).toHaveLength(1);
 		const failure = onlyCustomMessage(failed.entries, HANDOFF_FAILED_CUSTOM_TYPE);
-		expect(typeof failure.content).toBe("string");
+		expect(failure.content).toBeTypeOf("string");
 		const failureText = failure.content as string;
 		expect(failureText, "the failure names its reason").toContain(REASON_NOT_PERSISTED);
 		expect(failureText, "the failure says the handoff stays required").toContain("The required handoff remains pending");
@@ -464,7 +460,7 @@ describe("pi-schematic real-host E2E", () => {
 			const handoffId = cutHandoffId(cut)!;
 			expect(requestsAfterCut(host.probeLog(), handoffId), "the run is aborted before the model is called after the cut").toStrictEqual([]);
 			const failure = onlyCustomMessage(failed.entries, HANDOFF_FAILED_CUSTOM_TYPE);
-			expect(typeof failure.content).toBe("string");
+			expect(failure.content).toBeTypeOf("string");
 			expect(failure.content as string, "the failure carries the instruction").toContain("## Next instruction\n\nfinish the report");
 			expect(failure.content as string, "the failure carries the context").toContain("mid-task state");
 			expect(failure.display, "the failure is shown").toBe(true);
@@ -503,11 +499,11 @@ describe("pi-schematic real-host E2E", () => {
 		const cut = onlyHandoffCut(entries);
 		const successor = onlyCustomMessage(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE);
 		expect(successor.details, "the successor details carry no discard report").toStrictEqual({ handoffId: cutHandoffId(cut) });
-		expect(host.notifications.filter((notification) => notification.message.startsWith("Handoff complete")).map((notification) => notification.message), "the completion counts follow the branch").toStrictEqual(["Handoff complete. Notebook: 3 pages kept."]);
-		expect(host.notifications, JSON.stringify(host.notifications)).toContainEqual(expect.objectContaining({
-			notifyType: "warning",
-			message: "The notebook discard was not persisted (another extension's turn_end handler may have dropped it); still in the notebook: p3.",
-		}));
+		expect(notificationsStartingWith(host, "Handoff complete"), "the completion counts follow the branch").toStrictEqual(["Handoff complete. Notebook: 3 pages kept."]);
+		expect(
+			host.notifications.filter((notification) => notification.notifyType === "warning" && notification.message === "The notebook discard was not persisted (another extension's turn_end handler may have dropped it); still in the notebook: p3."),
+			JSON.stringify(host.notifications),
+		).toHaveLength(1);
 		const read = onlyResult(toolResults(entries, "notebook_read"), "notebook_read");
 		expect(read.isError, "the page is still in the notebook after the cut").toBe(false);
 		expect(read.text, read.text).toContain("page three");
@@ -534,7 +530,7 @@ describe("pi-schematic real-host E2E", () => {
 		expect(handoffCuts(entries), "no handoff cut after the abort").toHaveLength(0);
 		expect(host.cuts(), "no cut reached the turn_end boundary").toStrictEqual([]);
 		const failure = onlyCustomMessage(entries, HANDOFF_FAILED_CUSTOM_TYPE);
-		expect(typeof failure.content).toBe("string");
+		expect(failure.content).toBeTypeOf("string");
 		expect(failure.content as string, "the failure names its reason").toContain(REASON_ABORTED);
 		expect(failure.content as string, "the failure says no handoff stays required").toContain("No required handoff remains pending");
 		expect(failure.display, "the failure is shown").toBe(true);
@@ -608,31 +604,31 @@ describe("pi-schematic real-host E2E", () => {
 			requestsAfterCut(host.probeLog(), cutHandoffId(cut)!).filter((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
 			"readonly is re-announced after the handoff",
 		).toHaveLength(1);
-		expect(handoffResults[1].isError, "handoff is blocked again after the cut").toBe(true);
-		expect(handoffResults[1].text).toBe(READONLY_HANDOFF_BLOCK_REASON);
+		expect(handoffResults[1], "handoff is blocked again after the cut").toMatchObject({ isError: true, text: READONLY_HANDOFF_BLOCK_REASON });
 		const write = onlyResult(toolResults(entries, "write"), "write");
-		expect(write.isError, "write stays blocked").toBe(true);
-		expect(write.text).toBe(READONLY_WRITE_EDIT_BLOCK_REASON);
+		expect(write, "write stays blocked").toMatchObject({ isError: true, text: READONLY_WRITE_EDIT_BLOCK_REASON });
 		expect(existsSync(blocked), "blocked write left no file").toBe(false);
 	}), REAL_HOST_TEST_TIMEOUT_MS);
 
-	it.skipIf(!canUseOsSandbox())("readonly sandboxed bash write outside temp fails with the readonly block notice", async (t) => withRealHost(t, async (host) => {
+	it.skipIf(!canUseOsSandbox())("readonly sandboxed bash write outside temp fails with the readonly block notice", async (t) => {
 		// The harness HOME and project live under the OS temp dir, which the sandbox lets writes into,
 		// so the target sits under the real home directory of the test process instead.
 		const target = join(os.homedir(), `pi-schematic-e2e-readonly-${process.pid}-${Date.now()}`);
 		t.onTestFinished(() => rmSync(target, { force: true }));
-		const script = `require("fs").writeFileSync(${JSON.stringify(target)}, "x")`;
-		await host.command("/readonly");
-		await host.script([{ name: "bash", arguments: { command: `${quoteShellArgument(process.execPath)} -e ${quoteShellArgument(script)}` } }], 1);
+		return withRealHost(t, async (host) => {
+			const script = `require("fs").writeFileSync(${JSON.stringify(target)}, "x")`;
+			await host.command("/readonly");
+			await host.script([{ name: "bash", arguments: { command: `${quoteShellArgument(process.execPath)} -e ${quoteShellArgument(script)}` } }], 1);
 
-		const { entries } = await host.entries();
-		const bash = onlyResult(toolResults(entries, "bash"), "bash");
-		expect(bash.isError, "the write fails").toBe(true);
-		expect(bash.text.slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), bash.text).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
-		const probed = onlyResult(host.probeLog().filter((record) => record.kind === "bashResult"), "probed bash");
-		expect(probed.structuredOutput?.slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), String(probed.structuredOutput)).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
-		expect(existsSync(target), "the sandbox blocked the write").toBe(false);
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+			const { entries } = await host.entries();
+			const bash = onlyResult(toolResults(entries, "bash"), "bash");
+			expect(bash.isError, "the write fails").toBe(true);
+			expect(bash.text.slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), bash.text).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
+			const probed = onlyResult(host.probeLog().filter((record) => record.kind === "bashResult"), "probed bash");
+			expect(probed.structuredOutput?.slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), String(probed.structuredOutput)).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
+			expect(existsSync(target), "the sandbox blocked the write").toBe(false);
+		});
+	}, REAL_HOST_TEST_TIMEOUT_MS);
 
 	it("readonly topic boundary enables the handoff bypass on the next context hook", async (t) => withRealHost(t, async (host) => {
 		const boundaryCall = handoffCall({ nextInstruction: "continue billing work" });
@@ -646,7 +642,10 @@ describe("pi-schematic real-host E2E", () => {
 		await host.script(handoffCall({ nextInstruction: "direct call" }), 1);
 
 		const log = host.probeLog();
-		expect(scriptedRequest(log, boundaryCall, 0).texts, "boundary bypass announced before the handoff call").toContainEqual(expect.stringContaining(READONLY_HANDOFF_EXCEPTION_SUMMARY));
+		expect(
+			scriptedRequest(log, boundaryCall, 0).texts.filter((text) => text.includes(READONLY_HANDOFF_EXCEPTION_SUMMARY)),
+			"boundary bypass announced before the handoff call",
+		).toHaveLength(1);
 		const handoffStatuses = projectStatuses(throughHandoff)
 			.filter((status) => status.statusKey === STATUS_KEY_HANDOFF)
 			.map((status) => status.statusText);
@@ -659,7 +658,10 @@ describe("pi-schematic real-host E2E", () => {
 			.filter((status) => status.statusKey === STATUS_KEY_HANDOFF);
 		expect(statusesAfterCut, "a handoff status follows the cut").toHaveLength(1);
 		expect(statusesAfterCut.at(-1)?.statusText, "handoff status cleared after the cut").toBeUndefined();
-		expect(host.notifications.map((notification) => notification.message), "boundary promotion notified").toContainEqual(expect.stringContaining("Readonly topic boundary detected"));
+		expect(
+			host.notifications.map((notification) => notification.message).filter((message) => message.includes("Readonly topic boundary detected")),
+			"boundary promotion notified",
+		).toHaveLength(1);
 
 		const { entries } = await host.entries();
 		const handoffResults = toolResults(entries, "handoff");
@@ -670,7 +672,6 @@ describe("pi-schematic real-host E2E", () => {
 			requestsAfterCut(log, cutHandoffId(cut)!).filter((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
 			"readonly is re-announced after the handoff",
 		).toHaveLength(1);
-		expect(handoffResults[1].isError, "handoff is blocked again after the cut").toBe(true);
-		expect(handoffResults[1].text).toBe(READONLY_HANDOFF_BLOCK_REASON);
+		expect(handoffResults[1], "handoff is blocked again after the cut").toMatchObject({ isError: true, text: READONLY_HANDOFF_BLOCK_REASON });
 	}), REAL_HOST_TEST_TIMEOUT_MS);
 });
