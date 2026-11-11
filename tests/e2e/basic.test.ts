@@ -8,16 +8,11 @@
 import { describe, expect, it } from "vitest";
 import { ProcessHarness } from "./pty-harness.js";
 
-/** Create a fresh host, wait for READY, and return the harness. */
-async function start(): Promise<ProcessHarness> {
-	const h = new ProcessHarness();
-	await expect(h.waitForText("READY")).resolves.toBeUndefined();
-	return h;
-}
-
+/** Start a fresh host, wait for READY, and run `run` against it; the host is closed in every case. */
 async function withHarness(run: (h: ProcessHarness) => Promise<void>): Promise<void> {
-	const h = await start();
+	const h = new ProcessHarness();
 	try {
+		await expect(h.waitForText("READY")).resolves.toBeUndefined();
 		await run(h);
 	} finally {
 		try {

@@ -173,6 +173,7 @@ async function expectCancellationAtLastAttempt(host: RealHost): Promise<void> {
 	await host.turn("/" + PROBE_COMMAND.turn, 1);
 	expect(handoffCancellations(host), `settled run ${MAX_HANDOFF_ATTEMPTS} cancels the handoff`).toHaveLength(1);
 	const handoffStatuses = host.statuses.filter((status) => status.statusKey === STATUS_KEY_HANDOFF);
+	expect(handoffStatuses.map((status) => status.statusText), "the handoff required status was shown").toContain(HANDOFF_REQUIRED_STATUS);
 	expect(handoffStatuses.at(-1)?.statusText, "the handoff status is cleared").toBeUndefined();
 }
 
@@ -181,7 +182,7 @@ function onlyResult<T>(results: T[], label: string): T {
 	return results[0];
 }
 
-describe("pi-schematic real-host E2E", () => {
+describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, () => {
 	it("host starts and extension registers", async (t) => withRealHost(t, async (host) => {
 		await host.command("/" + PROBE_COMMAND.tools);
 		await host.settle(0);
@@ -190,7 +191,7 @@ describe("pi-schematic real-host E2E", () => {
 		for (const name of ["notebook_write", "notebook_read", "notebook_index", "notebook_topic_set", "handoff", "spawn"]) {
 			expect(tools[0].names, `${name} tool registered`).toContain(name);
 		}
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("commands are registered", async (t) => withRealHost(t, async (host) => {
 		const commands = await host.client.getCommands();
@@ -199,7 +200,7 @@ describe("pi-schematic real-host E2E", () => {
 			.map((command) => command.name)
 			.sort();
 		expect(names).toStrictEqual(["handoff", "model-groups", "notebook", "readonly"]);
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("spawn adds the child's usage to the parent's session stats", async (t) => withRealHost(t, async (host) => {
 		await host.script([
@@ -217,7 +218,7 @@ describe("pi-schematic real-host E2E", () => {
 		// Pi sizes the context from the last assistant message's usage alone: the final reply's
 		// 50000 tokens, not 51305 with the child's 1305.
 		expect(stats.contextUsage?.tokens).toBe(50000);
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("a spawn that fails after its child ran still adds the child's usage to the parent's session stats", async (t) => withRealHost(t, async (host) => {
 		await host.script([
@@ -232,7 +233,7 @@ describe("pi-schematic real-host E2E", () => {
 		// Two parent assistant messages report 50000 input tokens each; the child's one empty
 		// reply reports 1234 input, 56 output, 7 cache-read and 8 cache-write tokens at a cost of 0.9375.
 		expect({ ...stats.tokens, cost: stats.cost }).toStrictEqual({ input: 101234, output: 56, cacheRead: 7, cacheWrite: 8, total: 101305, cost: 0.9375 });
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("notebook write/read round-trip", async (t) => withRealHost(t, async (host) => {
 		await host.script([
@@ -247,7 +248,7 @@ describe("pi-schematic real-host E2E", () => {
 		expect(read.isError).toBe(false);
 		expect(read.text.slice(0, "--- my-page ---".length), read.text).toBe("--- my-page ---");
 		expect(read.text, "content persisted").toContain("Hello World");
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("notebook index reflects written pages", async (t) => withRealHost(t, async (host) => {
 		await host.script([
@@ -264,7 +265,7 @@ describe("pi-schematic real-host E2E", () => {
 		expect(indexes[0].text, "page-a in first index").toContain("page-a");
 		expect(indexes[1].text, "page-a in second index").toContain("page-a");
 		expect(indexes[1].text, "page-b in second index").toContain("page-b");
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("notebook_write overwrites existing page", async (t) => withRealHost(t, async (host) => {
 		await host.script([
@@ -276,7 +277,7 @@ describe("pi-schematic real-host E2E", () => {
 		const read = onlyResult(toolResults(entries, "notebook_read"), "notebook_read");
 		expect(read.text, "overwritten content present").toContain("v2");
 		expect(read.text, "old content absent").not.toContain("v1");
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("notebook topic lifecycle: set via command, agent-set blocked", async (t) => withRealHost(t, async (host) => {
 		await host.command("/notebook my-e2e-topic");
@@ -285,7 +286,7 @@ describe("pi-schematic real-host E2E", () => {
 		const result = onlyResult(toolResults(entries, "notebook_topic_set"), "notebook_topic_set");
 		expect(result.isError).toBe(true);
 		expect(result.text, result.text).toContain("authoritative");
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("agent-set topic works when unset", async (t) => withRealHost(t, async (host) => {
 		await host.script([{ name: "notebook_topic_set", arguments: { topic: "fresh-agent-topic" } }], 1);
@@ -293,7 +294,7 @@ describe("pi-schematic real-host E2E", () => {
 		const result = onlyResult(toolResults(entries, "notebook_topic_set"), "notebook_topic_set");
 		expect(result.text.slice(0, "Active notebook topic:".length), result.text).toBe("Active notebook topic:");
 		expect(result.text, result.text).toContain("fresh-agent-topic");
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("handoff tool rejects a missing instruction", async (t) => withRealHost(t, async (host) => {
 		await handoff(host, { context: "situational only" }, 1);
@@ -303,7 +304,7 @@ describe("pi-schematic real-host E2E", () => {
 		expect(result.text, result.text).toContain("Empty handoff nextInstruction rejected");
 		expect(entries.filter((entry) => userText(entry)?.includes("Handoff failed")), "no failure follow-up user message").toHaveLength(0);
 		expect(customMessages(entries, HANDOFF_FAILED_CUSTOM_TYPE), "no failure message").toHaveLength(0);
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("handoff writes the cut, the successor and the note as one boundary and re-announces readonly in the successor turn", async (t) => withRealHost(t, async (host) => {
 		await host.command("/readonly");
@@ -332,7 +333,7 @@ describe("pi-schematic real-host E2E", () => {
 			"readonly is re-announced after the handoff",
 		).toHaveLength(1);
 		expect(await host.client.clearQueue()).toStrictEqual({ steering: [], followUp: [] });
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("the successor turn continues the handoff run without the pre-cut user turn or handoff result", async (t) => withRealHost(t, async (host) => {
 		const payload = { nextInstruction: "do the resumed work", context: "remaining state" };
@@ -349,7 +350,7 @@ describe("pi-schematic real-host E2E", () => {
 		expect(successorRequest.texts, "the pre-cut user turn is gone from the successor request").not.toContain("go");
 		// The probe records only text blocks, so the handoff toolCall block is not in `texts`.
 		expect(successorRequest.texts, "the pre-cut handoff result is gone from the successor request").not.toContain(HANDOFF_STAGED_RESULT);
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("a handoff sharing its message with another call is refused, the other call runs, and a lone handoff then lands the cut", async (t) => withRealHost(t, async (host) => {
 		await host.script([
@@ -387,7 +388,7 @@ describe("pi-schematic real-host E2E", () => {
 		const readIndex = entries.findIndex((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "notebook_read");
 		expect(readIndex, "the page read is among the entries").not.toBe(-1);
 		expect(readIndex, "the page is read after the cut").toBeGreaterThan(cutIndex);
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("a boundary successor is not re-sent by settle or tree navigation", async (t) => withRealHost(t, async (host) => {
 		const payload = { nextInstruction: "do the resumed work", context: "remaining state" };
@@ -400,7 +401,7 @@ describe("pi-schematic real-host E2E", () => {
 		const { entries } = await host.entries();
 		expect(customMessages(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE), "one successor entry").toHaveLength(1);
 		expect(userEntriesWithText(entries, buildNextUserMessage(payload)), "no successor resent as a user message").toHaveLength(0);
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("editing a boundary successor never re-delivers its instruction", async (t) => withRealHost(t, async (host) => {
 		const payload = { nextInstruction: "do the resumed work", context: "remaining state" };
@@ -414,7 +415,7 @@ describe("pi-schematic real-host E2E", () => {
 		expect(leafId, "editing the successor moves the leaf to the cut").toBe(cut.id);
 		expect(customMessages(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE), "one successor entry").toHaveLength(1);
 		expect(userEntriesWithText(entries, buildNextUserMessage(payload)), "no successor resent as a user message").toHaveLength(0);
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("a dropped handoff cut fails in one run without a follow-up and stays retryable", async (t) => withRealHost(t, async (host) => {
 		await host.command("/" + PROBE_COMMAND.dropNextCut);
@@ -445,7 +446,7 @@ describe("pi-schematic real-host E2E", () => {
 		expect(results, "two handoff results").toHaveLength(2);
 		expect(results[1].text).toBe(HANDOFF_STAGED_RESULT);
 		onlyHandoffCut(retried.entries);
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	for (const variant of [
 		{ name: "another extension drops its successor", command: PROBE_COMMAND.dropNextSuccessor },
@@ -470,6 +471,7 @@ describe("pi-schematic real-host E2E", () => {
 			).toHaveLength(1);
 			expect(notificationsStartingWith(host, "Handoff complete"), "no completion notice").toHaveLength(0);
 			const handoffStatuses = host.statuses.filter((status) => status.statusKey === STATUS_KEY_HANDOFF);
+			expect(handoffStatuses.map((status) => status.statusText), "the handoff in progress status was shown").toContain(HANDOFF_IN_PROGRESS_STATUS);
 			expect(handoffStatuses.at(-1)?.statusText, "no handoff stays required").toBeUndefined();
 
 			await handoff(host, { nextInstruction: "later work" }, 1);
@@ -482,7 +484,7 @@ describe("pi-schematic real-host E2E", () => {
 			const [laterRequest] = requestsAfterCut(host.probeLog(), cutHandoffId(laterCut)!);
 			assertPresent(laterRequest, "the model is called after the later cut");
 			expect(laterRequest.texts.filter((text) => text.startsWith(NEXT_INSTRUCTION_PREFIX)), "only the later successor reaches the model").toStrictEqual([buildNextUserMessage({ nextInstruction: "later work" })]);
-		}), REAL_HOST_TEST_TIMEOUT_MS);
+		}));
 	}
 
 	it("a cut whose notebook rewrite another extension dropped reports the discard from the branch and warns", async (t) => withRealHost(t, async (host) => {
@@ -507,7 +509,7 @@ describe("pi-schematic real-host E2E", () => {
 		const read = onlyResult(toolResults(entries, "notebook_read"), "notebook_read");
 		expect(read.isError, "the page is still in the notebook after the cut").toBe(false);
 		expect(read.text, read.text).toContain("page three");
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("readonly is re-announced in the run after a handoff whose successor was dropped", async (t) => withRealHost(t, async (host) => {
 		await host.command("/readonly");
@@ -520,7 +522,7 @@ describe("pi-schematic real-host E2E", () => {
 		const laterRequests = requestsAfterCut(host.probeLog(), cutHandoffId(cut)!);
 		expect(laterRequests, "the later run calls the model").toHaveLength(2);
 		expect(laterRequests.filter((record) => containsText(record, READONLY_ACTIVE_SUMMARY)), "readonly is re-announced after the failed handoff").toHaveLength(1);
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("a handoff aborted before its cut persists the failure without starting a run", async (t) => withRealHost(t, async (host) => {
 		await host.command("/" + PROBE_COMMAND.abortAfterHandoff);
@@ -538,7 +540,7 @@ describe("pi-schematic real-host E2E", () => {
 			notificationsStartingWith(host, `Handoff failed: ${REASON_ABORTED}.`),
 			"failure notified",
 		).toHaveLength(1);
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it("a run pi retries counts one required-handoff attempt", async (t) => withRealHost(t, async (host) => {
 		// A tool call reports usage that makes the handoff eligible, so the call after it is nudged. The
@@ -561,7 +563,7 @@ describe("pi-schematic real-host E2E", () => {
 		const nudged = host.probeLog().filter((record): record is RequestRecord => record.kind === "request" && containsText(record, ELIGIBLE_HANDOFF_NUDGE));
 		expect(nudged.map((record) => record.step), "the failed pass and the retry pass both carry the eligible nudge").toStrictEqual([1, 3]);
 		await expectCancellationAtLastAttempt(host);
-	}, { settings: { retry: { enabled: true, baseDelayMs: 0 } } }), REAL_HOST_TEST_TIMEOUT_MS);
+	}, { settings: { retry: { enabled: true, baseDelayMs: 0 } } }));
 
 	it("a run that ends in threshold compaction counts one required-handoff attempt", async (t) => withRealHost(t, async (host) => {
 		// The nudged second call replies with usage above the threshold, so pi compacts after the run.
@@ -583,7 +585,7 @@ describe("pi-schematic real-host E2E", () => {
 		assertPresent(contextUsage, "pi reports context usage");
 		expect(contextUsage.tokens, "usage is unknown once the run has settled").toBeNull();
 		await expectCancellationAtLastAttempt(host);
-	}, { settings: { compaction: { enabled: true, reserveTokens: COMPACTION_RESERVE_TOKENS } } }), REAL_HOST_TEST_TIMEOUT_MS);
+	}, { settings: { compaction: { enabled: true, reserveTokens: COMPACTION_RESERVE_TOKENS } } }));
 
 	it("readonly lifecycle: handoff bypass clears after the cut while readonly persists", async (t) => withRealHost(t, async (host) => {
 		const blocked = join(host.projectDir, "blocked.txt");
@@ -608,7 +610,7 @@ describe("pi-schematic real-host E2E", () => {
 		const write = onlyResult(toolResults(entries, "write"), "write");
 		expect(write, "write stays blocked").toMatchObject({ isError: true, text: READONLY_WRITE_EDIT_BLOCK_REASON });
 		expect(existsSync(blocked), "blocked write left no file").toBe(false);
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 
 	it.skipIf(!canUseOsSandbox())("readonly sandboxed bash write outside temp fails with the readonly block notice", async (t) => {
 		// The harness HOME and project live under the OS temp dir, which the sandbox lets writes into,
@@ -628,7 +630,7 @@ describe("pi-schematic real-host E2E", () => {
 			expect(probed.structuredOutput?.slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), String(probed.structuredOutput)).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
 			expect(existsSync(target), "the sandbox blocked the write").toBe(false);
 		});
-	}, REAL_HOST_TEST_TIMEOUT_MS);
+	});
 
 	it("readonly topic boundary enables the handoff bypass on the next context hook", async (t) => withRealHost(t, async (host) => {
 		const boundaryCall = handoffCall({ nextInstruction: "continue billing work" });
@@ -673,5 +675,5 @@ describe("pi-schematic real-host E2E", () => {
 			"readonly is re-announced after the handoff",
 		).toHaveLength(1);
 		expect(handoffResults[1], "handoff is blocked again after the cut").toMatchObject({ isError: true, text: READONLY_HANDOFF_BLOCK_REASON });
-	}), REAL_HOST_TEST_TIMEOUT_MS);
+	}));
 });

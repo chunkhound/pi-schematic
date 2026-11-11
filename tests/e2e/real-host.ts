@@ -53,10 +53,12 @@ const MAX_TEST_TIMEOUT_MS = 2_147_483_647;
 
 /**
  * Vitest timeout for a real-host test whose barriers each wait `waitMs`: every barrier
- * a test may make running to its harness deadline, plus a minute for start, commands and
- * close, so a slow test fails with the harness's message, not Vitest's. A step that
- * barriers again spends that same deadline and can stretch its phase by one report backstop,
- * which that minute absorbs.
+ * a host may make running to its harness deadline, plus a minute for start and commands,
+ * so a slow test fails with the harness's message, not Vitest's. The timeout covers the test
+ * body: start, commands and the barriers of its steps. The close runs afterwards in the finish
+ * callback, bounded by its own waits; its barrier still claims one of the
+ * REAL_HOST_MAX_BARRIERS_PER_TEST phases. A step that barriers again spends that same deadline
+ * and can stretch its phase by one report backstop, which that minute absorbs.
  */
 function testTimeoutFor(waitMs: number): number {
 	return REAL_HOST_MAX_BARRIERS_PER_TEST * (waitMs + BARRIER_REPORT_MARGIN_MS) + 60_000;
@@ -91,7 +93,7 @@ export const REAL_HOST_TEST_TIMEOUT_MS = testTimeoutFor(REAL_HOST_TIMEOUT_MS);
  * A round takes what is left of that deadline as its probe deadline, so the rounds together spend
  * one barrier's probe budget, and the harness waits the backstop on top of the last one. A step's
  * phase can therefore outlast its deadline by that backstop, which stays inside the minute
- * `testTimeoutFor` leaves for start, commands and close.
+ * `testTimeoutFor` leaves for start and commands.
  */
 const STEP_BUDGET_MS = REAL_HOST_TIMEOUT_MS + BARRIER_REPORT_MARGIN_MS;
 
@@ -457,7 +459,7 @@ export class RealHost {
 		);
 	}
 
-	/** Claim a barrier phase; `testTimeoutFor` covers REAL_HOST_MAX_BARRIERS_PER_TEST of them. */
+	/** Claim a barrier phase; the test timeout from `testTimeoutFor` bounds the body's phases, while the close's phase runs in the finish callback outside it and still counts toward REAL_HOST_MAX_BARRIERS_PER_TEST. */
 	private startBarrierPhase(): void {
 		const phase = ++this.barrierPhases;
 		if (phase > REAL_HOST_MAX_BARRIERS_PER_TEST) {
@@ -559,31 +561,32 @@ export function startRealHost(options?: RealHostOptions): Promise<RealHost> {
 }
 
 /**
- * Start a host and run `run` against it, then close it inline. A close error is reported
- * exactly once: alone after a passing body, next to the body error after a failing one.
- * The close also hangs off `t`'s `onTestFinished` with no timeout, because Vitest does not
- * cancel a timed-out test body and only a finish callback still runs then. The callback always
- * awaits `host.close()` (memoized, so the host closes once), so the test does not finish while
- * a close is still running. It rethrows the close error unless the inline close had already
- * settled when the callback started, because then the error reached the test through the body.
- * A timed-out or abandoned body therefore still gets its close error among the test's errors.
+ * Start a host and run `run` against it. The host closes once, from `t`'s finish callback,
+ * whether the test passed, failed or timed out, a timeout during start included; a close error
+ * is reported among the test's errors once. A body whose test timed out during start is not run.
+ * After closing, the callback waits for the body to settle, so a timed-out body does not run into
+ * the next test; a host wait still pending then may only end at its own deadline.
  */
 export async function withRealHost(t: TestContext, run: (host: RealHost) => Promise<void>, options?: RealHostOptions): Promise<void> {
-	const host = await startRealHost(options);
-	let inlineCloseSettled = false;
+	const starting = startRealHost(options);
+	let body: Promise<void> | undefined;
 	t.onTestFinished(async () => {
-		const reportedByBody = inlineCloseSettled;
+		let host: RealHost;
 		try {
-			await host.close();
+			host = await starting;
 		} catch (error) {
-			if (!reportedByBody) throw error;
+			// A test that timed out cannot report the start error through the body any more.
+			if (t.signal.aborted) throw error;
+			return; // the start error already reached the test through the body
 		}
-	}, 0);
-	await withCleanup(() => run(host), async () => {
 		try {
 			await host.close();
 		} finally {
-			inlineCloseSettled = true;
+			await body?.catch(() => {});
 		}
-	});
+	}, 0);
+	const host = await starting;
+	if (t.signal.aborted) throw t.signal.reason;
+	body = run(host);
+	await body;
 }
