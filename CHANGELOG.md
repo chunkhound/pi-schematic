@@ -7,10 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Pi 1.2.0 minimum**: the `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` peers now require 1.2.0 or later, up from 0.99.2. The `typebox` peer minimum stays 1.3.27.
+
+## [0.7.1] - 2026-11-08
+
+### Changed
+
+- **Published through npm trusted publishing** — this version is published by the tag workflow with npm trusted publishing instead of by hand. The package contents are unchanged from 0.7.0.
+
+## [0.7.0] - 2026-11-06
+
 ### Added
 
 - **Date anchor** — the `schematic_date` prompt section holds a `## Current date` block (ISO date, weekday, IANA zone, UTC offset, plus a resolve-relative-references directive). `before_agent_start` renders it once per user prompt, and it is byte-stable within a calendar day, so while the host zone stays fixed it changes at most once per day; on a DST transition day the offset adds one more change. When it changes, Pi appends a section-update message and the leading system message stays unchanged. A zone Intl cannot render falls back to `UTC` rather than throwing.
 - **Notebook pages open in a pager** — Enter in the interactive `/notebook` picker opens the selected page in `$PI_PAGER`, else `$PAGER`, else `less` if installed (not on Windows); with no pager or a `cat` or `more` pager it shows the inline preview instead. Quitting either returns to the list on the same page. See [Compatibility and limits](README.md#compatibility-and-limits).
+- **npm package** — Published on npm as `@chunkhound/pi-schematic`; install with `pi install npm:@chunkhound/pi-schematic`.
 
 ### Breaking Changes
 
@@ -26,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Handoff completes inside the calling run** — the cut and the successor are written together at the end of the turn that called `handoff`, in one `turn_end` boundary pass: notebook discard entries, a retain-none compaction, the successor, and a hidden note. The successor turn continues the same run. If another extension's `turn_end` handler stops the continuation, the successor runs on the next prompt. The successor shows as a `pi-schematic-handoff` message instead of a user message, and a hidden `pi-schematic-handoff-note` tells it that the system prompt is stale until the next run starts; a message typed during the run does not refresh it. If another extension's `turn_end` handler keeps the cut and the successor but drops the notebook discard entries, the pages stay in the notebook, the completion notice counts them as kept, and a session with a UI also shows a warning naming them.
 - **Failed handoff cut** — a handoff whose cut is missing at the next turn or when the run settles reports the failure and leaves a pending handoff request pending. The failure guidance is a `pi-schematic-handoff-failed` message that starts no run, for an abort and for every other cause (another extension replacing the `turn_end` entries, invalid drafts). Further `handoff` calls in the same run are refused, and after a dropped cut the notebook is rebuilt from the branch. The watchdog's `MAX_HANDOFF_ATTEMPTS` still bounds the attempts, and the failure on the last attempt says no required handoff remains pending. A `handoff` call rejected at validation reports its reason in the tool's error result and queues no follow-up message. If another extension's `turn_end` handler keeps the cut but drops the successor, or appends its own compaction after the cut so the successor is no longer in context, the handoff fails instead of completing. A successor turn is aborted before it reaches the model, the failure message carries the instruction, and the request is cleared without a retry because the context is already cut.
 - **Spawn result limit marker** — the truncation marker and the child prompt write the size as `50 KiB (51200 bytes)`, the form notebook uses, instead of `50KB`. The marker now advises spawning a new child with a narrower request.
-- **Pi minimum** — Pi 1.0.4 is now the documented minimum for the `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` peers, and the `typebox` peer minimum is 1.3.27.
+- **Pi minimum** — Pi 0.99.2 is now the documented minimum for the `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` peers, and the `typebox` peer minimum is 1.3.27.
 
 ### Fixed
 
@@ -41,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Spawn preview strips terminal sequences** — the collapsed spawn preview now removes OSC (including OSC 8 links), APC, and erase and cursor-position sequences from child assistant text, not only SGR styling (#83).
 - **Global files follow `PI_CODING_AGENT_DIR`** — the global `model-groups.json` and the global prompt scan resolve inside pi's agent directory, so with `PI_CODING_AGENT_DIR` set both move with it, as pi's own global files do. With the variable unset, both stay at their previous locations.
 - **Type-checks against Pi 1.5** — the `spawn` tool builds its `thinking` parameter schema with typebox instead of pi-ai's `StringEnum`, which returns a non-typebox schema from Pi 1.5 on. The schema sent to the model is unchanged.
+- **Readonly sandbox passes commands through and reports blocks on Linux** — readonly bash commands under `sandbox-exec` or `bwrap` now get the same stdin, exit code and output as unsandboxed commands, except for the differences listed in [Architecture](docs/architecture.md#behavioral-notes); commands that read stdin no longer swallow part of the sandbox wrapper, and output is no longer buffered until exit. The sandboxed command runs under the shell pi started instead of always under `/bin/bash`. The readonly block notice now appears on Linux (`Read-only file system`) and for lowercase errors such as node's `EPERM`/`EROFS`, and no longer appears for `Permission denied` failures the sandbox does not cause. The notice is appended to the failed tool result and says the block applies if the failure was a write outside the OS temp dir.
 
 ## [0.6.0] - 2026-09-26
 
@@ -212,7 +226,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Comprehensive test suite** — 50+ tests covering spawn execution and rendering (concurrency, cancellation, truncation, stale detection, ownership lifecycle, microtask batching), ledger tools (add/get/list, staleness, rehydration, empty states, prompt hints), handoff (tool, command, compaction), watchdog (nudge injection, enforcement), and extension lifecycle.
 - **MIT licensed** — open-source permissive license.
 
-[Unreleased]: https://github.com/chunkhound/pi-schematic/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/chunkhound/pi-schematic/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/chunkhound/pi-schematic/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/chunkhound/pi-schematic/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/chunkhound/pi-schematic/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/chunkhound/pi-schematic/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/chunkhound/pi-schematic/compare/v0.3.0...v0.4.0

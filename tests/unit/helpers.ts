@@ -5,13 +5,14 @@
 import { CONFIG_DIR_NAME, type Theme, type TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
-import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import os from "node:os";
+import { test as base, expect } from "vitest";
 import { createState, resetState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
+import { assertPresent } from "../assertions.js";
 import { AGENT_DIR_ENV_KEY } from "../paths.js";
 import { createTestHost, type TestPI } from "./test-host.js";
 
@@ -24,10 +25,10 @@ export const EMPTY_CHILD_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite
 
 /** A failure after the child session exists is returned as an error result, not thrown. */
 export function assertErrorResult(result: any, text: string, usage: unknown): void {
-	assert.equal(result.isError, true);
-	assert.deepEqual(result.content, [{ type: "text", text }]);
-	assert.equal(result.details.outcome, "error");
-	assert.deepEqual(result.usage, usage);
+	expect(result.isError).toBe(true);
+	expect(result.content).toStrictEqual([{ type: "text", text }]);
+	expect(result.details.outcome).toBe("error");
+	expect(result.usage).toStrictEqual(usage);
 }
 
 export const ansiTheme = {
@@ -103,19 +104,21 @@ export function stripAnsi(text: string): string {
 
 export function getRenderedLine(lines: string[], match: (plain: string) => boolean): string {
 	const line = lines.find(candidate => match(stripAnsi(candidate)));
-	assert.ok(line);
+	assertPresent(line);
+	expect(line).not.toBe("");
 	return line;
 }
 
 export function getLineContaining(lines: string[], text: string): string {
 	const line = lines.find(candidate => candidate.includes(text));
-	assert.ok(line);
+	assertPresent(line);
+	expect(line).not.toBe("");
 	return line;
 }
 
 export function assertShellBackgroundPreserved(line: string): void {
-	assert.equal(line.includes("\u001b[0m"), false);
-	assert.match(line, /\u001b\[48;/);
+	expect(line).not.toContain("\u001b[0m");
+	expect(line).toMatch(/\u001b\[48;/);
 }
 
 export function createDeferred() {
@@ -236,11 +239,43 @@ export function makeReadonlyUICtx(overrides: Record<string, unknown> = {}) {
 	};
 }
 
+/** The denial phrase each platform's OS sandbox puts in a blocked write's error. */
+export const SANDBOX_DENIAL_PHRASES: Partial<Record<NodeJS.Platform, string>> = {
+	darwin: "Operation not permitted",
+	linux: "Read-only file system",
+};
+
+/** Build a result shaped like pi's bash tool result for a command that exited with code 1. */
+export function bashResult(output: string, isError = true) {
+	return {
+		content: [{ type: "text" as const, text: `${output}\n\nCommand exited with code 1` }],
+		structuredContent: { output, truncated: false, exit_code: 1, wall_time_seconds: 0.1 },
+		isError,
+	};
+}
+
+/** Join the text of a tool result's text blocks. */
+export function textOf(result: { content: readonly { type: string; text?: string }[] }): string {
+	return result.content.map((block) => block.text ?? "").join("");
+}
+
 // ── Temp directory helpers ──────────────────────────────────────────
 
 export async function tmpDir(): Promise<string> {
 	return mkdtemp(join(os.tmpdir(), "pi-test-"));
 }
+
+/**
+ * `test` with a `dir` fixture: a fresh temp directory, created only for tests
+ * that take `dir` and removed after the test, also when a check failed.
+ */
+export const testWithDir = base.extend<{ dir: string }>({
+	dir: async ({}, use) => {
+		const dir = await tmpDir();
+		await use(dir);
+		await rm(dir, { recursive: true, force: true });
+	},
+});
 
 export async function withTempHome<T>(run: (homeDir: string) => Promise<T>): Promise<T> {
 	const homeDir = await tmpDir();
@@ -307,6 +342,8 @@ export interface RealChildInvocationResult {
 export async function runRealChildInvocation(params: {
 	prompt: string;
 	thinking?: "max";
+	/** Register the probe model as reasoning-capable, so a requested thinking level is not clamped to "off". */
+	reasoning?: boolean;
 	readonly?: boolean;
 	activeTools?: string[];
 	invokeReadonlyBash?: boolean;
@@ -341,7 +378,6 @@ export async function runRealChildInvocation(params: {
 	const resultText = params.resultText ?? `${provider}/${modelId}:${sentinel}`;
 	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 	const previousOpenAiApiKey = process.env.OPENAI_API_KEY;
-	const previousPiOffline = process.env.PI_OFFLINE;
 	const previousFetch = globalThis.fetch;
 	const outboundFetches: string[] = [];
 
@@ -353,7 +389,7 @@ export async function runRealChildInvocation(params: {
 		await writeFile(
 			join(extensionDir, "agentic-e2e-probe.js"),
 			`
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, getCurrentTools } from "@earendil-works/pi-ai";
 const usage = {
 	input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
@@ -362,29 +398,15 @@ export default function(pi) {
 	pi.registerProvider("${provider}", {
 		api: "agentic-e2e-api", apiKey: "test-key", baseUrl: "http://localhost.invalid",
 		models: [{
-			id: "${modelId}", name: "Agentic E2E Model", reasoning: false,
+			id: "${modelId}", name: "Agentic E2E Model", reasoning: ${params.reasoning ?? false},
 			input: ["text"], cost: usage.cost, contextWindow: 128000, maxTokens: 1024,
 		}],
 		streamSimple(model, context, options) {
 			globalThis.__agenticE2eStreamCalls = (globalThis.__agenticE2eStreamCalls ?? 0) + 1;
-			// Pi <=0.86 passes tools as context.tools; 0.87+ carries the tool set in the
-			// transcript's system message (toolsAdded/toolsRemoved). Replay both so the
-			// fixture observes the same effective tool set across Pi versions.
-			const effectiveToolNames = (() => {
-				const names = (context.tools ?? []).map((tool) => tool.name);
-				for (const message of context.messages ?? []) {
-					if (message.role !== "system") continue;
-					for (const tool of message.toolsAdded ?? []) if (!names.includes(tool.name)) names.push(tool.name);
-					for (const removed of message.toolsRemoved ?? []) {
-						const index = names.indexOf(removed.name);
-						if (index !== -1) names.splice(index, 1);
-					}
-				}
-				return names;
-			})();
+			const effectiveToolNames = getCurrentTools(context.messages).map((tool) => tool.name);
 			globalThis.__agenticE2eToolSets = [...(globalThis.__agenticE2eToolSets ?? []), effectiveToolNames];
 			// Content may be a block array (assistant/user) or a plain string (system/user text); normalize both.
-			globalThis.__agenticE2eMessages = [...(globalThis.__agenticE2eMessages ?? []), ...(context.messages ?? []).flatMap((message) => {
+			globalThis.__agenticE2eMessages = [...(globalThis.__agenticE2eMessages ?? []), ...context.messages.flatMap((message) => {
 				const content = message.content;
 				if (Array.isArray(content)) return content.filter((block) => block.type === "text").map((block) => block.text);
 				return typeof content === "string" ? [content] : [];
@@ -445,7 +467,6 @@ export default function(pi) {
 
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		process.env.OPENAI_API_KEY = "test-openai-key";
-		process.env.PI_OFFLINE = "1";
 		globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
 			outboundFetches.push(input instanceof Request ? input.url : String(input));
 			throw new Error(`offline fixture blocked outbound fetch: ${outboundFetches.at(-1)}`);
@@ -462,7 +483,7 @@ export default function(pi) {
 		(globalThis as any).__agenticE2eThinking = [];
 		const model = {
 			id: modelId, name: "Agentic E2E Model", api: "agentic-e2e-api", provider,
-			reasoning: false, input: ["text"],
+			reasoning: params.reasoning ?? false, input: ["text"],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 128000, maxTokens: 1024,
 		};
@@ -534,8 +555,6 @@ export default function(pi) {
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		if (previousOpenAiApiKey === undefined) delete process.env.OPENAI_API_KEY;
 		else process.env.OPENAI_API_KEY = previousOpenAiApiKey;
-		if (previousPiOffline === undefined) delete process.env.PI_OFFLINE;
-		else process.env.PI_OFFLINE = previousPiOffline;
 		globalThis.fetch = previousFetch;
 		delete (globalThis as any).__agenticE2eProbeCalls;
 		delete (globalThis as any).__agenticE2eStreamCalls;

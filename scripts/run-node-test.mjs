@@ -8,16 +8,17 @@ import { VITEST_FILES } from "../tests/vitest-files.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
 const args = process.argv.slice(2);
-const updateSnapshots = args.includes("--update-snapshots");
-const flags = args.filter((arg) => arg.startsWith("--") && arg !== "--update-snapshots");
+const flags = args.filter((arg) => arg.startsWith("--"));
 const patterns = args.filter((arg) => !arg.startsWith("--"));
 
 if (patterns.length === 0) {
   throw new Error("Pass at least one test file or glob pattern.");
 }
 
-// The files listed in tests/vitest-files.mjs run on Vitest, so this runner drops them from the
-// files its patterns match. The exclusion is temporary while the suite moves to Vitest.
+// The files listed in tests/vitest-files.mjs run on Vitest. This runner drops them from the files
+// its patterns match, so a unit file passed by mistake does not run here as well. Its callers
+// (`npm run test:e2e` and the compat lane) pass only e2e files; the exclusion goes when those
+// move to Vitest.
 const vitestFiles = new Set(VITEST_FILES.map((file) => resolve(root, file)));
 for (const file of vitestFiles) {
   if (!existsSync(file)) throw new Error(`tests/vitest-files.mjs lists ${file}, which does not exist.`);
@@ -42,8 +43,8 @@ const loader = pathToFileURL(resolve(root, "register-loader.mjs")).href;
 // node --test reads each argument as a glob pattern, so a path containing glob characters such as
 // `[ab]` matches nothing; relative paths keep the checkout's directory names out of the pattern.
 const testFiles = files.map((file) => relative(root, file).split(sep).join("/"));
-// WHY: see e2e-concurrency.mjs. A run that includes any e2e file caps the whole
-// run to 2 concurrent files; unit-only runs keep Node's default.
+// WHY: see e2e-concurrency.mjs. A run whose patterns name an e2e path caps the whole
+// run to 2 concurrent files; any other run keeps Node's default.
 const concurrency = needsE2eConcurrency(patterns) ? ["--test-concurrency=2"] : [];
 const result = spawnSync(
   process.execPath,
@@ -51,9 +52,6 @@ const result = spawnSync(
   {
     cwd: root,
     stdio: "inherit",
-    env: updateSnapshots
-      ? { ...process.env, UPDATE_SNAPSHOTS: "1" }
-      : process.env,
   },
 );
 

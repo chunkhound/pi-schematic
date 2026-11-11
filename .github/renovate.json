@@ -1,16 +1,91 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
+  "extends": [
+    "config:recommended",
+    "group:allNonMajor",
+    "helpers:pinGitHubActionDigestsToSemver",
+    "security:minimumReleaseAgeNpm",
+    ":maintainLockFilesMonthly"
+  ],
+  "customDatasources": {
+    "pi-node-floor": {
+      "defaultRegistryUrlTemplate": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/latest",
+      "transformTemplates": [
+        "{\"releases\":[{\"version\": $replace(engines.node, /^>=\\s*/, \"\")}]}"
+      ]
+    }
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/test\\.yml$/",
+        "/^\\.github/renovate\\.json$/",
+        "/^\\.node-version$/"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>\\d+\\.\\d+\\.\\d+)\\s*$",
+        "track: floor\\s+node-version: \"(?<currentValue>[^\"]+)\"",
+        "\"matchPackageNames\":\\s*\\[\"@types/node\"\\],\\s*\"allowedVersions\":\\s*\"\\^(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "pi-node-floor",
+      "datasourceTemplate": "custom.pi-node-floor"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/test\\.yml$/",
+        "/^\\.github/workflows/npm-publish\\.yml$/"
+      ],
+      "matchStrings": [
+        "track: newest\\s+node-version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
+        "uses: actions/setup-node@[^\\n]+\\n\\s+with:\\n\\s+node-version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version"
+    }
+  ],
   "packageRules": [
     {
       "matchPackageNames": [
+        "@earendil-works/pi-agent-core",
         "@earendil-works/pi-ai",
         "@earendil-works/pi-coding-agent",
         "@earendil-works/pi-tui",
-        "typebox"
+        "typebox",
+        "pi-node-floor"
       ],
-      "groupName": "Pi compatibility dependencies",
-      "rangeStrategy": "pin"
+      "groupName": "Pi compatibility floor",
+      "dependencyDashboardApproval": true
+    },
+    {
+      "matchDepNames": ["pi-node-floor"],
+      "separateMajorMinor": false
+    },
+    {
+      "matchDepNames": ["node"],
+      "groupName": "Node.js"
+    },
+    {
+      "matchPackageNames": ["typescript"],
+      "groupName": "TypeScript"
+    },
+    {
+      "matchPackageNames": ["@types/node"],
+      "allowedVersions": "^22.19.0"
+    },
+    {
+      "matchDepTypes": ["peerDependencies"],
+      "enabled": false
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["node"],
+      "enabled": false
+    },
+    {
+      "matchManagers": ["nodenv"],
+      "enabled": false
     }
   ]
 }

@@ -1,13 +1,13 @@
 <p align="center">
-  <a href="https://pi.dev/packages/pi-schematic">
+  <a href="https://pi.dev/packages/@chunkhound/pi-schematic">
     <img src="https://raw.githubusercontent.com/chunkhound/pi-schematic/main/assets/logo-animated.gif" alt="pi-schematic" width="180">
   </a>
 </p>
 
 # pi-schematic
 
-[![pi.dev package](https://img.shields.io/badge/pi.dev-package-purple)](https://pi.dev/packages/pi-schematic)
-[![npm version](https://img.shields.io/npm/v/pi-schematic?logo=npm)](https://www.npmjs.com/package/pi-schematic)
+[![pi.dev package](https://img.shields.io/badge/pi.dev-package-purple)](https://pi.dev/packages/@chunkhound/pi-schematic)
+[![npm version](https://img.shields.io/npm/v/@chunkhound/pi-schematic?logo=npm)](https://www.npmjs.com/package/@chunkhound/pi-schematic)
 [![CI](https://github.com/chunkhound/pi-schematic/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/chunkhound/pi-schematic/actions/workflows/test.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -17,10 +17,10 @@
 
 ## Quick start
 
-Requires [Pi](https://pi.dev) 1.0.4 or later and Node.js 22.19.0 or later.
+Requires [Pi](https://pi.dev) 1.2.0 or later, on a Node.js version Pi supports.
 
 ```bash
-pi install npm:pi-schematic
+pi install npm:@chunkhound/pi-schematic
 ```
 
 To let **handoff** own deliberate restarts, disable Pi's built-in compaction in `~/.pi/agent/settings.json` (or in `settings.json` inside the directory `PI_CODING_AGENT_DIR` names):
@@ -144,13 +144,14 @@ When you delegate a task with `spawn`, you can declare which capabilities it nee
 
 | Area | Current behavior |
 |---|---|
-| **Runtime** | Requires Pi 1.0.4+ and Node.js 22.19.0+. Spawn passes the selected public model into a child-owned runtime. Persisted, environment-based, and extension-rediscoverable provider/auth configuration is available; parent-only transient credentials, inline provider factories, and in-memory catalog changes may not be. Resolution failures are explicit and never silently select another model. |
+| **Runtime** | Requires Pi 1.2.0+ on a Node.js version Pi supports. Spawn passes the selected public model into a child-owned runtime. Persisted, environment-based, and extension-rediscoverable provider/auth configuration is available; parent-only transient credentials, inline provider factories, and in-memory catalog changes may not be. Resolution failures are explicit and never silently select another model. |
 | **Frontmatter** | `model: <provider>/<model-id>` overrides `model-group`; `thinking: off|minimal|low|medium|high|xhigh|max` is capability-clamped and overrides group thinking; `readonly` is boolean. Interactive model selection runs at idle input, while readonly is deferred to `before_agent_start`. Model/thinking changes are sticky. Failed or streaming selection blocks expansion; headless/RPC invocations ignore this policy. |
 | **Group routing** | A known group samples uniformly **with replacement** from authenticated, usable entries, so repeated calls may select the same model. Unknown spawn groups fall back to the parent's model; the spawn tool's TUI display and the result's `details.route` (status `unknown-fallback`) show the fallback, and the result text the model receives carries no marker; known groups with no usable entries fail before child creation. There is no weighting, no-repeat selection, health routing, retry/failover, or optimizer. |
 | **Model Groups files** | Global groups live in `pi-schematic/model-groups.json` inside pi's agent directory (`~/.pi/agent/` by default, or the directory `PI_CODING_AGENT_DIR` names); project groups live in `.pi/pi-schematic/model-groups.json` under the project and are read only in a trusted project. A missing file is no configuration, with no warning. An SDK host that passes its own `agentDir` to pi does not move these files or the global prompt scan: pi loads prompts from that `agentDir/prompts`, while schematic resolves both from `PI_CODING_AGENT_DIR` or the home default, because pi passes no agent directory to extensions. |
 | **Context and cache** | Spawn creates a separate child context; handoff starts a new input prefix. A model/provider switch starts a different cache—the extension creates cache-aware boundaries, not cache preservation or provider cache configuration. |
 | **Delegation** | Children return condensed results and cannot spawn or handoff. There is no worktree isolation or per-child granular tool policy. |
 | **Memory** | Notebook pages are branch- and work-stream-scoped, survive handoff, and clear with `/new`; they are not forever memory. Handoff can transactionally discard stale pages. |
+| **Readonly sandbox** | Sandboxed bash commands run as they would unsandboxed, except that the sandbox denies most writes outside the OS temp dir. [Architecture](docs/architecture.md#behavioral-notes) lists the other, smaller differences. |
 | **Notebook pager** | `/notebook` opens a page in `$PI_PAGER`, else `$PAGER`, else `less` if installed (never auto-detected on Windows); a blank value counts as unset. Args are split on whitespace, with no quoting or shell syntax except on Windows, where `cmd.exe` runs the line. A `cat` or `more` pager, or no pager, shows a 500-character inline preview. `bat` still honors an exported `LESS=-F`, which closes short pages at once. |
 
 ## Readonly and security
@@ -165,7 +166,7 @@ Toggle it with `/readonly`, `Ctrl+Shift+R`, `--readonly`, or workflow frontmatte
 - [Architecture and exact lifecycle behavior](docs/architecture.md)
 - [Changelog](CHANGELOG.md)
 - [Questions, bugs, and feature requests](https://github.com/chunkhound/pi-schematic/issues)
-- [Pi package page](https://pi.dev/packages/pi-schematic)
+- [Pi package page](https://pi.dev/packages/@chunkhound/pi-schematic)
 - [Agentic Coding](https://agenticoding.ai) — companion methodology
 
 ## Contributing

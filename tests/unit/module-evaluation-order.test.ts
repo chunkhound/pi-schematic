@@ -5,13 +5,12 @@
  * the extension graph, so in-process imports cannot prove loader order.
  */
 
-import { spawnSync } from "node:child_process";
-import { strict as assert } from "node:assert";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it } from "node:test";
+import { describe, expect, it } from "vitest";
+import { spawnNode } from "./spawn-node.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const loader = new URL("../../register-loader.mjs", import.meta.url).href;
@@ -19,12 +18,12 @@ const loader = new URL("../../register-loader.mjs", import.meta.url).href;
 function evaluate(code: string): void {
 	const agentDir = mkdtempSync(join(tmpdir(), "pi-schematic-module-order-"));
 	try {
-		const result = spawnSync(process.execPath, ["--import", loader, "--input-type=module", "--eval", code], {
+		const result = spawnNode(["--input-type=module", "--eval", code], {
 			cwd: root,
-			encoding: "utf8",
-			env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+			env: { PI_CODING_AGENT_DIR: agentDir },
+			loader,
 		});
-		assert.equal(result.status, 0, [result.stdout, result.stderr].filter(Boolean).join("\n"));
+		expect(result.status, [result.stdout, result.stderr].filter(Boolean).join("\n")).toBe(0);
 	} finally {
 		rmSync(agentDir, { recursive: true, force: true });
 	}
