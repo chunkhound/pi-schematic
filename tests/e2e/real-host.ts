@@ -17,9 +17,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { TestContext } from "node:test";
 import { RpcClient, type RpcClientOptions, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
+import type { TestContext } from "vitest";
 import { piManifestPath } from "../../pi-packages.mjs";
 import {
 	parseBarrierReport,
@@ -48,13 +48,13 @@ const REQUIRED_COMMANDS = ["handoff", "notebook", "readonly", PROBE_COMMAND.barr
 const REAL_HOST_MAX_BARRIERS_PER_TEST = 4;
 /** How much longer than the probe's own deadline the harness waits for a barrier report. */
 const BARRIER_REPORT_MARGIN_MS = 5_000;
-/** Largest `timeout` node:test accepts; a larger one throws ERR_OUT_OF_RANGE when the test registers. */
-const NODE_TEST_MAX_TIMEOUT_MS = 2_147_483_647;
+/** Largest `timeout` Vitest can apply: it hands the value to `setTimeout`, and Node turns a delay above this into 1 ms. */
+const MAX_TEST_TIMEOUT_MS = 2_147_483_647;
 
 /**
- * `node:test` timeout for a real-host test whose barriers each wait `waitMs`: every barrier
+ * Vitest timeout for a real-host test whose barriers each wait `waitMs`: every barrier
  * a test may make running to its harness deadline, plus a minute for start, commands and
- * close, so a slow test fails with the harness's message, not node:test's. A step that
+ * close, so a slow test fails with the harness's message, not Vitest's. A step that
  * barriers again spends that same deadline and can stretch its phase by one report backstop,
  * which that minute absorbs.
  */
@@ -69,11 +69,11 @@ function readTimeout(): number {
 	if (!Number.isInteger(value) || value <= 0) {
 		throw new Error(`E2E_REAL_HOST_TIMEOUT_MS must be a positive integer, got: ${raw}`);
 	}
-	if (testTimeoutFor(value) > NODE_TEST_MAX_TIMEOUT_MS) {
-		const max = Math.floor((NODE_TEST_MAX_TIMEOUT_MS - 60_000) / REAL_HOST_MAX_BARRIERS_PER_TEST) - BARRIER_REPORT_MARGIN_MS;
+	if (testTimeoutFor(value) > MAX_TEST_TIMEOUT_MS) {
+		const max = Math.floor((MAX_TEST_TIMEOUT_MS - 60_000) / REAL_HOST_MAX_BARRIERS_PER_TEST) - BARRIER_REPORT_MARGIN_MS;
 		throw new Error(
 			`E2E_REAL_HOST_TIMEOUT_MS=${raw} makes the per-test timeout ${testTimeoutFor(value)} ms, ` +
-			`above node:test's limit of ${NODE_TEST_MAX_TIMEOUT_MS} ms; use at most ${max}`,
+			`above Vitest's limit of ${MAX_TEST_TIMEOUT_MS} ms; use at most ${max}`,
 		);
 	}
 	return value;
@@ -370,7 +370,7 @@ export class RealHost {
 		if (sessionIndex !== -1) args.splice(sessionIndex, 2);
 		args.push("--session", sessionFile);
 		this.options = { ...this.options, args };
-		// A timed-out test body keeps running after its after-hook closed the host; whatever the
+		// A timed-out test body keeps running after its finish callback closed the host; whatever the
 		// new CLI wrote into the removed root, and the CLI itself when it started, is cleared here.
 		const { client, events } = await cleanupOnFailure(() => startClient(this.options), () => {
 			if (this.closing) removeRoot(this.root);
@@ -559,17 +559,14 @@ export function startRealHost(options?: RealHostOptions): Promise<RealHost> {
 }
 
 /**
- * Start a host and run `run` against it, then close it. The close also hangs off an after-hook
- * on `t`: node:test does not cancel a timed-out test body, so only a hook still runs then.
- * `close()` runs once however many of these paths reach it. The inline close keeps a cleanup
- * error visible next to a body failure; node:test ignores an after-hook error once the test
- * has failed (timeout included), so the hook also records it as a diagnostic.
+ * Start a host and run `run` against it, then close it. The close also hangs off `t`'s
+ * `onTestFinished` with no timeout: Vitest does not cancel a timed-out test body, so only a
+ * finish callback still runs then. `close()` runs once however many of these paths reach it.
+ * The inline close keeps a cleanup error visible next to a body failure; a close error from
+ * the callback is added to the test's errors, also when the test already failed or timed out.
  */
 export async function withRealHost(t: TestContext, run: (host: RealHost) => Promise<void>, options?: RealHostOptions): Promise<void> {
 	const host = await startRealHost(options);
-	t.after(() => host.close().catch((error: unknown) => {
-		t.diagnostic(`cleanup failed: ${describeError(error)}`);
-		throw error;
-	}));
+	t.onTestFinished(() => host.close(), 0);
 	await withCleanup(() => run(host), () => host.close());
 }
