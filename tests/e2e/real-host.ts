@@ -208,8 +208,8 @@ export function toolResults(entries: SessionEntry[], name: string): ToolResult[]
 }
 
 export class RealHost {
-	client: RpcClient;
-	events: RpcEvent[];
+	readonly client: RpcClient;
+	readonly events: RpcEvent[];
 	readonly projectDir: string;
 	private readonly root: string;
 	private readonly logPath: string;
@@ -449,14 +449,13 @@ export class RealHost {
 	 */
 	private async waitForEvent(seen: number, deadline: number): Promise<void> {
 		if (this.events.length > seen) return;
-		const { client, events } = this;
 		await new Promise<void>((resolve) => {
 			const timer = setTimeout(() => {
 				unsubscribe();
 				resolve();
 			}, Math.max(deadline - Date.now(), 0));
-			const unsubscribe = client.onEvent(() => {
-				if (events.length <= seen) return;
+			const unsubscribe = this.client.onEvent(() => {
+				if (this.events.length <= seen) return;
 				clearTimeout(timer);
 				unsubscribe();
 				resolve();
@@ -467,11 +466,9 @@ export class RealHost {
 	/** Run `/e2e-barrier <id> <probeDeadlineMs>` and wait for its report; throws with the probe's outstanding items when it failed. */
 	private async barrier(probeDeadlineMs: number): Promise<void> {
 		const id = ++this.barrierRounds;
-		const client = this.client;
-		const events = this.events;
-		const mark = events.length;
+		const mark = this.events.length;
 		const findReport = (): BarrierReport | undefined => {
-			for (const event of events.slice(mark)) {
+			for (const event of this.events.slice(mark)) {
 				if (event.type !== "extension_ui_request" || event.method !== "setStatus" || event.statusKey !== PROBE_BARRIER_STATUS_KEY) continue;
 				const report = parseBarrierReport(requireString(event, "statusText"));
 				if (report.id === id) return report;
@@ -483,9 +480,9 @@ export class RealHost {
 		const report = findReport() ?? await new Promise<BarrierReport>((resolveWait, rejectWait) => {
 			const timer = setTimeout(() => {
 				unsubscribe();
-				rejectWait(new Error(`Timed out after ${waitMs} ms waiting for barrier ${id} to report. Stderr: ${client.getStderr()}`));
+				rejectWait(new Error(`Timed out after ${waitMs} ms waiting for barrier ${id} to report. Stderr: ${this.client.getStderr()}`));
 			}, waitMs);
-			const unsubscribe = client.onEvent(() => {
+			const unsubscribe = this.client.onEvent(() => {
 				let found: BarrierReport | undefined;
 				try {
 					found = findReport();
@@ -527,10 +524,6 @@ function removeRoot(root: string): void {
 	rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
 
-export function startRealHost(options?: RealHostOptions): Promise<RealHost> {
-	return RealHost.start(options);
-}
-
 /**
  * Start a host and run `run` against it. The host closes once, from `t`'s finish callback,
  * whether the test passed, failed or timed out, a timeout during start included; a close error
@@ -540,8 +533,12 @@ export function startRealHost(options?: RealHostOptions): Promise<RealHost> {
  * next test.
  */
 export async function withRealHost(t: TestContext, run: (host: RealHost) => Promise<void>, options?: RealHostOptions): Promise<void> {
-	const starting = startRealHost(options);
+	const starting = RealHost.start(options);
 	let body: Promise<void> | undefined;
+	// The explicit 0 keeps the close independent of the project's hookTimeout. Under a nonzero
+	// hookTimeout (a global --hookTimeout, or another project) Vitest would fail the test with a hook
+	// timeout while the close is still running and stop waiting, so the close would run on into the
+	// next test.
 	t.onTestFinished(async () => {
 		let host: RealHost;
 		try {
@@ -555,7 +552,7 @@ export async function withRealHost(t: TestContext, run: (host: RealHost) => Prom
 		await host.close();
 	}, 0);
 	const host = await starting;
-	if (t.signal.aborted) throw t.signal.reason;
+	t.signal.throwIfAborted();
 	body = run(host);
 	await body;
 }

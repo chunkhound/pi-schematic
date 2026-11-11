@@ -527,8 +527,9 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			expect(requestsAfterCut(host.probeLog(), handoffId), "the run is aborted before the model is called after the cut").toStrictEqual([]);
 			const failure = onlyCustomMessage(failed.entries, HANDOFF_FAILED_CUSTOM_TYPE);
 			expect(failure.content).toBeTypeOf("string");
-			expect(failure.content as string, "the failure carries the instruction").toContain("## Next instruction\n\nfinish the report");
-			expect(failure.content as string, "the failure carries the context").toContain("mid-task state");
+			const failureText = failure.content as string;
+			expect(failureText, "the failure carries the instruction").toContain("## Next instruction\n\nfinish the report");
+			expect(failureText, "the failure carries the context").toContain("mid-task state");
 			expect(failure.display, "the failure is shown").toBe(true);
 			expect(
 				notificationsStartingWith(host, `Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}.`),
@@ -598,8 +599,9 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		expect(host.cuts(), "no cut reached the turn_end boundary").toStrictEqual([]);
 		const failure = onlyCustomMessage(entries, HANDOFF_FAILED_CUSTOM_TYPE);
 		expect(failure.content).toBeTypeOf("string");
-		expect(failure.content as string, "the failure names its reason").toContain(REASON_ABORTED);
-		expect(failure.content as string, "the failure says no handoff stays required").toContain("No required handoff remains pending");
+		const failureText = failure.content as string;
+		expect(failureText, "the failure names its reason").toContain(REASON_ABORTED);
+		expect(failureText, "the failure says no handoff stays required").toContain("No required handoff remains pending");
 		expect(failure.display, "the failure is shown").toBe(true);
 		expect(
 			notificationsStartingWith(host, `Handoff failed: ${REASON_ABORTED}.`),
@@ -723,8 +725,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		expect(cutsAppended, "one cut appended during the handoff run").toHaveLength(1);
 		const statusesAfterCut = projectStatuses(throughHandoff.slice(cutsAppended[0] + 1))
 			.filter((status) => status.statusKey === STATUS_KEY_HANDOFF);
-		expect(statusesAfterCut, "a handoff status follows the cut").toHaveLength(1);
-		expect(statusesAfterCut.at(-1)?.statusText, "handoff status cleared after the cut").toBeUndefined();
+		expect(statusesAfterCut, "one handoff status follows the cut and clears it").toStrictEqual([{ statusKey: STATUS_KEY_HANDOFF, statusText: undefined }]);
 		expect(
 			host.notifications.map((notification) => notification.message).filter((message) => message.includes("Readonly topic boundary detected")),
 			"boundary promotion notified",
