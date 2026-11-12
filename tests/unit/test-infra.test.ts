@@ -1,6 +1,6 @@
 // Tests for the test infrastructure itself: the shared Node child runner, the compat lane check that
-// every file on its unit list exists and belongs to the unit project, and the run-wide config that
-// keeps parameterized test titles whole.
+// every file on its unit list exists and belongs to the unit project, the run-wide config that
+// keeps parameterized test titles whole, and the prefix and suffix assertion helpers.
 
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
