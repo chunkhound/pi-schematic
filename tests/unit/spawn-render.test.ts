@@ -465,7 +465,7 @@ test("expanded nested spawn header stays within width after indent", async () =>
 
 	const lines = component.render(24);
 	const headerLine = lines.find((line: string) => line.includes("model-name")) ?? "";
-	expectPrefix(headerLine, "     ");
+	expectPrefix(headerLine, " ".repeat(5));
 	expect(stripAnsi(headerLine).length).toBeLessThanOrEqual(24);
 });
 

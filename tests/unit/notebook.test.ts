@@ -1554,8 +1554,7 @@ test("rejected overwrite preserves prior body and clipped flag", async () => {
 	expect(state.epoch).toBe(epochClipped);
 	read = await notebookRead.execute("3", { name: "page" }, undefined, undefined, {} as any);
 	expect((read.details as any).clipped).toBe(true);
-	const suffix = `\n\n${Notice}`;
-	expectSuffix((read.content[0] as any).text, suffix);
+	expectSuffix((read.content[0] as any).text, `\n\n${Notice}`);
 });
 
 test("blank first line plus oversized line rejects and preserves prior page state", async () => {
@@ -1614,8 +1613,7 @@ test("clipped flag survives fresh reconstruction without persisted quantities", 
 	const [, restoredRead] = createNotebookToolDefinitions(restoredPi as any, restored);
 	const read = await restoredRead.execute("1", { name: "page" }, undefined, undefined, {} as any);
 	expect((read.details as any).clipped).toBe(true);
-	const suffix = `\n\n${Notice}`;
-	expectSuffix((read.content[0] as any).text, suffix);
+	expectSuffix((read.content[0] as any).text, `\n\n${Notice}`);
 });
 
 test("complete overwrite clears a durable clipped flag", async () => {

@@ -1151,8 +1151,7 @@ test("buildNextUserMessage preserves instruction bytes and normalizes context pa
 			fc.string(),
 			(instruction, context) => {
 				const message = buildNextUserMessage({ nextInstruction: instruction, context });
-				const prefix = `## Next instruction\n\n${instruction}`;
-				expectPrefix(message, prefix, "the instruction must open the message byte-for-byte");
+				expectPrefix(message, `## Next instruction\n\n${instruction}`, "the instruction must open the message byte-for-byte");
 				if (context.trim()) expect(message, "non-blank context must be preserved in the message").toContain(context.trim());
 				expect(message, "context padding must not change the delivered message").toBe(buildNextUserMessage({ nextInstruction: instruction, context: ` \n${context} ` }));
 			},

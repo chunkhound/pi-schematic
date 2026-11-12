@@ -561,8 +561,7 @@ test("readonly topic boundary handoff clears its bypass after the cut", async ()
 	const compaction = drafts.find((draft) => draft.type === "compaction");
 	const successor = drafts.find((draft) => draft.customType === "pi-schematic-handoff");
 	expect(compaction.summary, "readonly must not be frozen into the summary").toBe(buildContinuationFrame());
-	const prefix = "## Next instruction\n\nContinue billing work";
-	expectPrefix(successor.content, prefix, "the successor turn carries the stored direction verbatim");
+	expectPrefix(successor.content, "## Next instruction\n\nContinue billing work", "the successor turn carries the stored direction verbatim");
 	expect((await toolCall({ toolName: "handoff", input: {} }, {})).block).toBe(true);
 	expect((await toolCall({ toolName: "write", input: {} }, {})).block).toBe(true);
 });

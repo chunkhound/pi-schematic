@@ -135,8 +135,7 @@ test.skipIf(!canUseOsSandbox())("sandboxed child bash write outside temp returns
 	expect(result.isError).toBe(true);
 	expect(textOf(result), textOf(result)).toContain(READONLY_SANDBOX_BLOCK_NOTICE);
 	const structured = result.structuredContent as { output: string; exit_code: number };
-	const suffix = `\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`;
-	expectSuffix(structured.output, suffix);
+	expectSuffix(structured.output, `\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`);
 	expect(structured.exit_code).toBe(1);
 	expect(target, "the sandbox must block the write").not.toSatisfy(fs.existsSync);
 });
