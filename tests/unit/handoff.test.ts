@@ -606,9 +606,9 @@ for (const { attemptsBefore, nudged, requestSurvives } of [
 		if (requestSurvives) expect(state.pendingRequestedHandoff).not.toBeNull();
 		else expect(state.pendingRequestedHandoff).toBeNull();
 		expect(pi.sentMessages).toHaveLength(1);
-		expect(pi.sentMessages[0].message.content).toMatch(requestSurvives
-			? /The required handoff remains pending; retry when context usage is eligible\.$/
-			: /No required handoff remains pending; retry when ready\.$/);
+		expectSuffix(pi.sentMessages[0].message.content, requestSurvives
+			? "The required handoff remains pending; retry when context usage is eligible."
+			: "No required handoff remains pending; retry when ready.");
 		expect(statuses.get(STATUS_KEY_HANDOFF)).toBe(requestSurvives ? "🤝 Handoff required — ready to compact" : undefined);
 		expect(notifications[0]?.message).toBe(`Handoff failed: ${REASON_NOT_PERSISTED}. The handoff can be retried.`);
 	});
