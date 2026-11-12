@@ -7,9 +7,11 @@ import { Value } from "typebox/value";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, type SessionStats } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxProvider, type Usage } from "@earendil-works/pi-ai";
 import { createState } from "../../state.js";
+import { THINKING_LEVELS } from "../../thinking-levels.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
 import { createTestHost } from "./test-host.js";
 import { assertErrorResult, EMPTY_CHILD_USAGE, runRealChildInvocation } from "./helpers.js";
+import { REPO_ROOT_URL } from "../paths.js";
 
 test("real child completes through inherited/default thinking", async () => {
 	const proof = await runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK." });
@@ -84,27 +86,36 @@ test("concurrent real children both complete", async () => {
 	expect(proof.probeCalls).toBe(2);
 });
 
-test("spawn routes through the public registry but uses only the selected-model child session boundary", async () => {
-
-	const source = await readFile(new URL("../../spawn/index.ts", import.meta.url), "utf8");
+test("spawn routes through the public registry and keeps source boundaries exact", async () => {
+	const source = await readFile(new URL("spawn/index.ts", REPO_ROOT_URL), "utf8");
 	expect(source).not.toMatch(/\bAuthStorage\b|\bModelRegistry\b/);
 	expect(source).not.toMatch(/\bauthStorage\s*:/);
 	expect(source).not.toMatch(/sessionFactory\(\{[\s\S]*?\bmodelRegistry\s*:/);
 	expect(source).not.toMatch(/modelRuntime\s*[:.]|as\s+any[^\n]*(?:auth|runtime)/i);
 	expect(source).toMatch(/modelRegistry:\s*ctx\.modelRegistry/);
 	expect(source).toMatch(/model:\s*childModel/);
+	expect(source).toMatch(/session\.dispose\(\)/);
+	const renderer = await readFile(new URL("spawn/renderer.ts", REPO_ROOT_URL), "utf8");
+	expect(renderer).not.toMatch(/console\.(?:debug|warn|error|log)\s*\(/);
+	expect(renderer).not.toMatch(/process\.(?:stdout|stderr)\.write\s*\(/);
 });
 
-test("spawn accepts max thinking parameter in schema", async () => {
+test("spawn schema advertises the thinking levels as a plain string enum and rejects other values", async () => {
 	const state = createState();
 	const pi = await createTestHost((api) => registerSpawnTool(api, state));
 	const tool = pi.tools.get("spawn");
-	const schemaText = JSON.stringify(tool.parameters);
-	expect(schemaText).toMatch(/max/);
+	const thinkingSchema = JSON.parse(JSON.stringify(tool.parameters)).properties.thinking;
+	expect(thinkingSchema.type).toBe("string");
+	expect(thinkingSchema.enum).toStrictEqual([...THINKING_LEVELS]);
+	expect(JSON.stringify(thinkingSchema)).not.toMatch(/"(?:anyOf|const)"\s*:/);
 	expect(Value.Check(tool.parameters, { prompt: "work" }), "schema accepts prompt without thinking").toBe(true);
-	expect(Value.Check(tool.parameters, { prompt: "work", thinking: "max" }), "schema accepts thinking: max").toBe(true);
+	expect(Value.Check(tool.parameters, { prompt: "work", thinking: "ultra" }), "schema rejects unknown thinking levels").toBe(false);
 	expect(Value.Check(tool.parameters, { prompt: "work", group: "review", thinking: "max" }), "schema composes Model Group routing with explicit thinking").toBe(true);
+});
 
+test.for([...THINKING_LEVELS])("spawn schema accepts thinking: %s", async (thinking) => {
+	const pi = await createTestHost((api) => registerSpawnTool(api, createState()));
+	expect(Value.Check(pi.tools.get("spawn").parameters, { prompt: "work", thinking })).toBe(true);
 });
 
 test("spawn real child completes with max thinking requested", async () => {

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Pi 1.2.0 minimum**: the `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` peers now require 1.2.0 or later, up from 0.99.2. The `typebox` peer minimum stays 1.3.27.
+
 ## [0.7.1] - 2026-11-08
 
 ### Changed

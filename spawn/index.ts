@@ -18,7 +18,7 @@ import type {
 	ToolDefinition,
 	ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import { type AssistantMessage, type ModelThinkingLevel, type TextContent, type Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ModelThinkingLevel, TextContent, Usage } from "@earendil-works/pi-ai";
 import {
 	READONLY_CHILD_AUTHORITY_NOTE,
 	READONLY_NO_SHELL_SUMMARY,
@@ -359,12 +359,13 @@ export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
 		constraints: Type.Optional(Type.Object(Object.fromEntries(constraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])) as any, {
 			description: `Capability requirements for the delegated task — a JSON object keyed by constraint name, not a JSON string and not an array. Keys: ${constraintRegistry.descriptors.map((descriptor) => descriptor.key).join(", ")} — each value must match its key's schema; unknown keys or invalid values are rejected before a child is created.`,
 		})),
-		// A plain string enum rather than a union of literals, because some providers reject anyOf/const schemas.
+		// pi-ai >=1.5.0 StringEnum returns a pi-schema schema, which typebox cannot
+		// infer: `thinking` became unknown and the tool contract broke. Type.Unsafe
+		// restores the exact type; the wire shape stays a Google-safe string enum.
 		thinking: Type.Optional(Type.Unsafe<ModelThinkingLevel>({
 			type: "string",
 			enum: THINKING_LEVELS,
-			description:
-				"Override child thinking level. A routed Model Group entry may override it.",
+			description: "Override child thinking level. A routed Model Group entry may override it.",
 		})),
 	});
 }

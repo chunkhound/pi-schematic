@@ -13,7 +13,6 @@ import {
 	registerSpawnTool,
 } from "../../spawn/index.js";
 import { renderSpawnResult } from "../../spawn/renderer.js";
-import { THINKING_LEVELS } from "../../thinking-levels.js";
 import { formatByteCap } from "../../notebook/store.js";
 import { SpawnRouteError } from "../../model-groups/router.js";
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
@@ -1388,20 +1387,6 @@ test("registered spawn tool schema accepts injected scalar requirements", async 
 	expect(Value.Check(schema, { prompt: "Do the task", constraints: { testMinContext: 20 } }), "the registered schema accepts an injected descriptor's scalar requirement").toBe(true);
 	expect(Value.Check(schema, { prompt: "Do the task", constraints: { testMinContext: 0 } }), "the injected descriptor retains its requirement schema").toBe(false);
 	expect(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["text"] } } }), "the injected registry, not the production registry, defines the registered schema").toBe(false);
-});
-
-test("registered spawn tool schema advertises thinking as a plain string enum of the thinking levels", async () => {
-	const pi = await createTestHost((api) => registerSpawnTool(api, createState()));
-	const schema = pi.tools.get("spawn").parameters;
-	const thinking = JSON.parse(JSON.stringify(schema.properties.thinking));
-	expect(thinking.type).toBe("string");
-	expect(thinking.enum).toStrictEqual([...THINKING_LEVELS]);
-});
-
-test("registered spawn tool schema rejects an unknown thinking level", async () => {
-	const pi = await createTestHost((api) => registerSpawnTool(api, createState()));
-	const schema = pi.tools.get("spawn").parameters;
-	expect(Value.Check(schema, { prompt: "Do the task", thinking: "extreme" })).toBe(false);
 });
 
 test("spawn requirements validate the canonical envelope and keep its shape", () => {

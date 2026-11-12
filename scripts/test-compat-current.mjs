@@ -61,8 +61,11 @@ async function main() {
     prepareCompatCopy(copy);
 
     const latestPi = await resolveLatestPi(copy);
+    // WHY: agent-core is an exact devDependency, so it must move with the other Pi packages here, or
+    // the floor pin stays top-level and the latest coding-agent nests its own exact agent-core copy.
     await runNpmWithRetry(copy, ["install", "--ignore-scripts", "--save-dev", "--save-exact",
       ...Object.entries(latestPiDependencies(latestPi)).map(([name, version]) => `${name}@${version}`),
+      `@earendil-works/pi-agent-core@${latestPi.piVersion}`,
     ]);
     const graphResult = await runNpmWithRetry(copy, ["ls", "--all", "--json"], { capture: true });
     const graph = JSON.parse(graphResult.stdout);

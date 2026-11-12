@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { CURSOR_MARKER, fuzzyFilter, visibleWidth } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, fuzzyFilter, renderFakeCursor, visibleWidth } from "@earendil-works/pi-tui";
 import { createModelGroupsComponent } from "../../model-groups/tui.js";
 import { ModelGroupsPersistenceError, type ModelGroupsBootValidation, type ResolvedModelGroup } from "../../model-groups/types.js";
 import { assertPresent } from "../assertions.js";
@@ -54,6 +54,14 @@ function press(c: { handleInput?: (data: string) => void; render?: (width: numbe
 		c.render?.(100);
 	}
 }
+
+// A focused Input draws its cursor cell between pi-tui's fake-cursor markers; the TUI turns them
+// into reverse video only when it writes the frame, so a component render carries the markers.
+const FAKE_CURSOR_PARTS = renderFakeCursor("\0").split("\0");
+if (FAKE_CURSOR_PARTS.length !== 2 || FAKE_CURSOR_PARTS[0] === "") {
+	throw new Error(`renderFakeCursor no longer wraps its text in a marker pair: ${JSON.stringify(FAKE_CURSOR_PARTS)}`);
+}
+const FAKE_CURSOR_START = FAKE_CURSOR_PARTS[0];
 
 function rendered(c: { render: (width: number) => string[] }, width = 100): string {
 	return c.render(width).join("\n");
@@ -680,14 +688,14 @@ test("model groups TUI renders name editing inline and preserves edit/commit tra
 	let text = rendered(c);
 	expect(text).toMatch(/→ Name: abc/);
 	expect(text).not.toMatch(/(?:^|\n)> /);
-	expect(text).not.toMatch(/\u001b\[7m/);
+	expect(text).not.toContain(FAKE_CURSOR_START);
 	expect(text).not.toContain(CURSOR_MARKER);
 
 	press(c, ENTER, "d"); // D remains literal while the input is active
 	text = rendered(c);
 	expect(text).toMatch(/→ Name: abcd/);
 	expect(text).not.toMatch(/(?:^|\n)> /);
-	expect(text).toMatch(/\u001b\[7m/);
+	expect(text).toContain(`abcd${CURSOR_MARKER}${renderFakeCursor(" ")}`);
 	expect(text.split(CURSOR_MARKER)).toHaveLength(2);
 
 	press(c, LEFT, BACKSPACE);
@@ -697,7 +705,7 @@ test("model groups TUI renders name editing inline and preserves edit/commit tra
 	text = rendered(c);
 	expect(text).toMatch(/Model Group: abcd/);
 	expect(text).toMatch(/  Name: abcd/);
-	expect(text).not.toMatch(/\u001b\[7m/);
+	expect(text).not.toContain(FAKE_CURSOR_START);
 	expect(text).not.toContain(CURSOR_MARKER);
 
 	press(c, DOWN, DOWN, ENTER, "e", ENTER); // Enter also commits and exits edit mode
@@ -711,7 +719,7 @@ test("model groups TUI renders name editing inline and preserves edit/commit tra
 	expect(text).toMatch(/Model Group: abcdef/);
 	expect(text).toMatch(/→ \+ Add model/);
 	expect(text).toMatch(/Name: abcdef/);
-	expect(text).not.toMatch(/\u001b\[7m/);
+	expect(text).not.toContain(FAKE_CURSOR_START);
 	expect(text).not.toContain(CURSOR_MARKER);
 	expect(text).not.toMatch(/Delete Model Group/);
 });
