@@ -2,7 +2,7 @@ import { expect, test, vi } from "vitest";
 import { CURSOR_MARKER, fuzzyFilter, renderFakeCursor, visibleWidth } from "@earendil-works/pi-tui";
 import { createModelGroupsComponent } from "../../model-groups/tui.js";
 import { ModelGroupsPersistenceError, type ModelGroupsBootValidation, type ResolvedModelGroup } from "../../model-groups/types.js";
-import { assertPresent, expectPrefix } from "../assertions.js";
+import { assertPresent } from "../assertions.js";
 import { stripAnsi, theme } from "./helpers.js";
 import { group } from "./model-groups-helpers.js";
 
@@ -767,9 +767,10 @@ test("model groups TUI move, wizard add, model thinking, and remove persist thro
 	c.handleInput?.("\u001b[B"); // first model row after refresh
 	c.handleInput?.("\r");
 	c.handleInput?.("D");
-	const lastCall = calls.at(-1);
-	assertPresent(lastCall);
-	expectPrefix(lastCall, "update:global:review:");
+	// Assert a NEW persist happened; the add step's call has the same prefix, so
+	// `calls.at(-1)` alone would also pass if D persisted nothing.
+	expect(calls).toHaveLength(4);
+	expect(calls.at(-1)).toBe("update:global:review:anthropic/claude/inherit");
 });
 
 test("model groups TUI notifies and keeps visible state on persistence errors", () => {
