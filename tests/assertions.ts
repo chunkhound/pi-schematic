@@ -10,7 +10,7 @@ export function assertPresent<T>(value: T, message?: string): asserts value is N
 	expect(value, message).not.toBeNullable();
 }
 
-// The failure message carries the full string, so a mismatch shows what was compared against.
+// The failure message carries the full string, so a mismatch shows the string the compared part was cut from.
 function withActual(actual: string, message: string | undefined): string {
 	return message === undefined ? actual : `${message}\n${actual}`;
 }

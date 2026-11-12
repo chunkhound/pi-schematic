@@ -67,12 +67,13 @@ describe("compat lane test files", () => {
 });
 
 describe("expectPrefix and expectSuffix", () => {
+	const whole = "hello world";
 	const helpers = [
-		{ name: "expectPrefix", check: expectPrefix, match: "hello", mismatch: "world", whole: "hello world" },
-		{ name: "expectSuffix", check: expectSuffix, match: "world", mismatch: "hello", whole: "hello world" },
+		{ name: "expectPrefix", check: expectPrefix, match: "hello", mismatch: "world" },
+		{ name: "expectSuffix", check: expectSuffix, match: "world", mismatch: "hello" },
 	];
 
-	describe.for(helpers)("$name", ({ check, match, mismatch, whole }) => {
+	describe.for(helpers)("$name", ({ check, match, mismatch }) => {
 		test.for([
 			{ title: "a matching part", part: match },
 			{ title: "an empty part", part: "" },
@@ -85,17 +86,13 @@ describe("expectPrefix and expectSuffix", () => {
 			expect(() => check(whole, mismatch)).toThrow(whole);
 		});
 
-		test("fails on a string shorter than the part and prints the full string", () => {
-			expect(() => check("hi", "hello world")).toThrow("hi");
+		test("fails on a string shorter than the part and prints the caller's message and the full string", () => {
+			expect(() => check("hi", whole, "the greeting")).toThrow("the greeting\nhi");
 		});
 
 		test("prints the caller's message and the full string", () => {
 			expect(() => check(whole, mismatch, "the greeting")).toThrow(`the greeting\n${whole}`);
 		});
-	});
-
-	test("expectSuffix passes on an empty suffix of a non-empty string", () => {
-		expect(() => expectSuffix("hello world", "")).not.toThrow();
 	});
 });
 
