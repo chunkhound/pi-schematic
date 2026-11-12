@@ -23,6 +23,8 @@ export default defineConfig({
 	test: {
 		env: { PI_OFFLINE: "1" },
 		expect: { requireAssertions: true },
+		// Drop the assertion helpers' frames so a failure's code frame points at the test's call line.
+		onStackTrace: (_error, { file }) => !/[\\/]tests[\\/]assertions\.ts$/.test(file),
 		unstubEnvs: true,
 		restoreMocks: true,
 		// 0 disables truncation, so test names built from test.each/test.for rows stay whole.
