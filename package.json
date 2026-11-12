@@ -37,7 +37,7 @@
   "scripts": {
     "prepare": "husky",
     "test": "vitest run --project unit",
-    "test:e2e": "node ./scripts/run-node-test.mjs tests/e2e/**/*.test.ts",
+    "test:e2e": "vitest run --project e2e",
     "test:all": "npm run test && npm run test:e2e",
     "test:snapshots:check": "vitest run --project unit --update=none tests/unit/render-snapshots.test.ts",
     "test:snapshots:update": "vitest run --project unit --update=all tests/unit/render-snapshots.test.ts",

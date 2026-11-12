@@ -1,20 +1,15 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createCompatCopy, latestPiDependencies, prepareCompatCopy, resolveLatestPi, writeCompatArtifacts, writeCompatDiagnostics } from "./compat-fixture.mjs";
 import { repoRootFromScript, runChecked, runNpmWithRetry } from "./compat-process.mjs";
 import { assertSynchronizedPackageVersions } from "./dependency-graph-assertions.mjs";
-import { VITEST_FILES } from "../tests/vitest-files.mjs";
 
+const ROOT = repoRootFromScript(import.meta.url);
 const PI_SYNC_PACKAGES = ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"];
 
-// The end-to-end suites the compat lane runs on node:test through scripts/run-node-test.mjs.
-export const COMPAT_NODE_TEST_FILES = [
-  "tests/e2e/basic.test.ts",
-  "tests/e2e/real-host.test.ts",
-];
-// The unit tests the compat lane runs on Vitest.
-export const COMPAT_VITEST_FILES = [
+// The unit tests the compat lane runs in the Vitest unit project.
+export const COMPAT_UNIT_FILES = [
   "tests/unit/spawn-runtime-compatibility.test.ts",
   "tests/unit/spawn-lifecycle.test.ts",
   "tests/unit/spawn-event.test.ts",
@@ -39,27 +34,28 @@ export const COMPAT_VITEST_FILES = [
   "tests/unit/test-host.test.ts",
 ];
 
-// tests/vitest-files.mjs decides each file's runner. run-node-test.mjs drops a file that runs on
-// Vitest, and Vitest ignores a file filter that matches none of its files, so a file on the wrong
-// list here would run in neither runner while the lane passes.
-export function assertCompatTestLists(nodeTestFiles, vitestTestFiles) {
-  const onVitest = new Set(VITEST_FILES);
-  const misplaced = [
-    ...nodeTestFiles.filter((file) => onVitest.has(file)),
-    ...vitestTestFiles.filter((file) => !onVitest.has(file)),
-  ];
-  if (misplaced.length > 0) {
-    throw new Error(`The compat lane lists ${misplaced.join(", ")} for the wrong runner; tests/vitest-files.mjs decides it.`);
+// Vitest ignores a file filter that matches no file when another filter matches, so a listed file
+// that does not exist, or that the unit project does not include, would silently not run while the
+// lane passes. The unit project runs `tests/unit/**/*.test.ts`. The check compares the paths as
+// written, so each entry is a normalized path relative to the repository root, whatever the working
+// directory.
+export function assertCompatTestFiles(files) {
+  const missing = files.filter((file) => !existsSync(join(ROOT, file)));
+  if (missing.length > 0) {
+    throw new Error(`The compat lane lists test files that do not exist: ${missing.join(", ")}`);
+  }
+  const outside = files.filter((file) => !(file.startsWith("tests/unit/") && file.endsWith(".test.ts")));
+  if (outside.length > 0) {
+    throw new Error(`The compat lane lists test files outside the unit project: ${outside.join(", ")}`);
   }
 }
 
 const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
 
 async function main() {
-  assertCompatTestLists(COMPAT_NODE_TEST_FILES, COMPAT_VITEST_FILES);
-  const root = repoRootFromScript(import.meta.url);
+  assertCompatTestFiles(COMPAT_UNIT_FILES);
   const artifactDir = process.env.COMPAT_ARTIFACT_DIR;
-  const { temp, copy } = createCompatCopy(root, "pi-schematic-current-");
+  const { temp, copy } = createCompatCopy(ROOT, "pi-schematic-current-");
 
   try {
     prepareCompatCopy(copy);
@@ -82,8 +78,8 @@ async function main() {
 
     await runNpmWithRetry(copy, ["run", "typecheck"]);
     await runNpmWithRetry(copy, ["exec", "audit-ci", "--", "--config", "audit-ci.jsonc"]);
-    runChecked(process.execPath, ["./node_modules/vitest/vitest.mjs", "run", "--project", "unit", ...COMPAT_VITEST_FILES], { cwd: copy });
-    runChecked(process.execPath, ["./scripts/run-node-test.mjs", ...COMPAT_NODE_TEST_FILES], { cwd: copy });
+    runChecked(process.execPath, ["./node_modules/vitest/vitest.mjs", "run", "--project", "unit", ...COMPAT_UNIT_FILES], { cwd: copy });
+    runChecked(process.execPath, ["./node_modules/vitest/vitest.mjs", "run", "--project", "e2e"], { cwd: copy });
     writeCompatArtifacts(artifactDir, copy, { piVersion, typeboxVersion: latestPi.typeboxVersion });
     process.stdout.write(`Current synchronized Pi compatibility passed at ${piVersion}.\n`);
   } catch (error) {
