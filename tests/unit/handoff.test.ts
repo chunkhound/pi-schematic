@@ -637,7 +637,7 @@ test("agent_settled fails a declined handoff with its decline reason in a displa
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 
 	expect(state.pendingRequestedHandoff?.toolCalled).toBe(false);
-	expect(assertFailedWithoutRun(state, pi)).toMatch(new RegExp(`^Handoff failed — ${REASON_RESULT_MISSING}\\.`));
+	expectPrefix(assertFailedWithoutRun(state, pi), `Handoff failed — ${REASON_RESULT_MISSING}.`);
 	expect(notifications[0].level).toBe("error");
 });
 
@@ -649,7 +649,7 @@ test("agent_settled fails a handoff whose turn_end never ran", async () => {
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 
 	expect(state.pendingRequestedHandoff?.toolCalled).toBe(false);
-	expect(assertFailedWithoutRun(state, pi)).toMatch(new RegExp(`^Handoff failed — ${REASON_NO_BOUNDARY}\\.`));
+	expectPrefix(assertFailedWithoutRun(state, pi), `Handoff failed — ${REASON_NO_BOUNDARY}.`);
 	expect(notifications).toStrictEqual([{ message: `Handoff failed: ${REASON_NO_BOUNDARY}. The handoff can be retried.`, level: "error" }]);
 });
 
@@ -735,7 +735,7 @@ test("a handoff whose branch holds only an earlier handoff's cut fails as not pe
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
 	expect(state.stagedHandoff).toBeNull();
-	expect(pi.sentMessages[0].message.content).toMatch(new RegExp(`^Handoff failed — ${REASON_NOT_PERSISTED.replace(/[()]/g, "\\$&")}\\.`));
+	expectPrefix(pi.sentMessages[0].message.content, `Handoff failed — ${REASON_NOT_PERSISTED}.`);
 });
 
 test("agent_settled after a handoff completed at turn_start sends and notifies nothing", async () => {
@@ -914,7 +914,7 @@ test("the boundary settles a failed handoff before the watchdog counts the run, 
 		expect(warnings(), `after failed attempt ${attempt}`).toHaveLength(attempt < MAX_HANDOFF_ATTEMPTS ? 0 : 1);
 	}
 
-	expect(warnings()[0].message).toMatch(new RegExp(`^Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts`));
+	expectPrefix(warnings()[0].message, `Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts`);
 });
 
 /** The watchdog nudge the real context hook injects for `ctx`, or undefined when it injects none. */
