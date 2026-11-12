@@ -1,6 +1,6 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type SessionEntry } from "@earendil-works/pi-coding-agent";
-import { assertPresent, expectSuffix } from "../assertions.js";
+import { assertPresent, expectPrefix, expectSuffix } from "../assertions.js";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createState, resetState } from "../../state.js";
@@ -1113,6 +1113,7 @@ test("spawn result over the byte limit keeps the byte-limited head", async () =>
 	const result = await executeWithChildText(Array(lineCount).fill(line).join("\n"));
 
 	expect(result.details.truncated).toBe(true);
+	expectSuffix(result.content[0].text, TRUNCATION_MARKER);
 	expect(Buffer.byteLength(result.content[0].text.slice(0, -TRUNCATION_MARKER.length))).toBe(DEFAULT_MAX_BYTES);
 });
 
@@ -1140,10 +1141,11 @@ test("spawn result with CRLF lines keeps the exact byte-limited prefix", async (
 
 test("spawn result retains the byte-limited prefix of a long second line", async () => {
 	const result = await executeWithChildText(`short\n${"b".repeat(DEFAULT_MAX_BYTES)}`);
+	expectSuffix(result.content[0].text, TRUNCATION_MARKER);
 	const content = result.content[0].text.slice(0, -TRUNCATION_MARKER.length);
 
 	expect(Buffer.byteLength(content)).toBe(DEFAULT_MAX_BYTES);
-	expect(content).toMatch(/^short\nb+/);
+	expectPrefix(content, "short\nb");
 });
 
 test("headless spawn aggregates Error and cleanup failures without mutating the primary error", async () => {
