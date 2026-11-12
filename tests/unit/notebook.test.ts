@@ -13,7 +13,7 @@ import { openInPager, resolvePager, spawnPager, __setPagerRuntimeForTests } from
 import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
 import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
-import { assertPresent } from "../assertions.js";
+import { assertPresent, expectSuffix } from "../assertions.js";
 import { callHandlers, handoffToolResult, turnEndEvent, makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
 import { createBeforeAgentStartEvent, createTestHost } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
@@ -1555,7 +1555,7 @@ test("rejected overwrite preserves prior body and clipped flag", async () => {
 	read = await notebookRead.execute("3", { name: "page" }, undefined, undefined, {} as any);
 	expect((read.details as any).clipped).toBe(true);
 	const suffix = `\n\n${Notice}`;
-	expect((read.content[0] as any).text.slice(-suffix.length)).toBe(suffix);
+	expectSuffix((read.content[0] as any).text, suffix);
 });
 
 test("blank first line plus oversized line rejects and preserves prior page state", async () => {
@@ -1615,7 +1615,7 @@ test("clipped flag survives fresh reconstruction without persisted quantities", 
 	const read = await restoredRead.execute("1", { name: "page" }, undefined, undefined, {} as any);
 	expect((read.details as any).clipped).toBe(true);
 	const suffix = `\n\n${Notice}`;
-	expect((read.content[0] as any).text.slice(-suffix.length)).toBe(suffix);
+	expectSuffix((read.content[0] as any).text, suffix);
 });
 
 test("complete overwrite clears a durable clipped flag", async () => {
@@ -1713,9 +1713,9 @@ test("notebook_write descriptions state the shared write-size semantics", async 
 	const state = createState();
 	const [notebookWrite] = createNotebookToolDefinitions(pi as any, state);
 
-	expect(notebookWrite.description.slice(-DescriptionSuffix.length)).toBe(DescriptionSuffix);
+	expectSuffix(notebookWrite.description, DescriptionSuffix);
 	const contentDescription = (notebookWrite.parameters as any).properties.content.description as string;
-	expect(contentDescription.slice(-DescriptionSuffix.length)).toBe(DescriptionSuffix);
+	expectSuffix(contentDescription, DescriptionSuffix);
 	expect(JSON.stringify(notebookWrite.parameters)).not.toMatch(/Truncated at 50KB \/ 2000 lines\./);
 	expect(notebookWrite.description).not.toMatch(/Truncated at 50KB \/ 2000 lines\./);
 });

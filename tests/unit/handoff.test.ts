@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { expectPrefix, expectSuffix } from "../assertions.js";
 import * as fc from "fast-check";
 import { Value } from "typebox/value";
 import { createState } from "../../state.js";
@@ -46,7 +47,7 @@ function assertSuccessorTurn(content: string, input: { nextInstruction: string; 
 	const context = input.context?.trim();
 	if (context) expected.push(`## Context\n\n${context}`);
 	const prefix = expected.join("\n\n");
-	expect(content.slice(0, prefix.length), `successor turn must start with the delivered instruction and context:\n${content}`).toBe(prefix);
+	expectPrefix(content, prefix, "successor turn must start with the delivered instruction and context:");
 }
 
 type Usage = { tokens: number | null; percent: number | null; contextWindow: number | null } | null;
@@ -579,7 +580,7 @@ test("a failed handoff without a pending request clears the status and says noth
 	expect(pi.sentMessages).toHaveLength(1);
 	expect(pi.sentMessages[0].message.customType).toBe("pi-schematic-handoff-failed");
 	expect(pi.sentMessages[0].message.display).toBe(true);
-	expect(pi.sentMessages[0].message.content).toMatch(/No required handoff remains pending; retry when ready\.$/);
+	expectSuffix(pi.sentMessages[0].message.content, "No required handoff remains pending; retry when ready.");
 	expect(pi.sentMessages[0].options).toStrictEqual({ triggerTurn: false });
 });
 
@@ -1151,7 +1152,7 @@ test("buildNextUserMessage preserves instruction bytes and normalizes context pa
 			(instruction, context) => {
 				const message = buildNextUserMessage({ nextInstruction: instruction, context });
 				const prefix = `## Next instruction\n\n${instruction}`;
-				expect(message.slice(0, prefix.length), "the instruction must open the message byte-for-byte").toBe(prefix);
+				expectPrefix(message, prefix, "the instruction must open the message byte-for-byte");
 				if (context.trim()) expect(message, "non-blank context must be preserved in the message").toContain(context.trim());
 				expect(message, "context padding must not change the delivered message").toBe(buildNextUserMessage({ nextInstruction: instruction, context: ` \n${context} ` }));
 			},
