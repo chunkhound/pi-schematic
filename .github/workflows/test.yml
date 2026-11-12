@@ -57,9 +57,25 @@ jobs:
       - name: Security audit
         run: npx audit-ci --config audit-ci.jsonc
 
-      # Unit suite (unit tests + snapshot tests + property-based tests)
+      # Unit suite (unit tests + snapshot tests + property-based tests). The ubuntu newest lane
+      # also collects V8 coverage and uploads the report.
       - name: Unit tests
+        if: ${{ !(matrix.os == 'ubuntu-latest' && matrix.track == 'newest') }}
         run: npm test
+
+      - name: Unit tests with coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.track == 'newest'
+        run: npm run test:coverage
+
+      - name: Upload coverage report
+        if: always() && matrix.os == 'ubuntu-latest' && matrix.track == 'newest'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-${{ matrix.os }}-${{ matrix.track }}-attempt-${{ github.run_attempt }}
+          path: coverage/
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 30
 
       # E2E tests — two suites: the real-host suite runs the pi CLI in RPC mode, and the
       # line-host harness runs a child process over stdin/stdout (no PTY).

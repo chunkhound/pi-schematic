@@ -29,6 +29,13 @@ export default defineConfig({
 		restoreMocks: true,
 		// 0 disables truncation, so test names built from test.each/test.for rows stay whole.
 		taskTitleValueFormatTruncate: 0,
+		// Only a run with --coverage collects. `include` is the production sources; the e2e suites run the extension in child processes and are not measured.
+		coverage: {
+			provider: "v8",
+			reporter: ["text", "lcov"],
+			include: ["*.ts", "handoff/**/*.ts", "model-groups/**/*.ts", "notebook/**/*.ts", "spawn/**/*.ts", "time/**/*.ts"],
+			exclude: ["vitest.config.ts"],
+		},
 		projects: [
 			{
 				test: {

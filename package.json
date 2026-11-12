@@ -37,6 +37,7 @@
   "scripts": {
     "prepare": "husky",
     "test": "vitest run --project unit",
+    "test:coverage": "vitest run --project unit --coverage",
     "test:e2e": "vitest run --project e2e",
     "test:all": "npm run test && npm run test:e2e",
     "test:snapshots:check": "vitest run --project unit --update=none tests/unit/render-snapshots.test.ts",
@@ -51,6 +52,7 @@
     "@earendil-works/pi-coding-agent": "1.2.0",
     "@earendil-works/pi-tui": "1.2.0",
     "@types/node": "^22.20.5",
+    "@vitest/coverage-v8": "5.1.0",
     "audit-ci": "^7.1.0",
     "fast-check": "^4.8.0",
     "husky": "^9.1.7",
