@@ -16,7 +16,7 @@ import {
 import { READONLY_SANDBOX_BLOCK_NOTICE } from "../../notifications.js";
 import { resolveRealPath } from "../../resolve-path.js";
 import { bashResult, SANDBOX_DENIAL_PHRASES } from "./helpers.js";
-import { assertPresent, expectSuffix } from "../assertions.js";
+import { expectSuffix } from "../assertions.js";
 
 const NOTICE_SUFFIX = `\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`;
 
@@ -323,11 +323,9 @@ for (const { name, write } of [
 
 			const noticed = appendSandboxBlockNoticeToResult(bashResult(`${run.stdout}${run.stderr}`));
 
-			assertPresent(noticed, "the sandbox block should produce a noticed result");
-			const firstBlock = noticed.content[0];
-			assertPresent(firstBlock, JSON.stringify(noticed));
-			expect(firstBlock.type, JSON.stringify(noticed)).toBe("text");
-			if (firstBlock.type !== "text") throw new Error(JSON.stringify(noticed));
+			const firstBlock = noticed?.content[0];
+			expect(firstBlock?.type, JSON.stringify(noticed)).toBe("text");
+			if (firstBlock?.type !== "text") expect.unreachable();
 			expectSuffix(firstBlock.text, NOTICE_SUFFIX, JSON.stringify(noticed));
 		} finally {
 			fs.rmSync(outsidePath, { force: true });
