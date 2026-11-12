@@ -766,10 +766,9 @@ test("model groups TUI move, wizard add, model thinking, and remove persist thro
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B"); // first model row after refresh
 	c.handleInput?.("\r");
+	const callsBeforeRemove = calls.length;
 	c.handleInput?.("D");
-	// Assert a NEW persist happened; the add step's call has the same prefix, so
-	// `calls.at(-1)` alone would also pass if D persisted nothing.
-	expect(calls).toHaveLength(4);
+	expect(calls).toHaveLength(callsBeforeRemove + 1);
 	expect(calls.at(-1)).toBe("update:global:review:anthropic/claude/inherit");
 });
 
