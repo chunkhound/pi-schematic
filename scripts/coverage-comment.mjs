@@ -22,6 +22,37 @@ function metricRow(label, entry) {
   return `| ${label} | ${METRICS.map((metric) => `${entry[metric].pct}% (${entry[metric].covered}/${entry[metric].total})`).join(" | ")} |`;
 }
 
+// An empty metric counts as 100%, as the summary's own pct does.
+function exactPct({ covered, total }) {
+  return total > 0 ? (100 * covered) / total : 100;
+}
+
+function formatChange(points) {
+  const rounded = Math.round(points * 100) / 100;
+  if (rounded === 0) {
+    return "±0.00";
+  }
+  return `${rounded > 0 ? "+" : ""}${rounded.toFixed(2)}`;
+}
+
+function changeRow(head, base) {
+  return `| Change | ${METRICS.map((metric) => formatChange(exactPct(head[metric]) - exactPct(base[metric]))).join(" | ")} |`;
+}
+
+function parseBase(base) {
+  const keys = base !== null && typeof base === "object" ? Object.keys(base).sort().join(",") : null;
+  if (keys !== "sha,total" && keys !== "reason,sha") {
+    throw new Error(`base ${JSON.stringify(base)} is neither { sha, total } nor { sha, reason }`);
+  }
+  if (typeof base.sha !== "string" || !SHA_PATTERN.test(base.sha)) {
+    throw new Error(`base commit ${JSON.stringify(base.sha)} is not a 40-character hex SHA`);
+  }
+  if ("reason" in base && (typeof base.reason !== "string" || base.reason.trim() === "" || base.reason.includes("\n"))) {
+    throw new Error(`base reason ${JSON.stringify(base.reason)} is not a non-empty single line`);
+  }
+  return "total" in base ? { sha: base.sha, total: metricsOf("base total", base.total) } : base;
+}
+
 function tableHead(label) {
   return [`| ${[label, ...METRICS].join(" | ")} |`, `|${" --- |".repeat(METRICS.length + 1)}`];
 }
@@ -69,10 +100,17 @@ export function decideCoverageComment({ summary, testResult, runAttempt, existin
   throw new Error(`attempt ${attempt} has no coverage summary although the test job succeeded, and no coverage comment names commit ${sha}`);
 }
 
-export function buildCoverageComment({ summary, root, runUrl, sha, runAttempt }) {
+/**
+ * Builds the comment body. `base` is `null` without a summary; with one it is `{ sha, total }`, the base
+ * commit's coverage total, or `{ sha, reason }` when the base commit has no coverage.
+ */
+export function buildCoverageComment({ summary, base, root, runUrl, sha, runAttempt }) {
   const marker = markerFor(sha);
   const attempt = parseRunAttempt(runAttempt);
   if (summary === null) {
+    if (base !== null) {
+      throw new Error(`base ${JSON.stringify(base)} was given without a coverage summary`);
+    }
     return [
       marker,
       "## Unit test coverage",
@@ -85,6 +123,13 @@ export function buildCoverageComment({ summary, root, runUrl, sha, runAttempt })
   }
 
   const { total, ...files } = summary;
+  const headTotal = metricsOf("total", total);
+  const parsedBase = parseBase(base);
+  const shortBaseSha = parsedBase.sha.slice(0, 7);
+  const baseLines =
+    "total" in parsedBase
+      ? [metricRow(`Base (${shortBaseSha})`, parsedBase.total), changeRow(headTotal, parsedBase.total)]
+      : ["", `No base coverage for ${shortBaseSha}: ${parsedBase.reason}.`];
   const fileRows = Object.entries(files)
     .map(([path, entry]) => {
       const relativePath = relative(root, path);
@@ -101,7 +146,8 @@ export function buildCoverageComment({ summary, root, runUrl, sha, runAttempt })
     "## Unit test coverage",
     "",
     ...tableHead(""),
-    metricRow("Total", metricsOf("total", total)),
+    metricRow("Total", headTotal),
+    ...baseLines,
     "",
     "<details>",
     `<summary>Coverage per file (${fileRows.length})</summary>`,

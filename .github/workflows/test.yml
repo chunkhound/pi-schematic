@@ -67,6 +67,39 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.track == 'newest'
         run: npm run test:coverage
 
+      # The coverage comment compares the totals with the PR's base commit, measured by the same unit run.
+      - name: Check out the base commit
+        if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest' && matrix.track == 'newest'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base-src
+          persist-credentials: false
+
+      # Writes coverage/base-coverage-summary.json, or coverage/base-coverage-status.txt with the
+      # reason the base commit has no coverage. The base's reports go to a separate directory because
+      # Vitest clears its reports directory before a run.
+      - name: Unit test coverage of the base commit
+        if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest' && matrix.track == 'newest'
+        working-directory: base-src
+        shell: bash
+        env:
+          BASE_REPORTS_DIR: ${{ runner.temp }}/base-coverage
+        run: |
+          has_provider=$(node -p 'JSON.parse(require("node:fs").readFileSync("package.json", "utf8")).devDependencies?.["@vitest/coverage-v8"] !== undefined')
+          if [ "$has_provider" = false ]; then
+            echo 'the base commit has no `@vitest/coverage-v8` devDependency' > "$GITHUB_WORKSPACE/coverage/base-coverage-status.txt"
+            exit 0
+          fi
+          npm ci
+          status=0
+          npx vitest run --project unit --coverage --coverage.reporter=json-summary "--coverage.reportsDirectory=$BASE_REPORTS_DIR" || status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "the base commit's unit run failed" > "$GITHUB_WORKSPACE/coverage/base-coverage-status.txt"
+            exit 0
+          fi
+          cp "$BASE_REPORTS_DIR/coverage-summary.json" "$GITHUB_WORKSPACE/coverage/base-coverage-summary.json"
+
       - name: Upload coverage report
         if: always() && matrix.os == 'ubuntu-latest' && matrix.track == 'newest'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -164,6 +197,19 @@ jobs:
             const { buildCoverageComment, decideCoverageComment, findCoverageComment, parseCoverageCommentSha, upsertCoverageComment } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/coverage-comment.mjs`);
             const summaryPath = `${process.env.GITHUB_WORKSPACE}/coverage/coverage-summary.json`;
             const summary = existsSync(summaryPath) ? JSON.parse(readFileSync(summaryPath, "utf8")) : null;
+            const baseSummaryPath = `${process.env.GITHUB_WORKSPACE}/coverage/base-coverage-summary.json`;
+            const baseStatusPath = `${process.env.GITHUB_WORKSPACE}/coverage/base-coverage-status.txt`;
+            const baseSha = context.payload.pull_request.base.sha;
+            let base = null;
+            if (summary !== null) {
+              const hasBaseSummary = existsSync(baseSummaryPath);
+              if (hasBaseSummary === existsSync(baseStatusPath)) {
+                throw new Error(`the coverage report holds ${hasBaseSummary ? "both" : "neither"} of base-coverage-summary.json and base-coverage-status.txt`);
+              }
+              base = hasBaseSummary
+                ? { sha: baseSha, total: JSON.parse(readFileSync(baseSummaryPath, "utf8")).total }
+                : { sha: baseSha, reason: readFileSync(baseStatusPath, "utf8").trim() };
+            }
             const sha = context.payload.pull_request.head.sha;
             const target = { github, owner: context.repo.owner, repo: context.repo.repo, issueNumber: context.issue.number };
             const existing = await findCoverageComment(target);
@@ -179,6 +225,7 @@ jobs:
             } else {
               const body = buildCoverageComment({
                 summary,
+                base,
                 root: process.env.GITHUB_WORKSPACE,
                 runUrl: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
                 sha,
