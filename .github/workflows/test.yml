@@ -132,6 +132,62 @@ jobs:
             tests/snapshots/
           retention-days: 30
 
+  # A separate job because it is the only one with PR write access, and it runs no installs or tests.
+  # Fork PRs get a read-only token, so they skip; pushes and dispatches have no PR.
+  coverage-comment:
+    needs: test
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # A pattern that matches no artifact downloads nothing and succeeds, where `name` would fail.
+      # The next step decides whether a missing report is expected.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-ubuntu-latest-newest-attempt-${{ github.run_attempt }}
+          merge-multiple: true
+          path: coverage/
+
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          TEST_RESULT: ${{ needs.test.result }}
+        with:
+          script: |
+            const { existsSync, readFileSync } = await import("node:fs");
+            const { buildCoverageComment, decideCoverageComment, findCoverageComment, parseCoverageCommentSha, upsertCoverageComment } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/coverage-comment.mjs`);
+            const summaryPath = `${process.env.GITHUB_WORKSPACE}/coverage/coverage-summary.json`;
+            const summary = existsSync(summaryPath) ? JSON.parse(readFileSync(summaryPath, "utf8")) : null;
+            const sha = context.payload.pull_request.head.sha;
+            const target = { github, owner: context.repo.owner, repo: context.repo.repo, issueNumber: context.issue.number };
+            const existing = await findCoverageComment(target);
+            const decision = decideCoverageComment({
+              summary,
+              testResult: process.env.TEST_RESULT,
+              runAttempt: process.env.RUN_ATTEMPT,
+              existingSha: existing === null ? null : parseCoverageCommentSha(existing.body),
+              sha,
+            });
+            if (decision.kind === "keep") {
+              core.notice(`Kept the coverage comment for commit ${sha}: attempt ${process.env.RUN_ATTEMPT} produced no coverage report of its own`);
+            } else {
+              const body = buildCoverageComment({
+                summary,
+                root: process.env.GITHUB_WORKSPACE,
+                runUrl: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                sha,
+                runAttempt: process.env.RUN_ATTEMPT,
+              });
+              const action = await upsertCoverageComment({ ...target, existing, body });
+              core.info(`Coverage comment ${action}`);
+            }
+
   current-pi:
     runs-on: ubuntu-latest
     steps:

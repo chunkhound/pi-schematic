@@ -33,7 +33,7 @@ export default defineConfig({
 		// the e2e project too, so `npm run test:coverage` restricts the run to the unit project.
 		coverage: {
 			provider: "v8",
-			reporter: ["text", "lcov"],
+			reporter: ["text", "lcov", "json-summary"],
 			include: ["*.ts", "handoff/**/*.ts", "model-groups/**/*.ts", "notebook/**/*.ts", "spawn/**/*.ts", "time/**/*.ts"],
 			exclude: ["vitest.config.ts"],
 		},
