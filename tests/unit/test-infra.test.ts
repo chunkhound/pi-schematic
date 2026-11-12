@@ -69,11 +69,11 @@ describe("compat lane test files", () => {
 describe("expectPrefix and expectSuffix", () => {
 	const whole = "hello world";
 	const helpers = [
-		{ name: "expectPrefix", check: expectPrefix, match: "hello", mismatch: "world" },
-		{ name: "expectSuffix", check: expectSuffix, match: "world", mismatch: "hello" },
+		{ name: "expectPrefix", check: expectPrefix, match: "hello", mismatch: "world", compared: "hello" },
+		{ name: "expectSuffix", check: expectSuffix, match: "world", mismatch: "hello", compared: "world" },
 	];
 
-	describe.for(helpers)("$name", ({ check, match, mismatch }) => {
+	describe.for(helpers)("$name", ({ check, match, mismatch, compared }) => {
 		test.for([
 			{ title: "a matching part", part: match },
 			{ title: "an empty part", part: "" },
@@ -82,17 +82,23 @@ describe("expectPrefix and expectSuffix", () => {
 			expect(() => check(whole, part)).not.toThrow();
 		});
 
-		test("fails on a non-matching part and prints the full string", () => {
-			expect(() => check(whole, mismatch)).toThrow(whole);
+		test("fails on a non-matching part, printing the full string before the comparison", () => {
+			expect(() => check(whole, mismatch)).toThrow(new RegExp(`^${whole}: expected '${compared}' to be '${mismatch}'`));
 		});
 
-		test("fails on a string shorter than the part and prints the caller's message and the full string", () => {
-			expect(() => check("hi", whole, "the greeting")).toThrow("the greeting\nhi");
+		test("fails on a string shorter than the part, comparing the whole string", () => {
+			expect(() => check("hi", whole)).toThrow(new RegExp(`^hi: expected 'hi' to be '${whole}'`));
 		});
 
-		test("prints the caller's message and the full string", () => {
-			expect(() => check(whole, mismatch, "the greeting")).toThrow(`the greeting\n${whole}`);
+		test("prints the caller's message on its own line before the full string", () => {
+			expect(() => check(whole, mismatch, "the greeting")).toThrow(
+				new RegExp(`^the greeting\\n${whole}: expected '${compared}' to be '${mismatch}'`),
+			);
 		});
+	});
+
+	test("expectSuffix fails on a suffix longer than the string, comparing the whole string", () => {
+		expect(() => expectSuffix("abcdef", "xxabcdef")).toThrow(/^abcdef: expected 'abcdef' to be 'xxabcdef'/);
 	});
 });
 

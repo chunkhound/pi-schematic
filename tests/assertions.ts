@@ -22,7 +22,8 @@ export function expectPrefix(actual: string, prefix: string, message?: string): 
 
 /** Asserts `actual` ends with `suffix`; a failure prints the full `actual`. */
 export function expectSuffix(actual: string, suffix: string, message?: string): void {
-	// The start index comes from `actual.length`: `actual.slice(-0)` is the whole string, which would
-	// make an empty suffix compare the whole string.
-	expect(actual.slice(actual.length - suffix.length), withActual(actual, message)).toBe(suffix);
+	// The start index comes from `actual.length`, clamped at 0: `actual.slice(-0)` is the whole string,
+	// which would make an empty suffix compare the whole string, and a negative start for a suffix longer
+	// than `actual` wraps around and shows a cut-off tail.
+	expect(actual.slice(Math.max(0, actual.length - suffix.length)), withActual(actual, message)).toBe(suffix);
 }
