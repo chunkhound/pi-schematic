@@ -325,7 +325,7 @@ for (const { name, write } of [
 
 			const firstBlock = noticed?.content[0];
 			expect(firstBlock?.type, JSON.stringify(noticed)).toBe("text");
-			if (firstBlock?.type !== "text") expect.unreachable();
+			if (firstBlock?.type !== "text") { expect.unreachable(); }
 			expectSuffix(firstBlock.text, NOTICE_SUFFIX);
 		} finally {
 			fs.rmSync(outsidePath, { force: true });
