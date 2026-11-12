@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test } from "vitest";
 import { piManifestPath } from "../../pi-packages.mjs";
-import { assertPresent } from "../assertions.js";
+import { assertPresent, expectPrefix } from "../assertions.js";
 import { spawnNode } from "./spawn-node.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -60,7 +60,7 @@ test("register-loader resolves typebox exports from pi's dependency tree", () =>
 		const resolved = JSON.parse(result.stdout.trim()) as Record<string, string>;
 		const [rootSpecifier, ...subpathSpecifiers] = Object.keys(resolved);
 		const typeboxRoot = resolved[rootSpecifier].replace(/(?:build\/)?index\.m?js$/, "");
-		expect(typeboxRoot).toMatch(/^file:/);
+		expectPrefix(typeboxRoot, "file:");
 		// The copy pi itself loads, not the project's top-level one, which can be another version.
 		const piTypeboxManifest = findPackageJSON("typebox", pathToFileURL(piManifestPath));
 		assertPresent(piTypeboxManifest, "pi's dependency tree should contain typebox");
@@ -69,11 +69,8 @@ test("register-loader resolves typebox exports from pi's dependency tree", () =>
 			pathToFileURL(realpathSync(dirname(piTypeboxManifest))).href + "/",
 		);
 		for (const specifier of Object.keys(resolved)) {
-			expect(resolved[specifier]).toMatch(/^file:/);
-			expect(
-				resolved[specifier].startsWith(typeboxRoot),
-				`${specifier} should resolve from the same typebox package root`,
-			).toBe(true);
+			expectPrefix(resolved[specifier], "file:");
+			expectPrefix(resolved[specifier], typeboxRoot, `${specifier} should resolve from the same typebox package root`);
 		}
 		expect(subpathSpecifiers.length).toBeGreaterThan(0);
 	} finally {

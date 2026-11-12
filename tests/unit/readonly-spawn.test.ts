@@ -13,6 +13,7 @@ import {
 	createReadonlyChildBashTool,
 	filterReadonlyToolNames,
 } from "../../spawn/index.js";
+import { expectSuffix } from "../assertions.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
 import { runRealChildInvocation, SANDBOX_DENIAL_PHRASES, textOf, tmpDir } from "./helpers.js";
@@ -135,7 +136,7 @@ test.skipIf(!canUseOsSandbox())("sandboxed child bash write outside temp returns
 	expect(textOf(result), textOf(result)).toContain(READONLY_SANDBOX_BLOCK_NOTICE);
 	const structured = result.structuredContent as { output: string; exit_code: number };
 	const suffix = `\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`;
-	expect(structured.output.slice(-suffix.length), structured.output).toBe(suffix);
+	expectSuffix(structured.output, suffix);
 	expect(structured.exit_code).toBe(1);
 	expect(target, "the sandbox must block the write").not.toSatisfy(fs.existsSync);
 });
@@ -149,7 +150,7 @@ test.skipIf(!canUseOsSandbox())("sandboxed child bash error carrying a sandbox d
 	await expect(runChildBashUntil(command, SANDBOX_DENIAL_PHRASE)).rejects.toSatisfy((error: Error) => {
 		expect(error).toBeInstanceOf(Error);
 		expect(error.message).toMatch(/Command aborted/);
-		expect(error.message.slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), error.message).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
+		expectSuffix(error.message, READONLY_SANDBOX_BLOCK_NOTICE);
 		return true;
 	});
 	expect(target, "the sandbox must block the write").not.toSatisfy(fs.existsSync);
@@ -225,7 +226,7 @@ test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("concurrent child bas
 
 	expect(sandboxedResult.status).toBe("fulfilled");
 	if (sandboxedResult.status !== "fulfilled") expect.unreachable();
-	expect(textOf(sandboxedResult.value).slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), textOf(sandboxedResult.value)).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
+	expectSuffix(textOf(sandboxedResult.value), READONLY_SANDBOX_BLOCK_NOTICE);
 	expect(blockedResult.status).toBe("rejected");
 	if (blockedResult.status !== "rejected") expect.unreachable();
 	expect(blockedResult.reason).toBeInstanceOf(Error);
@@ -239,7 +240,7 @@ test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("sandboxed child bash
 	await expect(runChildBash(command, { timeout: 1 })).rejects.toSatisfy((error: Error) => {
 		expect(error).toBeInstanceOf(Error);
 		expect(error.message).toMatch(/Command timed out after 1 seconds/);
-		expect(error.message.slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), error.message).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
+		expectSuffix(error.message, READONLY_SANDBOX_BLOCK_NOTICE);
 		return true;
 	});
 }, 20_000);

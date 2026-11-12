@@ -1,6 +1,6 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type SessionEntry } from "@earendil-works/pi-coding-agent";
-import { assertPresent } from "../assertions.js";
+import { assertPresent, expectSuffix } from "../assertions.js";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createState, resetState } from "../../state.js";
@@ -328,7 +328,7 @@ test("spawn execute builds prompt with notebook pages and task", async () => {
 	expect(seenPrompt).toMatch(/durable shared memory for the parent and future contexts/i);
 	expect(seenPrompt).not.toMatch(/durable grounding/i);
 	const limitLine = `Keep the result under ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}.`;
-	expect(seenPrompt.slice(-limitLine.length)).toBe(limitLine);
+	expectSuffix(seenPrompt, limitLine);
 });
 
 test("spawn emits no capability notice when the routed group has no explicit override", async () => {

@@ -1,5 +1,5 @@
 import { expect, onTestFinished, test, vi } from "vitest";
-import { assertPresent } from "../assertions.js";
+import { assertPresent, expectPrefix } from "../assertions.js";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,7 +45,7 @@ test("real child output is truncated at the public line limit", async () => {
 	const text = proof.result.content[0].text;
 
 	expect(proof.result.details.truncated).toBe(true);
-	expect(text).toMatch(/^line 0/);
+	expectPrefix(text, "line 0");
 	// Pins Pi's public limits on purpose, so a change to them in Pi fails here.
 	expect(text).toMatch(/\[Result truncated to 2000 lines \/ 50 KiB \(51200 bytes\)\. Spawn a new child with a narrower request if more is needed\.\]/);
 	expect(text).not.toContain("line 2099");

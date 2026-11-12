@@ -5,7 +5,7 @@ import type { ToolResultEvent, ToolResultEventResult } from "@earendil-works/pi-
 import { canUseOsSandbox } from "../../os-sandbox.js";
 import { bashResult, callHandlers, emitAll, registerReadonlyPI, makeReadonlyUICtx, SANDBOX_DENIAL_PHRASES, textOf } from "./helpers.js";
 import { createBeforeAgentStartEvent } from "./test-host.js";
-import { assertPresent } from "../assertions.js";
+import { assertPresent, expectSuffix } from "../assertions.js";
 
 test("readonly toggle on blocks write, edit, powershell, handoff, and bash mutations", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
@@ -203,5 +203,5 @@ test.skipIf(skipWithoutSandbox)("a call sandboxed after a session start gets the
 	const result = await bash.result("after-start");
 
 	assertPresent(result?.content);
-	expect(textOf({ content: result.content }).slice(-READONLY_SANDBOX_BLOCK_NOTICE.length)).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
+	expectSuffix(textOf({ content: result.content }), READONLY_SANDBOX_BLOCK_NOTICE);
 });
