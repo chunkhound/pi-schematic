@@ -35,7 +35,7 @@ import {
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { buildNudge, MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
-import { assertPresent } from "../assertions.js";
+import { assertPresent, expectPrefix, expectSuffix } from "../assertions.js";
 import {
 	cleanupOnFailure,
 	messageText,
@@ -316,9 +316,9 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		const write = onlyResult(toolResults(entries, "notebook_write"), "notebook_write");
 		const read = onlyResult(toolResults(entries, "notebook_read"), "notebook_read");
 		expect(write.isError).toBe(false);
-		expect(write.text.slice(0, "Saved notebook page".length), write.text).toBe("Saved notebook page");
+		expectPrefix(write.text, "Saved notebook page");
 		expect(read.isError).toBe(false);
-		expect(read.text.slice(0, "--- my-page ---".length), read.text).toBe("--- my-page ---");
+		expectPrefix(read.text, "--- my-page ---");
 		expect(read.text, "content persisted").toContain("Hello World");
 	}));
 
@@ -364,7 +364,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		await host.script([{ name: "notebook_topic_set", arguments: { topic: "fresh-agent-topic" } }], 1);
 		const { entries } = await host.entries();
 		const result = onlyResult(toolResults(entries, "notebook_topic_set"), "notebook_topic_set");
-		expect(result.text.slice(0, "Active notebook topic:".length), result.text).toBe("Active notebook topic:");
+		expectPrefix(result.text, "Active notebook topic:");
 		expect(result.text).toContain("fresh-agent-topic");
 	}));
 
@@ -696,9 +696,10 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			const { entries } = await host.entries();
 			const bash = onlyResult(toolResults(entries, "bash"), "bash");
 			expect(bash.isError, "the write fails").toBe(true);
-			expect(bash.text.slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), bash.text).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
+			expectSuffix(bash.text, READONLY_SANDBOX_BLOCK_NOTICE);
 			const probed = onlyResult(host.probeLog().filter((record) => record.kind === "bashResult"), "probed bash");
-			expect(probed.structuredOutput?.slice(-READONLY_SANDBOX_BLOCK_NOTICE.length), String(probed.structuredOutput)).toBe(READONLY_SANDBOX_BLOCK_NOTICE);
+			assertPresent(probed.structuredOutput);
+			expectSuffix(probed.structuredOutput, READONLY_SANDBOX_BLOCK_NOTICE);
 			expect(existsSync(target), "the sandbox blocked the write").toBe(false);
 		});
 	});
