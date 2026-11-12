@@ -1,6 +1,5 @@
 import { defineConfig } from "vitest/config";
 import { PI_SHARED_PACKAGES, piManifestPath } from "./pi-packages.mjs";
-import { VITEST_FILES } from "./tests/vitest-files.mjs";
 
 // pi's packages resolve from pi's manifest; see pi-packages.mjs for the rationale. Vitest
 // externalizes a path under node_modules to native import(), so the extension shares pi's copies.
@@ -32,10 +31,18 @@ export default defineConfig({
 			{
 				test: {
 					name: "unit",
-					// Only the files listed in tests/vitest-files.mjs run here.
-					include: [...VITEST_FILES],
+					include: ["tests/unit/**/*.test.ts"],
 					testTimeout: 30_000,
 					hookTimeout: 30_000,
+				},
+			},
+			{
+				test: {
+					name: "e2e",
+					include: ["tests/e2e/**/*.test.ts"],
+					// 0 disables the timeout: an e2e test or hook bounds its own waits.
+					testTimeout: 0,
+					hookTimeout: 0,
 				},
 			},
 		],

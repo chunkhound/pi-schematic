@@ -1,16 +1,13 @@
-// Tests for the test infrastructure itself: the shared Node child runner, the node:test runner
-// script, the unit test list in tests/vitest-files.mjs (every unit file on disk is listed and every
-// entry exists), the compat lane's test lists, and the run-wide config that keeps parameterized test
-// titles whole.
+// Tests for the test infrastructure itself: the shared Node child runner, the compat lane check that
+// every file on its unit list exists and belongs to the unit project, and the run-wide config that
+// keeps parameterized test titles whole.
 
-import { globSync } from "node:fs";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { REPO_ROOT, REPO_ROOT_URL } from "../paths.js";
-import { VITEST_FILES } from "../vitest-files.mjs";
 import { spawnNode } from "./spawn-node.js";
 
-const { assertCompatTestLists, COMPAT_NODE_TEST_FILES, COMPAT_VITEST_FILES } = await import(
+const { assertCompatTestFiles, COMPAT_UNIT_FILES } = await import(
 	new URL("scripts/test-compat-current.mjs", REPO_ROOT_URL).href,
 );
 
@@ -44,38 +41,27 @@ describe("spawnNode", () => {
 	});
 });
 
-describe("run-node-test", () => {
-	test("fails when every file it is given runs on Vitest", () => {
-		const result = spawnNode(["scripts/run-node-test.mjs", "tests/unit/thinking-levels.test.ts"], { cwd: REPO_ROOT });
-		expect(result.status).not.toBe(0);
-		expect(result.stderr).toMatch(/Every file matching tests\/unit\/thinking-levels\.test\.ts runs on Vitest/);
-	});
-});
-
-// TODO(#88): remove with tests/vitest-files.mjs once the unit project includes its files by glob.
-describe("tests/vitest-files.mjs", () => {
-	const onDisk = globSync("tests/unit/**/*.test.ts", { cwd: REPO_ROOT }).map((file) => file.split(sep).join("/"));
-
-	test("lists every unit test file under tests/unit", () => {
-		const unlisted = onDisk.filter((file) => !VITEST_FILES.includes(file)).sort();
-		expect(unlisted, "missing from tests/vitest-files.mjs").toStrictEqual([]);
+describe("compat lane test files", () => {
+	test("every file on the unit list exists and belongs to the unit project", () => {
+		expect(() => assertCompatTestFiles(COMPAT_UNIT_FILES)).not.toThrow();
 	});
 
-	test("lists only files that exist", () => {
-		const missing = VITEST_FILES.filter((file) => !onDisk.includes(file)).sort();
-		expect(missing, "listed in tests/vitest-files.mjs but missing on disk").toStrictEqual([]);
-	});
-});
-
-describe("compat lane test lists", () => {
-	test("put every file on the runner tests/vitest-files.mjs assigns it", () => {
-		expect(() => assertCompatTestLists(COMPAT_NODE_TEST_FILES, COMPAT_VITEST_FILES)).not.toThrow();
+	test("a list naming a missing file fails with that file's path", () => {
+		expect(() => assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/unit/missing.test.ts"])).toThrow(
+			new Error("The compat lane lists test files that do not exist: tests/unit/missing.test.ts"),
+		);
 	});
 
-	test("reject a Vitest file on the node:test list and a node:test file on the Vitest list", () => {
-		expect(() =>
-			assertCompatTestLists(["tests/unit/thinking-levels.test.ts"], ["tests/e2e/basic.test.ts"]),
-		).toThrow(/lists tests\/unit\/thinking-levels\.test\.ts, tests\/e2e\/basic\.test\.ts for the wrong runner/);
+	test("a list naming an existing file outside the project fails with that file's path", () => {
+		expect(() => assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/e2e/basic.test.ts"])).toThrow(
+			new Error("The compat lane lists test files outside the unit project: tests/e2e/basic.test.ts"),
+		);
+	});
+
+	test("a list naming an existing non-test file inside the project fails with that file's path", () => {
+		expect(() => assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/unit/helpers.ts"])).toThrow(
+			new Error("The compat lane lists test files outside the unit project: tests/unit/helpers.ts"),
+		);
 	});
 });
 

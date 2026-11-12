@@ -3,7 +3,7 @@
  * (`real-host.ts`) and the probe extension the harness loads into pi
  * (`real-host-probe.ts`).
  *
- * Both sides import this module: the harness under the node:test loader, the
+ * Both sides import this module: the harness in a Vitest worker, the
  * probe inside the pi process under jiti. It imports no pi runtime code, only
  * types and the handoff message builder, so it loads in either environment.
  */
