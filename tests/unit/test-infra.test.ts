@@ -4,6 +4,7 @@
 
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { expectPrefix, expectSuffix } from "../assertions.js";
 import { REPO_ROOT, REPO_ROOT_URL } from "../paths.js";
 import { spawnNode } from "./spawn-node.js";
 
@@ -62,6 +63,39 @@ describe("compat lane test files", () => {
 		expect(() => assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/unit/helpers.ts"])).toThrow(
 			new Error("The compat lane lists test files outside the unit project: tests/unit/helpers.ts"),
 		);
+	});
+});
+
+describe("expectPrefix and expectSuffix", () => {
+	const helpers = [
+		{ name: "expectPrefix", check: expectPrefix, match: "hello", mismatch: "world", whole: "hello world" },
+		{ name: "expectSuffix", check: expectSuffix, match: "world", mismatch: "hello", whole: "hello world" },
+	];
+
+	describe.for(helpers)("$name", ({ check, match, mismatch, whole }) => {
+		test.for([
+			{ title: "a matching part", part: match },
+			{ title: "an empty part", part: "" },
+			{ title: "a part equal to the whole string", part: whole },
+		])("passes on $title", ({ part }) => {
+			expect(() => check(whole, part)).not.toThrow();
+		});
+
+		test("fails on a non-matching part and prints the full string", () => {
+			expect(() => check(whole, mismatch)).toThrow(whole);
+		});
+
+		test("fails on a string shorter than the part and prints the full string", () => {
+			expect(() => check("hi", "hello world")).toThrow("hi");
+		});
+
+		test("prints the caller's message and the full string", () => {
+			expect(() => check(whole, mismatch, "the greeting")).toThrow(`the greeting\n${whole}`);
+		});
+	});
+
+	test("expectSuffix passes on an empty suffix of a non-empty string", () => {
+		expect(() => expectSuffix("hello world", "")).not.toThrow();
 	});
 });
 
