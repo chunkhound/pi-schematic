@@ -430,7 +430,7 @@ export class RealHost {
 		);
 	}
 
-	/** Claim a barrier phase; the test timeout from `testTimeoutFor` bounds the body's phases, while the close's phase runs in the finish callback outside it and still counts toward REAL_HOST_MAX_BARRIERS_PER_TEST. */
+	/** Claim a barrier phase; the test timeout from `testTimeoutFor` bounds the body's phases, while the close's phase runs in the finish callback outside it and still counts toward REAL_HOST_MAX_BARRIERS_PER_TEST, so a body that used every phase fails the close with this error before its unexpected-run check runs. */
 	private startBarrierPhase(): void {
 		const phase = ++this.barrierPhases;
 		if (phase > REAL_HOST_MAX_BARRIERS_PER_TEST) {
@@ -548,6 +548,10 @@ export async function withRealHost(t: TestContext, run: (host: RealHost) => Prom
 			if (t.signal.aborted) throw error;
 			return; // the start error already reached the test through the body
 		}
+		// No timeout on this wait, on purpose: every wait the harness gives a body has a deadline,
+		// so a timed-out body settles on its own. Closing earlier would run the close's barrier while
+		// the body is still in a step and report that step's runs as unexpected. A body that awaits
+		// something without a deadline must bound that wait itself.
 		await body?.catch(() => {});
 		await host.close();
 	}, 0);

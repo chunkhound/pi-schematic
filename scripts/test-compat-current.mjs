@@ -36,8 +36,9 @@ export const COMPAT_UNIT_FILES = [
 
 // Vitest ignores a file filter that matches no file when another filter matches, so a listed file
 // that does not exist, or that the unit project does not include, would silently not run while the
-// lane passes. The unit project runs `tests/unit/**/*.test.ts`. Paths are relative to the repository
-// root, whatever the working directory.
+// lane passes. The unit project runs `tests/unit/**/*.test.ts`. The check compares the paths as
+// written, so each entry is a normalized path relative to the repository root, whatever the working
+// directory.
 export function assertCompatTestFiles(files) {
   const missing = files.filter((file) => !existsSync(join(ROOT, file)));
   if (missing.length > 0) {
