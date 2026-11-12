@@ -69,36 +69,58 @@ describe("compat lane test files", () => {
 describe("expectPrefix and expectSuffix", () => {
 	const whole = "hello world";
 	const helpers = [
-		{ name: "expectPrefix", check: expectPrefix, match: "hello", mismatch: "world", compared: "hello" },
-		{ name: "expectSuffix", check: expectSuffix, match: "world", mismatch: "hello", compared: "world" },
+		{ name: "expectPrefix", check: expectPrefix, match: "hello", mismatch: "world", otherCase: "HELLO", padded: " hello" },
+		{ name: "expectSuffix", check: expectSuffix, match: "world", mismatch: "hello", otherCase: "WORLD", padded: "world " },
 	];
 
-	describe.for(helpers)("$name", ({ check, match, mismatch, compared }) => {
+	describe.for(helpers)("$name", ({ check, match, mismatch, otherCase, padded }) => {
 		test.for([
 			{ title: "a matching part", part: match },
 			{ title: "an empty part", part: "" },
 			{ title: "a part equal to the whole string", part: whole },
 		])("passes on $title", ({ part }) => {
-			expect(() => check(whole, part)).not.toThrow();
+			expect(() => {
+				check(whole, part);
+			}).not.toThrow();
 		});
 
 		test("fails on a non-matching part, printing the full string before the comparison", () => {
-			expect(() => check(whole, mismatch)).toThrow(new RegExp(`^${whole}: expected '${compared}' to be '${mismatch}'`));
+			expect(() => {
+				check(whole, mismatch);
+			}).toThrow(new RegExp(`^${whole}: expected '${match}' to be '${mismatch}'`));
+		});
+
+		test("fails on a part that differs only in letter case", () => {
+			expect(() => {
+				check(whole, otherCase);
+			}).toThrow();
+		});
+
+		test("fails on a part that differs only in surrounding whitespace", () => {
+			expect(() => {
+				check(whole, padded);
+			}).toThrow();
 		});
 
 		test("fails on a string shorter than the part, comparing the whole string", () => {
-			expect(() => check("hi", whole)).toThrow(new RegExp(`^hi: expected 'hi' to be '${whole}'`));
+			expect(() => {
+				check("hi", whole);
+			}).toThrow(new RegExp(`^hi: expected 'hi' to be '${whole}'`));
 		});
 
 		test("prints the caller's message on its own line before the full string", () => {
-			expect(() => check(whole, mismatch, "the greeting")).toThrow(
-				new RegExp(`^the greeting\\n${whole}: expected '${compared}' to be '${mismatch}'`),
-			);
+			expect(() => {
+				check(whole, mismatch, "the greeting");
+			}).toThrow(new RegExp(`^the greeting\\n${whole}: expected '${match}' to be '${mismatch}'`));
 		});
 	});
 
-	test("expectSuffix fails on a suffix longer than the string, comparing the whole string", () => {
-		expect(() => expectSuffix("abcdef", "xxabcdef")).toThrow(/^abcdef: expected 'abcdef' to be 'xxabcdef'/);
+	// A suffix longer than the string but shorter than twice its length is the case where an unclamped
+	// negative start index wraps around and compares a cut-off tail.
+	test("expectSuffix compares the whole string for a suffix longer than it but shorter than twice its length", () => {
+		expect(() => {
+			expectSuffix("abcdef", "xxabcdef");
+		}).toThrow(/^abcdef: expected 'abcdef' to be 'xxabcdef'/);
 	});
 });
 
