@@ -29,7 +29,8 @@ export default defineConfig({
 		restoreMocks: true,
 		// 0 disables truncation, so test names built from test.each/test.for rows stay whole.
 		taskTitleValueFormatTruncate: 0,
-		// Only a run with --coverage collects. `include` is the production sources; the e2e suites run the extension in child processes and are not measured.
+		// Coverage is collected only when a run passes --coverage. These root options would apply to
+		// the e2e project too, so `npm run test:coverage` restricts the run to the unit project.
 		coverage: {
 			provider: "v8",
 			reporter: ["text", "lcov"],
