@@ -9,7 +9,7 @@
  */
 
 import { beforeEach, expect, test } from "vitest";
-import { assertPresent } from "../assertions.js";
+import { assertPresent, expectPrefix } from "../assertions.js";
 import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
@@ -465,7 +465,7 @@ test("expanded nested spawn header stays within width after indent", async () =>
 
 	const lines = component.render(24);
 	const headerLine = lines.find((line: string) => line.includes("model-name")) ?? "";
-	expect(headerLine).toMatch(/^ {5}/);
+	expectPrefix(headerLine, " ".repeat(5));
 	expect(stripAnsi(headerLine).length).toBeLessThanOrEqual(24);
 });
 

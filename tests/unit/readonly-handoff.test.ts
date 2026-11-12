@@ -8,7 +8,7 @@ import { canPromoteBoundary, discardNonHumanBoundary } from "../../readonly-boun
 import { setActiveNotebookTopic } from "../../notebook/topic.js";
 import { callHandlers, emitAll, handoffToolResult, makeReadonlyUICtx, registerReadonlyPI, turnEndEvent, type ToolCall } from "./helpers.js";
 import type { TestPI } from "./test-host.js";
-import { assertPresent } from "../assertions.js";
+import { assertPresent, expectPrefix } from "../assertions.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
 import { buildContinuationFrame } from "../../handoff/format.js";
@@ -561,8 +561,7 @@ test("readonly topic boundary handoff clears its bypass after the cut", async ()
 	const compaction = drafts.find((draft) => draft.type === "compaction");
 	const successor = drafts.find((draft) => draft.customType === "pi-schematic-handoff");
 	expect(compaction.summary, "readonly must not be frozen into the summary").toBe(buildContinuationFrame());
-	const prefix = "## Next instruction\n\nContinue billing work";
-	expect(successor.content.slice(0, prefix.length), "the successor turn carries the stored direction verbatim").toBe(prefix);
+	expectPrefix(successor.content, "## Next instruction\n\nContinue billing work", "the successor turn carries the stored direction verbatim");
 	expect((await toolCall({ toolName: "handoff", input: {} }, {})).block).toBe(true);
 	expect((await toolCall({ toolName: "write", input: {} }, {})).block).toBe(true);
 });
@@ -666,7 +665,7 @@ test("session tree drops a staged handoff, releases the overlap guard, and a sta
 	const drafts = await completeHandoffCut(pi, "fresh-branch-handoff", { nextInstruction: "continue fresh branch work" });
 	expect(pi.sentUserMessages, "the dropped handoff reports no failure and the fresh one completes").toHaveLength(0);
 	const successor = drafts.find((draft) => draft.customType === "pi-schematic-handoff");
-	expect(successor.content, "the fresh branch must receive its own instruction").toMatch(/^## Next instruction\n\ncontinue fresh branch work/);
+	expectPrefix(successor.content, "## Next instruction\n\ncontinue fresh branch work", "the fresh branch must receive its own instruction");
 });
 
 test("session resume restores readonly enforcement from persisted state", async () => {

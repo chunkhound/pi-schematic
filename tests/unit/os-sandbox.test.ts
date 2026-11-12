@@ -16,6 +16,7 @@ import {
 import { READONLY_SANDBOX_BLOCK_NOTICE } from "../../notifications.js";
 import { resolveRealPath } from "../../resolve-path.js";
 import { bashResult, SANDBOX_DENIAL_PHRASES } from "./helpers.js";
+import { expectSuffix } from "../assertions.js";
 
 const NOTICE_SUFFIX = `\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`;
 
@@ -242,7 +243,7 @@ test(`sandbox wrappers pass the command as one quoted argument to "$0" -c with n
 	const command = `printf '%s\\n' "it's quoted"\necho second line`;
 
 	for (const wrapped of [wrapWithSandboxExec(command), wrapWithBwrap(command)]) {
-		expect(wrapped.endsWith(` "$0" -c ${quoteShellArgument(command)}`), wrapped).toBe(true);
+		expectSuffix(wrapped, ` "$0" -c ${quoteShellArgument(command)}`);
 		expect(wrapped, wrapped).not.toContain("<<");
 		expect(wrapped, wrapped).not.toContain(READONLY_SANDBOX_BLOCK_NOTICE);
 		expect(wrapped, wrapped).not.toContain("2>&1");
@@ -322,7 +323,10 @@ for (const { name, write } of [
 
 			const noticed = appendSandboxBlockNoticeToResult(bashResult(`${run.stdout}${run.stderr}`));
 
-			expect(noticed?.content[0]?.type === "text" && noticed.content[0].text.endsWith(NOTICE_SUFFIX), JSON.stringify(noticed)).toBe(true);
+			const firstBlock = noticed?.content[0];
+			expect(firstBlock?.type, JSON.stringify(noticed)).toBe("text");
+			if (firstBlock?.type !== "text") { expect.unreachable(); }
+			expectSuffix(firstBlock.text, NOTICE_SUFFIX);
 		} finally {
 			fs.rmSync(outsidePath, { force: true });
 		}

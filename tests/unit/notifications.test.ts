@@ -6,6 +6,7 @@
  */
 
 import { expect, test } from "vitest";
+import { expectPrefix } from "../assertions.js";
 import { applyReadonlyBashGuard, classifyBashCommand } from "../../readonly-bash.js";
 import { registerReadonlyPI } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
@@ -91,20 +92,20 @@ test("composition chain: READONLY_ENABLED_STATUS contains READONLY_BASH_SCOPE", 
 });
 
 test("summary constants use [readonly] prefix", () => {
-	expect(READONLY_WRITE_EDIT_SUMMARY.slice(0, "[readonly]".length)).toBe("[readonly]");
-	expect(READONLY_NO_SHELL_SUMMARY.slice(0, "[readonly]".length)).toBe("[readonly]");
-	expect(READONLY_ACTIVE_SUMMARY.slice(0, "[readonly]".length)).toBe("[readonly]");
-	expect(READONLY_HANDOFF_EXCEPTION_SUMMARY.slice(0, "[readonly]".length)).toBe("[readonly]");
-	expect(READONLY_ENABLED_STATUS.slice(0, "[readonly]".length)).toBe("[readonly]");
-	expect(READONLY_DISABLED_SUMMARY.slice(0, "[readonly]".length)).toBe("[readonly]");
+	expectPrefix(READONLY_WRITE_EDIT_SUMMARY, "[readonly]");
+	expectPrefix(READONLY_NO_SHELL_SUMMARY, "[readonly]");
+	expectPrefix(READONLY_ACTIVE_SUMMARY, "[readonly]");
+	expectPrefix(READONLY_HANDOFF_EXCEPTION_SUMMARY, "[readonly]");
+	expectPrefix(READONLY_ENABLED_STATUS, "[readonly]");
+	expectPrefix(READONLY_DISABLED_SUMMARY, "[readonly]");
 });
 
 test("block reasons use 'Readonly mode:' prefix", () => {
-	expect(READONLY_WRITE_EDIT_BLOCK_REASON.slice(0, "Readonly mode:".length)).toBe("Readonly mode:");
-	expect(READONLY_POWERSHELL_BLOCK_REASON.slice(0, "Readonly mode:".length)).toBe("Readonly mode:");
+	expectPrefix(READONLY_WRITE_EDIT_BLOCK_REASON, "Readonly mode:");
+	expectPrefix(READONLY_POWERSHELL_BLOCK_REASON, "Readonly mode:");
 	expect(READONLY_POWERSHELL_BLOCK_REASON).toMatch(/powershell/);
-	expect(READONLY_HANDOFF_BLOCK_REASON.slice(0, "Readonly mode:".length)).toBe("Readonly mode:");
-	expect(buildReadonlyBashBlockReason("test", "cmd").slice(0, "Readonly mode:".length)).toBe("Readonly mode:");
+	expectPrefix(READONLY_HANDOFF_BLOCK_REASON, "Readonly mode:");
+	expectPrefix(buildReadonlyBashBlockReason("test", "cmd"), "Readonly mode:");
 });
 
 test("bash guard uses centralized readonly block copy", () => {

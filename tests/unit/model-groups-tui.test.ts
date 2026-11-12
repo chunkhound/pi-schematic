@@ -766,8 +766,10 @@ test("model groups TUI move, wizard add, model thinking, and remove persist thro
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B"); // first model row after refresh
 	c.handleInput?.("\r");
+	const callsBeforeRemove = calls.length;
 	c.handleInput?.("D");
-	expect(calls.at(-1)).toMatch(/^update:global:review:/);
+	expect(calls).toHaveLength(callsBeforeRemove + 1);
+	expect(calls.at(-1)).toBe("update:global:review:anthropic/claude/inherit");
 });
 
 test("model groups TUI notifies and keeps visible state on persistence errors", () => {

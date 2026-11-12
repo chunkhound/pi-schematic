@@ -1,9 +1,10 @@
 // Tests for the test infrastructure itself: the shared Node child runner, the compat lane check that
-// every file on its unit list exists and belongs to the unit project, and the run-wide config that
-// keeps parameterized test titles whole.
+// every file on its unit list exists and belongs to the unit project, the run-wide config that
+// keeps parameterized test titles whole, and the prefix and suffix assertion helpers.
 
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { expectPrefix, expectSuffix } from "../assertions.js";
 import { REPO_ROOT, REPO_ROOT_URL } from "../paths.js";
 import { spawnNode } from "./spawn-node.js";
 
@@ -62,6 +63,64 @@ describe("compat lane test files", () => {
 		expect(() => assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/unit/helpers.ts"])).toThrow(
 			new Error("The compat lane lists test files outside the unit project: tests/unit/helpers.ts"),
 		);
+	});
+});
+
+describe("expectPrefix and expectSuffix", () => {
+	const whole = "hello world";
+	const helpers = [
+		{ name: "expectPrefix", check: expectPrefix, match: "hello", mismatch: "world", otherCase: "HELLO", padded: " hello" },
+		{ name: "expectSuffix", check: expectSuffix, match: "world", mismatch: "hello", otherCase: "WORLD", padded: "world " },
+	];
+
+	describe.for(helpers)("$name", ({ check, match, mismatch, otherCase, padded }) => {
+		test.for([
+			{ title: "a matching part", part: match },
+			{ title: "an empty part", part: "" },
+			{ title: "a part equal to the whole string", part: whole },
+		])("passes on $title", ({ part }) => {
+			expect(() => {
+				check(whole, part);
+			}).not.toThrow();
+		});
+
+		test("fails on a non-matching part, printing the full string before the comparison", () => {
+			expect(() => {
+				check(whole, mismatch);
+			}).toThrow(new RegExp(`^${whole}: expected '${match}' to be '${mismatch}'`));
+		});
+
+		test("fails on a part that differs only in letter case", () => {
+			expect(() => {
+				check(whole, otherCase);
+			}).toThrow();
+		});
+
+		test("fails on a part that differs only in surrounding whitespace", () => {
+			expect(() => {
+				check(whole, padded);
+			}).toThrow();
+		});
+
+		test("fails on a string shorter than the part, comparing the whole string", () => {
+			expect(() => {
+				check("hi", whole);
+			}).toThrow(new RegExp(`^hi: expected 'hi' to be '${whole}'`));
+		});
+
+		test("prints the caller's message on its own line before the full string", () => {
+			expect(() => {
+				check(whole, mismatch, "the greeting");
+			}).toThrow(new RegExp(`^the greeting\\n${whole}: expected '${match}' to be '${mismatch}'`));
+		});
+	});
+
+	// A suffix longer than the string but shorter than twice its length is the case where an unclamped
+	// negative start index wraps around and compares a cut-off tail.
+	test("expectSuffix compares the whole string for a suffix longer than it but shorter than twice its length", () => {
+		expect(() => {
+			expectSuffix("abcdef", "xxabcdef");
+		}).toThrow(/^abcdef: expected 'abcdef' to be 'xxabcdef'/);
 	});
 });
 

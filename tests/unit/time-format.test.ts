@@ -9,6 +9,7 @@ import {
 	hostZone,
 } from "../../time/format.js";
 import { spawnNode } from "./spawn-node.js";
+import { expectPrefix } from "../assertions.js";
 
 // Instants are built with Date.UTC throughout, so a run in any host zone
 // exercises the same instants — the tests never inherit the runner's wall clock.
@@ -105,8 +106,8 @@ test("formatCurrentDate renders the calendar day of the zone, not the host", () 
 });
 
 test("formatCurrentDate zero-pads month and day", () => {
-	expect(formatCurrentDate(utc(2025, 0, 1), "UTC")).toMatch(/^2025-01-01 /);
-	expect(formatCurrentDate(utc(2025, 8, 9), "UTC")).toMatch(/^2025-09-09 /);
+	expectPrefix(formatCurrentDate(utc(2025, 0, 1), "UTC"), "2025-01-01 ");
+	expectPrefix(formatCurrentDate(utc(2025, 8, 9), "UTC"), "2025-09-09 ");
 });
 
 // The host zone is interpolated into the prompt, so a host that reports no
@@ -130,7 +131,7 @@ test("formatCurrentDate carries no clock reading", () => {
 test("formatCurrentDatePrompt is byte-stable across a whole calendar day", () => {
 	const start = utc(2026, 9, 5, 4).getTime(); // 2026-10-05 00:00 in America/New_York
 	const baseline = formatCurrentDatePrompt(new Date(start), "America/New_York");
-	expect(baseline).toMatch(/^## Current date\n2026-10-05 \(Monday\), America\/New_York \(UTC-04:00\)/);
+	expectPrefix(baseline, "## Current date\n2026-10-05 (Monday), America/New_York (UTC-04:00)");
 	for (let minute = 0; minute < 1440; minute++) {
 		const instant = new Date(start + minute * MINUTE);
 		expect(formatCurrentDatePrompt(instant, "America/New_York"), `minute ${minute} drifted`).toBe(baseline);

@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { expectPrefix, expectSuffix } from "../assertions.js";
 import * as fc from "fast-check";
 import { Value } from "typebox/value";
 import { createState } from "../../state.js";
@@ -46,7 +47,7 @@ function assertSuccessorTurn(content: string, input: { nextInstruction: string; 
 	const context = input.context?.trim();
 	if (context) expected.push(`## Context\n\n${context}`);
 	const prefix = expected.join("\n\n");
-	expect(content.slice(0, prefix.length), `successor turn must start with the delivered instruction and context:\n${content}`).toBe(prefix);
+	expectPrefix(content, prefix, "successor turn must start with the delivered instruction and context:");
 }
 
 type Usage = { tokens: number | null; percent: number | null; contextWindow: number | null } | null;
@@ -579,7 +580,7 @@ test("a failed handoff without a pending request clears the status and says noth
 	expect(pi.sentMessages).toHaveLength(1);
 	expect(pi.sentMessages[0].message.customType).toBe("pi-schematic-handoff-failed");
 	expect(pi.sentMessages[0].message.display).toBe(true);
-	expect(pi.sentMessages[0].message.content).toMatch(/No required handoff remains pending; retry when ready\.$/);
+	expectSuffix(pi.sentMessages[0].message.content, "No required handoff remains pending; retry when ready.");
 	expect(pi.sentMessages[0].options).toStrictEqual({ triggerTurn: false });
 });
 
@@ -605,9 +606,9 @@ for (const { attemptsBefore, nudged, requestSurvives } of [
 		if (requestSurvives) expect(state.pendingRequestedHandoff).not.toBeNull();
 		else expect(state.pendingRequestedHandoff).toBeNull();
 		expect(pi.sentMessages).toHaveLength(1);
-		expect(pi.sentMessages[0].message.content).toMatch(requestSurvives
-			? /The required handoff remains pending; retry when context usage is eligible\.$/
-			: /No required handoff remains pending; retry when ready\.$/);
+		expectSuffix(pi.sentMessages[0].message.content, requestSurvives
+			? "The required handoff remains pending; retry when context usage is eligible."
+			: "No required handoff remains pending; retry when ready.");
 		expect(statuses.get(STATUS_KEY_HANDOFF)).toBe(requestSurvives ? "🤝 Handoff required — ready to compact" : undefined);
 		expect(notifications[0]?.message).toBe(`Handoff failed: ${REASON_NOT_PERSISTED}. The handoff can be retried.`);
 	});
@@ -636,7 +637,7 @@ test("agent_settled fails a declined handoff with its decline reason in a displa
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 
 	expect(state.pendingRequestedHandoff?.toolCalled).toBe(false);
-	expect(assertFailedWithoutRun(state, pi)).toMatch(new RegExp(`^Handoff failed — ${REASON_RESULT_MISSING}\\.`));
+	expectPrefix(assertFailedWithoutRun(state, pi), `Handoff failed — ${REASON_RESULT_MISSING}.`);
 	expect(notifications[0].level).toBe("error");
 });
 
@@ -648,7 +649,7 @@ test("agent_settled fails a handoff whose turn_end never ran", async () => {
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 
 	expect(state.pendingRequestedHandoff?.toolCalled).toBe(false);
-	expect(assertFailedWithoutRun(state, pi)).toMatch(new RegExp(`^Handoff failed — ${REASON_NO_BOUNDARY}\\.`));
+	expectPrefix(assertFailedWithoutRun(state, pi), `Handoff failed — ${REASON_NO_BOUNDARY}.`);
 	expect(notifications).toStrictEqual([{ message: `Handoff failed: ${REASON_NO_BOUNDARY}. The handoff can be retried.`, level: "error" }]);
 });
 
@@ -734,7 +735,7 @@ test("a handoff whose branch holds only an earlier handoff's cut fails as not pe
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
 	expect(state.stagedHandoff).toBeNull();
-	expect(pi.sentMessages[0].message.content).toMatch(new RegExp(`^Handoff failed — ${REASON_NOT_PERSISTED.replace(/[()]/g, "\\$&")}\\.`));
+	expectPrefix(pi.sentMessages[0].message.content, `Handoff failed — ${REASON_NOT_PERSISTED}.`);
 });
 
 test("agent_settled after a handoff completed at turn_start sends and notifies nothing", async () => {
@@ -913,7 +914,7 @@ test("the boundary settles a failed handoff before the watchdog counts the run, 
 		expect(warnings(), `after failed attempt ${attempt}`).toHaveLength(attempt < MAX_HANDOFF_ATTEMPTS ? 0 : 1);
 	}
 
-	expect(warnings()[0].message).toMatch(new RegExp(`^Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts`));
+	expectPrefix(warnings()[0].message, `Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts`);
 });
 
 /** The watchdog nudge the real context hook injects for `ctx`, or undefined when it injects none. */
@@ -1150,8 +1151,7 @@ test("buildNextUserMessage preserves instruction bytes and normalizes context pa
 			fc.string(),
 			(instruction, context) => {
 				const message = buildNextUserMessage({ nextInstruction: instruction, context });
-				const prefix = `## Next instruction\n\n${instruction}`;
-				expect(message.slice(0, prefix.length), "the instruction must open the message byte-for-byte").toBe(prefix);
+				expectPrefix(message, `## Next instruction\n\n${instruction}`, "the instruction must open the message byte-for-byte");
 				if (context.trim()) expect(message, "non-blank context must be preserved in the message").toContain(context.trim());
 				expect(message, "context padding must not change the delivered message").toBe(buildNextUserMessage({ nextInstruction: instruction, context: ` \n${context} ` }));
 			},
