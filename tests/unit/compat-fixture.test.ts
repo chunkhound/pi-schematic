@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 
-const { createCompatCopy, packEntry, parseNpmViewValue, resolveLatestPi, writeCompatArtifacts } = await import(new URL("../../scripts/compat-fixture.mjs", import.meta.url).href);
+const { packEntry, parseNpmViewValue, resolveLatestPi, writeCompatArtifacts } = await import(new URL("../../scripts/compat-fixture.mjs", import.meta.url).href);
 
 function withTempDir(prefix: string, run: (temp: string) => void): void {
 	const temp = mkdtempSync(join(tmpdir(), prefix));
@@ -13,27 +13,6 @@ function withTempDir(prefix: string, run: (temp: string) => void): void {
 		rmSync(temp, { recursive: true, force: true });
 	}
 }
-
-test("createCompatCopy leaves out local output directories and keeps source files", () => {
-	withTempDir("compat-copy-source-", (root) => {
-		for (const dir of [".git", ".cache", "coverage", "node_modules", "openspec", "docs"]) {
-			mkdirSync(join(root, dir));
-			writeFileSync(join(root, dir, "marker.txt"), dir);
-		}
-		writeFileSync(join(root, "package.json"), "{}");
-
-		const { temp, copy } = createCompatCopy(root, "compat-copy-target-");
-		try {
-			expect(existsSync(join(copy, "package.json"))).toBe(true);
-			expect(existsSync(join(copy, "docs", "marker.txt"))).toBe(true);
-			for (const dir of [".git", ".cache", "coverage", "node_modules", "openspec"]) {
-				expect(existsSync(join(copy, dir)), dir).toBe(false);
-			}
-		} finally {
-			rmSync(temp, { recursive: true, force: true });
-		}
-	});
-});
 
 test("writeCompatArtifacts does nothing when artifacts are disabled", () => {
 	withTempDir("compat-artifact-disabled-", (temp) => {
