@@ -92,10 +92,10 @@ test("capability pre-selection excludes unauthenticated capable models and picks
 	], constraints: { modalities: ["text", "image"] } });
 	routed.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
 	// cap-unavailable is not auth-configured, so it must be excluded from the capable pool.
-	const reg = registry([parent, capA, capB, text], new Set(["p:cap-a", "p:cap-b", "p:text"]));
+	const reg = registry([parent, capA, capB, model("p", "cap-unavailable", { input: ["text", "image"] }), text], new Set(["p:cap-a", "p:cap-b", "p:text"]));
 	let draws = 0;
-	// Random selection over the filtered pool: alternating draws land on each capable member.
-	const pick = () => resolveSpawnModelRoute({ requestedGroup: "mixed", constraints: { modalities: { required: ["image"] } }, groups: [routed], parentModel: parent, parentThinking: "low", modelRegistry: reg, rng: () => (draws++ % 2 === 0 ? 0.05 : 0.95) }).modelId;
+	// Cycling draws reach every index of a three-member pool, so an unfiltered pool would yield cap-unavailable.
+	const pick = () => resolveSpawnModelRoute({ requestedGroup: "mixed", constraints: { modalities: { required: ["image"] } }, groups: [routed], parentModel: parent, parentThinking: "low", modelRegistry: reg, rng: () => [0.05, 0.5, 0.95][draws++ % 3] }).modelId;
 	const seen = new Set<string>();
 	for (let i = 0; i < 6; i++) {
 		const id = pick();
