@@ -1,7 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, type Model, type ModelThinkingLevel, type Api } from "@earendil-works/pi-ai";
-import { Container, fuzzyFilter, Input, Key, matchesKey, SelectList, sliceByColumn, truncateToWidth, visibleWidth, type Component, type Focusable, type SelectItem, type SelectListLayoutOptions, type SelectListTruncatePrimaryContext, type TUI } from "@earendil-works/pi-tui";
+import { Container, fuzzyFilter, Input, Key, matchesKey, SelectList, sliceByColumn, truncateToWidth, visibleWidth, type Component, type Focusable, type SelectItem, type SelectListTruncatePrimaryContext, type TUI } from "@earendil-works/pi-tui";
 import {
 	createGroup,
 	deleteGroup,
@@ -340,7 +340,7 @@ export function createModelGroupsComponent(
 		// selector row). Text is the required base when the group's members support
 		// it and reasoning is handled per-model (thinkingLevel), so both are
 		// excluded from toggles.
-		return constraintEditorRows(editor.descriptor, editor.evaluation, state.editDraft?.constraints?.[editor.descriptor.key]).filter(
+		return constraintEditorRows(editor.descriptor, editor.evaluation).filter(
 			(row) => row.kind === "toggle" && row.value !== "reasoning" && row.value !== "text",
 		);
 	}

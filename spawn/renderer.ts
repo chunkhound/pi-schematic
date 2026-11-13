@@ -657,7 +657,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 					this.handleEvent(event);
 				})
 				: undefined;
-		} catch (error) {
+		} catch {
 			this.unsubscribe = undefined;
 		}
 	}
@@ -762,7 +762,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			try {
 				this.streamingComponent.updateContent(this.pendingAssistantMessage as unknown as import("@earendil-works/pi-ai").AssistantMessage);
 			} catch (error) {
-				this.resetStreamingComponent(error, "message_update");
+				this.resetStreamingComponent(error);
 			}
 			this.pendingAssistantMessage = undefined;
 		}
@@ -1044,7 +1044,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		return lines;
 	}
 
-	private resetStreamingComponent(error: unknown, eventType: string): void {
+	private resetStreamingComponent(error: unknown): void {
 		this.streamingComponent = undefined;
 		if (isExpectedToolComponentFailure(error)) {
 			return;
@@ -1082,7 +1082,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 				this.addChild(this.streamingComponent);
 				this.streamingComponent.updateContent(event.message);
 			} catch (error) {
-				this.resetStreamingComponent(error, "message_start");
+				this.resetStreamingComponent(error);
 			}
 		}
 	}
@@ -1142,7 +1142,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			try {
 				this.streamingComponent.updateContent(event.message);
 			} catch (error) {
-				this.resetStreamingComponent(error, "message_end");
+				this.resetStreamingComponent(error);
 			}
 		}
 		const stopOutcome = getStopReasonOutcome(event.message.stopReason);
@@ -1278,7 +1278,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			// correct for synchronous access (tests, in-between paints).
 			this.clearRenderCache();
 			this.scheduleRender();
-		} catch (error) {
+		} catch {
 			this.clearRenderCache();
 			this.resetRenderBatching();
 			// Prevent a single bad event from killing the subscription.

@@ -4,6 +4,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { applySharedModuleProbe, PROBE_MODEL_KEY } from "./shared-module-probe.js";
 
-export default function (pi: ExtensionAPI): void {
+export default function (_pi: ExtensionAPI): void {
 	(globalThis as Record<symbol, unknown>)[PROBE_MODEL_KEY] = applySharedModuleProbe().model;
 }
