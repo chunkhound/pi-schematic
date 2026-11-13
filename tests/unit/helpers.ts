@@ -73,8 +73,8 @@ export function setTempHome(home: string): () => void {
 
 /**
  * An untyped render context for a collapsed call `tool-call-1` with no previous
- * component and a no-op `invalidate`. Members whose override is `undefined` keep
- * these defaults. New tests use `createToolRenderContext`.
+ * component and a no-op `invalidate`; the overrides replace these members. New
+ * tests use `createToolRenderContext`.
  */
 export function createRenderContext(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
@@ -83,7 +83,7 @@ export function createRenderContext(overrides: Record<string, unknown> = {}): Re
 		toolCallId: "tool-call-1",
 		lastComponent: undefined,
 		invalidate: () => {},
-		...definedOverrides(overrides),
+		...overrides,
 	};
 }
 
@@ -254,16 +254,19 @@ export function turnEndEvent(overrides: Partial<TurnEndEvent> = {}): TurnEndEven
 }
 
 // ── Typed extension contexts ─────────────────────────────────────────
-// Each member a test leaves out throws when the code under test reaches it, naming
-// the member, so a test that reaches a member it did not stub fails, unless the code
-// under test catches the error (spawn cleanup swallows a throwing ctx.ui.notify).
-// Plain data members get the values pi reports for a session without UI. An
+// Each method a test leaves out fails when the code under test calls it, naming the
+// method: a method whose pi type returns a promise returns a rejected one, every
+// other method throws. So a test that reaches a method it did not stub fails, unless
+// the code under test catches the error (spawn cleanup swallows a throwing
+// ctx.ui.notify). Data members get the values pi reports for a session without UI;
+// optional ones such as `thinkingLevel` are left out and read as `undefined`. An
 // override whose value is `undefined` counts as left out.
 
 function unstubbedError(member: string): Error {
-	const where = member.startsWith("ctx.ui.")
-		? `pass it to createUIContext and that context as \`ui\``
-		: "pass it in the overrides";
+	let where = "pass it in the overrides";
+	if (member.startsWith("ctx.ui.")) {where = "pass it to createUIContext and that context as `ui`";}
+	// The pinned pi's render context type has no keybinding formatters, so an override cannot name them.
+	if (member.startsWith("context.")) {where = "assign it to the context createToolRenderContext returned";}
 	return new Error(`${member} is not stubbed in this test context; ${where}.`);
 }
 
@@ -271,6 +274,10 @@ function unstubbed(member: string): () => never {
 	return () => {
 		throw unstubbedError(member);
 	};
+}
+
+function unstubbedAsync(member: string): () => Promise<never> {
+	return () => Promise.reject(unstubbedError(member));
 }
 
 // The overrides without the members whose value is `undefined`, so spreading them
@@ -283,32 +290,31 @@ function definedOverrides<T extends object>(overrides: Partial<T>): Partial<T> {
 	return defined;
 }
 
-// A model registry whose every use throws naming `ctx.modelRegistry`. It is a value,
-// not a throwing getter, so spreading or copying a context does not throw; only
-// using the registry does, on the original context and on every copy.
+// The methods `ModelRegistry` declares; its only data member, `runtime`, is private.
+const MODEL_REGISTRY_MEMBERS = new Set(Object.getOwnPropertyNames(ModelRegistry.prototype).filter((name) => name !== "constructor"));
+
+// A model registry on which reading any `ModelRegistry` method throws naming
+// `ctx.modelRegistry`. Every other access behaves as on an empty object, so copying,
+// comparing, printing or awaiting a context does not throw; only using the registry
+// does, on the original context and on every copy.
 function unstubbedModelRegistry(): ModelRegistry {
 	const target: unknown = Object.create(ModelRegistry.prototype);
 	if (!(target instanceof ModelRegistry)) {throw new Error("Object.create did not produce a ModelRegistry instance.");}
-	const fail = (): never => {
-		throw unstubbedError("ctx.modelRegistry");
-	};
 	return new Proxy(target, {
-		get: fail,
-		set: fail,
-		has: fail,
-		ownKeys: fail,
-		getOwnPropertyDescriptor: fail,
-		defineProperty: fail,
-		deleteProperty: fail,
+		get(registry, property, receiver) {
+			if (typeof property === "string" && MODEL_REGISTRY_MEMBERS.has(property)) {throw unstubbedError("ctx.modelRegistry");}
+			const value: unknown = Reflect.get(registry, property, receiver);
+			return value;
+		},
 	});
 }
 
-/** An `ExtensionUIContext` with `theme` as its theme; every other member throws unless overridden. */
+/** An `ExtensionUIContext` with `theme` as its theme; every other member fails on call unless overridden. */
 export function createUIContext(overrides: Partial<ExtensionUIContext> = {}): ExtensionUIContext {
 	return {
-		select: unstubbed("ctx.ui.select"),
-		confirm: unstubbed("ctx.ui.confirm"),
-		input: unstubbed("ctx.ui.input"),
+		select: unstubbedAsync("ctx.ui.select"),
+		confirm: unstubbedAsync("ctx.ui.confirm"),
+		input: unstubbedAsync("ctx.ui.input"),
 		notify: unstubbed("ctx.ui.notify"),
 		onTerminalInput: unstubbed("ctx.ui.onTerminalInput"),
 		setStatus: unstubbed("ctx.ui.setStatus"),
@@ -320,11 +326,11 @@ export function createUIContext(overrides: Partial<ExtensionUIContext> = {}): Ex
 		setFooter: unstubbed("ctx.ui.setFooter"),
 		setHeader: unstubbed("ctx.ui.setHeader"),
 		setTitle: unstubbed("ctx.ui.setTitle"),
-		custom: unstubbed("ctx.ui.custom"),
+		custom: unstubbedAsync("ctx.ui.custom"),
 		pasteToEditor: unstubbed("ctx.ui.pasteToEditor"),
 		setEditorText: unstubbed("ctx.ui.setEditorText"),
 		getEditorText: unstubbed("ctx.ui.getEditorText"),
-		editor: unstubbed("ctx.ui.editor"),
+		editor: unstubbedAsync("ctx.ui.editor"),
 		addAutocompleteProvider: unstubbed("ctx.ui.addAutocompleteProvider"),
 		setEditorComponent: unstubbed("ctx.ui.setEditorComponent"),
 		getEditorComponent: unstubbed("ctx.ui.getEditorComponent"),
@@ -341,8 +347,8 @@ export function createUIContext(overrides: Partial<ExtensionUIContext> = {}): Ex
 /**
  * An `ExtensionContext` without UI: `hasUI` false, mode `print`, `cwd` the process
  * directory, no model, an in-memory session manager for `cwd` and `createUIContext()`
- * as `ui`. `modelRegistry` throws on use unless overridden; every method throws
- * unless overridden.
+ * as `ui`. `modelRegistry` throws on use unless overridden; every method fails on
+ * call unless overridden.
  */
 export function createExtensionContext(overrides: Partial<ExtensionContext> = {}): ExtensionContext {
 	const defined = definedOverrides(overrides);
@@ -369,26 +375,26 @@ export function createExtensionContext(overrides: Partial<ExtensionContext> = {}
 	};
 }
 
-/** `createExtensionContext` plus the command members, each throwing unless overridden. */
+/** `createExtensionContext` plus the command members, each failing on call unless overridden. */
 export function createCommandContext(overrides: Partial<ExtensionCommandContext> = {}): ExtensionCommandContext {
 	const { getSystemPromptOptions, waitForIdle, newSession, fork, navigateTree, switchSession, reload, ...base } = overrides;
 	return Object.assign(createExtensionContext(base), {
 		getSystemPromptOptions: getSystemPromptOptions ?? unstubbed("ctx.getSystemPromptOptions"),
-		waitForIdle: waitForIdle ?? unstubbed("ctx.waitForIdle"),
-		newSession: newSession ?? unstubbed("ctx.newSession"),
-		fork: fork ?? unstubbed("ctx.fork"),
-		navigateTree: navigateTree ?? unstubbed("ctx.navigateTree"),
-		switchSession: switchSession ?? unstubbed("ctx.switchSession"),
-		reload: reload ?? unstubbed("ctx.reload"),
+		waitForIdle: waitForIdle ?? unstubbedAsync("ctx.waitForIdle"),
+		newSession: newSession ?? unstubbedAsync("ctx.newSession"),
+		fork: fork ?? unstubbedAsync("ctx.fork"),
+		navigateTree: navigateTree ?? unstubbedAsync("ctx.navigateTree"),
+		switchSession: switchSession ?? unstubbedAsync("ctx.switchSession"),
+		reload: reload ?? unstubbedAsync("ctx.reload"),
 	});
 }
 
-/** `createExtensionContext` plus no callable tools and an `executeTool` that throws unless overridden. */
+/** `createExtensionContext` plus no callable tools and an `executeTool` that rejects unless overridden. */
 export function createToolContext(overrides: Partial<ExtensionToolContext> = {}): ExtensionToolContext {
 	const { tools, executeTool, ...base } = overrides;
 	return Object.assign(createExtensionContext(base), {
 		tools: tools ?? [],
-		executeTool: executeTool ?? unstubbed("ctx.executeTool"),
+		executeTool: executeTool ?? unstubbedAsync("ctx.executeTool"),
 	});
 }
 
