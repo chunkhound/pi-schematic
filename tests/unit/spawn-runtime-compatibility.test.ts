@@ -9,7 +9,6 @@ import { fauxAssistantMessage, fauxProvider, type Api, type Model, type Usage } 
 import { createState } from "../../state.js";
 import { THINKING_LEVELS } from "../../thinking-levels.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
-import type { SpawnToolResult } from "../../spawn/shared.js";
 import { createTestHost, getTool } from "./test-host.js";
 import { assertErrorResult, createExtensionContext, EMPTY_CHILD_USAGE, runRealChildInvocation } from "./helpers.js";
 import { REPO_ROOT_URL } from "../paths.js";
@@ -18,7 +17,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
-function isSpawnToolResult(value: unknown): value is SpawnToolResult {
+// The fields isSpawnToolResult checks; everything else stays unknown.
+interface CheckedSpawnResult {
+	content: { type: "text"; text: string }[];
+	details: { model: string; thinking: string; truncated: boolean; outcome: string; stats?: unknown };
+	usage: Record<string, unknown>;
+	isError?: unknown;
+}
+
+function isSpawnToolResult(value: unknown): value is CheckedSpawnResult {
 	if (!isRecord(value) || !Array.isArray(value.content) || !isRecord(value.details) || !isRecord(value.usage)) {return false;}
 	const { details } = value;
 	return value.content.every((block: unknown) => isRecord(block) && block.type === "text" && typeof block.text === "string")
@@ -29,8 +36,8 @@ function isSpawnToolResult(value: unknown): value is SpawnToolResult {
 }
 
 // The real-child fixture reports the spawn tool's result untyped; this checks its shape.
-function spawnResult(value: unknown): SpawnToolResult {
-	if (!isSpawnToolResult(value)) {throw new Error("Expected a spawn tool result with text content, details and usage.");}
+function spawnResult(value: unknown): CheckedSpawnResult {
+	if (!isSpawnToolResult(value)) {throw new Error(`Expected a spawn tool result with text content, details and usage, got ${JSON.stringify(value)}.`);}
 	return value;
 }
 
@@ -100,9 +107,7 @@ test("real child reset during its running update invalidates the session", async
 		prompt: "Use the agentic_e2e_probe tool.",
 		resetOnRunningUpdate: true,
 	});
-	const result = spawnResult(proof.result);
-
-	assertErrorResult(result, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
+	assertErrorResult(proof.result, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
 });
 
 test("concurrent real children both complete", async () => {

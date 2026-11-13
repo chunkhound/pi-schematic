@@ -1,5 +1,6 @@
 import type { Component } from "@earendil-works/pi-tui";
-import { beforeEach, expect, test, vi } from "vitest";
+import { initTheme } from "@earendil-works/pi-coding-agent";
+import { beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { createState, type SchematicState } from "../../state.js";
 import { createSession, createSubscribableSession, createToolRenderContext, theme } from "./helpers.js";
 import { createTestHost, getToolRenderResult, type ToolRenderResult } from "./test-host.js";
@@ -22,12 +23,11 @@ async function makeChildSpawnTool(state: SchematicState) {
 	return { renderResult: (...args: Parameters<ToolRenderResult>) => nestedComponent(renderResult(...args)) };
 }
 
-type CreateToolComponent = (toolName: string, toolCallId: string, args: Record<string, unknown>) => unknown;
-
-// createToolComponent is private to the nested session component; the spy reaches it through this check.
-function hasCreateToolComponent(value: unknown): value is { createToolComponent: CreateToolComponent } {
-	return typeof value === "object" && value !== null && typeof Reflect.get(value, "createToolComponent") === "function";
-}
+// pi's theme is global and initTheme() cannot be undone, so every test in this file runs with it:
+// nested tool components render only with a theme.
+beforeAll(() => {
+	initTheme();
+});
 
 beforeEach(() => {
 	h = createTestHarness();
@@ -311,11 +311,6 @@ test("nested spawn uses the latest streamed tool-call args before first frame fl
 		createToolRenderContext(),
 	);
 
-	// Spy on createToolComponent to capture args while preserving original behavior
-	const target: unknown = component;
-	if (!hasCreateToolComponent(target)) {throw new Error("The nested session component has no createToolComponent method.");}
-	const createToolComponent = vi.spyOn(target, "createToolComponent");
-
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	emit({
 		type: "message_update",
@@ -327,7 +322,9 @@ test("nested spawn uses the latest streamed tool-call args before first frame fl
 	});
 	flushSpawnFrameScheduler();
 
-	expect(createToolComponent.mock.lastCall?.[2]).toStrictEqual({ value: "new" });
+	const lines = component.render(120);
+	expect(lines).toContainEqual(expect.stringContaining('"value": "new"'));
+	expect(lines).not.toContainEqual(expect.stringContaining('"value": "old"'));
 });
 
 test("nested spawn coalesces same-turn child events into one parent invalidate", async () => {

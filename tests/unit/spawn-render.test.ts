@@ -8,7 +8,8 @@
  * Execution and lifecycle tests remain in spawn.test.ts.
  */
 
-import { beforeEach, expect, test } from "vitest";
+import { beforeAll, beforeEach, expect, onTestFinished, test } from "vitest";
+import { resetCapabilitiesCache, setCapabilities } from "@earendil-works/pi-tui";
 import { assertPresent, expectPrefix } from "../assertions.js";
 import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { createState, type SchematicState } from "../../state.js";
@@ -36,16 +37,11 @@ async function makeChildSpawnTool(state: SchematicState) {
 	return { renderResult: getToolRenderResult(pi, "spawn") };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
-// The nested session component keeps `details` private; the test reads it as an untyped record.
-function privateDetails(component: object): Record<string, unknown> {
-	const details: unknown = Reflect.get(component, "details");
-	if (!isRecord(details)) {throw new Error("Expected the component to hold result details.");}
-	return details;
-}
+// pi's theme is global and initTheme() cannot be undone, so every test in this file runs with it:
+// nested tool components and the child's error message render only with a theme.
+beforeAll(() => {
+	initTheme();
+});
 
 beforeEach(() => {
 	h = createTestHarness();
@@ -398,7 +394,6 @@ test("retained nested spawn preserves identity when malformed terminal details r
 	expect(sameComponent).toBe(component);
 	expect(collapsedLines).toContainEqual(expect.stringContaining("⚠ mock-model • high"));
 	expect(collapsedLines).toContainEqual(expect.stringContaining("💬 error"));
-	expect(privateDetails(sameComponent).outcome).toBe("error");
 
 	const expandedComponent = childSpawnTool.renderResult(
 		{ content: [], details: {} },
@@ -505,9 +500,13 @@ test("nested spawn clears cached render when showImages changes", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
 	const session = createSession([
-		{ role: "assistant", content: [{ type: "text", text: "hello" }, { type: "image", data: "iVBOR", mimeType: "image/png" }] },
+		{ role: "assistant", content: [{ type: "toolCall", id: "tc-1", name: "screenshot", arguments: {} }] },
+		{ role: "toolResult", toolCallId: "tc-1", toolName: "screenshot", content: [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }], isError: false },
 	]);
 	state.childSessions.set("tool-call-1", session);
+	// An inline image renders only on a terminal that draws images.
+	setCapabilities({ images: "kitty", trueColor: true, hyperlinks: false });
+	onTestFinished(() => { resetCapabilitiesCache(); });
 
 	const component = childSpawnTool.renderResult(
 		{
@@ -532,9 +531,9 @@ test("nested spawn clears cached render when showImages changes", async () => {
 	const linesWithoutImages = sameComponent.render(120);
 
 	expect(sameComponent).toBe(component);
-	expect(linesWithImages).toSatisfy(Array.isArray);
-	expect(linesWithoutImages).toSatisfy(Array.isArray);
-	expect(Reflect.get(sameComponent, "cachedShowImages")).toBe(false);
+	expect(linesWithImages).toContainEqual(expect.stringContaining("iVBORw0KGgo="));
+	expect(linesWithoutImages).toContainEqual(expect.stringContaining("[Image: [image/png]]"));
+	expect(linesWithoutImages).not.toContainEqual(expect.stringContaining("iVBORw0KGgo="));
 });
 
 test("nested spawn rerenders when stats become unavailable", async () => {
@@ -640,8 +639,6 @@ const stopReasonOutcomeCases = [
 
 for (const { name, outcome, isError, present, absent } of stopReasonOutcomeCases) {
 	test(name, async () => {
-		// The child's error message renders through pi's global theme.
-		initTheme();
 		const state = createState();
 		const childSpawnTool = await makeChildSpawnTool(state);
 		state.childSessions.set("tool-call-1", createSession([
