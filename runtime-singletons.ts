@@ -15,7 +15,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 // ── Types ─────────────────────────────────────────────────────────────
 
 /** Minimal frame scheduler interface that the container understands. */
-export interface RuntimeFrameScheduler {
+interface RuntimeFrameScheduler {
 	markDirty(component: unknown): void;
 	cancelDirty(component: unknown): void;
 	flushNow(): void;

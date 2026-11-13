@@ -408,4 +408,3 @@ export function summarizeBootValidation(groups: ResolvedModelGroup[], constraint
 		staleModalityOverrideCount: diagnostics.filter((diagnostic) => diagnostic.key === "modalities" && diagnostic.code === "unsupported-override").length,
 	};
 }
-export const EMPTY_MODEL_GROUPS_CONFIG: ModelGroupsConfig = emptyConfig(); export { CURRENT_VERSION as MODEL_GROUPS_CONFIG_VERSION, hasOwnGroup };

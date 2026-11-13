@@ -49,7 +49,6 @@ import { registerHandoffBoundary } from "./handoff/boundary.js";
 import {
 	READONLY_ACTIVE_SUMMARY,
 	READONLY_COMMAND_DESCRIPTION,
-	READONLY_DISABLED_NOTIFICATION,
 	READONLY_DISABLED_SUMMARY,
 	READONLY_ENABLED_STATUS,
 	READONLY_HANDOFF_BLOCK_REASON,
@@ -626,7 +625,7 @@ export default function (pi: ExtensionAPI): void {
 		ctx.ui.notify(
 			state.readonlyEnabled
 				? READONLY_ENABLED_STATUS
-				: READONLY_DISABLED_NOTIFICATION,
+				: READONLY_DISABLED_SUMMARY,
 			"info",
 		);
 	}

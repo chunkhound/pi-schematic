@@ -2,7 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { TSchema } from "typebox";
 import type { ModelGroupModel } from "../types.js";
 
-export type DecodeResult<T> = { ok: true; value: T } | { ok: false; message: string };
+type DecodeResult<T> = { ok: true; value: T } | { ok: false; message: string };
 
 export interface ConstraintMemberResolution {
 	members: readonly { ref: ModelGroupModel; model?: Model<Api> }[];

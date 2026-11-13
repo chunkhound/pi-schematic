@@ -30,7 +30,7 @@ const UNKNOWN_ZONE_FALLBACK = "UTC";
  * Without this directive the model holds a fact but no procedure, which is why
  * listing trigger words alone underperforms.
  */
-export const TEMPORAL_DIRECTIVE =
+const TEMPORAL_DIRECTIVE =
 	'Resolve every relative or ambiguous time reference ("today", "yesterday", "last Friday", "this week", "recently", "latest") to an absolute date from this anchor before you answer or act. The anchor is the date this request started and is not updated during it; never guess a date.';
 
 function pad2(n: number): string {

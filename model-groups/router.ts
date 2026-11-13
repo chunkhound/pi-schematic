@@ -7,7 +7,7 @@ import type { AnyConstraintDescriptor, ConstraintViolation } from "./constraints
 import type { ModelGroupModality, ResolvedModelGroup } from "./types.js";
 import { isUsableModel } from "./availability.js";
 
-export type SpawnRouteStatus = "inherited" | "routed" | "unknown-fallback";
+type SpawnRouteStatus = "inherited" | "routed" | "unknown-fallback";
 export interface SpawnModelRoute {
 	status: SpawnRouteStatus;
 	requestedGroup?: string;
