@@ -16,7 +16,7 @@ export function registerModelGroupsCommand(pi: ExtensionAPI, state: SchematicSta
 				return;
 			}
 			const access = createModelGroupsAccess(ctx.cwd, ctx.isProjectTrusted());
-			await ctx.ui.custom<void>((tui, theme, _keybindings, done) =>
+			await ctx.ui.custom<undefined>((tui, theme, _keybindings, done) =>
 				createModelGroupsComponent(tui, theme, ctx.modelRegistry, access, done, {
 					initialValidation: state.modelGroups.validation,
 					notify: (message, type) => { ctx.ui.notify(message, type); },

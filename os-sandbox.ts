@@ -34,9 +34,7 @@ let _canonicalTempDir: string | undefined;
 
 /** Get the canonical (symlink-resolved) temp dir path. */
 function getCanonicalTempDir(): string {
-	if (_canonicalTempDir === undefined) {
-		_canonicalTempDir = resolveRealPath(TEMP_DIR);
-	}
+	_canonicalTempDir ??= resolveRealPath(TEMP_DIR);
 	return _canonicalTempDir;
 }
 

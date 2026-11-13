@@ -354,9 +354,7 @@ export class SpawnFrameScheduler {
 	/** Mark a component as dirty — will be flushed on the next frame tick. */
 	markDirty(component: SpawnFrameTarget): void {
 		this.dirtyComponents.add(component);
-		if (!this.frameTimer) {
-			this.frameTimer = setTimeout(() => { this.flush(); }, this.frameMs);
-		}
+		this.frameTimer ??= setTimeout(() => { this.flush(); }, this.frameMs);
 	}
 
 	/** Remove a component from the dirty set (dispose, stale, rebuild). */
@@ -596,8 +594,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 
 	setDetails(details: SpawnResultDetails, theme: Theme): void {
 		const prior = this.details;
-		const changed = !prior
-			|| prior.model !== details.model
+		const changed = prior?.model !== details.model
 			|| prior.thinking !== details.thinking
 			|| prior.truncated !== details.truncated
 			|| prior.outcome !== details.outcome

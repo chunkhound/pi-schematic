@@ -13,4 +13,4 @@ const validation: ModelGroupsBootValidation = { groups: [], loadIssues: [] };
 const state = createState();
 state.modelGroups = { groups: validation.groups, validation };
 
-[model, access, canonical, displayed, state];
+export { access, canonical, displayed, model, state };

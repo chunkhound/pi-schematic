@@ -312,7 +312,7 @@ export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState)
 	pi.on("turn_end", (event, ctx) => {
 		state.handoffRefusals.clear();
 		const staged = state.stagedHandoff;
-		if (!staged || staged.phase !== "staged") {return undefined;}
+		if (staged?.phase !== "staged") {return undefined;}
 		const reason = declineReason(event, ctx, staged);
 		if (reason !== null) {
 			staged.phase = "declined";

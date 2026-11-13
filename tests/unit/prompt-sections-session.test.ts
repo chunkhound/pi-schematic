@@ -182,6 +182,6 @@ describe("prompt sections in a real agent session", () => {
 			}
 		}
 		expect(sections.schematic, `schematic section missing; sections: ${Object.keys(sections).join(", ")}`).toBeDefined();
-		expect(sections.schematic_topic, `schematic_topic: ${String(sections.schematic_topic)}`).toContain("Current topic: `oauth`");
+		expect(sections.schematic_topic, `schematic_topic: ${sections.schematic_topic}`).toContain("Current topic: `oauth`");
 	});
 });
