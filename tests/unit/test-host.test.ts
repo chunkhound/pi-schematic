@@ -2,21 +2,37 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Type } from "typebox";
-import { CONFIG_DIR_NAME, type ExecResult, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, type ExecResult, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { expect, test } from "vitest";
 import { assertPresent } from "../assertions.js";
 import { CHILD_TIMEOUT_MS } from "./spawn-node.js";
-import { createExtensionContext } from "./helpers.js";
-import { createTestHost, emitBeforeAgentStart, getCommand, getHandler, getHostRecords, getTool } from "./test-host.js";
+import { createExtensionContext, createToolRenderContext, theme, type RenderContext } from "./helpers.js";
+import {
+	createTestHost,
+	emitBeforeAgentStart,
+	getCommand,
+	getHandler,
+	getHandlers,
+	getHostRecords,
+	getTool,
+	getToolRenderCall,
+	getToolRenderResult,
+	invokeHandler,
+} from "./test-host.js";
 
-function registerNamedTool(pi: ExtensionAPI, name: string): void {
-	pi.registerTool({
+function namedTool(name: string): ToolDefinition {
+	return {
 		name,
 		label: name,
 		description: `test tool ${name}`,
 		parameters: Type.Object({}),
 		execute: async () => ({ content: [{ type: "text", text: "ok" }], details: undefined }),
-	});
+	};
+}
+
+function registerNamedTool(pi: ExtensionAPI, name: string): void {
+	pi.registerTool(namedTool(name));
 }
 
 function leakExtensionSource(toolName: string): string {
@@ -73,20 +89,103 @@ test("a handler lookup for an unregistered event throws naming the event", async
 	expect(() => getHandler(pi, "input")).toThrow('No "input" handler is registered on the test host.');
 });
 
-test("a handler lookup past the registered handlers throws naming the index", async () => {
+test.for([1, -1, 0.5])("a handler lookup at index %s throws naming the event and index", async (index) => {
 	const pi = await createTestHost((api) => {
 		api.on("input", () => ({ action: "continue" }));
 	});
 
-	expect(() => getHandler(pi, "input", 1)).toThrow('No "input" handler at index 1; 1 registered on the test host.');
+	expect(() => getHandler(pi, "input", index)).toThrow(`No "input" handler at index ${String(index)}; 1 registered on the test host.`);
 });
 
-test("a tool lookup returns the registered definition", async () => {
+test("handlers of one event are returned in registration order", async () => {
+	const pi = await createTestHost((api) => {
+		api.on("input", () => ({ action: "transform", text: "first" }));
+		api.on("input", () => ({ action: "transform", text: "second" }));
+	});
+	const event = { type: "input", text: "probe", source: "interactive" } as const;
+	const ctx = createExtensionContext();
+
+	const results = [];
+	for (const handler of getHandlers(pi, "input")) {results.push(await handler(event, ctx));}
+
+	expect(results).toStrictEqual([{ action: "transform", text: "first" }, { action: "transform", text: "second" }]);
+	await expect(invokeHandler(pi, "input", event, ctx, 1)).resolves.toStrictEqual({ action: "transform", text: "second" });
+});
+
+test("an invoked handler's result can be narrowed to present", async () => {
+	const pi = await createTestHost((api) => {
+		api.on("input", (event) => ({ action: "transform", text: event.text.toUpperCase() }));
+	});
+
+	const result = await invokeHandler(pi, "input", { type: "input", text: "probe", source: "interactive" }, createExtensionContext());
+
+	assertPresent(result);
+	expect(result.action).toBe("transform");
+});
+
+test("an invoked handler that returns nothing resolves to undefined", async () => {
+	const pi = await createTestHost((api) => {
+		api.on("agent_end", () => undefined);
+	});
+
+	await expect(invokeHandler(pi, "agent_end", { type: "agent_end", messages: [] }, createExtensionContext())).resolves.toBeUndefined();
+});
+
+test("a lookup on an api the test host did not return throws", async () => {
 	const pi = await createTestHost((api) => {
 		registerNamedTool(api, "probe_tool");
 	});
 
-	expect(getTool(pi, "probe_tool").description).toBe("test tool probe_tool");
+	expect(() => getTool({ ...pi }, "probe_tool")).toThrow("This api was not returned by createTestHost.");
+});
+
+test("a tool lookup returns the registered definition", async () => {
+	const definition = namedTool("probe_tool");
+	const pi = await createTestHost((api) => {
+		api.registerTool(definition);
+	});
+
+	expect(getTool(pi, "probe_tool")).toBe(definition);
+});
+
+test("a tool's renderers are returned callable with a typed render context", async () => {
+	const seen: RenderContext[] = [];
+	const pi = await createTestHost((api) => {
+		api.registerTool({
+			...namedTool("probe_tool"),
+			renderCall: (_args, _theme, context) => {
+				seen.push(context);
+				return new Text("call");
+			},
+			renderResult: (_result, _options, _theme, context) => {
+				seen.push(context);
+				return new Text("result");
+			},
+		});
+	});
+	const callContext = createToolRenderContext({ toolCallId: "probe-call" });
+	const resultContext = createToolRenderContext({ toolCallId: "probe-result" });
+
+	getToolRenderCall(pi, "probe_tool")({}, theme, callContext);
+	getToolRenderResult(pi, "probe_tool")(
+		{ content: [{ type: "text", text: "ok" }], details: undefined },
+		{ expanded: false, isPartial: false },
+		theme,
+		resultContext,
+	);
+
+	expect(seen).toStrictEqual([callContext, resultContext]);
+});
+
+test.for([
+	{ member: "renderCall", get: getToolRenderCall },
+	{ member: "renderResult", get: getToolRenderResult },
+])("a renderer lookup for a tool without $member throws naming the tool and member", async ({ member, get }) => {
+	const pi = await createTestHost((api) => {
+		registerNamedTool(api, "probe_tool");
+	});
+
+	expect(() => get(pi, "probe_tool")).toThrow(`Tool "probe_tool" on the test host has no ${member}.`);
 });
 
 test("a tool lookup for an unregistered name throws naming the tool", async () => {
@@ -95,6 +194,17 @@ test("a tool lookup for an unregistered name throws naming the tool", async () =
 	});
 
 	expect(() => getTool(pi, "probe_tool")).toThrow('No tool "probe_tool" is registered on the test host.');
+});
+
+test("a command lookup returns the registered command", async () => {
+	const handler = async (): Promise<void> => { await Promise.resolve(); };
+	const pi = await createTestHost((api) => {
+		api.registerCommand("probe", { description: "probe command", handler });
+	});
+
+	const command = getCommand(pi, "probe");
+
+	expect({ name: command.name, description: command.description, handler: command.handler }).toStrictEqual({ name: "probe", description: "probe command", handler });
 });
 
 test("a command lookup for an unregistered name throws naming the command", async () => {

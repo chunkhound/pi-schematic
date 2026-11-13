@@ -8,7 +8,7 @@ import { registerHandoffTool } from "../../handoff/tool.js";
 import { registerHandoffBoundary } from "../../handoff/boundary.js";
 import { callHandlers, createCommandContext, createExtensionContext, emitAll, handoffToolResult, makeReadonlyUICtx, registerReadonlyPI, turnEndEvent } from "./helpers.js";
 import { assertPresent } from "../assertions.js";
-import { createTestHost, getCommand, getHandler } from "./test-host.js";
+import { createTestHost, getCommand, getHandler, invokeHandler } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 
@@ -52,24 +52,28 @@ test("watchdog records overflow percentages", async () => {
 
 test("context injects watchdog reminder before each LLM call", async () => {
 	const pi = await createTestHost();
-	const [handler] = pi.handlers.get("context")!;
-	await getCommand(pi, "notebook").handler("oauth", createCommandContext({ getContextUsage: () => undefined }));
+	await getCommand(pi, "notebook").handler("oauth", createCommandContext());
 
-	const result = await handler(
-		{ messages: [{ role: "user", content: "hi", timestamp: 1 }] },
-		{
-			getContextUsage: () => ({ percent: 70 }),
-		},
+	const result = await invokeHandler(
+		pi,
+		"context",
+		{ type: "context", messages: [{ role: "user", content: "hi", timestamp: 1 }] },
+		createExtensionContext({ getContextUsage: () => ({ tokens: 140_000, contextWindow: 200_000, percent: 70 }) }),
 	);
 
-	expect(result.messages).toHaveLength(2);
-	expect(result.messages[0]).toStrictEqual({ role: "user", content: "hi", timestamp: 1 });
-	expect(result.messages[1]).toMatchObject({ role: "custom", customType: "pi-schematic-watchdog", display: false });
-	expect(result.messages[1].content).toMatch(/70%/);
-	expect(result.messages[1].content).toMatch(/oauth/);
-	expect(result.messages[1].content).toMatch(/spawn/i);
-	expect(result.messages[1].content).toMatch(/parent context/i);
-	expect(result.messages[1].content).not.toMatch(/draft a clear prompt|what comes next/i);
+	assertPresent(result);
+	const { messages } = result;
+	assertPresent(messages);
+	expect(messages).toHaveLength(2);
+	const [first, reminder] = messages;
+	expect(first).toStrictEqual({ role: "user", content: "hi", timestamp: 1 });
+	expect(reminder).toMatchObject({ role: "custom", customType: "pi-schematic-watchdog", display: false });
+	if (reminder.role !== "custom") {throw new Error("The second message is not the watchdog reminder.");}
+	expect(reminder.content).toMatch(/70%/);
+	expect(reminder.content).toMatch(/oauth/);
+	expect(reminder.content).toMatch(/spawn/i);
+	expect(reminder.content).toMatch(/parent context/i);
+	expect(reminder.content).not.toMatch(/draft a clear prompt|what comes next/i);
 });
 
 

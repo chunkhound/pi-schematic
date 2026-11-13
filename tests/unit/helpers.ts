@@ -4,13 +4,14 @@
 
 import {
 	CONFIG_DIR_NAME,
+	ModelRegistry,
 	SessionManager,
 	type ExtensionCommandContext,
 	type ExtensionContext,
 	type ExtensionToolContext,
 	type ExtensionUIContext,
-	type ModelRegistry,
 	type Theme,
+	type ToolDefinition,
 	type TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
@@ -70,6 +71,11 @@ export function setTempHome(home: string): () => void {
 	};
 }
 
+/**
+ * An untyped render context for a collapsed call `tool-call-1` with no previous
+ * component and a no-op `invalidate`. Members whose override is `undefined` keep
+ * these defaults. New tests use `createToolRenderContext`.
+ */
 export function createRenderContext(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
 		expanded: false,
@@ -77,7 +83,35 @@ export function createRenderContext(overrides: Record<string, unknown> = {}): Re
 		toolCallId: "tool-call-1",
 		lastComponent: undefined,
 		invalidate: () => {},
-		...overrides,
+		...definedOverrides(overrides),
+	};
+}
+
+/** The render context pi passes a tool's `renderCall` and `renderResult` (not exported from pi's package root). */
+export type RenderContext = Parameters<NonNullable<ToolDefinition["renderResult"]>>[3];
+
+/**
+ * A `RenderContext` for a finished, collapsed call `tool-call-1`: arguments and
+ * state empty, no error, no previous component, `invalidate` a no-op. Members
+ * whose override is `undefined` keep these defaults.
+ */
+export function createToolRenderContext(overrides: Partial<RenderContext> = {}): RenderContext {
+	return {
+		args: {},
+		toolCallId: "tool-call-1",
+		invalidate: () => undefined,
+		lastComponent: undefined,
+		state: {},
+		cwd: process.cwd(),
+		executionStarted: true,
+		argsComplete: true,
+		isPartial: false,
+		expanded: false,
+		showImages: true,
+		isError: false,
+		durationMs: undefined,
+		outputPad: 0,
+		...definedOverrides(overrides),
 	};
 }
 
@@ -213,13 +247,52 @@ export function turnEndEvent(overrides: Partial<TurnEndEvent> = {}): TurnEndEven
 
 // ── Typed extension contexts ─────────────────────────────────────────
 // Each member a test leaves out throws when the code under test reaches it, naming
-// the member, so a test cannot pass on a stub it did not provide. Plain data members
-// get the values pi reports for a session without UI.
+// the member, so a test that reaches a member it did not stub fails, unless the code
+// under test catches the error (spawn cleanup swallows a throwing ctx.ui.notify).
+// Plain data members get the values pi reports for a session without UI. An
+// override whose value is `undefined` counts as left out.
+
+function unstubbedError(member: string): Error {
+	const where = member.startsWith("ctx.ui.")
+		? `pass it to createUIContext and that context as \`ui\``
+		: "pass it in the overrides";
+	return new Error(`${member} is not stubbed in this test context; ${where}.`);
+}
 
 function unstubbed(member: string): () => never {
 	return () => {
-		throw new Error(`${member} is not stubbed in this test context; pass it in the overrides.`);
+		throw unstubbedError(member);
 	};
+}
+
+// The overrides without the members whose value is `undefined`, so spreading them
+// over the defaults keeps a default instead of replacing it with `undefined`.
+function definedOverrides<T extends object>(overrides: Partial<T>): Partial<T> {
+	const defined: Partial<T> = {};
+	for (const key in overrides) {
+		if (Object.hasOwn(overrides, key) && overrides[key] !== undefined) {defined[key] = overrides[key];}
+	}
+	return defined;
+}
+
+// A model registry whose every use throws naming `ctx.modelRegistry`. It is a value,
+// not a throwing getter, so spreading or copying a context does not throw; only
+// using the registry does, on the original context and on every copy.
+function unstubbedModelRegistry(): ModelRegistry {
+	const target: unknown = Object.create(ModelRegistry.prototype);
+	if (!(target instanceof ModelRegistry)) {throw new Error("Object.create did not produce a ModelRegistry instance.");}
+	const fail = (): never => {
+		throw unstubbedError("ctx.modelRegistry");
+	};
+	return new Proxy(target, {
+		get: fail,
+		set: fail,
+		has: fail,
+		ownKeys: fail,
+		getOwnPropertyDescriptor: fail,
+		defineProperty: fail,
+		deleteProperty: fail,
+	});
 }
 
 /** An `ExtensionUIContext` with `theme` as its theme; every other member throws unless overridden. */
@@ -253,28 +326,26 @@ export function createUIContext(overrides: Partial<ExtensionUIContext> = {}): Ex
 		setTheme: unstubbed("ctx.ui.setTheme"),
 		getToolsExpanded: unstubbed("ctx.ui.getToolsExpanded"),
 		setToolsExpanded: unstubbed("ctx.ui.setToolsExpanded"),
-		...overrides,
+		...definedOverrides(overrides),
 	};
 }
 
 /**
  * An `ExtensionContext` without UI: `hasUI` false, mode `print`, `cwd` the process
- * directory, no model, an in-memory session manager and `createUIContext()` as `ui`.
- * `modelRegistry` throws on read unless overridden; every method throws unless overridden.
+ * directory, no model, an in-memory session manager for `cwd` and `createUIContext()`
+ * as `ui`. `modelRegistry` throws on use unless overridden; every method throws
+ * unless overridden.
  */
 export function createExtensionContext(overrides: Partial<ExtensionContext> = {}): ExtensionContext {
-	const { modelRegistry, ...rest } = overrides;
-	const cwd = overrides.cwd ?? process.cwd();
+	const defined = definedOverrides(overrides);
+	const cwd = defined.cwd ?? process.cwd();
 	return {
 		ui: createUIContext(),
 		mode: "print",
 		hasUI: false,
 		cwd,
-		sessionManager: SessionManager.inMemory(cwd),
-		get modelRegistry(): ModelRegistry {
-			if (modelRegistry === undefined) {throw new Error("ctx.modelRegistry is not stubbed in this test context; pass it in the overrides.");}
-			return modelRegistry;
-		},
+		sessionManager: defined.sessionManager ?? SessionManager.inMemory(cwd),
+		modelRegistry: unstubbedModelRegistry(),
 		model: undefined,
 		scopedModels: [],
 		isIdle: unstubbed("ctx.isIdle"),
@@ -286,7 +357,7 @@ export function createExtensionContext(overrides: Partial<ExtensionContext> = {}
 		getContextUsage: unstubbed("ctx.getContextUsage"),
 		compact: unstubbed("ctx.compact"),
 		getSystemPrompt: unstubbed("ctx.getSystemPrompt"),
-		...rest,
+		...defined,
 	};
 }
 
