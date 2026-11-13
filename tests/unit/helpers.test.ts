@@ -1,13 +1,17 @@
 /**
- * Environment restore semantics of the temp-directory helpers, and the guards of
- * the typed extension contexts.
+ * The test helpers in helpers.ts:
  *
- * pi reads PI_CODING_AGENT_DIR before HOME when it resolves its agent
- * directory, so each helper must leave the variable as it found it: the prior
- * value when one was set, and absent (not the string "undefined") when it was
- * unset.
+ * - Temp-directory helpers restore the environment. pi reads PI_CODING_AGENT_DIR
+ *   before HOME when it resolves its agent directory, so each helper must leave
+ *   the variable as it found it: the prior value when one was set, and absent
+ *   (not the string "undefined") when it was unset.
+ * - Typed extension, command, tool and UI contexts fail naming each member a test
+ *   did not stub, and pass overrides through.
+ * - A tool render context keeps a default whose override is undefined, and its
+ *   keybinding formatters throw naming themselves until a test assigns them.
  */
 
+import path from "node:path";
 import { expect, test } from "vitest";
 import { SessionManager, type ExtensionContext, type ExtensionToolContext, type ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
@@ -115,6 +119,14 @@ test("a promise-returning context member the test did not stub rejects naming it
 	await expect(ctx.waitForIdle()).rejects.toThrow("ctx.waitForIdle is not stubbed in this test context; pass it in the overrides.");
 });
 
+test("a synchronous command member the test did not stub throws naming it", () => {
+	const ctx = createCommandContext();
+
+	expect(() => ctx.getSystemPromptOptions()).toThrow(
+		"ctx.getSystemPromptOptions is not stubbed in this test context; pass it in the overrides.",
+	);
+});
+
 test("a command context passes its command and context overrides through", async () => {
 	const ctx = createCommandContext({ waitForIdle: async () => { await Promise.resolve(); }, cwd: "/probe/cwd" });
 
@@ -161,22 +173,13 @@ test("awaiting an unstubbed model registry resolves to the registry", async () =
 	await expect(Promise.resolve(registry)).resolves.toBe(registry);
 });
 
-test("copying a context or composing it into another does not throw", () => {
-	const ctx = createExtensionContext();
-
-	expect(() => {
-		const { cwd: _cwd, ...rest } = ctx;
-		createExtensionContext({ ...ctx });
-		createCommandContext(Object.assign({}, rest));
-	}).not.toThrow();
-});
-
 test.for<{ label: string; copy: (ctx: ExtensionContext) => { modelRegistry: ModelRegistry } }>([
 	{ label: "a spread copy", copy: (ctx) => ({ ...ctx }) },
 	{ label: "an Object.assign copy", copy: (ctx) => Object.assign({}, ctx) },
 	{ label: "a rest copy", copy: ({ cwd: _cwd, ...rest }) => rest },
 	{ label: "an extension context built from it", copy: (ctx) => createExtensionContext(ctx) },
 	{ label: "a tool context built from it", copy: (ctx) => createToolContext(ctx) },
+	{ label: "a command context built from it", copy: (ctx) => createCommandContext(ctx) },
 ])("the unstubbed model registry still throws on $label of a context", ({ copy }) => {
 	const registry = copy(createExtensionContext()).modelRegistry;
 
@@ -195,9 +198,10 @@ test("a context without UI reports pi's no-UI data defaults", () => {
 });
 
 test("an overridden cwd reaches the default session manager", () => {
-	const ctx = createExtensionContext({ cwd: "/probe/cwd" });
+	const cwd = path.resolve("/probe/cwd");
+	const ctx = createExtensionContext({ cwd });
 
-	expect(ctx.sessionManager.getCwd()).toBe("/probe/cwd");
+	expect(ctx.sessionManager.getCwd()).toBe(cwd);
 });
 
 test("a session manager passed in the overrides is the context's session manager", () => {

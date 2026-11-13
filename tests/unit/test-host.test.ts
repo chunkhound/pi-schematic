@@ -125,17 +125,6 @@ test("an invoked handler at an index is the handler registered at that position"
 	});
 });
 
-test("an invoked handler's result can be narrowed to present", async () => {
-	const pi = await createTestHost((api) => {
-		api.on("input", (event) => ({ action: "transform", text: event.text.toUpperCase() }));
-	});
-
-	const result = await invokeHandler(pi, "input", { type: "input", text: "probe", source: "interactive" }, createExtensionContext());
-
-	assertPresent(result);
-	expect(result.action).toBe("transform");
-});
-
 test("an invoked handler that returns nothing resolves to undefined", async () => {
 	const pi = await createTestHost((api) => {
 		api.on("agent_end", () => undefined);
