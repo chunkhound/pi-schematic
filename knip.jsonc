@@ -1,0 +1,18 @@
+{
+  "entry": [
+    // pi loads the extension through package.json `pi.extensions`.
+    "index.ts",
+    // Started by path: the e2e harnesses spawn these, CI imports the coverage script,
+    // register-loader.mjs registers the test loader, and tsc type-checks the typecheck files.
+    "tests/e2e/test-host.ts",
+    "tests/e2e/real-host-probe.ts",
+    "tests/e2e/real-host-child-probe.ts",
+    "scripts/coverage-comment.mjs",
+    "test-loader.mjs",
+    "tests/typecheck/*.ts",
+    // TypeScript reads it for the types of pi-packages.mjs.
+    "pi-packages.d.mts"
+  ],
+  // Platform sandbox binaries that os-sandbox.ts runs when the host has them.
+  "ignoreBinaries": ["bwrap", "sandbox-exec"]
+}
