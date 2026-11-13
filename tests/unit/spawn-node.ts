@@ -1,5 +1,4 @@
-// Runs a Node or git child process for a unit test. This module imports no test runner, so test files on
-// either runner can use it.
+// Runs a Node or git child process for a unit test. This module imports no test runner.
 
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 
@@ -50,7 +49,8 @@ export interface RunGitOptions {
 /**
  * Run `git ...args` to completion and return its stdout. Throws when git fails to spawn, outlives
  * the deadline, dies from a signal, or exits non-zero. The message names the command and, for a
- * spawn failure or timeout, the spawn error; for a signal or exit status, that and stderr.
+ * spawn failure or timeout, the spawn error; for a signal or exit status, that and stderr. A signal
+ * message also carries the spawn error when there is one, such as ENOBUFS for output beyond maxBuffer.
  */
 export function runGit(args: readonly string[], options: RunGitOptions): string {
 	const command = ["git", ...args].join(" ");
@@ -66,7 +66,7 @@ export function runGit(args: readonly string[], options: RunGitOptions): string 
 		throw new Error(`${command} did not exit within ${String(CHILD_TIMEOUT_MS)} ms (${spawnError.message})`, { cause: spawnError });
 	}
 	if (result.signal !== null) {
-		throw new Error(`${command} was killed by ${result.signal}; stderr: ${result.stderr}`);
+		throw new Error(`${command} was killed by ${result.signal}${spawnError ? ` (${spawnError.message})` : ""}; stderr: ${result.stderr}`);
 	}
 	if (spawnError) {
 		throw new Error(`${command} failed to spawn: ${spawnError.message}`, { cause: spawnError });

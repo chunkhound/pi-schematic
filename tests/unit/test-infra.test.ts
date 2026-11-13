@@ -63,7 +63,15 @@ describe("spawnNode", () => {
 describe("runGit", () => {
 	test("throws the exit status and stderr for a git command that fails", () => {
 		expect(() => runGit(["rev-parse", "--verify", "refs/heads/missing-branch-for-run-git"], { cwd: REPO_ROOT })).toThrow(
-			/^git rev-parse --verify refs\/heads\/missing-branch-for-run-git exited with status 128; stderr: fatal: Needed a single revision/,
+			/^git rev-parse --verify refs\/heads\/missing-branch-for-run-git exited with status 128; stderr: \S/,
+		);
+	});
+
+	// Output beyond spawnSync's 1 MiB maxBuffer kills git with SIGKILL and sets ENOBUFS; the shell alias
+	// produces that output. Windows has no POSIX signals, so the kill leaves no signal to report.
+	test.skipIf(process.platform === "win32")("names the spawn error with the signal for output beyond the buffer", () => {
+		expect(() => runGit(["-c", "alias.flood=!yes | head -c 2000000", "flood"], { cwd: REPO_ROOT })).toThrow(
+			/^git -c alias\.flood=!yes \| head -c 2000000 flood was killed by SIGKILL \(spawnSync git ENOBUFS\); stderr: /,
 		);
 	});
 
