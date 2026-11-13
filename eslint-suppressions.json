@@ -1093,9 +1093,6 @@
     }
   },
   "tests/unit/readonly-handoff.test.ts": {
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
-    },
     "ban/wall-clock": {
       "count": 1
     },
@@ -1104,9 +1101,6 @@
     }
   },
   "tests/unit/readonly-mode.test.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 3
     },
@@ -1119,7 +1113,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
+      "count": 3
     },
     "ban/wall-clock": {
       "count": 3

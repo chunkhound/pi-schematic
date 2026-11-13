@@ -17,7 +17,7 @@ import { expectSuffix } from "../assertions.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
 import { createToolContext, runRealChildInvocation, SANDBOX_DENIAL_PHRASES, textOf, tmpDir } from "./helpers.js";
-import type { AgentToolResult, AgentToolUpdateCallback, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -33,8 +33,7 @@ function rejectionError(result: PromiseSettledResult<unknown>): Error {
 	expect(result.status).toBe("rejected");
 	if (result.status !== "rejected") {expect.unreachable();}
 	const reason: unknown = result.reason;
-	expect(reason).toBeInstanceOf(Error);
-	if (!(reason instanceof Error)) {expect.unreachable();}
+	if (!(reason instanceof Error)) {expect.unreachable("the blocked call must reject with an Error");}
 	return reason;
 }
 
@@ -44,6 +43,14 @@ function spawnResultParts(result: unknown): { details: Record<string, unknown>; 
 	const first: unknown = result.content[0];
 	if (!isRecord(first)) {throw new Error("The spawn result has no first content block.");}
 	return { details: result.details, first };
+}
+
+// The structured output and exit code of a child bash result.
+function structuredBashResult(structured: unknown): { output: string; exit_code: number } {
+	if (!isRecord(structured) || typeof structured.output !== "string" || typeof structured.exit_code !== "number") {
+		throw new Error("The child bash result has no structured output and exit code.");
+	}
+	return { output: structured.output, exit_code: structured.exit_code };
 }
 
 // ── Tool filtering ───────────────────────────────────────────────────
@@ -116,29 +123,14 @@ function outsideTempPath(label: string): string {
 	return target;
 }
 
-// The child bash tool as these tests call it: without a ctx, pi's bash tool skips the session
-// environment, which these tests do not need. pi types `ctx` as required; `execute` is declared
-// as a method, so the tool is assignable to this shape.
-interface ChildBashTool {
-	execute(
-		toolCallId: string,
-		params: { command: string; timeout?: number },
-		signal: AbortSignal | undefined,
-		onUpdate: AgentToolUpdateCallback | undefined,
-		ctx: ExtensionToolContext | undefined,
-	): Promise<AgentToolResult<unknown>>;
-}
-
-function childBashTool(cwd: string): ChildBashTool {
-	return createReadonlyChildBashTool(cwd);
-}
-
 function runChildBash(
 	command: string,
 	options: { timeout?: number; signal?: AbortSignal; onUpdate?: (update: { content: { type: string; text?: string }[] }) => void } = {},
 ) {
-	return childBashTool(process.cwd())
-		.execute("child-bash", { command, timeout: options.timeout }, options.signal, options.onUpdate, undefined);
+	// Without a ctx, pi's bash tool skips the session environment, which these tests do not need;
+	// pi types `ctx` as required.
+	return createReadonlyChildBashTool(process.cwd())
+		.execute("child-bash", { command, timeout: options.timeout }, options.signal, options.onUpdate, undefined as unknown as ExtensionToolContext);
 }
 
 /** Return `command` after checking that the readonly guard sandboxes it rather than blocking it. */
@@ -177,7 +169,7 @@ test.skipIf(!canUseOsSandbox())("sandboxed child bash write outside temp returns
 
 	expect(result.isError).toBe(true);
 	expect(textOf(result), textOf(result)).toContain(READONLY_SANDBOX_BLOCK_NOTICE);
-	const structured = result.structuredContent as { output: string; exit_code: number };
+	const structured = structuredBashResult(result.structuredContent);
 	expectSuffix(structured.output, `\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`);
 	expect(structured.exit_code).toBe(1);
 	expect(target, "the sandbox must block the write").not.toSatisfy(fs.existsSync);
@@ -244,8 +236,8 @@ test.skipIf(skipWithoutDenialPhrase)("child bash call the readonly guard blocks 
 
 test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("child bash call the readonly guard blocks gets no block notice after a sandboxed call on the same tool", async () => {
 	const target = outsideTempPath("blocked-after-sandboxed");
-	const tool = childBashTool(process.cwd());
-	const run = (command: string) => tool.execute("child-bash", { command }, undefined, undefined, undefined);
+	const tool = createReadonlyChildBashTool(process.cwd());
+	const run = (command: string) => tool.execute("child-bash", { command }, undefined, undefined, undefined as unknown as ExtensionToolContext);
 	await run(sandboxed("echo sandboxed-first"));
 
 	await expect(run(`echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(target)}`)).rejects.toSatisfy((error: Error) => {
@@ -259,8 +251,8 @@ test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("child bash call the 
 test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("concurrent child bash calls on one tool get the block notice only on the sandboxed call", async () => {
 	const sandboxedTarget = outsideTempPath("concurrent-sandboxed");
 	const blockedTarget = outsideTempPath("concurrent-blocked");
-	const tool = childBashTool(process.cwd());
-	const run = (toolCallId: string, command: string) => tool.execute(toolCallId, { command }, undefined, undefined, undefined);
+	const tool = createReadonlyChildBashTool(process.cwd());
+	const run = (toolCallId: string, command: string) => tool.execute(toolCallId, { command }, undefined, undefined, undefined as unknown as ExtensionToolContext);
 	const [sandboxedResult, blockedResult] = await Promise.allSettled([
 		run("child-bash-sandboxed", nodeCommand(`require("fs").writeFileSync(${JSON.stringify(sandboxedTarget)}, "x")`)),
 		run("child-bash-blocked", `echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(blockedTarget)}`),

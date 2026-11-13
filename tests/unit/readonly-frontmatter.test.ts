@@ -62,7 +62,7 @@ async function registerCheckedPI(): Promise<{ pi: TestPI; toolCall: ReadonlyTool
 	};
 }
 
-// pi registers one input and one before_agent_start handler. The contexts here have no
+// The extension registers one input and one before_agent_start handler. The contexts here have no
 // `modelRegistry`, which `ExtensionContext` requires, so the handlers run through callHandlers.
 function frontmatterHandlers(pi: TestPI) {
 	return {
@@ -119,16 +119,15 @@ function makeBeforeStartCtx(cwd = process.cwd()) {
 }
 
 function makeNotifyBeforeStartCtx() {
-	const notifications: { message: string; level: string }[] = [];
+	const notifications: { message: string; level: string | undefined }[] = [];
 	return {
 		ctx: {
 			...makeReadonlyUICtx({
-				ui: {
-					notify: (message: string, level: string) => { notifications.push({ message, level }); },
-					theme: { fg: (_name: string, text: string) => text },
+				ui: createUIContext({
+					notify: (message, level) => { notifications.push({ message, level }); },
 					setStatus: vi.fn(),
 					setWidget: vi.fn(),
-				},
+				}),
 			}),
 			cwd: process.cwd(),
 			isProjectTrusted: () => true,
@@ -202,7 +201,8 @@ testWithDir("readonly: false frontmatter keeps readonly disabled and stays silen
 	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
 	expect(notifications).toHaveLength(0);
 	const contextResult = await contextHook({ messages: [] }, { getContextUsage: () => ({ percent: 40 }) });
-	expect(contextResult?.messages.find((message) => typeof message.content === "string" && /readonly/i.test(message.content))).toBeUndefined();
+	assertPresent(contextResult, "the context hook must return the messages");
+	expect(contextResult.messages.find((message) => typeof message.content === "string" && /readonly/i.test(message.content))).toBeUndefined();
 });
 
 test("suffixed /name command activates readonly frontmatter", async () => {
@@ -835,7 +835,10 @@ async function assertHandoffAlignment(name: string, readonly: boolean, direction
 		const contextHandler = (event: unknown, ctx: unknown) => runContextHandler(pi, event, ctx);
 		const result = await contextHandler(
 			{ messages: [{ role: "user", content: "continue", timestamp: 1 }] },
-			makeReadonlyUICtx({ getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }) }),
+			makeReadonlyUICtx({
+				ui: createUIContext({ notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn() }),
+				getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
+			}),
 		);
 		const nudge = result?.messages.filter((message) => message.customType === "pi-schematic-watchdog").at(-1);
 		assertPresent(nudge, "the context hook must deliver a pending-handoff watchdog nudge");
