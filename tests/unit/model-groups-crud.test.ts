@@ -696,6 +696,53 @@ test("model groups use branded paths, global-only access, canonical own keys, an
 	expect(projectProbes).toStrictEqual([]);
 }));
 
+test.for(["__proto__", "constructor"])("rename, move and delete of a group named %s leave exactly the expected own group keys", (name) => withTemp(({ cwd }) => {
+	const a = access(cwd);
+	const noModels: Parameters<typeof createGroup>[4] = { find: () => undefined };
+	const groups = (scope: ModelGroupScope) => loadModelGroups(a).configs[scope].groups;
+	const names = (scope: ModelGroupScope) => Object.getOwnPropertyNames(groups(scope)).sort();
+	createGroup("project", a, "keep", { models: [{ provider: "openai", modelId: "gpt-5" }] }, noModels);
+	createGroup("project", a, name, { models: [{ provider: "anthropic", modelId: "claude" }] }, noModels);
+	createGroup("global", a, "other", { models: [{ provider: "anthropic", modelId: "claude" }] }, noModels);
+	createGroup("global", a, "drop", { models: [] }, noModels);
+	const keep = groups("project").keep;
+	const other = groups("global").other;
+
+	renameGroup("project", a, name, "renamed");
+	const renamedAway = names("project");
+	renameGroup("project", a, "renamed", name);
+	const renamedBack = names("project");
+
+	moveGroup(a, name, "global");
+	const moved = { project: names("project"), global: names("global") };
+
+	renameGroup("global", a, "drop", "dropped");
+	const siblingRenamed = names("global");
+	deleteGroup("global", a, "dropped");
+	const siblingDeleted = names("global");
+
+	deleteGroup("global", a, name);
+	expect({
+		renamedAway,
+		renamedBack,
+		moved,
+		siblingRenamed,
+		siblingDeleted,
+		deleted: names("global"),
+		keep: groups("project").keep,
+		other: groups("global").other,
+	}).toStrictEqual({
+		renamedAway: ["keep", "renamed"],
+		renamedBack: [name, "keep"].sort(),
+		moved: { project: ["keep"], global: [name, "drop", "other"].sort() },
+		siblingRenamed: [name, "dropped", "other"].sort(),
+		siblingDeleted: [name, "other"].sort(),
+		deleted: ["other"],
+		keep,
+		other,
+	});
+}));
+
 test("model groups direct save canonicalizes unique keys and rejects empty/colliding keys before write", () => withTemp(({ cwd }) => {
 	const a = access(cwd);
 	saveModelGroups("project", a, { version: 2, groups: { committed: { models: [] } } });
