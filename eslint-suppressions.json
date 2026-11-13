@@ -559,34 +559,6 @@
       "count": 1
     }
   },
-  "tests/unit/compat-fixture.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 12
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 6
-    }
-  },
-  "tests/unit/compat-process.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 5
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 10
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 6
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 4
-    }
-  },
   "tests/unit/config-invariants.test.ts": {
     "@typescript-eslint/no-unnecessary-condition": {
       "count": 4
@@ -610,41 +582,12 @@
       "count": 2
     }
   },
-  "tests/unit/dependency-graph-assertions.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 2
-    }
-  },
   "tests/unit/fixtures/shared-module-probe-extension.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
     }
   },
   "tests/unit/frontmatter-cache.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    },
     "ban/wall-clock": {
       "count": 11
     },
@@ -887,21 +830,6 @@
     }
   },
   "tests/unit/notifications.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    },
     "vitest/max-expects": {
       "count": 17
     },
@@ -924,15 +852,6 @@
     }
   },
   "tests/unit/pi-module-identity.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    },
     "ban/find-package-json-import": {
       "count": 1
     },
@@ -1000,12 +919,6 @@
     }
   },
   "tests/unit/render-snapshots.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
     },
@@ -1154,14 +1067,8 @@
     }
   },
   "tests/unit/state-invariants.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 3
+      "count": 1
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 2
@@ -1198,15 +1105,6 @@
     }
   },
   "tests/unit/test-infra.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 4
-    },
     "ban/wall-clock": {
       "count": 2
     }

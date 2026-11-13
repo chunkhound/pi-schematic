@@ -8,9 +8,27 @@ import { expectPrefix, expectSuffix } from "../assertions.js";
 import { REPO_ROOT, REPO_ROOT_URL } from "../paths.js";
 import { spawnNode } from "./spawn-node.js";
 
-const { assertCompatTestFiles, COMPAT_UNIT_FILES } = await import(
-	new URL("scripts/test-compat-current.mjs", REPO_ROOT_URL).href,
-);
+interface CompatCurrentModule {
+	assertCompatTestFiles: (files: string[]) => void;
+	COMPAT_UNIT_FILES: string[];
+}
+
+// The script is plain JavaScript, so its exports arrive untyped: the check must be a function and the
+// unit list an array of strings.
+function assertCompatCurrentModule(value: unknown): asserts value is CompatCurrentModule {
+	if (typeof value !== "object" || value === null) {throw new Error("scripts/test-compat-current.mjs did not load as a module.");}
+	if (typeof Reflect.get(value, "assertCompatTestFiles") !== "function") {
+		throw new Error('scripts/test-compat-current.mjs does not export a function "assertCompatTestFiles".');
+	}
+	const files: unknown = Reflect.get(value, "COMPAT_UNIT_FILES");
+	if (!Array.isArray(files) || !files.every((file) => typeof file === "string")) {
+		throw new Error('scripts/test-compat-current.mjs does not export "COMPAT_UNIT_FILES" as an array of strings.');
+	}
+}
+
+const compatCurrent: unknown = await import(new URL("scripts/test-compat-current.mjs", REPO_ROOT_URL).href);
+assertCompatCurrentModule(compatCurrent);
+const { assertCompatTestFiles, COMPAT_UNIT_FILES } = compatCurrent;
 
 describe("spawnNode", () => {
 	test("throws a timeout error for a child that outlives its deadline", () => {
@@ -44,23 +62,23 @@ describe("spawnNode", () => {
 
 describe("compat lane test files", () => {
 	test("every file on the unit list exists and belongs to the unit project", () => {
-		expect(() => assertCompatTestFiles(COMPAT_UNIT_FILES)).not.toThrow();
+		expect(() => { assertCompatTestFiles(COMPAT_UNIT_FILES); }).not.toThrow();
 	});
 
 	test("a list naming a missing file fails with that file's path", () => {
-		expect(() => assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/unit/missing.test.ts"])).toThrow(
+		expect(() => { assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/unit/missing.test.ts"]); }).toThrow(
 			new Error("The compat lane lists test files that do not exist: tests/unit/missing.test.ts"),
 		);
 	});
 
 	test("a list naming an existing file outside the project fails with that file's path", () => {
-		expect(() => assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/e2e/basic.test.ts"])).toThrow(
+		expect(() => { assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/e2e/basic.test.ts"]); }).toThrow(
 			new Error("The compat lane lists test files outside the unit project: tests/e2e/basic.test.ts"),
 		);
 	});
 
 	test("a list naming an existing non-test file inside the project fails with that file's path", () => {
-		expect(() => assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/unit/helpers.ts"])).toThrow(
+		expect(() => { assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/unit/helpers.ts"]); }).toThrow(
 			new Error("The compat lane lists test files outside the unit project: tests/unit/helpers.ts"),
 		);
 	});

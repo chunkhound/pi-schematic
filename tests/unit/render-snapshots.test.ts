@@ -12,7 +12,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, vi } from "vitest";
 
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { createState, type SchematicState } from "../../state.js";
 import {
 	renderSpawnCall,
@@ -46,6 +46,26 @@ const theme: Theme = {
 	fg: (_name: string, text: string) => text,
 	bold: (text: string) => text,
 } as unknown as Theme;
+
+// ── Indicator context ─────────────────────────────────────────────────
+
+// makeTUICtx returns an untyped context with only the members updateIndicators reads; this checks
+// those members before the context goes where pi's ExtensionContext is expected.
+function assertIndicatorContext(value: unknown): asserts value is ExtensionContext {
+	if (typeof value !== "object" || value === null) {throw new Error("makeTUICtx did not return an object.");}
+	const ui: unknown = Reflect.get(value, "ui");
+	if (
+		typeof Reflect.get(value, "hasUI") !== "boolean"
+		|| typeof Reflect.get(value, "getContextUsage") !== "function"
+		|| typeof ui !== "object"
+		|| ui === null
+		|| typeof Reflect.get(ui, "theme") !== "object"
+		|| typeof Reflect.get(ui, "setStatus") !== "function"
+		|| typeof Reflect.get(ui, "setWidget") !== "function"
+	) {
+		throw new Error("makeTUICtx returned a context without the members updateIndicators reads.");
+	}
+}
 
 // ── Snapshot helpers ──────────────────────────────────────────────────
 
@@ -265,7 +285,8 @@ test("nested expanded matches snapshot", () => withHarness(async (state) => {
 test.for([30, 50, 70])("context indicator at %i% matches snapshot", async (percent) => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = makeTUICtx({ percent, record });
+	const ctx: unknown = makeTUICtx({ percent, record });
+	assertIndicatorContext(ctx);
 
 	updateIndicators(ctx, state);
 	const status = record.statuses.get("pi-schematic-ctx") ?? "";

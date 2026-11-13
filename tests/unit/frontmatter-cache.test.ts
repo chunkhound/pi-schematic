@@ -263,8 +263,8 @@ testWithDir("resolved non-prompt command blocks prompt-dir fallback for the same
 
 	populatePromptCacheFromResolvedCommandsAndDirs(state, [{
 		name: "shared-owned",
-		source: "builtin" as any,
-		description: "Builtin command",
+		source: "extension",
+		description: "Extension command",
 		sourceInfo: { path: promptPath, source: "test", scope: "temporary", origin: "top-level" },
 	}], workspace, true);
 	expect(cacheLookupCommand(state, "shared-owned")).toBeNull();
