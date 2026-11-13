@@ -8,7 +8,7 @@
 
 [![pi.dev package](https://img.shields.io/badge/pi.dev-package-purple)](https://pi.dev/packages/@chunkhound/pi-schematic)
 [![npm version](https://img.shields.io/npm/v/@chunkhound/pi-schematic?logo=npm)](https://www.npmjs.com/package/@chunkhound/pi-schematic)
-[![CI](https://github.com/chunkhound/pi-schematic/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/chunkhound/pi-schematic/actions/workflows/test.yml)
+[![CI](https://github.com/chunkhound/pi-schematic/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/chunkhound/pi-schematic/actions/workflows/ci.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 > A composable workflow layer for [Pi](https://pi.dev). Define task-specific workflows in saved prompts or skills, with declarative policy, short-lived shared memory, provider-independent delegation, and deliberate context boundaries.

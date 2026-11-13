@@ -3,7 +3,7 @@
 # Runs the full unit suite on Linux, macOS, and Windows, each on the minimum
 # Node.js version required by pi coding agent and on the current Node.js LTS. Snapshot tests verify TUI render output against golden files.
 
-name: test
+name: CI
 
 permissions:
   contents: read
@@ -22,6 +22,24 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Lint runs once: the n/ rules take the Node.js range from .node-version, not from the runtime.
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.13.1"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
   # ── Cross-platform test matrix ──────────────────────────────────────
   # Every platform runs two tracks: the floor (Pi's minimum Node.js version) and the
   # current Node.js LTS, both as exact versions. Platform-specific code paths
@@ -48,14 +66,11 @@ jobs:
 
       - run: npm ci
 
-      # Uniform pre-flight checks — type errors, lint findings and security issues on every platform.
+      # Uniform pre-flight checks: type errors and security issues on every platform.
       # audit-ci fails on moderate-or-higher advisories; reviewed exceptions, if ever
       # needed, must be explicit and expiry-tracked in audit-ci.jsonc.
       - name: Type check
         run: npx tsc --noEmit
-
-      - name: Lint
-        run: npm run lint
 
       - name: Security audit
         run: npx audit-ci --config audit-ci.jsonc
