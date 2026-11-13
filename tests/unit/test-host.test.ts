@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Type } from "typebox";
 import { CONFIG_DIR_NAME, type ExecResult, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { assertPresent } from "../assertions.js";
 import { CHILD_TIMEOUT_MS } from "./spawn-node.js";
 import { createExtensionContext, createToolRenderContext, theme, type RenderContext } from "./helpers.js";
@@ -27,7 +27,7 @@ function namedTool(name: string): ToolDefinition {
 		label: name,
 		description: `test tool ${name}`,
 		parameters: Type.Object({}),
-		execute: async () => ({ content: [{ type: "text", text: "ok" }], details: undefined }),
+		execute: () => Promise.resolve({ content: [{ type: "text", text: "ok" }], details: undefined }),
 	};
 }
 
@@ -274,13 +274,13 @@ test("pi.exec during registration runs in the seeded project directory", async (
 });
 
 test("host actions after the load report seeded state", async () => {
-	const pi = await createTestHost(() => {}, { activeTools: ["read", "bash"] });
+	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash"] });
 
 	expect(pi.getActiveTools()).toStrictEqual(["read", "bash"]);
 });
 
 test("host actions after the load record side effects", async () => {
-	const pi = await createTestHost(() => {});
+	const pi = await createTestHost(vi.fn());
 
 	pi.sendUserMessage("x");
 	pi.appendEntry("t", {});

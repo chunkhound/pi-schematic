@@ -470,8 +470,8 @@ test("readonly /notebook boundary notification explains deferred handoff eligibi
 		ui: {
 			theme: { fg: (_name: string, text: string) => text },
 			notify: (message: string, level: string) => { notifications.push({ message, level }); },
-			setStatus: () => {},
-			setWidget: () => {},
+			setStatus: vi.fn(),
+			setWidget: vi.fn(),
 		},
 	};
 
@@ -494,8 +494,9 @@ test("/notebook empty overlay renders empty state and closes on input", async ()
 		hasUI: true,
 		ui: {
 			theme,
-			custom: async (build: any) => {
-				overlay = build({ requestRender: () => {} }, theme, {}, done);
+			custom: (build: any) => {
+				overlay = build({ requestRender: vi.fn() }, theme, {}, done);
+				return Promise.resolve();
 			},
 		},
 	});
@@ -520,8 +521,9 @@ test("/notebook selection previews the chosen entry when no pager is available",
 		hasUI: true,
 		ui: {
 			theme,
-			custom: async (build: any) => {
-				overlay = build({ requestRender: () => {} }, theme, {}, done);
+			custom: (build: any) => {
+				overlay = build({ requestRender: vi.fn() }, theme, {}, done);
+				return Promise.resolve();
 			},
 		},
 	});
@@ -550,8 +552,9 @@ test("/notebook inline preview hints at $PI_PAGER when it cuts a long page", asy
 		hasUI: true,
 		ui: {
 			theme,
-			custom: async (build: any) => {
-				overlay = build({ requestRender: () => {} }, theme, {}, () => {});
+			custom: (build: any) => {
+				overlay = build({ requestRender: vi.fn() }, theme, {}, vi.fn());
+				return Promise.resolve();
 			},
 		},
 	});
@@ -573,8 +576,9 @@ test("/notebook overlay sorts entries consistently", async () => {
 		hasUI: true,
 		ui: {
 			theme,
-			custom: async (build: any) => {
-				overlay = build({ requestRender: () => {} }, theme, {}, () => {});
+			custom: (build: any) => {
+				overlay = build({ requestRender: vi.fn() }, theme, {}, vi.fn());
+				return Promise.resolve();
 			},
 		},
 	});
@@ -762,9 +766,9 @@ test("/notebook enter suspends the TUI, awaits the pager, then restores the TUI 
 	const renders: string[] = [];
 	const handlerPromise = pi.commands.get("notebook")!.handler("", makeTUICtx({
 		percent: 20,
-		custom: async (build: any) => {
+		custom: (build: any) => {
 			customCalls++;
-			if (customCalls > 2) {return undefined;}
+			if (customCalls > 2) {return Promise.resolve(undefined);}
 			let result: unknown;
 			const overlay = build(tui, theme, {}, (value: unknown) => { result = value; });
 			if (customCalls === 1) {
@@ -773,9 +777,9 @@ test("/notebook enter suspends the TUI, awaits the pager, then restores the TUI 
 				overlay.handleInput("\r");
 			} else {
 				renders.push(stripAnsi(overlay.render(120).join("\n")));
-				return undefined;
+				return Promise.resolve(undefined);
 			}
-			return result;
+			return Promise.resolve(result);
 		},
 	}));
 
@@ -799,12 +803,12 @@ test("/notebook enter suspends the TUI, awaits the pager, then restores the TUI 
  * ctx.ui.custom stub: runs beforeEnter, then presses Enter on the first open.
  * Every later open is rendered into `reopens` and closed.
  */
-function enterOnFirstOpen(beforeEnter: () => void | Promise<void> = () => {}) {
+function enterOnFirstOpen(beforeEnter: () => void | Promise<void> = () => { /* Nothing happens before the first Enter by default. */ }) {
 	const reopens: string[] = [];
 	let opened = false;
 	const custom = async (build: any) => {
 		let result: unknown;
-		const overlay = build({ stop: () => {}, start: () => {}, requestRender: () => {} }, theme, {}, (value: unknown) => { result = value; });
+		const overlay = build({ stop: vi.fn(), start: vi.fn(), requestRender: vi.fn() }, theme, {}, (value: unknown) => { result = value; });
 		if (opened) {
 			reopens.push(stripAnsi(overlay.render(120).join("\n")));
 			return undefined;
@@ -822,8 +826,9 @@ test("/notebook pager interaction installs and removes a SIGINT guard", async ()
 	let duringSpawnListenerCount = -1;
 	setPagerRuntime({
 		resolvePager: () => ({ cmd: "pager", args: [] }),
-		spawnPager: async () => {
+		spawnPager: () => {
 			duringSpawnListenerCount = process.listeners("SIGINT").length;
+			return Promise.resolve();
 		},
 	});
 
@@ -839,12 +844,12 @@ test("/notebook pager interaction installs and removes a SIGINT guard", async ()
 
 test("openInPager removes the SIGINT guard even if tui.start throws", async () => {
 	const baselineSigint = process.listeners("SIGINT").length;
-	setPagerRuntime({ spawnPager: async () => {} });
+	setPagerRuntime({ spawnPager: vi.fn(() => Promise.resolve()) });
 
 	const tui = {
-		stop: () => {},
+		stop: vi.fn(),
 		start: () => { throw new Error("start boom"); },
-		requestRender: () => {},
+		requestRender: vi.fn(),
 	};
 
 	await expect(openInPager(tui as any, "body", { cmd: "pager", args: [] })).rejects.toThrow(/start boom/);
@@ -853,14 +858,14 @@ test("openInPager removes the SIGINT guard even if tui.start throws", async () =
 
 test("openInPager propagates a tui.stop failure without spawning, guarding SIGINT, or restarting", async () => {
 	const baselineSigint = process.listeners("SIGINT").length;
-	const spawnPager = vi.fn(async () => {});
+	const spawnPager = vi.fn(() => Promise.resolve());
 	setPagerRuntime({ spawnPager });
 
 	const start = vi.fn();
 	const tui = {
 		stop: () => { throw new Error("stop boom"); },
 		start,
-		requestRender: () => {},
+		requestRender: vi.fn(),
 	};
 
 	await expect(openInPager(tui as any, "body", { cmd: "pager", args: [] })).rejects.toThrow(/stop boom/);
@@ -872,7 +877,7 @@ test("openInPager propagates a tui.stop failure without spawning, guarding SIGIN
 test("/notebook surfaces pager spawn errors as a warning notification", async () => {
 	setPagerRuntime({
 		resolvePager: () => ({ cmd: "pager", args: [] }),
-		spawnPager: async () => { throw new Error("boom"); },
+		spawnPager: () => Promise.reject(new Error("boom")),
 	});
 
 	const pi = await createTestHost();
@@ -890,7 +895,7 @@ test("/notebook surfaces pager spawn errors as a warning notification", async ()
 });
 
 test("/notebook reopens the list when the selected page vanished while it was open", async () => {
-	const spawnPager = vi.fn(async () => {});
+	const spawnPager = vi.fn(() => Promise.resolve());
 	setPagerRuntime({
 		resolvePager: () => ({ cmd: "pager", args: [] }),
 		spawnPager,
@@ -932,19 +937,19 @@ test("/notebook inline preview returns to the list on any key when no pager is a
 	const renders: string[] = [];
 	await pi.commands.get("notebook")!.handler("", makeTUICtx({
 		percent: 20,
-		custom: async (build: any) => {
+		custom: (build: any) => {
 			customCalls++;
 			let result: unknown;
-			const overlay = build({ requestRender: () => {} }, theme, {}, (value: unknown) => { result = value; });
+			const overlay = build({ requestRender: vi.fn() }, theme, {}, (value: unknown) => { result = value; });
 			if (customCalls === 1) {
 				// Move off the default index 0 so the reopen assertion proves cursor restore.
 				overlay.handleInput("\x1b[B");
 				overlay.handleInput("\r"); // opens the inline preview
 				overlay.handleInput(" ");  // any key returns to the list
-				return result;
+				return Promise.resolve(result);
 			}
 			renders.push(stripAnsi(overlay.render(120).join("\n")));
-			return undefined;
+			return Promise.resolve(undefined);
 		},
 	}));
 
@@ -965,14 +970,15 @@ test("/notebook selecting an empty-content page opens the preview instead of clo
 	const done = vi.fn();
 	await pi.commands.get("notebook")!.handler("", makeTUICtx({
 		percent: 20,
-		custom: async (build: any) => {
-			const overlay = build({ requestRender: () => {} }, theme, {}, done);
+		custom: (build: any) => {
+			const overlay = build({ requestRender: vi.fn() }, theme, {}, done);
 			overlay.handleInput("\r"); // Enter on the empty-content page
 			expect(done, "an empty page body must not close the picker early").not.toHaveBeenCalled();
 			const preview = stripAnsi(overlay.render(120).join("\n"));
 			expect(preview, "inline preview header must show the page name").toMatch(/alpha/);
 			overlay.handleInput(" "); // any key leaves the inline preview
 			expect(done).toHaveBeenCalledOnce();
+			return Promise.resolve();
 		},
 	}));
 });
@@ -990,7 +996,7 @@ test("saveNotebookPage serializes concurrent writes and preserves completion ord
 		await firstGate.promise;
 		order.push("first:end");
 	});
-	const second = saveNotebookPage(pi, state, "entry-a", "second", async () => {
+	const second = saveNotebookPage(pi, state, "entry-a", "second", () => {
 		order.push("second:start");
 	});
 	// Both writes hold the module-level lock, so a failing check must not leave them running into the next test.
@@ -1029,7 +1035,7 @@ test("saveNotebookPage keeps write order across runtime singleton swaps", async 
 			writeContext: new AsyncLocalStorage<true>(),
 			frameScheduler: getSingletons().frameScheduler,
 		});
-		const second = saveNotebookPage(pi, state, "entry-a", "second", async () => {
+		const second = saveNotebookPage(pi, state, "entry-a", "second", () => {
 			order.push("second:start");
 		});
 
@@ -1087,8 +1093,8 @@ test("saveNotebookPage releases the lock when assertWritable throws", async () =
 	const pi = await createTestHost();
 	const state = createState();
 
-	await expect(saveNotebookPage(pi as any, state, "broken", "value", async () => {
-		throw new Error("blocked");
+	await expect(saveNotebookPage(pi as any, state, "broken", "value", () => {
+		return Promise.reject(new Error("blocked"));
 	})).rejects.toThrow(/blocked/);
 	await expect(saveNotebookPage(pi as any, state, "fresh", "value")).resolves.toMatchObject({ clipped: false });
 	expect(state.notebookPages.get("fresh")).toBe("value");
@@ -1687,7 +1693,7 @@ test("/notebook selector badges clipped pages without changing stored bodies", a
 	let overlay: any;
 	await pi.commands.get("notebook")!.handler("", {
 		hasUI: true,
-		ui: { theme, custom: async (build: any) => { overlay = build({ requestRender: () => {} }, theme, {}, () => {}); } },
+		ui: { theme, custom: (build: any) => { overlay = build({ requestRender: vi.fn() }, theme, {}, vi.fn()); return Promise.resolve(); } },
 	});
 
 	const lines = stripAnsi(overlay.render(200).join("\n")).split("\n");
@@ -1720,7 +1726,7 @@ test("notebook_write descriptions state the shared write-size semantics", async 
 
 // ── Notebook write-size green regression net ───────────────────────────
 
-test("plain preview preserves the 80-character boundary", async () => {
+test("plain preview preserves the 80-character boundary", () => {
 	expect(formatPagePreview("p".repeat(80))).toBe("p".repeat(80));
 	expect(formatPagePreview("p".repeat(81) + "\ntail")).toBe("p".repeat(77) + "...");
 });

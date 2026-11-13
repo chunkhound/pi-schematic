@@ -43,11 +43,12 @@ export function createWriteLock(): RuntimeWriteLock {
 // ── Pre‑init defaults (overwritten by spawn/renderer.ts at import time) ──
 
 function createNoopScheduler(): RuntimeFrameScheduler {
+	const noop = () => { /* No scheduler is registered yet. */ };
 	return {
-		markDirty: () => {},
-		cancelDirty: () => {},
-		flushNow: () => {},
-		clear: () => {},
+		markDirty: noop,
+		cancelDirty: noop,
+		flushNow: noop,
+		clear: noop,
 	};
 }
 

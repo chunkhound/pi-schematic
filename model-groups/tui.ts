@@ -88,7 +88,7 @@ export function createModelGroupsComponent(
 	options: ModelGroupsComponentOptions = {},
 ): Component & Focusable {
 	const store = { ...defaultStore, ...options.store };
-	const notify = options.notify ?? (() => {});
+	const notify = options.notify ?? (() => { /* Without a notify option, messages are dropped. */ });
 	const state = {
 		screen: "LIST" as ModelGroupsScreen,
 		row: 0,
@@ -525,7 +525,7 @@ export function createModelGroupsComponent(
 	}
 
 	function textLine(value: string): Component {
-		return { render: () => [value], invalidate: () => {} };
+		return { render: () => [value], invalidate: () => { /* Renders from `value` alone; no cache to drop. */ } };
 	}
 
 	function groupNameLineComponent(): Component {
@@ -830,7 +830,7 @@ export function createModelGroupsComponent(
 				}
 				return lines;
 			},
-			invalidate: () => {},
+			invalidate: () => { /* render() rebuilds every line; no cache to drop. */ },
 		};
 	}
 

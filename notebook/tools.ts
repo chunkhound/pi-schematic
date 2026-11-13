@@ -10,6 +10,7 @@ import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-age
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
+import { asPromise } from "../as-promise.js";
 import type { SchematicState } from "../state.js";
 import { updateIndicators } from "../tui.js";
 import { formatByteCap, formatPageList, formatPagePreview, getPageNames, saveNotebookPage, type TruncationReport } from "./store.js";
@@ -190,40 +191,42 @@ export function createNotebookToolDefinitions(
 			return new Text(text, 0, 0);
 		},
 
-		async execute(_toolCallId, params: ReadArgs, _signal, _onUpdate, _ctx) {
-			assertFresh();
-			const content = state.notebookPages.get(params.name);
-			const names = getPageNames(state);
+		execute(_toolCallId, params: ReadArgs, _signal, _onUpdate, _ctx) {
+			return asPromise(() => {
+				assertFresh();
+				const content = state.notebookPages.get(params.name);
+				const names = getPageNames(state);
 
-			if (content === undefined) {
+				if (content === undefined) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text:
+									`Notebook page "${params.name}" not found.` +
+									`\n\nNotebook Pages:\n${formatPageList(state) || "(empty)"}`,
+							},
+						],
+						details: { entries: names, found: false },
+					};
+				}
+
+				const clipped = state.clippedPages.has(params.name);
 				return {
 					content: [
 						{
 							type: "text" as const,
 							text:
-								`Notebook page "${params.name}" not found.` +
-								`\n\nNotebook Pages:\n${formatPageList(state) || "(empty)"}`,
+								`--- ${params.name} ---\n${content}\n` +
+								`---\nNotebook Pages:\n${formatPageList(state) || "(empty)"}` +
+								(clipped
+									? `\n\nNotice: This page was clipped at write time; its stored body is incomplete.`
+									: ""),
 						},
 					],
-					details: { entries: names, found: false },
+					details: { entries: names, found: true, body: content, clipped },
 				};
-			}
-
-			const clipped = state.clippedPages.has(params.name);
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text:
-							`--- ${params.name} ---\n${content}\n` +
-							`---\nNotebook Pages:\n${formatPageList(state) || "(empty)"}` +
-							(clipped
-								? `\n\nNotice: This page was clipped at write time; its stored body is incomplete.`
-								: ""),
-					},
-				],
-				details: { entries: names, found: true, body: content, clipped },
-			};
+			});
 		},
 	};
 
@@ -256,18 +259,20 @@ export function createNotebookToolDefinitions(
 			return new Text(text, 0, 0);
 		},
 
-		async execute() {
-			assertFresh();
-			const names = getPageNames(state);
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: `Notebook Pages:\n${formatPageList(state) || "(empty)"}`,
-					},
-				],
-				details: { entries: names },
-			};
+		execute() {
+			return asPromise(() => {
+				assertFresh();
+				const names = getPageNames(state);
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `Notebook Pages:\n${formatPageList(state) || "(empty)"}`,
+						},
+					],
+					details: { entries: names },
+				};
+			});
 		},
 	};
 

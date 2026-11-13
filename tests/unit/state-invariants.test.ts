@@ -5,7 +5,7 @@
  * that must hold after every operation on a pure SchematicState.
  */
 
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import * as fc from "fast-check";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
@@ -20,7 +20,7 @@ import { useTestHarness } from "../test-utils.js";
 
 // ── Mock ExtensionAPI ─────────────────────────────────────────────────
 
-const mockPi = { appendEntry: () => {} } as unknown as ExtensionAPI;
+const mockPi = { appendEntry: vi.fn() } as unknown as ExtensionAPI;
 
 /** First line fits, second line alone exceeds the byte cap: truncates to a clipped head. */
 const CLIPPED_BODY = "head\n" + "x".repeat(DEFAULT_MAX_BYTES + 1);

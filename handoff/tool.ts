@@ -20,6 +20,7 @@ import {
 	HANDOFF_STAGED_RESULT,
 } from "./copy.js";
 import { formatHandoffFailure } from "./format.js";
+import { asPromise } from "../as-promise.js";
 import {
 	MIN_HANDOFF_TOKENS,
 	estimateHandoffContextTokens,
@@ -132,39 +133,41 @@ export function registerHandoffTool(
 			})),
 		}),
 
-		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-			if (state.stagedHandoff) {throw new Error(HANDOFF_ALREADY_STAGED);}
-			const { nextInstruction, context } = resolveHandoffRequest(state, params);
-			// The error result is the only report of a rejected call: a queued follow-up
-			// would outlive this run and reach a later successor.
-			try {
-				validateHandoffRequest(nextInstruction, ctx);
-			} catch (error) {
-				if (!state.pendingRequestedHandoff || !(error instanceof Error)) {throw error;}
-				throw new Error(formatHandoffFailure(error.message, true));
-			}
-			// Status first: a throwing UI call must leave no staged handoff behind.
-			if (ctx.hasUI && ctx.ui.theme) {
-				ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_IN_PROGRESS_STATUS));
-			}
-			const discardPages = [...new Set(params.discardPages ?? [])];
-			state.stagedHandoff = {
-				handoffId: randomUUID(),
-				toolCallId,
-				nextInstruction,
-				context,
-				discardPages,
-				discardedPages: [],
-				phase: "staged",
-				declineReason: null,
-			};
-			if (state.pendingRequestedHandoff) {state.pendingRequestedHandoff.toolCalled = true;}
+		execute(toolCallId, params, _signal, _onUpdate, ctx) {
+			return asPromise(() => {
+				if (state.stagedHandoff) {throw new Error(HANDOFF_ALREADY_STAGED);}
+				const { nextInstruction, context } = resolveHandoffRequest(state, params);
+				// The error result is the only report of a rejected call: a queued follow-up
+				// would outlive this run and reach a later successor.
+				try {
+					validateHandoffRequest(nextInstruction, ctx);
+				} catch (error) {
+					if (!state.pendingRequestedHandoff || !(error instanceof Error)) {throw error;}
+					throw new Error(formatHandoffFailure(error.message, true));
+				}
+				// Status first: a throwing UI call must leave no staged handoff behind.
+				if (ctx.hasUI && ctx.ui.theme) {
+					ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_IN_PROGRESS_STATUS));
+				}
+				const discardPages = [...new Set(params.discardPages ?? [])];
+				state.stagedHandoff = {
+					handoffId: randomUUID(),
+					toolCallId,
+					nextInstruction,
+					context,
+					discardPages,
+					discardedPages: [],
+					phase: "staged",
+					declineReason: null,
+				};
+				if (state.pendingRequestedHandoff) {state.pendingRequestedHandoff.toolCalled = true;}
 
-			return {
-				content: [{ type: "text", text: HANDOFF_STAGED_RESULT }],
-				details: {},
-				terminate: true,
-			};
+				return {
+					content: [{ type: "text", text: HANDOFF_STAGED_RESULT }],
+					details: {},
+					terminate: true,
+				};
+			});
 		},
 
 	});

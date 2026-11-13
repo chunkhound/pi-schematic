@@ -114,7 +114,7 @@ function entryLabel(entry: SessionEntry): string {
 
 function observer(observed: Observed): ExtensionFactory {
 	return (pi) => {
-		const record = (name: string) => async () => {
+		const record = (name: string) => () => {
 			observed.events.push(name);
 		};
 		pi.on("before_agent_start", record("before_agent_start"));
@@ -122,13 +122,13 @@ function observer(observed: Observed): ExtensionFactory {
 		pi.on("agent_settled", record("agent_settled"));
 		pi.on("session_before_compact", record("session_before_compact"));
 		pi.on("session_compact", record("session_compact"));
-		pi.on("turn_start", async (_event, ctx) => {
+		pi.on("turn_start", (_event, ctx) => {
 			observed.branchAtTurnStart.push(ctx.sessionManager.getBranch().map(entryLabel));
 		});
-		pi.on("context", async (_event, ctx) => {
+		pi.on("context", (_event, ctx) => {
 			observed.usageAtContext.push(ctx.getContextUsage());
 		});
-		pi.on("tool_call", async (event, ctx) => {
+		pi.on("tool_call", (event, ctx) => {
 			if (event.toolName === "handoff") {observed.usageAtHandoffCall.push(ctx.getContextUsage());}
 		});
 	};
@@ -141,34 +141,34 @@ function observer(observed: Observed): ExtensionFactory {
  */
 function recordingUI(log: string[]): ExtensionUIContext {
 	const ui = {
-		select: async () => undefined,
-		confirm: async () => false,
-		input: async () => undefined,
+		select: () => Promise.resolve(undefined),
+		confirm: () => Promise.resolve(false),
+		input: () => Promise.resolve(undefined),
 		notify: (message: string, type?: string) => { log.push(`notify:${type ?? "info"}:${message}`); },
-		onTerminalInput: () => () => {},
+		onTerminalInput: () => vi.fn(),
 		setStatus: (key: string, text: string | undefined) => { log.push(`status:${key}:${String(text)}`); },
-		setWorkingMessage: () => {},
-		setWorkingVisible: () => {},
-		setWorkingIndicator: () => {},
-		setHiddenThinkingLabel: () => {},
-		setWidget: () => {},
-		setFooter: () => {},
-		setHeader: () => {},
-		setTitle: () => {},
-		custom: async () => undefined,
-		pasteToEditor: () => {},
-		setEditorText: () => {},
+		setWorkingMessage: vi.fn(),
+		setWorkingVisible: vi.fn(),
+		setWorkingIndicator: vi.fn(),
+		setHiddenThinkingLabel: vi.fn(),
+		setWidget: vi.fn(),
+		setFooter: vi.fn(),
+		setHeader: vi.fn(),
+		setTitle: vi.fn(),
+		custom: () => Promise.resolve(undefined),
+		pasteToEditor: vi.fn(),
+		setEditorText: vi.fn(),
 		getEditorText: () => "",
-		editor: async () => undefined,
-		addAutocompleteProvider: () => {},
-		setEditorComponent: () => {},
+		editor: () => Promise.resolve(undefined),
+		addAutocompleteProvider: vi.fn(),
+		setEditorComponent: vi.fn(),
 		getEditorComponent: () => undefined,
 		theme: { fg: (_color: string, text: string) => text, bold: (text: string) => text },
 		getAllThemes: () => [],
 		getTheme: () => undefined,
 		setTheme: () => ({ success: false, error: "UI not available" }),
 		getToolsExpanded: () => false,
-		setToolsExpanded: () => {},
+		setToolsExpanded: vi.fn(),
 	};
 	return ui as unknown as ExtensionUIContext;
 }
@@ -457,7 +457,7 @@ describe("handoff boundary in a real agent session", () => {
 
 	it("completes the cut when the run settles after a later extension stops the continuation", async () => {
 		const stopContinuation: ExtensionFactory = (pi) => {
-			pi.on("turn_end", async () => ({ continue: false }));
+			pi.on("turn_end", () => ({ continue: false }));
 		};
 		const handoffRequested = createDeferred();
 		const nextRunRequested = createDeferred();
@@ -492,13 +492,13 @@ describe("handoff boundary in a real agent session", () => {
 		let abortSent = false;
 		const abortedAtTurnStart: boolean[] = [];
 		const abortAfterCut: ExtensionFactory = (pi) => {
-			pi.on("turn_end", async (event, ctx) => {
+			pi.on("turn_end", (event, ctx) => {
 				if (!abortSent && event.entries.length > 0) {
 					abortSent = true;
 					ctx.abort();
 				}
 			});
-			pi.on("turn_start", async (_event, ctx) => {
+			pi.on("turn_start", (_event, ctx) => {
 				abortedAtTurnStart.push(ctx.signal?.aborted === true);
 			});
 		};
@@ -619,7 +619,7 @@ describe("failed handoff cut in a real agent session", () => {
 	for (const variant of dropVariants) {
 		it(`persists the failure guidance without starting a run and keeps the request pending when a later extension drops the boundary (${variant.name})`, async () => {
 			const dropBoundary: ExtensionFactory = (pi) => {
-				pi.on("turn_end", async (event) => (event.entries.length > 0 ? variant.result : undefined));
+				pi.on("turn_end", (event) => (event.entries.length > 0 ? variant.result : undefined));
 			};
 			// Hand-written, not the formatter's output: the persisted guidance is what
 			// this test pins.
@@ -668,7 +668,7 @@ describe("failed handoff cut in a real agent session", () => {
 		it(`fails the handoff, aborts the continuation and clears the request when the cut lands without its successor (${variant.name})`, async () => {
 			let tampered = false;
 			const tamperBoundary: ExtensionFactory = (pi) => {
-				pi.on("turn_end", async (event) => {
+				pi.on("turn_end", (event) => {
 					if (tampered || event.entries.length === 0) {return undefined;}
 					tampered = true;
 					return { entries: variant.tamper(event.entries) };
@@ -718,7 +718,7 @@ describe("failed handoff cut in a real agent session", () => {
 
 	it("fails the handoff at settle without an abort and clears the request when a later extension drops the successor and stops the continuation", async () => {
 		const dropSuccessorAndStop: ExtensionFactory = (pi) => {
-			pi.on("turn_end", async (event) => (event.entries.length > 0
+			pi.on("turn_end", (event) => (event.entries.length > 0
 				? { entries: lostSuccessorVariants[0].tamper(event.entries), continue: false }
 				: undefined));
 		};
@@ -754,7 +754,7 @@ describe("failed handoff cut in a real agent session", () => {
 
 	it("writes no cut, persists the abort failure and starts no new run when the run is aborted", async () => {
 		const abortOnHandoffResult: ExtensionFactory = (pi) => {
-			pi.on("turn_end", async (event, ctx) => {
+			pi.on("turn_end", (event, ctx) => {
 				if (event.toolResults.some((result) => result.toolName === "handoff")) {ctx.abort();}
 			});
 		};
@@ -795,7 +795,7 @@ describe("failed handoff cut in a real agent session", () => {
 	 */
 	async function exhaustHandoffBudget(dropResult: { entries: []; continue?: false }, ui?: string[]) {
 		const dropBoundary: ExtensionFactory = (pi) => {
-			pi.on("turn_end", async (event) => (event.entries.length > 0 ? dropResult : undefined));
+			pi.on("turn_end", (event) => (event.entries.length > 0 ? dropResult : undefined));
 		};
 		let nudgedCalls = 0;
 		const handoffWhenNudged: FauxResponseFactory = (context) => {
@@ -835,7 +835,7 @@ describe("failed handoff cut in a real agent session", () => {
 
 	it("refuses a second handoff in the run that already lost a cut and accepts one in the next run", async () => {
 		const dropKeepingContinuation: ExtensionFactory = (pi) => {
-			pi.on("turn_end", async (event) => (event.entries.length > 0 ? { entries: [] } : undefined));
+			pi.on("turn_end", (event) => (event.entries.length > 0 ? { entries: [] } : undefined));
 		};
 		const handoffAs = (id: string) => call(fauxToolCall("handoff", { nextInstruction: NEXT_INSTRUCTION, context: HANDOFF_CONTEXT }, { id }));
 		const { session, sessionManager, observed } = await startSession(

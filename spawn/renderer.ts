@@ -474,13 +474,12 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 	private unsubscribe?: () => void;
 	private expanded = false;
 	private showImages = true;
-	private requestRender: () => void = () => {};
+	private requestRender: () => void = () => { /* No parent render loop until one is attached. */ };
 	private readonly markdownTheme = getMarkdownTheme();
 	// Minimal TUI mock for ToolExecutionComponent/BashExecutionComponent.
-	// Parent invalidation is one-way from child session events below; renderer-
-	// internal invalidations must not re-enter the parent render loop.
+	// Parent invalidation is one-way from child session events below.
 	private readonly fakeUi = {
-		requestRender: () => {},
+		requestRender: () => { /* Render requests from the nested ToolExecutionComponent/BashExecutionComponent instances must not re-enter the parent render loop. */ },
 	};
 	private details?: SpawnResultDetails;
 	private nestTheme?: Theme;
@@ -711,7 +710,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		const session = this.session;
 		const ownedToolCallId = this.ownedToolCallId;
 		this.resetRenderBatching();
-		this.requestRender = () => {};
+		this.requestRender = () => { /* Disposed: the parent render loop is detached. */ };
 		this.clearRenderCache();
 		this.details = undefined;
 		this.nestTheme = undefined;
@@ -725,10 +724,8 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		if (session && ownedToolCallId && state?.liveChildSessions.get(ownedToolCallId) === session) {
 			// Share the deduplicated abort promise with the other abort paths (spawn
 			// invalidation, /reset) so one session never receives a second abort.
-			// Renderer has no ExtensionContext, so abort failures are intentionally
-			// not notified here — spawn path notifies via ctx.ui.notify. Silent swallow is correct.
 			try {
-				void abortChildSession(state, session).catch(() => {});
+				void abortChildSession(state, session).catch(() => { /* No ExtensionContext to notify. The spawn reports a failure of this shared abort only when its tool signal aborts or it detects a reset; an abort started here with neither goes unreported. */ });
 			} finally {
 				state.liveChildSessions.delete(ownedToolCallId);
 			}

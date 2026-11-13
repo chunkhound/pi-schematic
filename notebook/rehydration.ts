@@ -134,7 +134,7 @@ export function registerNotebookRehydration(
 	pi: ExtensionAPI,
 	state: SchematicState,
 ): void {
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", (_event, ctx) => {
 		reconstructNotebook(state, ctx.sessionManager.getBranch());
 		ensureNotebookToolsActive(pi);
 	});

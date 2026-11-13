@@ -287,7 +287,7 @@ function declineReason(event: TurnEndEvent, ctx: ExtensionContext, staged: Stage
  * refusal wins over a readonly block).
  */
 export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState): void {
-	pi.on("message_end", async (event) => {
+	pi.on("message_end", (event) => {
 		if (event.message.role !== "assistant") {return;}
 		state.handoffRefusals.clear();
 		const calls = event.message.content.filter((block) => block.type === "toolCall");
@@ -302,14 +302,14 @@ export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState)
 		}
 	});
 
-	pi.on("tool_call", async (event) => {
+	pi.on("tool_call", (event) => {
 		const reason = state.handoffRefusals.get(event.toolCallId) ??
 			(event.toolName === HANDOFF_TOOL_NAME && state.handoffFailedInRun ? HANDOFF_FAILED_IN_RUN_REFUSAL : undefined);
 		if (reason) {return { block: true, reason, terminate: true };}
 		return undefined;
 	});
 
-	pi.on("turn_end", async (event, ctx) => {
+	pi.on("turn_end", (event, ctx) => {
 		state.handoffRefusals.clear();
 		const staged = state.stagedHandoff;
 		if (!staged || staged.phase !== "staged") {return undefined;}
@@ -329,11 +329,11 @@ export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState)
 
 	// First handler point after the commit and before the successor's context
 	// event, so request, topic and readonly nudge are settled for its first request.
-	pi.on("turn_start", async (_event, ctx) => {
+	pi.on("turn_start", (_event, ctx) => {
 		resolveStagedHandoff(pi, state, ctx, "turn_start");
 	});
 
-	pi.on("agent_settled", async (_event, ctx) => {
+	pi.on("agent_settled", (_event, ctx) => {
 		resolveStagedHandoff(pi, state, ctx, "agent_settled");
 		state.handoffFailedInRun = false;
 		if (state.readonlyNudgeRearmAtSettle) {

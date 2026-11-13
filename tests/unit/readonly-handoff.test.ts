@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { access, rm } from "node:fs/promises";
 import os from "node:os";
@@ -235,7 +235,7 @@ test("watchdog cancellation clears the readonly handoff bypass", async () => {
 		ui: {
 			theme: { fg: (_name: string, text: string) => text },
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-			notify: () => {},
+			notify: vi.fn(),
 		},
 		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
 	};
@@ -293,7 +293,7 @@ test("synchronous handoff rejection preserves the readonly bypass contract", asy
 			undefined,
 			{
 				hasUI: true,
-				ui: { setStatus: () => {} },
+				ui: { setStatus: vi.fn() },
 				getContextUsage: () => null,
 			},
 		),
@@ -646,7 +646,7 @@ test("session tree drops a staged handoff, releases the overlap guard, and a sta
 		ui: {
 			theme: { fg: (_name: string, text: string) => text },
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-			setWidget: () => {},
+			setWidget: vi.fn(),
 		},
 		getContextUsage: () => null,
 	} as any);

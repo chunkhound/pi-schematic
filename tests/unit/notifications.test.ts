@@ -5,7 +5,7 @@
  * would cascade to downstream constants. These tests catch that cheaply.
  */
 
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { expectPrefix } from "../assertions.js";
 import { applyReadonlyBashGuard, classifyBashCommand } from "../../readonly-bash.js";
 import { registerReadonlyPI } from "./helpers.js";
@@ -128,9 +128,9 @@ test("parent readonly tool-call consumer uses centralized block copy", async () 
 		getContextUsage: () => null,
 		ui: {
 			theme: { fg: (_name: string, text: string) => text },
-			notify: () => {},
-			setStatus: () => {},
-			setWidget: () => {},
+			notify: vi.fn(),
+			setStatus: vi.fn(),
+			setWidget: vi.fn(),
 		},
 	} as any);
 	const result = await toolCall({ toolName: "write", input: {} }, {});

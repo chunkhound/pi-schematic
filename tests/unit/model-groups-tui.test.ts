@@ -32,7 +32,7 @@ function component(args: { groups?: ResolvedModelGroup[]; store?: any; notify?: 
 		args.renderTheme ?? theme,
 		args.modelRegistry ?? registry(),
 		{ cwd: "/tmp/project", policy: args.policy ?? "global-project" },
-		() => {},
+		vi.fn(),
 		{ initialValidation: boot(args.groups ?? []), store: args.store, notify: args.notify },
 	);
 	return { c, get renders() { return renders; } };
@@ -881,7 +881,7 @@ test.for(["__proto__", "constructor", "toString"])("model groups TUI decodes the
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const c = component({ groups, store, notify: (message) => notifications.push(message) }).c;
-	press(c, ENTER, DOWN, DOWN, ENTER, "\u007f", "\u007f", "\u007f", ...[...` ${nextName} `], DOWN);
+	press(c, ENTER, DOWN, DOWN, ENTER, "\u007f", "\u007f", "\u007f", ...Array.from(` ${nextName} `), DOWN);
 	expect(calls).toStrictEqual([`abc->${nextName}`]);
 	expect(rendered(c)).toMatch(new RegExp(nextName.replaceAll("_", "\\_")));
 	expect(notifications).toStrictEqual([]);
@@ -960,16 +960,16 @@ test("model groups TUI searchable Model step filters raw fields and handles no m
 
 	for (const query of ["alpha-id", "openai/alpha-id", "Friendly"]) {
 		const queried = atSearchableModel(models);
-		pressAndRender(queried, ...query);
+		pressAndRender(queried, ...Array.from(query));
 		expect(rendered(queried)).toMatch(/alpha-id/);
 		expect(rendered(queried)).not.toMatch(/beta-id/);
 	}
 	const providerQuery = atSearchableModel(models);
-	pressAndRender(providerQuery, ..."openai");
+	pressAndRender(providerQuery, ...Array.from("openai"));
 	expect(rendered(providerQuery)).toMatch(/alpha-id/);
 	expect(rendered(providerQuery)).toMatch(/beta-id/);
 
-	pressAndRender(c, ..."Friendly impossible");
+	pressAndRender(c, ...Array.from("Friendly impossible"));
 	expect(rendered(c)).toMatch(/No matching models/);
 	const before = rendered(c);
 	pressAndRender(c, UP, DOWN, ENTER);
@@ -996,7 +996,7 @@ test("model groups TUI fuzzy search excludes synthetic provider-space-id matches
 	expect(withSyntheticProviderSpaceId).toHaveLength(1);
 
 	const c = atSearchableModel([model]);
-	pressAndRender(c, ...query);
+	pressAndRender(c, ...Array.from(query));
 	expect(rendered(c)).toMatch(/No matching models/);
 	expect(rendered(c)).not.toMatch(/→ abc\/xyz/);
 });
@@ -1085,7 +1085,7 @@ test("model groups TUI Model Input directly proves every nonempty, cursor-start,
 	const models = Array.from({ length: 4 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: true }));
 
 	const cursorMiddle = atSearchableModel(models);
-	pressAndRender(cursorMiddle, ..."model", DOWN, DOWN, LEFT);
+	pressAndRender(cursorMiddle, ...Array.from("model"), DOWN, DOWN, LEFT);
 	expect(rendered(cursorMiddle)).toMatch(/Add model — Step 2\/3 Model/);
 	expect(rendered(cursorMiddle)).toMatch(/→ openai\/model-2/); // Left moved only the Input cursor.
 	pressAndRender(cursorMiddle, BACKSPACE);
@@ -1093,7 +1093,7 @@ test("model groups TUI Model Input directly proves every nonempty, cursor-start,
 
 	for (const key of [LEFT, BACKSPACE]) {
 		const cursorStart = atSearchableModel(models);
-		pressAndRender(cursorStart, ..."model", ...Array(5).fill(LEFT), DOWN, DOWN, key);
+		pressAndRender(cursorStart, ...Array.from("model"), ...Array(5).fill(LEFT), DOWN, DOWN, key);
 		expect(rendered(cursorStart)).toMatch(/→ openai\/model-2/); // Cursor-start key left query and selection unchanged.
 		expect(rendered(cursorStart)).toMatch(/Add model — Step 2\/3 Model/);
 	}
@@ -1112,7 +1112,7 @@ test("model groups TUI Model Input directly proves every nonempty, cursor-start,
 	}
 	for (const query of ["", "m"]) {
 		const escaped = atSearchableModel(models);
-		pressAndRender(escaped, ...query, ESC);
+		pressAndRender(escaped, ...Array.from(query), ESC);
 		expect(rendered(escaped)).toMatch(/Step 1\/3 Provider/);
 	}
 });
@@ -1126,12 +1126,12 @@ test("model groups TUI directly proves query preservation and every abandonment,
 	};
 
 	const thinkingBack = atSearchableModel(models, store);
-	pressAndRender(thinkingBack, ..."target", ENTER, LEFT);
+	pressAndRender(thinkingBack, ...Array.from("target"), ENTER, LEFT);
 	expect(rendered(thinkingBack)).toMatch(/Step 2\/3 Model/);
 	expect(rendered(thinkingBack)).toMatch(/> target/);
 
 	const abandonedAndExited = atSearchableModel(models, store);
-	pressAndRender(abandonedAndExited, ..."target", ESC);
+	pressAndRender(abandonedAndExited, ...Array.from("target"), ESC);
 	expect(rendered(abandonedAndExited)).toMatch(/Step 1\/3 Provider/);
 	pressAndRender(abandonedAndExited, ESC);
 	expect(rendered(abandonedAndExited)).toMatch(/Model Group: review/);
@@ -1140,7 +1140,7 @@ test("model groups TUI directly proves query preservation and every abandonment,
 	expect(rendered(abandonedAndExited)).not.toMatch(/> target/);
 
 	const completedAndReopened = atSearchableModel(models, store);
-	pressAndRender(completedAndReopened, ..."target", ENTER, ENTER);
+	pressAndRender(completedAndReopened, ...Array.from("target"), ENTER, ENTER);
 	expect(rendered(completedAndReopened)).toMatch(/Model Group: review/);
 	pressAndRender(completedAndReopened, ...Array(5).fill(DOWN), ENTER, ENTER);
 	expect(rendered(completedAndReopened)).toMatch(/Step 2\/3 Model/);
@@ -1160,12 +1160,12 @@ test("model groups TUI persists exact raw identity from both filtered/reordered 
 		{ provider: "raw-provider", id: "a-first", name: "unrelated", reasoning: false },
 	];
 	const filtered = atSearchableModel(filteredModels, store);
-	pressAndRender(filtered, ..."needle", ENTER, ENTER);
+	pressAndRender(filtered, ...Array.from("needle"), ENTER, ENTER);
 	expect(persisted[0]).toStrictEqual({ provider: "raw-provider", modelId: "z-last\u001b" });
 
 	const offscreenModels = Array.from({ length: 12 }, (_, index) => ({ provider: "raw-provider", id: `raw/${String(index).padStart(2, "0")}\u001b`, name: `match ${index}`, reasoning: false }));
 	const offscreen = atSearchableModel(offscreenModels, store);
-	pressAndRender(offscreen, ..."match", ...Array(11).fill(DOWN), ENTER, ENTER);
+	pressAndRender(offscreen, ...Array.from("match"), ...Array(11).fill(DOWN), ENTER, ENTER);
 	expect(persisted[1]).toStrictEqual({ provider: "raw-provider", modelId: "raw/11\u001b" });
 });
 
@@ -1272,7 +1272,7 @@ test("model groups TUI model picker detail keeps a width-bounded fixed line coun
 	expect(stripAnsi(narrowLines.join("\n"))).toMatch(/…/);
 	expect(stripAnsi(wideLines.join("\n"))).toMatch(/openai\/gpt-5\.2-codex-2025-07-01-rc1/);
 	// No matches: the detail block disappears.
-	pressAndRender(c, ..."zzz");
+	pressAndRender(c, ...Array.from("zzz"));
 	expect(rendered(c)).toMatch(/No matching models/);
 	expect(rendered(c)).not.toMatch(/Selected:/);
 });

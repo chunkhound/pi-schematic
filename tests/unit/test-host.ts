@@ -268,9 +268,9 @@ function bindConversationActions(runtime: ExtensionRuntime, state: HostState): v
 		appendEntry: (customType: string, data?: unknown) => {
 			state.appendedEntries.push({ customType, data });
 		},
-		setSessionName: () => {},
+		setSessionName: () => { /* No test reads the session name back. */ },
 		getSessionName: () => undefined,
-		setLabel: () => {},
+		setLabel: () => { /* No test reads labels back. */ },
 	});
 }
 
@@ -283,7 +283,7 @@ function bindToolAndModelActions(runtime: ExtensionRuntime, state: HostState): v
 			applyActiveTools(state, names);
 		},
 		getCommands: () => [...state.commands],
-		setModel: async () => true,
+		setModel: () => Promise.resolve(true),
 		getThinkingLevel: () => state.thinkingLevel,
 		setThinkingLevel: (level: ThinkingLevel) => {
 			state.thinkingLevel = level;
@@ -320,8 +320,8 @@ function stampAccessors(api: ExtensionAPI, extension: Extension, state: HostStat
 	pi.setCommands = (commands: SlashCommandInfo[]) => {
 		state.commands = [...commands];
 	};
-	pi.exec = async () => {
-		throw new Error("pi.exec is not available in the test host; override pi.exec in the test if needed.");
+	pi.exec = () => {
+		return Promise.reject(new Error("pi.exec is not available in the test host; override pi.exec in the test if needed."));
 	};
 	return pi;
 }

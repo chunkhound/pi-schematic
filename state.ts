@@ -301,6 +301,6 @@ export function abortAndClearChildSessions(state: SchematicState): void {
 	state.childSessions.clear();
 	state.liveChildSessions.clear();
 	for (const session of sessions) {
-		void abortChildSession(state, session).catch(() => {});
+		void abortChildSession(state, session).catch(() => { /* Reset proceeds regardless. The spawn running this child reports a failure of this shared abort at its next reset check; while the child's prompt runs, that check waits until session.prompt settles, so an abort that fails and leaves the prompt running stays unreported until then unless the tool signal aborts. */ });
 	}
 }

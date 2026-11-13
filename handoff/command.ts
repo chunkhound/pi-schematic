@@ -10,6 +10,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { HANDOFF_COMMAND_BUSY, HANDOFF_REQUESTED_STATUS, HANDOFF_REQUIRED_STATUS } from "./copy.js";
 import { isHandoffEligible } from "./eligibility.js";
+import { asPromise } from "../as-promise.js";
 import {
 	READONLY_HANDOFF_EXCEPTION_NOTIFICATION,
 	buildReadonlyHandoffCommandNotice,
@@ -23,40 +24,40 @@ export function registerHandoffCommand(pi: ExtensionAPI, state: SchematicState):
 			"Store the next context's instruction verbatim from your direction, have the LLM " +
 			"curate the notebook and supply the remaining context, then perform the handoff automatically.",
 
-		handler: async (args, ctx) => {
-			const direction = args;
-			if (!direction.trim()) {
-				if (ctx.hasUI) {ctx.ui.notify("Usage: /handoff <direction>", "error");}
-				return;
-			}
+		handler: (direction, ctx) =>
+			asPromise(() => {
+				if (!direction.trim()) {
+					if (ctx.hasUI) {ctx.ui.notify("Usage: /handoff <direction>", "error");}
+					return;
+				}
 
-			if (state.stagedHandoff) {throw new Error(HANDOFF_COMMAND_BUSY);}
-			state.pendingRequestedHandoff = newRequestedHandoff(direction);
+				if (state.stagedHandoff) {throw new Error(HANDOFF_COMMAND_BUSY);}
+				state.pendingRequestedHandoff = newRequestedHandoff(direction);
 
-			if (ctx.hasUI && state.readonlyEnabled) {
-				ctx.ui.notify(
-					READONLY_HANDOFF_EXCEPTION_NOTIFICATION,
-					"info",
-				);
-			}
+				if (ctx.hasUI && state.readonlyEnabled) {
+					ctx.ui.notify(
+						READONLY_HANDOFF_EXCEPTION_NOTIFICATION,
+						"info",
+					);
+				}
 
-			// Show live progress indicator in footer
-			if (ctx.hasUI && ctx.ui.theme) {
-				const status = isHandoffEligible(ctx.getContextUsage())
-					? HANDOFF_REQUIRED_STATUS
-					: HANDOFF_REQUESTED_STATUS;
-				ctx.ui.setStatus(
-					STATUS_KEY_HANDOFF,
-					ctx.ui.theme.fg("accent", status),
-				);
-			}
+				// Show live progress indicator in footer
+				if (ctx.hasUI && ctx.ui.theme) {
+					const status = isHandoffEligible(ctx.getContextUsage())
+						? HANDOFF_REQUIRED_STATUS
+						: HANDOFF_REQUESTED_STATUS;
+					ctx.ui.setStatus(
+						STATUS_KEY_HANDOFF,
+						ctx.ui.theme.fg("accent", status),
+					);
+				}
 
-			const readonlyNotice = state.readonlyEnabled
-				? buildReadonlyHandoffCommandNotice()
-				: "\n\nA real handoff is required in the current session. Do not continue normal work instead.";
+				const readonlyNotice = state.readonlyEnabled
+					? buildReadonlyHandoffCommandNotice()
+					: "\n\nA real handoff is required in the current session. Do not continue normal work instead.";
 
-			pi.sendUserMessage(
-				`Handoff requested. The next context will execute this instruction verbatim:
+				pi.sendUserMessage(
+					`Handoff requested. The next context will execute this instruction verbatim:
 <next-instruction>
 ${direction}
 </next-instruction>
@@ -66,8 +67,8 @@ Do NOT start this instruction. This context is discarded at compaction, so actin
 Preparation duties for this context:
 1. Curate the notebook for what the instruction needs: refresh non-recoverable knowledge (user guidance, decisions, design, task scope) and discard pages holding only recoverable code facts.
 2. Call the handoff tool with \`context\`: the situational context still missing from the notebook — current state, blockers, unresolved questions, failed paths worth avoiding, and the concrete next step. Do NOT repeat the instruction; it is already stored and will be delivered verbatim.${readonlyNotice}`,
-				ctx.isIdle() ? undefined : { deliverAs: "followUp" },
-			);
-		},
+					ctx.isIdle() ? undefined : { deliverAs: "followUp" },
+				);
+			}),
 	});
 }

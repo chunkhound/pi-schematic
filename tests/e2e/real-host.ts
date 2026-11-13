@@ -20,6 +20,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { RpcClient, type RpcClientOptions, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import type { TestContext } from "vitest";
+import { asPromise } from "../../as-promise.js";
 import { piManifestPath } from "../../pi-packages.mjs";
 import {
 	parseBarrierReport,
@@ -156,7 +157,7 @@ function describeError(error: unknown): string {
  * Run `body`; when it throws, run `cleanup` and rethrow the body's error. A cleanup
  * error never hides it: both are thrown together as an AggregateError.
  */
-export async function cleanupOnFailure<T>(body: () => Promise<T>, cleanup: () => unknown): Promise<T> {
+export async function cleanupOnFailure<T>(body: () => T | Promise<T>, cleanup: () => unknown): Promise<T> {
 	try {
 		return await body();
 	} catch (failure) {
@@ -532,7 +533,7 @@ function removeRoot(root: string): void {
  * finishes its step against a live host, bounded by its own deadlines, and does not run into the
  * next test.
  */
-export async function withRealHost(t: TestContext, run: (host: RealHost) => Promise<void>, options?: RealHostOptions): Promise<void> {
+export async function withRealHost(t: TestContext, run: (host: RealHost) => void | Promise<void>, options?: RealHostOptions): Promise<void> {
 	const starting = RealHost.start(options);
 	let body: Promise<void> | undefined;
 	// The explicit 0 keeps the close independent of the project's hookTimeout. Under a nonzero
@@ -552,11 +553,11 @@ export async function withRealHost(t: TestContext, run: (host: RealHost) => Prom
 		// so a timed-out body settles on its own. Closing earlier would run the close's barrier while
 		// the body is still in a step and report that step's runs as unexpected. A body that awaits
 		// something without a deadline must bound that wait itself.
-		await body?.catch(() => {});
+		await body?.catch(() => { /* The test already failed: through `await body`, or by its timeout while that await was pending. */ });
 		await host.close();
 	}, 0);
 	const host = await starting;
 	t.signal.throwIfAborted();
-	body = run(host);
+	body = asPromise(() => run(host));
 	await body;
 }

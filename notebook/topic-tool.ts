@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { asPromise } from "../as-promise.js";
 import type { SchematicState } from "../state.js";
 import { normalizeNotebookTopic, setActiveNotebookTopic } from "./topic.js";
 
@@ -24,30 +25,32 @@ export function registerNotebookTopicTool(
 				description: "Short stable notebook topic name for the current semantic frame.",
 			}),
 		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-			const normalized = normalizeNotebookTopic(params.topic);
-			if (state.activeNotebookTopic) {
-				if (state.activeNotebookTopic !== normalized) {
-					throw new Error(
-						state.activeNotebookTopicSource === "human"
-							? "Human-set notebook topic is authoritative. Use handoff instead of overriding it."
-							: "Active notebook topic already exists. Use handoff instead of changing it mid-session.",
-					);
+		execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			return asPromise(() => {
+				const normalized = normalizeNotebookTopic(params.topic);
+				if (state.activeNotebookTopic) {
+					if (state.activeNotebookTopic !== normalized) {
+						throw new Error(
+							state.activeNotebookTopicSource === "human"
+								? "Human-set notebook topic is authoritative. Use handoff instead of overriding it."
+								: "Active notebook topic already exists. Use handoff instead of changing it mid-session.",
+						);
+					}
+					return {
+						content: [{ type: "text", text: `Notebook topic already set to "${state.activeNotebookTopic}".` }],
+						details: {
+							topic: state.activeNotebookTopic,
+							source: state.activeNotebookTopicSource,
+							changed: false,
+						},
+					};
 				}
+				const result = setActiveNotebookTopic(state, params.topic, "agent");
 				return {
-					content: [{ type: "text", text: `Notebook topic already set to "${state.activeNotebookTopic}".` }],
-					details: {
-						topic: state.activeNotebookTopic,
-						source: state.activeNotebookTopicSource,
-						changed: false,
-					},
+					content: [{ type: "text", text: `Active notebook topic: "${result.current}".` }],
+					details: { topic: result.current, source: "agent" as const, changed: result.changed },
 				};
-			}
-			const result = setActiveNotebookTopic(state, params.topic, "agent");
-			return {
-				content: [{ type: "text", text: `Active notebook topic: "${result.current}".` }],
-				details: { topic: result.current, source: "agent" as const, changed: result.changed },
-			};
+			});
 		},
 	});
 }

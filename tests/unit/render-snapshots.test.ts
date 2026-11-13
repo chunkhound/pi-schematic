@@ -10,7 +10,7 @@
 
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { createState, type SchematicState } from "../../state.js";
@@ -127,7 +127,7 @@ test("spawn result success matches snapshot", () => withHarness(async (state) =>
 		},
 		false,
 		theme,
-		{ toolCallId: "tc-1", invalidate: () => {}, showImages: false, lastComponent: undefined },
+		{ toolCallId: "tc-1", invalidate: vi.fn(), showImages: false, lastComponent: undefined },
 		state,
 	);
 
@@ -148,7 +148,7 @@ test("spawn result error matches snapshot", () => withHarness(async (state) => {
 		},
 		false,
 		theme,
-		{ toolCallId: "tc-2", invalidate: () => {}, showImages: false, lastComponent: undefined },
+		{ toolCallId: "tc-2", invalidate: vi.fn(), showImages: false, lastComponent: undefined },
 		state,
 	);
 
@@ -169,7 +169,7 @@ test("spawn result aborted matches snapshot", () => withHarness(async (state) =>
 		},
 		false,
 		theme,
-		{ toolCallId: "tc-3", invalidate: () => {}, showImages: false, lastComponent: undefined },
+		{ toolCallId: "tc-3", invalidate: vi.fn(), showImages: false, lastComponent: undefined },
 		state,
 	);
 
@@ -192,7 +192,7 @@ test("nested collapsed running matches snapshot", () => withHarness(async (state
 		},
 		false,
 		theme,
-		{ toolCallId: "tc-nested-1", invalidate: () => {}, showImages: false, lastComponent: undefined },
+		{ toolCallId: "tc-nested-1", invalidate: vi.fn(), showImages: false, lastComponent: undefined },
 		state,
 	);
 
@@ -221,7 +221,7 @@ test("nested collapsed success matches snapshot", () => withHarness(async (state
 		},
 		false,
 		theme,
-		{ toolCallId: "tc-nested-2", invalidate: () => {}, showImages: false, lastComponent: undefined },
+		{ toolCallId: "tc-nested-2", invalidate: vi.fn(), showImages: false, lastComponent: undefined },
 		state,
 	);
 
@@ -250,7 +250,7 @@ test("nested expanded matches snapshot", () => withHarness(async (state) => {
 		},
 		true,
 		theme,
-		{ toolCallId: "tc-nested-3", invalidate: () => {}, showImages: false, lastComponent: undefined },
+		{ toolCallId: "tc-nested-3", invalidate: vi.fn(), showImages: false, lastComponent: undefined },
 		state,
 	);
 

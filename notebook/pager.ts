@@ -142,7 +142,7 @@ export async function openInPager(
 	pager: ResolvedPager,
 ): Promise<Error | undefined> {
 	tui.stop();
-	const ignoreSigint = () => {};
+	const ignoreSigint = () => { /* A listener keeps Ctrl+C from killing pi while the pager owns the terminal. */ };
 	process.on("SIGINT", ignoreSigint);
 	try {
 		await pagerRuntime.spawnPager(body, pager);
