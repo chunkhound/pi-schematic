@@ -218,8 +218,8 @@ async function endTurn(pi: TestPI, ctx: ExtensionContext, overrides: Parameters<
  */
 function persist(drafts: readonly SessionBoundaryDraft[]): SessionEntry[] {
 	return drafts.map((draft, index): SessionEntry => {
-		const id = `entry-${index}`;
-		const persisted = { id, parentId: index === 0 ? null : `entry-${index - 1}`, timestamp: "2026-01-01T00:00:00.000Z" };
+		const id = `entry-${String(index)}`;
+		const persisted = { id, parentId: index === 0 ? null : `entry-${String(index - 1)}`, timestamp: "2026-01-01T00:00:00.000Z" };
 		if (draft.type !== "compaction") {return { ...draft, ...persisted };}
 		return { ...draft, ...persisted, firstKeptEntryId: draft.firstKeptEntryId ?? id, tokensBefore: 0, fromHook: true };
 	});
@@ -714,7 +714,7 @@ for (const { attemptsBefore, nudged, requestSurvives } of [
 	{ attemptsBefore: MAX_HANDOFF_ATTEMPTS - 2, nudged: true, requestSurvives: true },
 	{ attemptsBefore: MAX_HANDOFF_ATTEMPTS - 1, nudged: false, requestSurvives: true },
 ]) {
-	test(`a failed cut on ${nudged ? "a nudged" : "an un-nudged"} run after ${attemptsBefore} counted attempts ${requestSurvives ? "keeps" : "does not call"} the request pending`, async () => {
+	test(`a failed cut on ${nudged ? "a nudged" : "an un-nudged"} run after ${String(attemptsBefore)} counted attempts ${requestSurvives ? "keeps" : "does not call"} the request pending`, async () => {
 		const state = createState();
 		state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: attemptsBefore, eligibleNudgeDelivered: nudged, nextInstruction: null };
 		const pi = await createTestHost((api) => {
@@ -1033,15 +1033,15 @@ test("the boundary settles a failed handoff before the watchdog counts the run, 
 
 	await getCommand(pi, "handoff").handler("continue work", createCommandContext({ isIdle: () => true }));
 	for (let attempt = 1; attempt <= MAX_HANDOFF_ATTEMPTS; attempt++) {
-		expect(await nudge(), `attempt ${attempt} is still nudged`).toMatch(/A real handoff is required/);
+		expect(await nudge(), `attempt ${String(attempt)} is still nudged`).toMatch(/A real handoff is required/);
 		await executeHandoff(pi, ctx, { nextInstruction: "continue work" });
 		await endTurn(pi, ctx, { toolResults: [] });
 		await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, ctx);
 
-		expect(warnings(), `after failed attempt ${attempt}`).toHaveLength(attempt < MAX_HANDOFF_ATTEMPTS ? 0 : 1);
+		expect(warnings(), `after failed attempt ${String(attempt)}`).toHaveLength(attempt < MAX_HANDOFF_ATTEMPTS ? 0 : 1);
 	}
 
-	expectPrefix(warnings()[0].message, `Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts`);
+	expectPrefix(warnings()[0].message, `Required handoff cancelled after ${String(MAX_HANDOFF_ATTEMPTS)} attempts`);
 });
 
 type ContextMessage = ContextEvent["messages"][number];

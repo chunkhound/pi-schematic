@@ -15,12 +15,12 @@ import { updateIndicators } from "../tui.js";
 import { formatByteCap, formatPageList, formatPagePreview, getPageNames, saveNotebookPage, type TruncationReport } from "./store.js";
 
 const WRITE_SIZE_SUFFIX =
-	`Content is limited to ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. ` +
+	`Content is limited to ${String(DEFAULT_MAX_LINES)} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. ` +
 	"The beginning is kept, the tail is dropped, and truncation is reported. " +
 	"A write whose retained head would be empty (for example, an oversized first line) is rejected.";
 
 function formatTruncationReport(report: TruncationReport): string {
-	return `TRUNCATED by ${report.truncatedBy}: kept ${report.outputLines} of ${report.totalLines} lines (${report.outputBytes} of ${report.totalBytes} bytes); tail dropped. Split this page into smaller pages.`;
+	return `TRUNCATED by ${report.truncatedBy}: kept ${String(report.outputLines)} of ${String(report.totalLines)} lines (${String(report.outputBytes)} of ${String(report.totalBytes)} bytes); tail dropped. Split this page into smaller pages.`;
 }
 
 // ── Parameter schemas ────────────────────────────────────────────────
@@ -249,7 +249,7 @@ export function createNotebookToolDefinitions(
 			if (entries.length === 0) {
 				return new Text(theme.fg("dim", "\u{1F4D2} (empty)"), 0, 0);
 			}
-			let text = theme.fg("muted", `\u{1F4D2} ${entries.length} page${entries.length === 1 ? "" : "s"}`);
+			let text = theme.fg("muted", `\u{1F4D2} ${String(entries.length)} page${entries.length === 1 ? "" : "s"}`);
 			if (expanded) {
 				text += "\n" + theme.fg("dim", entries.join("\n"));
 			}

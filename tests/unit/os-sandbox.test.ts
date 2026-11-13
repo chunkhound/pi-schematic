@@ -305,7 +305,7 @@ for (const { name, write } of [
 	},
 ]) {
 	test.skipIf(!canUseOsSandbox())(`sandbox blocks ${name} outside temp`, async () => {
-		const outsidePath = path.join(os.homedir(), `.pi-readonly-outside-${process.pid}-${Date.now()}`);
+		const outsidePath = path.join(os.homedir(), `.pi-readonly-outside-${String(process.pid)}-${String(Date.now())}`);
 		try {
 			const run = await runLikePi(wrapCommandWithOsSandbox(write(outsidePath)));
 
@@ -317,11 +317,11 @@ for (const { name, write } of [
 	}, SANDBOX_TIMEOUT_MS);
 
 	test.skipIf(!canUseOsSandbox())(`the failed result of ${name} the sandbox blocked gets the block notice`, async () => {
-		const outsidePath = path.join(os.homedir(), `.pi-readonly-outside-${process.pid}-${Date.now()}`);
+		const outsidePath = path.join(os.homedir(), `.pi-readonly-outside-${String(process.pid)}-${String(Date.now())}`);
 		try {
 			const run = await runLikePi(wrapCommandWithOsSandbox(write(outsidePath)));
 
-			const noticed = appendSandboxBlockNoticeToResult(bashResult(`${run.stdout}${run.stderr}`));
+			const noticed = appendSandboxBlockNoticeToResult(bashResult(`${run.stdout.toString()}${run.stderr.toString()}`));
 
 			const firstBlock = noticed?.content[0];
 			expect(firstBlock?.type, JSON.stringify(noticed)).toBe("text");
@@ -453,7 +453,7 @@ test.skipIf(!canUseOsSandbox())("sandbox allows writes to /dev/null", async () =
 
 test.skipIf(!canUseOsSandbox())("sandbox allows writes through a symlinked temp path", async () => {
 	const realDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-real-"));
-	const linkDir = path.join(os.tmpdir(), `pi-readonly-link-${Date.now()}`);
+	const linkDir = path.join(os.tmpdir(), `pi-readonly-link-${String(Date.now())}`);
 	try {
 		// Create symlink to mimic /tmp → /private/tmp on macOS
 		fs.symlinkSync(realDir, linkDir);

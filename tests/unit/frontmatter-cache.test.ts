@@ -849,13 +849,13 @@ testWithDir("populateFromSkills accepts slashes inside model IDs", async ({ dir 
 	const state = createState();
 	const models = ["openrouter/anthropic/claude-sonnet", "provider/a/b/c"];
 	const skills = await Promise.all(models.map(async (model, index) => {
-		const name = `nested-model-${index}`;
+		const name = `nested-model-${String(index)}`;
 		return makeSkill(name, await writeMd(dir, name, { model }));
 	}));
 	populateFromSkills(state, skills);
 	models.forEach((model, index) => {
-		expect(cacheLookupSkillExplicitModel(state, `nested-model-${index}`)).toBe(model);
-		expect(cacheLookupSkillIssue(state, `nested-model-${index}`)).toBeNull();
+		expect(cacheLookupSkillExplicitModel(state, `nested-model-${String(index)}`)).toBe(model);
+		expect(cacheLookupSkillIssue(state, `nested-model-${String(index)}`)).toBeNull();
 	});
 });
 

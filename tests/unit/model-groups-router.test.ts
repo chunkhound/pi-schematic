@@ -106,7 +106,7 @@ test("capability pre-selection excludes unauthenticated capable models and picks
 		seen.add(id);
 	}
 	expect(draws, "every selection must consult the RNG — no cursor short-circuit").toBe(6);
-	expect(seen.has("cap-a") && seen.has("cap-b"), `expected random selection to reach both capable members, got ${[...seen]}`).toBe(true);
+	expect(seen.has("cap-a") && seen.has("cap-b"), `expected random selection to reach both capable members, got ${[...seen].join(",")}`).toBe(true);
 });
 
 test("known group missing effective modality and inherited fallback reject requirements", () => {

@@ -59,7 +59,7 @@ test("handoff eligibility is monotonic as explicit context tokens grow", () => {
 		fc.property(fc.integer({ min: 0, max: 100_000 }), fc.integer({ min: 0, max: 100_000 }), (base, additional) => {
 			const initial = isHandoffEligible({ tokens: base });
 			const larger = isHandoffEligible({ tokens: base + additional });
-			expect(!initial || larger, `${base} eligible but ${base + additional} was not`).toBe(true);
+			expect(!initial || larger, `${String(base)} eligible but ${String(base + additional)} was not`).toBe(true);
 		}),
 	);
 });

@@ -57,14 +57,14 @@ ${readonlyContinuation}`;
 
 function buildHandoffCancellationNotice(readonly: boolean): string {
 	const retryAdvice = readonly ? READONLY_HANDOFF_RETRY_ADVICE : "Use /handoff <direction> again to retry.";
-	return `Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts without completion. ${retryAdvice}`;
+	return `Required handoff cancelled after ${String(MAX_HANDOFF_ATTEMPTS)} attempts without completion. ${retryAdvice}`;
 }
 
 function buildBoundaryNudge(boundary: NotebookTopicBoundaryHint, eligible: boolean): string {
 	const action = eligible
 		? "Prefer a deliberate handoff before continuing under the new topic: save durable findings to the notebook, then call handoff with the next instruction and the remaining context."
 		: "Continue working until context is ready for handoff; this boundary remains advisory for now.";
-	return `Notebook topic changed from ${boundary.from ?? "(unset)"} to ${boundary.to}.
+	return `Notebook topic changed from ${boundary.from} to ${boundary.to}.
 Treat this as a strong task-boundary signal. ${action}
 Only continue inline if this was merely a rename rather than a real pivot.`;
 }
@@ -74,10 +74,10 @@ function buildDefaultNudge(pct: number | null, topic: string | null, eligible: b
 	const contextLead = pct === null
 		? "Topic-aware context reminder."
 		: pct >= 70
-			? `Context at ${pct}% — topic discipline is urgent.`
+			? `Context at ${String(pct)}% — topic discipline is urgent.`
 			: pct >= 50
-				? `Context at ${pct}% — topic discipline matters now.`
-				: `Context at ${pct}% — choose your next step by topic fit.`;
+				? `Context at ${String(pct)}% — topic discipline matters now.`
+				: `Context at ${String(pct)}% — choose your next step by topic fit.`;
 	const pivotAdvice = eligible
 		? "prefer a deliberate handoff"
 		: "continue working until handoff is available";

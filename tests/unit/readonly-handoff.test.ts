@@ -159,7 +159,7 @@ function successorContent(drafts: SessionBoundaryDraft[]): string {
 
 /** The branch pi would hold after committing `drafts` as session entries. */
 function committedBranch(drafts: SessionBoundaryDraft[]) {
-	return drafts.map((draft, index) => ({ ...draft, id: `entry-${index}`, parentId: index === 0 ? null : `entry-${index - 1}`, timestamp: "2026-01-01T00:00:00.000Z" }));
+	return drafts.map((draft, index) => ({ ...draft, id: `entry-${String(index)}`, parentId: index === 0 ? null : `entry-${String(index - 1)}`, timestamp: "2026-01-01T00:00:00.000Z" }));
 }
 
 async function turnStartWith(pi: TestPI, branch: unknown[]): Promise<void> {
@@ -202,7 +202,7 @@ async function handoffCutAcrossReadonlyToggle(readonlyAfterCut: boolean) {
 }
 
 async function assertNonTempBashBlocked(toolCall: ToolCall): Promise<void> {
-	const target = path.join(os.homedir(), `readonly-handoff-test-${process.pid}-${Date.now()}`);
+	const target = path.join(os.homedir(), `readonly-handoff-test-${String(process.pid)}-${String(Date.now())}`);
 	const command = `touch "${target}"`;
 	await rm(target, { force: true });
 	try {

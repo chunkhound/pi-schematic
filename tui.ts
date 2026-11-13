@@ -42,7 +42,7 @@ export function updateIndicators(ctx: ExtensionContext, state: SchematicState): 
 	if (percent !== null) {
 		const pct = Math.round(percent);
 		const tone = pct >= 70 ? "error" : pct >= 50 ? "warning" : pct >= 30 ? "accent" : "dim";
-		ctx.ui.setStatus(STATUS_KEY_CTX, theme.fg("dim", "ctx ") + theme.fg(tone, `${pct}%`));
+		ctx.ui.setStatus(STATUS_KEY_CTX, theme.fg("dim", "ctx ") + theme.fg(tone, `${String(pct)}%`));
 	} else {
 		ctx.ui.setStatus(STATUS_KEY_CTX, theme.fg("dim", "ctx --%"));
 	}
@@ -50,7 +50,7 @@ export function updateIndicators(ctx: ExtensionContext, state: SchematicState): 
 	// Notebook page count — show 📒 0 in dim tone when empty so the feature is discoverable
 	const count = state.notebookPages.size;
 	ctx.ui.setStatus(STATUS_KEY_NOTEBOOK, count > 0
-		? `\u{1F4D2} ${count}`
+		? `\u{1F4D2} ${String(count)}`
 		: theme.fg("dim", "\u{1F4D2} 0"),
 	);
 
@@ -72,10 +72,10 @@ export function updateIndicators(ctx: ExtensionContext, state: SchematicState): 
 	if (percent !== null && percent >= 70) {
 		const pct = Math.round(percent);
 		const warning = state.readonlyEnabled
-			? `Context at ${pct}% — readonly: same topic → spawn; different topic → ${READONLY_HANDOFF_TRIGGER}`
+			? `Context at ${String(pct)}% — readonly: same topic → spawn; different topic → ${READONLY_HANDOFF_TRIGGER}`
 			: state.activeNotebookTopic
-				? `Context at ${pct}% — use topic fit: same topic → spawn, different topic → handoff`
-				: `Context at ${pct}% — no active topic; handoff soon unless you can assign one cleanly`;
+				? `Context at ${String(pct)}% — use topic fit: same topic → spawn, different topic → handoff`
+				: `Context at ${String(pct)}% — no active topic; handoff soon unless you can assign one cleanly`;
 		ctx.ui.setWidget(WIDGET_KEY_WARNING, [
 			theme.fg("error", "\u26A0 ") + theme.fg("warning", warning),
 		]);

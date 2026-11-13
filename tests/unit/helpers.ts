@@ -741,7 +741,7 @@ export async function runRealChildInvocation(params: {
 	// actually fires. The child's working dir still lives under the fixture temp
 	// root, so the fixture stays portable under a restricted $HOME.
 	const readonlyWriteTarget = params.cwdOutsideTemp
-		? resolve(os.tmpdir(), "..", `readonly-child-escape-${process.pid}-${Date.now()}`)
+		? resolve(os.tmpdir(), "..", `readonly-child-escape-${String(process.pid)}-${String(Date.now())}`)
 		: "readonly-child-escape";
 	const agentDir = join(tempRoot, "agent");
 	const extensionDir = join(cwd, CONFIG_DIR_NAME, "extensions");
@@ -771,7 +771,7 @@ export default function(pi) {
 	pi.registerProvider("${provider}", {
 		api: "agentic-e2e-api", apiKey: "test-key", baseUrl: "http://localhost.invalid",
 		models: [{
-			id: "${modelId}", name: "Agentic E2E Model", reasoning: ${params.reasoning ?? false},
+			id: "${modelId}", name: "Agentic E2E Model", reasoning: ${String(params.reasoning ?? false)},
 			input: ["text"], cost: usage.cost, contextWindow: 128000, maxTokens: 1024,
 		}],
 		streamSimple(model, context, options) {
@@ -842,7 +842,7 @@ export default function(pi) {
 		process.env.OPENAI_API_KEY = "test-openai-key";
 		globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
 			outboundFetches.push(input instanceof Request ? input.url : String(input));
-			throw new Error(`offline fixture blocked outbound fetch: ${outboundFetches.at(-1)}`);
+			throw new Error(`offline fixture blocked outbound fetch: ${String(outboundFetches.at(-1))}`);
 		});
 		setProbeGlobal("__agenticE2eProbeCalls", 0);
 		setProbeGlobal("__agenticE2eStreamCalls", 0);
@@ -890,7 +890,7 @@ export default function(pi) {
 		try {
 			const spawn = getTool(pi, "spawn");
 			results = await Promise.all(prompts.map((prompt, index) => spawn.execute(
-				`spawn-${params.thinking ?? "inherited"}-${index}`,
+				`spawn-${params.thinking ?? "inherited"}-${String(index)}`,
 				{ prompt, thinking: params.thinking },
 				controller.signal,
 				onUpdate,

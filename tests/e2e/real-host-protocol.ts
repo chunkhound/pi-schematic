@@ -178,7 +178,7 @@ export function parseScriptedStep(value: unknown, fail: (reason: string) => neve
 		const { calls, ...rest } = value;
 		if (!Array.isArray(calls) || calls.length === 0) {fail(`calls is not a non-empty array: ${JSON.stringify(value)}`);}
 		if (Object.keys(rest).length > 0) {fail(`a batch step takes only calls: ${JSON.stringify(value)}`);}
-		return { calls: calls.map((call: unknown, index) => parseScriptedCall(call, (reason) => fail(`calls[${index}]: ${reason}`))) };
+		return { calls: calls.map((call: unknown, index) => parseScriptedCall(call, (reason) => fail(`calls[${String(index)}]: ${reason}`))) };
 	}
 	return parseScriptedCall(value, fail);
 }
@@ -187,7 +187,7 @@ export function parseScriptedStep(value: unknown, fail: (reason: string) => neve
 function requireScriptedCalls(value: unknown, line: string): ScriptedStep[] | null {
 	if (value === null) {return null;}
 	if (!Array.isArray(value)) {malformed(line, `calls is neither an array nor null: ${JSON.stringify(value)}`);}
-	return value.map((step: unknown, index) => parseScriptedStep(step, (reason) => malformed(line, `calls[${index}]: ${reason}`)));
+	return value.map((step: unknown, index) => parseScriptedStep(step, (reason) => malformed(line, `calls[${String(index)}]: ${reason}`)));
 }
 
 /** Parse one probe-log line; throws on an unknown kind or a record missing a required field. */

@@ -140,7 +140,7 @@ test("formatCurrentDatePrompt is byte-stable across a whole calendar day", () =>
 	expectPrefix(baseline, "## Current date\n2026-10-05 (Monday), America/New_York (UTC-04:00)");
 	for (let minute = 0; minute < 1440; minute++) {
 		const instant = new Date(start + minute * MINUTE);
-		expect(formatCurrentDatePrompt(instant, "America/New_York"), `minute ${minute} drifted`).toBe(baseline);
+		expect(formatCurrentDatePrompt(instant, "America/New_York"), `minute ${String(minute)} drifted`).toBe(baseline);
 	}
 });
 
@@ -150,7 +150,7 @@ test("formatCurrentDatePrompt is byte-stable across the host day", () => {
 	const start = localMidnight(utc(2026, 9, 5, 0));
 	const baseline = formatCurrentDatePrompt(new Date(start));
 	for (let minute = 0; minute <= 1320; minute++) {
-		expect(formatCurrentDatePrompt(new Date(start + minute * MINUTE)), `minute ${minute} drifted`).toBe(baseline);
+		expect(formatCurrentDatePrompt(new Date(start + minute * MINUTE)), `minute ${String(minute)} drifted`).toBe(baseline);
 	}
 });
 
@@ -174,11 +174,11 @@ test("formatCurrentDatePrompt holds one date change and one offset flip across a
 		expect(offset === "(UTC-05:00)" || offset === "(UTC-04:00)", `unexpected offset ${offset}`).toBe(true);
 	}
 	const offsetFlips = offsets.filter((offset, i) => i > 0 && offset !== offsets[i - 1]).length;
-	expect(offsetFlips, `offset must flip exactly once, got ${offsetFlips}: ${[...new Set(offsets)].join(", ")}`).toBe(1);
+	expect(offsetFlips, `offset must flip exactly once, got ${String(offsetFlips)}: ${[...new Set(offsets)].join(", ")}`).toBe(1);
 	// Dates are ISO so lexicographic order is chronological: non-decreasing,
 	// at most one change (the midnight boundary), never alternating back.
 	for (let i = 1; i < dates.length; i++) {
-		expect(dates[i] >= dates[i - 1], `date moved backwards at step ${i}: ${dates[i - 1]} → ${dates[i]}`).toBe(true);
+		expect(dates[i] >= dates[i - 1], `date moved backwards at step ${String(i)}: ${dates[i - 1]} → ${dates[i]}`).toBe(true);
 	}
 	const dateFlips = dates.filter((date, i) => i > 0 && date !== dates[i - 1]).length;
 	expect(dateFlips, `date changed more than once: ${[...new Set(dates)].join(", ")}`).toBeLessThanOrEqual(1);
@@ -206,7 +206,7 @@ test.skipIf(process.platform === "win32")("formatCurrentDate defaults to the hos
 	const instant = Date.UTC(2026, 9, 5, 4, 0);
 	const script =
 		`import { formatCurrentDate, hostZone } from "./time/format.js"; ` +
-		`console.log(hostZone() + "|" + formatCurrentDate(new Date(${instant})));`;
+		`console.log(hostZone() + "|" + formatCurrentDate(new Date(${String(instant)})));`;
 	const result = spawnNode(["--input-type=module", "-e", script], {
 		cwd: ROOT,
 		env: { TZ: "America/New_York" },

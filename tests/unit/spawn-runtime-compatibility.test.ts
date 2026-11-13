@@ -66,7 +66,7 @@ test("real child preserves selected identity and reports effective thinking", as
 });
 
 test("real child output is truncated at the public line limit", async () => {
-	const output = Array.from({ length: 2_100 }, (_, index) => `line ${index}`).join("\n");
+	const output = Array.from({ length: 2_100 }, (_, index) => `line ${String(index)}`).join("\n");
 	const proof = await runRealChildInvocation({ prompt: "return long output", resultText: output });
 	const result = spawnResult(proof.result);
 	const text = result.content[0].text;

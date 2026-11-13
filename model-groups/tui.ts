@@ -174,8 +174,8 @@ export function createModelGroupsComponent(
 		const existing = new Set(state.groups.map((group) => group.name));
 		if (!existing.has("new-group")) {return "new-group";}
 		let index = 2;
-		while (existing.has(`new-group-${index}`)) {index++;}
-		return `new-group-${index}`;
+		while (existing.has(`new-group-${String(index)}`)) {index++;}
+		return `new-group-${String(index)}`;
 	}
 
 	function notifyError(error: unknown): void {
@@ -586,7 +586,7 @@ export function createModelGroupsComponent(
 		tags: string,
 		effective: readonly ModelGroupModality[] | null | undefined,
 	): string {
-		const head = dim(`[${scope}] ${count} models`);
+		const head = dim(`[${scope}] ${String(count)} models`);
 		const letters = modalityLetterRun(effective);
 		return `${head}${letters ? `${dim(" ")}${letters}${dim(" ")}` : dim(" ")}${dim(thinking)}${tags ? dim(` — ${tags}`) : ""}`;
 	}
@@ -681,7 +681,7 @@ export function createModelGroupsComponent(
 		const summary = summarizeBootValidation(state.groups);
 		const container = new Container();
 		container.addChild(textLine(theme.fg("accent", "Model Groups")));
-		container.addChild(textLine(theme.fg("dim", `Boot validation: ${summary.unavailableCount} unavailable model references · ${summary.overrideCount} project overrides`)));
+		container.addChild(textLine(theme.fg("dim", `Boot validation: ${String(summary.unavailableCount)} unavailable model references · ${String(summary.overrideCount)} project overrides`)));
 		const legend = `${theme.fg("dim", "modalities: ")}${VISIBLE_MODALITIES.map((modality) => `${theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality])}${dim(" " + modality)}`).join(dim(" · "))}`;
 		container.addChild(textLine(legend));
 		const items: SelectItem[] = state.groups.map((group, index) => {
@@ -871,7 +871,7 @@ export function createModelGroupsComponent(
 		const group = state.groups.find((candidate) => groupKey(candidate) === state.deleteKey);
 		const otherScope = group ? state.groups.some((candidate) => candidate.name === group.name && candidate.scope !== group.scope) : false;
 		container.addChild(textLine(theme.fg("warning", "Delete Model Group?")));
-		container.addChild(textLine(group ? `${escapeDisplayLabel(group.name)} [${group.scope}] with ${group.models.length} models` : "Missing group"));
+		container.addChild(textLine(group ? `${escapeDisplayLabel(group.name)} [${group.scope}] with ${String(group.models.length)} models` : "Missing group"));
 		if (otherScope) {container.addChild(textLine("Same-name group in the other scope remains unaffected."));}
 		container.addChild(textLine(selectableLine(state.row === 0, "Keep group")));
 		container.addChild(textLine(selectableLine(state.row === 1, "Delete group")));

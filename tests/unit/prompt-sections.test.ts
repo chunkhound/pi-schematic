@@ -264,7 +264,7 @@ test("re-renders the topic and notebook sections after a handoff completes", asy
 		handoffCtx,
 	);
 	const results = await callHandlers(pi, "turn_end", turnEndEvent({ toolResults: [handoffToolResult("handoff")] }), handoffCtx);
-	branch = boundaryEntries(results).map((entry, index) => ({ ...entry, id: `entry-${index}` }));
+	branch = boundaryEntries(results).map((entry, index) => ({ ...entry, id: `entry-${String(index)}` }));
 	await callHandlers(pi, "turn_start", { type: "turn_start", turnIndex: 1, timestamp: 0 }, handoffCtx);
 	const afterHandoff = createBeforeAgentStartEvent();
 	await handler(afterHandoff, ctx);

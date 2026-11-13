@@ -84,7 +84,7 @@ export class ProcessHarness {
 			await this.waitForOutput(deadline - Date.now());
 		}
 		throw new Error(
-			`waitForText timeout after ${this.timeoutMs}ms looking for fresh "${text}".\n` +
+			`waitForText timeout after ${String(this.timeoutMs)}ms looking for fresh "${text}".\n` +
 				`Output so far:\n${this.output}`,
 		);
 	}

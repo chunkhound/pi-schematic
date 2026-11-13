@@ -34,7 +34,7 @@ export function spawnNode(args: readonly string[], options: SpawnNodeOptions): S
 	// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- the ErrnoException cast exposes the code property the ETIMEDOUT check reads
 	const spawnError = result.error as NodeJS.ErrnoException | undefined;
 	if (spawnError?.code === "ETIMEDOUT") {
-		throw new Error(`Node child process did not exit within ${timeoutMs} ms (${spawnError.message})`);
+		throw new Error(`Node child process did not exit within ${String(timeoutMs)} ms (${spawnError.message})`);
 	}
 	if (result.signal !== null) {
 		throw new Error(`Node child process was killed by ${result.signal}${spawnError ? ` (${spawnError.message})` : ""}`);

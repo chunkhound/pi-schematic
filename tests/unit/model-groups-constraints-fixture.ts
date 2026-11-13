@@ -31,18 +31,18 @@ export const testMinContext: ConstraintDescriptor<"testMinContext", number, Test
 	assertOverrideSupported({ evaluation, override }) {
 		if (override === undefined) {return;}
 		if (evaluation.diagnostics.some((diagnostic) => diagnostic.code === "unsupported-override")) {
-			throw new Error(`Model group testMinContext override ${override} exceeds the supported context for this group.`);
+			throw new Error(`Model group testMinContext override ${String(override)} exceeds the supported context for this group.`);
 		}
 	},
 	requirement: positiveIntegerCodec,
 	editor: { kind: "number", label: "Test minimum context", unit: "tokens", min: 1, step: 1, automatic: () => "Automatic", value: (evaluation) => evaluation.effective },
 	present: {
-		group: (evaluation) => `minimum ${evaluation.effective ?? "unknown"} tokens`,
-		prompt: (evaluation) => `minimum ${evaluation.effective ?? "unknown"} tokens`,
-		diagnostic: (diagnostic) => diagnostic.code === "unsupported-override" ? `unsupported minimum ${diagnostic.details} tokens` : "minimum context unknown",
+		group: (evaluation) => `minimum ${evaluation.effective?.toString() ?? "unknown"} tokens`,
+		prompt: (evaluation) => `minimum ${evaluation.effective?.toString() ?? "unknown"} tokens`,
+		diagnostic: (diagnostic) => diagnostic.code === "unsupported-override" ? `unsupported minimum ${String(diagnostic.details)} tokens` : "minimum context unknown",
 		violation: () => "minimum context unsatisfied",
 		ceiling: (evaluation) => evaluation.effective !== null && (evaluation.aggregate.automatic === null || evaluation.effective > evaluation.aggregate.automatic)
-			? `Minimum context is capped at ${evaluation.effective} tokens for this group.`
+			? `Minimum context is capped at ${String(evaluation.effective)} tokens for this group.`
 			: undefined,
 	},
 };
@@ -68,18 +68,18 @@ export const testMaxBudget: ConstraintDescriptor<"testMaxBudget", number, TestMa
 	assertOverrideSupported({ evaluation, override }) {
 		if (override === undefined) {return;}
 		if (evaluation.diagnostics.some((diagnostic) => diagnostic.code === "unsupported-override")) {
-			throw new Error(`Model group testMaxBudget override ${override} exceeds the supported budget for this group.`);
+			throw new Error(`Model group testMaxBudget override ${String(override)} exceeds the supported budget for this group.`);
 		}
 	},
 	requirement: positiveIntegerCodec,
 	editor: { kind: "number", label: "Test maximum budget", unit: "credits", min: 1, step: 1, automatic: () => "Automatic", value: (evaluation) => evaluation.effective },
 	present: {
-		group: (evaluation) => `maximum ${evaluation.effective ?? "unknown"} credits`,
-		prompt: (evaluation) => `maximum ${evaluation.effective ?? "unknown"} credits`,
-		diagnostic: (diagnostic) => diagnostic.code === "unsupported-override" ? `unsupported maximum ${diagnostic.details} credits` : "maximum budget unknown",
+		group: (evaluation) => `maximum ${evaluation.effective?.toString() ?? "unknown"} credits`,
+		prompt: (evaluation) => `maximum ${evaluation.effective?.toString() ?? "unknown"} credits`,
+		diagnostic: (diagnostic) => diagnostic.code === "unsupported-override" ? `unsupported maximum ${String(diagnostic.details)} credits` : "maximum budget unknown",
 		violation: () => "maximum budget unsatisfied",
 		ceiling: (evaluation) => evaluation.effective !== null && (evaluation.aggregate.automatic === null || evaluation.effective < evaluation.aggregate.automatic)
-			? `Maximum output budget is capped at ${evaluation.effective} credits for this group.`
+			? `Maximum output budget is capped at ${String(evaluation.effective)} credits for this group.`
 			: undefined,
 	},
 };

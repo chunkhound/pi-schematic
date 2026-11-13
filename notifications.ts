@@ -92,12 +92,12 @@ export const READONLY_HANDOFF_EXCEPTION_NOTIFICATION =
 
 /** Add context usage to the one-shot readonly-disabled message. */
 export function buildReadonlyDisabledContextSuffix(percent: number): string {
-	return ` Context at ${Math.round(percent)}% — if the work changed topics, you can handoff now.`;
+	return ` Context at ${String(Math.round(percent))}% — if the work changed topics, you can handoff now.`;
 }
 
 /** Explain that an eligible human topic boundary will activate the temporary bypass. */
-export function buildReadonlyTopicBoundaryNotification(from: string | null, to: string): string {
-	return `Active notebook topic changed: ${from ?? "(unset)"} → ${to}. This is a likely task boundary; use spawn only for same-topic delegation. In readonly mode, the handoff exception activates only once the context is ready; until then this boundary is advisory.`;
+export function buildReadonlyTopicBoundaryNotification(from: string, to: string): string {
+	return `Active notebook topic changed: ${from} → ${to}. This is a likely task boundary; use spawn only for same-topic delegation. In readonly mode, the handoff exception activates only once the context is ready; until then this boundary is advisory.`;
 }
 
 /** Explain when a readonly topic boundary has activated the handoff path. */

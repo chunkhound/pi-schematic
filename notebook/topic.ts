@@ -3,7 +3,7 @@ import type { SchematicState } from "../state.js";
 export type NotebookTopicSource = "human" | "agent";
 
 export interface NotebookTopicBoundaryHint {
-	from: string | null;
+	from: string;
 	to: string;
 	source: NotebookTopicSource;
 	/** Prevent repeated advisory nudges while waiting for handoff eligibility. */

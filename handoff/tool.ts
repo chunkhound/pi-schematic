@@ -50,7 +50,7 @@ function validateHandoffRequest(nextInstruction: string, ctx: ExtensionContext):
 	if (approximateTokens < MIN_HANDOFF_TOKENS) {
 		const tokenLabel = formatHandoffContextUsage(usage);
 		const percent = normalizeContextPercent(usage?.percent);
-		const pctLabel = percent === null ? "?" : `~${Math.round(percent)}%`;
+		const pctLabel = percent === null ? "?" : `~${String(Math.round(percent))}%`;
 		throw new Error(
 			`Context at ${pctLabel} (${tokenLabel}); handoff unavailable yet. Continue working and retry.`,
 		);

@@ -300,7 +300,7 @@ function formatCollapsedStats(details: SpawnResultDetails): { text: string; colo
 		const costStr = cost >= COST_THRESHOLD_COMPACT ? cost.toFixed(0) : cost >= COST_THRESHOLD_DECIMAL ? cost.toFixed(2) : cost.toFixed(4);
 		return {
 			// Intentionally dim — truncated spawns are routine, not alarming
-			text: `tok ${s.inputTokens ?? "?"}/${s.outputTokens ?? "?"} · ${s.turns ?? "?"}t · $${costStr}${details.truncated ? " · trunc" : ""}`,
+			text: `tok ${String(s.inputTokens ?? "?")}/${String(s.outputTokens ?? "?")} · ${String(s.turns ?? "?")}t · $${costStr}${details.truncated ? " · trunc" : ""}`,
 			color: "dim",
 		};
 	}
@@ -1002,7 +1002,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			}
 			const remaining = textLines.length - maxLines;
 			if (remaining > 0) {
-				lines.push(truncateAndColor(`... ${remaining} more lines`, width, color, "muted"));
+				lines.push(truncateAndColor(`... ${String(remaining)} more lines`, width, color, "muted"));
 			}
 		}
 
@@ -1291,7 +1291,7 @@ function renderSpawnCall(args: { prompt?: unknown; group?: unknown; thinking?: u
 	}
 	text += `\n${theme.fg("dim", shown)}`;
 	if (remaining > 0) {
-		text += theme.fg("muted", `\n... (${remaining} more lines, ${safeKeyHint("app.tools.expand", "to expand")})`);
+		text += theme.fg("muted", `\n... (${String(remaining)} more lines, ${safeKeyHint("app.tools.expand", "to expand")})`);
 	}
 	return new Text(text, SPAWN_SHELL_PADDING_X, SPAWN_SHELL_PADDING_Y, getShellBackground(theme, "running"));
 }

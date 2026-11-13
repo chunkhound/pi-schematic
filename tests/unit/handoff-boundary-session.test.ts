@@ -798,7 +798,7 @@ describe("failed handoff cut in a real agent session", () => {
 		const handoffWhenNudged: FauxResponseFactory = (context) => {
 			if (carriesRequiredNudge(context.messages)) {
 				nudgedCalls += 1;
-				return fauxAssistantMessage([fauxToolCall("handoff", { nextInstruction: "x", context: HANDOFF_CONTEXT }, { id: `call-handoff-${nudgedCalls}` })]);
+				return fauxAssistantMessage([fauxToolCall("handoff", { nextInstruction: "x", context: HANDOFF_CONTEXT }, { id: `call-handoff-${String(nudgedCalls)}` })]);
 			}
 			return fauxAssistantMessage("plain answer");
 		};
@@ -880,7 +880,7 @@ describe("failed handoff cut in a real agent session", () => {
 			`status:${STATUS_KEY_HANDOFF}:undefined`,
 		]);
 		const cancelledAt = ui.flatMap((line, index) =>
-			(line.startsWith(`notify:warning:Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts`) ? [index] : []));
+			(line.startsWith(`notify:warning:Required handoff cancelled after ${String(MAX_HANDOFF_ATTEMPTS)} attempts`) ? [index] : []));
 		expect(cancelledAt, JSON.stringify(ui)).toHaveLength(1);
 		const lastFailureAt = failureAt.at(-1);
 		assertPresent(lastFailureAt, "the last cut failure is in the UI log");

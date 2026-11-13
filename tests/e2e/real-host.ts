@@ -75,8 +75,8 @@ function readTimeout(): number {
 	if (testTimeoutFor(value) > MAX_TEST_TIMEOUT_MS) {
 		const max = Math.floor((MAX_TEST_TIMEOUT_MS - 60_000) / REAL_HOST_MAX_BARRIERS_PER_TEST) - BARRIER_REPORT_MARGIN_MS;
 		throw new Error(
-			`E2E_REAL_HOST_TIMEOUT_MS=${raw} makes the per-test timeout ${testTimeoutFor(value)} ms, ` +
-			`above Vitest's limit of ${MAX_TEST_TIMEOUT_MS} ms; use at most ${max}`,
+			`E2E_REAL_HOST_TIMEOUT_MS=${raw} makes the per-test timeout ${String(testTimeoutFor(value))} ms, ` +
+			`above Vitest's limit of ${String(MAX_TEST_TIMEOUT_MS)} ms; use at most ${String(max)}`,
 		);
 	}
 	return value;
@@ -375,7 +375,7 @@ export class RealHost {
 		this.startBarrierPhase();
 		await this.barrier(REAL_HOST_TIMEOUT_MS);
 		const unexpected = countRuns(this.events) - this.stepRuns;
-		if (unexpected !== 0) {throw new Error(`${unexpected} run(s) started outside every step; no step expected them`);}
+		if (unexpected !== 0) {throw new Error(`${String(unexpected)} run(s) started outside every step; no step expected them`);}
 	}
 
 	/**
@@ -425,10 +425,10 @@ export class RealHost {
 		}
 		this.stepRuns += started;
 		if (started === runs) {return;}
-		if (started > runs) {throw new Error(`${action} started ${started} run(s), expected ${runs}`);}
+		if (started > runs) {throw new Error(`${action} started ${String(started)} run(s), expected ${String(runs)}`);}
 		throw new Error(
-			`${action} started ${started} run(s), expected ${runs}; ` +
-			`the ${STEP_BUDGET_MS} ms step budget expired after ${rounds} barrier round(s)`,
+			`${action} started ${String(started)} run(s), expected ${String(runs)}; ` +
+			`the ${String(STEP_BUDGET_MS)} ms step budget expired after ${String(rounds)} barrier round(s)`,
 		);
 	}
 
@@ -437,7 +437,7 @@ export class RealHost {
 		const phase = ++this.barrierPhases;
 		if (phase > REAL_HOST_MAX_BARRIERS_PER_TEST) {
 			throw new Error(
-				`Barrier phase ${phase} exceeds REAL_HOST_MAX_BARRIERS_PER_TEST (${REAL_HOST_MAX_BARRIERS_PER_TEST}), ` +
+				`Barrier phase ${String(phase)} exceeds REAL_HOST_MAX_BARRIERS_PER_TEST (${String(REAL_HOST_MAX_BARRIERS_PER_TEST)}), ` +
 				"which sizes REAL_HOST_TEST_TIMEOUT_MS; raise it for this test",
 			);
 		}
@@ -477,12 +477,12 @@ export class RealHost {
 			}
 			return undefined;
 		};
-		await this.command(`/${PROBE_COMMAND.barrier} ${id} ${probeDeadlineMs}`);
+		await this.command(`/${PROBE_COMMAND.barrier} ${String(id)} ${String(probeDeadlineMs)}`);
 		const waitMs = probeDeadlineMs + BARRIER_REPORT_MARGIN_MS;
 		const report = findReport() ?? await new Promise<BarrierReport>((resolveWait, rejectWait) => {
 			const timer = setTimeout(() => {
 				unsubscribe();
-				rejectWait(new Error(`Timed out after ${waitMs} ms waiting for barrier ${id} to report. Stderr: ${this.client.getStderr()}`));
+				rejectWait(new Error(`Timed out after ${String(waitMs)} ms waiting for barrier ${String(id)} to report. Stderr: ${this.client.getStderr()}`));
 			}, waitMs);
 			const unsubscribe = this.client.onEvent(() => {
 				let found: BarrierReport | undefined;
@@ -500,7 +500,7 @@ export class RealHost {
 				resolveWait(found);
 			});
 		});
-		if (report.failure !== null) {throw new Error(`Barrier ${id} failed: ${report.failure}`);}
+		if (report.failure !== null) {throw new Error(`Barrier ${String(id)} failed: ${report.failure}`);}
 	}
 }
 

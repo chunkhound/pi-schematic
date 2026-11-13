@@ -203,9 +203,9 @@ test("context nudges at band crossings and after a below-30% reset", async () =>
 	];
 
 	for (const [percent, shouldNudge] of steps) {
-		const result = await runContext(pi, percentUsage(percent), `at ${percent}`, percent);
-		if (shouldNudge) {expect(result, `watchdog nudge at ${percent}%`).toBeDefined();}
-		else {expect(result, `watchdog nudge at ${percent}%`).toBeUndefined();}
+		const result = await runContext(pi, percentUsage(percent), `at ${String(percent)}`, percent);
+		if (shouldNudge) {expect(result, `watchdog nudge at ${String(percent)}%`).toBeDefined();}
+		else {expect(result, `watchdog nudge at ${String(percent)}%`).toBeUndefined();}
 	}
 });
 
@@ -395,7 +395,7 @@ test("a staged handoff that completes at the settle is neither counted nor cance
 	deliverEligibleNudge(state);
 	await stageHandoff(pi, "in-flight");
 	const drafts = await endStagingTurn(pi, "in-flight");
-	const branch = drafts.map((draft, index) => ({ ...draft, id: `entry-${index}`, parentId: null }));
+	const branch = drafts.map((draft, index) => ({ ...draft, id: `entry-${String(index)}`, parentId: null }));
 	await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, {
 		hasUI: true,
 		ui: createUIContext({ notify: (message: string) => notifications.push(message), setStatus: () => undefined, setWidget: () => undefined }),
@@ -521,7 +521,7 @@ test("a continued run cancels only after MAX_HANDOFF_ATTEMPTS settled runs", asy
 		deliverEligibleNudge(state);
 		for (let i = 0; i < 3; i++) {await agentEnd({ type: "agent_end", messages: [] }, ctx);}
 		await agentSettled({ type: "agent_settled", aborted: false }, ctx);
-		assertPresent(state.pendingRequestedHandoff, `handoff must remain pending after settled run ${run}`);
+		assertPresent(state.pendingRequestedHandoff, `handoff must remain pending after settled run ${String(run)}`);
 		expect(notifications, "cancellation must not notify early").toStrictEqual([]);
 	}
 
@@ -598,7 +598,7 @@ test("a run nudged while eligible counts when it settles after compaction", asyn
 	for (let run = 1; run < MAX_HANDOFF_ATTEMPTS; run++) {
 		expect(await runContextHook(eligibleUsage())).toMatch(/A real handoff is required/);
 		await settle(postCompactionUsage);
-		expect(warnings, `cancellation must not warn after run ${run}`).toStrictEqual([]);
+		expect(warnings, `cancellation must not warn after run ${String(run)}`).toStrictEqual([]);
 	}
 
 	await runContextHook(eligibleUsage());
@@ -644,8 +644,8 @@ test("context hook suppresses watchdog after readonly toggle nudge is drained", 
 
 	// Repeated calls across watchdog bands remain silent while readonly is active.
 	for (const percent of [70, 30, 50, 80]) {
-		const result = await runContext(pi, percentUsage(percent), `second at ${percent}`, percent);
-		expect(result, `watchdog must be suppressed at ${percent}% in readonly mode`).toBeUndefined();
+		const result = await runContext(pi, percentUsage(percent), `second at ${String(percent)}`, percent);
+		expect(result, `watchdog must be suppressed at ${String(percent)}% in readonly mode`).toBeUndefined();
 	}
 });
 
@@ -737,12 +737,12 @@ test("watchdog band-crossing: nudge iff context enters a higher band", async () 
 					) ?? false;
 					if (raw < 30) {
 						// Below 30% resets lastWatchdogBand and never nudges.
-						expect(didNudge, `${raw}% below 30% must not nudge`).toBe(false);
+						expect(didNudge, `${String(raw)}% below 30% must not nudge`).toBe(false);
 						lastBand = null;
 					} else {
 						const currentBand: number = raw < 50 ? 0 : raw < 70 ? 1 : 2;
 						const shouldNudge: boolean = lastBand === null || currentBand > lastBand;
-						expect(didNudge, `${raw}% band ${lastBand}→${currentBand}: nudge=${didNudge}`).toBe(shouldNudge);
+						expect(didNudge, `${String(raw)}% band ${String(lastBand)}→${String(currentBand)}: nudge=${String(didNudge)}`).toBe(shouldNudge);
 						if (didNudge) {lastBand = currentBand;}
 					}
 				}

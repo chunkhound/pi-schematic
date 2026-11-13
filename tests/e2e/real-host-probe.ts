@@ -40,8 +40,8 @@ const SCRIPTED_INPUT_TOKENS = 50000;
 // context size, or schematic rejects the handoffs this suite scripts.
 if (!(SCRIPTED_INPUT_TOKENS > MIN_HANDOFF_TOKENS)) {
 	throw new Error(
-		`The probe's scripted usage (${SCRIPTED_INPUT_TOKENS} input tokens) must exceed ` +
-		`MIN_HANDOFF_TOKENS (${MIN_HANDOFF_TOKENS}); schematic would reject every scripted handoff.`,
+		`The probe's scripted usage (${String(SCRIPTED_INPUT_TOKENS)} input tokens) must exceed ` +
+		`MIN_HANDOFF_TOKENS (${String(MIN_HANDOFF_TOKENS)}); schematic would reject every scripted handoff.`,
 	);
 }
 function usageOf(inputTokens: number): AssistantMessage["usage"] {
@@ -52,7 +52,7 @@ function parseScript(args: string): ScriptedStep[] {
 	const parsed: unknown = JSON.parse(args);
 	if (!Array.isArray(parsed)) {throw new Error(`/e2e-script expects a JSON array, got: ${args}`);}
 	return parsed.map((step: unknown, index) => parseScriptedStep(step, (reason) => {
-		throw new Error(`/e2e-script step ${index}: ${reason}`);
+		throw new Error(`/e2e-script step ${String(index)}: ${reason}`);
 	}));
 }
 
@@ -134,8 +134,8 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	const outstanding = (ctx: ExtensionCommandContext): string[] => [
 		...handoffCallsAwaitingBoundary.map((id) => `handoff call ${id} has no turn_end`),
 		...inputsAwaitingDelivery.map((text) => `extension input ${JSON.stringify(text.slice(0, 80))} has no user message`),
-		...(runsAwaitingSettle > 0 ? [`${runsAwaitingSettle} run(s) have no agent_settled`] : []),
-		...(chainedTurns > 0 ? [`${chainedTurns} chained /e2e-turn run(s) have not started`] : []),
+		...(runsAwaitingSettle > 0 ? [`${String(runsAwaitingSettle)} run(s) have no agent_settled`] : []),
+		...(chainedTurns > 0 ? [`${String(chainedTurns)} chained /e2e-turn run(s) have not started`] : []),
 		...(ctx.isIdle() ? [] : ["pi is not idle"]),
 		...(ctx.hasPendingMessages() ? ["pi has pending messages"] : []),
 	];
@@ -154,11 +154,11 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 				// Subscribed before the checks, so an event between them is not missed.
 				const changed = new Promise<"changed">((resolve) => wakeBarriers.push(() => { resolve("changed"); }));
 				const idle = ctx.waitForIdle().then(() => "idle" as const);
-				if (await Promise.race([idle, deadline]) === "deadline") {throw fail(`timed out after ${deadlineMs} ms waiting for idle`);}
+				if (await Promise.race([idle, deadline]) === "deadline") {throw fail(`timed out after ${String(deadlineMs)} ms waiting for idle`);}
 				if (accountingErrors.length > 0) {throw fail(`cannot account for: ${accountingErrors.join("; ")}`);}
 				if (outstanding(ctx).length === 0) {return;}
 				if (!ctx.isIdle()) {continue;}
-				if (await Promise.race([changed, deadline]) === "deadline") {throw fail(`timed out after ${deadlineMs} ms`);}
+				if (await Promise.race([changed, deadline]) === "deadline") {throw fail(`timed out after ${String(deadlineMs)} ms`);}
 			}
 		} finally {
 			clearTimeout(timer);
@@ -171,7 +171,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		streamSimple(model, context) {
 			const i = step++;
 			log({ kind: "request", step: i, calls: runScript, texts: contextTexts(context.messages) });
-			const id = `e2e-${runEntryCount}-${i}`;
+			const id = `e2e-${String(runEntryCount)}-${String(i)}`;
 			const scripted: ScriptedStep | null = runScript
 				? i < runScript.length ? runScript[i] : null
 				: i === 0 ? { name: "e2e_noop", arguments: {} } : null;
@@ -189,7 +189,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 			}
 			const toolCalls: ToolCall[] = scripted === null ? []
 				: "name" in scripted ? [{ type: "toolCall", id, ...scripted }]
-				: "calls" in scripted ? scripted.calls.map((call, n) => ({ type: "toolCall", id: `${id}-${n}`, ...call }))
+				: "calls" in scripted ? scripted.calls.map((call, n) => ({ type: "toolCall", id: `${id}-${String(n)}`, ...call }))
 				: [];
 			const reply = scripted !== null && "text" in scripted ? scripted : { text: "ack", inputTokens: SCRIPTED_INPUT_TOKENS };
 			const stopReason = toolCalls.length > 0 ? "toolUse" : "stop";

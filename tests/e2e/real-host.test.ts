@@ -148,7 +148,7 @@ function scriptedRequest(log: ProbeRecord[], calls: ScriptedCall[], step: number
 	const record = log.find((entry): entry is RequestRecord =>
 		entry.kind === "request" && entry.step === step && JSON.stringify(entry.calls) === JSON.stringify(calls)
 	);
-	assertPresent(record, `request record for step ${step} of ${JSON.stringify(calls)}`);
+	assertPresent(record, `request record for step ${String(step)} of ${JSON.stringify(calls)}`);
 	return record;
 }
 
@@ -187,10 +187,10 @@ function handoffCancellations(host: RealHost): string[] {
  */
 async function expectCancellationAtLastAttempt(host: RealHost): Promise<void> {
 	const middleRuns = MAX_HANDOFF_ATTEMPTS - 2;
-	await host.turn(`/${PROBE_COMMAND.turn} ${middleRuns}`, middleRuns);
-	expect(handoffCancellations(host), `the handoff stays required after ${MAX_HANDOFF_ATTEMPTS - 1} settled runs`).toStrictEqual([]);
+	await host.turn(`/${PROBE_COMMAND.turn} ${String(middleRuns)}`, middleRuns);
+	expect(handoffCancellations(host), `the handoff stays required after ${String(MAX_HANDOFF_ATTEMPTS - 1)} settled runs`).toStrictEqual([]);
 	await host.turn("/" + PROBE_COMMAND.turn, 1);
-	expect(handoffCancellations(host), `settled run ${MAX_HANDOFF_ATTEMPTS} cancels the handoff`).toHaveLength(1);
+	expect(handoffCancellations(host), `settled run ${String(MAX_HANDOFF_ATTEMPTS)} cancels the handoff`).toHaveLength(1);
 	const handoffStatuses = host.statuses.filter((status) => status.statusKey === STATUS_KEY_HANDOFF);
 	expect(handoffStatuses.map((status) => status.statusText), "the handoff required status was shown").toContain(HANDOFF_REQUIRED_STATUS);
 	expect(handoffStatuses.at(-1)?.statusText, "the handoff status is cleared").toBeUndefined();
@@ -699,7 +699,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 	it.skipIf(!canUseOsSandbox())("readonly sandboxed bash write outside temp fails with the readonly block notice", async (t) => {
 		// The harness HOME and project live under the OS temp dir, which the sandbox lets writes into,
 		// so the target sits under the real home directory of the test process instead.
-		const target = join(os.homedir(), `pi-schematic-e2e-readonly-${process.pid}-${Date.now()}`);
+		const target = join(os.homedir(), `pi-schematic-e2e-readonly-${String(process.pid)}-${String(Date.now())}`);
 		t.onTestFinished(() => { rmSync(target, { force: true }); });
 		return withRealHost(t, async (host) => {
 			const script = `require("fs").writeFileSync(${JSON.stringify(target)}, "x")`;

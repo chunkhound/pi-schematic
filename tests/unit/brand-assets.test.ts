@@ -75,7 +75,7 @@ function markCells(svg: string): Set<string> {
 	for (const [, fill = "", d = ""] of svg.matchAll(/<path\b[^>]*fill="([^"]+)"[^>]*\bd="([^"]+)"/g)) {
 		if (fill.toLowerCase() !== "currentcolor" && !PALETTE.includes(fill.toUpperCase())) {continue;}
 		for (const [, x = "", y = ""] of d.matchAll(/M([\d.]+) ([\d.]+)h[\d.]+v[\d.]+h-[\d.]+Z/gi)) {
-			cells.add(`${cellIndex(x)},${cellIndex(y)}`);
+			cells.add(`${String(cellIndex(x))},${String(cellIndex(y))}`);
 		}
 	}
 	return cells;
