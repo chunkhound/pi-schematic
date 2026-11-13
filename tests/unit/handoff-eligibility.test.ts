@@ -28,7 +28,7 @@ test("context percentage normalization accepts finite non-negative usage, includ
 	expect(normalizeContextPercent(100)).toBe(100);
 	expect(normalizeContextPercent(125)).toBe(125);
 	for (const percent of [-1, Number.NaN, Number.POSITIVE_INFINITY, null, undefined]) {
-		expect(normalizeContextPercent(percent)).toBe(null);
+		expect(normalizeContextPercent(percent)).toBeNull();
 	}
 });
 
@@ -42,14 +42,14 @@ test("handoff eligibility rejects malformed or unestimable usage", () => {
 		{ tokens: null, percent: -1, contextWindow: 200_000 },
 		{ tokens: null, percent: 20, contextWindow: 0 },
 	]) {
-		expect(estimateHandoffContextTokens(usage)).toBe(null);
+		expect(estimateHandoffContextTokens(usage)).toBeNull();
 		expect(isHandoffEligible(usage)).toBe(false);
 	}
 });
 
 test("handoff eligibility rejects arithmetic overflow", () => {
 	const usage = { tokens: null, percent: 100, contextWindow: Number.MAX_VALUE };
-	expect(estimateHandoffContextTokens(usage)).toBe(null);
+	expect(estimateHandoffContextTokens(usage)).toBeNull();
 	expect(isHandoffEligible(usage)).toBe(false);
 	expect(formatHandoffContextUsage(usage)).toBe("~unknown tokens estimated from context usage");
 });

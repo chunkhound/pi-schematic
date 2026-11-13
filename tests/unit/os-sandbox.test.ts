@@ -109,14 +109,14 @@ for (const { name, platform, output, isError } of [
 	{ name: "another platform's phrase on the current platform", platform: undefined, output: OTHER_DENIAL_OUTPUT, isError: true },
 ] as { name: string; platform?: NodeJS.Platform; output: string; isError: boolean }[]) {
 	test(`appends no block notice for ${name}`, () => {
-		expect(appendSandboxBlockNoticeToResult(bashResult(output, isError), platform)).toBe(undefined);
+		expect(appendSandboxBlockNoticeToResult(bashResult(output, isError), platform)).toBeUndefined();
 	});
 }
 
 test("appends no block notice to a result whose isError is unset", () => {
 	const { isError: _isError, ...result } = bashResult("bash: /outside: Operation not permitted");
 
-	expect(appendSandboxBlockNoticeToResult(result, "darwin")).toBe(undefined);
+	expect(appendSandboxBlockNoticeToResult(result, "darwin")).toBeUndefined();
 });
 
 test("block notice leaves the input result unchanged", () => {
@@ -233,7 +233,7 @@ for (const { name, platform, message } of [
 	{ name: "another platform's phrase on the current platform", platform: undefined, message: OTHER_DENIAL_OUTPUT },
 ] as { name: string; platform?: NodeJS.Platform; message: string }[]) {
 	test(`text block notice appends nothing for ${name}`, () => {
-		expect(appendSandboxBlockNotice(message, platform)).toBe(undefined);
+		expect(appendSandboxBlockNotice(message, platform)).toBeUndefined();
 	});
 }
 

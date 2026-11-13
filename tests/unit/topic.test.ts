@@ -17,9 +17,9 @@ test("topic helpers manage the active notebook topic lifecycle", () => {
 	expect(second.boundaryHint?.from).toBe("oauth");
 	expect(second.boundaryHint?.to).toBe("billing");
 	clearActiveNotebookTopic(state);
-	expect(state.activeNotebookTopic).toBe(null);
-	expect(state.activeNotebookTopicSource).toBe(null);
-	expect(state.pendingTopicBoundaryHint).toBe(null);
+	expect(state.activeNotebookTopic).toBeNull();
+	expect(state.activeNotebookTopicSource).toBeNull();
+	expect(state.pendingTopicBoundaryHint).toBeNull();
 });
 
 test("notebook_topic_set establishes a fresh topic, is idempotent, and refuses overrides", async () => {

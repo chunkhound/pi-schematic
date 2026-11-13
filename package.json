@@ -58,6 +58,7 @@
     "@types/node": "^22.20.5",
     "@typescript/native": "npm:typescript@^7.0.2",
     "@vitest/coverage-v8": "5.1.0",
+    "@vitest/eslint-plugin": "^1.6.28",
     "audit-ci": "^7.1.0",
     "eslint": "^10.14.0",
     "eslint-import-resolver-typescript": "^4.4.5",
