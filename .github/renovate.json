@@ -19,7 +19,7 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^\\.github/workflows/test\\.yml$/",
+        "/^\\.github/workflows/ci\\.yml$/",
         "/^\\.github/renovate\\.json$/",
         "/^\\.node-version$/"
       ],
@@ -34,7 +34,7 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^\\.github/workflows/test\\.yml$/",
+        "/^\\.github/workflows/ci\\.yml$/",
         "/^\\.github/workflows/npm-publish\\.yml$/"
       ],
       "matchStrings": [
