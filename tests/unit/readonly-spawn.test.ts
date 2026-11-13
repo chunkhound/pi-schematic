@@ -13,10 +13,40 @@ import {
 	createReadonlyChildBashTool,
 	filterReadonlyToolNames,
 } from "../../spawn/index.js";
-import { expectSuffix } from "../assertions.js";
+import { expectSuffix, isRecord } from "../assertions.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
-import { runRealChildInvocation, SANDBOX_DENIAL_PHRASES, textOf, tmpDir } from "./helpers.js";
+import { createToolContext, runRealChildInvocation, SANDBOX_DENIAL_PHRASES, textOf, tmpDir } from "./helpers.js";
+
+function fulfilledValue<T>(result: PromiseSettledResult<T>): T {
+	expect(result.status).toBe("fulfilled");
+	if (result.status !== "fulfilled") {expect.unreachable();}
+	return result.value;
+}
+
+function rejectionError(result: PromiseSettledResult<unknown>): Error {
+	expect(result.status).toBe("rejected");
+	if (result.status !== "rejected") {expect.unreachable();}
+	const reason: unknown = result.reason;
+	if (!(reason instanceof Error)) {expect.unreachable("the blocked call must reject with an Error");}
+	return reason;
+}
+
+// The details and first content block of a spawn tool result.
+function spawnResultParts(result: unknown): { details: Record<string, unknown>; first: Record<string, unknown> } {
+	if (!isRecord(result) || !isRecord(result.details) || !Array.isArray(result.content)) {throw new Error("The spawn result has no details or content.");}
+	const first: unknown = result.content[0];
+	if (!isRecord(first)) {throw new Error("The spawn result has no first content block.");}
+	return { details: result.details, first };
+}
+
+// The structured output and exit code of a child bash result.
+function structuredBashResult(structured: unknown): { output: string; exit_code: number } {
+	if (!isRecord(structured) || typeof structured.output !== "string" || typeof structured.exit_code !== "number") {
+		throw new Error("The child bash result has no structured output and exit code.");
+	}
+	return { output: structured.output, exit_code: structured.exit_code };
+}
 
 // ── Tool filtering ───────────────────────────────────────────────────
 
@@ -63,10 +93,8 @@ test("readonly write/edit summary communicates blocked mutations", () => {
 
 test.each([undefined, null, 42, { command: "ls" }])("readonly bash guard rejects non-string commands: %s", (command) => {
 	const result = applyReadonlyBashGuard(command, process.cwd());
-	expect(result, `expected block for ${String(command)}`).toMatchObject({
-		action: "block",
-		reason: expect.stringMatching(new RegExp(READONLY_INVALID_BASH_COMMAND_REASON)),
-	});
+	const reason: unknown = expect.stringMatching(new RegExp(READONLY_INVALID_BASH_COMMAND_REASON));
+	expect(result, `expected block for ${String(command)}`).toMatchObject({ action: "block", reason });
 });
 
 test("readonly bash guard blocks non-temp writes and allows temp writes", () => {
@@ -75,7 +103,8 @@ test("readonly bash guard blocks non-temp writes and allows temp writes", () => 
 	const cwd = process.cwd();
 
 	const blockResult = applyReadonlyBashGuard(`touch ${outsideTemp}`, cwd);
-	expect(blockResult).toMatchObject({ action: "block", reason: expect.stringMatching(/Readonly mode:/) });
+	const reason: unknown = expect.stringMatching(/Readonly mode:/);
+	expect(blockResult).toMatchObject({ action: "block", reason });
 
 	const tempResult = applyReadonlyBashGuard(`touch ${insideTemp} && rm ${insideTemp}`, cwd);
 	expect(tempResult.action, "temp dir writes should not be blocked").not.toBe("block");
@@ -89,13 +118,13 @@ function outsideTempPath(label: string): string {
 	return target;
 }
 
-// No ctx: pi's bash tool then skips the session environment, which these tests do not need.
 function runChildBash(
 	command: string,
 	options: { timeout?: number; signal?: AbortSignal; onUpdate?: (update: { content: { type: string; text?: string }[] }) => void } = {},
 ) {
+	// The default tool context runs the command in the process directory, the tool's own cwd.
 	return createReadonlyChildBashTool(process.cwd())
-		.execute("child-bash", { command, timeout: options.timeout }, options.signal, options.onUpdate, undefined as any);
+		.execute("child-bash", { command, timeout: options.timeout }, options.signal, options.onUpdate, createToolContext());
 }
 
 /** Return `command` after checking that the readonly guard sandboxes it rather than blocking it. */
@@ -134,7 +163,7 @@ test.skipIf(!canUseOsSandbox())("sandboxed child bash write outside temp returns
 
 	expect(result.isError).toBe(true);
 	expect(textOf(result), textOf(result)).toContain(READONLY_SANDBOX_BLOCK_NOTICE);
-	const structured = result.structuredContent as { output: string; exit_code: number };
+	const structured = structuredBashResult(result.structuredContent);
 	expectSuffix(structured.output, `\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`);
 	expect(structured.exit_code).toBe(1);
 	expect(target, "the sandbox must block the write").not.toSatisfy(fs.existsSync);
@@ -202,7 +231,7 @@ test.skipIf(skipWithoutDenialPhrase)("child bash call the readonly guard blocks 
 test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("child bash call the readonly guard blocks gets no block notice after a sandboxed call on the same tool", async () => {
 	const target = outsideTempPath("blocked-after-sandboxed");
 	const tool = createReadonlyChildBashTool(process.cwd());
-	const run = (command: string) => tool.execute("child-bash", { command }, undefined, undefined, undefined as any);
+	const run = (command: string) => tool.execute("child-bash", { command }, undefined, undefined, createToolContext());
 	await run(sandboxed("echo sandboxed-first"));
 
 	await expect(run(`echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(target)}`)).rejects.toSatisfy((error: Error) => {
@@ -217,20 +246,16 @@ test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("concurrent child bas
 	const sandboxedTarget = outsideTempPath("concurrent-sandboxed");
 	const blockedTarget = outsideTempPath("concurrent-blocked");
 	const tool = createReadonlyChildBashTool(process.cwd());
-	const run = (toolCallId: string, command: string) => tool.execute(toolCallId, { command }, undefined, undefined, undefined as any);
+	const run = (toolCallId: string, command: string) => tool.execute(toolCallId, { command }, undefined, undefined, createToolContext());
 	const [sandboxedResult, blockedResult] = await Promise.allSettled([
 		run("child-bash-sandboxed", nodeCommand(`require("fs").writeFileSync(${JSON.stringify(sandboxedTarget)}, "x")`)),
 		run("child-bash-blocked", `echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(blockedTarget)}`),
 	]);
 
-	expect(sandboxedResult.status).toBe("fulfilled");
-	if (sandboxedResult.status !== "fulfilled") {expect.unreachable();}
-	expectSuffix(textOf(sandboxedResult.value), READONLY_SANDBOX_BLOCK_NOTICE);
-	expect(blockedResult.status).toBe("rejected");
-	if (blockedResult.status !== "rejected") {expect.unreachable();}
-	expect(blockedResult.reason).toBeInstanceOf(Error);
-	expect(blockedResult.reason.message).toMatch(/Readonly mode:/);
-	expect(blockedResult.reason.message, blockedResult.reason.message).not.toContain(READONLY_SANDBOX_BLOCK_NOTICE);
+	expectSuffix(textOf(fulfilledValue(sandboxedResult)), READONLY_SANDBOX_BLOCK_NOTICE);
+	const reason = rejectionError(blockedResult);
+	expect(reason.message).toMatch(/Readonly mode:/);
+	expect(reason.message, reason.message).not.toContain(READONLY_SANDBOX_BLOCK_NOTICE);
 });
 
 test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("sandboxed child bash timeout after a sandbox denial gets the readonly block notice", async () => {
@@ -248,9 +273,9 @@ test("child bash call resolves a relative write against the execution cwd", asyn
 	const executionCwd = await tmpDir();
 	// The tool's own cwd is outside temp, so classifying against it would block the write.
 	const tool = createReadonlyChildBashTool(os.homedir());
-	const ctx = { cwd: executionCwd, sessionManager: { getSessionId: () => "readonly-child", getSessionFile: () => undefined } };
+	const ctx = createToolContext({ cwd: executionCwd });
 	try {
-		const result = await tool.execute("child-bash", { command: "touch relative-target" }, undefined, undefined, ctx as any);
+		const result = await tool.execute("child-bash", { command: "touch relative-target" }, undefined, undefined, ctx);
 
 		expect(result.isError, textOf(result)).toBeUndefined();
 		expect(path.join(executionCwd, "relative-target")).toSatisfy(fs.existsSync);
@@ -270,8 +295,9 @@ test("real readonly child omits write/edit/powershell and blocks a non-temp bash
 		activeTools: ["read", "bash", "write", "edit", "powershell", "agentic_e2e_probe", "spawn", "handoff"],
 	});
 
-	expect(proof.result.details.model).toBe(proof.modelId);
-	expect(proof.result.content[0].text).toMatch(/READONLY_BASH_BLOCKED/);
+	const { details, first } = spawnResultParts(proof.result);
+	expect(details.model).toBe(proof.modelId);
+	expect(first.text).toMatch(/READONLY_BASH_BLOCKED/);
 	expect(proof.bashWriteExists, "readonly child bash must not write to its cwd").toBe(false);
 	expect(proof.observedToolSets).toHaveLength(2);
 	for (const toolNames of proof.observedToolSets) {

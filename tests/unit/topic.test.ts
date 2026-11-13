@@ -5,10 +5,7 @@ import { setActiveNotebookTopic, clearActiveNotebookTopic } from "../../notebook
 import { registerNotebookTopicTool } from "../../notebook/topic-tool.js";
 import { createToolContext } from "./helpers.js";
 import { createTestHost, getTool } from "./test-host.js";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
+import { isRecord } from "../assertions.js";
 
 /** The result's details; throws unless they are an object. */
 function detailsOf(result: AgentToolResult<unknown>): Record<string, unknown> {

@@ -27,3 +27,8 @@ export function expectSuffix(actual: string, suffix: string, message?: string): 
 	// than `actual` wraps around and shows a cut-off tail.
 	expect(actual.slice(Math.max(0, actual.length - suffix.length)), withActual(actual, message)).toBe(suffix);
 }
+
+/** Whether `value` is a non-null object. A type guard, not an assertion: it makes no `expect(...)`. */
+export function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}

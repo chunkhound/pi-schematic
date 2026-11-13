@@ -23,7 +23,7 @@ import { openInPager, resolvePager, spawnPager, __setPagerRuntimeForTests } from
 import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
 import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
-import { assertPresent, expectSuffix } from "../assertions.js";
+import { assertPresent, expectSuffix, isRecord } from "../assertions.js";
 import { callHandlers, createCommandContext, createExtensionContext, createToolContext, createToolRenderContext, createUIContext, handoffToolResult, turnEndEvent, makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
 import { createBeforeAgentStartEvent, createTestHost, getCommand, getHandler, getHandlers, getHostRecords, getTool } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
@@ -44,10 +44,6 @@ function hostContext(value: unknown): HostContext {
 
 function tuiContext(options?: Parameters<typeof makeTUICtx>[0]): HostContext {
 	return hostContext(makeTUICtx(options));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
 }
 
 /** `value` as a record; throws, naming `what`, unless it is an object. */
