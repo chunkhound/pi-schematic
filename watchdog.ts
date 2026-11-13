@@ -10,6 +10,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { RequestedHandoff, SchematicState } from "./state.js";
+import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
 import { normalizeContextPercent } from "./handoff/eligibility.js";
 import {
 	READONLY_HANDOFF_RETRY_ADVICE,
@@ -35,14 +36,13 @@ export function settleExhaustsHandoffBudget(request: RequestedHandoff): boolean 
 
 type NudgeState = Pick<SchematicState, "activeNotebookTopic" | "pendingTopicBoundaryHint" | "readonlyEnabled" | "pendingRequestedHandoff">;
 
-function buildRequestedHandoffNudge(state: NudgeState, eligible: boolean): string {
+function buildRequestedHandoffNudge(state: NudgeState, requestedHandoff: RequestedHandoff, eligible: boolean): string {
 	if (!eligible) {
 		const readonlyWait = state.readonlyEnabled
 			? buildReadonlyHandoffWaitNotice()
 			: "";
 		return "A handoff is requested, but context is not yet ready for compaction. Continue working and retry handoff later." + readonlyWait;
 	}
-	const requestedHandoff = state.pendingRequestedHandoff!;
 	const handoffArguments = requestedHandoff.nextInstruction === null
 		? "the next instruction and the remaining context"
 		: "only the remaining context";
@@ -60,8 +60,7 @@ function buildHandoffCancellationNotice(readonly: boolean): string {
 	return `Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts without completion. ${retryAdvice}`;
 }
 
-function buildBoundaryNudge(state: NudgeState, eligible: boolean): string {
-	const boundary = state.pendingTopicBoundaryHint!;
+function buildBoundaryNudge(boundary: NotebookTopicBoundaryHint, eligible: boolean): string {
 	const action = eligible
 		? "Prefer a deliberate handoff before continuing under the new topic: save durable findings to the notebook, then call handoff with the next instruction and the remaining context."
 		: "Continue working until context is ready for handoff; this boundary remains advisory for now.";
@@ -102,12 +101,15 @@ Save durable findings to the notebook before handoff.`;
 No active notebook topic is set. ${noTopicUrgency}`;
 }
 
-/** Pick the watchdog message; `handoffRequiredNow` marks the eligible required-handoff nudge. */
-function selectNudge(state: NudgeState, percent: number | null, eligible: boolean): { text: string; handoffRequiredNow: boolean } {
+/** Pick the watchdog message; `nudgedHandoff` is the request an eligible required-handoff nudge is for. */
+function selectNudge(state: NudgeState, percent: number | null, eligible: boolean): { text: string; nudgedHandoff: RequestedHandoff | null } {
 	const pct = percent === null ? null : Math.round(percent);
-	if (state.pendingRequestedHandoff) {return { text: buildRequestedHandoffNudge(state, eligible), handoffRequiredNow: eligible };}
-	if (state.pendingTopicBoundaryHint) {return { text: buildBoundaryNudge(state, eligible), handoffRequiredNow: false };}
-	return { text: buildDefaultNudge(pct, state.activeNotebookTopic, eligible), handoffRequiredNow: false };
+	const requestedHandoff = state.pendingRequestedHandoff;
+	if (requestedHandoff) {
+		return { text: buildRequestedHandoffNudge(state, requestedHandoff, eligible), nudgedHandoff: eligible ? requestedHandoff : null };
+	}
+	if (state.pendingTopicBoundaryHint) {return { text: buildBoundaryNudge(state.pendingTopicBoundaryHint, eligible), nudgedHandoff: null };}
+	return { text: buildDefaultNudge(pct, state.activeNotebookTopic, eligible), nudgedHandoff: null };
 }
 
 /** Build a watchdog message using the caller's current handoff eligibility. */
@@ -120,8 +122,8 @@ export function buildNudge(state: NudgeState, percent: number | null, eligible: 
  * required-handoff nudge, mark it sent so `agent_settled` counts this run.
  */
 export function buildAndRecordNudge(state: NudgeState, percent: number | null, eligible: boolean): string {
-	const { text, handoffRequiredNow } = selectNudge(state, percent, eligible);
-	if (handoffRequiredNow) {state.pendingRequestedHandoff!.eligibleNudgeDelivered = true;}
+	const { text, nudgedHandoff } = selectNudge(state, percent, eligible);
+	if (nudgedHandoff) {nudgedHandoff.eligibleNudgeDelivered = true;}
 	return text;
 }
 
