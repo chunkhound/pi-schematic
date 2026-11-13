@@ -14,7 +14,6 @@ import {
 	createUIContext,
 	emitAll,
 	handoffToolResult,
-	makeReadonlyUICtx,
 	registerReadonlyPI,
 	turnEndEvent,
 } from "./helpers.js";
@@ -398,7 +397,7 @@ test("a staged handoff that completes at the settle is neither counted nor cance
 	const branch = drafts.map((draft, index) => ({ ...draft, id: `entry-${index}`, parentId: null }));
 	await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, {
 		hasUI: true,
-		ui: { ...makeReadonlyUICtx().ui, notify: (message: string) => notifications.push(message) },
+		ui: createUIContext({ notify: (message: string) => notifications.push(message), setStatus: () => undefined, setWidget: () => undefined }),
 		getContextUsage: eligibleUsage,
 		sessionManager: { getBranch: () => branch },
 	});
@@ -717,7 +716,7 @@ test("eligible readonly human topic boundary auto-creates handoff bypass equival
 	expect(watchdogMessage.content).toMatch(/handoff/i);
 	expect(watchdogMessage.content).toMatch(/temporary handoff exception active/i);
 
-	const blockResult: unknown = await toolCall({ toolName: "handoff", input: {} }, { cwd: "/tmp" });
+	const blockResult = await toolCall({ toolName: "handoff", input: {} }, { cwd: "/tmp" });
 	expect(blockResult, "handoff tool should be unblocked after topic boundary creates bypass").toBeUndefined();
 });
 

@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { ToolCallEventResult } from "@earendil-works/pi-coding-agent";
-import { isRecord, createCommandContext, createUIContext, registerReadonlyPI } from "./helpers.js";
+import { createCommandContext, createUIContext, registerReadonlyPI } from "./helpers.js";
 import type { ToolCall } from "./helpers.js";
 import { getCommand, type TestPI } from "./test-host.js";
 
@@ -17,14 +17,9 @@ async function enableReadonly(pi: TestPI) {
 	}));
 }
 
-/** The tool_call result for a bash `command`, checked to be the first blocking result or nothing. */
-async function bashCall(toolCall: ToolCall, command: unknown, cwd = "/workspace"): Promise<ToolCallEventResult | undefined> {
-	const result: unknown = await toolCall({ toolName: "bash", input: { command } }, { cwd });
-	if (result === undefined) {return undefined;}
-	if (!isRecord(result) || typeof result.block !== "boolean" || (result.reason !== undefined && typeof result.reason !== "string")) {
-		throw new Error("The tool_call handlers returned something other than a tool_call result.");
-	}
-	return result;
+/** The tool_call result for a bash `command`: the first blocking result or nothing. */
+function bashCall(toolCall: ToolCall, command: unknown, cwd = "/workspace"): Promise<ToolCallEventResult | undefined> {
+	return toolCall({ toolName: "bash", input: { command } }, { cwd });
 }
 
 async function assertBlocked(toolCall: ToolCall, command: string, cwd = "/workspace") {

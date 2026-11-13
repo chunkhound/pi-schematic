@@ -1610,8 +1610,7 @@ test("session_start new clears stale handoff status and warning widget", async (
 	const pi = await createTestHost();
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "stale"]]);
 	const widgets = new Map<string, string[] | undefined>([[WIDGET_KEY_WARNING, ["stale"]]]);
-	const tui = makeTUICtx({ record: { statuses, widgets } });
-	const ctx = { ...tui, ui: { ...tui.ui, addAutocompleteProvider: () => undefined } };
+	const ctx = makeTUICtx({ record: { statuses, widgets }, ui: { addAutocompleteProvider: () => undefined } });
 	await emitAll(pi, "session_start", { type: "session_start", reason: "new" }, ctx);
 
 	expect(statuses.get(STATUS_KEY_HANDOFF)).toBeUndefined();

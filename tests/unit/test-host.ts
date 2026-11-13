@@ -92,10 +92,11 @@ interface InternalKeybindings {
 	KeybindingsManager: typeof KeybindingsManager;
 }
 
-const internalKeybindings = await importInternal<InternalKeybindings>("core/keybindings.js", ["KeybindingsManager"]);
-
 /** pi's keybindings with the default bindings, for the `keybindings` argument of a `ctx.ui.custom` factory. */
-export const testKeybindings: KeybindingsManager = new internalKeybindings.KeybindingsManager();
+export async function loadTestKeybindings(): Promise<KeybindingsManager> {
+	const internalKeybindings = await importInternal<InternalKeybindings>("core/keybindings.js", ["KeybindingsManager"]);
+	return new internalKeybindings.KeybindingsManager();
+}
 
 /** The tool definitions the extension registered, by tool name. */
 export type TestToolMap = Map<string, ToolDefinition>;
@@ -510,6 +511,13 @@ export function getHandlers<K extends HostEventName>(pi: TestPI, event: K): Host
 		assertHostHandler(candidate, event);
 		return candidate;
 	});
+}
+
+/** The one handler registered for `event`; throws, naming the event and the count, unless exactly one is registered. */
+export function getOnlyHandler<K extends HostEventName>(pi: TestPI, event: K): HostHandler<K> {
+	const handlers = getHandlers(pi, event);
+	if (handlers.length !== 1) {throw new Error(`Expected one "${event}" handler on the test host; ${String(handlers.length)} registered.`);}
+	return handlers[0];
 }
 
 /**

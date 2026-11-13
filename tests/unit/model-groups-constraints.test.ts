@@ -6,16 +6,10 @@ import { modalitiesConstraint } from "../../model-groups/constraints/modalities.
 import { createConstraintRegistry, productionConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import type { AnyConstraintDescriptor, ConstraintMemberResolution } from "../../model-groups/constraints/types.js";
 import { testMaxBudget, testMinContext } from "./model-groups-constraints-fixture.js";
+import { testModel } from "./helpers.js";
 
-function model(fields: Pick<Model<Api>, "provider" | "id" | "input" | "reasoning"> & Partial<Model<Api>>): Model<Api> {
-	return {
-		name: fields.id, api: "test-api", baseUrl: "http://localhost.invalid",
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 0, maxTokens: 0, ...fields,
-	};
-}
-
-const rich = model({ provider: "p", id: "rich", input: ["text", "image"], reasoning: true, contextWindow: 100 });
-const text = model({ provider: "p", id: "text", input: ["text"], reasoning: false, contextWindow: 10 });
+const rich = testModel({ provider: "p", id: "rich", input: ["text", "image"], reasoning: true, contextWindow: 100 });
+const text = testModel({ provider: "p", id: "text", input: ["text"], reasoning: false, contextWindow: 10 });
 const resolution = (members: readonly { provider: string; modelId: string; model?: Model<Api> }[]): ConstraintMemberResolution => ({ members: members.map(({ provider, modelId, model: resolved }) => ({ ref: { provider, modelId }, ...(resolved ? { model: resolved } : {}) })) });
 
 test("constraint registry orders descriptors and rejects duplicate keys", () => {
@@ -58,7 +52,7 @@ test("text is always present in effective even when the override drops it", () =
 
 test("fully stale non-empty modality overrides fall back to the union while explicit empty remains text-only", () => {
 	const registry = createConstraintRegistry([modalitiesConstraint]);
-	const visionWithoutReasoning = model({ provider: "p", id: "vision", input: ["text", "image"], reasoning: false });
+	const visionWithoutReasoning = testModel({ provider: "p", id: "vision", input: ["text", "image"], reasoning: false });
 	const resolved = resolution([{ provider: "p", modelId: "vision", model: visionWithoutReasoning }]);
 	const stale = evaluateConstraints(resolved, { modalities: ["reasoning"] }, registry)[0];
 	expect(stale.effective).toStrictEqual(["text", "image"]);

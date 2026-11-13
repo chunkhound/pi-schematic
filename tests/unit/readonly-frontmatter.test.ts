@@ -15,14 +15,13 @@ import {
 	createCommandContext,
 	createExtensionContext,
 	createUIContext,
-	makeReadonlyUICtx,
 	registerReadonlyPI,
 	testWithDir,
 	tmpDir,
 	withTempHome,
 	type ToolCall,
 } from "./helpers.js";
-import { createBeforeAgentStartEvent, getCommand, getHandler, getHostRecords, type AppendedEntry, type TestPI } from "./test-host.js";
+import { createBeforeAgentStartEvent, getCommand, getHostRecords, getOnlyHandler, type AppendedEntry, type TestPI } from "./test-host.js";
 import { assertPresent } from "../assertions.js";
 
 // pi's agent directory holds global prompts; an empty one keeps an exported
@@ -39,8 +38,8 @@ beforeEach(() => {
 // The extension registers one input and one before_agent_start handler.
 function frontmatterHandlers(pi: TestPI) {
 	return {
-		inputHandler: (event: Omit<InputEvent, "type">, ctx: ExtensionContext) => getHandler(pi, "input")({ type: "input", ...event }, ctx),
-		beforeStartHandler: (event: BeforeAgentStartEvent, ctx: ExtensionContext) => getHandler(pi, "before_agent_start")(event, ctx),
+		inputHandler: (event: Omit<InputEvent, "type">, ctx: ExtensionContext) => getOnlyHandler(pi, "input")({ type: "input", ...event }, ctx),
+		beforeStartHandler: (event: BeforeAgentStartEvent, ctx: ExtensionContext) => getOnlyHandler(pi, "before_agent_start")(event, ctx),
 	};
 }
 
@@ -794,7 +793,8 @@ async function assertHandoffAlignment(name: string, readonly: boolean, direction
 		const contextHandler = (event: unknown, ctx: unknown) => runContextHandler(pi, event, ctx);
 		const result = await contextHandler(
 			{ messages: [{ role: "user", content: "continue", timestamp: 1 }] },
-			makeReadonlyUICtx({
+			handlerContext({
+				hasUI: true,
 				ui: createUIContext({ notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn() }),
 				getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
 			}),

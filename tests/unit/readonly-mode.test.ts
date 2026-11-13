@@ -19,7 +19,7 @@ import {
 	SANDBOX_DENIAL_PHRASES,
 	textOf,
 } from "./helpers.js";
-import { createBeforeAgentStartEvent, getCommand, getHandler, type TestPI } from "./test-host.js";
+import { createBeforeAgentStartEvent, getCommand, getOnlyHandler, type TestPI } from "./test-host.js";
 import { assertPresent, expectSuffix } from "../assertions.js";
 
 // The tool_result handler returns a patch of the result or nothing.
@@ -89,8 +89,8 @@ test("readonly toggle is a no-op in headless mode", async () => {
 
 	// Without a model registry the handlers load no model groups.
 	const headless = createExtensionContext({ isProjectTrusted: () => false, getContextUsage: () => undefined, modelRegistry: undefined });
-	await getHandler(pi, "input")({ type: "input", text: "/review", source: "interactive" }, headless);
-	await getHandler(pi, "before_agent_start")(createBeforeAgentStartEvent({ skills: [] }), headless);
+	await getOnlyHandler(pi, "input")({ type: "input", text: "/review", source: "interactive" }, headless);
+	await getOnlyHandler(pi, "before_agent_start")(createBeforeAgentStartEvent({ skills: [] }), headless);
 
 	// Write should remain unblocked for both manual and deferred readonly paths.
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();

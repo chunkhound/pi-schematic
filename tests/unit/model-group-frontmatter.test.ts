@@ -13,7 +13,7 @@ import { join } from "node:path";
 import type { ExtensionContext, ModelRegistry, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { modelGroupsPath } from "../../model-groups/store.js";
-import { isRecord, createExtensionContext, createModelRegistry, createUIContext, testWithDir, tmpDir } from "./helpers.js";
+import { createExtensionContext, createModelRegistry, createUIContext, recordOf, testWithDir, tmpDir } from "./helpers.js";
 import { createBeforeAgentStartEvent, createTestHost, getHandler, getHandlers, getHostRecords, type AppendedEntry, type HostHandler, type TestPI } from "./test-host.js";
 import { withTemp } from "./model-groups-helpers.js";
 
@@ -42,16 +42,10 @@ function mockRegistry(
 	});
 }
 
-/** `value` as a record; throws, naming `label`, when it is not an object. */
-function asRecord(value: unknown, label: string): Record<string, unknown> {
-	if (!isRecord(value)) {throw new Error(`${label} is not an object.`);}
-	return value;
-}
-
 /** The data of an appended entry; throws when the entry is missing or its data is not an object. */
 function entryData(entry: AppendedEntry | undefined): Record<string, unknown> {
 	if (entry === undefined) {throw new Error("No appended entry.");}
-	return asRecord(entry.data, `Data of the ${entry.customType} entry`);
+	return recordOf(entry.data, `the data of the ${entry.customType} entry`);
 }
 
 // The extension registers several `session_start` handlers; its model-group refresh is the last one.
@@ -505,7 +499,7 @@ testWithDir("explicit model applies while invalid thinking is reported", async (
 	expect(issues, "invalid thinking should produce one issue entry").toHaveLength(1);
 	const issueData = entryData(issues[0]);
 	expect(issueData.type).toBe("command");
-	expect(asRecord(issueData.issue, "data.issue of the pi-schematic-frontmatter-issue entry").kind).toBe("invalid-thinking-value");
+	expect(recordOf(issueData.issue, "data.issue of the pi-schematic-frontmatter-issue entry").kind).toBe("invalid-thinking-value");
 }));
 
 testWithDir("valid model applies when model-group frontmatter is invalid", async ({ dir: skillDir }) => withTemp(async ({ cwd }) => {
