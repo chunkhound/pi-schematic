@@ -1,16 +1,25 @@
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
 import { beforeEach, expect, test, vi } from "vitest";
-import { createState, resetState, abortChildSession } from "../../state.js";
-import { createSession, createSubscribableSession, createRenderContext, theme } from "./helpers.js";
-import { createTestHost } from "./test-host.js";
+import { createState, resetState, abortChildSession, type SchematicState } from "../../state.js";
+import { createSession, createSubscribableSession, createToolRenderContext, theme } from "./helpers.js";
+import { createTestHost, getToolRenderResult, type ToolRenderResult } from "./test-host.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
 import { registerSpawnTool } from "../../spawn/index.js";
-import { flushSpawnFrameScheduler } from "../../spawn/renderer.js";
+import { flushSpawnFrameScheduler, NestedAgentSessionComponent } from "../../spawn/renderer.js";
 
 let h: TestHarness;
 
-async function makeChildSpawnTool(state: any) {
+// Every render here has a child session in state, so the spawn renderer returns its nested session component.
+function nestedComponent(component: Component): NestedAgentSessionComponent {
+	if (!(component instanceof NestedAgentSessionComponent)) {throw new Error("Expected the spawn renderer to return its nested session component.");}
+	return component;
+}
+
+async function makeChildSpawnTool(state: SchematicState) {
 	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
-	return pi.tools.get("spawn");
+	const renderResult = getToolRenderResult(pi, "spawn");
+	return { renderResult: (...args: Parameters<ToolRenderResult>) => nestedComponent(renderResult(...args)) };
 }
 
 beforeEach(() => {
@@ -27,7 +36,7 @@ test("resetState aborts and clears child session registries", () => {
 	const abort = vi.fn(async () => {});
 	const session = {
 		abort,
-	} as any;
+	} as unknown as AgentSession;
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 	resetState(state);
@@ -40,18 +49,15 @@ test("resetState aborts a claimed child session after render ownership transfer"
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
 	const abort = vi.fn(async () => {});
-	const session = {
-		...createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]),
-		abort,
-	} as any;
+	const session = Object.assign(createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]), { abort });
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 
 	childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "ignored" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
@@ -68,18 +74,15 @@ test("nested spawn dispose shares the deduplicated abort promise with other abor
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
 	const abort = vi.fn(async () => {});
-	const session = {
-		...createSession([]),
-		abort,
-	} as any;
+	const session = Object.assign(createSession([]), { abort });
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	// Another abort path (spawn invalidation, /reset) already started the shared abort.
@@ -99,18 +102,15 @@ test("nested spawn dispose registers its abort in the shared dedup map", async (
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
 	const abort = vi.fn(async () => {});
-	const session = {
-		...createSession([]),
-		abort,
-	} as any;
+	const session = Object.assign(createSession([]), { abort });
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	component.dispose();
@@ -127,18 +127,15 @@ test("nested spawn dispose is identity-guarded against a replaced live session",
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
 	const abort = vi.fn(async () => {});
-	const session = {
-		...createSession([]),
-		abort,
-	} as any;
+	const session = Object.assign(createSession([]), { abort });
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	// A newer child claimed the toolCallId slot before disposal.
@@ -158,18 +155,15 @@ test("nested spawn dispose survives re-entrant dispose from abort", async () => 
 		// Synchronous re-entrant dispose from within abort must be a no-op.
 		component.dispose();
 	});
-	const session = {
-		...createSession([]),
-		abort,
-	} as any;
+	const session = Object.assign(createSession([]), { abort });
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 
-	const component: any = childSpawnTool.renderResult(
+	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	component.dispose();
@@ -190,9 +184,9 @@ test("nested spawn drops events after resetState bumps child epoch", async () =>
 
 	const component = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "initial" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ invalidate }),
+		createToolRenderContext({ invalidate }),
 	);
 	const before = component.render(120);
 
@@ -214,9 +208,9 @@ test("nested spawn drops events when session is replaced in live state", async (
 
 	const component = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "initial" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ invalidate }),
+		createToolRenderContext({ invalidate }),
 	);
 	const before = component.render(120);
 
@@ -239,9 +233,9 @@ test("nested spawn completed-session deletion stays stale even if the toolCallId
 
 	const component = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "initial" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ invalidate }),
+		createToolRenderContext({ invalidate }),
 	);
 	const before = component.render(120);
 
@@ -269,9 +263,9 @@ test("nested spawn drops late events after live registry deletion", async () => 
 
 	const component = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "initial" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ invalidate }),
+		createToolRenderContext({ invalidate }),
 	);
 	const before = component.render(120);
 
@@ -293,9 +287,9 @@ test("nested spawn reattach resets render guard for the new session", async () =
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ invalidate }),
+		createToolRenderContext({ invalidate }),
 	);
 
 	first.emit({ type: "message_start", message: { role: "assistant", content: [] } });
@@ -308,9 +302,9 @@ test("nested spawn reattach resets render guard for the new session", async () =
 	state.liveChildSessions.set("tool-call-1", second.session);
 	const sameComponent = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ lastComponent: component, invalidate }),
+		createToolRenderContext({ lastComponent: component, invalidate }),
 	);
 
 	second.emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "replacement 2" }] } });
@@ -329,9 +323,9 @@ test("nested spawn dispose then reattach streams new session events", async () =
 
 	const component = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "first" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	first.emit({ type: "message_start", message: { role: "assistant", content: [] } });
@@ -346,9 +340,9 @@ test("nested spawn dispose then reattach streams new session events", async () =
 	state.liveChildSessions.set("tool-call-1", second.session);
 	const reattached = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "second" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ lastComponent: component }),
+		createToolRenderContext({ lastComponent: component }),
 	);
 
 	second.emit({ type: "message_start", message: { role: "assistant", content: [] } });

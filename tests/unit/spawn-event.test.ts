@@ -1,17 +1,32 @@
+import type { Component } from "@earendil-works/pi-tui";
 import { beforeEach, expect, test, vi } from "vitest";
-import { createState } from "../../state.js";
-import { createSession, createSubscribableSession, createRenderContext, theme } from "./helpers.js";
-import { createTestHost } from "./test-host.js";
-import { flushSpawnFrameScheduler } from "../../spawn/renderer.js";
+import { createState, type SchematicState } from "../../state.js";
+import { createSession, createSubscribableSession, createToolRenderContext, theme } from "./helpers.js";
+import { createTestHost, getToolRenderResult, type ToolRenderResult } from "./test-host.js";
+import { flushSpawnFrameScheduler, NestedAgentSessionComponent } from "../../spawn/renderer.js";
 import { getSingletons } from "../../runtime-singletons.js";
 import { registerSpawnTool } from "../../spawn/index.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
 
 let h: TestHarness;
 
-async function makeChildSpawnTool(state: any) {
+// Every render here has a child session in state, so the spawn renderer returns its nested session component.
+function nestedComponent(component: Component): NestedAgentSessionComponent {
+	if (!(component instanceof NestedAgentSessionComponent)) {throw new Error("Expected the spawn renderer to return its nested session component.");}
+	return component;
+}
+
+async function makeChildSpawnTool(state: SchematicState) {
 	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
-	return pi.tools.get("spawn");
+	const renderResult = getToolRenderResult(pi, "spawn");
+	return { renderResult: (...args: Parameters<ToolRenderResult>) => nestedComponent(renderResult(...args)) };
+}
+
+type CreateToolComponent = (toolName: string, toolCallId: string, args: Record<string, unknown>) => unknown;
+
+// createToolComponent is private to the nested session component; the spy reaches it through this check.
+function hasCreateToolComponent(value: unknown): value is { createToolComponent: CreateToolComponent } {
+	return typeof value === "object" && value !== null && typeof Reflect.get(value, "createToolComponent") === "function";
 }
 
 beforeEach(() => {
@@ -102,9 +117,9 @@ test("frame scheduler contains invalidate callback failures and continues health
 
 test("frame scheduler creates only one timer for a failed-target recovery frame", () => {
 	const scheduler = getSingletons().frameScheduler;
-	const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void) => {
-		return { callback } as any;
-	}) as typeof setTimeout);
+	const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation((callback: () => void) => {
+		return { callback } as unknown as ReturnType<typeof setTimeout>;
+	});
 	vi.spyOn(globalThis, "clearTimeout").mockImplementation((() => {}));
 	const failing = {
 		flushPendingUpdates() { throw new Error("retry later"); },
@@ -126,9 +141,9 @@ test("nested spawn live action tracks tool execution events", async () => {
 
 	const component = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "ignored" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	// message_start → thinking
@@ -161,9 +176,9 @@ test("nested spawn handleEvent recovers from malformed events", async () => {
 
 	const component = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "ignored" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	// Emit a malformed event that will throw inside handleEvent
@@ -184,9 +199,9 @@ test("nested spawn message_end with aborted stopReason clears pending tools", as
 
 	const component = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "ignored" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	// Start an assistant message
@@ -207,9 +222,9 @@ test("nested spawn dispose stops event processing", async () => {
 
 	const component = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "ignored" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	component.dispose();
@@ -226,19 +241,15 @@ test("nested spawn dispose aborts but does not dispose a claimed live child sess
 	const childSpawnTool = await makeChildSpawnTool(state);
 	const abort = vi.fn(async () => {});
 	const dispose = vi.fn();
-	const session = {
-		...createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]),
-		abort,
-		dispose,
-	} as any;
+	const session = Object.assign(createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]), { abort, dispose });
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 
 	const component = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "ignored" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
@@ -260,9 +271,9 @@ test("nested spawn rapid events collapse to last state", async () => {
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	// Start a tool execution
@@ -295,13 +306,15 @@ test("nested spawn uses the latest streamed tool-call args before first frame fl
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: true },
+		{ expanded: true, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	// Spy on createToolComponent to capture args while preserving original behavior
-	const createToolComponent = vi.spyOn(component, "createToolComponent");
+	const target: unknown = component;
+	if (!hasCreateToolComponent(target)) {throw new Error("The nested session component has no createToolComponent method.");}
+	const createToolComponent = vi.spyOn(target, "createToolComponent");
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	emit({
@@ -327,9 +340,9 @@ test("nested spawn coalesces same-turn child events into one parent invalidate",
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ invalidate }),
+		createToolRenderContext({ invalidate }),
 	);
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
@@ -354,9 +367,9 @@ test("nested spawn retries a throw-once parent invalidate without a new child ev
 
 	childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ invalidate }),
+		createToolRenderContext({ invalidate }),
 	);
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
@@ -381,11 +394,11 @@ test("nested spawn does not restore a failed invalidate after disposal", async (
 		throw new Error("invalidate after disposal");
 	});
 
-	const component: any = childSpawnTool.renderResult(
+	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ invalidate }),
+		createToolRenderContext({ invalidate }),
 	);
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
@@ -400,35 +413,39 @@ test("nested spawn ignores child renderer invalidations during parent rebuild", 
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session } = createSubscribableSession([]);
-	(session as any).getToolDefinition = (toolName: string) => toolName === "reentrant"
-		? {
-			name: "reentrant",
-			renderCall(_args: any, _theme: any, context: any) {
-				if (!context.state.didInvalidate) {
-					context.state.didInvalidate = true;
-					context.invalidate();
-				}
-				return { render: () => ["reentrant"] };
-			},
-		}
-		: undefined;
+	Object.assign(session, {
+		getToolDefinition: (toolName: string) => toolName === "reentrant"
+			? {
+				name: "reentrant",
+				renderCall(_args: unknown, _theme: unknown, context: { state: Record<string, unknown>; invalidate: () => void }) {
+					if (!context.state.didInvalidate) {
+						context.state.didInvalidate = true;
+						context.invalidate();
+					}
+					return { render: () => ["reentrant"] };
+				},
+			}
+			: undefined,
+	});
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 	const invalidate = vi.fn();
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ invalidate }),
+		createToolRenderContext({ invalidate }),
 	);
 	flushSpawnFrameScheduler();
 	expect(invalidate, "initial empty attach does not invalidate").not.toHaveBeenCalled();
 
-	(session as any).messages = [{
-		role: "assistant",
-		content: [{ type: "toolCall", id: "tc-1", name: "reentrant", arguments: {} }],
-	}];
+	Object.assign(session, {
+		messages: [{
+			role: "assistant",
+			content: [{ type: "toolCall", id: "tc-1", name: "reentrant", arguments: {} }],
+		}],
+	});
 	component.invalidate();
 	flushSpawnFrameScheduler();
 
@@ -449,15 +466,15 @@ test("nested spawn shared scheduler calls each distinct invalidate once per fram
 
 	const firstComponent = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ toolCallId: "tool-call-1", invalidate: firstInvalidates }),
+		createToolRenderContext({ toolCallId: "tool-call-1", invalidate: firstInvalidates }),
 	);
 	const secondComponent = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ toolCallId: "tool-call-2", invalidate: secondInvalidates }),
+		createToolRenderContext({ toolCallId: "tool-call-2", invalidate: secondInvalidates }),
 	);
 
 	first.emit({ type: "message_start", message: { role: "assistant", content: [] } });
@@ -488,15 +505,15 @@ test("nested spawn shared scheduler still coalesces duplicate invalidate callbac
 
 	childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ toolCallId: "tool-call-1", invalidate }),
+		createToolRenderContext({ toolCallId: "tool-call-1", invalidate }),
 	);
 	childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ toolCallId: "tool-call-2", invalidate }),
+		createToolRenderContext({ toolCallId: "tool-call-2", invalidate }),
 	);
 
 	first.emit({ type: "message_start", message: { role: "assistant", content: [] } });
@@ -514,9 +531,9 @@ test("nested spawn renders state changes across frame boundaries", async () => {
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	// First batch: message_start sets thinking state, flush triggers render
@@ -542,9 +559,9 @@ test("nested spawn dispose cancels pending and further invalidates after cleanup
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ invalidate }),
+		createToolRenderContext({ invalidate }),
 	);
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
@@ -572,14 +589,14 @@ test("nested spawn recovers batching state after event handler error", async () 
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	// Bad event triggers an error in handleMessageStart (null message)
 	// catch block must call resetRenderBatching() so the flag resets
-	emit({ type: "message_start", message: null } as any);
+	emit({ type: "message_start", message: null });
 
 	// Good event after error — should still schedule and render
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
@@ -597,9 +614,9 @@ test("handleEvent gracefully degrades with null message events", async () => {
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	// asToolResult is exercised indirectly through tool_execution_update

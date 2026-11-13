@@ -11,27 +11,40 @@
 import { beforeEach, expect, test } from "vitest";
 import { assertPresent, expectPrefix } from "../assertions.js";
 import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
-import { createState } from "../../state.js";
+import { createState, type SchematicState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
 import { renderSpawnResult } from "../../spawn/renderer.js";
 import {
 	theme,
 	ansiTheme,
-	createRenderContext,
 	createSession,
+	createToolRenderContext,
 	stripAnsi,
 	getRenderedLine,
 	getLineContaining,
 	assertShellBackgroundPreserved,
 } from "./helpers.js";
-import { createTestHost } from "./test-host.js";
+import { createTestHost, getToolRenderResult, type ToolRenderResult } from "./test-host.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
 
 let h: TestHarness;
 
-async function makeChildSpawnTool(state: any) {
+type SpawnRenderedResult = Parameters<ToolRenderResult>[0];
+
+async function makeChildSpawnTool(state: SchematicState) {
 	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
-	return pi.tools.get("spawn");
+	return { renderResult: getToolRenderResult(pi, "spawn") };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+// The nested session component keeps `details` private; the test reads it as an untyped record.
+function privateDetails(component: object): Record<string, unknown> {
+	const details: unknown = Reflect.get(component, "details");
+	if (!isRecord(details)) {throw new Error("Expected the component to hold result details.");}
+	return details;
 }
 
 beforeEach(() => {
@@ -59,9 +72,9 @@ test("collapsed nested spawn render shows preview and stats", async () => {
 				stats: { inputTokens: 12, outputTokens: 34, turns: 2, cost: 0.125 },
 			},
 		},
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	const lines = component.render(120);
@@ -78,19 +91,19 @@ test("spawn result identity formats default routed and unknown fallback", async 
 	const childSpawnTool = await makeChildSpawnTool(state);
 	const routed = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "done" }], details: { model: "gpt-routed", thinking: "high", truncated: false, outcome: "success", route: { status: "routed", group: "review", provider: "openai", modelId: "gpt-routed" } } },
-		{ expanded: false }, theme, createRenderContext(),
+		{ expanded: false, isPartial: false }, theme, createToolRenderContext(),
 	);
 	expect(routed.render(120)).toContainEqual(expect.stringContaining("review → openai/gpt-routed • high"));
 
 	const inherited = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "done" }], details: { model: "parent", thinking: "low", truncated: false, outcome: "success", route: { status: "inherited" } } },
-		{ expanded: false }, theme, createRenderContext(),
+		{ expanded: false, isPartial: false }, theme, createToolRenderContext(),
 	);
 	expect(inherited.render(120)).toContainEqual(expect.stringContaining("✅ parent • low"));
 
 	const fallback = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "done" }], details: { model: "parent", thinking: "medium", truncated: false, outcome: "success", route: { status: "unknown-fallback", requestedGroup: "rev", provider: "openai", modelId: "parent" } } },
-		{ expanded: false }, theme, createRenderContext(),
+		{ expanded: false, isPartial: false }, theme, createToolRenderContext(),
 	);
 	expect(fallback.render(120)).toContainEqual(expect.stringContaining("rev? fallback → openai/parent • medium"));
 
@@ -110,7 +123,7 @@ test("spawn result identity formats default routed and unknown fallback", async 
 				},
 			},
 		},
-		{ expanded: false }, theme, createRenderContext(),
+		{ expanded: false, isPartial: false }, theme, createToolRenderContext(),
 	);
 	const escapedLines = escaped.render(120);
 	expect(escapedLines).toContainEqual(expect.stringContaining("review\\n\\x1B → open\\tai/gpt\\rrouted • low"));
@@ -130,9 +143,9 @@ test("collapsed nested spawn render keeps all text blocks from the last assistan
 			content: [{ type: "text", text: "ignored" }],
 			details: { model: "mock-model", thinking: "medium", truncated: false },
 		},
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	const lines = component.render(120);
@@ -151,9 +164,9 @@ async function renderCollapsedPreview(text: string, width: number): Promise<stri
 			content: [{ type: "text", text: "ignored" }],
 			details: { model: "mock-model", thinking: "medium", truncated: false },
 		},
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 	return component.render(width);
 }
@@ -204,9 +217,9 @@ test("collapsed nested spawn truncation preserves shell background across previe
 				stats: { inputTokens: 12, outputTokens: 34, turns: 2, cost: 0.125 },
 			},
 		},
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		ansiTheme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	const lines = component.render(24);
@@ -240,9 +253,9 @@ test("collapsed nested spawn keeps truncated stats line calm", async () => {
 				stats: { inputTokens: 12, outputTokens: 34, turns: 2, cost: 0.125 },
 			},
 		},
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		markerTheme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	const lines = component.render(120);
@@ -260,9 +273,9 @@ test("static no-output child error with empty details renders without fabricated
 			content: [{ type: "text", text: "Child agent produced no output." }],
 			details: {},
 		},
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ isError: true }),
+		createToolRenderContext({ isError: true }),
 	);
 	const lines = component.render(120);
 
@@ -271,7 +284,7 @@ test("static no-output child error with empty details renders without fabricated
 	expect(lines).not.toContainEqual(expect.stringContaining("unknown"));
 });
 
-const returnedErrorResult = {
+const returnedErrorResult: SpawnRenderedResult = {
 	content: [{ type: "text", text: "Child agent produced no output." }],
 	details: {
 		model: "mock-model",
@@ -285,7 +298,7 @@ const returnedErrorResult = {
 
 // Each case renders its error result statically and over a retained running child.
 // `present` and `absent` hold for both; `staticPresent` holds for the static render only.
-const errorResultRenderCases = [
+const errorResultRenderCases: { name: string; result: SpawnRenderedResult; present: string[]; staticPresent: string[]; absent: string[] }[] = [
 	{
 		name: "returned spawn error result with details renders as an error",
 		result: returnedErrorResult,
@@ -322,9 +335,9 @@ for (const { name, result, present, staticPresent, absent } of errorResultRender
 
 		const lines = (childSpawnTool.renderResult(
 			result,
-			{ expanded: false },
+			{ expanded: false, isPartial: false },
 			theme,
-			createRenderContext({ isError: true }),
+			createToolRenderContext({ isError: true }),
 		)).render(120);
 		for (const text of [...present, ...staticPresent]) {
 			expect(lines).toContainEqual(expect.stringContaining(text));
@@ -341,15 +354,15 @@ for (const { name, result, present, staticPresent, absent } of errorResultRender
 		state.childSessions.set("tool-call-1", createSession([]));
 		const running = childSpawnTool.renderResult(
 			{ content: [], details: { model: "mock-model", thinking: "high", truncated: false, outcome: "running" } },
-			{ expanded: false },
+			{ expanded: false, isPartial: false },
 			theme,
-			createRenderContext(),
+			createToolRenderContext(),
 		);
 		const retained = childSpawnTool.renderResult(
 			result,
-			{ expanded: false },
+			{ expanded: false, isPartial: false },
 			theme,
-			createRenderContext({ lastComponent: running, isError: true }),
+			createToolRenderContext({ lastComponent: running, isError: true }),
 		);
 		const lines = retained.render(120);
 		expect(retained).toBe(running);
@@ -370,28 +383,28 @@ test("retained nested spawn preserves identity when malformed terminal details r
 
 	const component = childSpawnTool.renderResult(
 		{ content: [], details: { model: "mock-model", thinking: "high", truncated: false, outcome: "running" } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 	const sameComponent = childSpawnTool.renderResult(
 		{ content: [], details: {} },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ lastComponent: component, isError: true }),
+		createToolRenderContext({ lastComponent: component, isError: true }),
 	);
 	const collapsedLines = sameComponent.render(120);
 
 	expect(sameComponent).toBe(component);
 	expect(collapsedLines).toContainEqual(expect.stringContaining("⚠ mock-model • high"));
 	expect(collapsedLines).toContainEqual(expect.stringContaining("💬 error"));
-	expect((sameComponent).details.outcome).toBe("error");
+	expect(privateDetails(sameComponent).outcome).toBe("error");
 
 	const expandedComponent = childSpawnTool.renderResult(
 		{ content: [], details: {} },
-		{ expanded: true },
+		{ expanded: true, isPartial: false },
 		theme,
-		createRenderContext({ expanded: true, lastComponent: sameComponent, isError: true }),
+		createToolRenderContext({ expanded: true, lastComponent: sameComponent, isError: true }),
 	);
 	const expandedLines = expandedComponent.render(120);
 	expect(expandedComponent).toBe(component);
@@ -414,9 +427,9 @@ test("spawn result ignores malformed route and stats fields", async () => {
 				statsUnavailable: "yes",
 			},
 		},
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 	const lines = component.render(120);
 
@@ -435,10 +448,10 @@ test("nested spawn render is safe without details", async () => {
 	state.childSessions.set("tool-call-1", session);
 
 	const component = childSpawnTool.renderResult(
-		{ content: [{ type: "text", text: "ignored" }] },
-		{ expanded: false },
+		{ content: [{ type: "text", text: "ignored" }], details: undefined },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	const lines = component.render(120);
@@ -458,9 +471,9 @@ test("expanded nested spawn header stays within width after indent", async () =>
 			content: [{ type: "text", text: "ignored" }],
 			details: { model: "model-name", thinking: "medium", truncated: false },
 		},
-		{ expanded: true },
+		{ expanded: true, isPartial: false },
 		theme,
-		createRenderContext({ expanded: true }),
+		createToolRenderContext({ expanded: true }),
 	);
 
 	const lines = component.render(24);
@@ -478,9 +491,9 @@ test("nested spawn render cache preserves stable output for identical params", a
 
 	const component = childSpawnTool.renderResult(
 		{ content: [{ type: "text", text: "hello" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 
 	const first = component.render(120);
@@ -501,9 +514,9 @@ test("nested spawn clears cached render when showImages changes", async () => {
 			content: [{ type: "text", text: "ignored" }],
 			details: { model: "mock-model", thinking: "medium", truncated: false },
 		},
-		{ expanded: true },
+		{ expanded: true, isPartial: false },
 		theme,
-		createRenderContext({ expanded: true, showImages: true }),
+		createToolRenderContext({ expanded: true, showImages: true }),
 	);
 	const linesWithImages = component.render(120);
 
@@ -512,16 +525,16 @@ test("nested spawn clears cached render when showImages changes", async () => {
 			content: [{ type: "text", text: "ignored" }],
 			details: { model: "mock-model", thinking: "medium", truncated: false },
 		},
-		{ expanded: true },
+		{ expanded: true, isPartial: false },
 		theme,
-		createRenderContext({ expanded: true, showImages: false, lastComponent: component }),
+		createToolRenderContext({ expanded: true, showImages: false, lastComponent: component }),
 	);
 	const linesWithoutImages = sameComponent.render(120);
 
 	expect(sameComponent).toBe(component);
 	expect(linesWithImages).toSatisfy(Array.isArray);
 	expect(linesWithoutImages).toSatisfy(Array.isArray);
-	expect((sameComponent).cachedShowImages).toBe(false);
+	expect(Reflect.get(sameComponent, "cachedShowImages")).toBe(false);
 });
 
 test("nested spawn rerenders when stats become unavailable", async () => {
@@ -537,9 +550,9 @@ test("nested spawn rerenders when stats become unavailable", async () => {
 			content: [{ type: "text", text: "ignored" }],
 			details: { model: "mock-model", thinking: "medium", truncated: false },
 		},
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext(),
+		createToolRenderContext(),
 	);
 	const before = component.render(120);
 	expect(before).not.toContainEqual(expect.stringContaining("stats unavailable"));
@@ -549,9 +562,9 @@ test("nested spawn rerenders when stats become unavailable", async () => {
 			content: [{ type: "text", text: "ignored" }],
 			details: { model: "mock-model", thinking: "medium", truncated: false, outcome: "success", statsUnavailable: true },
 		},
-		{ expanded: false },
+		{ expanded: false, isPartial: false },
 		theme,
-		createRenderContext({ lastComponent: component }),
+		createToolRenderContext({ lastComponent: component }),
 	);
 	const after = sameComponent.render(120);
 
@@ -594,9 +607,9 @@ for (const { name, stats, statsUnavailable, present, absent } of collapsedStatsC
 					...(statsUnavailable ? { statsUnavailable: true } : {}),
 				},
 			},
-			{ expanded: false },
+			{ expanded: false, isPartial: false },
 			theme,
-			createRenderContext(),
+			createToolRenderContext(),
 		);
 		const lines = component.render(120);
 		for (const text of present) {
@@ -636,9 +649,9 @@ for (const { name, outcome, isError, present, absent } of stopReasonOutcomeCases
 		]));
 		const lines = (childSpawnTool.renderResult(
 			{ content: [], details: { model: "mock-model", thinking: "high", truncated: false, outcome } },
-			{ expanded: false },
+			{ expanded: false, isPartial: false },
 			theme,
-			createRenderContext({ isError }),
+			createToolRenderContext({ isError }),
 		)).render(120);
 		expect(lines).toContainEqual(expect.stringContaining(present));
 		expect(lines).not.toContainEqual(expect.stringContaining(absent));

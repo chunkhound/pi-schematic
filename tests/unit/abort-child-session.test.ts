@@ -1,8 +1,9 @@
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { expect, test } from "vitest";
 import { createState, abortChildSession } from "../../state.js";
 
 function createMockSession(abortImpl: () => Promise<void> | void) {
-	return { abort: abortImpl } as any;
+	return { abort: abortImpl } as unknown as AgentSession;
 }
 
 test("abortChildSession returns the same promise for the same session", async () => {
