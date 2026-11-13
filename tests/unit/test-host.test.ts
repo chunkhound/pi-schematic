@@ -7,7 +7,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { expect, test, vi } from "vitest";
 import { assertPresent } from "../assertions.js";
 import { CHILD_TIMEOUT_MS } from "./spawn-node.js";
-import { createExtensionContext, createToolRenderContext, theme, type RenderContext } from "./helpers.js";
+import { createExtensionContext, createToolRenderContext, emitAll, theme, type RenderContext } from "./helpers.js";
 import {
 	createTestHost,
 	emitBeforeAgentStart,
@@ -64,10 +64,9 @@ test("a factory's event handler is registered on the host", async () => {
 			seen.push(event);
 		});
 	});
-	const handlers = pi.handlers.get("tool_call") ?? [];
-	for (const registered of handlers) {await registered("probe-event", {});}
+	await emitAll(pi, "tool_call", "probe-event", {});
 
-	expect(handlers).toHaveLength(1);
+	expect(pi.handlers.get("tool_call")).toHaveLength(1);
 	expect(seen).toStrictEqual(["probe-event"]);
 });
 

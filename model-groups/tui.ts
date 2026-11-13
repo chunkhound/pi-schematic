@@ -50,8 +50,10 @@ function isLeft(data: string): boolean { return matchesKey(data, Key.left); }
 function isBackspace(data: string): boolean { return matchesKey(data, Key.backspace); }
 function isDeleteChord(data: string): boolean { return data === "D" || matchesKey(data, Key.delete); }
 
+function isArray(value: unknown): value is unknown[] { return Array.isArray(value); }
+
 function cloneDef(def: ModelGroupDef): ModelGroupDef {
-	const constraints = def.constraints === undefined ? undefined : { ...def.constraints, ...(Array.isArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) };
+	const constraints = def.constraints === undefined ? undefined : { ...def.constraints, ...(isArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) };
 	return { ...def, models: def.models.map((model) => ({ ...model })), ...(constraints === undefined ? {} : { constraints }) };
 }
 

@@ -73,8 +73,9 @@ function readCacheEntry(
 	let st;
 	try {
 		st = statSync(filePath);
-	} catch (error: any) {
-		return error?.code === "ENOENT" || error?.code === "ENOTDIR"
+	} catch (error: unknown) {
+		const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+		return code === "ENOENT" || code === "ENOTDIR"
 			? { entry: null, issue: null }
 			: { entry: null, issue: { kind: "unreadable-file", filePath } };
 	}

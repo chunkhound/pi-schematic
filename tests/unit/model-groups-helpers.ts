@@ -21,6 +21,10 @@ export async function withTemp(
 	}
 }
 
+function isArray(value: unknown): value is unknown[] {
+	return Array.isArray(value);
+}
+
 export function group(
 	name: string,
 	opts: {
@@ -37,7 +41,7 @@ export function group(
 		scope,
 		sourcePath: `<${scope}>`,
 		models: opts.models ?? [],
-		...(opts.constraints === undefined ? {} : { constraints: { ...opts.constraints, ...(Array.isArray(opts.constraints.modalities) ? { modalities: [...opts.constraints.modalities] } : {}) } }),
+		...(opts.constraints === undefined ? {} : { constraints: { ...opts.constraints, ...(isArray(opts.constraints.modalities) ? { modalities: [...opts.constraints.modalities] } : {}) } }),
 		validation: {
 			unavailableRefs: opts.unavailableRefs ?? [],
 			shadowedByProject: opts.shadowedByProject ?? false,
