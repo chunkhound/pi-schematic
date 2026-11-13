@@ -6,9 +6,9 @@ import { buildNudge } from "../../watchdog.js";
 import { registerHandoffCommand } from "../../handoff/command.js";
 import { registerHandoffTool } from "../../handoff/tool.js";
 import { registerHandoffBoundary } from "../../handoff/boundary.js";
-import { callHandlers, emitAll, handoffToolResult, makeReadonlyUICtx, registerReadonlyPI, turnEndEvent } from "./helpers.js";
+import { callHandlers, createCommandContext, createExtensionContext, emitAll, handoffToolResult, makeReadonlyUICtx, registerReadonlyPI, turnEndEvent } from "./helpers.js";
 import { assertPresent } from "../assertions.js";
-import { createTestHost } from "./test-host.js";
+import { createTestHost, getCommand, getHandler } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 
@@ -42,15 +42,18 @@ test.for([Number.NaN, Number.POSITIVE_INFINITY, -1])("watchdog ignores malformed
 test("watchdog records overflow percentages", async () => {
 	const state = createState();
 	const pi = await createTestHost((api) => { registerWatchdog(api, state); });
-	const [handler] = pi.handlers.get("agent_end")!;
-	await handler({}, { hasUI: false, getContextUsage: () => ({ percent: 125 }) });
+	const handler = getHandler(pi, "agent_end");
+	await handler(
+		{ type: "agent_end", messages: [] },
+		createExtensionContext({ getContextUsage: () => ({ tokens: 250_000, contextWindow: 200_000, percent: 125 }) }),
+	);
 	expect(state.lastContextPercent).toBe(125);
 });
 
 test("context injects watchdog reminder before each LLM call", async () => {
 	const pi = await createTestHost();
 	const [handler] = pi.handlers.get("context")!;
-	await pi.commands.get("notebook")!.handler("oauth", { hasUI: false, getContextUsage: () => null });
+	await getCommand(pi, "notebook").handler("oauth", createCommandContext({ getContextUsage: () => undefined }));
 
 	const result = await handler(
 		{ messages: [{ role: "user", content: "hi", timestamp: 1 }] },

@@ -1115,13 +1115,13 @@
       "count": 22
     },
     "@typescript-eslint/no-explicit-any": {
-      "count": 127
+      "count": 123
     },
     "@typescript-eslint/no-non-null-assertion": {
       "count": 50
     },
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 66
+      "count": 62
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 68
@@ -1136,7 +1136,7 @@
       "count": 2
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 112
+      "count": 108
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 1
@@ -1665,12 +1665,9 @@
       "count": 2
     },
     "@typescript-eslint/no-explicit-any": {
-      "count": 22
+      "count": 11
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 7
-    },
-    "@typescript-eslint/no-unsafe-return": {
       "count": 1
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
@@ -1738,16 +1735,16 @@
       "count": 24
     },
     "@typescript-eslint/no-non-null-assertion": {
-      "count": 27
+      "count": 25
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 54
+      "count": 53
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 66
+      "count": 64
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 78
+      "count": 77
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 3

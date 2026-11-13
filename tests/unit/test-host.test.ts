@@ -6,7 +6,8 @@ import { CONFIG_DIR_NAME, type ExecResult, type ExtensionAPI } from "@earendil-w
 import { expect, test } from "vitest";
 import { assertPresent } from "../assertions.js";
 import { CHILD_TIMEOUT_MS } from "./spawn-node.js";
-import { createTestHost, emitBeforeAgentStart } from "./test-host.js";
+import { createExtensionContext } from "./helpers.js";
+import { createTestHost, emitBeforeAgentStart, getCommand, getHandler, getHostRecords, getTool } from "./test-host.js";
 
 function registerNamedTool(pi: ExtensionAPI, name: string): void {
 	pi.registerTool({
@@ -52,6 +53,56 @@ test("a factory's event handler is registered on the host", async () => {
 
 	expect(handlers).toHaveLength(1);
 	expect(seen).toStrictEqual(["probe-event"]);
+});
+
+test("a registered handler is returned with its result", async () => {
+	const pi = await createTestHost((api) => {
+		api.on("input", (event) => ({ action: "transform", text: event.text.toUpperCase() }));
+	});
+
+	const result = await getHandler(pi, "input")({ type: "input", text: "probe", source: "interactive" }, createExtensionContext());
+
+	expect(result).toStrictEqual({ action: "transform", text: "PROBE" });
+});
+
+test("a handler lookup for an unregistered event throws naming the event", async () => {
+	const pi = await createTestHost((api) => {
+		registerNamedTool(api, "probe_tool");
+	});
+
+	expect(() => getHandler(pi, "input")).toThrow('No "input" handler is registered on the test host.');
+});
+
+test("a handler lookup past the registered handlers throws naming the index", async () => {
+	const pi = await createTestHost((api) => {
+		api.on("input", () => ({ action: "continue" }));
+	});
+
+	expect(() => getHandler(pi, "input", 1)).toThrow('No "input" handler at index 1; 1 registered on the test host.');
+});
+
+test("a tool lookup returns the registered definition", async () => {
+	const pi = await createTestHost((api) => {
+		registerNamedTool(api, "probe_tool");
+	});
+
+	expect(getTool(pi, "probe_tool").description).toBe("test tool probe_tool");
+});
+
+test("a tool lookup for an unregistered name throws naming the tool", async () => {
+	const pi = await createTestHost((api) => {
+		registerNamedTool(api, "other_tool");
+	});
+
+	expect(() => getTool(pi, "probe_tool")).toThrow('No tool "probe_tool" is registered on the test host.');
+});
+
+test("a command lookup for an unregistered name throws naming the command", async () => {
+	const pi = await createTestHost((api) => {
+		registerNamedTool(api, "probe_tool");
+	});
+
+	expect(() => getCommand(pi, "probe")).toThrow('No command "probe" is registered on the test host.');
 });
 
 test("the returned host is the api object pi passed to the factory", async () => {
@@ -120,6 +171,18 @@ test("host actions after the load record side effects", async () => {
 
 	expect(pi.sentUserMessages).toStrictEqual([{ content: "x", options: undefined }]);
 	expect(pi.appendedEntries).toStrictEqual([{ customType: "t", data: {} }]);
+});
+
+test("the typed host records are the host's live records", async () => {
+	const pi = await createTestHost((api) => {
+		registerNamedTool(api, "probe_tool");
+	});
+
+	const records = getHostRecords(pi);
+
+	expect(records.sentMessages).toBe(pi.sentMessages);
+	expect(records.sentUserMessages).toBe(pi.sentUserMessages);
+	expect(records.appendedEntries).toBe(pi.appendedEntries);
 });
 
 // The host's contract, independent of the path pi assigns: a header line, then

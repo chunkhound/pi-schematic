@@ -2,7 +2,17 @@
 // Imported by other test files via `./helpers.js`
 // Includes the real-API test host (see ./test-host.js), test utilities, theme constants, readonly helpers, etc.
 
-import { CONFIG_DIR_NAME, type Theme, type TurnEndEvent } from "@earendil-works/pi-coding-agent";
+import {
+	CONFIG_DIR_NAME,
+	SessionManager,
+	type ExtensionCommandContext,
+	type ExtensionContext,
+	type ExtensionToolContext,
+	type ExtensionUIContext,
+	type ModelRegistry,
+	type Theme,
+	type TurnEndEvent,
+} from "@earendil-works/pi-coding-agent";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { existsSync } from "node:fs";
@@ -199,6 +209,108 @@ export function turnEndEvent(overrides: Partial<TurnEndEvent> = {}): TurnEndEven
 		outcome: "completed",
 		...overrides,
 	};
+}
+
+// ── Typed extension contexts ─────────────────────────────────────────
+// Each member a test leaves out throws when the code under test reaches it, naming
+// the member, so a test cannot pass on a stub it did not provide. Plain data members
+// get the values pi reports for a session without UI.
+
+function unstubbed(member: string): () => never {
+	return () => {
+		throw new Error(`${member} is not stubbed in this test context; pass it in the overrides.`);
+	};
+}
+
+/** An `ExtensionUIContext` with `theme` as its theme; every other member throws unless overridden. */
+export function createUIContext(overrides: Partial<ExtensionUIContext> = {}): ExtensionUIContext {
+	return {
+		select: unstubbed("ctx.ui.select"),
+		confirm: unstubbed("ctx.ui.confirm"),
+		input: unstubbed("ctx.ui.input"),
+		notify: unstubbed("ctx.ui.notify"),
+		onTerminalInput: unstubbed("ctx.ui.onTerminalInput"),
+		setStatus: unstubbed("ctx.ui.setStatus"),
+		setWorkingMessage: unstubbed("ctx.ui.setWorkingMessage"),
+		setWorkingVisible: unstubbed("ctx.ui.setWorkingVisible"),
+		setWorkingIndicator: unstubbed("ctx.ui.setWorkingIndicator"),
+		setHiddenThinkingLabel: unstubbed("ctx.ui.setHiddenThinkingLabel"),
+		setWidget: unstubbed("ctx.ui.setWidget"),
+		setFooter: unstubbed("ctx.ui.setFooter"),
+		setHeader: unstubbed("ctx.ui.setHeader"),
+		setTitle: unstubbed("ctx.ui.setTitle"),
+		custom: unstubbed("ctx.ui.custom"),
+		pasteToEditor: unstubbed("ctx.ui.pasteToEditor"),
+		setEditorText: unstubbed("ctx.ui.setEditorText"),
+		getEditorText: unstubbed("ctx.ui.getEditorText"),
+		editor: unstubbed("ctx.ui.editor"),
+		addAutocompleteProvider: unstubbed("ctx.ui.addAutocompleteProvider"),
+		setEditorComponent: unstubbed("ctx.ui.setEditorComponent"),
+		getEditorComponent: unstubbed("ctx.ui.getEditorComponent"),
+		theme,
+		getAllThemes: unstubbed("ctx.ui.getAllThemes"),
+		getTheme: unstubbed("ctx.ui.getTheme"),
+		setTheme: unstubbed("ctx.ui.setTheme"),
+		getToolsExpanded: unstubbed("ctx.ui.getToolsExpanded"),
+		setToolsExpanded: unstubbed("ctx.ui.setToolsExpanded"),
+		...overrides,
+	};
+}
+
+/**
+ * An `ExtensionContext` without UI: `hasUI` false, mode `print`, `cwd` the process
+ * directory, no model, an in-memory session manager and `createUIContext()` as `ui`.
+ * `modelRegistry` throws on read unless overridden; every method throws unless overridden.
+ */
+export function createExtensionContext(overrides: Partial<ExtensionContext> = {}): ExtensionContext {
+	const { modelRegistry, ...rest } = overrides;
+	const cwd = overrides.cwd ?? process.cwd();
+	return {
+		ui: createUIContext(),
+		mode: "print",
+		hasUI: false,
+		cwd,
+		sessionManager: SessionManager.inMemory(cwd),
+		get modelRegistry(): ModelRegistry {
+			if (modelRegistry === undefined) {throw new Error("ctx.modelRegistry is not stubbed in this test context; pass it in the overrides.");}
+			return modelRegistry;
+		},
+		model: undefined,
+		scopedModels: [],
+		isIdle: unstubbed("ctx.isIdle"),
+		isProjectTrusted: unstubbed("ctx.isProjectTrusted"),
+		signal: undefined,
+		abort: unstubbed("ctx.abort"),
+		hasPendingMessages: unstubbed("ctx.hasPendingMessages"),
+		shutdown: unstubbed("ctx.shutdown"),
+		getContextUsage: unstubbed("ctx.getContextUsage"),
+		compact: unstubbed("ctx.compact"),
+		getSystemPrompt: unstubbed("ctx.getSystemPrompt"),
+		...rest,
+	};
+}
+
+/** `createExtensionContext` plus the command members, each throwing unless overridden. */
+export function createCommandContext(overrides: Partial<ExtensionCommandContext> = {}): ExtensionCommandContext {
+	const { getSystemPromptOptions, waitForIdle, newSession, fork, navigateTree, switchSession, reload, ...base } = overrides;
+	return Object.assign(createExtensionContext(base), {
+		getSystemPromptOptions: getSystemPromptOptions ?? unstubbed("ctx.getSystemPromptOptions"),
+		waitForIdle: waitForIdle ?? unstubbed("ctx.waitForIdle"),
+		newSession: newSession ?? unstubbed("ctx.newSession"),
+		fork: fork ?? unstubbed("ctx.fork"),
+		navigateTree: navigateTree ?? unstubbed("ctx.navigateTree"),
+		switchSession: switchSession ?? unstubbed("ctx.switchSession"),
+		reload: reload ?? unstubbed("ctx.reload"),
+	});
+}
+
+/** `createExtensionContext` plus no callable tools and an `executeTool` that throws unless overridden. */
+export function createToolContext(overrides: Partial<ExtensionToolContext> = {}): ExtensionToolContext {
+	const { tools, executeTool, ...base } = overrides;
+	return Object.assign(createExtensionContext(base), {
+		tools: tools ?? [],
+		executeTool: executeTool ?? unstubbed("ctx.executeTool"),
+	});
 }
 
 // ── Readonly test helpers ────────────────────────────────────────────
