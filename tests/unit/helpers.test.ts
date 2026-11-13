@@ -1,5 +1,6 @@
 /**
- * Environment restore semantics of the temp-directory helpers.
+ * Environment restore semantics of the temp-directory helpers, and the guards of
+ * the typed extension contexts.
  *
  * pi reads PI_CODING_AGENT_DIR before HOME when it resolves its agent
  * directory, so each helper must leave the variable as it found it: the prior
@@ -8,7 +9,7 @@
  */
 
 import { expect, test } from "vitest";
-import { setTempHome, withTempAgentDir, withTempHome } from "./helpers.js";
+import { createExtensionContext, createUIContext, setTempHome, withTempAgentDir, withTempHome } from "./helpers.js";
 
 const KEY = "PI_CODING_AGENT_DIR";
 
@@ -83,3 +84,21 @@ for (const { label, prior } of priors) {
 		});
 	});
 }
+
+test("a context member the test did not stub throws naming it", () => {
+	const ctx = createExtensionContext();
+
+	expect(() => ctx.getContextUsage()).toThrow("ctx.getContextUsage is not stubbed in this test context; pass it in the overrides.");
+});
+
+test("a UI member the test did not stub throws naming it", () => {
+	const ui = createUIContext();
+
+	expect(() => { ui.notify("probe"); }).toThrow("ctx.ui.notify is not stubbed in this test context; pass it in the overrides.");
+});
+
+test("reading a model registry the test did not stub throws", () => {
+	const ctx = createExtensionContext();
+
+	expect(() => ctx.modelRegistry).toThrow("ctx.modelRegistry is not stubbed in this test context; pass it in the overrides.");
+});
