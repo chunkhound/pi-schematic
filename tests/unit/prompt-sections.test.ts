@@ -1,13 +1,30 @@
 import { expect, test } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext, ExtensionFactory, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { applyPromptSections, createPromptSectionRegistry } from "../../prompt-sections.js";
 import { modelGroupsPath } from "../../model-groups/store.js";
 import { assertPresent } from "../assertions.js";
-import { createBeforeAgentStartEvent, createTestHost, emitBeforeAgentStart } from "./test-host.js";
+import { createBeforeAgentStartEvent, createTestHost, emitBeforeAgentStart, getCommand, getHandler, getTool } from "./test-host.js";
 import { withTemp } from "./model-groups-helpers.js";
 import { callHandlers, handoffToolResult, makeTUICtx, turnEndEvent } from "./helpers.js";
+
+type HostContext = ExtensionCommandContext & ExtensionToolContext;
+
+// The contexts these tests pass carry only the members the code under test reads; reading a
+// member a context lacks fails the test. Only that the value is an object can be checked at run time.
+function assertHostContext(value: unknown): asserts value is HostContext {
+	if (typeof value !== "object" || value === null) {throw new Error("Expected a context object.");}
+}
+
+function hostContext(value: unknown): HostContext {
+	assertHostContext(value);
+	return value;
+}
+
+function tuiContext(options?: Parameters<typeof makeTUICtx>[0]): HostContext {
+	return hostContext(makeTUICtx(options));
+}
 
 // ── Registry ────────────────────────────────────────────────────────
 
@@ -180,15 +197,15 @@ test("hands a later extension a prompt that already holds schematic's content", 
 
 test("keeps the primer section byte-identical while the topic and notebook sections change", async () => {
 	const pi = await createTestHost();
-	const handler = pi.handlers.get("before_agent_start")![0];
-	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
+	const handler = getHandler(pi, "before_agent_start");
+	const ctx = { ...tuiContext({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
 	const beforeEvent = createBeforeAgentStartEvent();
 	await handler(beforeEvent, ctx);
 	const before = beforeEvent.systemPromptOptions.sections;
 	expect(before.schematic).toBeDefined();
 
-	await pi.tools.get("notebook_write").execute("1", { name: "alpha", content: "first line" }, undefined, undefined, makeTUICtx());
-	await pi.commands.get("notebook")!.handler("oauth", { hasUI: false, getContextUsage: () => null });
+	await getTool(pi, "notebook_write").execute("1", { name: "alpha", content: "first line" }, undefined, undefined, tuiContext());
+	await getCommand(pi, "notebook").handler("oauth", hostContext({ hasUI: false, getContextUsage: () => null }));
 	const afterEvent = createBeforeAgentStartEvent();
 	await handler(afterEvent, ctx);
 	const after = afterEvent.systemPromptOptions.sections;
@@ -211,12 +228,12 @@ for (const sectionName of ["schematic", "schematic_topic", "schematic_model_grou
 			hasConfiguredAuth: () => true,
 		};
 		const pi = await createTestHost();
-		await pi.commands.get("notebook")!.handler("oauth", { hasUI: false, getContextUsage: () => null });
-		await pi.tools.get("notebook_write").execute("1", { name: "alpha", content: "first line" }, undefined, undefined, makeTUICtx());
-		const handler = pi.handlers.get("before_agent_start")![0];
+		await getCommand(pi, "notebook").handler("oauth", hostContext({ hasUI: false, getContextUsage: () => null }));
+		await getTool(pi, "notebook_write").execute("1", { name: "alpha", content: "first line" }, undefined, undefined, tuiContext());
+		const handler = getHandler(pi, "before_agent_start");
 		const event = createBeforeAgentStartEvent();
 
-		await handler(event, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry, getContextUsage: () => null });
+		await handler(event, hostContext({ hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry, getContextUsage: () => null }));
 
 		const body = event.systemPromptOptions.sections[sectionName];
 		assertPresent(body, `section ${sectionName} is missing`);
@@ -226,23 +243,23 @@ for (const sectionName of ["schematic", "schematic_topic", "schematic_model_grou
 
 test("re-renders the topic and notebook sections after a handoff completes", async () => {
 	const pi = await createTestHost();
-	const handler = pi.handlers.get("before_agent_start")![0];
-	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
-	await pi.commands.get("notebook")!.handler("oauth", { hasUI: false, getContextUsage: () => null });
-	await pi.tools.get("notebook_write").execute("1", { name: "stale", content: "obsolete finding" }, undefined, undefined, makeTUICtx());
-	await pi.tools.get("notebook_write").execute("2", { name: "keep", content: "durable decision" }, undefined, undefined, makeTUICtx());
+	const handler = getHandler(pi, "before_agent_start");
+	const ctx = { ...tuiContext({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
+	await getCommand(pi, "notebook").handler("oauth", hostContext({ hasUI: false, getContextUsage: () => null }));
+	await getTool(pi, "notebook_write").execute("1", { name: "stale", content: "obsolete finding" }, undefined, undefined, tuiContext());
+	await getTool(pi, "notebook_write").execute("2", { name: "keep", content: "durable decision" }, undefined, undefined, tuiContext());
 	const beforeHandoff = createBeforeAgentStartEvent();
 	await handler(beforeHandoff, ctx);
 	expect(beforeHandoff.systemPromptOptions.sections.schematic_topic).toContain("Current topic: `oauth`");
 	expect(beforeHandoff.systemPromptOptions.sections.schematic_notebook).toContain("  stale: obsolete finding");
 
 	let branch: unknown[] = [];
-	const handoffCtx = {
+	const handoffCtx = hostContext({
 		getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
 		hasUI: false,
 		sessionManager: { getBranch: () => branch },
-	};
-	await pi.tools.get("handoff").execute(
+	});
+	await getTool(pi, "handoff").execute(
 		"handoff",
 		{ nextInstruction: "continue without the stale page", discardPages: ["stale"] },
 		undefined,
