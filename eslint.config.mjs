@@ -416,7 +416,26 @@ export default defineConfig([
 		plugins: { vitest },
 		rules: {
 			// @vitest/eslint-plugin recommended
-			"vitest/expect-expect": "error",
+			// The suite's assertion helpers make a counted expect on every path; "expect" and "assert" are the rule's defaults.
+			"vitest/expect-expect": [
+				"error",
+				{
+					assertFunctionNames: [
+						"expect",
+						"assert",
+						"expectPrefix",
+						"expectSuffix",
+						"expectGoldenFile",
+						"assertAllowed",
+						"assertBlocked",
+						"assertChildRegistriesCleared",
+						"assertErrorResult",
+						"assertHandoffAlignment",
+						"assertResetClears",
+						"assertTopicSourceCoupling",
+					],
+				},
+			],
 			"vitest/no-commented-out-tests": "error",
 			"vitest/no-conditional-expect": "error",
 			// An error, not the preset's warn: lint exits 0 on warnings, so a disabled test would pass unnoticed.
@@ -426,7 +445,8 @@ export default defineConfig([
 			"vitest/no-import-node-test": "error",
 			"vitest/no-interpolation-in-snapshots": "error",
 			"vitest/no-mocks-import": "error",
-			"vitest/no-standalone-expect": "error",
+			// testWithDir is Vitest's test extended with a temp-directory fixture.
+			"vitest/no-standalone-expect": ["error", { additionalTestBlockFunctions: ["testWithDir"] }],
 			"vitest/no-unneeded-async-expect-function": "error",
 			"vitest/prefer-called-exactly-once-with": "error",
 			"vitest/require-local-test-context-for-concurrent-snapshots": "error",
@@ -434,7 +454,8 @@ export default defineConfig([
 			// The suite passes a failure message as the second argument: expect(value, message).
 			"vitest/valid-expect": ["error", { maxArgs: 2 }],
 			"vitest/valid-expect-in-promise": "error",
-			"vitest/valid-title": "error",
+			// Table-driven tests loop over a case list and pass each case's name variable as the title.
+			"vitest/valid-title": ["error", { allowArguments: true }],
 
 			"vitest/max-expects": "error",
 			"vitest/no-conditional-in-test": "error",

@@ -15,7 +15,7 @@ import { spawnNode } from "./spawn-node.js";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const loader = new URL("../../register-loader.mjs", import.meta.url).href;
 
-function evaluate(code: string): void {
+function evaluate(code: string): { status: number | null; output: string } {
 	const agentDir = mkdtempSync(join(tmpdir(), "pi-schematic-module-order-"));
 	try {
 		const result = spawnNode(["--input-type=module", "--eval", code], {
@@ -23,7 +23,7 @@ function evaluate(code: string): void {
 			env: { PI_CODING_AGENT_DIR: agentDir },
 			loader,
 		});
-		expect(result.status, [result.stdout, result.stderr].filter(Boolean).join("\n")).toBe(0);
+		return { status: result.status, output: [result.stdout, result.stderr].filter(Boolean).join("\n") };
 	} finally {
 		rmSync(agentDir, { recursive: true, force: true });
 	}
@@ -31,7 +31,7 @@ function evaluate(code: string): void {
 
 describe("module evaluation order", () => {
 	it("loads handoff before spawn in a fresh extension process", () => {
-		evaluate(`
+		const { status, output } = evaluate(`
 			await import('./handoff/tool.ts');
 			await import('./spawn/index.ts');
 			const sdk = await import('@earendil-works/pi-coding-agent');
@@ -40,10 +40,11 @@ describe("module evaluation order", () => {
 			if (typeof sdk.SettingsManager !== 'function') throw new Error('SettingsManager missing');
 			if (typeof sdk.ModelRuntime?.create !== 'function') throw new Error('ModelRuntime.create missing');
 		`);
+		expect(status, output).toBe(0);
 	});
 
 	it("createAgentSession is callable after handoff-first import sequence", () => {
-		evaluate(`
+		const { status, output } = evaluate(`
 			await import('./handoff/tool.ts');
 			await import('./spawn/index.ts');
 			const sdk = await import('@earendil-works/pi-coding-agent');
@@ -62,10 +63,11 @@ describe("module evaluation order", () => {
 			}
 			if (!threw) throw new Error('Expected createAgentSession to throw with invalid args');
 		`);
+		expect(status, output).toBe(0);
 	});
 
 	it("creates and uses a deterministic session after handoff-first imports", () => {
-		evaluate(`
+		const { status, output } = evaluate(`
 			await import('./handoff/tool.ts');
 			await import('./spawn/index.ts');
 			const [{ createAssistantMessageEventStream }, sdk] = await Promise.all([
@@ -113,5 +115,6 @@ describe("module evaluation order", () => {
 				session.dispose();
 			}
 		`);
+		expect(status, output).toBe(0);
 	});
 });

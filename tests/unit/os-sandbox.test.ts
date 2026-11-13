@@ -448,7 +448,8 @@ test.skipIf(!canUseOsSandbox())("sandboxed stray closing brace is the same synta
 
 test.skipIf(!canUseOsSandbox())("sandbox allows writes to /dev/null", async () => {
 	// CONTRACT: /dev/null redirects are always allowed (not a real write)
-	await runLikePiOk(wrapCommandWithOsSandbox("echo discard > /dev/null"));
+	const run = await runLikePi(wrapCommandWithOsSandbox("echo discard > /dev/null"));
+	expect(run.code, run.stderr.toString()).toBe(0);
 }, SANDBOX_TIMEOUT_MS);
 
 test.skipIf(!canUseOsSandbox())("sandbox allows writes through a symlinked temp path", async () => {

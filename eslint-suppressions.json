@@ -520,6 +520,9 @@
     },
     "ban/zero-delay-timeout": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 34
     }
   },
   "tests/e2e/real-host.ts": {
@@ -661,6 +664,12 @@
     },
     "ban/wall-clock": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 7
+    },
+    "vitest/prefer-strict-boolean-matchers": {
+      "count": 2
     }
   },
   "tests/unit/dependency-graph-assertions.test.ts": {
@@ -700,6 +709,9 @@
     },
     "ban/wall-clock": {
       "count": 11
+    },
+    "vitest/max-expects": {
+      "count": 112
     }
   },
   "tests/unit/handoff-boundary-session.test.ts": {
@@ -716,6 +728,14 @@
       "count": 18
     },
     "@typescript-eslint/unbound-method": {
+      "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 52
+    }
+  },
+  "tests/unit/handoff-eligibility.test.ts": {
+    "vitest/max-expects": {
       "count": 1
     }
   },
@@ -758,6 +778,15 @@
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 2
+    },
+    "vitest/max-expects": {
+      "count": 38
+    },
+    "vitest/no-conditional-expect": {
+      "count": 3
+    },
+    "vitest/no-conditional-in-test": {
+      "count": 1
     }
   },
   "tests/unit/helpers.test.ts": {
@@ -845,6 +874,9 @@
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 4
+    },
+    "vitest/max-expects": {
+      "count": 9
     }
   },
   "tests/unit/model-groups-autocomplete.test.ts": {
@@ -865,6 +897,9 @@
     },
     "@typescript-eslint/unbound-method": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 5
     }
   },
   "tests/unit/model-groups-constraints-fixture.ts": {
@@ -884,6 +919,9 @@
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 7
     }
   },
   "tests/unit/model-groups-crud.test.ts": {
@@ -918,6 +956,12 @@
       "count": 3
     },
     "@typescript-eslint/restrict-template-expressions": {
+      "count": 2
+    },
+    "vitest/max-expects": {
+      "count": 48
+    },
+    "vitest/no-conditional-expect": {
       "count": 2
     }
   },
@@ -958,6 +1002,9 @@
     },
     "no-control-regex": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 3
     }
   },
   "tests/unit/model-groups-modalities.test.ts": {
@@ -977,6 +1024,11 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 1
+    }
+  },
+  "tests/unit/model-groups-modality.test.ts": {
+    "vitest/max-expects": {
       "count": 1
     }
   },
@@ -1045,6 +1097,12 @@
     },
     "no-control-regex": {
       "count": 3
+    },
+    "vitest/max-expects": {
+      "count": 157
+    },
+    "vitest/no-conditional-expect": {
+      "count": 2
     }
   },
   "tests/unit/notebook-prompt.test.ts": {
@@ -1091,6 +1149,12 @@
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 55
+    },
+    "vitest/no-conditional-in-test": {
+      "count": 1
     }
   },
   "tests/unit/notifications.test.ts": {
@@ -1114,6 +1178,15 @@
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 17
+    },
+    "vitest/no-conditional-expect": {
+      "count": 2
+    },
+    "vitest/no-conditional-in-test": {
+      "count": 1
     }
   },
   "tests/unit/os-sandbox.test.ts": {
@@ -1122,6 +1195,9 @@
     },
     "ban/wall-clock": {
       "count": 3
+    },
+    "vitest/no-conditional-expect": {
+      "count": 1
     }
   },
   "tests/unit/pi-module-identity.test.ts": {
@@ -1213,6 +1289,9 @@
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 69
     }
   },
   "tests/unit/readonly-handoff.test.ts": {
@@ -1248,6 +1327,9 @@
     },
     "ban/wall-clock": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 2
     }
   },
   "tests/unit/readonly-mode.test.ts": {
@@ -1274,6 +1356,9 @@
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 3
+    },
+    "vitest/max-expects": {
+      "count": 3
     }
   },
   "tests/unit/readonly-spawn.test.ts": {
@@ -1297,6 +1382,15 @@
     },
     "ban/wall-clock": {
       "count": 3
+    },
+    "vitest/max-expects": {
+      "count": 7
+    },
+    "vitest/no-conditional-expect": {
+      "count": 2
+    },
+    "vitest/no-conditional-in-test": {
+      "count": 2
     }
   },
   "tests/unit/register-loader.test.ts": {
@@ -1335,6 +1429,9 @@
   "tests/unit/runtime-singletons.test.ts": {
     "@typescript-eslint/no-non-null-assertion": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 7
     }
   },
   "tests/unit/spawn-event.test.ts": {
@@ -1370,6 +1467,9 @@
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 6
     }
   },
   "tests/unit/spawn-lifecycle.test.ts": {
@@ -1428,6 +1528,9 @@
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 2
     }
   },
   "tests/unit/spawn-runtime-compatibility.test.ts": {
@@ -1451,6 +1554,9 @@
     },
     "ban/wall-clock": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 7
     }
   },
   "tests/unit/spawn.test.ts": {
@@ -1498,6 +1604,9 @@
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 60
     }
   },
   "tests/unit/state-invariants.test.ts": {
@@ -1515,6 +1624,12 @@
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 2
+    },
+    "vitest/max-expects": {
+      "count": 24
+    },
+    "vitest/no-conditional-expect": {
+      "count": 8
     }
   },
   "tests/unit/system-prompt.test.ts": {
@@ -1529,6 +1644,9 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 4
+    },
+    "vitest/max-expects": {
+      "count": 31
     }
   },
   "tests/unit/test-host.test.ts": {
@@ -1585,6 +1703,9 @@
     },
     "ban/wall-clock": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 3
     }
   },
   "tests/unit/topic.test.ts": {
@@ -1596,6 +1717,9 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 13
+    },
+    "vitest/max-expects": {
+      "count": 3
     }
   },
   "tests/unit/tui-indicators.test.ts": {
@@ -1639,6 +1763,12 @@
     },
     "ban/wall-clock": {
       "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 16
+    },
+    "vitest/no-conditional-expect": {
+      "count": 4
     }
   },
   "thinking-levels.ts": {

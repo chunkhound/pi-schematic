@@ -72,18 +72,22 @@ test("cache lookups return null for unknown names", () => {
 	expect(cacheLookupCommand(state, "nonexistent-command")).toBeNull();
 });
 
-testWithDir.for([
+const skillReadonlyCases = [
 	{ title: "populateFromSkills caches a skill with readonly: true", name: "my-skill", fm: { readonly: true, description: "Test" }, expected: true },
 	{ title: "populateFromSkills caches a skill with readonly: false", name: "safe-skill", fm: { readonly: false, description: "Test" }, expected: false },
 	{ title: "populateFromSkills returns null for skill without readonly frontmatter", name: "no-readonly", fm: { description: "Test" }, expected: null },
-])("$title", async ({ name, fm, expected }, { dir }) => {
-	const state = createState();
-	const filePath = await writeMd(dir, name, fm);
-	populateFromSkills(state, [makeSkill(name, filePath)]);
+];
 
-	expect(cacheLookupSkill(state, name)).toBe(expected);
-	expect(cacheLookupCommand(state, name)).toBeNull();
-});
+for (const { title, name, fm, expected } of skillReadonlyCases) {
+	testWithDir(title, async ({ dir }) => {
+		const state = createState();
+		const filePath = await writeMd(dir, name, fm);
+		populateFromSkills(state, [makeSkill(name, filePath)]);
+
+		expect(cacheLookupSkill(state, name)).toBe(expected);
+		expect(cacheLookupCommand(state, name)).toBeNull();
+	});
+}
 
 test("populateFromSkills silently skips missing file", () => {
 	const state = createState();
