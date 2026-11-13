@@ -1046,40 +1046,19 @@
   },
   "tests/unit/notebook.test.ts": {
     "@typescript-eslint/no-empty-function": {
-      "count": 22
-    },
-    "@typescript-eslint/no-explicit-any": {
-      "count": 123
+      "count": 18
     },
     "@typescript-eslint/no-non-null-assertion": {
-      "count": 50
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 62
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 68
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 100
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 158
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 2
+      "count": 18
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 108
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
+      "count": 13
     },
     "@typescript-eslint/require-await": {
-      "count": 14
+      "count": 10
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 4
+      "count": 2
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
@@ -1142,18 +1121,6 @@
     }
   },
   "tests/unit/prompt-sections.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 6
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 5
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 13
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 8
-    },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
     },
@@ -1508,20 +1475,6 @@
       "count": 7
     }
   },
-  "tests/unit/system-prompt.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 7
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 12
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 9
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 4
-    }
-  },
   "tests/unit/test-host.test.ts": {
     "@typescript-eslint/no-empty-function": {
       "count": 2
@@ -1573,25 +1526,6 @@
     },
     "ban/wall-clock": {
       "count": 1
-    }
-  },
-  "tests/unit/topic.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 6
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 6
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 13
-    }
-  },
-  "tests/unit/tui-indicators.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 14
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 12
     }
   },
   "tests/unit/watchdog.test.ts": {

@@ -1,8 +1,27 @@
 import { expect, test } from "vitest";
+import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
 import { setActiveNotebookTopic, clearActiveNotebookTopic } from "../../notebook/topic.js";
 import { registerNotebookTopicTool } from "../../notebook/topic-tool.js";
-import { createTestHost } from "./test-host.js";
+import { createToolContext } from "./helpers.js";
+import { createTestHost, getTool } from "./test-host.js";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+/** The result's details; throws unless they are an object. */
+function detailsOf(result: AgentToolResult<unknown>): Record<string, unknown> {
+	if (!isRecord(result.details)) {throw new Error("Expected the tool result details to be an object.");}
+	return result.details;
+}
+
+/** The text of the result's first content block; throws unless that block is text. */
+function firstText(result: AgentToolResult<unknown>): string {
+	const block = result.content.at(0);
+	if (block?.type !== "text") {throw new Error("Expected the tool result to start with a text block.");}
+	return block.text;
+}
 
 test("topic helpers manage the active notebook topic lifecycle", () => {
 	const state = createState();
@@ -26,35 +45,35 @@ test("notebook_topic_set establishes a fresh topic, is idempotent, and refuses o
 	const state = createState();
 	const pi = await createTestHost((api) => { registerNotebookTopicTool(api, state); });
 
-	const tool = pi.tools.get("notebook_topic_set");
-	const first = await tool.execute("1", { topic: "OAuth" });
-	expect(first.details.topic).toBe("oauth");
+	const tool = getTool(pi, "notebook_topic_set");
+	const first = await tool.execute("1", { topic: "OAuth" }, undefined, undefined, createToolContext());
+	expect(detailsOf(first).topic).toBe("oauth");
 	expect(state.activeNotebookTopic).toBe("oauth");
 	expect(state.activeNotebookTopicSource).toBe("agent");
 
-	const second = await tool.execute("2", { topic: "oauth" });
-	expect(second.details.changed).toBe(false);
-	expect(second.details.source).toBe("agent");
-	expect(second.content[0].text).toMatch(/already set to "oauth"/i);
+	const second = await tool.execute("2", { topic: "oauth" }, undefined, undefined, createToolContext());
+	expect(detailsOf(second).changed).toBe(false);
+	expect(detailsOf(second).source).toBe("agent");
+	expect(firstText(second)).toMatch(/already set to "oauth"/i);
 
-	await expect(tool.execute("3", { topic: "billing" })).rejects.toThrow(/already exists/);
+	await expect(tool.execute("3", { topic: "billing" }, undefined, undefined, createToolContext())).rejects.toThrow(/already exists/);
 });
 
 
 test("notebook_topic_set preserves human authority, stays idempotent for equal topics, and rejects empty normalized topics", async () => {
 	const state = createState();
 	const pi = await createTestHost((api) => { registerNotebookTopicTool(api, state); });
-	const tool = pi.tools.get("notebook_topic_set");
+	const tool = getTool(pi, "notebook_topic_set");
 
 	setActiveNotebookTopic(state, "oauth", "human");
-	const same = await tool.execute("1", { topic: "OAuth" });
-	expect(same.details.changed).toBe(false);
-	expect(same.details.source).toBe("human");
-	expect(same.content[0].text).toMatch(/already set to "oauth"/i);
-	await expect(tool.execute("2", { topic: "billing" })).rejects.toThrow(/human-set notebook topic is authoritative/i);
+	const same = await tool.execute("1", { topic: "OAuth" }, undefined, undefined, createToolContext());
+	expect(detailsOf(same).changed).toBe(false);
+	expect(detailsOf(same).source).toBe("human");
+	expect(firstText(same)).toMatch(/already set to "oauth"/i);
+	await expect(tool.execute("2", { topic: "billing" }, undefined, undefined, createToolContext())).rejects.toThrow(/human-set notebook topic is authoritative/i);
 
 	const freshState = createState();
 	const freshPi = await createTestHost((api) => { registerNotebookTopicTool(api, freshState); });
-	const freshTool = freshPi.tools.get("notebook_topic_set");
-	await expect(freshTool.execute("3", { topic: "@@@" })).rejects.toThrow(/notebook topic cannot be empty/i);
+	const freshTool = getTool(freshPi, "notebook_topic_set");
+	await expect(freshTool.execute("3", { topic: "@@@" }, undefined, undefined, createToolContext())).rejects.toThrow(/notebook topic cannot be empty/i);
 });
