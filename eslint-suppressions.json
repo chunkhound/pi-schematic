@@ -240,17 +240,9 @@
       "count": 1
     }
   },
-  "tests/e2e/real-host-protocol.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 2
-    }
-  },
   "tests/e2e/real-host.test.ts": {
     "@typescript-eslint/no-non-null-assertion": {
       "count": 7
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 6
     },
     "@typescript-eslint/unbound-method": {
       "count": 2
@@ -259,7 +251,7 @@
       "count": 1
     },
     "vitest/max-expects": {
-      "count": 34
+      "count": 31
     }
   },
   "tests/e2e/real-host.ts": {
@@ -270,23 +262,12 @@
       "count": 1
     }
   },
-  "tests/unit/brand-assets.test.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    }
-  },
   "tests/unit/config-invariants.test.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 4
-    },
     "ban/wall-clock": {
       "count": 1
     },
     "vitest/max-expects": {
       "count": 7
-    },
-    "vitest/prefer-strict-boolean-matchers": {
-      "count": 2
     }
   },
   "tests/unit/frontmatter-cache.test.ts": {
@@ -298,11 +279,8 @@
     "@typescript-eslint/no-non-null-assertion": {
       "count": 2
     },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 7
-    },
     "vitest/max-expects": {
-      "count": 52
+      "count": 48
     }
   },
   "tests/unit/handoff-eligibility.test.ts": {
@@ -334,7 +312,7 @@
       "count": 2
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 6
+      "count": 2
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 2
@@ -377,7 +355,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 3
+      "count": 1
     },
     "vitest/max-expects": {
       "count": 48
@@ -435,9 +413,6 @@
     "@typescript-eslint/no-non-null-assertion": {
       "count": 18
     },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 8
-    },
     "vitest/max-expects": {
       "count": 55
     }
@@ -469,11 +444,6 @@
       "count": 1
     },
     "n/no-unsupported-features/node-builtins": {
-      "count": 1
-    }
-  },
-  "tests/unit/prompt-sections.test.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
     }
   },
@@ -513,9 +483,6 @@
     }
   },
   "tests/unit/register-loader.test.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    },
     "ban/find-package-json-import": {
       "count": 1
     },
@@ -524,9 +491,6 @@
     }
   },
   "tests/unit/render-snapshots.test.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    },
     "no-control-regex": {
       "count": 1
     }
@@ -545,17 +509,11 @@
     }
   },
   "tests/unit/spawn-event.test.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    },
     "vitest/max-expects": {
       "count": 6
     }
   },
   "tests/unit/spawn-render.test.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    },
     "vitest/max-expects": {
       "count": 1
     }
@@ -573,19 +531,16 @@
       "count": 3
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 13
+      "count": 2
     },
     "@typescript-eslint/only-throw-error": {
       "count": 1
     },
     "vitest/max-expects": {
-      "count": 59
+      "count": 56
     }
   },
   "tests/unit/state-invariants.test.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 2
     },
@@ -603,7 +558,7 @@
   },
   "tests/unit/test-host.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 4
+      "count": 2
     }
   },
   "tests/unit/time-format.test.ts": {

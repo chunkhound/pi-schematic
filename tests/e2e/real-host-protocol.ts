@@ -8,7 +8,7 @@
  * types and the handoff message builder, so it loads in either environment.
  */
 
-import type { ToolCall, Usage } from "@earendil-works/pi-ai";
+import type { JsonObject, JsonValue, ToolCall, Usage } from "@earendil-works/pi-ai";
 import { buildNextUserMessage } from "../../handoff/format.js";
 
 /** Provider, API and model the probe registers and the harness selects. */
@@ -106,6 +106,15 @@ export function isJsonObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isJsonValue(value: unknown): value is JsonValue {
+	return value === null || typeof value === "boolean" || typeof value === "number" || typeof value === "string"
+		|| (Array.isArray(value) && value.every(isJsonValue)) || isJsonRecord(value);
+}
+
+function isJsonRecord(value: unknown): value is JsonObject {
+	return isJsonObject(value) && Object.values(value).every(isJsonValue);
+}
+
 function requireStep(record: Record<string, unknown>, field: string, line: string): number {
 	const value = record[field];
 	if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
@@ -138,10 +147,9 @@ function parseScriptedCall(value: unknown, fail: (reason: string) => never): Scr
 	if (!isJsonObject(value)) {fail(`not an object: ${JSON.stringify(value)}`);}
 	const { name, arguments: callArguments, ...rest } = value;
 	if (typeof name !== "string" || name === "") {fail(`no name: ${JSON.stringify(value)}`);}
-	if (!isJsonObject(callArguments)) {fail(`no arguments object: ${JSON.stringify(value)}`);}
+	if (!isJsonRecord(callArguments)) {fail(`no arguments object: ${JSON.stringify(value)}`);}
 	if (Object.keys(rest).length > 0) {fail(`a call step takes only name and arguments: ${JSON.stringify(value)}`);}
-	// The value came out of JSON.parse, so the arguments are JSON.
-	return { name, arguments: callArguments as ToolCall["arguments"] };
+	return { name, arguments: callArguments };
 }
 
 /**
@@ -250,7 +258,7 @@ export function parseBarrierReport(text: string): BarrierReport {
 
 /** `handoffId` of a handoff cut written in a turn_end boundary, or null for any other entry or draft. */
 export function cutHandoffId(entry: { type: string; details?: unknown }): string | null {
-	if (entry.type !== "compaction" || typeof entry.details !== "object" || entry.details === null) {return null;}
-	const handoffId = (entry.details as Record<string, unknown>).handoffId;
+	if (entry.type !== "compaction" || !isJsonObject(entry.details)) {return null;}
+	const handoffId = entry.details.handoffId;
 	return typeof handoffId === "string" ? handoffId : null;
 }
