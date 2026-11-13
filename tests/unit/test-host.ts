@@ -19,6 +19,7 @@ import type {
 	ContextEventResult,
 	Extension,
 	ExtensionAPI,
+	ExtensionContext,
 	ExtensionError,
 	ExtensionEvent,
 	ExtensionFactory,
@@ -501,15 +502,32 @@ export function getHandlers<K extends HostEventName>(pi: TestPI, event: K): Host
 
 /**
  * The handler registered for `event` at `index` in registration order (default the
- * first). Throws, naming the event, when there is no handler at that index.
+ * first). Throws, naming the event and index, unless `index` is a non-negative
+ * integer below the number of registered handlers.
  */
 export function getHandler<K extends HostEventName>(pi: TestPI, event: K, index = 0): HostHandler<K> {
 	const handlers = getHandlers(pi, event);
-	const handler = handlers.at(index);
-	if (handler === undefined) {
+	if (!Number.isInteger(index) || index < 0 || index >= handlers.length) {
 		throw new Error(`No "${event}" handler at index ${String(index)}; ${String(handlers.length)} registered on the test host.`);
 	}
-	return handler;
+	return handlers[index];
+}
+
+/**
+ * Calls the handler `getHandler(pi, event, index)` returns and resolves to its
+ * result, with a handler that returned nothing resolved to `undefined`, so
+ * `assertPresent` can narrow the result.
+ */
+export async function invokeHandler<K extends HostEventName>(
+	pi: TestPI,
+	event: K,
+	payload: HostEvent<K>,
+	ctx: ExtensionContext,
+	index = 0,
+): Promise<HostEventResult<K> | undefined> {
+	const result = await getHandler(pi, event, index)(payload, ctx);
+	if (result === undefined) {return undefined;}
+	return result;
 }
 
 /** The definition of the tool registered as `name`. Throws, naming the tool, when none is. */
@@ -517,6 +535,32 @@ export function getTool(pi: TestPI, name: string): ToolDefinition {
 	const registered = hostOf(pi).extension.tools.get(name);
 	if (registered === undefined) {throw new Error(`No tool "${name}" is registered on the test host.`);}
 	return registered.definition;
+}
+
+/** A tool's `renderCall` as pi types it. */
+export type ToolRenderCall = NonNullable<ToolDefinition["renderCall"]>;
+
+/** A tool's `renderResult` as pi types it. */
+export type ToolRenderResult = NonNullable<ToolDefinition["renderResult"]>;
+
+/**
+ * The `renderCall` of the tool registered as `name`, bound to its definition.
+ * Throws, naming the tool, when none is registered or it has no `renderCall`.
+ */
+export function getToolRenderCall(pi: TestPI, name: string): ToolRenderCall {
+	const definition = getTool(pi, name);
+	if (definition.renderCall === undefined) {throw new Error(`Tool "${name}" on the test host has no renderCall.`);}
+	return definition.renderCall.bind(definition);
+}
+
+/**
+ * The `renderResult` of the tool registered as `name`, bound to its definition.
+ * Throws, naming the tool, when none is registered or it has no `renderResult`.
+ */
+export function getToolRenderResult(pi: TestPI, name: string): ToolRenderResult {
+	const definition = getTool(pi, name);
+	if (definition.renderResult === undefined) {throw new Error(`Tool "${name}" on the test host has no renderResult.`);}
+	return definition.renderResult.bind(definition);
 }
 
 /** The command registered as `name`. Throws, naming the command, when none is. */

@@ -1715,16 +1715,16 @@
       "count": 24
     },
     "@typescript-eslint/no-non-null-assertion": {
-      "count": 25
+      "count": 24
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 53
+      "count": 51
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 64
+      "count": 63
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 77
+      "count": 69
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 3
