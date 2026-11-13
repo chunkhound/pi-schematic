@@ -2,38 +2,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-
-interface PiVersions {
-	piVersion: string;
-	typeboxVersion: string;
-}
-
-interface CompatFixtureModule {
-	packEntry: (stdout: string) => unknown;
-	parseNpmViewValue: (stdout: string) => unknown;
-	resolveLatestPi: (copy: string, options: { env: NodeJS.ProcessEnv }) => Promise<PiVersions>;
-	writeCompatArtifacts: (artifactDir: string | undefined, sourceDir: string, versions: PiVersions) => void;
-}
-
-// Keyed by the interface, so tsc rejects a member the guard does not check.
-const COMPAT_FIXTURE_EXPORTS = Object.keys({
-	packEntry: true,
-	parseNpmViewValue: true,
-	resolveLatestPi: true,
-	writeCompatArtifacts: true,
-} satisfies Record<keyof CompatFixtureModule, true>);
-
-// The script is plain JavaScript, so its exports arrive untyped: each one the tests call must be a function.
-function assertCompatFixtureModule(value: unknown): asserts value is CompatFixtureModule {
-	if (typeof value !== "object" || value === null) {throw new Error("scripts/compat-fixture.mjs did not load as a module.");}
-	for (const name of COMPAT_FIXTURE_EXPORTS) {
-		if (typeof Reflect.get(value, name) !== "function") {throw new Error(`scripts/compat-fixture.mjs does not export a function "${name}".`);}
-	}
-}
-
-const compatFixture: unknown = await import(new URL("../../scripts/compat-fixture.mjs", import.meta.url).href);
-assertCompatFixtureModule(compatFixture);
-const { packEntry, parseNpmViewValue, resolveLatestPi, writeCompatArtifacts } = compatFixture;
+import { packEntry, parseNpmViewValue, resolveLatestPi, writeCompatArtifacts } from "../../scripts/compat-fixture.mjs";
 
 // One line of the stub npm's call log: the arguments of one call, which must be strings.
 function parseCallArgs(line: string): string[] {

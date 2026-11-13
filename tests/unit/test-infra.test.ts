@@ -5,30 +5,9 @@
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { expectPrefix, expectSuffix } from "../assertions.js";
-import { REPO_ROOT, REPO_ROOT_URL } from "../paths.js";
+import { assertCompatTestFiles, COMPAT_UNIT_FILES } from "../../scripts/test-compat-current.mjs";
+import { REPO_ROOT } from "../paths.js";
 import { spawnNode } from "./spawn-node.js";
-
-interface CompatCurrentModule {
-	assertCompatTestFiles: (files: string[]) => void;
-	COMPAT_UNIT_FILES: string[];
-}
-
-// The script is plain JavaScript, so its exports arrive untyped: the check must be a function and the
-// unit list an array of strings.
-function assertCompatCurrentModule(value: unknown): asserts value is CompatCurrentModule {
-	if (typeof value !== "object" || value === null) {throw new Error("scripts/test-compat-current.mjs did not load as a module.");}
-	if (typeof Reflect.get(value, "assertCompatTestFiles") !== "function") {
-		throw new Error('scripts/test-compat-current.mjs does not export a function "assertCompatTestFiles".');
-	}
-	const files: unknown = Reflect.get(value, "COMPAT_UNIT_FILES");
-	if (!Array.isArray(files) || !files.every((file) => typeof file === "string")) {
-		throw new Error('scripts/test-compat-current.mjs does not export "COMPAT_UNIT_FILES" as an array of strings.');
-	}
-}
-
-const compatCurrent: unknown = await import(new URL("scripts/test-compat-current.mjs", REPO_ROOT_URL).href);
-assertCompatCurrentModule(compatCurrent);
-const { assertCompatTestFiles, COMPAT_UNIT_FILES } = compatCurrent;
 
 describe("spawnNode", () => {
 	test("throws a timeout error for a child that outlives its deadline", () => {
