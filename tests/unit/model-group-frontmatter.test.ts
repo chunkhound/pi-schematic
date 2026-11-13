@@ -10,25 +10,59 @@ import fs from "node:fs";
 import path from "node:path";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { ModelRegistry, type ExtensionContext, type SlashCommandInfo } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { __setModelGroupsFsForTests, modelGroupsPath } from "../../model-groups/store.js";
-import { makeReadonlyUICtx, testWithDir, tmpDir, theme } from "./helpers.js";
-import { createBeforeAgentStartEvent, createTestHost } from "./test-host.js";
+import { createExtensionContext, createUIContext, testWithDir, tmpDir } from "./helpers.js";
+import { createBeforeAgentStartEvent, createTestHost, getHandler, getHandlers, getHostRecords, type AppendedEntry, type HostHandler, type TestPI } from "./test-host.js";
 import { withTemp } from "./model-groups-helpers.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-function mockModel(provider: string, id: string): any {
-	return { provider, id, reasoning: true };
+// The fields a registry model needs beyond identity, reasoning and thinking map are
+// neutral: an empty `input` reads like an absent one, and nothing on these paths
+// reads the name, api, cost or token limits.
+function mockModel(provider: string, id: string): Model<Api> {
+	return {
+		provider, id, reasoning: true,
+		name: "", api: "test-api", baseUrl: "", input: [],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 0, maxTokens: 0,
+	};
 }
 
+// A `ModelRegistry` whose `find` and `hasConfiguredAuth` answer from `models` and
+// `authenticated`; every other method is the class's own and fails without a runtime.
 function mockRegistry(
-	models: any[] = [mockModel("openai", "gpt-4o")],
+	models: Model<Api>[] = [mockModel("openai", "gpt-4o")],
 	authenticated = new Set(models.map((m) => `${m.provider}:${m.id}`)),
-): any {
-	return {
+): ModelRegistry {
+	const registry: unknown = Object.create(ModelRegistry.prototype);
+	if (!(registry instanceof ModelRegistry)) {throw new Error("Object.create did not produce a ModelRegistry instance.");}
+	return Object.assign(registry, {
 		find: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id),
-		hasConfiguredAuth: (m: any) => authenticated.has(`${m.provider}:${m.id}`),
-	};
+		hasConfiguredAuth: (m: Model<Api>) => authenticated.has(`${m.provider}:${m.id}`),
+	});
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+/** `value` as a record; throws, naming `label`, when it is not an object. */
+function asRecord(value: unknown, label: string): Record<string, unknown> {
+	if (!isRecord(value)) {throw new Error(`${label} is not an object.`);}
+	return value;
+}
+
+/** The data of an appended entry; throws when the entry is missing or its data is not an object. */
+function entryData(entry: AppendedEntry | undefined): Record<string, unknown> {
+	if (entry === undefined) {throw new Error("No appended entry.");}
+	return asRecord(entry.data, `Data of the ${entry.customType} entry`);
+}
+
+// The extension registers several `session_start` handlers; its model-group refresh is the last one.
+function lastSessionStartHandler(pi: TestPI): HostHandler<"session_start"> {
+	return getHandler(pi, "session_start", getHandlers(pi, "session_start").length - 1);
 }
 
 function writeModelGroupsConfig(dir: string, groups: Record<string, { models: { provider: string; modelId: string; thinkingLevel?: string }[] }>): void {
@@ -46,25 +80,26 @@ async function writeSkillMd(dir: string, name: string, frontmatter: Record<strin
 	return filePath;
 }
 
-function makeNotifyCtx(overrides: Record<string, unknown> = {}) {
-	const notifications: { message: string; level: string }[] = [];
-	const ctx = {
-		...makeReadonlyUICtx({
-			ui: {
-				notify: (message: string, level: string) => { notifications.push({ message, level }); },
-				theme,
-				setStatus: () => {},
-				setWidget: () => {},
-			},
+function makeNotifyCtx(overrides: Partial<ExtensionContext> = {}) {
+	const notifications: { message: string; level: "info" | "warning" | "error" | undefined }[] = [];
+	const ctx = createExtensionContext({
+		hasUI: true,
+		ui: createUIContext({
+			notify: (message, level) => { notifications.push({ message, level }); },
+			setStatus: () => {},
+			setWidget: () => {},
+			// session_start registers the model-group autocomplete provider; these tests never query it.
+			addAutocompleteProvider: () => undefined,
 		}),
 		cwd: process.cwd(),
 		isProjectTrusted: () => true,
+		getContextUsage: () => undefined,
 		...overrides,
-	};
+	});
 	return { ctx, notifications };
 }
 
-function makePromptCommand(name: string, filePath: string) {
+function makePromptCommand(name: string, filePath: string): SlashCommandInfo {
 	return {
 		name,
 		source: "prompt",
@@ -84,7 +119,7 @@ function makeSkill(name: string, filePath: string) {
 	};
 }
 
-function makeSkillCommand(name: string, filePath: string) {
+function makeSkillCommand(name: string, filePath: string): SlashCommandInfo {
 	return { ...makePromptCommand(`skill:${name}`, filePath), source: "skill" };
 }
 
@@ -94,11 +129,11 @@ testWithDir("model-group frontmatter triggers model switch for /name command", a
 	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
 	const filePath = await writeSkillMd(skillDir, "review", { "model-group": "reviewer" });
 	const pi = await createTestHost();
-	const setModelCalls: any[] = [];
-	(pi as any).setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -106,15 +141,15 @@ testWithDir("model-group frontmatter triggers model switch for /name command", a
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(setModelCalls, "setModel should be called once").toHaveLength(1);
 	expect(setModelCalls[0].provider).toBe("openai");
 	expect(setModelCalls[0].id).toBe("gpt-4o");
 	expect(notifications.map((n) => n.message)).toContainEqual(expect.stringMatching(/Model changed.*reviewer.*\/review/));
 
-	const groupEntries = pi.appendedEntries.filter((e: any) => e.customType === "pi-schematic-model-group-switch");
+	const groupEntries = getHostRecords(pi).appendedEntries.filter((e) => e.customType === "pi-schematic-model-group-switch");
 	expect(groupEntries, "should append one model-group-switch entry").toHaveLength(1);
 	expect(groupEntries, "should append one model-group-switch entry").toMatchObject([
 		{ data: { command: "/review", groupName: "reviewer", provider: "openai", modelId: "gpt-4o" } },
@@ -129,8 +164,8 @@ testWithDir("model-group-only frontmatter applies and records the group's effect
 	const pi = await makeMockPI();
 	const setThinkingCalls: string[] = [];
 	pi.setThinkingLevel = (level: string) => { setThinkingCalls.push(level); };
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const routedModel = mockModelWithThinking("openai", "gpt-4o", {
 		off: null, minimal: "minimal", low: "low", medium: "medium", high: null,
 	});
@@ -141,23 +176,23 @@ testWithDir("model-group-only frontmatter applies and records the group's effect
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(setThinkingCalls, "group thinking is clamped for the routed model").toStrictEqual(["medium"]);
-	const entry = pi.appendedEntries.find((e: any) => e.customType === "pi-schematic-model-group-switch");
-	expect(entry?.data.thinking, "entry records effective thinking").toBe("medium");
+	const entry = getHostRecords(pi).appendedEntries.find((e) => e.customType === "pi-schematic-model-group-switch");
+	expect(entryData(entry).thinking, "entry records effective thinking").toBe("medium");
 }));
 
 testWithDir("model-group frontmatter triggers model switch for /skill:name command", async ({ dir: skillDir }) => withTemp(async ({ cwd }) => {
 	writeModelGroupsConfig(cwd, { fast: { models: [{ provider: "anthropic", modelId: "claude-sonnet" }] } });
 	const filePath = await writeSkillMd(skillDir, "quick", { "model-group": "fast" });
 	const pi = await createTestHost();
-	const setModelCalls: any[] = [];
-	(pi as any).setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -165,8 +200,8 @@ testWithDir("model-group frontmatter triggers model switch for /skill:name comma
 	});
 
 	pi.setCommands([makeSkillCommand("quick", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/skill:quick", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/skill:quick", source: "interactive" }, ctx);
 
 	expect(setModelCalls).toHaveLength(1);
 	expect(setModelCalls[0].provider).toBe("anthropic");
@@ -177,11 +212,11 @@ testWithDir("unknown model-group in /skill:name frontmatter blocks execution bef
 	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
 	const filePath = await writeSkillMd(skillDir, "quick", { "model-group": "nonexistent" });
 	const pi = await createTestHost();
-	const setModelCalls: any[] = [];
-	(pi as any).setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -189,8 +224,8 @@ testWithDir("unknown model-group in /skill:name frontmatter blocks execution bef
 	});
 
 	pi.setCommands([makeSkillCommand("quick", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	const result = await inputHandler({ text: "/skill:quick", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	const result = await inputHandler({ type: "input", text: "/skill:quick", source: "interactive" }, ctx);
 
 	expect(result, "selection failure must prevent command expansion and agent start").toStrictEqual({ action: "handled" });
 	expect(setModelCalls, "setModel should not be called").toHaveLength(0);
@@ -203,11 +238,11 @@ testWithDir("unknown model-group in frontmatter blocks execution with error", as
 	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
 	const filePath = await writeSkillMd(skillDir, "review", { "model-group": "nonexistent" });
 	const pi = await createTestHost();
-	const setModelCalls: any[] = [];
-	(pi as any).setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -215,8 +250,8 @@ testWithDir("unknown model-group in frontmatter blocks execution with error", as
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	const result = await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(result, "selection failure must prevent command expansion and agent start").toStrictEqual({ action: "handled" });
 	expect(setModelCalls, "setModel should not be called").toHaveLength(0);
@@ -230,11 +265,11 @@ testWithDir("empty model-group (SpawnRouteError) blocks execution with error", a
 	writeModelGroupsConfig(cwd, { empty: { models: [] } });
 	const filePath = await writeSkillMd(skillDir, "review", { "model-group": "empty" });
 	const pi = await createTestHost();
-	const setModelCalls: any[] = [];
-	(pi as any).setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -242,8 +277,8 @@ testWithDir("empty model-group (SpawnRouteError) blocks execution with error", a
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	const result = await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(result).toStrictEqual({ action: "handled" });
 	expect(setModelCalls).toHaveLength(0);
@@ -254,13 +289,13 @@ testWithDir("headless session does not inherit model-group changes", async ({ di
 	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
 	const filePath = await writeSkillMd(skillDir, "review", { "model-group": "reviewer" });
 	const pi = await createTestHost();
-	const setModelCalls: any[] = [];
-	(pi as any).setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 
-	const [inputHandler] = pi.handlers.get("input")!;
+	const inputHandler = getHandler(pi, "input");
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await inputHandler({ text: "/review", source: "interactive" }, { hasUI: false } as any);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, createExtensionContext());
 
 	expect(setModelCalls, "setModel should not be called in headless").toHaveLength(0);
 }));
@@ -269,11 +304,11 @@ testWithDir("no model-group frontmatter is a silent no-op", async ({ dir: skillD
 	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
 	const filePath = await writeSkillMd(skillDir, "review", { readonly: true });
 	const pi = await createTestHost();
-	const setModelCalls: any[] = [];
-	(pi as any).setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -281,8 +316,8 @@ testWithDir("no model-group frontmatter is a silent no-op", async ({ dir: skillD
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(setModelCalls, "setModel should not be called when no model-group frontmatter").toHaveLength(0);
 	expect(notifications.map((n) => n.message)).not.toContainEqual(expect.stringMatching(/Model changed/));
@@ -292,11 +327,11 @@ testWithDir("invalid model-group value produces warning notification", async ({ 
 	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
 	const filePath = await writeSkillMd(skillDir, "review", { "model-group": "" });
 	const pi = await createTestHost();
-	const setModelCalls: any[] = [];
-	(pi as any).setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -304,21 +339,21 @@ testWithDir("invalid model-group value produces warning notification", async ({ 
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(setModelCalls, "setModel should not be called for invalid model-group").toHaveLength(0);
 	expect(notifications.map((n) => n.message), "should warn about invalid model-group").toContainEqual(expect.stringMatching(/model-group.*non-empty/));
 }));
 
-function mockModelWithThinking(provider: string, id: string, thinkingLevelMap?: Record<string, string | null>): any {
-	return { provider, id, reasoning: true, thinkingLevelMap };
+function mockModelWithThinking(provider: string, id: string, thinkingLevelMap?: Model<Api>["thinkingLevelMap"]): Model<Api> {
+	return { ...mockModel(provider, id), thinkingLevelMap };
 }
 
 async function makeMockPI() {
 	const pi = await createTestHost();
-	pi.setModel = async (_model: any) => true;
-	pi.setThinkingLevel = (_level: any) => {};
+	pi.setModel = async () => true;
+	pi.setThinkingLevel = () => {};
 	pi.getThinkingLevel = () => "medium";
 	return pi;
 }
@@ -327,9 +362,9 @@ type SetModelBehavior = "success" | "false" | "reject";
 
 async function makeTrackedPI(behavior: SetModelBehavior) {
 	const pi = await makeMockPI();
-	const modelCalls: any[] = [];
+	const modelCalls: Model<Api>[] = [];
 	const thinkingCalls: string[] = [];
-	pi.setModel = async (model: any) => {
+	pi.setModel = async (model: Model<Api>) => {
 		modelCalls.push(model);
 		if (behavior === "reject") {throw new Error("setModel rejected");}
 		return behavior !== "false";
@@ -338,10 +373,10 @@ async function makeTrackedPI(behavior: SetModelBehavior) {
 	return { pi, modelCalls, thinkingCalls };
 }
 
-async function executePromptInput(pi: any, ctx: any, streamingBehavior?: "steer" | "followUp") {
-	await pi.handlers.get("session_start")!.at(-1)!({ reason: "load" }, ctx);
-	const input = pi.handlers.get("input")![0];
-	return input({ text: "/review", source: "interactive", streamingBehavior }, ctx);
+async function executePromptInput(pi: TestPI, ctx: ExtensionContext, streamingBehavior?: "steer" | "followUp") {
+	await lastSessionStartHandler(pi)({ type: "session_start", reason: "startup" }, ctx);
+	const input = getHandler(pi, "input");
+	return input({ type: "input", text: "/review", source: "interactive", streamingBehavior }, ctx);
 }
 
 async function runPromptInput(
@@ -363,13 +398,13 @@ async function runPromptInput(
 	}
 }
 
-function modelSelectionEntries(pi: any): any[] {
+function modelSelectionEntries(pi: TestPI): AppendedEntry[] {
 	const types = new Set([
 		"pi-schematic-model-switch",
 		"pi-schematic-model-group-switch",
 		"pi-schematic-thinking-change",
 	]);
-	return pi.appendedEntries.filter((entry: any) => types.has(entry.customType));
+	return getHostRecords(pi).appendedEntries.filter((entry) => types.has(entry.customType));
 }
 
 // ── Explicit model frontmatter tests ──────────────────────────────
@@ -377,10 +412,10 @@ function modelSelectionEntries(pi: any): any[] {
 testWithDir("explicit model frontmatter switches model", async ({ dir: skillDir }) => withTemp(async ({ cwd }) => {
 	const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o" });
 	const pi = await makeMockPI();
-	const setModelCalls: any[] = [];
-	pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -388,32 +423,33 @@ testWithDir("explicit model frontmatter switches model", async ({ dir: skillDir 
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(setModelCalls, "setModel should be called once").toHaveLength(1);
 	expect(setModelCalls[0].provider).toBe("openai");
 	expect(setModelCalls[0].id).toBe("gpt-4o");
 	expect(notifications.map((n) => n.message)).toContainEqual(expect.stringMatching(/Model switched.*openai.*gpt-4o.*\/review/));
 
-	const switchEntries = pi.appendedEntries.filter((e: any) => e.customType === "pi-schematic-model-switch");
+	const switchEntries = getHostRecords(pi).appendedEntries.filter((e) => e.customType === "pi-schematic-model-switch");
 	expect(switchEntries, "should append one model-switch entry").toHaveLength(1);
-	expect(switchEntries[0].data.command).toBe("/review");
-	expect(switchEntries[0].data.provider).toBe("openai");
-	expect(switchEntries[0].data.modelId).toBe("gpt-4o");
-	expect(switchEntries[0].data.thinking).toBeNull();
+	const switchData = entryData(switchEntries[0]);
+	expect(switchData.command).toBe("/review");
+	expect(switchData.provider).toBe("openai");
+	expect(switchData.modelId).toBe("gpt-4o");
+	expect(switchData.thinking).toBeNull();
 }));
 
 testWithDir("explicit model with thinking sets both model and thinking level", async ({ dir: skillDir }) => withTemp(async ({ cwd }) => {
 	const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o", thinking: "high" });
 	const pi = await makeMockPI();
-	const setModelCalls: any[] = [];
+	const setModelCalls: Model<Api>[] = [];
 	const setThinkingCalls: string[] = [];
-	pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 	pi.setThinkingLevel = (level: string) => { setThinkingCalls.push(level); };
 	pi.getThinkingLevel = () => "medium";
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -421,8 +457,8 @@ testWithDir("explicit model with thinking sets both model and thinking level", a
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(setModelCalls, "setModel should be called once").toHaveLength(1);
 	expect(setModelCalls[0].id).toBe("gpt-4o");
@@ -434,13 +470,13 @@ testWithDir("explicit model with thinking sets both model and thinking level", a
 testWithDir("explicit model without thinking does not change thinking level", async ({ dir: skillDir }) => withTemp(async ({ cwd }) => {
 	const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o" });
 	const pi = await makeMockPI();
-	const setModelCalls: any[] = [];
+	const setModelCalls: Model<Api>[] = [];
 	const setThinkingCalls: string[] = [];
-	pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 	pi.setThinkingLevel = (level: string) => { setThinkingCalls.push(level); };
 	pi.getThinkingLevel = () => "medium";
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -448,8 +484,8 @@ testWithDir("explicit model without thinking does not change thinking level", as
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(setModelCalls, "setModel should be called").toHaveLength(1);
 	expect(setModelCalls[0].id).toBe("gpt-4o");
@@ -459,12 +495,12 @@ testWithDir("explicit model without thinking does not change thinking level", as
 testWithDir("explicit model applies while invalid thinking is reported", async ({ dir: skillDir }) => withTemp(async ({ cwd }) => {
 	const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o", thinking: "ultra" });
 	const pi = await makeMockPI();
-	const setModelCalls: any[] = [];
+	const setModelCalls: Model<Api>[] = [];
 	const setThinkingCalls: string[] = [];
-	pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 	pi.setThinkingLevel = (level: string) => { setThinkingCalls.push(level); };
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -472,26 +508,27 @@ testWithDir("explicit model applies while invalid thinking is reported", async (
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(setModelCalls, "valid model should still be applied").toHaveLength(1);
 	expect(setThinkingCalls, "invalid thinking must not be applied").toHaveLength(0);
 	const warnings = notifications.filter((n) => n.level === "warning");
 	expect(warnings, "invalid thinking should produce one warning").toHaveLength(1);
 	expect(warnings[0]?.message ?? "").toMatch(/`thinking`/);
-	const issues = pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-frontmatter-issue");
+	const issues = getHostRecords(pi).appendedEntries.filter((entry) => entry.customType === "pi-schematic-frontmatter-issue");
 	expect(issues, "invalid thinking should produce one issue entry").toHaveLength(1);
-	expect(issues[0]?.data.type).toBe("command");
-	expect(issues[0]?.data.issue.kind).toBe("invalid-thinking-value");
+	const issueData = entryData(issues[0]);
+	expect(issueData.type).toBe("command");
+	expect(asRecord(issueData.issue, "The issue entry's issue").kind).toBe("invalid-thinking-value");
 }));
 
 testWithDir("valid model applies when model-group frontmatter is invalid", async ({ dir: skillDir }) => withTemp(async ({ cwd }) => {
 	const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o", "model-group": "" });
 	const pi = await makeMockPI();
-	const setModelCalls: any[] = [];
-	pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
-	const [inputHandler] = pi.handlers.get("input")!;
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
+	const inputHandler = getHandler(pi, "input");
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -499,7 +536,7 @@ testWithDir("valid model applies when model-group frontmatter is invalid", async
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	const result = await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(result).toStrictEqual({ action: "continue" });
 	expect(setModelCalls.map((model) => model.id)).toStrictEqual(["gpt-4o"]);
@@ -512,10 +549,10 @@ testWithDir("explicit model + model-group warns and uses explicit model", async 
 	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "anthropic", modelId: "claude-sonnet" }] } });
 	const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o", "model-group": "reviewer" });
 	const pi = await makeMockPI();
-	const setModelCalls: any[] = [];
-	pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -523,8 +560,8 @@ testWithDir("explicit model + model-group warns and uses explicit model", async 
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(setModelCalls, "setModel should be called once").toHaveLength(1);
 	expect(setModelCalls[0].id, "explicit model should win over model-group").toBe("gpt-4o");
@@ -535,13 +572,13 @@ testWithDir("explicit model + model-group + thinking uses explicit model and thi
 	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "anthropic", modelId: "claude-sonnet" }] } });
 	const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o", "model-group": "reviewer", thinking: "high" });
 	const pi = await makeMockPI();
-	const setModelCalls: any[] = [];
+	const setModelCalls: Model<Api>[] = [];
 	const setThinkingCalls: string[] = [];
-	pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 	pi.setThinkingLevel = (level: string) => { setThinkingCalls.push(level); };
 	pi.getThinkingLevel = () => "medium";
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -549,8 +586,8 @@ testWithDir("explicit model + model-group + thinking uses explicit model and thi
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(setModelCalls, "setModel should be called once").toHaveLength(1);
 	expect(setModelCalls[0].id, "explicit model should win").toBe("gpt-4o");
@@ -563,13 +600,13 @@ testWithDir("model-group + thinking overrides group thinking level", async ({ di
 	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
 	const filePath = await writeSkillMd(skillDir, "review", { "model-group": "reviewer", thinking: "low" });
 	const pi = await makeMockPI();
-	const setModelCalls: any[] = [];
+	const setModelCalls: Model<Api>[] = [];
 	const setThinkingCalls: string[] = [];
-	pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 	pi.setThinkingLevel = (level: string) => { setThinkingCalls.push(level); };
 	pi.getThinkingLevel = () => "medium";
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -577,8 +614,8 @@ testWithDir("model-group + thinking overrides group thinking level", async ({ di
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(setModelCalls, "setModel should be called once").toHaveLength(1);
 	expect(setModelCalls[0].id, "model should come from group").toBe("gpt-4o");
@@ -590,13 +627,13 @@ testWithDir("model-group + thinking overrides group thinking level", async ({ di
 testWithDir("thinking only frontmatter sets thinking level without changing model", async ({ dir: skillDir }) => withTemp(async ({ cwd }) => {
 	const filePath = await writeSkillMd(skillDir, "review", { thinking: "high" });
 	const pi = await makeMockPI();
-	const setModelCalls: any[] = [];
+	const setModelCalls: Model<Api>[] = [];
 	const setThinkingCalls: string[] = [];
-	pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 	pi.setThinkingLevel = (level: string) => { setThinkingCalls.push(level); };
 	pi.getThinkingLevel = () => "medium";
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const currentModel = mockModelWithThinking("openai", "gpt-parent", { off: null, minimal: "minimal", low: "low", medium: "medium", high: "high" });
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
@@ -605,27 +642,28 @@ testWithDir("thinking only frontmatter sets thinking level without changing mode
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(setModelCalls, "setModel should NOT be called").toHaveLength(0);
 	expect(setThinkingCalls, "setThinkingLevel should be called").toHaveLength(1);
 	expect(setThinkingCalls[0]).toBe("high");
 	expect(notifications.map((n) => n.message)).toContainEqual(expect.stringMatching(/Thinking level set.*high.*\/review/));
 
-	const thinkingEntries = pi.appendedEntries.filter((e: any) => e.customType === "pi-schematic-thinking-change");
+	const thinkingEntries = getHostRecords(pi).appendedEntries.filter((e) => e.customType === "pi-schematic-thinking-change");
 	expect(thinkingEntries, "should append one thinking-change entry").toHaveLength(1);
-	expect(thinkingEntries[0].data.command).toBe("/review");
-	expect(thinkingEntries[0].data.thinking).toBe("high");
+	const thinkingData = entryData(thinkingEntries[0]);
+	expect(thinkingData.command).toBe("/review");
+	expect(thinkingData.thinking).toBe("high");
 }));
 
 testWithDir("unknown model in frontmatter blocks execution", async ({ dir: skillDir }) => withTemp(async ({ cwd }) => {
 	const filePath = await writeSkillMd(skillDir, "review", { model: "unknown/no-such-model" });
 	const pi = await makeMockPI();
-	const setModelCalls: any[] = [];
-	pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -633,8 +671,8 @@ testWithDir("unknown model in frontmatter blocks execution", async ({ dir: skill
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	const result = await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(result).toStrictEqual({ action: "handled" });
 	expect(setModelCalls, "setModel should not be called").toHaveLength(0);
@@ -645,8 +683,8 @@ testWithDir("model switch failure blocks explicit model selection", async ({ dir
 	const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o" });
 	const pi = await makeMockPI();
 	pi.setModel = async () => false; // Simulate setModel failure
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -654,8 +692,8 @@ testWithDir("model switch failure blocks explicit model selection", async ({ dir
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	const result = await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(result).toStrictEqual({ action: "handled" });
 	expect(notifications.find((n) => n.level === "error")?.message ?? "").toMatch(/failed to switch/);
@@ -664,8 +702,8 @@ testWithDir("model switch failure blocks explicit model selection", async ({ dir
 testWithDir("unauthenticated model in registry blocks explicit model selection", async ({ dir: skillDir }) => withTemp(async ({ cwd }) => {
 	const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o" });
 	const pi = await makeMockPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -674,8 +712,8 @@ testWithDir("unauthenticated model in registry blocks explicit model selection",
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	const result = await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(result).toStrictEqual({ action: "handled" });
 	expect(notifications.find((n) => n.level === "error")?.message ?? "").toMatch(/no API key/);
@@ -684,10 +722,10 @@ testWithDir("unauthenticated model in registry blocks explicit model selection",
 testWithDir("invalid model format in frontmatter produces warning", async ({ dir: skillDir }) => withTemp(async ({ cwd }) => {
 	const filePath = await writeSkillMd(skillDir, "review", { model: "not-valid-format" });
 	const pi = await makeMockPI();
-	const setModelCalls: any[] = [];
-	pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -695,8 +733,8 @@ testWithDir("invalid model format in frontmatter produces warning", async ({ dir
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(setModelCalls, "setModel should not be called for invalid model format").toHaveLength(0);
 	expect(notifications.map((n) => n.message), "should warn about invalid model format").toContainEqual(expect.stringMatching(/`model`.*`<provider>\/<model-id>`/));
@@ -707,8 +745,8 @@ testWithDir("invalid thinking value produces warning", async ({ dir: skillDir })
 	const pi = await makeMockPI();
 	const setThinkingCalls: string[] = [];
 	pi.setThinkingLevel = (level: string) => { setThinkingCalls.push(level); };
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx, notifications } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -716,8 +754,8 @@ testWithDir("invalid thinking value produces warning", async ({ dir: skillDir })
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 
 	expect(setThinkingCalls, "setThinkingLevel should NOT be called for invalid thinking").toHaveLength(0);
 	expect(notifications.map((n) => n.message), "should warn about invalid thinking").toContainEqual(expect.stringMatching(/`thinking`.*off, minimal, low/));
@@ -726,12 +764,12 @@ testWithDir("invalid thinking value produces warning", async ({ dir: skillDir })
 testWithDir("explicit model frontmatter is ignored in headless session", async ({ dir: skillDir }) => withTemp(async ({ cwd }) => {
 	const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o" });
 	const pi = await makeMockPI();
-	const setModelCalls: any[] = [];
-	pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
-	const [inputHandler] = pi.handlers.get("input")!;
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
+	const inputHandler = getHandler(pi, "input");
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await inputHandler({ text: "/review", source: "interactive" }, { hasUI: false } as any);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, createExtensionContext());
 
 	expect(setModelCalls, "setModel should not be called in headless").toHaveLength(0);
 }));
@@ -741,12 +779,12 @@ testWithDir("model-group toggle does not affect readonly state", async ({ dir: s
 	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
 	const filePath = await writeSkillMd(skillDir, "review", { "model-group": "reviewer" });
 	const pi = await createTestHost();
-	const setModelCalls: any[] = [];
-	(pi as any).setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
+	const beforeStartHandler = getHandler(pi, "before_agent_start");
 	const { ctx } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -754,12 +792,12 @@ testWithDir("model-group toggle does not affect readonly state", async ({ dir: s
 	});
 
 	pi.setCommands([makePromptCommand("review", filePath)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	await inputHandler({ text: "/review", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 	expect(setModelCalls, "model should be switched").toHaveLength(1);
-	const readonlyEntries = pi.appendedEntries.filter((e: any) => e.customType === "pi-schematic-readonly");
+	const readonlyEntries = getHostRecords(pi).appendedEntries.filter((e) => e.customType === "pi-schematic-readonly");
 	expect(readonlyEntries, "readonly state should not be affected").toHaveLength(0);
 }));
 
@@ -789,12 +827,12 @@ testWithDir("embedded-slash prompt and skill tokens do not apply model-selection
 	for (const scenario of cases) {
 		const filePath = await writeSkillMd(skillDir, `${scenario.command}-review`, scenario.frontmatter);
 		const pi = await makeMockPI();
-		const modelCalls: any[] = [];
+		const modelCalls: Model<Api>[] = [];
 		const thinkingCalls: string[] = [];
-		pi.setModel = async (model: any) => { modelCalls.push(model); return true; };
+		pi.setModel = async (model: Model<Api>) => { modelCalls.push(model); return true; };
 		pi.setThinkingLevel = (thinking: string) => thinkingCalls.push(thinking);
-		const [inputHandler] = pi.handlers.get("input")!;
-		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+		const inputHandler = getHandler(pi, "input");
+		const sessionStartHandler = lastSessionStartHandler(pi);
 		const { ctx } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -802,9 +840,9 @@ testWithDir("embedded-slash prompt and skill tokens do not apply model-selection
 		});
 		const name = `${scenario.command}-review`;
 		pi.setCommands([scenario.command === "prompt" ? makePromptCommand(name, filePath) : makeSkillCommand(name, filePath)]);
-		await sessionStartHandler({ reason: "load" }, ctx);
+		await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
 
-		const result = await inputHandler({ text: scenario.text.replace("review", name), source: "interactive" }, ctx);
+		const result = await inputHandler({ type: "input", text: scenario.text.replace("review", name), source: "interactive" }, ctx);
 		expect(result).toStrictEqual({ action: "continue" });
 		expect(modelCalls).toStrictEqual([]);
 		expect(thinkingCalls).toStrictEqual([]);
@@ -836,11 +874,11 @@ testWithDir("model-group commands are applied during their input preflight", asy
 	const fp1 = await writeSkillMd(skillDir, "review", { "model-group": "reviewer" });
 	const fp2 = await writeSkillMd(skillDir, "quick", { "model-group": "fast" });
 	const pi = await createTestHost();
-	const setModelCalls: any[] = [];
-	(pi as any).setModel = async (model: any) => { setModelCalls.push(model); return true; };
+	const setModelCalls: Model<Api>[] = [];
+	pi.setModel = async (model: Model<Api>) => { setModelCalls.push(model); return true; };
 
-	const [inputHandler] = pi.handlers.get("input")!;
-	const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+	const inputHandler = getHandler(pi, "input");
+	const sessionStartHandler = lastSessionStartHandler(pi);
 	const { ctx } = makeNotifyCtx({
 		cwd,
 		model: mockModel("openai", "gpt-parent"),
@@ -851,9 +889,9 @@ testWithDir("model-group commands are applied during their input preflight", asy
 	});
 
 	pi.setCommands([makePromptCommand("review", fp1), makePromptCommand("quick", fp2)]);
-	await sessionStartHandler({ reason: "load" }, ctx);
-	const reviewResult = await inputHandler({ text: "/review", source: "interactive" }, ctx);
-	const quickResult = await inputHandler({ text: "/quick", source: "interactive" }, ctx);
+	await sessionStartHandler({ type: "session_start", reason: "startup" }, ctx);
+	const reviewResult = await inputHandler({ type: "input", text: "/review", source: "interactive" }, ctx);
+	const quickResult = await inputHandler({ type: "input", text: "/quick", source: "interactive" }, ctx);
 
 	expect(reviewResult).toStrictEqual({ action: "continue" });
 	expect(quickResult).toStrictEqual({ action: "continue" });
