@@ -8,10 +8,20 @@
 import { beforeAll, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { registerReadonlyPI, makeReadonlyUICtx, testWithDir, tmpDir, withTempHome } from "./helpers.js";
-import type { ToolCall } from "./helpers.js";
-import { createBeforeAgentStartEvent } from "./test-host.js";
-import type { TestPI } from "./test-host.js";
+import type { BeforeAgentStartEvent, ExtensionCommandContext, InputEvent, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
+import {
+	callHandlers,
+	createCommandContext,
+	createUIContext,
+	emitAll,
+	makeReadonlyUICtx,
+	registerReadonlyPI,
+	testWithDir,
+	tmpDir,
+	withTempHome,
+	type ToolCall,
+} from "./helpers.js";
+import { createBeforeAgentStartEvent, getCommand, getHostRecords, type AppendedEntry, type TestPI } from "./test-host.js";
 import { assertPresent } from "../assertions.js";
 
 // pi's agent directory holds global prompts; an empty one keeps an exported
@@ -24,6 +34,75 @@ beforeAll(async () => {
 beforeEach(() => {
 	vi.stubEnv("PI_CODING_AGENT_DIR", isolatedAgentDir);
 });
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+// The composed tool_call handlers return the first blocking result or nothing.
+function assertToolCallResult(value: unknown): asserts value is ToolCallEventResult | undefined {
+	if (value === undefined) {return;}
+	if (!isRecord(value) || typeof value.block !== "boolean" || (value.reason !== undefined && typeof value.reason !== "string")) {
+		throw new Error("The tool_call handlers returned something other than a tool_call result.");
+	}
+}
+
+type ReadonlyToolCall = (event: Parameters<ToolCall>[0], ctx: Parameters<ToolCall>[1]) => Promise<ToolCallEventResult | undefined>;
+
+/** `registerReadonlyPI` with a `toolCall` whose result is checked to be a tool_call result or nothing. */
+async function registerCheckedPI(): Promise<{ pi: TestPI; toolCall: ReadonlyToolCall }> {
+	const { pi, toolCall } = await registerReadonlyPI();
+	return {
+		pi,
+		toolCall: async (event, ctx) => {
+			const result: unknown = await toolCall(event, ctx);
+			assertToolCallResult(result);
+			return result;
+		},
+	};
+}
+
+// pi registers one input and one before_agent_start handler. The contexts here have no
+// `modelRegistry`, which `ExtensionContext` requires, so the handlers run through callHandlers.
+function frontmatterHandlers(pi: TestPI) {
+	return {
+		inputHandler: async (event: Omit<InputEvent, "type">, ctx: unknown): Promise<unknown> => {
+			const [result] = await callHandlers(pi, "input", event, ctx);
+			return result;
+		},
+		beforeStartHandler: (event: BeforeAgentStartEvent, ctx: unknown) => emitAll(pi, "before_agent_start", event, ctx),
+	};
+}
+
+/**
+ * The result of the one context handler. The contexts here report partial usage,
+ * which `ExtensionContext` does not admit, so the handler runs through callHandlers.
+ */
+async function runContextHandler(pi: TestPI, event: unknown, ctx: unknown): Promise<{ messages: Record<string, unknown>[] } | undefined> {
+	const [result] = await callHandlers(pi, "context", event, ctx);
+	if (result === undefined) {return undefined;}
+	if (!isRecord(result) || !Array.isArray(result.messages)) {throw new Error("The context handler returned something other than messages.");}
+	const messages: unknown[] = result.messages;
+	if (!messages.every(isRecord)) {throw new Error("The context handler returned a message that is not an object.");}
+	return { messages };
+}
+
+/** The `field` member of an appended entry's data; the extension writes every entry's data as an object. */
+function dataField(entry: AppendedEntry | undefined, field: string): unknown {
+	if (entry === undefined) {return undefined;}
+	if (!isRecord(entry.data)) {throw new Error(`The "${entry.customType}" entry's data is not an object.`);}
+	return entry.data[field];
+}
+
+/** A UI command context whose notifications, statuses and widgets go nowhere, with no context usage. */
+function uiCommandContext(overrides: Partial<ExtensionCommandContext> = {}): ExtensionCommandContext {
+	return createCommandContext({
+		hasUI: true,
+		ui: createUIContext({ notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn() }),
+		getContextUsage: () => undefined,
+		...overrides,
+	});
+}
 
 async function writePrompt(dir: string, name: string, readonly: boolean): Promise<string> {
 	const filePath = join(dir, `${name}.md`);
@@ -90,13 +169,12 @@ async function runPromptToggle(
 	text: string,
 	readonly: boolean,
 	name = text.slice(1),
-): Promise<{ toolCall: ToolCall; pi: TestPI }> {
+): Promise<{ toolCall: ReadonlyToolCall; pi: TestPI }> {
 	const dir = await tmpDir();
 	onTestFinished(() => rm(dir, { recursive: true, force: true }));
 	const filePath = await writePrompt(dir, name, readonly);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([makePromptCommand(name, filePath)]);
 	await inputHandler({ text, source: "interactive" }, ctx);
@@ -106,15 +184,14 @@ async function runPromptToggle(
 
 test("single /name input activates readonly frontmatter", async () => {
 	const { toolCall } = await runPromptToggle("/my-prompt", true);
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
+	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
 });
 
 testWithDir("readonly: false frontmatter keeps readonly disabled and stays silent when already disabled", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "safe-prompt", false);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
-	const [contextHook] = pi.handlers.get("context")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
+	const contextHook = (event: unknown, ctx: unknown) => runContextHandler(pi, event, ctx);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([makePromptCommand("safe-prompt", filePath)]);
 
@@ -122,20 +199,20 @@ testWithDir("readonly: false frontmatter keeps readonly disabled and stays silen
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
 	expect(notifications).toHaveLength(0);
 	const contextResult = await contextHook({ messages: [] }, { getContextUsage: () => ({ percent: 40 }) });
-	expect(contextResult.messages.find((message: any) => /readonly/i.test(message.content ?? ""))).toBeUndefined();
+	expect(contextResult?.messages.find((message) => typeof message.content === "string" && /readonly/i.test(message.content))).toBeUndefined();
 });
 
 test("suffixed /name command activates readonly frontmatter", async () => {
 	const { toolCall } = await runPromptToggle("/review:1", true, "review:1");
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
+	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
 });
 
 test("dotted /name command activates readonly frontmatter", async () => {
 	const { toolCall } = await runPromptToggle("/review.pr", true, "review.pr");
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
+	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
 });
 
 testWithDir("embedded-slash prompt and skill tokens do not apply readonly frontmatter", async ({ dir }) => {
@@ -146,9 +223,8 @@ testWithDir("embedded-slash prompt and skill tokens do not apply readonly frontm
 	for (const scenario of cases) {
 		const caseDir = await mkdtemp(join(dir, "case-"));
 		const filePath = await writePrompt(caseDir, "review", true);
-		const { pi, toolCall } = await registerReadonlyPI();
-		const [inputHandler] = pi.handlers.get("input")!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+		const { pi, toolCall } = await registerCheckedPI();
+		const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 		const ctx = makeBeforeStartCtx();
 		if (scenario.type === "prompt") {pi.setCommands([makePromptCommand("review", filePath)]);}
 
@@ -156,14 +232,13 @@ testWithDir("embedded-slash prompt and skill tokens do not apply readonly frontm
 		expect(result).toStrictEqual({ action: "continue" });
 		await beforeStartHandler(createBeforeAgentStartEvent({ skills: scenario.type === "skill" ? [makeSkill("review", filePath)] : [] }), ctx);
 		expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-		expect(pi.appendedEntries).not.toContainEqual(expect.objectContaining({ customType: "pi-schematic-readonly" }));
+		expect(getHostRecords(pi).appendedEntries).not.toContainEqual(expect.objectContaining({ customType: "pi-schematic-readonly" }));
 	}
 });
 
 test("unknown /command without frontmatter produces no toggle", async () => {
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 
 	await inputHandler({ text: "/nonexistent-cmd", source: "interactive" }, ctx);
@@ -174,9 +249,8 @@ test("unknown /command without frontmatter produces no toggle", async () => {
 
 testWithDir("unknown /command does not delay the next valid prompt frontmatter toggle", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "review", true);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([makePromptCommand("review", filePath)]);
 
@@ -184,46 +258,44 @@ testWithDir("unknown /command does not delay the next valid prompt frontmatter t
 	await inputHandler({ text: "/review", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
-	const entries = pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-readonly");
+	const entries = getHostRecords(pi).appendedEntries.filter((entry) => entry.customType === "pi-schematic-readonly");
 	expect(entries).toHaveLength(1);
-	expect(entries[0]?.data.enabled).toBe(true);
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
+	expect(dataField(entries[0], "enabled")).toBe(true);
+	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
 });
 
 testWithDir("before_agent_start skips readonly cache population while no slash-command toggle is pending", async ({ dir }) => {
 	const filePath = join(dir, "broken.md");
 	await writeFile(filePath, `---\nreadonly: "yes"\n---\n\nBody content.\n`);
-	const { pi } = await registerReadonlyPI();
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi } = await registerCheckedPI();
+	const { beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([makePromptCommand("broken", filePath)]);
 
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
 });
 
 
 testWithDir("input handler queues a prompt command even when the registry is unavailable until before_agent_start", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "late-review", true);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 
 	await inputHandler({ text: "/late-review", source: "interactive" }, ctx);
 	pi.setCommands([makePromptCommand("late-review", filePath)]);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
+	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
 });
 
 testWithDir("late-resolved non-prompt /name does not inherit readonly from a same-named prompt file", async ({ dir: workspace }) => {
 	const promptDir = join(workspace, ".pi", "prompts");
 	await mkdir(promptDir, { recursive: true });
 	const promptPath = await writePrompt(promptDir, "shared", true);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx(workspace);
 
 	await inputHandler({ text: "/shared", source: "interactive" }, ctx);
@@ -231,16 +303,15 @@ testWithDir("late-resolved non-prompt /name does not inherit readonly from a sam
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
 });
 
 testWithDir("known non-prompt /name already present in the registry does not enqueue a deferred toggle", async ({ dir: workspace }) => {
 	const promptDir = join(workspace, ".pi", "prompts");
 	await mkdir(promptDir, { recursive: true });
 	const promptPath = await writePrompt(promptDir, "shared-known", true);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx(workspace);
 
 	pi.setCommands([makeResolvedCommand("shared-known", promptPath, "builtin")]);
@@ -248,80 +319,76 @@ testWithDir("known non-prompt /name already present in the registry does not enq
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
 });
 
 testWithDir("headless /name frontmatter stays a no-op through the deferred pipeline", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "headless-review", true);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	pi.setCommands([makePromptCommand("headless-review", filePath)]);
 
 	await inputHandler({ text: "/headless-review", source: "interactive" }, {
 		hasUI: false,
 		getContextUsage: () => null,
-	} as any);
+	});
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), {
 		hasUI: false,
 		cwd: process.cwd(),
 		isProjectTrusted: () => false,
 		getContextUsage: () => null,
-	} as any);
+	});
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
 });
 
 testWithDir("extension input stays a no-op when hasUI is false", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "headless-extension", true);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	pi.setCommands([makePromptCommand("headless-extension", filePath)]);
 
 	await inputHandler({ text: "/headless-extension", source: "extension" }, {
 		hasUI: false,
 		getContextUsage: () => null,
-	} as any);
+	});
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), {
 		hasUI: false,
 		cwd: process.cwd(),
 		isProjectTrusted: () => false,
 		getContextUsage: () => null,
-	} as any);
+	});
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
 });
 
 test("extension plain text without a slash stays a no-op", async () => {
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 
 	await inputHandler({ text: "continue", source: "extension" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
 });
 
 testWithDir("unresolved /name uses trusted cwd/.pi/prompts frontmatter via deferred fallback", async ({ dir: workspace }) => {
 	const promptDir = join(workspace, ".pi", "prompts");
 	await mkdir(promptDir, { recursive: true });
 	await writePrompt(promptDir, "fallback-only", true);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx(workspace);
 
 	await inputHandler({ text: "/fallback-only", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")?.data.enabled).toBe(true);
+	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
+	expect(dataField(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly"), "enabled")).toBe(true);
 });
 
 
@@ -330,24 +397,22 @@ testWithDir("unresolved /name uses ~/.pi/agent/prompts frontmatter via deferred 
 		const promptDir = join(homeDir, ".pi", "agent", "prompts");
 		await mkdir(promptDir, { recursive: true });
 		await writePrompt(promptDir, "global-fallback", true);
-		const { pi, toolCall } = await registerReadonlyPI();
-		const [inputHandler] = pi.handlers.get("input")!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+		const { pi, toolCall } = await registerCheckedPI();
+		const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 		const ctx = makeBeforeStartCtx(workspace);
 
 		await inputHandler({ text: "/global-fallback", source: "interactive" }, ctx);
 		await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
-		expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
-		expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")?.data.enabled).toBe(true);
+		expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
+		expect(dataField(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly"), "enabled")).toBe(true);
 	});
 });
 
 testWithDir("queued slash + extension message preserves the first pending command", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "my-prompt", true);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([makePromptCommand("my-prompt", filePath)]);
 
@@ -355,7 +420,7 @@ testWithDir("queued slash + extension message preserves the first pending comman
 	await inputHandler({ text: "continue", source: "extension" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
+	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
 });
 
 testWithDir("streaming readonly frontmatter is blocked without a delayed toggle", async ({ dir }) => {
@@ -368,9 +433,8 @@ testWithDir("streaming readonly frontmatter is blocked without a delayed toggle"
 	for (const scenario of cases) {
 		const caseDir = await mkdtemp(join(dir, "case-"));
 		const targetPath = await writePrompt(caseDir, "target", scenario.readonly);
-		const { pi, toolCall } = await registerReadonlyPI();
-		const [inputHandler] = pi.handlers.get("input")!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+		const { pi, toolCall } = await registerCheckedPI();
+		const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 		const { ctx, notifications } = makeNotifyBeforeStartCtx();
 		const commands = [scenario.type === "skill" ? makeSkillCommand("target", targetPath) : makePromptCommand("target", targetPath)];
 		if (!scenario.readonly) {
@@ -383,28 +447,27 @@ testWithDir("streaming readonly frontmatter is blocked without a delayed toggle"
 			await inputHandler({ text: "/initial", source: "interactive" }, ctx);
 			await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 		}
-		const readonlyEntries = pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-readonly").length;
+		const readonlyEntries = getHostRecords(pi).appendedEntries.filter((entry) => entry.customType === "pi-schematic-readonly").length;
 
 		const text = scenario.type === "skill" ? "/skill:target" : "/target";
 		const result = await inputHandler({ text, source: "interactive", streamingBehavior: scenario.streamingBehavior }, ctx);
 		expect(result).toStrictEqual({ action: "handled" });
 		expect(Boolean((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block)).toBe(!scenario.readonly);
-		expect(pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-readonly")).toHaveLength(readonlyEntries);
+		expect(getHostRecords(pi).appendedEntries.filter((entry) => entry.customType === "pi-schematic-readonly")).toHaveLength(readonlyEntries);
 		expect(notifications.at(-1)?.message ?? "").toMatch(/readonly frontmatter requires an idle agent/i);
 
 		await inputHandler({ text: "unrelated prompt", source: "interactive" }, ctx);
 		await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 		expect(Boolean((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block)).toBe(!scenario.readonly);
-		expect(pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-readonly")).toHaveLength(readonlyEntries);
+		expect(getHostRecords(pi).appendedEntries.filter((entry) => entry.customType === "pi-schematic-readonly")).toHaveLength(readonlyEntries);
 	}
 });
 
 testWithDir("queued slash commands are consumed FIFO across before_agent_start calls", async ({ dir }) => {
 	const filePathA = await writePrompt(dir, "cmd-a", true);
 	const filePathB = await writePrompt(dir, "cmd-b", false);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([
 		makePromptCommand("cmd-a", filePathA),
@@ -415,19 +478,18 @@ testWithDir("queued slash commands are consumed FIFO across before_agent_start c
 	await inputHandler({ text: "/cmd-b", source: "interactive" }, ctx);
 
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
-	expect(pi.appendedEntries.at(-1)?.data.enabled, "first before_agent_start should consume /cmd-a").toBe(true);
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
+	expect(dataField(getHostRecords(pi).appendedEntries.at(-1), "enabled"), "first before_agent_start should consume /cmd-a").toBe(true);
+	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
 
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
-	expect(pi.appendedEntries.at(-1)?.data.enabled, "second before_agent_start should consume /cmd-b").toBe(false);
+	expect(dataField(getHostRecords(pi).appendedEntries.at(-1), "enabled"), "second before_agent_start should consume /cmd-b").toBe(false);
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
 });
 
 testWithDir("non-prompt slash commands do not delay the next prompt frontmatter toggle", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "review", true);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([makePromptCommand("review", filePath)]);
 
@@ -435,44 +497,41 @@ testWithDir("non-prompt slash commands do not delay the next prompt frontmatter 
 	await inputHandler({ text: "/review", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
-	const entries = pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-readonly");
+	const entries = getHostRecords(pi).appendedEntries.filter((entry) => entry.customType === "pi-schematic-readonly");
 	expect(entries).toHaveLength(1);
-	expect(entries[0]?.data.enabled).toBe(true);
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
+	expect(dataField(entries[0], "enabled")).toBe(true);
+	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
 });
 
 testWithDir("/skill:name activates readonly from skill frontmatter", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "my-skill", true);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 
 	await inputHandler({ text: "/skill:my-skill", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [makeSkill("my-skill", filePath)] }), ctx);
 
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
+	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
 });
 
 testWithDir("/skill:name preserves dotted skill names for readonly frontmatter", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "review.pr", true);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 
 	await inputHandler({ text: "/skill:review.pr", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [makeSkill("review.pr", filePath)] }), ctx);
 
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
+	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
 });
 
 testWithDir("readonly success notifications use the exact slash-command source", async ({ dir }) => {
 	const promptPath = await writePrompt(dir, "shared", true);
 	const skillPath = await writePrompt(dir, "shared-skill", false);
-	const { pi } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([makePromptCommand("shared", promptPath)]);
 
@@ -489,9 +548,8 @@ testWithDir("readonly success notifications use the exact slash-command source",
 testWithDir("invalid /prompt readonly value records a warning for the prompt source", async ({ dir }) => {
 	const filePath = join(dir, "broken-prompt.md");
 	await writeFile(filePath, `---\nreadonly: "yes"\ndescription: "Broken"\n---\n\nBody content.\n`);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([makePromptCommand("broken-prompt", filePath)]);
 
@@ -499,8 +557,8 @@ testWithDir("invalid /prompt readonly value records a warning for the prompt sou
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-	expect(pi.appendedEntries.at(-1)?.customType).toBe("pi-schematic-frontmatter-issue");
-	expect(pi.appendedEntries.at(-1)?.data.type).toBe("command");
+	expect(getHostRecords(pi).appendedEntries.at(-1)?.customType).toBe("pi-schematic-frontmatter-issue");
+	expect(dataField(getHostRecords(pi).appendedEntries.at(-1), "type")).toBe("command");
 	expect(notifications.at(-1)?.message ?? "").toMatch(/\/broken-prompt/);
 	expect(notifications.at(-1)?.message ?? "").toMatch(/`readonly` frontmatter must be `true` or `false`/);
 });
@@ -508,17 +566,16 @@ testWithDir("invalid /prompt readonly value records a warning for the prompt sou
 testWithDir("invalid /skill:name readonly value records a warning for the skill source", async ({ dir }) => {
 	const filePath = join(dir, "broken-skill.md");
 	await writeFile(filePath, `---\nreadonly: "yes"\ndescription: "Broken"\n---\n\nBody content.\n`);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 
 	await inputHandler({ text: "/skill:broken-skill", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [makeSkill("broken-skill", filePath)] }), ctx);
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-	expect(pi.appendedEntries.at(-1)?.customType).toBe("pi-schematic-frontmatter-issue");
-	expect(pi.appendedEntries.at(-1)?.data.type).toBe("skill");
+	expect(getHostRecords(pi).appendedEntries.at(-1)?.customType).toBe("pi-schematic-frontmatter-issue");
+	expect(dataField(getHostRecords(pi).appendedEntries.at(-1), "type")).toBe("skill");
 	expect(notifications.at(-1)?.message ?? "").toMatch(/\/skill:broken-skill/);
 	expect(notifications.at(-1)?.message ?? "").toMatch(/`readonly` frontmatter must be `true` or `false`/);
 });
@@ -526,9 +583,8 @@ testWithDir("invalid /skill:name readonly value records a warning for the skill 
 testWithDir("unreadable /prompt frontmatter records a warning for the prompt source", async ({ dir }) => {
 	const filePath = join(dir, "dir-prompt.md");
 	await mkdir(filePath, { recursive: true });
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([makePromptCommand("dir-prompt", filePath)]);
 
@@ -536,8 +592,8 @@ testWithDir("unreadable /prompt frontmatter records a warning for the prompt sou
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-	expect(pi.appendedEntries.at(-1)?.customType).toBe("pi-schematic-frontmatter-issue");
-	expect(pi.appendedEntries.at(-1)?.data.type).toBe("command");
+	expect(getHostRecords(pi).appendedEntries.at(-1)?.customType).toBe("pi-schematic-frontmatter-issue");
+	expect(dataField(getHostRecords(pi).appendedEntries.at(-1), "type")).toBe("command");
 	expect(notifications.at(-1)?.message ?? "").toMatch(/\/dir-prompt/);
 	expect(notifications.at(-1)?.message ?? "").toMatch(/prompt\/skill file could not be read/);
 });
@@ -545,17 +601,16 @@ testWithDir("unreadable /prompt frontmatter records a warning for the prompt sou
 testWithDir("unreadable /skill:name frontmatter records a warning for the skill source", async ({ dir }) => {
 	const filePath = join(dir, "dir-skill.md");
 	await mkdir(filePath, { recursive: true });
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 
 	await inputHandler({ text: "/skill:dir-skill", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [makeSkill("dir-skill", filePath)] }), ctx);
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-	expect(pi.appendedEntries.at(-1)?.customType).toBe("pi-schematic-frontmatter-issue");
-	expect(pi.appendedEntries.at(-1)?.data.type).toBe("skill");
+	expect(getHostRecords(pi).appendedEntries.at(-1)?.customType).toBe("pi-schematic-frontmatter-issue");
+	expect(dataField(getHostRecords(pi).appendedEntries.at(-1), "type")).toBe("skill");
 	expect(notifications.at(-1)?.message ?? "").toMatch(/\/skill:dir-skill/);
 	expect(notifications.at(-1)?.message ?? "").toMatch(/prompt\/skill file could not be read/);
 });
@@ -564,9 +619,8 @@ testWithDir("invalid queued frontmatter warns and the next valid queued command 
 	const brokenPath = join(dir, "broken-then-valid.md");
 	await writeFile(brokenPath, `---\nreadonly: "yes"\n---\n\nBody content.\n`);
 	const validPath = await writePrompt(dir, "valid-after-broken", true);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([
 		makePromptCommand("broken-then-valid", brokenPath),
@@ -577,20 +631,19 @@ testWithDir("invalid queued frontmatter warns and the next valid queued command 
 	await inputHandler({ text: "/valid-after-broken", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
-	expect(pi.appendedEntries.at(-2)?.customType).toBe("pi-schematic-frontmatter-issue");
-	expect(pi.appendedEntries.at(-1)?.customType).toBe("pi-schematic-readonly");
-	expect(pi.appendedEntries.at(-1)?.data.enabled).toBe(true);
+	expect(getHostRecords(pi).appendedEntries.at(-2)?.customType).toBe("pi-schematic-frontmatter-issue");
+	expect(getHostRecords(pi).appendedEntries.at(-1)?.customType).toBe("pi-schematic-readonly");
+	expect(dataField(getHostRecords(pi).appendedEntries.at(-1), "enabled")).toBe(true);
 	expect(notifications.at(-2)?.message ?? "").toMatch(/`readonly` frontmatter must be `true` or `false`/);
 	expect(notifications.at(-1)?.message ?? "").toMatch(/Readonly mode enabled/);
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block).toBe(true);
+	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
 });
 
 testWithDir("prompt without readonly frontmatter stays a silent no-op through the deferred pipeline", async ({ dir }) => {
 	const filePath = join(dir, "no-readonly.md");
 	await writeFile(filePath, `---\ndescription: "No readonly"\n---\n\nBody content.\n`);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([makePromptCommand("no-readonly", filePath)]);
 
@@ -598,59 +651,56 @@ testWithDir("prompt without readonly frontmatter stays a silent no-op through th
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
 	expect(notifications).toHaveLength(0);
 });
 
 testWithDir("skill without readonly frontmatter stays a silent no-op through the deferred pipeline", async ({ dir }) => {
 	const filePath = join(dir, "no-readonly-skill.md");
 	await writeFile(filePath, `---\ndescription: "No readonly"\n---\n\nBody content.\n`);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 
 	await inputHandler({ text: "/skill:no-readonly-skill", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [makeSkill("no-readonly-skill", filePath)] }), ctx);
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
 	expect(notifications).toHaveLength(0);
 });
 
 testWithDir("/readonly bypasses deferred frontmatter lookup", async ({ dir }) => {
 	const filePath = join(dir, "readonly.md");
 	await writeFile(filePath, `---\nreadonly: "yes"\n---\n\nBody content.\n`);
-	const { pi } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([makePromptCommand("readonly", filePath)]);
 
 	await inputHandler({ text: "/readonly", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
 	expect(notifications).toHaveLength(0);
 });
 
 testWithDir("/handoff bypasses deferred frontmatter lookup", async ({ dir }) => {
 	const filePath = join(dir, "handoff.md");
 	await writeFile(filePath, `---\nreadonly: "yes"\n---\n\nBody content.\n`);
-	const { pi } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([makePromptCommand("handoff", filePath)]);
 
 	await inputHandler({ text: "/handoff continue", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
 	expect(notifications).toHaveLength(0);
 });
 
@@ -658,9 +708,8 @@ testWithDir("/notebook bypasses deferred frontmatter lookup", async ({ dir: work
 	const promptDir = join(workspace, ".pi", "prompts");
 	await mkdir(promptDir, { recursive: true });
 	await writeFile(join(promptDir, "notebook.md"), `---\nreadonly: "yes"\n---\n\nBody content.\n`);
-	const { pi } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 
 	await inputHandler({ text: "/notebook", source: "interactive" }, ctx);
@@ -670,17 +719,16 @@ testWithDir("/notebook bypasses deferred frontmatter lookup", async ({ dir: work
 		isProjectTrusted: () => true,
 	});
 
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
-	expect(pi.appendedEntries.find((entry: any) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
+	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
 	expect(notifications).toHaveLength(0);
 });
 
 testWithDir("malformed /prompt frontmatter records a parse warning for the prompt source", async ({ dir }) => {
 	const filePath = join(dir, "broken-yaml-prompt.md");
 	await writeFile(filePath, `---\nreadonly: [\n---\n\nBody content.\n`);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([makePromptCommand("broken-yaml-prompt", filePath)]);
 
@@ -688,7 +736,7 @@ testWithDir("malformed /prompt frontmatter records a parse warning for the promp
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-	expect(pi.appendedEntries.at(-1)?.customType).toBe("pi-schematic-frontmatter-issue");
+	expect(getHostRecords(pi).appendedEntries.at(-1)?.customType).toBe("pi-schematic-frontmatter-issue");
 	expect(notifications.at(-1)?.message ?? "").toMatch(/\/broken-yaml-prompt/);
 	expect(notifications.at(-1)?.message ?? "").toMatch(/frontmatter could not be parsed/);
 });
@@ -696,27 +744,25 @@ testWithDir("malformed /prompt frontmatter records a parse warning for the promp
 testWithDir("malformed /skill:name frontmatter records a parse warning for the skill source", async ({ dir }) => {
 	const filePath = join(dir, "broken-yaml-skill.md");
 	await writeFile(filePath, `---\nreadonly: [\n---\n\nBody content.\n`);
-	const { pi, toolCall } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi, toolCall } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 
 	await inputHandler({ text: "/skill:broken-yaml-skill", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [makeSkill("broken-yaml-skill", filePath)] }), ctx);
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-	expect(pi.appendedEntries.at(-1)?.customType).toBe("pi-schematic-frontmatter-issue");
-	expect(pi.appendedEntries.at(-1)?.data.type).toBe("skill");
+	expect(getHostRecords(pi).appendedEntries.at(-1)?.customType).toBe("pi-schematic-frontmatter-issue");
+	expect(dataField(getHostRecords(pi).appendedEntries.at(-1), "type")).toBe("skill");
 	expect(notifications.at(-1)?.message ?? "").toMatch(/\/skill:broken-yaml-skill/);
 	expect(notifications.at(-1)?.message ?? "").toMatch(/frontmatter could not be parsed/);
 });
 
 testWithDir("deferred readonly enable emits a one-shot context nudge", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "nudge-on", true);
-	const { pi } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
-	const [contextHook] = pi.handlers.get("context")!;
+	const { pi } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
+	const contextHook = (event: unknown, ctx: unknown) => runContextHandler(pi, event, ctx);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([makePromptCommand("nudge-on", filePath)]);
 
@@ -724,80 +770,74 @@ testWithDir("deferred readonly enable emits a one-shot context nudge", async ({ 
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 	const firstResult = await contextHook({ messages: [] }, { getContextUsage: () => ({ percent: 20 }) });
-	expect(firstResult.messages.filter((message: any) => message.customType === "pi-schematic-readonly-nudge")).toHaveLength(1);
-	expect(firstResult.messages.find((message: any) => message.customType === "pi-schematic-readonly-nudge")?.content ?? "").toMatch(/\[readonly\]/);
+	expect(firstResult?.messages.filter((message) => message.customType === "pi-schematic-readonly-nudge")).toHaveLength(1);
+	expect(firstResult?.messages.find((message) => message.customType === "pi-schematic-readonly-nudge")?.content ?? "").toMatch(/\[readonly\]/);
 
 	const secondResult = await contextHook({ messages: [] }, { getContextUsage: () => ({ percent: 20 }) });
-	expect(secondResult?.messages?.find((message: any) => message.customType === "pi-schematic-readonly-nudge")).toBeUndefined();
+	expect(secondResult?.messages.find((message) => message.customType === "pi-schematic-readonly-nudge")).toBeUndefined();
 });
 
 testWithDir("deferred readonly disable emits a one-shot context nudge", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "nudge-off", false);
-	const { pi } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
-	const [contextHook] = pi.handlers.get("context")!;
+	const { pi } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
+	const contextHook = (event: unknown, ctx: unknown) => runContextHandler(pi, event, ctx);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([makePromptCommand("nudge-off", filePath)]);
-	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
+	await getCommand(pi, "readonly").handler("", uiCommandContext());
 
 	await inputHandler({ text: "/nudge-off", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 	const firstResult = await contextHook({ messages: [] }, { getContextUsage: () => ({ percent: 40 }) });
-	expect(firstResult.messages.filter((message: any) => message.customType === "pi-schematic-readonly-nudge")).toHaveLength(1);
-	expect(firstResult.messages.find((message: any) => message.customType === "pi-schematic-readonly-nudge")?.content ?? "").toMatch(/\[readonly\] disabled/);
+	expect(firstResult?.messages.filter((message) => message.customType === "pi-schematic-readonly-nudge")).toHaveLength(1);
+	expect(firstResult?.messages.find((message) => message.customType === "pi-schematic-readonly-nudge")?.content ?? "").toMatch(/\[readonly\] disabled/);
 
 	const secondResult = await contextHook({ messages: [] }, { getContextUsage: () => ({ percent: 40 }) });
-	expect(secondResult?.messages?.filter((message: any) => message.customType === "pi-schematic-readonly-nudge").length ?? 0).toBe(0);
+	expect(secondResult?.messages.filter((message) => message.customType === "pi-schematic-readonly-nudge").length ?? 0).toBe(0);
 });
 
 testWithDir("one readonly entry is appended per consumed queued toggle", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "prompt-a", true);
-	const { pi } = await registerReadonlyPI();
-	const [inputHandler] = pi.handlers.get("input")!;
-	const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+	const { pi } = await registerCheckedPI();
+	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([makePromptCommand("prompt-a", filePath)]);
 
 	await inputHandler({ text: "/prompt-a", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
-	const entries = pi.appendedEntries.filter((entry: any) => entry.customType === "pi-schematic-readonly");
+	const entries = getHostRecords(pi).appendedEntries.filter((entry) => entry.customType === "pi-schematic-readonly");
 	expect(entries).toHaveLength(1);
-	expect(entries[0].data.enabled).toBe(true);
+	expect(dataField(entries[0], "enabled")).toBe(true);
 });
 
 async function assertHandoffAlignment(name: string, readonly: boolean, direction: string): Promise<void> {
 	const dir = await tmpDir();
 	try {
 		const filePath = await writePrompt(dir, name, readonly);
-		const { pi } = await registerReadonlyPI();
-		const [inputHandler] = pi.handlers.get("input")!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+		const { pi } = await registerCheckedPI();
+		const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 		const ctx = makeBeforeStartCtx();
 
-		await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
-		await pi.commands.get("handoff").handler(direction, {
-			...makeReadonlyUICtx(),
-			isIdle: () => true,
-		} as any);
+		await getCommand(pi, "readonly").handler("", uiCommandContext());
+		await getCommand(pi, "handoff").handler(direction, uiCommandContext({ isIdle: () => true }));
 
 		pi.setCommands([makePromptCommand(name, filePath)]);
 		await inputHandler({ text: `/${name}`, source: "interactive" }, ctx);
 		await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
-		expect(pi.appendedEntries.at(-1)?.customType).toBe("pi-schematic-readonly");
-		expect(pi.appendedEntries.at(-1)?.data.enabled).toBe(readonly);
+		expect(getHostRecords(pi).appendedEntries.at(-1)?.customType).toBe("pi-schematic-readonly");
+		expect(dataField(getHostRecords(pi).appendedEntries.at(-1), "enabled")).toBe(readonly);
 
 		// The live context hook renders the pending-handoff nudge from the toggled
 		// readonly mode, so the nudge can never go stale like a frozen summary would.
-		const [contextHandler] = pi.handlers.get("context")!;
+		const contextHandler = (event: unknown, ctx: unknown) => runContextHandler(pi, event, ctx);
 		const result = await contextHandler(
 			{ messages: [{ role: "user", content: "continue", timestamp: 1 }] },
 			makeReadonlyUICtx({ getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }) }),
 		);
-		const nudge = result.messages.filter((message: any) => message.customType === "pi-schematic-watchdog").at(-1);
+		const nudge = result?.messages.filter((message) => message.customType === "pi-schematic-watchdog").at(-1);
 		assertPresent(nudge, "the context hook must deliver a pending-handoff watchdog nudge");
 		if (readonly) {
 			expect(nudge.content).toMatch(/temporary handoff exception active/);
