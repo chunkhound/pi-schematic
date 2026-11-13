@@ -12,6 +12,7 @@ import {
 	type ExtensionContext,
 	type ExtensionToolContext,
 	type ExtensionUIContext,
+	type KeybindingsManager,
 	type ToolCallEventResult,
 	type ToolDefinition,
 	type TurnEndEvent,
@@ -27,7 +28,7 @@ import { createState, resetState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
 import { assertPresent, isRecord } from "../assertions.js";
 import { AGENT_DIR_ENV_KEY } from "../paths.js";
-import { createTestHost, getTool, testKeybindings, type TestPI } from "./test-host.js";
+import { createTestHost, getTool, loadTestKeybindings, type TestPI } from "./test-host.js";
 
 export const theme = {
 	fg: (_name: string, text: string) => text,
@@ -313,7 +314,8 @@ export function turnEndEvent(overrides: Partial<TurnEndEvent> = {}): TurnEndEven
 // cleanup swallows a throwing ctx.ui.notify). Data members get the values pi
 // reports for a session without UI; optional ones such as `thinkingLevel` are left
 // out and read as `undefined`. An override whose value is `undefined` counts as
-// left out.
+// left out, except `modelRegistry: undefined` on `createExtensionContext` and the
+// builders on it, which builds a context without a registry.
 
 function unstubbedError(member: string): Error {
 	let where = "pass it in the overrides";
@@ -343,19 +345,18 @@ function definedOverrides<T extends object>(overrides: Partial<T>): Partial<T> {
 	return defined;
 }
 
-// The methods `ModelRegistry` declares; its only data member, `runtime`, is private.
-const MODEL_REGISTRY_MEMBERS = new Set(Object.getOwnPropertyNames(ModelRegistry.prototype).filter((name) => name !== "constructor"));
-
-// A `ModelRegistry` with `members` as its own; reading any other `ModelRegistry` method
-// throws `unstubbed(property)`. Every other access behaves as on an empty object, so
-// copying, comparing, printing or awaiting the registry does not throw.
-function guardedModelRegistry(members: Partial<ModelRegistry>, unstubbed: (property: string) => Error): ModelRegistry {
-	return new Proxy(stubInstance(ModelRegistry.prototype, members), {
-		get(registry, property, receiver) {
-			if (typeof property === "string" && MODEL_REGISTRY_MEMBERS.has(property) && !Object.hasOwn(members, property)) {
+// An instance of `prototype`'s class with `members` as its own; reading any other
+// member `prototype` declares, method or accessor, throws `unstubbed(property)`.
+// Every other access behaves as on an empty object, so copying, comparing, printing
+// or awaiting the instance does not throw.
+function guardedInstance<T extends object>(prototype: T, members: Partial<T>, unstubbed: (property: string) => Error): T {
+	const declared = new Set(Object.getOwnPropertyNames(prototype).filter((name) => name !== "constructor"));
+	return new Proxy(stubInstance(prototype, members), {
+		get(instance, property, receiver) {
+			if (typeof property === "string" && declared.has(property) && !Object.hasOwn(members, property)) {
 				throw unstubbed(property);
 			}
-			const value: unknown = Reflect.get(registry, property, receiver);
+			const value: unknown = Reflect.get(instance, property, receiver);
 			return value;
 		},
 	});
@@ -363,13 +364,13 @@ function guardedModelRegistry(members: Partial<ModelRegistry>, unstubbed: (prope
 
 /** A `ModelRegistry` whose methods are `members`; reading any other `ModelRegistry` method throws, naming it. */
 export function createModelRegistry(members: Partial<ModelRegistry>): ModelRegistry {
-	return guardedModelRegistry(members, (property) => new Error(`modelRegistry.${property} is not stubbed in this test registry; add it to the members.`));
+	return guardedInstance(ModelRegistry.prototype, members, (property) => new Error(`modelRegistry.${property} is not stubbed in this test registry; add it to the members.`));
 }
 
 // A model registry on which reading any `ModelRegistry` method throws naming
 // `ctx.modelRegistry`, on the original context and on every copy.
 function unstubbedModelRegistry(): ModelRegistry {
-	return guardedModelRegistry({}, () => unstubbedError("ctx.modelRegistry"));
+	return guardedInstance(ModelRegistry.prototype, {}, () => unstubbedError("ctx.modelRegistry"));
 }
 
 /** A model with `fields` over placeholder metadata: the id as name, a test api and base URL, zero cost and limits. */
@@ -426,7 +427,7 @@ export function createUIContext(overrides: Partial<ExtensionUIContext> = {}): Ex
 export function createExtensionContext(overrides: Partial<ExtensionContext> = {}): ExtensionContext {
 	const defined = definedOverrides(overrides);
 	const cwd = defined.cwd ?? process.cwd();
-	const registry: Partial<Pick<ExtensionContext, "modelRegistry">> = Object.hasOwn(overrides, "modelRegistry") ? { modelRegistry: overrides.modelRegistry } : {};
+	const missingRegistry: Partial<Pick<ExtensionContext, "modelRegistry">> = Object.hasOwn(overrides, "modelRegistry") && overrides.modelRegistry === undefined ? { modelRegistry: undefined } : {};
 	return {
 		ui: createUIContext(),
 		mode: "print",
@@ -446,7 +447,7 @@ export function createExtensionContext(overrides: Partial<ExtensionContext> = {}
 		compact: unstubbed("ctx.compact"),
 		getSystemPrompt: unstubbed("ctx.getSystemPrompt"),
 		...defined,
-		...registry,
+		...missingRegistry,
 	};
 }
 
@@ -476,18 +477,31 @@ export function createToolContext(overrides: Partial<ExtensionToolContext> = {})
 /**
  * A `ctx.ui.custom` that builds the component with a TUI whose `requestRender` does
  * nothing, `renderTheme` and pi's default keybindings, then runs `onOpen` with it.
- * It resolves to the value the component passed to `done` by the time `onOpen`
- * finished, and rejects when the component did not call `done` by then.
+ * As pi does, the first `done` disposes a built component that has a `dispose`
+ * method. It resolves to the value the component passed to the first `done` by the
+ * time `onOpen` finished, and rejects when the component did not call `done` by then.
  */
 export function createCustomUI(renderTheme: Theme, onOpen: (component: Component) => void | Promise<void>): ExtensionUIContext["custom"] {
 	const tui = stubInstance(TuiMainScreen.prototype, { requestRender: () => undefined });
-	return async <T,>(factory: (tui: TuiMainScreen, theme: Theme, keybindings: typeof testKeybindings, done: (result: T) => void) => Component | Promise<Component>): Promise<T> => {
+	return async <T,>(factory: (tui: TuiMainScreen, theme: Theme, keybindings: KeybindingsManager, done: (result: T) => void) => Component | Promise<Component>): Promise<T> => {
+		const keybindings = await loadTestKeybindings();
 		const results: T[] = [];
-		const component = await factory(tui, renderTheme, testKeybindings, (result) => { results.push(result); });
+		let built: Component | undefined;
+		const component = await factory(tui, renderTheme, keybindings, (result) => {
+			results.push(result);
+			if (results.length === 1 && built !== undefined) {disposeComponent(built);}
+		});
+		built = component;
 		await onOpen(component);
 		if (results.length === 0) {throw new Error("The custom component did not call done.");}
 		return results[0];
 	};
+}
+
+// pi's `Component` type declares no `dispose`; pi calls it when a component has one.
+function disposeComponent(component: Component): void {
+	const dispose: unknown = Reflect.get(component, "dispose");
+	if (typeof dispose === "function") {Reflect.apply(dispose, component, []);}
 }
 
 // ── Readonly test helpers ────────────────────────────────────────────
@@ -505,7 +519,7 @@ function assertToolCallResult(value: unknown): asserts value is ToolCallEventRes
 		|| (value.reason !== undefined && typeof value.reason !== "string")
 		|| (value.terminate !== undefined && typeof value.terminate !== "boolean")
 	) {
-		throw new Error("A tool_call handler returned something other than a tool_call result.");
+		throw new Error(`A tool_call handler returned something other than a tool_call result: ${JSON.stringify(value)}.`);
 	}
 }
 
@@ -535,23 +549,6 @@ export function uiCommandContext(overrides: Partial<ExtensionCommandContext> = {
 		getContextUsage: () => undefined,
 		...overrides,
 	});
-}
-
-/**
- * Create a minimal UI context with the required shape for tool_call/auth tests.
- */
-export function makeReadonlyUICtx(overrides: Record<string, unknown> = {}) {
-	return {
-		hasUI: true,
-		ui: {
-			notify: vi.fn(),
-			theme: { fg: (_name: string, text: string) => text },
-			setStatus: vi.fn(),
-			setWidget: vi.fn(),
-		},
-		getContextUsage: () => null,
-		...overrides,
-	};
 }
 
 /** The denial phrase each platform's OS sandbox puts in a blocked write's error. */
@@ -935,17 +932,22 @@ export default function(pi) {
 
 // ── TUI context factory ───────────────────────────────────────────────
 
-// The theme of `makeTUICtx`: `fg` marks the color as `[name:text]`; every other member is the class's own.
-const tuiTheme = stubInstance(Theme.prototype, { fg: (name: string, text: string) => `[${name}:${text}]` });
+// The theme of `makeTUICtx`: `fg` marks the color as `[name:text]`; reading any other `Theme` member throws, naming it.
+const tuiTheme = guardedInstance(
+	Theme.prototype,
+	{ fg: (name: string, text: string) => `[${name}:${text}]` },
+	(property) => new Error(`theme.${property} is not stubbed in the makeTUICtx theme; it stubs only fg.`),
+);
 
 function isOptionalStringArray(value: unknown): value is string[] | undefined {
 	return value === undefined || isStringArray(value);
 }
 
 /**
- * A TUI command and tool context: UI on unless `hasUI` is false, `tuiTheme` as the
- * theme, `setStatus` and `setWidget` recorded into `record`, `notify` a no-op unless
- * overridden, and context usage at `percent` (none when `percent` is null, the
+ * A TUI command and tool context: UI on (mode `tui`) unless `hasUI` is false (mode
+ * `print`), `tuiTheme` as the theme, `setStatus` and `setWidget` recorded into
+ * `record`, `notify` a no-op, every other UI member as `createUIContext` builds it,
+ * `ui` over those, and context usage at `percent` (none when `percent` is null, the
  * default). It has no model registry, so code that refreshes model groups skips
  * them. `setWidget` throws for a component widget, which `record` cannot hold.
  */
@@ -954,8 +956,7 @@ export function makeTUICtx(
 		percent: number | null;
 		hasUI: boolean;
 		record: { statuses: Map<string, string | undefined>; widgets: Map<string, string[] | undefined> };
-		notify: ExtensionUIContext["notify"];
-		custom: ExtensionUIContext["custom"];
+		ui: Partial<ExtensionUIContext>;
 	}> = {},
 ): ExtensionCommandContext & ExtensionToolContext {
 	const record = overrides.record ?? { statuses: new Map(), widgets: new Map() };
@@ -963,17 +964,18 @@ export function makeTUICtx(
 	const percent = overrides.percent !== undefined ? overrides.percent : null;
 	const ui = createUIContext({
 		theme: tuiTheme,
-		notify: overrides.notify ?? vi.fn(),
+		notify: vi.fn(),
 		setStatus: (key, status) => { record.statuses.set(key, status); },
 		setWidget: (key: string, content: unknown) => {
 			if (!isOptionalStringArray(content)) {throw new Error(`makeTUICtx records only string widgets; "${key}" got a component.`);}
 			record.widgets.set(key, content);
 		},
-		custom: overrides.custom,
+		...definedOverrides(overrides.ui ?? {}),
 	});
 	return Object.assign(
 		createCommandContext({
 			hasUI,
+			mode: hasUI ? "tui" : "print",
 			ui,
 			modelRegistry: undefined,
 			getContextUsage: () => (percent !== null ? { tokens: null, contextWindow: 0, percent } : undefined),

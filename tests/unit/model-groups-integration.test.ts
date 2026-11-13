@@ -11,7 +11,8 @@ import { withTemp } from "./model-groups-helpers.js";
 
 type RegistryFields = Pick<ModelRegistry, "getAll" | "getAvailable" | "find" | "hasConfiguredAuth">;
 
-function registryFields(available = new Set(["openai:gpt-5"])): RegistryFields {
+function registryFields(): RegistryFields {
+	const available = new Set(["openai:gpt-5"]);
 	const models = [testModel({ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } })];
 	return {
 		getAll: () => models,
@@ -19,10 +20,6 @@ function registryFields(available = new Set(["openai:gpt-5"])): RegistryFields {
 		find: (provider, id) => models.find((m) => m.provider === provider && m.id === id),
 		hasConfiguredAuth: (entry) => available.has(`${entry.provider}:${entry.id}`),
 	};
-}
-
-function registry(available?: Set<string>): ModelRegistry {
-	return createModelRegistry(registryFields(available));
 }
 
 // Escape on the Model Groups list closes the component, which resolves ctx.ui.custom.
@@ -43,7 +40,7 @@ function sessionStartContext(cwd: string, ui: Partial<ExtensionUIContext>, overr
 		mode: "tui",
 		isProjectTrusted: () => true,
 		cwd,
-		modelRegistry: registry(),
+		modelRegistry: createModelRegistry(registryFields()),
 		getContextUsage: () => ({ tokens: null, contextWindow: 0, percent: 10 }),
 		ui: createUIContext({ setStatus: vi.fn(), setWidget: vi.fn(), addAutocompleteProvider: vi.fn(), ...ui }),
 		...overrides,
@@ -159,7 +156,7 @@ test("before_agent_start writes fresh names-and-effective-modalities guidance", 
 	const pi = await createTestHost();
 	const handler = getHandler(pi, "before_agent_start");
 	const event = createBeforeAgentStartEvent();
-	await handler(event, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: registry() }));
+	await handler(event, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: createModelRegistry(registryFields()) }));
 	const section = event.systemPromptOptions.sections.schematic_model_groups;
 	expect(section).toMatch(/## Model Groups for spawn/);
 	expect(section).toMatch(/Available Model Groups: review \(text, image, reasoning\)/);
@@ -193,7 +190,7 @@ test("before_agent_start labels empty effective modalities unambiguously", async
 	const pi = await createTestHost();
 	const handler = getHandler(pi, "before_agent_start");
 	const event = createBeforeAgentStartEvent();
-	await handler(event, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: registry() }));
+	await handler(event, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: createModelRegistry(registryFields()) }));
 	const section = event.systemPromptOptions.sections.schematic_model_groups;
 	expect(section).toMatch(/foo \(no common modalities\)/);
 	expect(section).toMatch(/foo \(none\) \(no common modalities\)/);
@@ -231,7 +228,7 @@ test("before_agent_start clears stale Model Groups guidance when registry become
 	const pi = await createTestHost();
 	const handler = getHandler(pi, "before_agent_start");
 	const loaded = createBeforeAgentStartEvent();
-	await handler(loaded, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: registry() }));
+	await handler(loaded, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: createModelRegistry(registryFields()) }));
 	expect(loaded.systemPromptOptions.sections.schematic_model_groups).toMatch(/Available Model Groups: review/);
 
 	const unavailable = createBeforeAgentStartEvent();
@@ -262,7 +259,7 @@ test.for(["rpc", "json", "print"] as const)("root-recorded /model-groups rejects
 		mode,
 		hasUI: mode === "rpc",
 		cwd: "/must-not-load",
-		modelRegistry: registry(),
+		modelRegistry: createModelRegistry(registryFields()),
 		isProjectTrusted: () => true,
 		ui: createUIContext({ notify: (message) => { notifications.push(message); }, custom: () => { customCalls++; return Promise.reject(new Error("/model-groups must not open custom UI outside TUI mode")); } }),
 	}));
@@ -285,7 +282,7 @@ test("model groups untrusted root flow never probes project data and publishes g
 	expect(projectProbe).toBe(false);
 	let rendered = "";
 	await getCommand(pi, "model-groups").handler("", createCommandContext({
-		mode: "tui", hasUI: true, isProjectTrusted: () => false, cwd, modelRegistry: registry(),
+		mode: "tui", hasUI: true, isProjectTrusted: () => false, cwd, modelRegistry: createModelRegistry(registryFields()),
 		ui: createUIContext({
 			notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn(), addAutocompleteProvider: vi.fn(),
 			custom: createCustomUI(theme, (component) => {

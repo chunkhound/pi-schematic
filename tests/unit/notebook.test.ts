@@ -949,7 +949,7 @@ test("/notebook surfaces pager spawn errors as a warning notification", async ()
 	const notifications: { message: string; level: string | undefined }[] = [];
 	await getCommand(pi, "notebook").handler("", tuiContext({
 		percent: 20,
-		notify: (message, level) => { notifications.push({ message, level }); },
+		ui: { notify: (message, level) => { notifications.push({ message, level }); } },
 		custom: enterOnFirstOpen().custom,
 	}));
 

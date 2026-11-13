@@ -10,7 +10,7 @@ import { createState } from "../../state.js";
 import { THINKING_LEVELS } from "../../thinking-levels.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
 import { createTestHost, getTool } from "./test-host.js";
-import { assertErrorResult, createExtensionContext, EMPTY_CHILD_USAGE, runRealChildInvocation } from "./helpers.js";
+import { assertErrorResult, createExtensionContext, EMPTY_CHILD_USAGE, recordOf, runRealChildInvocation } from "./helpers.js";
 import { REPO_ROOT_URL } from "../paths.js";
 
 // The fields isSpawnToolResult checks; everything else stays unknown.
@@ -34,12 +34,6 @@ function isSpawnToolResult(value: unknown): value is CheckedSpawnResult {
 // The real-child fixture reports the spawn tool's result untyped; this checks its shape.
 function spawnResult(value: unknown): CheckedSpawnResult {
 	if (!isSpawnToolResult(value)) {throw new Error(`Expected a spawn tool result with text content, details and usage, got ${JSON.stringify(value)}.`);}
-	return value;
-}
-
-// Narrows a parsed JSON value to an object; throws naming `what` otherwise.
-function plainRecord(value: unknown, what: string): Record<string, unknown> {
-	if (!isRecord(value)) {throw new Error(`Expected ${what} to be an object.`);}
 	return value;
 }
 
@@ -139,8 +133,8 @@ test("spawn schema advertises the thinking levels as a plain string enum and rej
 	const state = createState();
 	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 	const tool = getTool(pi, "spawn");
-	const schema = plainRecord(JSON.parse(JSON.stringify(tool.parameters)), "the spawn schema");
-	const thinkingSchema = plainRecord(plainRecord(schema.properties, "the spawn schema properties").thinking, "the thinking schema");
+	const schema = recordOf(JSON.parse(JSON.stringify(tool.parameters)), "the spawn schema");
+	const thinkingSchema = recordOf(recordOf(schema.properties, "the spawn schema properties").thinking, "the thinking schema");
 	expect(thinkingSchema.type).toBe("string");
 	expect(thinkingSchema.enum).toStrictEqual([...THINKING_LEVELS]);
 	expect(JSON.stringify(thinkingSchema)).not.toMatch(/"(?:anyOf|const)"\s*:/);

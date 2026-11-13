@@ -20,7 +20,7 @@ import {
 	withTempHome,
 	type ToolCall,
 } from "./helpers.js";
-import { createBeforeAgentStartEvent, getCommand, getHandler, getHostRecords, invokeHandler, type AppendedEntry, type TestPI } from "./test-host.js";
+import { createBeforeAgentStartEvent, getCommand, getHostRecords, getOnlyHandler, invokeHandler, type AppendedEntry, type TestPI } from "./test-host.js";
 import { assertPresent, isRecord } from "../assertions.js";
 
 // pi's agent directory holds global prompts; an empty one keeps an exported
@@ -39,8 +39,8 @@ type CustomAgentMessage = Extract<ContextEvent["messages"][number], { customType
 // The extension registers one input and one before_agent_start handler.
 function frontmatterHandlers(pi: TestPI) {
 	return {
-		inputHandler: (event: Omit<InputEvent, "type">, ctx: ExtensionContext) => getHandler(pi, "input")({ type: "input", ...event }, ctx),
-		beforeStartHandler: (event: BeforeAgentStartEvent, ctx: ExtensionContext) => getHandler(pi, "before_agent_start")(event, ctx),
+		inputHandler: (event: Omit<InputEvent, "type">, ctx: ExtensionContext) => getOnlyHandler(pi, "input")({ type: "input", ...event }, ctx),
+		beforeStartHandler: (event: BeforeAgentStartEvent, ctx: ExtensionContext) => getOnlyHandler(pi, "before_agent_start")(event, ctx),
 	};
 }
 

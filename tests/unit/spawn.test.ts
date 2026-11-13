@@ -45,7 +45,7 @@ let h: TestHarness;
 
 // ── Test helpers ─────────────────────────────────────────────────────
 /** A chat model with `fields` over placeholder metadata: no reasoning, text input, zero cost. */
-function testModel(fields: Partial<Model<Api>> & Pick<Model<Api>, "id">): Model<Api> {
+function spawnModel(fields: Partial<Model<Api>> & Pick<Model<Api>, "id">): Model<Api> {
 	return {
 		name: fields.id, api: "openai-completions", provider: "test", baseUrl: "http://localhost.invalid",
 		reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -54,26 +54,21 @@ function testModel(fields: Partial<Model<Api>> & Pick<Model<Api>, "id">): Model<
 	};
 }
 
-/** A model registry whose `find` and `hasConfiguredAuth` are `members`; reading its other methods throws. */
-function testModelRegistry(members: Pick<ModelRegistry, "find" | "hasConfiguredAuth">): ModelRegistry {
-	return createModelRegistry(members);
-}
-
 /**
- * The tool context of a spawn call: the parent `model` built by `testModel`, the
- * `cwd`, and `modelRegistry` built by `testModelRegistry`. With `notify` the UI is
+ * The tool context of a spawn call: the parent `model` built by `spawnModel`, the
+ * `cwd`, and `modelRegistry` built by `createModelRegistry`. With `notify` the UI is
  * on and `notify` is its only stubbed member.
  */
 function spawnContext(init: {
-	model?: Parameters<typeof testModel>[0];
+	model?: Parameters<typeof spawnModel>[0];
 	cwd?: string;
 	modelRegistry?: Pick<ModelRegistry, "find" | "hasConfiguredAuth">;
 	notify?: ExtensionUIContext["notify"];
 }): ExtensionToolContext {
 	return createToolContext({
-		model: init.model && testModel(init.model),
+		model: init.model && spawnModel(init.model),
 		cwd: init.cwd,
-		modelRegistry: init.modelRegistry && testModelRegistry(init.modelRegistry),
+		modelRegistry: init.modelRegistry && createModelRegistry(init.modelRegistry),
 		...(init.notify ? { hasUI: true, ui: createUIContext({ notify: init.notify }) } : {}),
 	});
 }
@@ -286,7 +281,7 @@ test("spawn forwards requested thinking and reports the session effective thinki
 test("spawn execute composes Model Group routing with readonly child guards", async () => {
 	const state = createState();
 	state.readonlyEnabled = true;
-	const routedModel = testModel({ provider: "openai", id: "gpt-routed", reasoning: true });
+	const routedModel = spawnModel({ provider: "openai", id: "gpt-routed", reasoning: true });
 	state.modelGroups.groups = [group("review", { models: [{ provider: "openai", modelId: "gpt-routed", thinkingLevel: "low" }] })];
 	const parentRegistry = {
 		find: (provider: string, modelId: string) => provider === "openai" && modelId === "gpt-routed" ? routedModel : undefined,
@@ -348,9 +343,9 @@ test("readonly child without a bash tool gets the no-shell summary and no bash r
 
 test("spawn routes capability requirements to capable members via random selection on the filtered pool", async () => {
 	const state = createState();
-	const capA = testModel({ provider: "openai", id: "gpt-cap-a", reasoning: true, input: ["text", "image"] });
-	const capB = testModel({ provider: "openai", id: "gpt-cap-b", reasoning: true, input: ["text", "image"] });
-	const textOnly = testModel({ provider: "openai", id: "gpt-text", reasoning: true, input: ["text"] });
+	const capA = spawnModel({ provider: "openai", id: "gpt-cap-a", reasoning: true, input: ["text", "image"] });
+	const capB = spawnModel({ provider: "openai", id: "gpt-cap-b", reasoning: true, input: ["text", "image"] });
+	const textOnly = spawnModel({ provider: "openai", id: "gpt-text", reasoning: true, input: ["text"] });
 	state.modelGroups.groups = [{
 		...group("multi", {
 			models: [{ provider: "openai", modelId: "gpt-cap-a" }, { provider: "openai", modelId: "gpt-cap-b" }, { provider: "openai", modelId: "gpt-text" }],
@@ -385,7 +380,7 @@ test("spawn routes capability requirements to capable members via random selecti
 test("spawn injects a capability ceiling notice for a routed group with image disabled", async () => {
 	const state = createState();
 	state.notebookPages.set("entry-a", "preview\nbody");
-	const routedModel = testModel({ provider: "openai", id: "gpt-vision", reasoning: true, input: ["text", "image"] });
+	const routedModel = spawnModel({ provider: "openai", id: "gpt-vision", reasoning: true, input: ["text", "image"] });
 	state.modelGroups.groups = [{
 		...group("quick", { models: [{ provider: "openai", modelId: "gpt-vision" }], constraints: { modalities: ["text", "reasoning"] } }),
 		modalities: {
@@ -414,8 +409,8 @@ test("spawn injects a capability ceiling notice for a routed group with image di
 
 test("spawn injects descriptor-provided scalar capability ceilings", async () => {
 	const state = createState();
-	const small = testModel({ provider: "openai", id: "small", input: ["text"], reasoning: false, contextWindow: 10 });
-	const large = testModel({ provider: "openai", id: "large", input: ["text"], reasoning: false, contextWindow: 100 });
+	const small = spawnModel({ provider: "openai", id: "small", input: ["text"], reasoning: false, contextWindow: 10 });
+	const large = spawnModel({ provider: "openai", id: "large", input: ["text"], reasoning: false, contextWindow: 100 });
 	state.modelGroups.groups = [{
 		...group("context-capped", { models: [{ provider: "openai", modelId: "small" }, { provider: "openai", modelId: "large" }], constraints: { testMinContext: 50 } }),
 		modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
@@ -459,7 +454,7 @@ test("spawn execute builds prompt with notebook pages and task", async () => {
 test("spawn emits no capability notice when the routed group has no explicit override", async () => {
 	const state = createState();
 	state.modelGroups.groups = [group("open", { models: [{ provider: "openai", modelId: "gpt-vision" }] })];
-	const routedModel = testModel({ provider: "openai", id: "gpt-vision", reasoning: true, input: ["text", "image"] });
+	const routedModel = spawnModel({ provider: "openai", id: "gpt-vision", reasoning: true, input: ["text", "image"] });
 	const parentRegistry = {
 		find: (_provider: string, modelId: string) => modelId === "gpt-vision" ? routedModel : undefined,
 		hasConfiguredAuth: (model: Model<Api>) => model === routedModel,
@@ -1419,7 +1414,7 @@ test("executeSpawn propagates missing modalities before creating child work", as
 	const sessionFactory = vi.fn(() => new Promise<never>(() => { throw new Error("must not create child"); }));
 	await expect(executeSpawn("missing-modality", pi, spawnContext({
 		model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
-		modelRegistry: { find: (_provider, id) => testModel({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
+		modelRegistry: { find: (_provider, id) => spawnModel({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
 	}), state, { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, "medium", sessionFactory)).rejects.toSatisfy((error: unknown) => {
 		expect(error).toBeInstanceOf(SpawnRouteError);
 		expect((error as SpawnRouteError).reason).toBe("missing-modality");
@@ -1452,7 +1447,7 @@ test("registered spawn tool rejects missing modalities before creating child wor
 	await expect(
 		executeSpawnTool(pi, "registered-missing-modality", { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, spawnContext({
 			model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
-			modelRegistry: { find: (_provider, id) => testModel({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
+			modelRegistry: { find: (_provider, id) => spawnModel({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
 		})),
 	).rejects.toSatisfy((error: unknown) => {
 		expect(error).toBeInstanceOf(SpawnRouteError);
@@ -1475,7 +1470,7 @@ test("registered spawn tool rejects injected scalar group and model requirements
 	await expect(
 		executeSpawnTool(pi, "registered-scalar", { prompt: "Do the task", group: "small", constraints: { testMinContext: 20 } }, undefined, undefined, spawnContext({
 			model: { provider: "openai", id: "parent", input: ["text"], reasoning: false, contextWindow: 100 }, cwd: "/tmp",
-			modelRegistry: { find: (_provider, id) => testModel({ provider: "openai", id, input: ["text"], reasoning: false, contextWindow: id === "small" ? 10 : 100 }), hasConfiguredAuth: () => true },
+			modelRegistry: { find: (_provider, id) => spawnModel({ provider: "openai", id, input: ["text"], reasoning: false, contextWindow: id === "small" ? 10 : 100 }), hasConfiguredAuth: () => true },
 		})),
 	).rejects.toSatisfy((error: unknown) => {
 		expect(error).toBeInstanceOf(SpawnRouteError);
@@ -1552,7 +1547,7 @@ test("executeSpawn forwards inherited constraints to routing and succeeds when s
 	const pi = await createTestHost((api) => { registerSpawnTool(api, state, sessionFactory); }, { activeTools: ["read", "spawn"] });
 	const result = await executeSpawn("spawn-inherited-rm", pi, spawnContext({
 		model: { provider: "openai", id: "parent", input: ["text", "image"], reasoning: false }, cwd: "/tmp",
-		modelRegistry: { find: (_p, id) => testModel({ provider: "openai", id, input: ["text", "image"], reasoning: false }), hasConfiguredAuth: () => true },
+		modelRegistry: { find: (_p, id) => spawnModel({ provider: "openai", id, input: ["text", "image"], reasoning: false }), hasConfiguredAuth: () => true },
 	}), state, { prompt: "Do the task", constraints: { modalities: { required: ["text", "image"] } } }, undefined, undefined, "medium", sessionFactory);
 	expect(result.details.outcome).toBe("success");
 	expect(result.details.route).toStrictEqual({ status: "inherited" });
