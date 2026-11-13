@@ -40,7 +40,10 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # A knip finding warns without failing the lint job; the pre-commit hook runs knip locally
+      # on every commit.
       - name: Knip
+        continue-on-error: true
         run: npm run knip
 
   # ── Cross-platform test matrix ──────────────────────────────────────
