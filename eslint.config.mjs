@@ -419,6 +419,7 @@ export default defineConfig([
 			"vitest/expect-expect": "error",
 			"vitest/no-commented-out-tests": "error",
 			"vitest/no-conditional-expect": "error",
+			// An error, not the preset's warn: lint exits 0 on warnings, so a disabled test would pass unnoticed.
 			"vitest/no-disabled-tests": "error",
 			"vitest/no-focused-tests": "error",
 			"vitest/no-identical-title": "error",
