@@ -113,7 +113,8 @@ async function executeSpawnTool(
 	return result;
 }
 
-// Spawn reads these members of a child session; a mock missing one fails here instead of inside spawn.
+// Spawn reads these members of a child session; a mock without messages, prompt, abort or a
+// sessionManager object fails here instead of inside spawn.
 function assertChildSession(session: unknown): asserts session is AgentSession {
 	if (!isRecord(session) || !Array.isArray(session.messages) || typeof session.prompt !== "function" || typeof session.abort !== "function" || !isRecord(session.sessionManager)) {
 		throw new Error("A mock child session needs messages, prompt, abort and sessionManager.");
@@ -307,6 +308,7 @@ test("spawn execute composes Model Group routing with readonly child guards", as
 	const configMembers: Record<string, unknown> = { ...seenConfig };
 	expect(configMembers.modelRegistry).toBeUndefined();
 	expect(configMembers.authStorage).toBeUndefined();
+	expect(seenConfig.modelRuntime).toBeUndefined();
 	expect(new Set(seenConfig.tools)).toStrictEqual(new Set(["read", "bash", "notebook_write", "notebook_read", "notebook_index"]));
 	expect(seenConfig.customTools).toContainEqual(expect.objectContaining({ name: "bash" }));
 	expect(seenConfig.tools).not.toContain("write");
@@ -323,9 +325,7 @@ test("readonly child without a bash tool gets the no-shell summary and no bash r
 	const state = createState();
 	state.readonlyEnabled = true;
 	let seenPrompt = "";
-	const pi = await createTestHost((api) => { registerSpawnTool(api, state, async () => sessionResult(
-		mockSessionFactory({ prompt: async (p?: string) => { seenPrompt = p ?? ""; } }),
-	)); }, { activeTools: ["read", "powershell", "edit", "write"], allTools: ["read", "powershell", "edit", "write"] });
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactoryWith({ prompt: async (p?: string) => { seenPrompt = p ?? ""; } })); }, { activeTools: ["read", "powershell", "edit", "write"], allTools: ["read", "powershell", "edit", "write"] });
 
 	await executeSpawnTool(pi,
 		"spawn-no-shell",
@@ -392,9 +392,7 @@ test("spawn injects a capability ceiling notice for a routed group with image di
 		hasConfiguredAuth: (model: Model<Api>) => model === routedModel,
 	};
 	let seenPrompt = "";
-	const pi = await createTestHost((api) => { registerSpawnTool(api, state, async (config) => sessionResult(
-		mockSessionFactory({ prompt: async (p?: string) => { seenPrompt = p ?? ""; } }),
-	)); }, { activeTools: ["read", "bash", "spawn"] });
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactoryWith({ prompt: async (p?: string) => { seenPrompt = p ?? ""; } })); }, { activeTools: ["read", "bash", "spawn"] });
 	await executeSpawnTool(pi,
 		"spawn-quick",
 		{ prompt: "Read the image in file.png", group: "quick" },
@@ -416,9 +414,7 @@ test("spawn injects descriptor-provided scalar capability ceilings", async () =>
 		modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
 	}];
 	let seenPrompt = "";
-	const pi = await createTestHost((api) => { registerSpawnTool(api, state, async () => sessionResult(
-		mockSessionFactory({ prompt: async (prompt?: string) => { seenPrompt = prompt ?? ""; } }),
-	), createConstraintRegistry([testMinContext])); }, { activeTools: ["read", "bash", "spawn"] });
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactoryWith({ prompt: async (prompt?: string) => { seenPrompt = prompt ?? ""; } }), createConstraintRegistry([testMinContext])); }, { activeTools: ["read", "bash", "spawn"] });
 	await executeSpawnTool(pi, "spawn-context-cap", { prompt: "Do the task", group: "context-capped" }, undefined, undefined, spawnContext({
 		model: { provider: "openai", id: "parent", contextWindow: 100 }, cwd: "/tmp",
 		modelRegistry: { find: (_provider, id) => id === "small" ? small : id === "large" ? large : undefined, hasConfiguredAuth: () => true },
@@ -462,9 +458,7 @@ test("spawn emits no capability notice when the routed group has no explicit ove
 		hasConfiguredAuth: (model: Model<Api>) => model === routedModel,
 	};
 	let seenPrompt = "";
-	const pi = await createTestHost((api) => { registerSpawnTool(api, state, async (config) => sessionResult(
-		mockSessionFactory({ prompt: async (p?: string) => { seenPrompt = p ?? ""; } }),
-	)); }, { activeTools: ["read", "bash", "spawn"] });
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactoryWith({ prompt: async (p?: string) => { seenPrompt = p ?? ""; } })); }, { activeTools: ["read", "bash", "spawn"] });
 	await executeSpawnTool(pi,
 		"spawn-open",
 		{ prompt: "Do the task", group: "open" },
@@ -1501,8 +1495,10 @@ test("spawn requirements validate the canonical envelope and keep its shape", ()
 	expect(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image", "text"] } } })).toStrictEqual({ modalities: { required: ["image", "text"] } });
 	expect(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image"] } } })).toStrictEqual({ modalities: { required: ["image"] } });
 	expect(() => normalizeSpawnRequirements({ constraints: { unknown: {} } })).toThrow(/Unknown spawn constraint/);
-	// A string is outside the parameter type, so the call goes through Reflect.apply.
-	expect(() => { Reflect.apply(normalizeSpawnRequirements, undefined, [{ constraints: "{\"modalities\":{\"required\":[\"text\"]}}" }]); }).toThrow(/must be an object/);
+	expect(() => {
+		// @ts-expect-error A string is outside the constraints parameter type.
+		normalizeSpawnRequirements({ constraints: "{\"modalities\":{\"required\":[\"text\"]}}" });
+	}).toThrow(/must be an object/);
 	expect(() => normalizeSpawnRequirements({ constraints: { modalities: ["text"] } })).toThrow(/must be an object with required modalities/);
 	expect(() => normalizeSpawnRequirements({ constraints: { modalities: ["required", ["text"]] } })).toThrow(/must be an object with required modalities/);
 	expect(normalizeSpawnRequirements({})).toStrictEqual(normalizeSpawnRequirements({ constraints: {}}));
@@ -1756,13 +1752,13 @@ test("a real prompt failure that races with a parent abort keeps its text under 
 	let rejectPrompt!: (error: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
 	const promptError = new Error("prompt failed despite abort");
-	const pi = await createTestHost((api) => { registerSpawnTool(api, state, async () => sessionResult(mockSessionFactory({
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactoryWith({
 		prompt: async () => {
 			promptStarted();
 			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
 		},
 		dispose,
-	}))); }, { activeTools: ["read", "bash", "spawn"] });
+	})); },{ activeTools: ["read", "bash", "spawn"] });
 
 	const execution = executeSpawnTool(pi,
 		"spawn-abort-real-error", { prompt: "Do the task" }, controller.signal,
@@ -1790,14 +1786,14 @@ test("spawn invalidation wins the abort and prompt-rejection race", async () => 
 	let promptStarted!: () => void;
 	let rejectPrompt!: (error: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
-	const mockFactory = async () => sessionResult(mockSessionFactory({
+	const mockFactory = mockFactoryWith({
 		prompt: async () => {
 			promptStarted();
 			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
 		},
 		abort,
 		dispose,
-	}));
+	});
 	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactory); }, { activeTools: ["read", "bash", "spawn"] });
 
 	const execution = executeSpawnTool(pi,
@@ -1823,14 +1819,14 @@ test("executeSpawn reports the invalidation and abort failure when abort rejects
 	let rejectPrompt!: (error: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
 	const abortError = new Error("abort failed");
-	const mockFactory = async () => sessionResult(mockSessionFactory({
+	const mockFactory = mockFactoryWith({
 		prompt: async () => {
 			promptStarted();
 			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
 		},
 		abort: async () => { throw abortError; },
 		dispose,
-	}));
+	});
 	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactory); }, { activeTools: ["read", "bash", "spawn"] });
 
 	const execution = executeSpawnTool(pi,
@@ -1890,14 +1886,14 @@ test("reset during prompt reports a failed abort once through the UI", async () 
 	const abortError = new Error("abort failed");
 	const abort = vi.fn(async () => { throw abortError; });
 	const notifications: [string, string | undefined][] = [];
-	const mockFactory = async () => sessionResult(mockSessionFactory({
+	const mockFactory = mockFactoryWith({
 		prompt: async () => {
 			promptStarted();
 			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
 		},
 		abort,
 		dispose,
-	}));
+	});
 	let promptStarted!: () => void;
 	let rejectPrompt!: (error: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
@@ -1933,14 +1929,14 @@ test("a throwing notice for a failed reset abort does not emit an unhandled reje
 	const onUnhandled = (reason: unknown) => unhandled.push(reason);
 	process.on("unhandledRejection", onUnhandled);
 	try {
-		const mockFactory = async () => sessionResult(mockSessionFactory({
+		const mockFactory = mockFactoryWith({
 			prompt: async () => {
 				promptStarted();
 				await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
 			},
 			abort: async () => { throw abortError; },
 			dispose: () => {},
-		}));
+		});
 		const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactory); }, { activeTools: ["read", "bash", "spawn"] });
 
 		const execution = executeSpawnTool(pi,
@@ -1974,31 +1970,31 @@ test("spawn renderCall shows prompt preview and optional routing controls", asyn
 	const renderCall = getToolRenderCall(pi, "spawn");
 
 	// Collapsed: short prompt
-	const collapsed = renderCall({ prompt: "Do X" }, theme, createToolRenderContext({ expanded: false }));
+	const collapsed = renderCall({ prompt: "Do X" }, theme, createToolRenderContext());
 	const collapsedLines = collapsed.render(120);
 	expect(collapsedLines).toContainEqual(expect.stringContaining("spawn"));
 	expect(collapsedLines).toContainEqual(expect.stringContaining("Do X"));
 
 	// Collapsed: long prompt shows truncation hint
 	const longPrompt = Array.from({ length: 10 }, (_, i) => `Line ${i}`).join("\n");
-	const truncated = renderCall({ prompt: longPrompt }, theme, createToolRenderContext({ expanded: false }));
+	const truncated = renderCall({ prompt: longPrompt }, theme, createToolRenderContext());
 	const truncatedLines = truncated.render(120);
 	expect(truncatedLines).toContainEqual(expect.stringContaining("more lines"));
 
 	// Explicit thinking is shown without a group; grouped calls show only the route.
-	const withThinking = renderCall({ prompt: "Do X", thinking: "high" }, theme, createToolRenderContext({ expanded: false }));
+	const withThinking = renderCall({ prompt: "Do X", thinking: "high" }, theme, createToolRenderContext());
 	const thinkingLines = withThinking.render(120);
 	expect(thinkingLines).toContainEqual(expect.stringContaining("high"));
 	const withWhitespaceGroup = renderCall(
 		{ prompt: "Do X", group: " \t ", thinking: "high" },
 		theme,
-		createToolRenderContext({ expanded: false }),
+		createToolRenderContext(),
 	);
 	expect(withWhitespaceGroup.render(120)).toContainEqual(expect.stringContaining("high"));
 	const withRouting = renderCall(
 		{ prompt: "Do X", group: "review", thinking: "max" },
 		theme,
-		createToolRenderContext({ expanded: false }),
+		createToolRenderContext(),
 	);
 	const routingLines = withRouting.render(120);
 	expect(routingLines).toContainEqual(expect.stringContaining("review"));
@@ -2006,7 +2002,7 @@ test("spawn renderCall shows prompt preview and optional routing controls", asyn
 	const withEscapedGroup = renderCall(
 		{ prompt: "Do X", group: "review\n\u001b" },
 		theme,
-		createToolRenderContext({ expanded: false }),
+		createToolRenderContext(),
 	);
 	const escapedGroupLines = withEscapedGroup.render(120);
 	expect(escapedGroupLines).toContainEqual(expect.stringContaining("review\\n\\x1B"));
@@ -2579,7 +2575,6 @@ test("registerSpawnTool registers a tool with correct name and metadata", async 
 	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 
 	const tool = getTool(pi, "spawn");
-	assertPresent(tool, "spawn tool should be registered");
 	expect(tool.name).toBe("spawn");
 	expect(tool.label).toBe("Spawn");
 	expect(tool.description).toBeTypeOf("string");
@@ -2591,7 +2586,6 @@ test("registerSpawnTool registers a tool with correct name and metadata", async 
 	expect(tool.renderCall).toBeTypeOf("function");
 	expect(tool.renderResult).toBeTypeOf("function");
 	expect(tool.renderShell).toBe("self");
-	assertPresent(tool.parameters, "should have parameters");
 	const constraints = spawnConstraintsSchema(pi);
 	expect(constraints.type).toBe("object");
 	expect(constraints.properties.modalities).toBeTypeOf("object");

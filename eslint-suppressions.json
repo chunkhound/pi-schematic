@@ -1481,14 +1481,11 @@
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 13
     },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
-    },
     "@typescript-eslint/only-throw-error": {
       "count": 1
     },
     "@typescript-eslint/require-await": {
-      "count": 62
+      "count": 53
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 4
