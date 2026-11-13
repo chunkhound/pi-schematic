@@ -12,6 +12,7 @@ import { createTestHost, getCommand, getHandler, invokeHandler } from "./test-ho
 import type { TestPI } from "./test-host.js";
 import type { ContextEventResult } from "@earendil-works/pi-coding-agent";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
+import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
 
 test("watchdog records context usage without user notifications", async () => {
 	const state = createState();
@@ -59,6 +60,10 @@ function assertWatchdogReminder(message: ContextMessage | undefined): asserts me
 }
 
 test("context injects watchdog reminder before each LLM call", async () => {
+	// One token below the handoff minimum, so the reminder does not prefer a handoff.
+	const tokens = MIN_HANDOFF_TOKENS - 1;
+	const percent = 70;
+	const contextWindow = Math.round((tokens * 100) / percent);
 	const pi = await createTestHost();
 	await getCommand(pi, "notebook").handler("oauth", createCommandContext());
 
@@ -66,8 +71,7 @@ test("context injects watchdog reminder before each LLM call", async () => {
 		pi,
 		"context",
 		{ type: "context", messages: [{ role: "user", content: "hi", timestamp: 1 }] },
-		// 21 000 tokens is below the handoff minimum, so the reminder does not prefer a handoff.
-		createExtensionContext({ getContextUsage: () => ({ tokens: 21_000, contextWindow: 30_000, percent: 70 }) }),
+		createExtensionContext({ getContextUsage: () => ({ tokens, contextWindow, percent }) }),
 	);
 
 	assertPresent(result);

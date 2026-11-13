@@ -72,9 +72,11 @@ export function setTempHome(home: string): () => void {
 }
 
 /**
- * An untyped render context for a collapsed call `tool-call-1` with no previous
- * component and a no-op `invalidate`; the overrides replace these members. New
- * tests use `createToolRenderContext`.
+ * An untyped render context for a collapsed call `tool-call-1` with images shown
+ * (`showImages: true`), no previous component and a no-op `invalidate`; the
+ * overrides replace these members, and unlike `createToolRenderContext` an
+ * override set to `undefined` replaces the default too. New tests use
+ * `createToolRenderContext`.
  */
 export function createRenderContext(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
@@ -256,9 +258,10 @@ export function turnEndEvent(overrides: Partial<TurnEndEvent> = {}): TurnEndEven
 // ── Typed extension contexts ─────────────────────────────────────────
 // Each method a test leaves out fails when the code under test calls it, naming the
 // method: a method whose pi type returns a promise returns a rejected one, every
-// other method throws. So a test that reaches a method it did not stub fails, unless
-// the code under test catches the error (spawn cleanup swallows a throwing
-// ctx.ui.notify). Data members get the values pi reports for a session without UI;
+// other method throws. The unstubbed model registry is the exception: reading any
+// of its members throws, whatever the member returns. So a test that reaches a
+// method it did not stub fails, unless the code under test catches the error (spawn
+// cleanup swallows a throwing ctx.ui.notify). Data members get the values pi reports for a session without UI;
 // optional ones such as `thinkingLevel` are left out and read as `undefined`. An
 // override whose value is `undefined` counts as left out.
 
