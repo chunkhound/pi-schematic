@@ -45,29 +45,31 @@ export function spawnNode(args: readonly string[], options: SpawnNodeOptions): S
 
 export interface RunGitOptions {
 	cwd: string;
-	timeoutMs?: number;
 }
 
 /**
  * Run `git ...args` to completion and return its stdout. Throws when git fails to spawn, outlives
- * the deadline, dies from a signal, or exits non-zero; the message names the command, the exit
- * status or signal, and stderr.
+ * the deadline, dies from a signal, or exits non-zero. The message names the command and, for a
+ * spawn failure or timeout, the spawn error; for a signal or exit status, that and stderr.
  */
 export function runGit(args: readonly string[], options: RunGitOptions): string {
-	const timeoutMs = options.timeoutMs ?? CHILD_TIMEOUT_MS;
 	const command = ["git", ...args].join(" ");
 	const result = spawnSync("git", args, {
 		cwd: options.cwd,
 		encoding: "utf8",
-		timeout: timeoutMs,
+		timeout: CHILD_TIMEOUT_MS,
+		// The timeout otherwise sends SIGTERM and waits, so a git process that handles SIGTERM outlives it.
 		killSignal: "SIGKILL",
 	});
-	if (result.error) {
-		// A timeout surfaces here as ETIMEDOUT, after the SIGKILL.
-		throw new Error(`${command} failed to run or did not exit within ${String(timeoutMs)} ms: ${result.error.message}`, { cause: result.error });
+	const spawnError = result.error;
+	if (spawnError && "code" in spawnError && spawnError.code === "ETIMEDOUT") {
+		throw new Error(`${command} did not exit within ${String(CHILD_TIMEOUT_MS)} ms (${spawnError.message})`, { cause: spawnError });
 	}
 	if (result.signal !== null) {
 		throw new Error(`${command} was killed by ${result.signal}; stderr: ${result.stderr}`);
+	}
+	if (spawnError) {
+		throw new Error(`${command} failed to spawn: ${spawnError.message}`, { cause: spawnError });
 	}
 	if (result.status !== 0) {
 		throw new Error(`${command} exited with status ${String(result.status)}; stderr: ${result.stderr}`);

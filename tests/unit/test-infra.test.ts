@@ -1,12 +1,12 @@
-// Tests for the test infrastructure itself: the shared Node child runner, the compat lane check that
-// every file on its unit list exists and belongs to the unit project, the run-wide config that
-// keeps parameterized test titles whole, and the prefix and suffix assertion helpers.
+// Tests for the test infrastructure itself: the shared Node and git child runners, the compat lane
+// check that every file on its unit list exists and belongs to the unit project, the run-wide config
+// that keeps parameterized test titles whole, and the prefix and suffix assertion helpers.
 
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { expectPrefix, expectSuffix } from "../assertions.js";
 import { REPO_ROOT, REPO_ROOT_URL } from "../paths.js";
-import { spawnNode } from "./spawn-node.js";
+import { runGit, spawnNode } from "./spawn-node.js";
 
 interface CompatCurrentModule {
 	assertCompatTestFiles: (files: string[]) => void;
@@ -57,6 +57,19 @@ describe("spawnNode", () => {
 	test("throws the spawn error for a working directory that does not exist", () => {
 		const missingCwd = join(REPO_ROOT, "missing-directory-for-spawn-node");
 		expect(() => spawnNode(["--version"], { cwd: missingCwd })).toThrow(/ENOENT/);
+	});
+});
+
+describe("runGit", () => {
+	test("throws the exit status and stderr for a git command that fails", () => {
+		expect(() => runGit(["rev-parse", "--verify", "refs/heads/missing-branch-for-run-git"], { cwd: REPO_ROOT })).toThrow(
+			/^git rev-parse --verify refs\/heads\/missing-branch-for-run-git exited with status 128; stderr: fatal: Needed a single revision/,
+		);
+	});
+
+	test("throws a spawn error for a working directory that does not exist", () => {
+		const missingCwd = join(REPO_ROOT, "missing-directory-for-run-git");
+		expect(() => runGit(["--version"], { cwd: missingCwd })).toThrow(/^git --version failed to spawn: .*ENOENT/);
 	});
 });
 

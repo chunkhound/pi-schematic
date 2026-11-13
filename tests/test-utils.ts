@@ -68,6 +68,14 @@ export interface TestHarness {
  * second restores stale singletons. Tear each harness down from a cleanup
  * returned by beforeEach (or from afterEach) or from an onTestFinished
  * callback to guarantee a single active harness per test.
+ *
+ * The console capture uses `vi.spyOn`, which brings two limits:
+ * - `restoreMocks` restores every spy before each test, so a harness created
+ *   outside a test body or `beforeEach` (at module level or in `beforeAll`)
+ *   stops capturing from the first test on.
+ * - `vi.spyOn` on a console method the harness already spies on returns the
+ *   harness's spy, so a test's own `mockImplementation` on it replaces the
+ *   capture and its `mockRestore` ends the capture for that level.
  */
 export function createTestHarness(): TestHarness {
 	const previousSingletons = getSingletons();
