@@ -120,7 +120,7 @@ test("#group autocomplete prepends colored effective modal letters when a colori
 test("registerModelGroupAutocomplete uses ctx.ui.addAutocompleteProvider once", () => {
 	const state = createState();
 	const providers: AutocompleteProviderFactory[] = [];
-	const ctx = createExtensionContext({ hasUI: true, ui: createUIContext({ addAutocompleteProvider: (factory) => { providers.push(factory); } }) });
+	const ctx = createExtensionContext({ hasUI: true, mode: "tui", ui: createUIContext({ addAutocompleteProvider: (factory) => { providers.push(factory); } }) });
 	registerModelGroupAutocomplete(ctx, state);
 	registerModelGroupAutocomplete(ctx, state);
 	expect(providers.length).toBe(1);
