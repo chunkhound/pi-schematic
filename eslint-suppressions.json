@@ -38,9 +38,6 @@
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 1
-    },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 2
     }
@@ -87,9 +84,6 @@
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 3
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 4
     }
   },
   "model-groups/store.ts": {
@@ -282,9 +276,6 @@
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 2
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
-    },
     "ban/wall-clock": {
       "count": 1
     },
@@ -300,11 +291,6 @@
   "tests/unit/model-groups-autocomplete.test.ts": {
     "vitest/max-expects": {
       "count": 5
-    }
-  },
-  "tests/unit/model-groups-constraints-fixture.ts": {
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
     }
   },
   "tests/unit/model-groups-constraints.test.ts": {
@@ -342,11 +328,6 @@
       "count": 1
     }
   },
-  "tests/unit/model-groups-router.test.ts": {
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 1
-    }
-  },
   "tests/unit/model-groups-tui.test.ts": {
     "no-control-regex": {
       "count": 3
@@ -375,9 +356,6 @@
     }
   },
   "tests/unit/os-sandbox.test.ts": {
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
-    },
     "ban/wall-clock": {
       "count": 3
     },
@@ -394,9 +372,6 @@
     }
   },
   "tests/unit/readonly-frontmatter.test.ts": {
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 1
-    },
     "vitest/max-expects": {
       "count": 69
     }
@@ -410,9 +385,6 @@
     }
   },
   "tests/unit/readonly-mode.test.ts": {
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 3
-    },
     "vitest/max-expects": {
       "count": 3
     }
@@ -478,9 +450,6 @@
     }
   },
   "tests/unit/state-invariants.test.ts": {
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
-    },
     "vitest/max-expects": {
       "count": 24
     },
@@ -509,9 +478,6 @@
     }
   },
   "tests/unit/watchdog.test.ts": {
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
-    },
     "vitest/max-expects": {
       "count": 15
     },

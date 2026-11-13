@@ -39,7 +39,7 @@ export const testMinContext: ConstraintDescriptor<"testMinContext", number, Test
 	present: {
 		group: (evaluation) => `minimum ${evaluation.effective ?? "unknown"} tokens`,
 		prompt: (evaluation) => `minimum ${evaluation.effective ?? "unknown"} tokens`,
-		diagnostic: (diagnostic) => diagnostic.code === "unsupported-override" ? `unsupported minimum ${diagnostic.details} tokens` : "minimum context unknown",
+		diagnostic: (diagnostic) => diagnostic.code === "unsupported-override" ? `unsupported minimum ${String(diagnostic.details)} tokens` : "minimum context unknown",
 		violation: () => "minimum context unsatisfied",
 		ceiling: (evaluation) => evaluation.effective !== null && (evaluation.aggregate.automatic === null || evaluation.effective > evaluation.aggregate.automatic)
 			? `Minimum context is capped at ${evaluation.effective} tokens for this group.`
@@ -76,7 +76,7 @@ export const testMaxBudget: ConstraintDescriptor<"testMaxBudget", number, TestMa
 	present: {
 		group: (evaluation) => `maximum ${evaluation.effective ?? "unknown"} credits`,
 		prompt: (evaluation) => `maximum ${evaluation.effective ?? "unknown"} credits`,
-		diagnostic: (diagnostic) => diagnostic.code === "unsupported-override" ? `unsupported maximum ${diagnostic.details} credits` : "maximum budget unknown",
+		diagnostic: (diagnostic) => diagnostic.code === "unsupported-override" ? `unsupported maximum ${String(diagnostic.details)} credits` : "maximum budget unknown",
 		violation: () => "maximum budget unsatisfied",
 		ceiling: (evaluation) => evaluation.effective !== null && (evaluation.aggregate.automatic === null || evaluation.effective < evaluation.aggregate.automatic)
 			? `Maximum output budget is capped at ${evaluation.effective} credits for this group.`

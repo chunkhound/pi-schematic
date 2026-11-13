@@ -89,7 +89,7 @@ async function apply(
 // ── Invariant helpers ─────────────────────────────────────────────────
 
 function assertTopicSourceCoupling(state: SchematicState): void {
-	const msg = `topic=${state.activeNotebookTopic} source=${state.activeNotebookTopicSource}`;
+	const msg = `topic=${String(state.activeNotebookTopic)} source=${String(state.activeNotebookTopicSource)}`;
 	if (state.activeNotebookTopic === null) {
 		expect(state.activeNotebookTopicSource, `topic null → source null: ${msg}`).toBeNull();
 	} else {

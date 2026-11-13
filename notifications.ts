@@ -96,8 +96,8 @@ export function buildReadonlyDisabledContextSuffix(percent: number): string {
 }
 
 /** Explain that an eligible human topic boundary will activate the temporary bypass. */
-export function buildReadonlyTopicBoundaryNotification(from: string | null, to: string): string {
-	return `Active notebook topic changed: ${from ?? "(unset)"} → ${to}. This is a likely task boundary; use spawn only for same-topic delegation. In readonly mode, the handoff exception activates only once the context is ready; until then this boundary is advisory.`;
+export function buildReadonlyTopicBoundaryNotification(from: string, to: string): string {
+	return `Active notebook topic changed: ${from} → ${to}. This is a likely task boundary; use spawn only for same-topic delegation. In readonly mode, the handoff exception activates only once the context is ready; until then this boundary is advisory.`;
 }
 
 /** Explain when a readonly topic boundary has activated the handoff path. */
