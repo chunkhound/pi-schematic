@@ -22,6 +22,7 @@ import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import type { TestContext } from "vitest";
 import { piManifestPath } from "../../pi-packages.mjs";
 import {
+	isJsonObject,
 	parseBarrierReport,
 	parseProbeRecord,
 	PROBE_BARRIER_STATUS_KEY,
@@ -39,7 +40,8 @@ export const SCHEMATIC_ENTRY = resolve(HERE, "..", "..", "index.ts");
 const PROBE_ENTRY = resolve(HERE, "real-host-probe.ts");
 const CHILD_PROBE_ENTRY = resolve(HERE, "real-host-child-probe.ts");
 // The CLI is the file pi's manifest declares as `bin.pi`, the one the `pi` command runs.
-const PI_BIN: unknown = JSON.parse(readFileSync(piManifestPath, "utf8")).bin?.pi;
+const PI_MANIFEST: unknown = JSON.parse(readFileSync(piManifestPath, "utf8"));
+const PI_BIN = isJsonObject(PI_MANIFEST) && isJsonObject(PI_MANIFEST.bin) ? PI_MANIFEST.bin.pi : undefined;
 if (typeof PI_BIN !== "string") {throw new Error(`No string bin.pi in pi's manifest at ${piManifestPath}.`);}
 const CLI_PATH = resolve(dirname(piManifestPath), PI_BIN);
 const REQUIRED_COMMANDS = ["handoff", "notebook", "readonly", PROBE_COMMAND.barrier];
@@ -193,8 +195,9 @@ export function projectStatuses(events: RpcEvent[]): Status[] {
 export function messageText(content: unknown): string {
 	if (typeof content === "string") {return content;}
 	if (!Array.isArray(content)) {throw new Error(`Unexpected message content: ${JSON.stringify(content)}`);}
-	return content
-		.filter((block): block is { type: "text"; text: string } => block?.type === "text" && typeof block.text === "string")
+	const blocks: unknown[] = content;
+	return blocks
+		.filter((block): block is { type: "text"; text: string } => isJsonObject(block) && block.type === "text" && typeof block.text === "string")
 		.map((block) => block.text)
 		.join("\n");
 }

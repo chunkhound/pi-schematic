@@ -14,7 +14,7 @@ import {
 	type ToolDefinition,
 	type TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
-import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import type { Api, Model, ToolResultMessage } from "@earendil-works/pi-ai";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -25,7 +25,7 @@ import { createState, resetState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
 import { assertPresent } from "../assertions.js";
 import { AGENT_DIR_ENV_KEY } from "../paths.js";
-import { createTestHost, type TestPI } from "./test-host.js";
+import { createTestHost, getTool, type TestPI } from "./test-host.js";
 
 export const theme = {
 	fg: (_name: string, text: string) => text,
@@ -34,8 +34,13 @@ export const theme = {
 
 export const EMPTY_CHILD_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
 /** A failure after the child session exists is returned as an error result, not thrown. */
-export function assertErrorResult(result: any, text: string, usage: unknown): void {
+export function assertErrorResult(result: unknown, text: string, usage: unknown): void {
+	if (!isRecord(result) || !isRecord(result.details)) {throw new Error("Expected a tool result object with a details object.");}
 	expect(result.isError).toBe(true);
 	expect(result.content).toStrictEqual([{ type: "text", text }]);
 	expect(result.details.outcome).toBe("error");
@@ -125,7 +130,7 @@ export function createToolRenderContext(overrides: Partial<RenderContext> = {}):
 	};
 }
 
-export function createSession(messages: any[]) {
+export function createSession(messages: unknown[]) {
 	return {
 		messages,
 		subscribe: () => () => {},
@@ -135,12 +140,12 @@ export function createSession(messages: any[]) {
 	} as unknown as import("@earendil-works/pi-coding-agent").AgentSession;
 }
 
-export function createSubscribableSession(messages: any[] = []) {
-	let handler: ((event: any) => void) | undefined;
+export function createSubscribableSession(messages: unknown[] = []) {
+	let handler: ((event: unknown) => void) | undefined;
 	return {
 		session: {
 			messages,
-			subscribe: (cb: (event: any) => void) => {
+			subscribe: (cb: (event: unknown) => void) => {
 				handler = cb;
 				return () => { handler = undefined; };
 			},
@@ -181,6 +186,22 @@ export function createDeferred() {
 	return { promise, resolve };
 }
 
+// pi stores every handler as a wrapper taking the event and context and returning a promise; only that it is
+// a function can be checked at run time.
+function assertRegisteredHandler(value: unknown, event: string): asserts value is (...args: unknown[]) => Promise<unknown> {
+	if (typeof value !== "function") {throw new Error(`A "${event}" handler on the test host is not a function.`);}
+}
+
+// The handlers registered for `event`. Throws when none is registered or one is not a function.
+function registeredHandlers(pi: TestPI, event: string): ((...args: unknown[]) => Promise<unknown>)[] {
+	const handlers: unknown[] | undefined = pi.handlers.get(event);
+	if (!handlers?.length) {throw new Error(`No handlers registered for "${event}"`);}
+	return handlers.map((handler) => {
+		assertRegisteredHandler(handler, event);
+		return handler;
+	});
+}
+
 /**
  * Run every handler registered for `event` in registration order. Unlike pi, which
  * catches each handler's error and runs the rest, a throwing handler stops the run
@@ -188,9 +209,7 @@ export function createDeferred() {
  * event cannot pass vacuously.
  */
 export async function emitAll(pi: TestPI, event: string, payload: unknown, ctx: unknown): Promise<void> {
-	const handlers = pi.handlers.get(event);
-	if (!handlers?.length) {throw new Error(`No handlers registered for "${event}"`);}
-	for (const handler of handlers) {
+	for (const handler of registeredHandlers(pi, event)) {
 		await handler(payload, ctx);
 	}
 }
@@ -201,10 +220,8 @@ export async function emitAll(pi: TestPI, event: string, payload: unknown, ctx: 
  * handlers is not emulated.
  */
 export async function callHandlers(pi: TestPI, event: string, payload: unknown, ctx: unknown): Promise<unknown[]> {
-	const handlers = pi.handlers.get(event);
-	if (!handlers?.length) {throw new Error(`No handlers registered for "${event}"`);}
 	const results: unknown[] = [];
-	for (const handler of handlers) {
+	for (const handler of registeredHandlers(pi, event)) {
 		results.push(await handler(payload, ctx));
 	}
 	return results;
@@ -411,12 +428,11 @@ export type ToolCall = (event: { toolName: string; toolCallId?: string; input?: 
  */
 export async function registerReadonlyPI(): Promise<{ pi: TestPI; toolCall: ToolCall }> {
 	const pi = await createTestHost();
-	const handlers = pi.handlers.get("tool_call") as ToolCall[];
 	// Pi runs tool_call handlers in registration order and the first block wins.
 	const toolCall: ToolCall = async (event, ctx) => {
-		for (const handler of handlers) {
+		for (const handler of registeredHandlers(pi, "tool_call")) {
 			const result = await handler(event, ctx);
-			if (result?.block) {return result;}
+			if (isRecord(result) && Boolean(result.block)) {return result;}
 		}
 		return undefined;
 	};
@@ -517,11 +533,65 @@ export interface RealChildInvocationResult {
 	/** Internally-created state, exposed so tests can assert childSessions bookkeeping. */
 	state: ReturnType<typeof createState>;
 	/** onUpdate payloads recorded from the spawn tool (real invocation). */
-	updates: any[];
+	updates: unknown[];
 	/** Full text of every message the child session sent to the deterministic provider. */
 	observedMessages: string[];
 	/** Requested thinking level forwarded to the provider per stream call (may be empty if the SDK omits it). */
 	observedThinking: (string | undefined)[];
+}
+
+// The probe extension runs in its own module scope, so the fixture and the probe share these globals.
+const PROBE_GLOBALS = [
+	"__agenticE2eProbeCalls",
+	"__agenticE2eStreamCalls",
+	"__agenticE2eToolSets",
+	"__agenticE2eInvokeReadonlyBash",
+	"__agenticE2eNoOutput",
+	"__agenticE2eResetDuringPrompt",
+	"__agenticE2eAbortMidPrompt",
+	"__agenticE2eReset",
+	"__agenticE2eState",
+	"__agenticE2eController",
+	"__agenticE2eMessages",
+	"__agenticE2eThinking",
+] as const;
+
+type ProbeGlobal = (typeof PROBE_GLOBALS)[number];
+
+function setProbeGlobal(name: ProbeGlobal, value: unknown): void {
+	Reflect.set(globalThis, name, value);
+}
+
+function probeGlobal(name: ProbeGlobal): unknown {
+	const value: unknown = Reflect.get(globalThis, name);
+	return value;
+}
+
+function probeNumber(name: ProbeGlobal): number {
+	const value = probeGlobal(name);
+	if (typeof value !== "number") {throw new Error(`The probe left ${name} as ${typeof value}, not a number.`);}
+	return value;
+}
+
+// The probe global `name` as an array of items `isItem` accepts; an unset global reads as an empty array.
+function probeArray<T>(name: ProbeGlobal, isItem: (item: unknown) => item is T): T[] {
+	const value = probeGlobal(name) ?? [];
+	if (!Array.isArray(value)) {throw new Error(`The probe left ${name} as ${typeof value}, not an array.`);}
+	const items: unknown[] = value;
+	if (!items.every(isItem)) {throw new Error(`The probe left an unexpected item in ${name}.`);}
+	return items;
+}
+
+function isString(value: unknown): value is string {
+	return typeof value === "string";
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+	return value === undefined || typeof value === "string";
+}
+
+function isStringArray(value: unknown): value is string[] {
+	return Array.isArray(value) && value.every(isString);
 }
 
 /**
@@ -672,18 +742,18 @@ export default function(pi) {
 			outboundFetches.push(input instanceof Request ? input.url : String(input));
 			throw new Error(`offline fixture blocked outbound fetch: ${outboundFetches.at(-1)}`);
 		});
-		(globalThis as any).__agenticE2eProbeCalls = 0;
-		(globalThis as any).__agenticE2eStreamCalls = 0;
-		(globalThis as any).__agenticE2eToolSets = [];
-		(globalThis as any).__agenticE2eInvokeReadonlyBash = params.invokeReadonlyBash ?? false;
-		(globalThis as any).__agenticE2eNoOutput = params.noOutput ?? false;
-		(globalThis as any).__agenticE2eResetDuringPrompt = params.resetDuringPrompt ?? false;
-		(globalThis as any).__agenticE2eAbortMidPrompt = params.abortMidPrompt ?? false;
-		(globalThis as any).__agenticE2eReset = resetState;
-		(globalThis as any).__agenticE2eMessages = [];
-		(globalThis as any).__agenticE2eThinking = [];
-		const model = {
-			id: modelId, name: "Agentic E2E Model", api: "agentic-e2e-api", provider,
+		setProbeGlobal("__agenticE2eProbeCalls", 0);
+		setProbeGlobal("__agenticE2eStreamCalls", 0);
+		setProbeGlobal("__agenticE2eToolSets", []);
+		setProbeGlobal("__agenticE2eInvokeReadonlyBash", params.invokeReadonlyBash ?? false);
+		setProbeGlobal("__agenticE2eNoOutput", params.noOutput ?? false);
+		setProbeGlobal("__agenticE2eResetDuringPrompt", params.resetDuringPrompt ?? false);
+		setProbeGlobal("__agenticE2eAbortMidPrompt", params.abortMidPrompt ?? false);
+		setProbeGlobal("__agenticE2eReset", resetState);
+		setProbeGlobal("__agenticE2eMessages", []);
+		setProbeGlobal("__agenticE2eThinking", []);
+		const model: Model<Api> = {
+			id: modelId, name: "Agentic E2E Model", api: "agentic-e2e-api", provider, baseUrl: "http://localhost.invalid",
 			reasoning: params.reasoning ?? false, input: ["text"],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 128000, maxTokens: 1024,
@@ -704,24 +774,25 @@ export default function(pi) {
 		const controller = new AbortController();
 		if (params.abortBeforeStart) {controller.abort(new Error("fixture abort"));}
 		// Expose live references for the provider (separate module scope) to act on.
-		(globalThis as any).__agenticE2eState = state;
-		(globalThis as any).__agenticE2eController = controller;
+		setProbeGlobal("__agenticE2eState", state);
+		setProbeGlobal("__agenticE2eController", controller);
 		const prompts = params.prompts ?? [params.prompt];
-		const updates: any[] = [];
+		const updates: unknown[] = [];
 		const onUpdate = params.resetOnRunningUpdate
-			? (result: any) => {
+			? (result: unknown) => {
 				updates.push(result);
 				resetState(state);
 			}
-			: (result: any) => { updates.push(result); };
+			: (result: unknown) => { updates.push(result); };
+		const spawn = getTool(pi, "spawn");
 		let results;
 		try {
-			results = await Promise.all(prompts.map((prompt, index) => pi.tools.get("spawn").execute(
+			results = await Promise.all(prompts.map((prompt, index) => spawn.execute(
 				`spawn-${params.thinking ?? "inherited"}-${index}`,
 				{ prompt, thinking: params.thinking },
 				controller.signal,
 				onUpdate,
-				{ model, cwd },
+				createToolContext({ model, cwd }),
 			)));
 		} catch (error) {
 			// Attach the partial proof so rejecting tests can assert bookkeeping
@@ -730,8 +801,8 @@ export default function(pi) {
 				proof: {
 					state,
 					updates,
-					observedMessages: (globalThis as any).__agenticE2eMessages ?? [],
-					observedThinking: (globalThis as any).__agenticE2eThinking ?? [],
+					observedMessages: probeGlobal("__agenticE2eMessages") ?? [],
+					observedThinking: probeGlobal("__agenticE2eThinking") ?? [],
 				},
 			});
 		}
@@ -741,15 +812,15 @@ export default function(pi) {
 			results,
 			expectedText: `${provider}/${modelId}:${sentinel}`,
 			modelId,
-			probeCalls: (globalThis as any).__agenticE2eProbeCalls,
-			streamCalls: (globalThis as any).__agenticE2eStreamCalls,
-			observedToolSets: (globalThis as any).__agenticE2eToolSets,
+			probeCalls: probeNumber("__agenticE2eProbeCalls"),
+			streamCalls: probeNumber("__agenticE2eStreamCalls"),
+			observedToolSets: probeArray("__agenticE2eToolSets", isStringArray),
 			bashWriteExists,
 			outboundFetches,
 			state,
 			updates,
-			observedMessages: (globalThis as any).__agenticE2eMessages ?? [],
-			observedThinking: (globalThis as any).__agenticE2eThinking ?? [],
+			observedMessages: probeArray("__agenticE2eMessages", isString),
+			observedThinking: probeArray("__agenticE2eThinking", isOptionalString),
 		};
 	} finally {
 		if (previousAgentDir === undefined) {delete process.env.PI_CODING_AGENT_DIR;}
@@ -757,18 +828,7 @@ export default function(pi) {
 		if (previousOpenAiApiKey === undefined) {delete process.env.OPENAI_API_KEY;}
 		else {process.env.OPENAI_API_KEY = previousOpenAiApiKey;}
 		globalThis.fetch = previousFetch;
-		delete (globalThis as any).__agenticE2eProbeCalls;
-		delete (globalThis as any).__agenticE2eStreamCalls;
-		delete (globalThis as any).__agenticE2eToolSets;
-		delete (globalThis as any).__agenticE2eInvokeReadonlyBash;
-		delete (globalThis as any).__agenticE2eNoOutput;
-		delete (globalThis as any).__agenticE2eResetDuringPrompt;
-		delete (globalThis as any).__agenticE2eAbortMidPrompt;
-		delete (globalThis as any).__agenticE2eReset;
-		delete (globalThis as any).__agenticE2eState;
-		delete (globalThis as any).__agenticE2eController;
-		delete (globalThis as any).__agenticE2eMessages;
-		delete (globalThis as any).__agenticE2eThinking;
+		for (const name of PROBE_GLOBALS) {Reflect.deleteProperty(globalThis, name);}
 		await rm(tempRoot, { recursive: true, force: true });
 		await rm(readonlyWriteTarget, { force: true });
 	}
@@ -782,7 +842,7 @@ export function makeTUICtx(
 		hasUI: boolean;
 		record: { statuses: Map<string, string | undefined>; widgets: Map<string, string[] | undefined> };
 		notify: (message: string, level: string) => void;
-		custom: (build: any) => Promise<unknown>;
+		custom: (build: unknown) => Promise<unknown>;
 	}> = {},
 ): any {
 	const record = overrides.record ?? { statuses: new Map(), widgets: new Map() };

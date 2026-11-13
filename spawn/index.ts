@@ -356,7 +356,7 @@ export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
 		group: Type.Optional(Type.String({
 			description: "Optional exact Model Group name for child model routing. Omit to inherit the parent model/thinking.",
 		})),
-		constraints: Type.Optional(Type.Object(Object.fromEntries(constraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])) as any, {
+		constraints: Type.Optional(Type.Object(Object.fromEntries(constraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])), {
 			description: `Capability requirements for the delegated task — a JSON object keyed by constraint name, not a JSON string and not an array. Keys: ${constraintRegistry.descriptors.map((descriptor) => descriptor.key).join(", ")} — each value must match its key's schema; unknown keys or invalid values are rejected before a child is created.`,
 		})),
 		// pi-ai >=1.5.0 StringEnum returns a pi-schema schema, which typebox cannot
