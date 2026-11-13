@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { MODEL_GROUP_MODALITIES, type ModelGroupModalities, type ModelGroupModality } from "../types.js";
-import type { ConstraintCodec, ConstraintDescriptor, ConstraintDiagnostic, ConstraintEvaluation, ConstraintSatisfaction, ConstraintViolation } from "./types.js";
+import type { ConstraintCodec, ConstraintDescriptor, ConstraintDiagnostic, ConstraintEvaluation, ConstraintSatisfaction } from "./types.js";
 
 function ordered(values: Iterable<ModelGroupModality>): ModelGroupModality[] {
 	const set = new Set(values);
@@ -84,12 +84,10 @@ export const modalitiesConstraint: ConstraintDescriptor<"modalities", ModelGroup
 	},
 	editor: { kind: "multi-select", label: "Modalities", choices: (evaluation) => evaluation.aggregate.supported, automatic: (evaluation) => `Automatic (${evaluation.aggregate.common.filter((modality) => modality !== "reasoning").join(", ") || "none"})` },
 	present: {
-		group: (evaluation) => evaluation.effective.join(", "),
 		prompt: (evaluation) => evaluation.effective.join(", "),
 		diagnostic: (diagnostic) => diagnostic.code === "empty-common"
 			? "⚠ no common modalities"
 			: `⚠ stale modality override: ${((diagnostic.details as ModelGroupModality[] | undefined) ?? []).join(", ")}`,
-		violation: (violation: ConstraintViolation) => violation.key,
 		ceiling: (evaluation) => evaluation.aggregate.supported.includes("image") && !evaluation.effective.includes("image")
 			? "Image input is disabled for this group. If the task requires reading or inspecting an image, do not work around it with OCR, third-party tools, or an alternate route; report the capability mismatch to the parent instead."
 			: undefined,
