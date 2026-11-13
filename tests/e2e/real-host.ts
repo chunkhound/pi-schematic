@@ -121,7 +121,7 @@ export interface RealHostOptions {
 
 function pathEnv(): Record<string, string> {
 	const key = Object.keys(process.env).find((name) => name.toUpperCase() === "PATH");
-	if (key === undefined || key === "") {throw new Error("No PATH variable in the test environment");}
+	if (key === undefined) {throw new Error("No PATH variable in the test environment");}
 	const current = process.env[key];
 	return { [key]: current !== undefined && current !== "" ? `${dirname(process.execPath)}${delimiter}${current}` : dirname(process.execPath) };
 }

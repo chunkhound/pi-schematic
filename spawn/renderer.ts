@@ -987,7 +987,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			lines.push(truncateAndColor(liveSummary, width, color, "dim"));
 		} else if (outcome !== "success") {
 			const outcomeText = getOutcomeStatusText(outcome);
-			if (outcomeText !== undefined && outcomeText !== "") {
+			if (outcomeText !== undefined) {
 				lines.push(truncateAndColor(outcomeText, width, color, outcome === "error" ? "warning" : "dim"));
 			}
 		}
@@ -1100,7 +1100,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		this.pendingAssistantMessage = event.message;
 
 		// Track new tool call IDs so flushPendingUpdates can create components
-		for (const content of event.message.content) {
+		for (const content of event.message.content ?? []) {
 			if (content.type !== "toolCall") {continue;}
 			if (this.pendingTools.has(content.id)) {
 				// Already tracked — just update args (cheap)
@@ -1118,7 +1118,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		}
 
 		// Cheap per-event: update the live action text preview
-		const textBlock = event.message.content.find(
+		const textBlock = event.message.content?.find(
 			(c): c is TextContent => c.type === "text" && Boolean(c.text),
 		);
 		if (textBlock !== undefined) {
@@ -1373,7 +1373,7 @@ function renderSpawnResult(
 	const status = getOutcomeStatusText(outcome);
 	const text = [
 		meta ? theme.fg("dim", meta) : "",
-		status !== undefined && status !== "" ? theme.fg(outcome === "error" ? "warning" : "dim", status) : "",
+		status !== undefined ? theme.fg(outcome === "error" ? "warning" : "dim", status) : "",
 		theme.fg("toolOutput", summary),
 	].filter(Boolean).join("\n");
 	return new Text(text, SPAWN_SHELL_PADDING_X, SPAWN_SHELL_PADDING_Y, getShellBackground(theme, outcome));
