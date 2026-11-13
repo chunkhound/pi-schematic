@@ -252,7 +252,7 @@
   },
   "spawn/index.ts": {
     "@typescript-eslint/no-unnecessary-condition": {
-      "count": 2
+      "count": 3
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
@@ -261,7 +261,7 @@
       "count": 1
     },
     "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
+      "count": 2
     },
     "@typescript-eslint/use-unknown-in-catch-callback-variable": {
       "count": 1

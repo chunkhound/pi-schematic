@@ -885,6 +885,29 @@ test("spawn execute skips an entry whose usage is null and sums the rest", async
 	expect(result.details.statsUnavailable).toBeUndefined();
 });
 
+test("spawn execute counts an assistant turn without usage and sums the other entries", async () => {
+	const result: unknown = await executeWithEntries(() => [
+		messageEntry("a0", { role: "assistant", content: [{ type: "text", text: "thinking aloud" }], stopReason: "toolUse" }),
+		messageEntry("a1", {
+			role: "assistant", content: [{ type: "text", text: "child result" }], stopReason: "stop",
+			usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 10, cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, total: 3 } },
+		}),
+	]);
+
+	expect(result).toMatchObject({
+		usage: {
+			input: 7,
+			output: 3,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 10,
+			cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, total: 3 },
+		},
+		details: { stats: { turns: 2 } },
+	});
+	expect(result).not.toHaveProperty("details.statsUnavailable");
+});
+
 test("aborted spawn returns the partial child usage", async () => {
 	const state = createState();
 	const controller = new AbortController();

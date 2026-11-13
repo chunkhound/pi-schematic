@@ -161,7 +161,7 @@ function collectChildAccounting(session: Pick<AgentSession, "sessionManager">): 
 				const message = entry.message;
 				if (message.role === "assistant") {
 					assistantTurns++;
-					usage = combineUsage(usage, message.usage);
+					if (message.usage) {usage = combineUsage(usage, message.usage);}
 				} else if (message.role === "toolResult" && message.usage) {
 					usage = combineUsage(usage, message.usage);
 				}

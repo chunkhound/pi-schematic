@@ -174,8 +174,8 @@ function resolveModelSelection(state: SchematicState, pending: PendingCommand): 
 }
 
 function hasModelSelection(selection: ModelSelection): boolean {
-	return (selection.model !== null && selection.model !== "") ||
-		(selection.group !== null && selection.group !== "") ||
+	return selection.model !== null ||
+		selection.group !== null ||
 		selection.thinking !== null;
 }
 
@@ -278,8 +278,8 @@ async function preflightModelSelection(
 		recordFrontmatterIssue(ctx, pi, pending, selection.issue);
 	}
 	const commandRef = formatCommandRef(pending);
-	if (selection.model !== null && selection.model !== "") {return handleExplicitModelFrontmatter(ctx, pi, selection, commandRef);}
-	if (selection.group !== null && selection.group !== "") {return handleModelGroupFrontmatter(state, ctx, pi, selection, commandRef, ctx.model);}
+	if (selection.model !== null) {return handleExplicitModelFrontmatter(ctx, pi, selection, commandRef);}
+	if (selection.group !== null) {return handleModelGroupFrontmatter(state, ctx, pi, selection, commandRef, ctx.model);}
 	if (selection.thinking !== null) {return handleThinkingOnlyFrontmatter(ctx, pi, selection.thinking, commandRef, ctx.model);}
 	return false;
 }
@@ -320,7 +320,7 @@ async function handleExplicitModelFrontmatter(
 	selection: ModelSelection,
 	commandRef: string,
 ): Promise<boolean> {
-	if (selection.group !== null && selection.group !== "") {ctx.ui.notify(buildModelGroupOverrideWarningNotification(selection.group, commandRef), "warning");}
+	if (selection.group !== null) {ctx.ui.notify(buildModelGroupOverrideWarningNotification(selection.group, commandRef), "warning");}
 	const model = findExplicitModel(ctx, selection.model!, commandRef);
 	if (!model) {return true;}
 	const notifyError = () => {
@@ -722,12 +722,12 @@ export default function (pi: ExtensionAPI): void {
 
 		const skillName = (/^\/skill:([^\s]+)/.exec(event.text))?.[1];
 		const commandName = (/^\/([^\s]+)/.exec(event.text))?.[1];
-		if ((skillName === undefined || skillName === "") && (commandName === undefined || commandName === "")) {
+		if (skillName === undefined && commandName === undefined) {
 			return { action: "continue" };
 		}
 
 		const commands = pi.getCommands();
-		const pending = skillName !== undefined && skillName !== ""
+		const pending = skillName !== undefined
 			? { type: "skill" as const, name: skillName }
 			: { type: "command" as const, name: commandName! };
 		if (pending.type === "command" && isBuiltinReadonlyBypassCommand(pending.name)) {return { action: "continue" };}

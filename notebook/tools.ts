@@ -138,7 +138,7 @@ export function createNotebookToolDefinitions(
 			onUpdate?.({
 				content: [{
 					type: "text" as const,
-					text: `Saved "${params.name}"` + (saved.preview ? `: ${saved.preview}` : "") + (report !== null && report !== "" ? `\n\n${report}` : ""),
+					text: `Saved "${params.name}"` + (saved.preview ? `: ${saved.preview}` : "") + (report !== null ? `\n\n${report}` : ""),
 				}],
 				details,
 			});
@@ -148,7 +148,7 @@ export function createNotebookToolDefinitions(
 						type: "text" as const,
 						text: `Saved notebook page "${params.name}".` +
 							(saved.preview ? `\n${saved.preview}` : "") +
-							(report !== null && report !== "" ? `\n\n${report}` : "") +
+							(report !== null ? `\n\n${report}` : "") +
 							`\n\nNotebook Pages:\n${formatPageList(state) || "(empty)"}`,
 					},
 				],

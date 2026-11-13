@@ -960,7 +960,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 
 	private extractPreview(result: ToolResultLike): string {
 		const text = result.content.find(c => c.type === "text" && c.text !== undefined && c.text !== "")?.text;
-		if (text === undefined || text === "") {return "";}
+		if (text === undefined) {return "";}
 		return text.trim().split("\n")[0].slice(0, TOOL_RESULT_PREVIEW_CHARS);
 	}
 
@@ -1121,7 +1121,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		const textBlock = event.message.content.find(
 			(c): c is TextContent => c.type === "text" && Boolean(c.text),
 		);
-		if (textBlock !== undefined && textBlock.text !== "") {
+		if (textBlock !== undefined) {
 			const firstLine = textBlock.text.trim().split("\n")[0];
 			if (firstLine) {
 				this.lastAction = firstLine.slice(0, LIVE_TEXT_PREVIEW_CHARS);
