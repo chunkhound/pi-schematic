@@ -19,11 +19,21 @@ function model(fields: Pick<Model<Api>, "provider" | "id" | "input" | "reasoning
 	};
 }
 
-// A ModelRegistry whose listed members are `fields`; any other member fails on call.
+const MODEL_REGISTRY_MEMBERS = new Set(Object.getOwnPropertyNames(ModelRegistry.prototype).filter((name) => name !== "constructor"));
+
+// A ModelRegistry whose listed members are `fields`; reading any other ModelRegistry member throws.
 function modelRegistry(fields: RegistryFields): ModelRegistry {
 	const target: unknown = Object.create(ModelRegistry.prototype);
 	if (!(target instanceof ModelRegistry)) {throw new Error("Object.create did not produce a ModelRegistry instance.");}
-	return Object.assign(target, fields);
+	return new Proxy(Object.assign(target, fields), {
+		get(registry, property, receiver) {
+			if (typeof property === "string" && MODEL_REGISTRY_MEMBERS.has(property) && !Object.hasOwn(fields, property)) {
+				throw new Error(`modelRegistry.${property} is not stubbed in this test registry; add it to the fields.`);
+			}
+			const value: unknown = Reflect.get(registry, property, receiver);
+			return value;
+		},
+	});
 }
 
 function registryFields(available = new Set(["openai:gpt-5"])): RegistryFields {
@@ -42,7 +52,7 @@ function registry(available?: Set<string>): ModelRegistry {
 
 const SESSION_START: HostEvent<"session_start"> = { type: "session_start", reason: "startup" };
 
-// The last registered session_start handler: the extension's own.
+// The last of the extension's two session_start handlers: the one that refreshes the model groups (the first rehydrates the notebook).
 function sessionStartHandler(pi: TestPI): HostHandler<"session_start"> {
 	const handler = getHandlers(pi, "session_start").at(-1);
 	assertPresent(handler);

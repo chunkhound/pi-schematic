@@ -39,7 +39,7 @@ function isPersistedGroup(value: unknown): value is PersistedGroup {
 	if (!isRecord(value)) {return false;}
 	const models: unknown = value.models;
 	return Array.isArray(models)
-		&& models.every((model: unknown) => isRecord(model) && typeof model.provider === "string" && typeof model.modelId === "string")
+		&& models.every((entry: unknown) => isRecord(entry) && typeof entry.provider === "string" && typeof entry.modelId === "string")
 		&& (value.constraints === undefined || isRecord(value.constraints));
 }
 
@@ -59,9 +59,6 @@ function read(scope: ModelGroupScope, cwd: string): PersistedConfig {
 	return readFile(modelGroupsPath(scope, cwd));
 }
 
-// `expect.any` is typed `any`; held as `unknown` so the matchers below stay typed.
-const ANY_ARRAY: unknown = expect.any(Array);
-
 type RegistryFields = Pick<ModelRegistry, "getAll" | "getAvailable" | "find" | "hasConfiguredAuth">;
 
 function model(fields: Pick<Model<Api>, "provider" | "id" | "input" | "reasoning"> & Partial<Model<Api>>): Model<Api> {
@@ -71,11 +68,21 @@ function model(fields: Pick<Model<Api>, "provider" | "id" | "input" | "reasoning
 	};
 }
 
-// A ModelRegistry whose listed members are `fields`; any other member fails on call.
+const MODEL_REGISTRY_MEMBERS = new Set(Object.getOwnPropertyNames(ModelRegistry.prototype).filter((name) => name !== "constructor"));
+
+// A ModelRegistry whose listed members are `fields`; reading any other ModelRegistry member throws.
 function modelRegistry(fields: RegistryFields): ModelRegistry {
 	const target: unknown = Object.create(ModelRegistry.prototype);
 	if (!(target instanceof ModelRegistry)) {throw new Error("Object.create did not produce a ModelRegistry instance.");}
-	return Object.assign(target, fields);
+	return new Proxy(Object.assign(target, fields), {
+		get(registry, property, receiver) {
+			if (typeof property === "string" && MODEL_REGISTRY_MEMBERS.has(property) && !Object.hasOwn(fields, property)) {
+				throw new Error(`modelRegistry.${property} is not stubbed in this test registry; add it to the fields.`);
+			}
+			const value: unknown = Reflect.get(registry, property, receiver);
+			return value;
+		},
+	});
 }
 
 function registryFields(available = new Set(["openai:gpt-5", "anthropic:claude"])): RegistryFields {
@@ -95,7 +102,7 @@ function registry(available?: Set<string>): ModelRegistry {
 	return modelRegistry(registryFields(available));
 }
 
-// The registry above plus `ctxModel`, a model with a concrete contextWindow for the injected descriptor.
+// The registry above plus `ctxModel`, whose 100-token contextWindow supports injected testMinContext overrides up to 100; the other models have a contextWindow of 0.
 function registryWithContextModel(): ModelRegistry {
 	const ctxModel = model({ provider: "openai", id: "gpt-ctx", input: ["text"], reasoning: false, contextWindow: 100 });
 	const fields = registryFields();
@@ -134,13 +141,13 @@ test("model groups store creates, round-trips, validates, renames, updates, dele
 	createGroup("global", access(cwd), "move-collision", { models: [] }, registry());
 	createGroup("project", access(cwd), "move-collision", { models: [] }, registry());
 	expect(() => { moveGroup(access(cwd), "move-collision", "project"); }).toThrow(/already exists in project scope/);
-	expect(read("global", cwd).groups).toHaveProperty(["move-collision"], expect.objectContaining({ models: ANY_ARRAY }));
-	expect(read("project", cwd).groups).toHaveProperty(["move-collision"], expect.objectContaining({ models: ANY_ARRAY }));
+	expect(read("global", cwd).groups).toHaveProperty(["move-collision"]);
+	expect(read("project", cwd).groups).toHaveProperty(["move-collision"]);
 
 	const deleted = deleteGroup("global", access(cwd), "reviewers");
 	expect(deleted.otherScopeHasOverride).toBe(true);
 	moveGroup(access(cwd), "reviewers", "global");
-	expect(read("global", cwd).groups).toHaveProperty(["reviewers"], expect.objectContaining({ models: ANY_ARRAY }));
+	expect(read("global", cwd).groups).toHaveProperty(["reviewers"]);
 	expect(read("project", cwd).groups.reviewers).toBeUndefined();
 }));
 
@@ -262,7 +269,7 @@ test("model groups persistence failures throw typed errors and preserve committe
 		return true;
 	}));
 	__setModelGroupsFsForTests(null);
-	expect(read("project", cwd).groups).toHaveProperty(["keep"], expect.objectContaining({ models: ANY_ARRAY }));
+	expect(read("project", cwd).groups).toHaveProperty(["keep"]);
 	expect(read("project", cwd).groups.keep.models).toHaveLength(0);
 
 	__setModelGroupsFsForTests({ renameSync: () => { throw new Error("rename denied"); } });
@@ -272,7 +279,7 @@ test("model groups persistence failures throw typed errors and preserve committe
 		return true;
 	}));
 	__setModelGroupsFsForTests(null);
-	expect(read("project", cwd).groups).toHaveProperty(["keep"], expect.objectContaining({ models: ANY_ARRAY }));
+	expect(read("project", cwd).groups).toHaveProperty(["keep"]);
 	expect(read("project", cwd).groups.drop).toBeUndefined();
 
 	__setModelGroupsFsForTests({ renameSync: () => { throw new Error("delete denied"); } });
@@ -405,7 +412,7 @@ test("low-level save permits shape-valid overrides while CRUD rejects union-cap-
 test("injected descriptors get persisted validation and CRUD cap enforcement through the registry", () => withTemp(({ cwd }) => {
 	const a = access(cwd);
 	const injected = createConstraintRegistry([testMinContext]);
-	// A model with a concrete contextWindow so the injected descriptor can evaluate it.
+	// gpt-ctx has a 100-token contextWindow, so the testMinContext override 5 is supported.
 	const modelRegistry = registryWithContextModel();
 	// Valid override: normalized through CRUD and persisted.
 	createGroup("project", a, "deep", { models: [{ provider: "openai", modelId: "gpt-ctx" }], constraints: { testMinContext: 5 } }, modelRegistry, injected);
