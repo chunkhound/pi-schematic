@@ -749,8 +749,8 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			try {
 				this.streamingComponent.updateContent(this.pendingAssistantMessage as unknown as import("@earendil-works/pi-ai").AssistantMessage);
 			} catch {
-				// The theme may not be initialized yet; any other error is swallowed too, so one
-				// bad component cannot break the nested view.
+				// updateContent reads the theme for error, abort and truncation notices, which throws before
+				// the theme is initialized; any other error is swallowed so one bad component cannot break the nested view.
 				this.resetStreamingComponent();
 			}
 			this.pendingAssistantMessage = undefined;
@@ -809,9 +809,9 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 				this.session?.sessionManager.getCwd() ?? process.cwd(),
 			);
 		} catch {
-			// Expected: getToolDefinition throws for a tool the session lacks, or the theme is
-			// not initialized yet. Any other error is swallowed too, so one bad component
-			// cannot break the nested view.
+			// The ToolExecutionComponent constructor reads the theme, which throws before the theme is
+			// initialized; a session whose getToolDefinition throws lands here too. Any other error is
+			// swallowed so one bad component cannot break the nested view.
 			return undefined;
 		}
 	}
@@ -1070,8 +1070,8 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 				this.addChild(this.streamingComponent);
 				this.streamingComponent.updateContent(event.message);
 			} catch {
-				// The theme may not be initialized yet; any other error is swallowed too, so one
-				// bad component cannot break the nested view.
+				// updateContent reads the theme for error, abort and truncation notices, which throws before
+				// the theme is initialized; any other error is swallowed so one bad component cannot break the nested view.
 				this.resetStreamingComponent();
 			}
 		}
@@ -1132,8 +1132,8 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			try {
 				this.streamingComponent.updateContent(event.message);
 			} catch {
-				// The theme may not be initialized yet; any other error is swallowed too, so one
-				// bad component cannot break the nested view.
+				// updateContent reads the theme for error, abort and truncation notices, which throws before
+				// the theme is initialized; any other error is swallowed so one bad component cannot break the nested view.
 				this.resetStreamingComponent();
 			}
 		}
