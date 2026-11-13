@@ -189,7 +189,7 @@ export function parseProbeRecord(line: string): ProbeRecord {
 		parsed = JSON.parse(line);
 	} catch (error) {
 		const detail = error instanceof Error ? error.message : String(error);
-		throw new Error(`Probe log line is not JSON (${detail}): ${line}`);
+		throw new Error(`Probe log line is not JSON (${detail}): ${line}`, { cause: error });
 	}
 	if (!isJsonObject(parsed)) {throw new Error(`Probe log line is not a record: ${line}`);}
 	switch (parsed.kind) {
@@ -235,7 +235,7 @@ export function parseBarrierReport(text: string): BarrierReport {
 		parsed = JSON.parse(text);
 	} catch (error) {
 		const detail = error instanceof Error ? error.message : String(error);
-		throw new Error(`Barrier report is not JSON (${detail}): ${text}`);
+		throw new Error(`Barrier report is not JSON (${detail}): ${text}`, { cause: error });
 	}
 	if (!isJsonObject(parsed)) {throw new Error(`Barrier report is not a record: ${text}`);}
 	const { id, failure } = parsed;

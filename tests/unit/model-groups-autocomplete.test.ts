@@ -91,7 +91,8 @@ test("#group autocomplete hands the delegate the caller's completion item unchan
 
 test("#group autocomplete triggers file completion when the delegate does not decide", () => {
 	const state = createState();
-	const { shouldTriggerFileCompletion: _omitted, ...current } = delegateProvider();
+	const current = delegateProvider();
+	delete current.shouldTriggerFileCompletion;
 	const provider = createModelGroupAutocompleteProvider(state)(current);
 
 	expect(provider.shouldTriggerFileCompletion?.(["@src"], 0, 4)).toBe(true);

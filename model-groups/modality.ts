@@ -29,7 +29,7 @@ export interface ModalityLetterRunOptions {
 	 */
 	hideTextWhenOtherMedia?: boolean;
 	/** Render one colored/letter token (e.g. a theme colorizer). Defaults to identity. */
-	render?(modality: ModelGroupModality, letter: string): string;
+	render?: (modality: ModelGroupModality, letter: string) => string;
 	/** Separator between colored letters. Default " ". */
 	separator?: string;
 }

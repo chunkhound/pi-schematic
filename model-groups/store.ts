@@ -26,6 +26,13 @@ function cloneDef(def: ModelGroupDef): ModelGroupDef {
 	return { ...def, models: def.models.map((model) => ({ ...model })), ...(constraints === undefined ? {} : { constraints }) };
 }
 function defineGroup(groups: Record<string, ModelGroupDef>, name: string, def: ModelGroupDef): void { Object.defineProperty(groups, name, { value: cloneDef(def), enumerable: true, writable: true, configurable: true }); }
+function withoutGroup(groups: Record<string, ModelGroupDef>, name: string): Record<string, ModelGroupDef> {
+	const remaining = ownGroups();
+	for (const [key, def] of Object.entries(groups)) {
+		if (key !== name) {defineGroup(remaining, key, def);}
+	}
+	return remaining;
+}
 function hasOwnGroup(groups: Record<string, ModelGroupDef>, name: string): boolean { return Object.hasOwn(groups, name); }
 function emptyConfig(): ModelGroupsConfig { return { version: CURRENT_VERSION, groups: ownGroups() }; }
 function isPlainRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
@@ -319,7 +326,7 @@ export function renameGroup(scope: ModelGroupScope, access: ModelGroupsAccess, o
 	if (!hasOwnGroup(config.groups, a)) {throw new Error(`Model group '${a}' does not exist in ${scope} scope`);}
 	if (hasOwnGroup(config.groups, b)) {throw new Error(`Model group '${b}' already exists in ${scope} scope`);}
 	const def = config.groups[a];
-	delete config.groups[a];
+	config.groups = withoutGroup(config.groups, a);
 	defineGroup(config.groups, b, def);
 	saveModelGroups(scope, access, config);
 }
@@ -327,7 +334,7 @@ export function deleteGroup(scope: ModelGroupScope, access: ModelGroupsAccess, r
 	const config = loadScopeConfig(scope, access);
 	const name = canonicalName(rawName);
 	if (!hasOwnGroup(config.groups, name)) {throw new Error(`Model group '${name}' does not exist in ${scope} scope`);}
-	delete config.groups[name];
+	config.groups = withoutGroup(config.groups, name);
 	const other = projectScopeEnabled(access) ? loadScopeConfig(scope === "global" ? "project" : "global", access) : emptyConfig();
 	try {
 		saveModelGroups(scope, access, config);
@@ -355,7 +362,7 @@ export function moveGroup(access: ModelGroupsAccess, rawName: string, newScope: 
 		}
 		throw cause;
 	}
-	delete source.groups[name];
+	source.groups = withoutGroup(source.groups, name);
 	try {
 		saveModelGroups(oldScope, access, source);
 	} catch (cause) {

@@ -400,7 +400,7 @@ async function handleModelGroupFrontmatter(
 ): Promise<boolean> {
 	try {
 		const route = resolveModelGroupRoute(state, ctx, pi, selection.group!, currentModel);
-		if (route.status !== "unknown-fallback") {return applyModelGroupRoute(ctx, pi, route, selection, commandRef);}
+		if (route.status !== "unknown-fallback") {return await applyModelGroupRoute(ctx, pi, route, selection, commandRef);}
 		const detail = unknownGroupDetail(state, selection.group!);
 		ctx.ui.notify(buildModelGroupErrorNotification(selection.group!, commandRef, detail), "error");
 		return true;

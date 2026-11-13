@@ -29,9 +29,6 @@
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
-    },
-    "preserve-caught-error": {
-      "count": 1
     }
   },
   "index.ts": {
@@ -45,9 +42,6 @@
       "count": 2
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 1
-    },
-    "@typescript-eslint/return-await": {
       "count": 1
     },
     "@typescript-eslint/strict-boolean-expressions": {
@@ -103,11 +97,6 @@
       "count": 2
     }
   },
-  "model-groups/modality.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 1
-    }
-  },
   "model-groups/router.ts": {
     "@typescript-eslint/no-non-null-assertion": {
       "count": 3
@@ -123,9 +112,6 @@
     }
   },
   "model-groups/store.ts": {
-    "@typescript-eslint/no-dynamic-delete": {
-      "count": 3
-    },
     "@typescript-eslint/no-non-null-assertion": {
       "count": 1
     },
@@ -135,9 +121,6 @@
   },
   "model-groups/tui.ts": {
     "@typescript-eslint/no-base-to-string": {
-      "count": 1
-    },
-    "@typescript-eslint/no-dynamic-delete": {
       "count": 1
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
@@ -234,14 +217,8 @@
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 2
     },
-    "@typescript-eslint/use-unknown-in-catch-callback-variable": {
-      "count": 1
-    },
     "no-unsafe-finally": {
       "count": 2
-    },
-    "preserve-caught-error": {
-      "count": 1
     }
   },
   "spawn/renderer.ts": {
@@ -291,9 +268,6 @@
   "tests/e2e/real-host-protocol.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 2
-    },
-    "preserve-caught-error": {
-      "count": 2
     }
   },
   "tests/e2e/real-host.test.ts": {
@@ -322,9 +296,6 @@
     },
     "ban/wall-clock": {
       "count": 3
-    },
-    "preserve-caught-error": {
-      "count": 1
     }
   },
   "tests/e2e/test-host.ts": {
@@ -381,9 +352,6 @@
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 7
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     },
     "vitest/max-expects": {
       "count": 52
@@ -442,9 +410,6 @@
     }
   },
   "tests/unit/model-groups-autocomplete.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 1
-    },
     "vitest/max-expects": {
       "count": 5
     }
@@ -580,11 +545,6 @@
       "count": 1
     },
     "n/no-unsupported-features/node-builtins": {
-      "count": 1
-    }
-  },
-  "tests/unit/prompt-sections-session.test.ts": {
-    "@typescript-eslint/no-dynamic-delete": {
       "count": 1
     }
   },
@@ -729,9 +689,6 @@
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 4
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "tests/unit/test-infra.test.ts": {

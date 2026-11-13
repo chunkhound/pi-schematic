@@ -174,14 +174,14 @@ describe("prompt sections in a real agent session", () => {
 			.map((message) => JSON.stringify(message.content))
 			.join("\n");
 		expect(nonSystemText, "the handoff run's request carries the eligible handoff nudge").toContain(JSON.stringify(nudgeFirstLine).slice(1, -1));
-		const sections: Record<string, string> = {};
+		const sections = new Map<string, string>();
 		for (const message of handoffRunRequest.filter((candidate): candidate is SystemMessage => candidate.role === "system")) {
 			for (const [name, body] of Object.entries(message.sections ?? {})) {
-				if (body === null) {delete sections[name];}
-				else {sections[name] = body;}
+				if (body === null) {sections.delete(name);}
+				else {sections.set(name, body);}
 			}
 		}
-		expect(sections.schematic, `schematic section missing; sections: ${Object.keys(sections).join(", ")}`).toBeDefined();
-		expect(sections.schematic_topic, `schematic_topic: ${sections.schematic_topic}`).toContain("Current topic: `oauth`");
+		expect(sections.get("schematic"), `schematic section missing; sections: ${[...sections.keys()].join(", ")}`).toBeDefined();
+		expect(sections.get("schematic_topic"), `schematic_topic: ${String(sections.get("schematic_topic"))}`).toContain("Current topic: `oauth`");
 	});
 });

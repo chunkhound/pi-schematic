@@ -213,7 +213,7 @@ function createSpawnAbortContext(state: SchematicState, session: AgentSession, c
 			reported = p;
 			// Report abort failures via UI. Guard against notify itself throwing
 			// so the detached promise never emits unhandledRejection.
-			void p.catch((e) => {
+			void p.catch((e: unknown) => {
 				try { notifyCleanupFailure(ctx, e); } catch { /* reporting must never reject */ }
 			});
 		}
@@ -670,7 +670,7 @@ export function executeSpawn(
 				}
 				if (!notified) {
 					// Without a cleanup notice the result names both failures.
-					throw new Error(`Spawn failed and cleanup failed: ${failureMessage(primary.error)}; ${failureMessage(cleanupError)}`);
+					throw new Error(`Spawn failed and cleanup failed: ${failureMessage(primary.error)}; ${failureMessage(cleanupError)}`, { cause: cleanupError });
 				}
 			}
 		}
