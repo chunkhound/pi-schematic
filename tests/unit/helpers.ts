@@ -261,9 +261,10 @@ export function turnEndEvent(overrides: Partial<TurnEndEvent> = {}): TurnEndEven
 // other method throws. The unstubbed model registry is the exception: reading any
 // of its members throws, whatever the member returns. So a test that reaches a
 // method it did not stub fails, unless the code under test catches the error (spawn
-// cleanup swallows a throwing ctx.ui.notify). Data members get the values pi reports for a session without UI;
-// optional ones such as `thinkingLevel` are left out and read as `undefined`. An
-// override whose value is `undefined` counts as left out.
+// cleanup swallows a throwing ctx.ui.notify). Data members get the values pi
+// reports for a session without UI; optional ones such as `thinkingLevel` are left
+// out and read as `undefined`. An override whose value is `undefined` counts as
+// left out.
 
 function unstubbedError(member: string): Error {
 	let where = "pass it in the overrides";
