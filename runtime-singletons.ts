@@ -60,6 +60,9 @@ let current: RuntimeSingletons = {
 // ── Public API ────────────────────────────────────────────────────────
 
 /** Atomically replace all singletons.
+ * While a write is pending on the current lock, the current writeLock and
+ * writeContext are kept and only the other fields come from `s`; pass
+ * `{ forceWriteLock: true }` to replace the lock and context as well.
  * Called by spawn/renderer.ts at module evaluation time (production) and by
  * tests via createTestHarness().  The __ prefix signals that callers should
  * understand the lifecycle implications — see spawn/renderer.ts for the
