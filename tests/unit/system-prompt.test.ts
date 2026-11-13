@@ -3,13 +3,14 @@ import type { ExtensionCommandContext, ExtensionToolContext } from "@earendil-wo
 import { contextPrimerSection } from "../../system-prompt.js";
 import { formatCurrentDatePrompt } from "../../time/format.js";
 import { createBeforeAgentStartEvent, createTestHost, getCommand, getHandler, getTool } from "./test-host.js";
-import { makeTUICtx } from "./helpers.js";
+import { createCommandContext, makeTUICtx } from "./helpers.js";
 import { assertPresent } from "../assertions.js";
 
 type HostContext = ExtensionCommandContext & ExtensionToolContext;
 
-// The contexts these tests pass carry only the members the code under test reads; reading a
-// member a context lacks fails the test. Only that the value is an object can be checked at run time.
+// makeTUICtx builds a partial context with the members the code under test uses. Reading a member it
+// lacks yields undefined; calling or dereferencing one throws a TypeError. Only that the value is an
+// object can be checked at run time.
 function assertHostContext(value: unknown): asserts value is HostContext {
 	if (typeof value !== "object" || value === null) {throw new Error("Expected a context object.");}
 }
@@ -73,7 +74,7 @@ test("the context primer states the notebook, topic, and handoff contracts", () 
 
 test("before_agent_start writes notebook contracts plus live topic and page data", async () => {
 	const pi = await createTestHost();
-	await getCommand(pi, "notebook").handler("oauth", hostContext({ hasUI: false, getContextUsage: () => null }));
+	await getCommand(pi, "notebook").handler("oauth", createCommandContext());
 	const notebookWrite = getTool(pi, "notebook_write");
 	await notebookWrite.execute("1", { name: "alpha", content: "first line\nsecond line" }, undefined, undefined, tuiContext());
 
@@ -100,7 +101,7 @@ test("before_agent_start writes notebook contracts plus live topic and page data
 // matches only full anchor blocks and excludes the notebook listing section.
 test("before_agent_start places date anchor after primer and before dynamic sections", async () => {
 	const pi = await createTestHost();
-	await getCommand(pi, "notebook").handler("oauth", hostContext({ hasUI: false, getContextUsage: () => null }));
+	await getCommand(pi, "notebook").handler("oauth", createCommandContext());
 	const notebookWrite = getTool(pi, "notebook_write");
 	await notebookWrite.execute("1", { name: "decoy", content: "## Current date decoy" }, undefined, undefined, tuiContext());
 

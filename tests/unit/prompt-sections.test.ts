@@ -7,12 +7,13 @@ import { modelGroupsPath } from "../../model-groups/store.js";
 import { assertPresent } from "../assertions.js";
 import { createBeforeAgentStartEvent, createTestHost, emitBeforeAgentStart, getCommand, getHandler, getTool } from "./test-host.js";
 import { withTemp } from "./model-groups-helpers.js";
-import { callHandlers, handoffToolResult, makeTUICtx, turnEndEvent } from "./helpers.js";
+import { callHandlers, createCommandContext, handoffToolResult, makeTUICtx, turnEndEvent } from "./helpers.js";
 
 type HostContext = ExtensionCommandContext & ExtensionToolContext;
 
-// The contexts these tests pass carry only the members the code under test reads; reading a
-// member a context lacks fails the test. Only that the value is an object can be checked at run time.
+// The contexts these tests pass carry only the members the code under test uses. Reading a member a
+// context lacks yields undefined; calling or dereferencing one throws a TypeError. Only that the value
+// is an object can be checked at run time.
 function assertHostContext(value: unknown): asserts value is HostContext {
 	if (typeof value !== "object" || value === null) {throw new Error("Expected a context object.");}
 }
@@ -205,7 +206,7 @@ test("keeps the primer section byte-identical while the topic and notebook secti
 	expect(before.schematic).toBeDefined();
 
 	await getTool(pi, "notebook_write").execute("1", { name: "alpha", content: "first line" }, undefined, undefined, tuiContext());
-	await getCommand(pi, "notebook").handler("oauth", hostContext({ hasUI: false, getContextUsage: () => null }));
+	await getCommand(pi, "notebook").handler("oauth", createCommandContext());
 	const afterEvent = createBeforeAgentStartEvent();
 	await handler(afterEvent, ctx);
 	const after = afterEvent.systemPromptOptions.sections;
@@ -228,7 +229,7 @@ for (const sectionName of ["schematic", "schematic_topic", "schematic_model_grou
 			hasConfiguredAuth: () => true,
 		};
 		const pi = await createTestHost();
-		await getCommand(pi, "notebook").handler("oauth", hostContext({ hasUI: false, getContextUsage: () => null }));
+		await getCommand(pi, "notebook").handler("oauth", createCommandContext());
 		await getTool(pi, "notebook_write").execute("1", { name: "alpha", content: "first line" }, undefined, undefined, tuiContext());
 		const handler = getHandler(pi, "before_agent_start");
 		const event = createBeforeAgentStartEvent();
@@ -245,7 +246,7 @@ test("re-renders the topic and notebook sections after a handoff completes", asy
 	const pi = await createTestHost();
 	const handler = getHandler(pi, "before_agent_start");
 	const ctx = { ...tuiContext({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
-	await getCommand(pi, "notebook").handler("oauth", hostContext({ hasUI: false, getContextUsage: () => null }));
+	await getCommand(pi, "notebook").handler("oauth", createCommandContext());
 	await getTool(pi, "notebook_write").execute("1", { name: "stale", content: "obsolete finding" }, undefined, undefined, tuiContext());
 	await getTool(pi, "notebook_write").execute("2", { name: "keep", content: "durable decision" }, undefined, undefined, tuiContext());
 	const beforeHandoff = createBeforeAgentStartEvent();

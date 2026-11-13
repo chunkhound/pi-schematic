@@ -46,17 +46,18 @@ test("notebook_topic_set establishes a fresh topic, is idempotent, and refuses o
 	const pi = await createTestHost((api) => { registerNotebookTopicTool(api, state); });
 
 	const tool = getTool(pi, "notebook_topic_set");
-	const first = await tool.execute("1", { topic: "OAuth" }, undefined, undefined, createToolContext());
+	const ctx = createToolContext();
+	const first = await tool.execute("1", { topic: "OAuth" }, undefined, undefined, ctx);
 	expect(detailsOf(first).topic).toBe("oauth");
 	expect(state.activeNotebookTopic).toBe("oauth");
 	expect(state.activeNotebookTopicSource).toBe("agent");
 
-	const second = await tool.execute("2", { topic: "oauth" }, undefined, undefined, createToolContext());
+	const second = await tool.execute("2", { topic: "oauth" }, undefined, undefined, ctx);
 	expect(detailsOf(second).changed).toBe(false);
 	expect(detailsOf(second).source).toBe("agent");
 	expect(firstText(second)).toMatch(/already set to "oauth"/i);
 
-	await expect(tool.execute("3", { topic: "billing" }, undefined, undefined, createToolContext())).rejects.toThrow(/already exists/);
+	await expect(tool.execute("3", { topic: "billing" }, undefined, undefined, ctx)).rejects.toThrow(/already exists/);
 });
 
 
@@ -64,16 +65,17 @@ test("notebook_topic_set preserves human authority, stays idempotent for equal t
 	const state = createState();
 	const pi = await createTestHost((api) => { registerNotebookTopicTool(api, state); });
 	const tool = getTool(pi, "notebook_topic_set");
+	const ctx = createToolContext();
 
 	setActiveNotebookTopic(state, "oauth", "human");
-	const same = await tool.execute("1", { topic: "OAuth" }, undefined, undefined, createToolContext());
+	const same = await tool.execute("1", { topic: "OAuth" }, undefined, undefined, ctx);
 	expect(detailsOf(same).changed).toBe(false);
 	expect(detailsOf(same).source).toBe("human");
 	expect(firstText(same)).toMatch(/already set to "oauth"/i);
-	await expect(tool.execute("2", { topic: "billing" }, undefined, undefined, createToolContext())).rejects.toThrow(/human-set notebook topic is authoritative/i);
+	await expect(tool.execute("2", { topic: "billing" }, undefined, undefined, ctx)).rejects.toThrow(/human-set notebook topic is authoritative/i);
 
 	const freshState = createState();
 	const freshPi = await createTestHost((api) => { registerNotebookTopicTool(api, freshState); });
 	const freshTool = getTool(freshPi, "notebook_topic_set");
-	await expect(freshTool.execute("3", { topic: "@@@" }, undefined, undefined, createToolContext())).rejects.toThrow(/notebook topic cannot be empty/i);
+	await expect(freshTool.execute("3", { topic: "@@@" }, undefined, undefined, ctx)).rejects.toThrow(/notebook topic cannot be empty/i);
 });

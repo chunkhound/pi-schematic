@@ -10,11 +10,12 @@ import type {
 	CustomEntry,
 	CustomEntryDraft,
 	ExtensionCommandContext,
+	ExtensionContext,
 	ExtensionToolContext,
 	SessionEntry,
 	Theme,
 } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, SessionManager } from "@earendil-works/pi-coding-agent";
 import { createState, resetState, invalidateHandoffState } from "../../state.js";
 import { registerNotebookRehydration, reconstructNotebook } from "../../notebook/rehydration.js";
 import { buildNotebookDiscardDrafts, formatByteCap, formatPagePreview, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
@@ -23,14 +24,15 @@ import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
 import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
 import { assertPresent, expectSuffix } from "../assertions.js";
-import { callHandlers, createToolContext, createToolRenderContext, handoffToolResult, turnEndEvent, makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
+import { callHandlers, createCommandContext, createExtensionContext, createToolContext, createToolRenderContext, createUIContext, handoffToolResult, turnEndEvent, makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
 import { createBeforeAgentStartEvent, createTestHost, getCommand, getHandler, getHandlers, getHostRecords, getTool } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
 
 type HostContext = ExtensionCommandContext & ExtensionToolContext;
 
-// The contexts these tests pass carry only the members the code under test reads; reading a
-// member a context lacks fails the test. Only that the value is an object can be checked at run time.
+// The contexts these tests pass carry only the members the code under test uses. Reading a member a
+// context lacks yields undefined; calling or dereferencing one throws a TypeError. Only that the value
+// is an object can be checked at run time.
 function assertHostContext(value: unknown): asserts value is HostContext {
 	if (typeof value !== "object" || value === null) {throw new Error("Expected a context object.");}
 }
@@ -136,11 +138,18 @@ function persistedBranch(pi: TestPI): CustomEntry[] {
 	return getHostRecords(pi).appendedEntries.map(({ customType, data }, index) => customEntry(customType, data, index));
 }
 
+/** A context whose session manager's `getBranch` returns what `branch` returns at call time. */
+function branchContext(branch: () => SessionEntry[]): ExtensionContext {
+	const sessionManager = SessionManager.inMemory();
+	vi.spyOn(sessionManager, "getBranch").mockImplementation(branch);
+	return createExtensionContext({ sessionManager });
+}
+
 async function rehydratePersistedNotebook(pi: TestPI) {
 	const state = createState();
 	const restoredPi = await createTestHost((api) => { registerNotebookRehydration(api, state); });
 	const handler = getHandler(restoredPi, "session_start");
-	await handler({ type: "session_start", reason: "startup" }, hostContext({ sessionManager: { getBranch: () => persistedBranch(pi) } }));
+	await handler({ type: "session_start", reason: "startup" }, branchContext(() => persistedBranch(pi)));
 	return state;
 }
 
@@ -313,7 +322,7 @@ test("future-version notebook entries have zero effect on rehydrated state", asy
 	pi.appendEntry("notebook-generation", { version: 2, epoch: 9 });
 	pi.appendEntry("notebook-entry", { version: 2, epoch: 9, name: "future", content: "x" });
 
-	await handler({ type: "session_start", reason: "startup" }, hostContext({ sessionManager: { getBranch: () => persistedBranch(pi) } }));
+	await handler({ type: "session_start", reason: "startup" }, branchContext(() => persistedBranch(pi)));
 
 	// Generation marker site: the future epoch 9 must not be adopted.
 	expect(state.epoch).toBe(1);
@@ -336,10 +345,11 @@ test("pre-versioned entries without a version field rehydrate on parity", async 
 	await saveNotebookPage(pi, state, "legacy", "old");
 	await saveNotebookPage(pi, state, "current", "new");
 	const branch = persistedBranch(pi);
-	delete (branch[0] as { data: { version?: unknown; clipped?: unknown } }).data.version;
-	delete (branch[0] as { data: { version?: unknown; clipped?: unknown } }).data.clipped;
+	const legacyData = recordOf(branch[0].data, "the first persisted entry data");
+	delete legacyData.version;
+	delete legacyData.clipped;
 
-	await handler({ type: "session_start", reason: "startup" }, hostContext({ sessionManager: { getBranch: () => branch } }));
+	await handler({ type: "session_start", reason: "startup" }, branchContext(() => branch));
 
 	expect(state.epoch).toBe(1);
 	expect(state.discardEpochWatermark).toBe(1);
@@ -403,7 +413,7 @@ test("notebook tools add/get/list return stable contract details", async () => {
 	expect(appendedData(pi, 0).name).toBe("entry-a");
 
 	const getResult = await notebookRead.execute("2", { name: "entry-a" }, undefined, undefined, createToolContext());
-	const details = getResult.details as { found: boolean; entries: string[] };
+	const details = detailsOf(getResult);
 	expect(details.found).toBe(true);
 	expect(details.entries).toStrictEqual(["entry-a"]);
 	expect(firstText(getResult)).toMatch(/--- entry-a ---/);
@@ -541,24 +551,23 @@ test("notebook tool renderers expose stable call/result summaries", async () => 
 test("/notebook exits cleanly when headless", async () => {
 	const pi = await createTestHost();
 
-	await expect(getCommand(pi, "notebook").handler("", hostContext({ hasUI: false }))).resolves.toBeUndefined();
+	await expect(getCommand(pi, "notebook").handler("", createCommandContext())).resolves.toBeUndefined();
 });
 
 
 test("/notebook <topic> notifies with info on first set and warning on boundary change", async () => {
 	const pi = await createTestHost();
-	const notifications: { message: string; level: string }[] = [];
+	const notifications: { message: string; level: string | undefined }[] = [];
 	const statuses = new Map<string, string | undefined>();
-	const widgets = new Map<string, string[] | undefined>();
-	const ctx = hostContext({
+	const widgets = new Map<string, unknown>();
+	const ctx = createCommandContext({
 		hasUI: true,
-		getContextUsage: () => ({ percent: 20 }),
-		ui: {
-			theme: { fg: (_name: string, text: string) => text },
-			notify: (message: string, level: string) => { notifications.push({ message, level }); },
-			setStatus: (key: string, status: string | undefined) => { statuses.set(key, status); },
-			setWidget: (key: string, content: string[] | undefined) => { widgets.set(key, content); },
-		},
+		getContextUsage: () => ({ tokens: 40_000, percent: 20, contextWindow: 200_000 }),
+		ui: createUIContext({
+			notify: (message, level) => { notifications.push({ message, level }); },
+			setStatus: (key, status) => { statuses.set(key, status); },
+			setWidget: (key: string, content: unknown) => { widgets.set(key, content); },
+		}),
 	});
 
 	await getCommand(pi, "notebook").handler("oauth", ctx);
@@ -573,16 +582,15 @@ test("/notebook <topic> notifies with info on first set and warning on boundary 
 
 test("readonly /notebook boundary notification explains deferred handoff eligibility", async () => {
 	const pi = await createTestHost();
-	const notifications: { message: string; level: string }[] = [];
-	const ctx = hostContext({
+	const notifications: { message: string; level: string | undefined }[] = [];
+	const ctx = createCommandContext({
 		hasUI: true,
-		getContextUsage: () => ({ percent: 20 }),
-		ui: {
-			theme: { fg: (_name: string, text: string) => text },
-			notify: (message: string, level: string) => { notifications.push({ message, level }); },
+		getContextUsage: () => ({ tokens: 40_000, percent: 20, contextWindow: 200_000 }),
+		ui: createUIContext({
+			notify: (message, level) => { notifications.push({ message, level }); },
 			setStatus: () => {},
 			setWidget: () => {},
-		},
+		}),
 	});
 
 	await getCommand(pi, "readonly").handler("", ctx);
@@ -1080,7 +1088,7 @@ test("saveNotebookPage serializes concurrent writes and preserves completion ord
 
 	expect(order).toStrictEqual(["first:start", "first:end", "second:start"]);
 	expect(state.notebookPages.get("entry-a")).toBe("second");
-	expect(getHostRecords(pi).appendedEntries.map((_entry, index) => appendedData(pi, index).content)).toStrictEqual(["first", "second"]);
+	expect(getHostRecords(pi).appendedEntries.map((entry) => recordOf(entry.data, "the appended entry data").content)).toStrictEqual(["first", "second"]);
 });
 
 test("saveNotebookPage keeps write order across runtime singleton swaps", async () => {
@@ -1331,7 +1339,7 @@ test("buildNotebookDiscardDrafts moves past the discard watermark", async () => 
 
 	const { drafts } = buildNotebookDiscardDrafts(state, ["page-a"]);
 
-	expect(drafts.map((draft) => (draft.data as { epoch: number }).epoch)).toStrictEqual([1, 5, 5]);
+	expect(drafts.map((draft) => recordOf(draft.data, "the draft data").epoch)).toStrictEqual([1, 5, 5]);
 });
 
 test("buildNotebookDiscardDrafts ignores unknown and repeated names", async () => {
@@ -1407,7 +1415,7 @@ test("a discard after orphaned staged survivors uses a fresh epoch and does not 
 	const retry = buildNotebookDiscardDrafts(restarted, ["page-a"]);
 	const restored = restoredFrom(branchWith(pi, [...orphanDrafts, ...retry.drafts]));
 
-	expect(retry.drafts.map((draft) => (draft.data as { epoch: number }).epoch)).toStrictEqual([1, 3, 3, 3]);
+	expect(retry.drafts.map((draft) => recordOf(draft.data, "the draft data").epoch)).toStrictEqual([1, 3, 3, 3]);
 	expect(Array.from(restored.notebookPages.entries()).sort()).toStrictEqual([
 		["page-b", "content-b"], ["page-c", "content-c"],
 	]);
