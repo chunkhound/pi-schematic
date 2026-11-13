@@ -10,6 +10,7 @@ import { callHandlers, createCommandContext, createExtensionContext, emitAll, ha
 import { assertPresent } from "../assertions.js";
 import { createTestHost, getCommand, getHandler, invokeHandler } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
+import type { ContextEventResult } from "@earendil-works/pi-coding-agent";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 
 test("watchdog records context usage without user notifications", async () => {
@@ -50,6 +51,13 @@ test("watchdog records overflow percentages", async () => {
 	expect(state.lastContextPercent).toBe(125);
 });
 
+type ContextMessage = NonNullable<ContextEventResult["messages"]>[number];
+
+/** Asserts `message` is the hidden watchdog reminder and narrows it to a custom message. */
+function assertWatchdogReminder(message: ContextMessage | undefined): asserts message is Extract<ContextMessage, { role: "custom" }> {
+	expect(message).toMatchObject({ role: "custom", customType: "pi-schematic-watchdog", display: false });
+}
+
 test("context injects watchdog reminder before each LLM call", async () => {
 	const pi = await createTestHost();
 	await getCommand(pi, "notebook").handler("oauth", createCommandContext());
@@ -58,7 +66,8 @@ test("context injects watchdog reminder before each LLM call", async () => {
 		pi,
 		"context",
 		{ type: "context", messages: [{ role: "user", content: "hi", timestamp: 1 }] },
-		createExtensionContext({ getContextUsage: () => ({ tokens: 140_000, contextWindow: 200_000, percent: 70 }) }),
+		// 21 000 tokens is below the handoff minimum, so the reminder does not prefer a handoff.
+		createExtensionContext({ getContextUsage: () => ({ tokens: 21_000, contextWindow: 30_000, percent: 70 }) }),
 	);
 
 	assertPresent(result);
@@ -67,8 +76,7 @@ test("context injects watchdog reminder before each LLM call", async () => {
 	expect(messages).toHaveLength(2);
 	const [first, reminder] = messages;
 	expect(first).toStrictEqual({ role: "user", content: "hi", timestamp: 1 });
-	expect(reminder).toMatchObject({ role: "custom", customType: "pi-schematic-watchdog", display: false });
-	if (reminder.role !== "custom") {throw new Error("The second message is not the watchdog reminder.");}
+	assertWatchdogReminder(reminder);
 	expect(reminder.content).toMatch(/70%/);
 	expect(reminder.content).toMatch(/oauth/);
 	expect(reminder.content).toMatch(/spawn/i);

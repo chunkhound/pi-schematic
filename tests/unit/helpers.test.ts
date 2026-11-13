@@ -9,9 +9,7 @@
  */
 
 import { expect, test } from "vitest";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { ModelRegistry, ModelRuntime, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type ExtensionContext, type ExtensionToolContext, type ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
 	createCommandContext,
 	createExtensionContext,
@@ -19,7 +17,6 @@ import {
 	createToolContext,
 	createUIContext,
 	setTempHome,
-	tmpDir,
 	withTempAgentDir,
 	withTempHome,
 } from "./helpers.js";
@@ -112,10 +109,10 @@ test("a UI member the test did not stub throws naming it and where to pass it", 
 	);
 });
 
-test("a command context member the test did not stub throws naming it", () => {
+test("a promise-returning context member the test did not stub rejects naming it", async () => {
 	const ctx = createCommandContext();
 
-	expect(() => ctx.waitForIdle()).toThrow("ctx.waitForIdle is not stubbed in this test context; pass it in the overrides.");
+	await expect(ctx.waitForIdle()).rejects.toThrow("ctx.waitForIdle is not stubbed in this test context; pass it in the overrides.");
 });
 
 test("a command context passes its command and context overrides through", async () => {
@@ -125,11 +122,11 @@ test("a command context passes its command and context overrides through", async
 	expect(ctx.cwd).toBe("/probe/cwd");
 });
 
-test("a tool context has no callable tools and an executeTool that throws naming it", () => {
+test("a tool context has no callable tools and an executeTool that rejects naming it", async () => {
 	const ctx = createToolContext();
 
 	expect(ctx.tools).toStrictEqual([]);
-	expect(() => ctx.executeTool("read", {})).toThrow("ctx.executeTool is not stubbed in this test context; pass it in the overrides.");
+	await expect(ctx.executeTool("read", {})).rejects.toThrow("ctx.executeTool is not stubbed in this test context; pass it in the overrides.");
 });
 
 test("a tool context passes its tool and context overrides through", () => {
@@ -146,15 +143,22 @@ test("using a model registry the test did not stub throws naming it", () => {
 	expect(() => ctx.modelRegistry.getAll()).toThrow("ctx.modelRegistry is not stubbed in this test context; pass it in the overrides.");
 });
 
-test("a model registry passed in the overrides is the context's registry", async () => {
-	const dir = await tmpDir();
-	try {
-		const registry = new ModelRegistry(await ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, refreshOnCreate: false }));
+test("a model registry passed in the overrides is the context's registry", () => {
+	const registry = createExtensionContext().modelRegistry;
 
-		expect(createExtensionContext({ modelRegistry: registry }).modelRegistry).toBe(registry);
-	} finally {
-		await rm(dir, { recursive: true, force: true });
-	}
+	expect(createExtensionContext({ modelRegistry: registry }).modelRegistry).toBe(registry);
+});
+
+test("contexts that differ only in their unstubbed model registries are deeply equal", () => {
+	const ctx = createExtensionContext();
+
+	expect({ ...ctx, modelRegistry: createExtensionContext().modelRegistry }).toStrictEqual(ctx);
+});
+
+test("awaiting an unstubbed model registry resolves to the registry", async () => {
+	const registry = createExtensionContext().modelRegistry;
+
+	await expect(Promise.resolve(registry)).resolves.toBe(registry);
 });
 
 test("copying a context or composing it into another does not throw", () => {
@@ -167,22 +171,54 @@ test("copying a context or composing it into another does not throw", () => {
 	}).not.toThrow();
 });
 
-test("the unstubbed model registry still throws on a copied or composed context", () => {
-	const ctx = createExtensionContext();
-	const { cwd: _cwd, ...rest } = ctx;
+test.for<{ label: string; copy: (ctx: ExtensionContext) => { modelRegistry: ModelRegistry } }>([
+	{ label: "a spread copy", copy: (ctx) => ({ ...ctx }) },
+	{ label: "an Object.assign copy", copy: (ctx) => Object.assign({}, ctx) },
+	{ label: "a rest copy", copy: ({ cwd: _cwd, ...rest }) => rest },
+	{ label: "an extension context built from it", copy: (ctx) => createExtensionContext(ctx) },
+	{ label: "a tool context built from it", copy: (ctx) => createToolContext(ctx) },
+])("the unstubbed model registry still throws on $label of a context", ({ copy }) => {
+	const registry = copy(createExtensionContext()).modelRegistry;
 
-	for (const copy of [{ ...ctx }, Object.assign({}, ctx), rest, createExtensionContext(ctx), createToolContext(ctx)]) {
-		expect(() => copy.modelRegistry.getAll()).toThrow("ctx.modelRegistry is not stubbed");
-	}
+	expect(() => registry.getAll()).toThrow("ctx.modelRegistry is not stubbed");
 });
 
-test("a model registry assigned to a built context replaces the unstubbed one", () => {
+test("a context without UI reports pi's no-UI data defaults", () => {
 	const ctx = createExtensionContext();
-	const other = createExtensionContext();
 
-	ctx.modelRegistry = other.modelRegistry;
+	expect({ mode: ctx.mode, hasUI: ctx.hasUI, model: ctx.model, scopedModels: ctx.scopedModels }).toStrictEqual({
+		mode: "print",
+		hasUI: false,
+		model: undefined,
+		scopedModels: [],
+	});
+});
 
-	expect(ctx.modelRegistry).toBe(other.modelRegistry);
+test("an overridden cwd reaches the default session manager", () => {
+	const ctx = createExtensionContext({ cwd: "/probe/cwd" });
+
+	expect(ctx.sessionManager.getCwd()).toBe("/probe/cwd");
+});
+
+test("a session manager passed in the overrides is the context's session manager", () => {
+	const sessionManager = SessionManager.inMemory("/probe/cwd");
+
+	expect(createExtensionContext({ sessionManager }).sessionManager).toBe(sessionManager);
+});
+
+test("a UI override is the member the UI context calls", () => {
+	const notifications: string[] = [];
+	const ui = createUIContext({ notify: (message) => { notifications.push(message); } });
+
+	ui.notify("probe");
+
+	expect(notifications).toStrictEqual(["probe"]);
+});
+
+test("a promise-returning UI member the test did not stub rejects naming it", async () => {
+	const ui = createUIContext();
+
+	await expect(ui.confirm("title", "message")).rejects.toThrow("ctx.ui.confirm is not stubbed");
 });
 
 test("an override set to undefined keeps the default cwd and its session manager", () => {
@@ -199,11 +235,13 @@ test("a UI override set to undefined keeps the throwing stub", () => {
 });
 
 // Read reflectively: the pinned pi's render context type has no keybinding formatters.
-test.for(["keyText", "keyHint"])("an unstubbed render context %s throws naming itself", (member) => {
+test.for(["keyText", "keyHint"])("an unstubbed render context %s throws naming itself and where to stub it", (member) => {
 	const formatter: unknown = Reflect.get(createToolRenderContext(), member);
 	if (typeof formatter !== "function") {throw new Error(`createToolRenderContext built no ${member} function.`);}
 
-	expect(() => { Reflect.apply(formatter, undefined, ["app.tools.expand", "to expand"]); }).toThrow(`context.${member} is not stubbed`);
+	expect(() => { Reflect.apply(formatter, undefined, ["app.tools.expand", "to expand"]); }).toThrow(
+		`context.${member} is not stubbed in this test context; assign it to the context createToolRenderContext returned.`,
+	);
 });
 
 test("a render context override set to undefined keeps the default", () => {

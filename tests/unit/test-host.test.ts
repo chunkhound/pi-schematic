@@ -14,11 +14,11 @@ import {
 	getCommand,
 	getHandler,
 	getHandlers,
-	getHostRecords,
 	getTool,
 	getToolRenderCall,
 	getToolRenderResult,
 	invokeHandler,
+	type TestPI,
 } from "./test-host.js";
 
 function namedTool(name: string): ToolDefinition {
@@ -97,19 +97,32 @@ test.for([1, -1, 0.5])("a handler lookup at index %s throws naming the event and
 	expect(() => getHandler(pi, "input", index)).toThrow(`No "input" handler at index ${String(index)}; 1 registered on the test host.`);
 });
 
-test("handlers of one event are returned in registration order", async () => {
-	const pi = await createTestHost((api) => {
+const PROBE_INPUT = { type: "input", text: "probe", source: "interactive" } as const;
+
+async function hostWithTwoInputHandlers(): Promise<TestPI> {
+	return createTestHost((api) => {
 		api.on("input", () => ({ action: "transform", text: "first" }));
 		api.on("input", () => ({ action: "transform", text: "second" }));
 	});
-	const event = { type: "input", text: "probe", source: "interactive" } as const;
+}
+
+test("handlers of one event are returned in registration order", async () => {
+	const pi = await hostWithTwoInputHandlers();
 	const ctx = createExtensionContext();
 
 	const results = [];
-	for (const handler of getHandlers(pi, "input")) {results.push(await handler(event, ctx));}
+	for (const handler of getHandlers(pi, "input")) {results.push(await handler(PROBE_INPUT, ctx));}
 
 	expect(results).toStrictEqual([{ action: "transform", text: "first" }, { action: "transform", text: "second" }]);
-	await expect(invokeHandler(pi, "input", event, ctx, 1)).resolves.toStrictEqual({ action: "transform", text: "second" });
+});
+
+test("an invoked handler at an index is the handler registered at that position", async () => {
+	const pi = await hostWithTwoInputHandlers();
+
+	await expect(invokeHandler(pi, "input", PROBE_INPUT, createExtensionContext(), 1)).resolves.toStrictEqual({
+		action: "transform",
+		text: "second",
+	});
 });
 
 test("an invoked handler's result can be narrowed to present", async () => {
@@ -148,20 +161,21 @@ test("a tool lookup returns the registered definition", async () => {
 	expect(getTool(pi, "probe_tool")).toBe(definition);
 });
 
-test("a tool's renderers are returned callable with a typed render context", async () => {
-	const seen: RenderContext[] = [];
+test("a tool's renderers are returned bound to the definition and callable with a typed render context", async () => {
+	const seen: { receiver: unknown; context: RenderContext }[] = [];
+	const definition: ToolDefinition = {
+		...namedTool("probe_tool"),
+		renderCall(_args, _theme, context) {
+			seen.push({ receiver: this, context });
+			return new Text("call");
+		},
+		renderResult(_result, _options, _theme, context) {
+			seen.push({ receiver: this, context });
+			return new Text("result");
+		},
+	};
 	const pi = await createTestHost((api) => {
-		api.registerTool({
-			...namedTool("probe_tool"),
-			renderCall: (_args, _theme, context) => {
-				seen.push(context);
-				return new Text("call");
-			},
-			renderResult: (_result, _options, _theme, context) => {
-				seen.push(context);
-				return new Text("result");
-			},
-		});
+		api.registerTool(definition);
 	});
 	const callContext = createToolRenderContext({ toolCallId: "probe-call" });
 	const resultContext = createToolRenderContext({ toolCallId: "probe-result" });
@@ -174,7 +188,10 @@ test("a tool's renderers are returned callable with a typed render context", asy
 		resultContext,
 	);
 
-	expect(seen).toStrictEqual([callContext, resultContext]);
+	expect(seen).toStrictEqual([
+		{ receiver: definition, context: callContext },
+		{ receiver: definition, context: resultContext },
+	]);
 });
 
 test.for([
@@ -281,18 +298,6 @@ test("host actions after the load record side effects", async () => {
 
 	expect(pi.sentUserMessages).toStrictEqual([{ content: "x", options: undefined }]);
 	expect(pi.appendedEntries).toStrictEqual([{ customType: "t", data: {} }]);
-});
-
-test("the typed host records are the host's live records", async () => {
-	const pi = await createTestHost((api) => {
-		registerNamedTool(api, "probe_tool");
-	});
-
-	const records = getHostRecords(pi);
-
-	expect(records.sentMessages).toBe(pi.sentMessages);
-	expect(records.sentUserMessages).toBe(pi.sentUserMessages);
-	expect(records.appendedEntries).toBe(pi.appendedEntries);
 });
 
 // The host's contract, independent of the path pi assigns: a header line, then
