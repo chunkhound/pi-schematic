@@ -68,8 +68,8 @@ test.each([undefined, null, 42, { command: "ls" }])("readonly bash guard rejects
 });
 
 test("readonly bash guard blocks non-temp writes and allows temp writes", () => {
-	const outsideTemp = path.join(os.homedir(), `readonly-child-test-${process.pid}-${Date.now()}`);
-	const insideTemp = path.join(os.tmpdir(), `readonly-child-test-${Date.now()}`);
+	const outsideTemp = path.join(os.homedir(), `readonly-child-test-${String(process.pid)}-${String(Date.now())}`);
+	const insideTemp = path.join(os.tmpdir(), `readonly-child-test-${String(Date.now())}`);
 	const cwd = process.cwd();
 
 	const blockResult = applyReadonlyBashGuard(`touch ${outsideTemp}`, cwd);
@@ -83,7 +83,7 @@ test("readonly bash guard blocks non-temp writes and allows temp writes", () => 
 // ── Readonly child bash tool ─────────────────────────────────────────
 
 function outsideTempPath(label: string): string {
-	const target = path.join(os.homedir(), `readonly-child-${label}-${process.pid}-${Date.now()}`);
+	const target = path.join(os.homedir(), `readonly-child-${label}-${String(process.pid)}-${String(Date.now())}`);
 	onTestFinished(() => { fs.rmSync(target, { force: true }); });
 	return target;
 }

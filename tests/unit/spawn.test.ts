@@ -434,7 +434,7 @@ test("spawn execute builds prompt with notebook pages and task", async () => {
 	expect(seenPrompt).toMatch(/entry-a: preview line/);
 	expect(seenPrompt).toMatch(/durable shared memory for the parent and future contexts/i);
 	expect(seenPrompt).not.toMatch(/durable grounding/i);
-	const limitLine = `Keep the result under ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}.`;
+	const limitLine = `Keep the result under ${String(DEFAULT_MAX_LINES)} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}.`;
 	expectSuffix(seenPrompt, limitLine);
 });
 
@@ -1116,7 +1116,7 @@ test("a parent abort between child creation and the prompt returns an aborted re
 
 // ── Result truncation ───────────────────────────────────────────────
 
-const TRUNCATION_MARKER = `\n\n[Result truncated to ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. Spawn a new child with a narrower request if more is needed.]`;
+const TRUNCATION_MARKER = `\n\n[Result truncated to ${String(DEFAULT_MAX_LINES)} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. Spawn a new child with a narrower request if more is needed.]`;
 // Whole 3-byte characters and, after a 1-byte prefix, whole 4-byte emoji that fit in the byte limit.
 const FITTING_3_BYTE_CHARS = Math.floor(DEFAULT_MAX_BYTES / 3);
 const FITTING_EMOJI = Math.floor((DEFAULT_MAX_BYTES - 1) / 4);
@@ -1126,7 +1126,7 @@ async function executeWithChildText(text: string) {
 }
 
 test("spawn result over the line limit keeps the first lines up to the limit and names the limits", async () => {
-	const lines = Array.from({ length: DEFAULT_MAX_LINES + 1 }, (_, i) => `line ${i}`);
+	const lines = Array.from({ length: DEFAULT_MAX_LINES + 1 }, (_, i) => `line ${String(i)}`);
 	expect(Buffer.byteLength(lines.slice(0, DEFAULT_MAX_LINES).join("\n")), "kept lines must fit in the byte limit").toBeLessThanOrEqual(DEFAULT_MAX_BYTES);
 	const result = await executeWithChildText(lines.join("\n"));
 
@@ -1967,7 +1967,7 @@ test("spawn renderCall shows prompt preview and optional routing controls", asyn
 	expect(collapsedLines).toContainEqual(expect.stringContaining("Do X"));
 
 	// Collapsed: long prompt shows truncation hint
-	const longPrompt = Array.from({ length: 10 }, (_, i) => `Line ${i}`).join("\n");
+	const longPrompt = Array.from({ length: 10 }, (_, i) => `Line ${String(i)}`).join("\n");
 	const truncated = renderCall({ prompt: longPrompt }, theme, createToolRenderContext());
 	const truncatedLines = truncated.render(120);
 	expect(truncatedLines).toContainEqual(expect.stringContaining("more lines"));

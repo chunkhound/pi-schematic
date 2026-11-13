@@ -673,7 +673,7 @@ export default function (pi: ExtensionAPI): void {
 						new DynamicBorder((s: string) => theme.fg("accent", s)),
 					);
 					container.addChild(
-						new Text(theme.fg("accent", theme.bold(` Notebook (${state.notebookPages.size} pages) `)), 1, 0),
+						new Text(theme.fg("accent", theme.bold(` Notebook (${String(state.notebookPages.size)} pages) `)), 1, 0),
 					);
 
 					const entries = Array.from(state.notebookPages.entries()).sort(([a], [b]) => a.localeCompare(b));
@@ -932,7 +932,7 @@ export default function (pi: ExtensionAPI): void {
 			}
 			const { unavailableCount, overrideCount, emptyModalityCount, staleModalityOverrideCount } = summarizeBootValidation(validation.groups);
 			if (unavailableCount > 0 || overrideCount > 0 || emptyModalityCount > 0 || staleModalityOverrideCount > 0) {
-				ctx.ui.notify(`Model Groups boot validation: ${unavailableCount} unavailable model references · ${overrideCount} project overrides · ${emptyModalityCount} groups with no common modalities · ${staleModalityOverrideCount} stale modality overrides`, "warning");
+				ctx.ui.notify(`Model Groups boot validation: ${String(unavailableCount)} unavailable model references · ${String(overrideCount)} project overrides · ${String(emptyModalityCount)} groups with no common modalities · ${String(staleModalityOverrideCount)} stale modality overrides`, "warning");
 			}
 		}
 

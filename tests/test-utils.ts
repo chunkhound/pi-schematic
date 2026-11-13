@@ -74,7 +74,7 @@ export function createTestHarness(): TestHarness {
 	const pendingAtStart = previousSingletons.writeLock.pending;
 	if (pendingAtStart > 0) {
 		throw new Error(
-			`createTestHarness: ${pendingAtStart} write(s) still pending on the installed write lock; a previous test or caller did not finish its writes.`,
+			`createTestHarness: ${String(pendingAtStart)} write(s) still pending on the installed write lock; a previous test or caller did not finish its writes.`,
 		);
 	}
 
@@ -123,7 +123,7 @@ export function createTestHarness(): TestHarness {
 			singletons.frameScheduler.clear();
 			if (pendingWrites > 0) {
 				throw new Error(
-					`createTestHarness teardown: ${pendingWrites} write(s) still pending on the harness write lock; the test ended before its writes finished.`,
+					`createTestHarness teardown: ${String(pendingWrites)} write(s) still pending on the harness write lock; the test ended before its writes finished.`,
 				);
 			}
 		},

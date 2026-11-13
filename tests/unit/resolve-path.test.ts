@@ -17,8 +17,8 @@ test("resolveRealPath: non-existent path inside temp dir preserves full path", (
 
 test("resolveRealPath follows symlinks", () => {
 	const dir = os.tmpdir();
-	const target = path.join(dir, `pi-test-target-${Date.now()}`);
-	const link = path.join(dir, `pi-test-link-${Date.now()}`);
+	const target = path.join(dir, `pi-test-target-${String(Date.now())}`);
+	const link = path.join(dir, `pi-test-link-${String(Date.now())}`);
 	fs.mkdirSync(target);
 	try {
 		fs.symlinkSync(target, link);

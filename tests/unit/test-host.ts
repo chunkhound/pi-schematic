@@ -411,7 +411,7 @@ async function loadExtensions(
 	}
 	if (extensions.length !== factories.length) {
 		throw new Error(
-			`pi loaded ${extensions.length} extensions for ${factories.length} factories: ${extensions.map((e) => e.path).join(", ")}.`,
+			`pi loaded ${String(extensions.length)} extensions for ${String(factories.length)} factories: ${extensions.map((e) => e.path).join(", ")}.`,
 		);
 	}
 	bindHostActions(runtime, state);

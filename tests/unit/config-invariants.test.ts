@@ -177,7 +177,7 @@ test("repository text has one LF line-ending contract", () => {
 	expect(rules, "all text must check out with LF; see .gitattributes").toStrictEqual(["* text=auto eol=lf"]);
 	// spawnNode runs only node; the same deadline keeps a stalled git child from hanging the worker.
 	const result = spawnSync("git", ["ls-files", "--eol"], { cwd: REPO_ROOT, encoding: "utf8", timeout: CHILD_TIMEOUT_MS, killSignal: "SIGKILL" });
-	expect(result.error, `git ls-files --eol did not run: ${result.error?.message}`).toBeUndefined();
+	expect(result.error, `git ls-files --eol did not run: ${String(result.error?.message)}`).toBeUndefined();
 	expect(result.status, `git ls-files --eol failed: ${result.stderr}`).toBe(0);
 	expect(result.stdout, "git ls-files --eol must report i/lf and w/lf").toMatch(/i\/lf\s+w\/lf/);
 	expect(eolViolations(result.stdout), "tracked text must be LF; stale Windows checkout recovery (discards uncommitted changes, so commit or stash first): git rm --cached -r . && git reset --hard").toStrictEqual([]);

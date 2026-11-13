@@ -81,7 +81,7 @@ function uiCommandContext(overrides: Partial<ExtensionCommandContext> = {}): Ext
 
 async function writePrompt(dir: string, name: string, readonly: boolean): Promise<string> {
 	const filePath = join(dir, `${name}.md`);
-	await writeFile(filePath, `---\nreadonly: ${readonly}\ndescription: "Test"\n---\n\nBody content.\n`);
+	await writeFile(filePath, `---\nreadonly: ${String(readonly)}\ndescription: "Test"\n---\n\nBody content.\n`);
 	return filePath;
 }
 

@@ -30,10 +30,16 @@ export interface SpawnRouteErrorDetails {
 	knownGroup?: boolean;
 }
 
-function describeRouteError(group: string, reason: SpawnRouteErrorReason, details: SpawnRouteErrorDetails, missingModalities: ModelGroupModality[], missingFromGroup: ModelGroupModality[], missingFromModel: ModelGroupModality[]): string {
-	if (reason === "empty") {return `Model Group '${group}' has no model entries.`;}
-	if (reason === "no-usable-models") {return `Model Group '${group}' has no configured/authenticated usable models.`;}
-	if (reason === "missing-modality") {
+/** A missing-modality error always names the routed model. */
+type SpawnRouteErrorArgs =
+	| [reason: "missing-modality", details: SpawnRouteErrorDetails & { provider: string; modelId: string }]
+	| [reason: Exclude<SpawnRouteErrorReason, "missing-modality">, details?: SpawnRouteErrorDetails];
+
+function describeRouteError(group: string, args: SpawnRouteErrorArgs, missingModalities: ModelGroupModality[], missingFromGroup: ModelGroupModality[], missingFromModel: ModelGroupModality[]): string {
+	if (args[0] === "empty") {return `Model Group '${group}' has no model entries.`;}
+	if (args[0] === "no-usable-models") {return `Model Group '${group}' has no configured/authenticated usable models.`;}
+	if (args[0] === "missing-modality") {
+		const details = args[1];
 		if (details.knownGroup) {
 			return `Model Group '${group}' cannot satisfy required modalities: ${missingModalities.join(", ")}. Effective group modalities missing: ${missingFromGroup.join(", ") || "none"}. Routed model '${details.provider}/${details.modelId}' missing: ${missingFromModel.join(", ") || "none"}.`;
 		}
@@ -56,11 +62,14 @@ export class SpawnRouteError extends Error {
 	readonly missingFromModel: ModelGroupModality[];
 	readonly constraintUnsatisfied?: readonly ConstraintViolation[];
 
-	constructor(group: string, reason: SpawnRouteErrorReason, details: SpawnRouteErrorDetails = {}) {
+	constructor(group: string, reason: "missing-modality", details: SpawnRouteErrorDetails & { provider: string; modelId: string });
+	constructor(group: string, reason: Exclude<SpawnRouteErrorReason, "missing-modality">, details?: SpawnRouteErrorDetails);
+	constructor(group: string, ...args: SpawnRouteErrorArgs) {
+		const [reason, details = {}] = args;
 		const missingModalities = details.missingModalities ?? [];
 		const missingFromGroup = details.missingFromGroup ?? [];
 		const missingFromModel = details.missingFromModel ?? [];
-		super(describeRouteError(group, reason, details, missingModalities, missingFromGroup, missingFromModel));
+		super(describeRouteError(group, args, missingModalities, missingFromGroup, missingFromModel));
 		this.name = "SpawnRouteError";
 		this.group = group;
 		this.reason = reason;

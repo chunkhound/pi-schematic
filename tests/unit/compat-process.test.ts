@@ -26,7 +26,7 @@ const { existsSync, readFileSync, writeFileSync } = require("node:fs");
 const attemptsPath = ${JSON.stringify(attemptsPath)};
 const attempts = (existsSync(attemptsPath) ? Number(readFileSync(attemptsPath, "utf8")) : 0) + 1;
 writeFileSync(attemptsPath, String(attempts));
-if (attempts <= ${failures}) { process.stderr.write("transient failure"); process.exit(17); }
+if (attempts <= ${String(failures)}) { process.stderr.write("transient failure"); process.exit(17); }
 process.stdout.write("fixture npm success");
 `);
 	return { cliPath, attemptsPath };

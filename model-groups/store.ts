@@ -104,7 +104,7 @@ function normalizeGroups(rawGroups: Record<string, unknown>, sourceVersion: numb
 
 		const models: ModelGroupModel[] = [];
 		for (let i = 0; i < rawDef.models.length; i++) {
-			const result = validateModelEntry(rawDef.models[i], `group ${rawName}.models[${i}]`);
+			const result = validateModelEntry(rawDef.models[i], `group ${rawName}.models[${String(i)}]`);
 			if (!result.ok) {return result;}
 			models.push(result.model);
 		}
@@ -126,7 +126,7 @@ function validateConfig(raw: unknown, registry: ConstraintRegistry): { ok: true;
 	if (!isPlainRecord(raw) || !isPlainRecord(raw.groups)) {return { ok: false, message: !isPlainRecord(raw) ? "config root must be an object" : "groups must be an object" };}
 	const sourceVersion = raw.version === undefined || raw.version === 0 ? 1 : raw.version;
 	if (typeof sourceVersion !== "number" || !Number.isInteger(sourceVersion) || sourceVersion < 1) {return { ok: false, message: "version must be a non-negative supported integer (only missing/0 normalize)" };}
-	if (sourceVersion > CURRENT_VERSION) {return { ok: false, message: `unsupported version ${sourceVersion}` };}
+	if (sourceVersion > CURRENT_VERSION) {return { ok: false, message: `unsupported version ${String(sourceVersion)}` };}
 	const normalized = normalizeGroups(raw.groups, sourceVersion, registry); return normalized.ok ? { ok: true, config: { version: CURRENT_VERSION, groups: normalized.groups } } : normalized;
 }
 function backupAndIssue(scope: ModelGroupScope, sourcePath: string, kind: ModelGroupsLoadIssue["kind"], message: string, version?: number): ModelGroupsLoadIssue {
@@ -158,7 +158,7 @@ function loadScope(scope: ModelGroupScope, access: ModelGroupsAccess, registry: 
 	if (isPlainRecord(parsed) && typeof parsed.version === "number" && Number.isInteger(parsed.version) && parsed.version > CURRENT_VERSION) {
 		return {
 			config: emptyConfig(),
-			issue: backupAndIssue(scope, sourcePath, "unsupported-version", `unsupported version ${parsed.version}`, parsed.version),
+			issue: backupAndIssue(scope, sourcePath, "unsupported-version", `unsupported version ${String(parsed.version)}`, parsed.version),
 		};
 	}
 	const validated = validateConfig(parsed, registry);
@@ -216,7 +216,7 @@ export function saveModelGroups(scope: ModelGroupScope, access: ModelGroupsAcces
 			const parsed: unknown = JSON.parse(String(fsOps.readFileSync(sourcePath, "utf8")));
 			if (isPlainRecord(parsed)) {
 				if (typeof parsed.version === "number" && Number.isInteger(parsed.version) && parsed.version > CURRENT_VERSION) {
-					throw persistenceError({ operation: "save", scope, sourcePath, phase: "config-validation", message: `unsupported version ${parsed.version}` });
+					throw persistenceError({ operation: "save", scope, sourcePath, phase: "config-validation", message: `unsupported version ${String(parsed.version)}` });
 				}
 				raw = parsed;
 			}
@@ -225,7 +225,7 @@ export function saveModelGroups(scope: ModelGroupScope, access: ModelGroupsAcces
 		}
 	}
 
-	const tempPath = `${sourcePath}.${process.pid}.${Date.now()}.tmp`;
+	const tempPath = `${sourcePath}.${String(process.pid)}.${String(Date.now())}.tmp`;
 	try {
 		fsOps.mkdirSync(path.dirname(sourcePath), { recursive: true });
 		fsOps.writeFileSync(tempPath, JSON.stringify({ ...raw, version: CURRENT_VERSION, groups: normalized.groups }, null, 2) + "\n", "utf8");

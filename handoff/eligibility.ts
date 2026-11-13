@@ -40,7 +40,7 @@ export function isHandoffEligible(usage: HandoffContextUsage): boolean {
 
 /** Format exact or estimated usage for user-facing handoff errors. */
 export function formatHandoffContextUsage(usage: HandoffContextUsage): string {
-	if (isFiniteNonNegative(usage?.tokens)) {return `${usage.tokens} tokens`;}
+	if (isFiniteNonNegative(usage?.tokens)) {return `${String(usage.tokens)} tokens`;}
 	const estimated = estimateHandoffContextTokens(usage);
-	return `~${estimated === null ? "unknown" : Math.round(estimated)} tokens estimated from context usage`;
+	return `~${estimated === null ? "unknown" : String(Math.round(estimated))} tokens estimated from context usage`;
 }

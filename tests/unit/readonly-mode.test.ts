@@ -147,10 +147,13 @@ const SANDBOX_DENIAL_PHRASE = SANDBOX_DENIAL_PHRASES[process.platform];
 const skipWithoutSandbox = !canUseOsSandbox();
 
 async function registerReadonlyBash() {
+	assertPresent(SANDBOX_DENIAL_PHRASE, `no sandbox denial phrase for ${process.platform}`);
+	const deniedOutput = `touch: x: ${SANDBOX_DENIAL_PHRASE}`;
 	const { pi, toolCall } = await registerReadonlyPI();
 	await getCommand(pi, "readonly").handler("", uiCommandContext());
 	return {
 		pi,
+		deniedOutput,
 		callBash: (toolCallId: string) =>
 			toolCall({ toolName: "bash", toolCallId, input: { command: "ls" } }, { cwd: "/workspace" }),
 		result: async (toolCallId: string, overrides: { toolName?: string; isError?: boolean } = {}) => {
@@ -160,7 +163,7 @@ async function registerReadonlyBash() {
 				toolCallId,
 				input: { command: "ls" },
 				details: undefined,
-				...bashResult(`touch: x: ${SANDBOX_DENIAL_PHRASE}`),
+				...bashResult(deniedOutput),
 				...overrides,
 			};
 			const [result] = await callHandlers(pi, "tool_result", event, {});
@@ -177,9 +180,9 @@ test.skipIf(skipWithoutSandbox)("a failed sandboxed bash result gets the sandbox
 	const first = await bash.result("call-1");
 
 	assertPresent(first?.content);
-	expect(textOf({ content: first.content })).toBe(`touch: x: ${SANDBOX_DENIAL_PHRASE}\n\nCommand exited with code 1\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`);
+	expect(textOf({ content: first.content })).toBe(`${bash.deniedOutput}\n\nCommand exited with code 1\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`);
 	expect(first.structuredContent).toStrictEqual({
-		output: `touch: x: ${SANDBOX_DENIAL_PHRASE}\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`,
+		output: `${bash.deniedOutput}\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`,
 		truncated: false,
 		exit_code: 1,
 		wall_time_seconds: 0.1,

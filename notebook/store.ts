@@ -94,9 +94,9 @@ export function formatByteCap(bytes: number): string {
 		["MiB", 1024 * 1024],
 		["KiB", 1024],
 	] as const) {
-		if (bytes % size === 0) {return `${bytes / size} ${unit} (${bytes} bytes)`;}
+		if (bytes % size === 0) {return `${String(bytes / size)} ${unit} (${String(bytes)} bytes)`;}
 	}
-	return `${bytes} bytes`;
+	return `${String(bytes)} bytes`;
 }
 
 /** Ephemeral write-time truncation account; never persisted. */

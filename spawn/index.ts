@@ -191,7 +191,7 @@ function limitResultText(text: string): { text: string; truncated: boolean } {
 	const truncated = lineLimited !== text || Buffer.byteLength(lineLimited, "utf8") > DEFAULT_MAX_BYTES;
 	if (!truncated) {return { text, truncated: false };}
 	const limitedText = cutToUtf8Bytes(lineLimited, DEFAULT_MAX_BYTES);
-	const marker = `[Result truncated to ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. ` +
+	const marker = `[Result truncated to ${String(DEFAULT_MAX_LINES)} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. ` +
 		`Spawn a new child with a narrower request if more is needed.]`;
 	return { text: `${limitedText}\n\n${marker}`, truncated: true };
 }
@@ -522,7 +522,7 @@ export function executeSpawn(
 		capabilityNotice +
 		`## Task\n\n${params.prompt}${readonlyNotice}\n\n` +
 		`When complete, provide a concise summary of findings. ` +
-		`Keep the result under ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}.`;
+		`Keep the result under ${String(DEFAULT_MAX_LINES)} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}.`;
 
 	const { session } = await sessionFactory({
 		sessionManager: SessionManager.inMemory(ctx.cwd),

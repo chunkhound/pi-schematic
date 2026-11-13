@@ -261,5 +261,5 @@ test.for([30, 50, 70])("context indicator at %i% matches snapshot", async (perce
 
 	updateIndicators(ctx, state);
 	const status = record.statuses.get("pi-schematic-ctx") ?? "";
-	await expectGoldenFile(`indicator-${percent}`, status);
+	await expectGoldenFile(`indicator-${String(percent)}`, status);
 });

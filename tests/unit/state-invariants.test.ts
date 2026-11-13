@@ -89,7 +89,7 @@ async function apply(
 // ── Invariant helpers ─────────────────────────────────────────────────
 
 function assertTopicSourceCoupling(state: SchematicState): void {
-	const msg = `topic=${state.activeNotebookTopic} source=${state.activeNotebookTopicSource}`;
+	const msg = `topic=${String(state.activeNotebookTopic)} source=${String(state.activeNotebookTopicSource)}`;
 	if (state.activeNotebookTopic === null) {
 		expect(state.activeNotebookTopicSource, `topic null → source null: ${msg}`).toBeNull();
 	} else {
@@ -226,7 +226,7 @@ test("Property 3: childSessionEpoch only changes on reset", async () => {
 						}
 						expect(
 							state.childSessionEpoch,
-							`childSessionEpoch must be ${expectedChildEpoch} after reset (prev=${prevChildEpoch})`,
+							`childSessionEpoch must be ${String(expectedChildEpoch)} after reset (prev=${String(prevChildEpoch)})`,
 						).toBe(expectedChildEpoch);
 						expectedChildEpoch = state.childSessionEpoch;
 					} else {
@@ -326,7 +326,7 @@ test("Property 5: Epoch counter — set to 1 on first savePage", async () => {
 						// After subsequent saves, epoch is unchanged (set once)
 						expect(
 							state.epoch,
-							`epoch must be > 0 after savePage, got ${state.epoch}`,
+							`epoch must be > 0 after savePage, got ${String(state.epoch)}`,
 						).toBeGreaterThan(0);
 						if (prevEpoch === 0) {
 							// First write: epoch transitions from 0 to 1
@@ -445,7 +445,7 @@ test("Property 6: childSessionEpoch monotonicity (never decreases)", async () =>
 					await apply(state, action);
 					expect(
 						state.childSessionEpoch,
-						`childSessionEpoch must never decrease: was ${maxSeenEpoch}, got ${state.childSessionEpoch}`,
+						`childSessionEpoch must never decrease: was ${String(maxSeenEpoch)}, got ${String(state.childSessionEpoch)}`,
 					).toBeGreaterThanOrEqual(maxSeenEpoch);
 					maxSeenEpoch = Math.max(maxSeenEpoch, state.childSessionEpoch);
 				}

@@ -1048,7 +1048,7 @@ test("model groups TUI handles Model activation immediately after Provider trans
 		},
 		listResolvedModelGroups: () => boot(groups),
 	};
-	const models = Array.from({ length: 2 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: false }));
+	const models = Array.from({ length: 2 }, (_, index) => ({ provider: "openai", id: `model-${String(index)}`, reasoning: false }));
 	const c = component({ groups, modelRegistry: catalog(models), store }).c;
 	pressAndRender(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
 	expect(rendered(c)).toMatch(/Add model — Step 1\/3 Provider/);
@@ -1069,7 +1069,7 @@ test("model groups TUI replaces Thinking control with Model control before rende
 		},
 		listResolvedModelGroups: () => boot(groups),
 	};
-	const models = Array.from({ length: 3 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: false }));
+	const models = Array.from({ length: 3 }, (_, index) => ({ provider: "openai", id: `model-${String(index)}`, reasoning: false }));
 	const c = atSearchableModel(models, store);
 	pressAndRender(c, ENTER);
 	expect(rendered(c)).toMatch(/Add model — Step 3\/3 Thinking/);
@@ -1090,7 +1090,7 @@ test("model groups TUI keeps Model selection live across rapid query, navigation
 		},
 		listResolvedModelGroups: () => boot(groups),
 	};
-	const models = Array.from({ length: 3 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: false }));
+	const models = Array.from({ length: 3 }, (_, index) => ({ provider: "openai", id: `model-${String(index)}`, reasoning: false }));
 	const c = atSearchableModel(models, store);
 
 	for (const input of ["m", "o", "d", "e", "l", DOWN, ENTER]) {c.handleInput?.(input);}
@@ -1119,7 +1119,7 @@ test("model groups TUI Model SelectList keeps all results behind a ten-row viewp
 });
 
 test("model groups TUI Model Input directly proves every nonempty, cursor-start, empty, and Esc branch", () => {
-	const models = Array.from({ length: 4 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: true }));
+	const models = Array.from({ length: 4 }, (_, index) => ({ provider: "openai", id: `model-${String(index)}`, reasoning: true }));
 
 	const cursorMiddle = atSearchableModel(models);
 	pressAndRender(cursorMiddle, ..."model", DOWN, DOWN, LEFT);
@@ -1200,7 +1200,7 @@ test("model groups TUI persists exact raw identity from both filtered/reordered 
 	pressAndRender(filtered, ..."needle", ENTER, ENTER);
 	expect(persisted[0]).toStrictEqual({ provider: "raw-provider", modelId: "z-last\u001b" });
 
-	const offscreenModels = Array.from({ length: 12 }, (_, index) => ({ provider: "raw-provider", id: `raw/${String(index).padStart(2, "0")}\u001b`, name: `match ${index}`, reasoning: false }));
+	const offscreenModels = Array.from({ length: 12 }, (_, index) => ({ provider: "raw-provider", id: `raw/${String(index).padStart(2, "0")}\u001b`, name: `match ${String(index)}`, reasoning: false }));
 	const offscreen = atSearchableModel(offscreenModels, store);
 	pressAndRender(offscreen, ..."match", ...Array<string>(11).fill(DOWN), ENTER, ENTER);
 	expect(persisted[1]).toStrictEqual({ provider: "raw-provider", modelId: "raw/11\u001b" });

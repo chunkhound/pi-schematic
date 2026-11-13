@@ -160,7 +160,7 @@ const Notice = "Notice: This page was clipped at write time; its stored body is 
 const rejectMessage = (name: string) => `Notebook page "${name}" rejected: first line exceeds ${formatByteCap(DEFAULT_MAX_BYTES)}. Split it into shorter lines or smaller pages.`;
 const emptyHeadRejectMessage = (name: string) => `Notebook page "${name}" rejected: the first non-empty line exceeds ${formatByteCap(DEFAULT_MAX_BYTES)}, so truncation would retain no content. Split it into shorter lines or smaller pages.`;
 const DescriptionSuffix =
-	`Content is limited to ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. ` +
+	`Content is limited to ${String(DEFAULT_MAX_LINES)} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. ` +
 	"The beginning is kept, the tail is dropped, and truncation is reported. " +
 	"A write whose retained head would be empty (for example, an oversized first line) is rejected.";
 
@@ -973,7 +973,7 @@ test("/notebook reopens the list when the selected page vanished while it was op
 	});
 	await getTool(pi, "handoff").execute("2", { nextInstruction: "continue", discardPages: ["alpha"] }, undefined, undefined, handoffCtx);
 	const results = await callHandlers(pi, "turn_end", turnEndEvent({ toolResults: [handoffToolResult("2")] }), handoffCtx);
-	branch = boundaryEntries(results).map((entry, index) => ({ ...entry, id: `entry-${index}` }));
+	branch = boundaryEntries(results).map((entry, index) => ({ ...entry, id: `entry-${String(index)}` }));
 
 	// turn_start applies the discard after the list was built with alpha and before Enter selects it.
 	const { custom, reopens } = enterOnFirstOpen(async () => {
