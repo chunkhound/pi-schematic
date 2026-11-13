@@ -730,7 +730,7 @@
   },
   "tests/unit/handoff.test.ts": {
     "@typescript-eslint/no-empty-function": {
-      "count": 7
+      "count": 6
     },
     "@typescript-eslint/no-non-null-assertion": {
       "count": 4
@@ -1287,9 +1287,6 @@
     },
     "@typescript-eslint/no-non-null-assertion": {
       "count": 1
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 2
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 13

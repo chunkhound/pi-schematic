@@ -104,15 +104,39 @@ function makeCtx(options: { usage?: ContextUsage; aborted?: boolean; hasUI?: boo
 			notify: (message: string, level?: string) => { notifications.push({ message, level }); },
 		}),
 		getContextUsage: () => session.usage,
-		// An in-memory session whose branch is `session.branch`.
-		sessionManager: Object.assign(SessionManager.inMemory(), { getBranch: () => session.branch }),
+		sessionManager: branchOnlySessionManager(() => session.branch),
 	});
 	return { ctx, statuses, widgets, notifications, session };
 }
 
+// The methods `SessionManager` declares.
+const SESSION_MANAGER_METHODS = new Set(Object.getOwnPropertyNames(SessionManager.prototype).filter((name) => name !== "constructor"));
+
 /**
- * Runs every `event` handler in registration order on the same payload, as pi
- * does, and returns the first result a handler returned.
+ * A session manager whose `getBranch` returns `branch()`; calling any other
+ * `SessionManager` method throws naming it, so code that reads more of the session
+ * than its branch fails instead of answering from an empty session.
+ */
+function branchOnlySessionManager(branch: () => SessionEntry[]): SessionManager {
+	return new Proxy(SessionManager.inMemory(), {
+		get(manager, property, receiver) {
+			if (property === "getBranch") {return branch;}
+			if (typeof property === "string" && SESSION_MANAGER_METHODS.has(property)) {
+				return () => {
+					throw new Error(`ctx.sessionManager.${property} is not stubbed in this test context; only getBranch is.`);
+				};
+			}
+			const value: unknown = Reflect.get(manager, property, receiver);
+			return value;
+		},
+	});
+}
+
+/**
+ * Runs every `event` handler in registration order on the same payload and
+ * returns the first result a handler returned. pi's chaining of `turn_end`
+ * results into the next handler's event and its stop at the first blocking
+ * `tool_call` result are not emulated.
  */
 async function firstHandlerResult<K extends HostEventName>(
 	pi: TestPI,
@@ -121,8 +145,9 @@ async function firstHandlerResult<K extends HostEventName>(
 	ctx: ExtensionContext,
 ): Promise<HostEventResult<K> | undefined> {
 	const results: (HostEventResult<K> | undefined)[] = [];
-	for (let index = 0; index < getHandlers(pi, event).length; index++) {
-		results.push(await invokeHandler(pi, event, payload, ctx, index));
+	for (const handler of getHandlers(pi, event)) {
+		const result = await handler(payload, ctx);
+		results.push(result === undefined ? undefined : result);
 	}
 	return results.find((result) => result !== undefined);
 }
@@ -144,6 +169,12 @@ function customMessageText(draft: SessionBoundaryDraft | undefined): string {
 	const { content } = customMessageDraft(draft);
 	if (typeof content !== "string") {throw new Error("The custom_message draft has no text content.");}
 	return content;
+}
+
+/** The `epoch` in a custom draft's data; `undefined` for any other draft and for data without an `epoch`. */
+function customDraftEpoch(draft: SessionBoundaryDraft): unknown {
+	if (draft.type !== "custom" || typeof draft.data !== "object" || draft.data === null || !("epoch" in draft.data)) {return undefined;}
+	return draft.data.epoch;
 }
 
 /** The text of the message the host recorded at `index` of its `pi.sendMessage` calls; throws unless it is text. */
@@ -195,12 +226,10 @@ function persist(drafts: readonly SessionBoundaryDraft[]): SessionEntry[] {
 
 /** A failed handoff stages nothing, starts no run and reports through one displayed message; returns its content. */
 function assertFailedWithoutRun(state: SchematicState, pi: TestPI): string {
+	const { sentMessages, sentUserMessages } = getHostRecords(pi);
 	expect(state.stagedHandoff).toBeNull();
-	expect(pi.sentUserMessages, "a failed handoff must not start a new run").toStrictEqual([]);
-	const { sentMessages } = getHostRecords(pi);
-	const content = sentMessages[0]?.message.content;
-	expect(content).toBeTypeOf("string");
-	if (typeof content !== "string") {throw new Error("The failure message has no text content.");}
+	expect(sentUserMessages, "a failed handoff must not start a new run").toStrictEqual([]);
+	const content = sentMessageText(pi, 0);
 	expect(sentMessages).toStrictEqual([{
 		message: { customType: "pi-schematic-handoff-failed", content, display: true },
 		options: { triggerTurn: false },
@@ -416,8 +445,7 @@ test("the discard epoch moves past the discard watermark", async () => {
 
 	const result = await endTurn(pi, makeCtx().ctx);
 
-	const epochs = boundaryEntries(result).map((entry) =>
-		entry.type === "custom" && typeof entry.data === "object" && entry.data !== null && "epoch" in entry.data ? entry.data.epoch : undefined);
+	const epochs = boundaryEntries(result).map(customDraftEpoch);
 	expect(epochs.slice(0, 3)).toStrictEqual([1, 4, 4]);
 });
 
@@ -476,7 +504,7 @@ test("turn_start with the cut on the branch completes the handoff", async () => 
 	session.branch = persist(boundaryEntries(result));
 	widgets.set(WIDGET_KEY_WARNING, ["⚠ Context at 85% — readonly"]);
 
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
 	expect(state.stagedHandoff).toBeNull();
 	expect(state.pendingRequestedHandoff).toBeNull();
@@ -509,7 +537,7 @@ test("a completed handoff without discardPages notifies a plain completion", asy
 		...boundaryEntries(result),
 	]);
 
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
 	expect(state.notebookPages.size, "the pages survive, so the plain form does not depend on an empty notebook").toBe(2);
 	expect(notifications).toStrictEqual([{ message: "Handoff complete.", level: "info" }]);
@@ -532,7 +560,7 @@ test("a discard naming no page reports the kept pages without a discarded count"
 		...boundaryEntries(result),
 	]);
 
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
 	expect(notifications).toStrictEqual([{ message: "Handoff complete. Notebook: 2 pages kept.", level: "info" }]);
 });
@@ -554,7 +582,7 @@ test("a discard dropped from the boundary is counted from the branch and warned 
 		...boundaryEntries(result).filter((entry) => entry.type !== "custom"),
 	]);
 
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
 	expect(state.notebookPages.get("stale"), "the page stays on the branch").toBe("obsolete");
 	expect(notifications).toStrictEqual([
@@ -581,7 +609,7 @@ test("a page created under a requested discard name after staging is neither cou
 		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 2, name: "ghost", content: "created after staging", clipped: false } },
 	]);
 
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
 	expect([...state.notebookPages], "the page added after staging survives").toStrictEqual([["ghost", "created after staging"]]);
 	expect(notifications).toStrictEqual([
@@ -595,7 +623,7 @@ test("a completed handoff leaves the readonly nudge off when readonly is off", a
 	await executeHandoff(pi, ctx);
 	session.branch = persist(boundaryEntries(await endTurn(pi, ctx)));
 
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
 	expect(state.stagedHandoff).toBeNull();
 	expect(state.readonlyNudgePending).toBe(false);
@@ -606,7 +634,7 @@ test("turn_start leaves a handoff staged until its turn_end has run", async () =
 	const { ctx, notifications } = makeCtx();
 	await executeHandoff(pi, ctx);
 
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
 	expect(state.stagedHandoff?.phase).toBe("staged");
 	expect(notifications).toStrictEqual([]);
@@ -619,7 +647,7 @@ test("turn_start without the cut on the branch fails the handoff and keeps the r
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, ctx);
 
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
 	expect(state.stagedHandoff).toBeNull();
 	expect(state.pendingRequestedHandoff).toStrictEqual({
@@ -648,7 +676,7 @@ test("a failed handoff shows the waiting status when usage becomes unavailable",
 	await endTurn(pi, ctx);
 	session.usage = undefined;
 
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
 	expect(statuses.get(STATUS_KEY_HANDOFF)).toBe("🤝 Handoff requested — waiting for eligible context");
 });
@@ -659,16 +687,17 @@ test("a failed handoff without a pending request clears the status and says noth
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, ctx);
 
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
+	const { sentMessages, sentUserMessages } = getHostRecords(pi);
 	expect(state.pendingRequestedHandoff).toBeNull();
 	expect(statuses.get(STATUS_KEY_HANDOFF), "the in-progress status the tool set is cleared").toBeUndefined();
-	expect(pi.sentUserMessages).toStrictEqual([]);
-	expect(pi.sentMessages).toHaveLength(1);
-	expect(getHostRecords(pi).sentMessages[0].message.customType).toBe("pi-schematic-handoff-failed");
-	expect(getHostRecords(pi).sentMessages[0].message.display).toBe(true);
+	expect(sentUserMessages).toStrictEqual([]);
+	expect(sentMessages).toHaveLength(1);
+	expect(sentMessages[0].message.customType).toBe("pi-schematic-handoff-failed");
+	expect(sentMessages[0].message.display).toBe(true);
 	expectSuffix(sentMessageText(pi, 0), "No required handoff remains pending; retry when ready.");
-	expect(pi.sentMessages[0].options).toStrictEqual({ triggerTurn: false });
+	expect(sentMessages[0].options).toStrictEqual({ triggerTurn: false });
 });
 
 for (const { attemptsBefore, nudged, requestSurvives } of [
@@ -688,11 +717,11 @@ for (const { attemptsBefore, nudged, requestSurvives } of [
 		await executeHandoff(pi, ctx);
 		await endTurn(pi, ctx);
 
-		await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
+		await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, ctx);
 
 		if (requestSurvives) {expect(state.pendingRequestedHandoff).not.toBeNull();}
 		else {expect(state.pendingRequestedHandoff).toBeNull();}
-		expect(pi.sentMessages).toHaveLength(1);
+		expect(getHostRecords(pi).sentMessages).toHaveLength(1);
 		expectSuffix(sentMessageText(pi, 0), requestSurvives
 			? "The required handoff remains pending; retry when context usage is eligible."
 			: "No required handoff remains pending; retry when ready.");
@@ -707,7 +736,7 @@ test("agent_settled with the cut on the branch completes with the successor-did-
 	await executeHandoff(pi, ctx);
 	session.branch = persist(boundaryEntries(await endTurn(pi, ctx)));
 
-	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
+	await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, ctx);
 
 	expect(state.stagedHandoff).toBeNull();
 	expect(state.pendingRequestedHandoff).toBeNull();
@@ -721,7 +750,7 @@ test("agent_settled fails a declined handoff with its decline reason in a displa
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, ctx, { toolResults: [] });
 
-	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
+	await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, ctx);
 
 	expect(state.pendingRequestedHandoff?.toolCalled).toBe(false);
 	expectPrefix(assertFailedWithoutRun(state, pi), `Handoff failed — ${REASON_RESULT_MISSING}.`);
@@ -733,7 +762,7 @@ test("agent_settled fails a handoff whose turn_end never ran", async () => {
 	const { ctx, notifications } = makeCtx();
 	await executeHandoff(pi, ctx);
 
-	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
+	await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, ctx);
 
 	expect(state.pendingRequestedHandoff?.toolCalled).toBe(false);
 	expectPrefix(assertFailedWithoutRun(state, pi), `Handoff failed — ${REASON_NO_BOUNDARY}.`);
@@ -746,7 +775,7 @@ test("a handoff declined for an abort fails at agent_settled with a displayed me
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, makeCtx({ aborted: true }).ctx);
 
-	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
+	await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, ctx);
 
 	expect(state.pendingRequestedHandoff?.toolCalled).toBe(false);
 	expect(assertFailedWithoutRun(state, pi)).toBe(`Handoff failed — ${REASON_ABORTED}. The required handoff remains pending; retry when context usage is eligible.`);
@@ -766,7 +795,7 @@ test("a submitted handoff whose cut is missing but whose notebook drafts persist
 	const expected = createState();
 	reconstructNotebook(expected, session.branch);
 
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
 	expect(state.stagedHandoff).toBeNull();
 	expect(getHostRecords(pi).sentMessages[0].message.customType).toBe("pi-schematic-handoff-failed");
@@ -795,15 +824,15 @@ test("a failed handoff, a retry and the second cut deliver the human direction a
 	session.branch = persist(persistedNotebook);
 	await executeHandoff(pi, ctx, { nextInstruction: "first model instruction", discardPages: ["other"] }, "first");
 	await endTurn(pi, ctx, {}, "first");
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
-	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
+	await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, ctx);
 	expect(state.stagedHandoff).toBeNull();
 	expect(state.pendingRequestedHandoff?.nextInstruction, "the failed cut keeps the request pending").toBe("human direction");
 
 	await executeHandoff(pi, ctx, { nextInstruction: "second model instruction", discardPages: ["stale"] }, "second");
 	const result = await endTurn(pi, ctx, {}, "second");
 	session.branch = persist([...persistedNotebook, ...boundaryEntries(result)]);
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
 	const successor = boundaryEntries(result).find((entry) => entry.type === "custom_message" && entry.customType === "pi-schematic-handoff");
 	expect(customMessageText(successor)).toBe("## Next instruction\n\nhuman direction");
@@ -828,7 +857,7 @@ test("a handoff whose branch holds only an earlier handoff's cut fails as not pe
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, ctx);
 
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
 	expect(state.stagedHandoff).toBeNull();
 	expectPrefix(sentMessageText(pi, 0), `Handoff failed — ${REASON_NOT_PERSISTED}.`);
@@ -839,10 +868,10 @@ test("agent_settled after a handoff completed at turn_start sends and notifies n
 	const { ctx, notifications, session } = makeCtx({ hasUI: true });
 	await executeHandoff(pi, ctx);
 	session.branch = persist(boundaryEntries(await endTurn(pi, ctx)));
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 	const notificationsAtCompletion = notifications.length;
 
-	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
+	await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, ctx);
 
 	expect(notificationsAtCompletion).toBe(1);
 	expect(notifications, "no second notification at settle").toHaveLength(1);
@@ -932,7 +961,7 @@ test("session_tree invalidates a staged handoff and the handoff refusals", async
 	await expect(executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second")).rejects.toThrow(new Error(HANDOFF_ALREADY_STAGED));
 	expect((await toolCall(pi, "h1", "handoff"))?.block).toBe(true);
 
-	await emitAll(pi, "session_tree", { type: "session_tree" }, ctx);
+	await emitAll(pi, "session_tree", { type: "session_tree", newLeafId: null, oldLeafId: null }, ctx);
 
 	await executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second");
 	expect(await toolCall(pi, "h1", "handoff")).toBeUndefined();
@@ -943,12 +972,12 @@ test("after a failed cut the run refuses further handoff calls until the agent s
 	const { ctx } = makeCtx();
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, ctx);
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
 	expect(await toolCall(pi, "again", "handoff")).toStrictEqual({ block: true, reason: HANDOFF_FAILED_IN_RUN_REFUSAL, terminate: true });
 	expect(await toolCall(pi, "w1", "write"), "other tools are not refused for the failed cut").toBeUndefined();
 
-	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
+	await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, ctx);
 
 	expect(await toolCall(pi, "again", "handoff")).toBeUndefined();
 });
@@ -959,7 +988,7 @@ test("a declined handoff resolved at turn_start fails without starting a run and
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, ctx, { toolResults: [handoffToolResult("call-1", true)] });
 
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
 	assertFailedWithoutRun(state, pi);
 	expect(await toolCall(pi, "again", "handoff")).toStrictEqual({ block: true, reason: HANDOFF_FAILED_IN_RUN_REFUSAL, terminate: true });
@@ -970,10 +999,10 @@ test("session_tree clears the failed-in-run refusal", async () => {
 	const { ctx } = makeCtx();
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, ctx);
-	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 	expect((await toolCall(pi, "again", "handoff"))?.block).toBe(true);
 
-	await emitAll(pi, "session_tree", { type: "session_tree" }, ctx);
+	await emitAll(pi, "session_tree", { type: "session_tree", newLeafId: null, oldLeafId: null }, ctx);
 
 	expect(await toolCall(pi, "again", "handoff")).toBeUndefined();
 });
@@ -998,7 +1027,7 @@ test("the boundary settles a failed handoff before the watchdog counts the run, 
 		expect(await nudge(), `attempt ${attempt} is still nudged`).toMatch(/A real handoff is required/);
 		await executeHandoff(pi, ctx, { nextInstruction: "continue work" });
 		await endTurn(pi, ctx, { toolResults: [] });
-		await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
+		await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, ctx);
 
 		expect(warnings(), `after failed attempt ${attempt}`).toHaveLength(attempt < MAX_HANDOFF_ATTEMPTS ? 0 : 1);
 	}
@@ -1032,7 +1061,7 @@ test("unready runs do not consume the enforcement budget", async () => {
 	for (let run = 0; run < MAX_HANDOFF_ATTEMPTS; run++) {
 		expect(await watchdogNudge(pi, small.ctx) ?? "").toMatch(/not yet ready for compaction/);
 		await expect(executeHandoff(pi, small.ctx, { nextInstruction: "continue work" }, "small")).rejects.toThrow(/handoff unavailable yet/);
-		await emitAll(pi, "agent_settled", { type: "agent_settled" }, small.ctx);
+		await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, small.ctx);
 	}
 
 	expect(warnings, "runs nudged only to keep working must not cancel the handoff").toStrictEqual([]);
@@ -1048,7 +1077,7 @@ test("a completed handoff clears the requested-handoff nudge", async () => {
 	const result = await endTurn(pi, eligible.ctx);
 	eligible.session.branch = persist(boundaryEntries(result));
 
-	await emitAll(pi, "turn_start", { type: "turn_start" }, eligible.ctx);
+	await emitAll(pi, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, eligible.ctx);
 
 	assertSuccessorTurn(customMessageText(boundaryEntries(result)[1]), { nextInstruction: "continue work" });
 	expect(await watchdogNudge(pi, eligible.ctx), "a completed handoff leaves no requested-handoff nudge").toBeUndefined();
@@ -1157,15 +1186,14 @@ test("turn_end fallback keeps requested handoff status sticky until real handoff
 		}),
 	}));
 
-	await emitAll(pi, "turn_end", turnEndEvent(), {
+	await emitAll(pi, "turn_end", turnEndEvent(), createExtensionContext({
 		hasUI: true,
-		ui: {
-			theme: { fg: (_name: string, text: string) => text },
+		ui: createUIContext({
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-			setWidget: () => {},
-		},
-		getContextUsage: () => null,
-	});
+			setWidget: ignore,
+		}),
+		getContextUsage: () => undefined,
+	}));
 
 	expect(statuses.get(STATUS_KEY_HANDOFF)).toBe("🤝 Handoff requested — waiting for eligible context");
 });
@@ -1566,7 +1594,7 @@ test("handoff tool rejects when context usage cannot be estimated", async () => 
 			{ nextInstruction: "Goal: continue" },
 			undefined,
 			undefined,
-			createToolContext({ getContextUsage: () => ({ tokens: null, percent: 20, contextWindow: Number.NaN }) }),
+			createToolContext({ getContextUsage: () => ({ tokens: null, percent: null, contextWindow: 200_000 }) }),
 		)).rejects.toSatisfy((error: Error) => {
 			expect(error).toBeInstanceOf(Error);
 			expect(error.message).toContain("Context usage unavailable");
@@ -1591,7 +1619,7 @@ test("session_start new clears stale handoff status and warning widget", async (
 		sessionManager: { getBranch: () => [] },
 		getContextUsage: () => null,
 	};
-	await emitAll(pi, "session_start", { reason: "new" }, ctx);
+	await emitAll(pi, "session_start", { type: "session_start", reason: "new" }, ctx);
 
 	expect(statuses.get(STATUS_KEY_HANDOFF)).toBeUndefined();
 	expect(widgets.get(WIDGET_KEY_WARNING)).toBeUndefined();
