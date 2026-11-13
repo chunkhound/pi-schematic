@@ -8,18 +8,18 @@
 import { expect, test, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ModelRegistry, type ExtensionContext, type SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { __setModelGroupsFsForTests, modelGroupsPath } from "../../model-groups/store.js";
+import { modelGroupsPath } from "../../model-groups/store.js";
 import { createExtensionContext, createUIContext, testWithDir, tmpDir } from "./helpers.js";
 import { createBeforeAgentStartEvent, createTestHost, getHandler, getHandlers, getHostRecords, type AppendedEntry, type HostHandler, type TestPI } from "./test-host.js";
 import { withTemp } from "./model-groups-helpers.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-// The fields a registry model needs beyond identity, reasoning and thinking map are
+// A reasoning-capable registry model; its fields beyond identity and `reasoning` are
 // neutral: an empty `input` reads like an absent one, and nothing on these paths
 // reads the name, api, cost or token limits.
 function mockModel(provider: string, id: string): Model<Api> {
@@ -62,7 +62,8 @@ function entryData(entry: AppendedEntry | undefined): Record<string, unknown> {
 
 // The extension registers several `session_start` handlers; its model-group refresh is the last one.
 function lastSessionStartHandler(pi: TestPI): HostHandler<"session_start"> {
-	return getHandler(pi, "session_start", getHandlers(pi, "session_start").length - 1);
+	const handlers = getHandlers(pi, "session_start");
+	return handlers[handlers.length - 1];
 }
 
 function writeModelGroupsConfig(dir: string, groups: Record<string, { models: { provider: string; modelId: string; thinkingLevel?: string }[] }>): void {
@@ -83,6 +84,7 @@ async function writeSkillMd(dir: string, name: string, frontmatter: Record<strin
 function makeNotifyCtx(overrides: Partial<ExtensionContext> = {}) {
 	const notifications: { message: string; level: "info" | "warning" | "error" | undefined }[] = [];
 	const ctx = createExtensionContext({
+		mode: "tui",
 		hasUI: true,
 		ui: createUIContext({
 			notify: (message, level) => { notifications.push({ message, level }); },
@@ -105,17 +107,6 @@ function makePromptCommand(name: string, filePath: string): SlashCommandInfo {
 		source: "prompt",
 		description: "Test prompt",
 		sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
-	};
-}
-
-function makeSkill(name: string, filePath: string) {
-	return {
-		name,
-		description: "Test skill",
-		filePath,
-		baseDir: "",
-		sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
-		disableModelInvocation: false,
 	};
 }
 
@@ -520,7 +511,7 @@ testWithDir("explicit model applies while invalid thinking is reported", async (
 	expect(issues, "invalid thinking should produce one issue entry").toHaveLength(1);
 	const issueData = entryData(issues[0]);
 	expect(issueData.type).toBe("command");
-	expect(asRecord(issueData.issue, "The issue entry's issue").kind).toBe("invalid-thinking-value");
+	expect(asRecord(issueData.issue, "data.issue of the pi-schematic-frontmatter-issue entry").kind).toBe("invalid-thinking-value");
 }));
 
 testWithDir("valid model applies when model-group frontmatter is invalid", async ({ dir: skillDir }) => withTemp(async ({ cwd }) => {
@@ -761,7 +752,7 @@ testWithDir("invalid thinking value produces warning", async ({ dir: skillDir })
 	expect(notifications.map((n) => n.message), "should warn about invalid thinking").toContainEqual(expect.stringMatching(/`thinking`.*off, minimal, low/));
 }));
 
-testWithDir("explicit model frontmatter is ignored in headless session", async ({ dir: skillDir }) => withTemp(async ({ cwd }) => {
+testWithDir("explicit model frontmatter is ignored in headless session", async ({ dir: skillDir }) => withTemp(async () => {
 	const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o" });
 	const pi = await makeMockPI();
 	const setModelCalls: Model<Api>[] = [];
