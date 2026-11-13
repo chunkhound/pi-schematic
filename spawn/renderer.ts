@@ -201,13 +201,6 @@ function getStopErrorText(outcome: SpawnOutcome, errorMessage: string | undefine
 	return outcome === "aborted" ? "Operation aborted" : "Error";
 }
 
-function isExpectedToolComponentFailure(error: unknown): boolean {
-	return error instanceof Error && (
-		/missing tool definition/i.test(error.message)
-		|| /theme not initialized/i.test(error.message)
-	);
-}
-
 function renderPromptPreview(prompt: string, expanded: boolean): { shown: string; remaining: number } {
 	const lines = prompt.split("\n");
 	const maxLines = expanded ? lines.length : PROMPT_PREVIEW_COLLAPSED_LINES;
@@ -761,8 +754,8 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		if (this.pendingAssistantMessage && this.streamingComponent) {
 			try {
 				this.streamingComponent.updateContent(this.pendingAssistantMessage as unknown as import("@earendil-works/pi-ai").AssistantMessage);
-			} catch (error) {
-				this.resetStreamingComponent(error);
+			} catch {
+				this.resetStreamingComponent();
 			}
 			this.pendingAssistantMessage = undefined;
 		}
@@ -819,10 +812,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 				this.fakeUi as unknown as TUI,
 				this.session?.sessionManager.getCwd() ?? process.cwd(),
 			);
-		} catch (error) {
-			if (isExpectedToolComponentFailure(error)) {
-				return undefined;
-			}
+		} catch {
 			return undefined;
 		}
 	}
@@ -1044,11 +1034,8 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		return lines;
 	}
 
-	private resetStreamingComponent(error: unknown): void {
+	private resetStreamingComponent(): void {
 		this.streamingComponent = undefined;
-		if (isExpectedToolComponentFailure(error)) {
-			return;
-		}
 	}
 
 	// ── Event handlers ───────────────────────────────────────────────
@@ -1081,8 +1068,8 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 				this.streamingComponent = new AssistantMessageComponent(undefined, false, this.markdownTheme, "Thinking...");
 				this.addChild(this.streamingComponent);
 				this.streamingComponent.updateContent(event.message);
-			} catch (error) {
-				this.resetStreamingComponent(error);
+			} catch {
+				this.resetStreamingComponent();
 			}
 		}
 	}
@@ -1141,8 +1128,8 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		if (this.streamingComponent) {
 			try {
 				this.streamingComponent.updateContent(event.message);
-			} catch (error) {
-				this.resetStreamingComponent(error);
+			} catch {
+				this.resetStreamingComponent();
 			}
 		}
 		const stopOutcome = getStopReasonOutcome(event.message.stopReason);
