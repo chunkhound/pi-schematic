@@ -44,6 +44,10 @@ beforeEach(() => {
 
 // ── Helpers ───────────────────────────────────────────────────────
 
+// The cache keys on exact mtime equality, so any fixed time other than the write's own marks the
+// file as changed.
+const CHANGED_MTIME = new Date("2000-01-01T00:00:00Z");
+
 async function writeMd(dir: string, name: string, frontmatter: Record<string, unknown>): Promise<string> {
 	const fm = Object.entries(frontmatter)
 		.map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
@@ -470,8 +474,7 @@ testWithDir("populateFromSkills refreshes changed frontmatter when mtime changes
 	expect(cacheLookupSkill(state, "mutable-skill")).toBe(true);
 
 	await writeFile(filePath, `---\nreadonly: false\n---\n\nBody content.\n`);
-	const future = new Date(Date.now() + 2_000);
-	await utimes(filePath, future, future);
+	await utimes(filePath, CHANGED_MTIME, CHANGED_MTIME);
 
 	populateFromSkills(state, [makeSkill("mutable-skill", filePath)]);
 	expect(cacheLookupSkill(state, "mutable-skill")).toBe(false);
@@ -485,8 +488,7 @@ testWithDir("populateFromSkills clears an invalid issue after the skill is fixed
 	expect(cacheLookupSkillIssue(state, "recover-skill")?.kind).toBe("invalid-readonly-value");
 
 	await writeFile(filePath, `---\nreadonly: true\n---\n\nBody content.\n`);
-	const future = new Date(Date.now() + 2_000);
-	await utimes(filePath, future, future);
+	await utimes(filePath, CHANGED_MTIME, CHANGED_MTIME);
 
 	populateFromSkills(state, [makeSkill("recover-skill", filePath)]);
 	expect(cacheLookupSkill(state, "recover-skill")).toBe(true);
@@ -502,8 +504,7 @@ testWithDir("populateFromSkills clears an unreadable issue after the skill becom
 
 	await rm(filePath, { recursive: true, force: true });
 	await writeFile(filePath, `---\nreadonly: false\n---\n\nBody content.\n`);
-	const future = new Date(Date.now() + 2_000);
-	await utimes(filePath, future, future);
+	await utimes(filePath, CHANGED_MTIME, CHANGED_MTIME);
 
 	populateFromSkills(state, [makeSkill("recover-readable-skill", filePath)]);
 	expect(cacheLookupSkill(state, "recover-readable-skill")).toBe(false);
@@ -524,8 +525,7 @@ testWithDir("populatePromptCacheFromResolvedCommandsAndDirs refreshes a prompt w
 	expect(cacheLookupCommand(state, "mutable-prompt")).toBe(true);
 
 	await writeFile(filePath, `---\nreadonly: false\n---\n\nBody content.\n`);
-	const future = new Date(Date.now() + 2_000);
-	await utimes(filePath, future, future);
+	await utimes(filePath, CHANGED_MTIME, CHANGED_MTIME);
 
 	populatePromptCacheFromResolvedCommandsAndDirs(state, commands, dir, false);
 	expect(cacheLookupCommand(state, "mutable-prompt")).toBe(false);
@@ -545,8 +545,7 @@ testWithDir("populatePromptCacheFromResolvedCommandsAndDirs clears an invalid is
 	expect(cacheLookupCommandIssue(state, "recover-prompt")?.kind).toBe("invalid-readonly-value");
 
 	await writeFile(filePath, `---\nreadonly: true\n---\n\nBody content.\n`);
-	const future = new Date(Date.now() + 2_000);
-	await utimes(filePath, future, future);
+	await utimes(filePath, CHANGED_MTIME, CHANGED_MTIME);
 
 	populatePromptCacheFromResolvedCommandsAndDirs(state, commands, dir, false);
 	expect(cacheLookupCommand(state, "recover-prompt")).toBe(true);
@@ -585,8 +584,7 @@ testWithDir("populatePromptCacheFromResolvedCommandsAndDirs clears an unreadable
 
 	await rm(filePath, { recursive: true, force: true });
 	await writeFile(filePath, `---\nreadonly: false\n---\n\nBody content.\n`);
-	const future = new Date(Date.now() + 2_000);
-	await utimes(filePath, future, future);
+	await utimes(filePath, CHANGED_MTIME, CHANGED_MTIME);
 
 	populatePromptCacheFromResolvedCommandsAndDirs(state, commands, dir, false);
 	expect(cacheLookupCommand(state, "recover-readable")).toBe(false);
@@ -811,8 +809,7 @@ testWithDir("cache refresh updates model-group when mtime changes", async ({ dir
 	expect(cacheLookupSkillModelGroup(state, "mutable-group")).toBe("reviewer");
 
 	await writeFile(filePath, `---\nmodel-group: "fast"\n---\n\nBody content.\n`);
-	const future = new Date(Date.now() + 2_000);
-	await utimes(filePath, future, future);
+	await utimes(filePath, CHANGED_MTIME, CHANGED_MTIME);
 
 	populateFromSkills(state, [makeSkill("mutable-group", filePath)]);
 	expect(cacheLookupSkillModelGroup(state, "mutable-group")).toBe("fast");
@@ -825,8 +822,7 @@ testWithDir("cache refresh updates explicit model when mtime changes", async ({ 
 	expect(cacheLookupSkillExplicitModel(state, "mutable-model")).toBe("openai/gpt-4o");
 
 	await writeFile(filePath, `---\nmodel: "anthropic/claude-sonnet"\n---\n\nBody content.\n`);
-	const future = new Date(Date.now() + 2_000);
-	await utimes(filePath, future, future);
+	await utimes(filePath, CHANGED_MTIME, CHANGED_MTIME);
 
 	populateFromSkills(state, [makeSkill("mutable-model", filePath)]);
 	expect(cacheLookupSkillExplicitModel(state, "mutable-model")).toBe("anthropic/claude-sonnet");
@@ -898,8 +894,7 @@ testWithDir("cache refresh updates thinking when mtime changes", async ({ dir })
 	expect(cacheLookupSkillExplicitThinking(state, "mutable-think")).toBe("high");
 
 	await writeFile(filePath, `---\nthinking: "low"\n---\n\nBody content.\n`);
-	const future = new Date(Date.now() + 2_000);
-	await utimes(filePath, future, future);
+	await utimes(filePath, CHANGED_MTIME, CHANGED_MTIME);
 
 	populateFromSkills(state, [makeSkill("mutable-think", filePath)]);
 	expect(cacheLookupSkillExplicitThinking(state, "mutable-think")).toBe("low");
@@ -912,8 +907,7 @@ testWithDir("cache clears invalid model issue after file is fixed", async ({ dir
 	expect(cacheLookupSkillIssue(state, "recover-model")?.kind).toBe("invalid-explicit-model-value");
 
 	await writeFile(filePath, `---\nmodel: "openai/gpt-4o"\n---\n\nBody content.\n`);
-	const future = new Date(Date.now() + 2_000);
-	await utimes(filePath, future, future);
+	await utimes(filePath, CHANGED_MTIME, CHANGED_MTIME);
 
 	populateFromSkills(state, [makeSkill("recover-model", filePath)]);
 	expect(cacheLookupSkillExplicitModel(state, "recover-model")).toBe("openai/gpt-4o");
@@ -927,8 +921,7 @@ testWithDir("cache clears invalid thinking issue after file is fixed", async ({ 
 	expect(cacheLookupSkillIssue(state, "recover-think")?.kind).toBe("invalid-thinking-value");
 
 	await writeFile(filePath, `---\nthinking: "high"\n---\n\nBody content.\n`);
-	const future = new Date(Date.now() + 2_000);
-	await utimes(filePath, future, future);
+	await utimes(filePath, CHANGED_MTIME, CHANGED_MTIME);
 
 	populateFromSkills(state, [makeSkill("recover-think", filePath)]);
 	expect(cacheLookupSkillExplicitThinking(state, "recover-think")).toBe("high");

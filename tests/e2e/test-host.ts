@@ -162,7 +162,7 @@ for await (const line of rl) {
 		let payload: unknown;
 		try {
 			payload = trimmed === "context"
-				? { messages: [{ role: "user", content: "e2e", timestamp: Date.now() }] }
+				? { messages: [{ role: "user", content: "e2e", timestamp: Date.UTC(2026, 0, 1) }] }
 				: JSON.parse(trimmed.slice(7).trim());
 		} catch (e: unknown) {
 			process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n");
