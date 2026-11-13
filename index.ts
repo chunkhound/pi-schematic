@@ -632,14 +632,17 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.registerCommand("readonly", {
 		description: READONLY_COMMAND_DESCRIPTION,
-		handler: async (_args, ctx) => { toggleReadonly(ctx); },
+		// The executor turns a throw into a rejection, as the async form did.
+		handler: (_args, ctx) => new Promise((resolve) => { toggleReadonly(ctx); resolve(); }),
 	});
 
 	pi.registerShortcut("ctrl+shift+r", {
 		description: "Toggle readonly mode",
-		handler: async (ctx) => {
+		// pi wraps the result in Promise.resolve(...).catch, which a synchronous throw would escape.
+		handler: (ctx) => new Promise((resolve) => {
 			if (ctx.isIdle()) {toggleReadonly(ctx);}
-		},
+			resolve();
+		}),
 	});
 
 	function rehydrateReadonlyState(ctx: ExtensionContext): void {
@@ -655,7 +658,7 @@ export default function (pi: ExtensionAPI): void {
 	}
 
 	// ── Readonly: tool_call blocking ────────────────────────────────
-	pi.on("tool_call", async (event, ctx) => {
+	pi.on("tool_call", (event, ctx) => {
 		// ── Readonly mode ───────────────────────────────────────────
 		// Guardrail for a coding agent (not a security boundary):
 		// write/edit/powershell stay in the tool list but are blocked at call
@@ -705,7 +708,7 @@ export default function (pi: ExtensionAPI): void {
 
 	// The sandbox wrapper passes the command's output through unchanged, so the
 	// block is reported here, on the failed result of a sandboxed call.
-	pi.on("tool_result", async (event) => {
+	pi.on("tool_result", (event) => {
 		if (!isBashToolResult(event)) {return;}
 		const wasSandboxed = state.sandboxedBashCallIds.delete(event.toolCallId);
 		if (!wasSandboxed) {return;}
@@ -789,7 +792,7 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	// ── before_agent_start: resolve deferred readonly, then write prompt sections ──
-	pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
+	pi.on("before_agent_start", (event, ctx: ExtensionContext) => {
 		if (state.pendingReadonlyCommands.length > 0) {
 			populateFrontmatterCache(state, ctx, pi, event.systemPromptOptions.skills);
 		}
@@ -811,7 +814,7 @@ export default function (pi: ExtensionAPI): void {
 	// handoff is pending. pendingRequestedHandoff is created by explicit
 	// /handoff or by an eligible human topic boundary. Ineligible boundaries
 	// remain advisory, so the guardrail never mandates an impossible handoff.
-	pi.on("context", async (event, ctx: ExtensionContext) => {
+	pi.on("context", (event, ctx: ExtensionContext) => {
 		const usage = ctx.getContextUsage();
 		const percent = normalizeContextPercent(usage?.percent);
 		state.lastContextPercent = percent;
@@ -918,7 +921,7 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	// ── session_start: reset state + readonly rehydration + indicators ──
-	pi.on("session_start", async (event, ctx: ExtensionContext) => {
+	pi.on("session_start", (event, ctx: ExtensionContext) => {
 		// Every start, not only "new": resetState below runs only for /new.
 		state.sandboxedBashCallIds.clear();
 		if (event.reason === "new") {
@@ -954,7 +957,7 @@ export default function (pi: ExtensionAPI): void {
 
 	// ── session_tree: invalidate branch-local handoff work, rehydrate the
 	//    branch-scoped notebook state, then rehydrate readonly ──
-	pi.on("session_tree", async (_event, ctx: ExtensionContext) => {
+	pi.on("session_tree", (_event, ctx: ExtensionContext) => {
 		invalidateHandoffState(state);
 		if (ctx.hasUI) {ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);}
 		// Notebook persistence is branch-scoped: pages, the committed epoch, and
@@ -969,7 +972,7 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	// ── update TUI indicators after each turn ───────────────────────
-	pi.on("turn_end", async (_event, ctx: ExtensionContext) => {
+	pi.on("turn_end", (_event, ctx: ExtensionContext) => {
 		updateIndicators(ctx, state);
 	});
 }

@@ -131,14 +131,14 @@ export function buildAndRecordNudge(state: NudgeState, percent: number | null, e
  * Must be called from the extension factory in index.ts after state creation.
  */
 export function registerWatchdog(pi: ExtensionAPI, state: SchematicState): void {
-	pi.on("agent_end", async (_event: unknown, ctx: ExtensionContext) => {
+	pi.on("agent_end", (_event: unknown, ctx: ExtensionContext) => {
 		// ── Context usage ───────────────────────────────────────────
 		// Null or malformed usage — right after compaction or when the host cannot
 		// provide a real percentage — is recorded as null, never as an invalid value.
 		state.lastContextPercent = normalizeContextPercent(ctx.getContextUsage()?.percent);
 	});
 
-	pi.on("agent_settled", async (_event: unknown, ctx: ExtensionContext) => {
+	pi.on("agent_settled", (_event: unknown, ctx: ExtensionContext) => {
 		// ── Enforcement counter: cap nudged runs of an unanswered handoff ──
 		// pendingRequestedHandoff is the sticky "user still expects a real
 		// handoff" contract. It survives normal turns and even a failed handoff

@@ -552,7 +552,7 @@ export async function withRealHost(t: TestContext, run: (host: RealHost) => Prom
 		// so a timed-out body settles on its own. Closing earlier would run the close's barrier while
 		// the body is still in a step and report that step's runs as unexpected. A body that awaits
 		// something without a deadline must bound that wait itself.
-		await body?.catch(() => {});
+		await body?.catch(() => { /* The failure already reached the test through `await body`. */ });
 		await host.close();
 	}, 0);
 	const host = await starting;

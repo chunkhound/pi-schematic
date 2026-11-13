@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import fc from "fast-check";
 import { createState } from "../../state.js";
 import { registerWatchdog, MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
@@ -307,7 +307,7 @@ test("watchdog stays advisory for a fresh user-requested handoff", async () => {
 			hasUI: true,
 			ui: {
 				notify: (message: string) => notifications.push(message),
-				setStatus: () => {},
+				setStatus: vi.fn(),
 			},
 			getContextUsage: eligibleUsage,
 		},
@@ -554,8 +554,8 @@ async function createRequestedHandoffSession() {
 		ui: {
 			notify: (message: string, level: string) => { if (level === "warning") {warnings.push(message);} },
 			theme: { fg: (_name: string, text: string) => text },
-			setStatus: () => {},
-			setWidget: () => {},
+			setStatus: vi.fn(),
+			setWidget: vi.fn(),
 		},
 		getContextUsage: () => usage,
 	});

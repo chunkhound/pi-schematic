@@ -24,7 +24,7 @@ beforeEach(() => {
 
 test("resetState aborts and clears child session registries", () => {
 	const state = createState();
-	const abort = vi.fn(async () => {});
+	const abort = vi.fn(() => Promise.resolve());
 	const session = {
 		abort,
 	} as any;
@@ -39,11 +39,8 @@ test("resetState aborts and clears child session registries", () => {
 test("resetState aborts a claimed child session after render ownership transfer", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
-	const abort = vi.fn(async () => {});
-	const session = {
-		...createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]),
-		abort,
-	} as any;
+	const abort = vi.fn(() => Promise.resolve());
+	const session = Object.assign(createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]), { abort }) as any;
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 
@@ -67,11 +64,8 @@ test("resetState aborts a claimed child session after render ownership transfer"
 test("nested spawn dispose shares the deduplicated abort promise with other abort paths", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
-	const abort = vi.fn(async () => {});
-	const session = {
-		...createSession([]),
-		abort,
-	} as any;
+	const abort = vi.fn(() => Promise.resolve());
+	const session = Object.assign(createSession([]), { abort }) as any;
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 
@@ -98,11 +92,8 @@ test("nested spawn dispose shares the deduplicated abort promise with other abor
 test("nested spawn dispose registers its abort in the shared dedup map", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
-	const abort = vi.fn(async () => {});
-	const session = {
-		...createSession([]),
-		abort,
-	} as any;
+	const abort = vi.fn(() => Promise.resolve());
+	const session = Object.assign(createSession([]), { abort }) as any;
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 
@@ -126,11 +117,8 @@ test("nested spawn dispose registers its abort in the shared dedup map", async (
 test("nested spawn dispose is identity-guarded against a replaced live session", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
-	const abort = vi.fn(async () => {});
-	const session = {
-		...createSession([]),
-		abort,
-	} as any;
+	const abort = vi.fn(() => Promise.resolve());
+	const session = Object.assign(createSession([]), { abort }) as any;
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 
@@ -154,14 +142,12 @@ test("nested spawn dispose is identity-guarded against a replaced live session",
 test("nested spawn dispose survives re-entrant dispose from abort", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
-	const abort = vi.fn(async () => {
+	const abort = vi.fn(() => {
 		// Synchronous re-entrant dispose from within abort must be a no-op.
 		component.dispose();
+		return Promise.resolve();
 	});
-	const session = {
-		...createSession([]),
-		abort,
-	} as any;
+	const session = Object.assign(createSession([]), { abort }) as any;
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 

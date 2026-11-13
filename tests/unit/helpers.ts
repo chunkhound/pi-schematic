@@ -20,7 +20,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import os from "node:os";
-import { test as base, expect } from "vitest";
+import { test as base, expect, vi } from "vitest";
 import { createState, resetState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
 import { assertPresent } from "../assertions.js";
@@ -84,7 +84,7 @@ export function createRenderContext(overrides: Record<string, unknown> = {}): Re
 		showImages: true,
 		toolCallId: "tool-call-1",
 		lastComponent: undefined,
-		invalidate: () => {},
+		invalidate: vi.fn(),
 		...overrides,
 	};
 }
@@ -128,10 +128,10 @@ export function createToolRenderContext(overrides: Partial<RenderContext> = {}):
 export function createSession(messages: any[]) {
 	return {
 		messages,
-		subscribe: () => () => {},
+		subscribe: () => vi.fn(),
 		getToolDefinition: () => undefined,
 		sessionManager: { getCwd: () => process.cwd() },
-		abort: async () => {},
+		abort: vi.fn(() => Promise.resolve()),
 	} as unknown as import("@earendil-works/pi-coding-agent").AgentSession;
 }
 
@@ -146,7 +146,7 @@ export function createSubscribableSession(messages: any[] = []) {
 			},
 			getToolDefinition: () => undefined,
 			sessionManager: { getCwd: () => process.cwd() },
-			abort: async () => {},
+			abort: vi.fn(() => Promise.resolve()),
 		} as unknown as import("@earendil-works/pi-coding-agent").AgentSession,
 		emit: (event: any) => handler?.(event),
 	};
@@ -430,10 +430,10 @@ export function makeReadonlyUICtx(overrides: Record<string, unknown> = {}) {
 	return {
 		hasUI: true,
 		ui: {
-			notify: () => {},
+			notify: vi.fn(),
 			theme: { fg: (_name: string, text: string) => text },
-			setStatus: () => {},
-			setWidget: () => {},
+			setStatus: vi.fn(),
+			setWidget: vi.fn(),
 		},
 		getContextUsage: () => null,
 		...overrides,
@@ -668,9 +668,9 @@ export default function(pi) {
 
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		process.env.OPENAI_API_KEY = "test-openai-key";
-		globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+		globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
 			outboundFetches.push(input instanceof Request ? input.url : String(input));
-			throw new Error(`offline fixture blocked outbound fetch: ${outboundFetches.at(-1)}`);
+			return Promise.reject(new Error(`offline fixture blocked outbound fetch: ${outboundFetches.at(-1)}`));
 		});
 		(globalThis as any).__agenticE2eProbeCalls = 0;
 		(globalThis as any).__agenticE2eStreamCalls = 0;
@@ -794,7 +794,7 @@ export function makeTUICtx(
 			theme: {
 				fg: (name: string, text: string) => `[${name}:${text}]`,
 			},
-			notify: overrides.notify ?? (() => {}),
+			notify: overrides.notify ?? vi.fn(),
 			setStatus: (key: string, status: string | undefined) => { record.statuses.set(key, status); },
 			setWidget: (key: string, content: string[] | undefined) => { record.widgets.set(key, content); },
 			...(overrides.custom !== undefined ? { custom: overrides.custom } : {}),

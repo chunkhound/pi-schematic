@@ -36,14 +36,14 @@ test("frame scheduler requeues a throwing target without diagnostics and recover
 	const healthyRenders = vi.fn();
 	const failing = {
 		flushPendingUpdates: failingFlushes,
-		clearRenderCache() {},
+		clearRenderCache: vi.fn(),
 		flushScheduledRender() {
 			return { requestRender: failingRenders, restoreAfterFailure: () => true };
 		},
 	};
 	const healthy = {
 		flushPendingUpdates: healthyFlushes,
-		clearRenderCache() {},
+		clearRenderCache: vi.fn(),
 		flushScheduledRender() {
 			return { requestRender: healthyRenders, restoreAfterFailure: () => true };
 		},
@@ -70,7 +70,7 @@ test("frame scheduler contains invalidate callback failures and continues health
 	const healthyInvalidates = vi.fn();
 	const failing = {
 		flushPendingUpdates: failingFlushes,
-		clearRenderCache() {},
+		clearRenderCache: vi.fn(),
 		flushScheduledRender() {
 			return {
 				requestRender: failingInvalidates,
@@ -79,8 +79,8 @@ test("frame scheduler contains invalidate callback failures and continues health
 		},
 	};
 	const healthy = {
-		flushPendingUpdates() {},
-		clearRenderCache() {},
+		flushPendingUpdates: vi.fn(),
+		clearRenderCache: vi.fn(),
 		flushScheduledRender() {
 			return { requestRender: healthyInvalidates, restoreAfterFailure: () => true };
 		},
@@ -105,10 +105,10 @@ test("frame scheduler creates only one timer for a failed-target recovery frame"
 	const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void) => {
 		return { callback } as any;
 	}) as typeof setTimeout);
-	vi.spyOn(globalThis, "clearTimeout").mockImplementation((() => {}));
+	vi.spyOn(globalThis, "clearTimeout").mockImplementation(vi.fn());
 	const failing = {
 		flushPendingUpdates() { throw new Error("retry later"); },
-		clearRenderCache() {},
+		clearRenderCache: vi.fn(),
 		flushScheduledRender() { return undefined; },
 	};
 
@@ -224,13 +224,9 @@ test("nested spawn dispose stops event processing", async () => {
 test("nested spawn dispose aborts but does not dispose a claimed live child session", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
-	const abort = vi.fn(async () => {});
+	const abort = vi.fn(() => Promise.resolve());
 	const dispose = vi.fn();
-	const session = {
-		...createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]),
-		abort,
-		dispose,
-	} as any;
+	const session = Object.assign(createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]), { abort, dispose }) as any;
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 

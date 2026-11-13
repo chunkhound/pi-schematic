@@ -54,9 +54,10 @@ for (const { label, prior } of priors) {
 		await withPriorAgentDir(prior, async () => {
 			let seen: string | undefined;
 			let created: string | undefined;
-			await withTempAgentDir(async (agentDir) => {
+			await withTempAgentDir((agentDir) => {
 				seen = process.env[KEY];
 				created = agentDir;
+				return Promise.resolve();
 			});
 			expect(seen).toBe(created);
 			assertAgentDirRestored(prior);
@@ -65,7 +66,7 @@ for (const { label, prior } of priors) {
 
 	test(`withTempAgentDir restores ${label} PI_CODING_AGENT_DIR when the run throws`, async () => {
 		await withPriorAgentDir(prior, async () => {
-			await expect(withTempAgentDir(async () => { throw new Error("run failed"); })).rejects.toThrow(/run failed/);
+			await expect(withTempAgentDir(() => Promise.reject(new Error("run failed")))).rejects.toThrow(/run failed/);
 			assertAgentDirRestored(prior);
 		});
 	});
@@ -73,8 +74,9 @@ for (const { label, prior } of priors) {
 	test(`withTempHome clears PI_CODING_AGENT_DIR during the run and restores ${label} value`, async () => {
 		await withPriorAgentDir(prior, async () => {
 			let during: { value: string | undefined } | undefined;
-			await withTempHome(async () => {
+			await withTempHome(() => {
 				during = { value: process.env[KEY] };
+				return Promise.resolve();
 			});
 			expect(during).toStrictEqual({ value: undefined });
 			assertAgentDirRestored(prior);
@@ -83,18 +85,19 @@ for (const { label, prior } of priors) {
 
 	test(`withTempHome restores ${label} PI_CODING_AGENT_DIR when the run throws`, async () => {
 		await withPriorAgentDir(prior, async () => {
-			await expect(withTempHome(async () => { throw new Error("run failed"); })).rejects.toThrow(/run failed/);
+			await expect(withTempHome(() => Promise.reject(new Error("run failed")))).rejects.toThrow(/run failed/);
 			assertAgentDirRestored(prior);
 		});
 	});
 
 	test(`setTempHome clears PI_CODING_AGENT_DIR until its restore function restores ${label} value`, async () => {
-		await withPriorAgentDir(prior, async () => {
+		await withPriorAgentDir(prior, () => {
 			const restoreHome = setTempHome("/temp/home");
 			const whileSet = { value: process.env[KEY] };
 			restoreHome();
 			expect(whileSet).toStrictEqual({ value: undefined });
 			assertAgentDirRestored(prior);
+			return Promise.resolve();
 		});
 	});
 }

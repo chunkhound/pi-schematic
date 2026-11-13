@@ -655,7 +655,7 @@ test("model groups direct save canonicalizes unique keys and rejects empty/colli
 	}
 }));
 
-test("global model groups file lives under PI_CODING_AGENT_DIR when it is set", () => withTemp(({ cwd, home }) => withTempAgentDir(async (agentDir) => {
+test("global model groups file lives under PI_CODING_AGENT_DIR when it is set", () => withTemp(({ cwd, home }) => withTempAgentDir((agentDir) => {
 	const expectedPath = path.join(agentDir, "pi-schematic", "model-groups.json");
 	expect(modelGroupsPath("global", cwd)).toBe(expectedPath);
 
@@ -663,6 +663,7 @@ test("global model groups file lives under PI_CODING_AGENT_DIR when it is set", 
 
 	expect(JSON.parse(fs.readFileSync(expectedPath, "utf8")).groups.relocated.models).toStrictEqual([]);
 	expect(path.join(home, ".pi")).not.toSatisfy(fs.existsSync);
+	return Promise.resolve();
 })));
 
 test("global model groups file defaults to the home agent dir when PI_CODING_AGENT_DIR is unset", () => withTemp(({ cwd, home }) => {
@@ -670,11 +671,13 @@ test("global model groups file defaults to the home agent dir when PI_CODING_AGE
 }));
 
 test("global model groups path follows a PI_CODING_AGENT_DIR change between resolutions", () => withTemp(async ({ cwd }) => {
-	await withTempAgentDir(async (firstAgentDir) => {
+	await withTempAgentDir((firstAgentDir) => {
 		expect(modelGroupsPath("global", cwd)).toBe(path.join(firstAgentDir, "pi-schematic", "model-groups.json"));
+		return Promise.resolve();
 	});
-	await withTempAgentDir(async (secondAgentDir) => {
+	await withTempAgentDir((secondAgentDir) => {
 		expect(modelGroupsPath("global", cwd)).toBe(path.join(secondAgentDir, "pi-schematic", "model-groups.json"));
+		return Promise.resolve();
 	});
 }));
 

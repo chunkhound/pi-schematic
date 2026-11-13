@@ -47,8 +47,8 @@ function makeNotifyBeforeStartCtx() {
 				ui: {
 					notify: (message: string, level: string) => { notifications.push({ message, level }); },
 					theme: { fg: (_name: string, text: string) => text },
-					setStatus: () => {},
-					setWidget: () => {},
+					setStatus: vi.fn(),
+					setWidget: vi.fn(),
 				},
 			}),
 			cwd: process.cwd(),

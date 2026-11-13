@@ -14,9 +14,9 @@ function completionItem(value: string): AutocompleteItem {
 	return { value, label: value };
 }
 
-function delegateProvider(onGetSuggestions: () => void = () => {}): AutocompleteProvider {
+function delegateProvider(onGetSuggestions: () => void = () => { /* Most tests ignore the call. */ }): AutocompleteProvider {
 	return {
-		getSuggestions: async () => { onGetSuggestions(); return { prefix: "", items: [completionItem("delegated")] }; },
+		getSuggestions: () => { onGetSuggestions(); return Promise.resolve({ prefix: "", items: [completionItem("delegated")] }); },
 		applyCompletion: () => ({ lines: ["applied"], cursorLine: 0, cursorCol: 7 }),
 		shouldTriggerFileCompletion: () => false,
 	};
@@ -63,7 +63,7 @@ test("#group autocomplete hands the delegate the caller's getSuggestions options
 	let receivedOptions: unknown;
 	const current: AutocompleteProvider = {
 		...delegateProvider(),
-		getSuggestions: async (_lines, _cursorLine, _cursorCol, options) => { receivedOptions = options; return null; },
+		getSuggestions: (_lines, _cursorLine, _cursorCol, options) => { receivedOptions = options; return Promise.resolve(null); },
 	};
 	const provider = createModelGroupAutocompleteProvider(state)(current);
 	const options = { signal: new AbortController().signal, force: true };

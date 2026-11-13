@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { createState, abortChildSession } from "../../state.js";
 
 function createMockSession(abortImpl: () => Promise<void> | void) {
@@ -7,7 +7,7 @@ function createMockSession(abortImpl: () => Promise<void> | void) {
 
 test("abortChildSession returns the same promise for the same session", async () => {
 	const state = createState();
-	const session = createMockSession(async () => {});
+	const session = createMockSession(vi.fn(() => Promise.resolve()));
 	
 	const promise1 = abortChildSession(state, session);
 	const promise2 = abortChildSession(state, session);
@@ -30,8 +30,8 @@ test("abortChildSession handles synchronous abort() throw", async () => {
 
 test("abortChildSession returns different promises for different sessions", async () => {
 	const state = createState();
-	const session1 = createMockSession(async () => {});
-	const session2 = createMockSession(async () => {});
+	const session1 = createMockSession(vi.fn(() => Promise.resolve()));
+	const session2 = createMockSession(vi.fn(() => Promise.resolve()));
 	
 	const promise1 = abortChildSession(state, session1);
 	const promise2 = abortChildSession(state, session2);
@@ -45,7 +45,7 @@ test("abortChildSession returns different promises for different sessions", asyn
 test("abortChildSession promise resolves when abort completes", async () => {
 	const state = createState();
 	let abortCalled = false;
-	const session = createMockSession(async () => { abortCalled = true; });
+	const session = createMockSession(() => { abortCalled = true; return Promise.resolve(); });
 	
 	const promise = abortChildSession(state, session);
 	await promise;
@@ -56,7 +56,7 @@ test("abortChildSession promise resolves when abort completes", async () => {
 test("abortChildSession promise rejects when abort rejects", async () => {
 	const state = createState();
 	const abortError = new Error("abort rejected");
-	const session = createMockSession(async () => { throw abortError; });
+	const session = createMockSession(() => Promise.reject(abortError));
 	
 	const promise = abortChildSession(state, session);
 	

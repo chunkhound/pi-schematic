@@ -44,10 +44,10 @@ export function createWriteLock(): RuntimeWriteLock {
 
 function createNoopScheduler(): RuntimeFrameScheduler {
 	return {
-		markDirty: () => {},
-		cancelDirty: () => {},
-		flushNow: () => {},
-		clear: () => {},
+		markDirty: () => { /* No scheduler is registered yet. */ },
+		cancelDirty: () => { /* No scheduler is registered yet. */ },
+		flushNow: () => { /* No scheduler is registered yet. */ },
+		clear: () => { /* No scheduler is registered yet. */ },
 	};
 }
 

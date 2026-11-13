@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { expectPrefix, expectSuffix } from "../assertions.js";
 import * as fc from "fast-check";
 import { Value } from "typebox/value";
@@ -75,7 +75,7 @@ function makeCtx(options: { usage?: Usage; aborted?: boolean; hasUI?: boolean } 
 	return { ctx, statuses, widgets, notifications, session };
 }
 
-async function boundaryHost(seed: (state: SchematicState) => void = () => {}) {
+async function boundaryHost(seed: (state: SchematicState) => void = () => { /* No seed: a fresh state. */ }) {
 	const state = createState();
 	seed(state);
 	const pi = await createTestHost((api) => {
@@ -133,7 +133,7 @@ test("/handoff sends the direction back through the LLM without opening the edit
 		hasUI: true,
 		isIdle: () => true,
 		getContextUsage: () => null,
-		ui: { notify: (_message: string) => {} },
+		ui: { notify: vi.fn() },
 	});
 
 	expect(state.pendingRequestedHandoff).toStrictEqual({
@@ -970,7 +970,7 @@ test("/handoff sets the handoff status indicator", async () => {
 		isIdle: () => true,
 		ui: {
 			theme: { fg: (_name: string, text: string) => text },
-			notify: () => {},
+			notify: vi.fn(),
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
 		},
 		getContextUsage: () => null,
@@ -992,7 +992,7 @@ test("/handoff shows ready status when context is eligible", async () => {
 		getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
 		ui: {
 			theme: { fg: (_name: string, text: string) => text },
-			notify: () => {},
+			notify: vi.fn(),
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
 		},
 	});
@@ -1009,7 +1009,7 @@ test("handoff status becomes ready when later context becomes eligible", async (
 		getContextUsage: () => null,
 		ui: {
 			theme: { fg: (_name: string, text: string) => text },
-			notify: () => {},
+			notify: vi.fn(),
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
 		},
 	};
@@ -1059,7 +1059,7 @@ test("turn_end fallback keeps requested handoff status sticky until real handoff
 		getContextUsage: () => null,
 		ui: {
 			theme: { fg: (_name: string, text: string) => text },
-			notify: () => {},
+			notify: vi.fn(),
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
 		},
 	});
@@ -1069,7 +1069,7 @@ test("turn_end fallback keeps requested handoff status sticky until real handoff
 		ui: {
 			theme: { fg: (_name: string, text: string) => text },
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-			setWidget: () => {},
+			setWidget: vi.fn(),
 		},
 		getContextUsage: () => null,
 	});
@@ -1143,7 +1143,7 @@ test("buildNextUserMessage carries the instruction verbatim and the context seco
 	expect(buildNextUserMessage({ nextInstruction: "Refactor billing", context: "   \n " }), "whitespace-only context adds no empty section").toBe("## Next instruction\n\nRefactor billing");
 });
 
-test("buildNextUserMessage preserves instruction bytes and normalizes context padding", async () => {
+test("buildNextUserMessage preserves instruction bytes and normalizes context padding", () => {
 	fc.assert(
 		fc.property(
 			// Blank instructions are rejected by validateHandoffRequest before the builder runs.

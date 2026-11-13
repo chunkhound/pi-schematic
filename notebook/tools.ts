@@ -190,40 +190,44 @@ export function createNotebookToolDefinitions(
 			return new Text(text, 0, 0);
 		},
 
-		async execute(_toolCallId, params: ReadArgs, _signal, _onUpdate, _ctx) {
-			assertFresh();
-			const content = state.notebookPages.get(params.name);
-			const names = getPageNames(state);
+		execute(_toolCallId, params: ReadArgs, _signal, _onUpdate, _ctx) {
+			// The executor turns every throw into a rejection, as the async form did.
+			return new Promise((resolve) => {
+				assertFresh();
+				const content = state.notebookPages.get(params.name);
+				const names = getPageNames(state);
 
-			if (content === undefined) {
-				return {
+				if (content === undefined) {
+					resolve({
+						content: [
+							{
+								type: "text" as const,
+								text:
+									`Notebook page "${params.name}" not found.` +
+									`\n\nNotebook Pages:\n${formatPageList(state) || "(empty)"}`,
+							},
+						],
+						details: { entries: names, found: false },
+					});
+					return;
+				}
+
+				const clipped = state.clippedPages.has(params.name);
+				resolve({
 					content: [
 						{
 							type: "text" as const,
 							text:
-								`Notebook page "${params.name}" not found.` +
-								`\n\nNotebook Pages:\n${formatPageList(state) || "(empty)"}`,
+								`--- ${params.name} ---\n${content}\n` +
+								`---\nNotebook Pages:\n${formatPageList(state) || "(empty)"}` +
+								(clipped
+									? `\n\nNotice: This page was clipped at write time; its stored body is incomplete.`
+									: ""),
 						},
 					],
-					details: { entries: names, found: false },
-				};
-			}
-
-			const clipped = state.clippedPages.has(params.name);
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text:
-							`--- ${params.name} ---\n${content}\n` +
-							`---\nNotebook Pages:\n${formatPageList(state) || "(empty)"}` +
-							(clipped
-								? `\n\nNotice: This page was clipped at write time; its stored body is incomplete.`
-								: ""),
-					},
-				],
-				details: { entries: names, found: true, body: content, clipped },
-			};
+					details: { entries: names, found: true, body: content, clipped },
+				});
+			});
 		},
 	};
 
@@ -256,18 +260,21 @@ export function createNotebookToolDefinitions(
 			return new Text(text, 0, 0);
 		},
 
-		async execute() {
-			assertFresh();
-			const names = getPageNames(state);
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: `Notebook Pages:\n${formatPageList(state) || "(empty)"}`,
-					},
-				],
-				details: { entries: names },
-			};
+		execute() {
+			// The executor turns every throw into a rejection, as the async form did.
+			return new Promise((resolve) => {
+				assertFresh();
+				const names = getPageNames(state);
+				resolve({
+					content: [
+						{
+							type: "text" as const,
+							text: `Notebook Pages:\n${formatPageList(state) || "(empty)"}`,
+						},
+					],
+					details: { entries: names },
+				});
+			});
 		},
 	};
 

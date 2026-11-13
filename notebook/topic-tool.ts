@@ -24,30 +24,34 @@ export function registerNotebookTopicTool(
 				description: "Short stable notebook topic name for the current semantic frame.",
 			}),
 		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-			const normalized = normalizeNotebookTopic(params.topic);
-			if (state.activeNotebookTopic) {
-				if (state.activeNotebookTopic !== normalized) {
-					throw new Error(
-						state.activeNotebookTopicSource === "human"
-							? "Human-set notebook topic is authoritative. Use handoff instead of overriding it."
-							: "Active notebook topic already exists. Use handoff instead of changing it mid-session.",
-					);
+		execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			// The executor turns every throw into a rejection, as the async form did.
+			return new Promise((resolve) => {
+				const normalized = normalizeNotebookTopic(params.topic);
+				if (state.activeNotebookTopic) {
+					if (state.activeNotebookTopic !== normalized) {
+						throw new Error(
+							state.activeNotebookTopicSource === "human"
+								? "Human-set notebook topic is authoritative. Use handoff instead of overriding it."
+								: "Active notebook topic already exists. Use handoff instead of changing it mid-session.",
+						);
+					}
+					resolve({
+						content: [{ type: "text", text: `Notebook topic already set to "${state.activeNotebookTopic}".` }],
+						details: {
+							topic: state.activeNotebookTopic,
+							source: state.activeNotebookTopicSource,
+							changed: false,
+						},
+					});
+					return;
 				}
-				return {
-					content: [{ type: "text", text: `Notebook topic already set to "${state.activeNotebookTopic}".` }],
-					details: {
-						topic: state.activeNotebookTopic,
-						source: state.activeNotebookTopicSource,
-						changed: false,
-					},
-				};
-			}
-			const result = setActiveNotebookTopic(state, params.topic, "agent");
-			return {
-				content: [{ type: "text", text: `Active notebook topic: "${result.current}".` }],
-				details: { topic: result.current, source: "agent" as const, changed: result.changed },
-			};
+				const result = setActiveNotebookTopic(state, params.topic, "agent");
+				resolve({
+					content: [{ type: "text", text: `Active notebook topic: "${result.current}".` }],
+					details: { topic: result.current, source: "agent" as const, changed: result.changed },
+				});
+			});
 		},
 	});
 }

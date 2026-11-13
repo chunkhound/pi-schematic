@@ -301,6 +301,6 @@ export function abortAndClearChildSessions(state: SchematicState): void {
 	state.childSessions.clear();
 	state.liveChildSessions.clear();
 	for (const session of sessions) {
-		void abortChildSession(state, session).catch(() => {});
+		void abortChildSession(state, session).catch(() => { /* Reset proceeds regardless; abort failures have no caller to report to. */ });
 	}
 }

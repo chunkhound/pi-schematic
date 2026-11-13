@@ -35,7 +35,7 @@ test("blocks bash writes outside temp dir", async () => {
 	await assertBlocked(toolCall, `echo "test" > ${outsideTemp}`);
 });
 
-test.each([undefined, null, 42, false, true, Symbol("test"), BigInt(42), () => {}])("blocks malformed bash input without throwing: %s", async (command) => {
+test.each([undefined, null, 42, false, true, Symbol("test"), BigInt(42), () => { /* A function value is the malformed input. */ }])("blocks malformed bash input without throwing: %s", async (command) => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 

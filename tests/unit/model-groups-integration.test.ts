@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import type { AutocompleteProviderFactory } from "@earendil-works/pi-coding-agent";
@@ -42,11 +42,12 @@ test("/model-groups command registers and opens ctx.ui.custom with live registry
 		cwd,
 		modelRegistry: registrySentinel,
 		ui: {
-			notify: () => {},
-			custom: async (factory: any) => {
+			notify: vi.fn(),
+			custom: (factory: any) => {
 				customCalled++;
-				const component = factory({ requestRender: () => {} }, theme, {}, () => {});
+				const component = factory({ requestRender: vi.fn() }, theme, {}, vi.fn());
 				rendered = component.render(80).join("\n");
+				return Promise.resolve();
 			},
 		},
 	});
@@ -73,8 +74,8 @@ test("index session_start stores model group validation and notifies load and va
 		ui: {
 			theme,
 			notify: (message: string) => notifications.push(message),
-			setStatus: () => {},
-			setWidget: () => {},
+			setStatus: vi.fn(),
+			setWidget: vi.fn(),
 		},
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
@@ -99,7 +100,7 @@ test("index session_start notifies empty-common and stale-override boot counts",
 		cwd,
 		modelRegistry: registry(),
 		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {} },
+		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: vi.fn(), setWidget: vi.fn() },
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
@@ -120,7 +121,7 @@ test("index session_start notifies corrupt/schema/unsupported load issues", asyn
 		cwd,
 		modelRegistry: registry(),
 		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {} },
+		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: vi.fn(), setWidget: vi.fn() },
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
@@ -140,7 +141,7 @@ test("index session_start notifies schema-invalid load issues", async () => with
 		cwd,
 		modelRegistry: registry(),
 		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {} },
+		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: vi.fn(), setWidget: vi.fn() },
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
@@ -162,7 +163,7 @@ test("index session_start includes backup-failure detail in load issue notificat
 		cwd,
 		modelRegistry: registry(),
 		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {} },
+		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: vi.fn(), setWidget: vi.fn() },
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
@@ -268,7 +269,7 @@ test("session_start registers Model Groups autocomplete provider when UI support
 		cwd,
 		modelRegistry: registry(),
 		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: () => {}, setStatus: () => {}, setWidget: () => {}, addAutocompleteProvider: (factory: AutocompleteProviderFactory) => providers.push(factory) },
+		ui: { theme, notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn(), addAutocompleteProvider: (factory: AutocompleteProviderFactory) => providers.push(factory) },
 	});
 	expect(providers).toHaveLength(1);
 }));
@@ -283,7 +284,7 @@ test("index session_start does not notify when load and validation issues are ab
 		cwd,
 		modelRegistry: registry(),
 		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {} },
+		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: vi.fn(), setWidget: vi.fn() },
 	};
 	const handler = pi.handlers.get("session_start")!.at(-1)!;
 	await handler({ reason: "load" }, ctx);
@@ -300,7 +301,7 @@ test.for(["rpc", "json", "print"] as const)("root-recorded /model-groups rejects
 		cwd: "/must-not-load",
 		modelRegistry: registry(),
 		isProjectTrusted: () => true,
-		ui: { notify: (message: string) => notifications.push(message), custom: async () => { customCalls++; } },
+		ui: { notify: (message: string) => notifications.push(message), custom: () => { customCalls++; return Promise.resolve(); } },
 	});
 	expect(customCalls, mode).toBe(0);
 	expect(notifications, mode).toStrictEqual(mode === "rpc" ? ["/model-groups requires TUI mode"] : []);
@@ -317,7 +318,7 @@ test("model groups untrusted root flow never probes project data and publishes g
 		return fs.existsSync(candidate);
 	} });
 	const pi = await createTestHost();
-	const baseUi = { theme, notify: () => {}, setStatus: () => {}, setWidget: () => {}, addAutocompleteProvider: () => {} };
+	const baseUi = { theme, notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn(), addAutocompleteProvider: vi.fn() };
 	await pi.handlers.get("session_start")!.at(-1)!({ reason: "load" }, {
 		mode: "tui", hasUI: true, isProjectTrusted: () => false, cwd, modelRegistry: registry(), getContextUsage: () => ({ percent: 10 }), ui: baseUi,
 	});
@@ -325,7 +326,7 @@ test("model groups untrusted root flow never probes project data and publishes g
 	let rendered = "";
 	await pi.commands.get("model-groups")!.handler("", {
 		mode: "tui", hasUI: true, isProjectTrusted: () => false, cwd, modelRegistry: registry(),
-		ui: { ...baseUi, custom: async (factory: any) => { rendered = factory({ requestRender: () => {} }, theme, {}, () => {}).render(80).join("\n"); } },
+		ui: { ...baseUi, custom: (factory: any) => { rendered = factory({ requestRender: vi.fn() }, theme, {}, vi.fn()).render(80).join("\n"); return Promise.resolve(); } },
 	});
 	expect(rendered).toMatch(/globalOnly/);
 	expect(rendered).not.toMatch(/projectSecret|\[project\]/);
@@ -344,7 +345,7 @@ test("model groups boot load-issue notifications escape hostile source, backup, 
 	const notifications: string[] = [];
 	await pi.handlers.get("session_start")!.at(-1)!({ reason: "load" }, {
 		mode: "tui", hasUI: true, isProjectTrusted: () => true, cwd: hostileCwd, modelRegistry: registry(), getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {}, addAutocompleteProvider: () => {} },
+		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: vi.fn(), setWidget: vi.fn(), addAutocompleteProvider: vi.fn() },
 	});
 	const notification = notifications.find((message) => message.includes("corrupt-json"))!;
 	expect(notification).toContain(`project scope (${escapeDisplayLabel(projectPath)})`);

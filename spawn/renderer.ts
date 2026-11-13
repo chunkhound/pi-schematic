@@ -474,13 +474,13 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 	private unsubscribe?: () => void;
 	private expanded = false;
 	private showImages = true;
-	private requestRender: () => void = () => {};
+	private requestRender: () => void = () => { /* No parent render loop until one is attached. */ };
 	private readonly markdownTheme = getMarkdownTheme();
 	// Minimal TUI mock for ToolExecutionComponent/BashExecutionComponent.
 	// Parent invalidation is one-way from child session events below; renderer-
 	// internal invalidations must not re-enter the parent render loop.
 	private readonly fakeUi = {
-		requestRender: () => {},
+		requestRender: () => { /* Child invalidations must not re-enter the parent render loop. */ },
 	};
 	private details?: SpawnResultDetails;
 	private nestTheme?: Theme;
@@ -711,7 +711,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		const session = this.session;
 		const ownedToolCallId = this.ownedToolCallId;
 		this.resetRenderBatching();
-		this.requestRender = () => {};
+		this.requestRender = () => { /* Disposed: the parent render loop is detached. */ };
 		this.clearRenderCache();
 		this.details = undefined;
 		this.nestTheme = undefined;
@@ -728,7 +728,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			// Renderer has no ExtensionContext, so abort failures are intentionally
 			// not notified here — spawn path notifies via ctx.ui.notify. Silent swallow is correct.
 			try {
-				void abortChildSession(state, session).catch(() => {});
+				void abortChildSession(state, session).catch(() => { /* No ExtensionContext to notify; the spawn path reports abort failures. */ });
 			} finally {
 				state.liveChildSessions.delete(ownedToolCallId);
 			}

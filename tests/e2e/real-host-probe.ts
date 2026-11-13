@@ -209,12 +209,12 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		label: "E2E noop",
 		description: "Does nothing and returns noop.",
 		parameters: Type.Object({}),
-		async execute() {
-			return { content: [{ type: "text", text: "noop" }], details: {} };
+		execute() {
+			return Promise.resolve({ content: [{ type: "text", text: "noop" }], details: {} });
 		},
 	});
 
-	pi.on("agent_start", async (_event, ctx) => {
+	pi.on("agent_start", (_event, ctx) => {
 		// pi starts a pass with agent_start for each automatic retry or continuation inside a
 		// run; only the run's first agent_start, with no run awaiting agent_settled, starts one.
 		if (runsAwaitingSettle > 0) {return;}
@@ -226,7 +226,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		wake();
 	});
 
-	pi.on("agent_settled", async () => {
+	pi.on("agent_settled", () => {
 		if (runsAwaitingSettle === 0) {accountingErrors.push("agent_settled without an agent_start");}
 		else {runsAwaitingSettle--;}
 		// pi defers a send from an agent_settled handler until the handlers return, so the
@@ -238,7 +238,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		wake();
 	});
 
-	pi.on("message_start", async (event) => {
+	pi.on("message_start", (event) => {
 		if (event.message.role !== "user") {return;}
 		const index = inputsAwaitingDelivery.indexOf(messageText(event.message.content));
 		if (index === -1) {return;}
@@ -246,7 +246,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		wake();
 	});
 
-	pi.on("tool_execution_end", async (event, ctx) => {
+	pi.on("tool_execution_end", (event, ctx) => {
 		// The final bash result, after every tool_result handler; the session entry drops structuredContent.
 		if (event.toolName === "bash") {
 			const structured: unknown = event.result.structuredContent;
@@ -269,7 +269,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		wake();
 	});
 
-	pi.on("turn_end", async (event) => {
+	pi.on("turn_end", (event) => {
 		for (const result of event.toolResults) {
 			if (result.toolName !== "handoff" || result.isError) {continue;}
 			const index = handoffCallsAwaitingBoundary.indexOf(result.toolCallId);
@@ -297,14 +297,14 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.on("input", async (event) => {
+	pi.on("input", (event) => {
 		if (event.source !== "extension") {return { action: "continue" };}
 		inputsAwaitingDelivery.push(event.text);
 		wake();
 		return { action: "continue" };
 	});
 
-	pi.on("session_compact", async (event) => {
+	pi.on("session_compact", (event) => {
 		// A handoff cut is a boundary entry and fires no session_compact; this is pi's own compaction.
 		log({ kind: "compact", entryId: event.compactionEntry.id });
 		wake();
@@ -312,39 +312,43 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 
 	pi.registerCommand(PROBE_COMMAND.script, {
 		description: "Arm a scripted tool-call sequence for the next run",
-		handler: async (args) => {
-			if (armedScript) {throw new Error(`a script is already armed: ${JSON.stringify(armedScript)}`);}
-			armedScript = parseScript(args);
-		},
+		handler: (args) =>
+			new Promise((resolve) => {
+				if (armedScript) {throw new Error(`a script is already armed: ${JSON.stringify(armedScript)}`);}
+				armedScript = parseScript(args);
+				resolve();
+			}),
 	});
 
 	pi.registerCommand(PROBE_COMMAND.barrier, {
 		description: "Report under PROBE_BARRIER_STATUS_KEY once no accounted work is outstanding",
-		handler: async (args, ctx) => {
-			// Returns at once and reports through a status, so the wait is bounded by the
-			// deadline the harness passes, not by RpcClient's fixed request timeout.
-			// Still assumed: a send that a command handler starts (schematic's /handoff
-			// request) shows up first as its "input" event; no
-			// public event announces it earlier. A barrier processed before that event reports
-			// quiet with the run still to come, so a harness step that has counted fewer runs
-			// than it expects waits for the next observed event and barriers again. The
-			// assumption therefore only reaches a step whose expected count is already met —
-			// the "nothing happened" checks (0 expected runs) above all. Those stay sound while
-			// schematic's /handoff handler and its "input"
-			// handler ahead of this file's await no I/O (that one returns early for the
-			// extension-sourced sends at issue here). A run that starts late anyway lands in the
-			// next step's window or in close(), which fails on any run no step expected. Closing
-			// this needs a pi API upstream declined (#9632, #10451, #9969).
-			const [idText, deadlineText, ...rest] = args.trim().split(/\s+/);
-			if (rest.length > 0) {throw new Error(`/e2e-barrier expects "<id> <deadlineMs>", got: ${args}`);}
-			const id = parseBarrierArgument(idText, "id", args);
-			const deadlineMs = parseBarrierArgument(deadlineText, "deadlineMs", args);
-			const report = (outcome: BarrierReport) => { ctx.ui.setStatus(PROBE_BARRIER_STATUS_KEY, JSON.stringify(outcome)); };
-			void awaitQuiet(ctx, deadlineMs).then(
-				() => { report({ id, failure: null }); },
-				(error: unknown) => { report({ id, failure: error instanceof Error ? error.message : String(error) }); },
-			);
-		},
+		handler: (args, ctx) =>
+			new Promise((resolve) => {
+				// Returns at once and reports through a status, so the wait is bounded by the
+				// deadline the harness passes, not by RpcClient's fixed request timeout.
+				// Still assumed: a send that a command handler starts (schematic's /handoff
+				// request) shows up first as its "input" event; no
+				// public event announces it earlier. A barrier processed before that event reports
+				// quiet with the run still to come, so a harness step that has counted fewer runs
+				// than it expects waits for the next observed event and barriers again. The
+				// assumption therefore only reaches a step whose expected count is already met —
+				// the "nothing happened" checks (0 expected runs) above all. Those stay sound while
+				// schematic's /handoff handler and its "input"
+				// handler ahead of this file's await no I/O (that one returns early for the
+				// extension-sourced sends at issue here). A run that starts late anyway lands in the
+				// next step's window or in close(), which fails on any run no step expected. Closing
+				// this needs a pi API upstream declined (#9632, #10451, #9969).
+				const [idText, deadlineText, ...rest] = args.trim().split(/\s+/);
+				if (rest.length > 0) {throw new Error(`/e2e-barrier expects "<id> <deadlineMs>", got: ${args}`);}
+				const id = parseBarrierArgument(idText, "id", args);
+				const deadlineMs = parseBarrierArgument(deadlineText, "deadlineMs", args);
+				const report = (outcome: BarrierReport) => { ctx.ui.setStatus(PROBE_BARRIER_STATUS_KEY, JSON.stringify(outcome)); };
+				void awaitQuiet(ctx, deadlineMs).then(
+					() => { report({ id, failure: null }); },
+					(error: unknown) => { report({ id, failure: error instanceof Error ? error.message : String(error) }); },
+				);
+				resolve();
+			}),
 	});
 
 	pi.registerCommand(PROBE_COMMAND.tree, {
@@ -358,51 +362,60 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 
 	pi.registerCommand(PROBE_COMMAND.turn, {
 		description: "Start a run without a user turn; with a count, start each further run once the previous one settles",
-		handler: async (args) => {
-			chainedTurns = parseTurnCount(args) - 1;
-			startTurn();
-		},
+		handler: (args) =>
+			new Promise((resolve) => {
+				chainedTurns = parseTurnCount(args) - 1;
+				startTurn();
+				resolve();
+			}),
 	});
 
 	pi.registerCommand(PROBE_COMMAND.dropNextCut, {
 		description: "Drop the next handoff cut and its continuation from the turn_end boundary",
-		handler: async () => {
+		handler: () => {
 			nextCutTamper = "drop";
+			return Promise.resolve();
 		},
 	});
 
 	pi.registerCommand(PROBE_COMMAND.dropNextSuccessor, {
 		description: "Keep the next handoff cut but drop its successor from the turn_end boundary",
-		handler: async () => {
+		handler: () => {
 			nextCutTamper = "dropSuccessor";
+			return Promise.resolve();
 		},
 	});
 
 	pi.registerCommand(PROBE_COMMAND.compactAfterNextCut, {
 		description: "Append a compaction after the next handoff cut in the turn_end boundary",
-		handler: async () => {
+		handler: () => {
 			nextCutTamper = "compactAfter";
+			return Promise.resolve();
 		},
 	});
 
 	pi.registerCommand(PROBE_COMMAND.dropNotebookRewriteAtNextCut, {
 		description: "Keep the next handoff cut and its successor but drop the notebook rewrite from the turn_end boundary",
-		handler: async () => {
+		handler: () => {
 			nextCutTamper = "dropNotebookRewrite";
+			return Promise.resolve();
 		},
 	});
 
 	pi.registerCommand(PROBE_COMMAND.abortAfterHandoff, {
 		description: "Abort the run once the next handoff call has returned without error",
-		handler: async () => {
+		handler: () => {
 			abortAfterHandoff = true;
+			return Promise.resolve();
 		},
 	});
 
 	pi.registerCommand(PROBE_COMMAND.tools, {
 		description: "Log the names of every registered tool",
-		handler: async () => {
-			log({ kind: "tools", names: pi.getAllTools().map((tool) => tool.name) });
-		},
+		handler: () =>
+			new Promise((resolve) => {
+				log({ kind: "tools", names: pi.getAllTools().map((tool) => tool.name) });
+				resolve();
+			}),
 	});
 }
