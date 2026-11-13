@@ -15,7 +15,7 @@ import {
 	type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { assertInstanceOf, assertPresent, expectPrefix, expectSuffix } from "../assertions.js";
+import { assertInstanceOf, assertPresent, assertString, expectPrefix, expectSuffix } from "../assertions.js";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createState, resetState, type SchematicState } from "../../state.js";
@@ -2552,11 +2552,11 @@ test("spawn tool definitions include prompt hints when registered", async () => 
 	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 
 	const spawnTool = getTool(pi, "spawn");
-	expect(spawnTool.promptSnippet, "spawn should have promptSnippet").toBeTypeOf("string");
-	expect(spawnTool.promptSnippet!.length, "spawn promptSnippet should be non-trivial").toBeGreaterThan(10);
-	expect(spawnTool.promptGuidelines, "spawn should have promptGuidelines").toSatisfy(Array.isArray);
-	expect(spawnTool.promptGuidelines!.length, "spawn promptGuidelines should be non-empty").toBeGreaterThan(0);
-	for (const g of spawnTool.promptGuidelines!) {
+	assertString(spawnTool.promptSnippet, "spawn should have promptSnippet");
+	expect(spawnTool.promptSnippet.length, "spawn promptSnippet should be non-trivial").toBeGreaterThan(10);
+	assertPresent(spawnTool.promptGuidelines, "spawn should have promptGuidelines");
+	expect(spawnTool.promptGuidelines.length, "spawn promptGuidelines should be non-empty").toBeGreaterThan(0);
+	for (const g of spawnTool.promptGuidelines) {
 		expect(g.length, "each spawn guideline should be non-trivial").toBeGreaterThan(10);
 	}
 });

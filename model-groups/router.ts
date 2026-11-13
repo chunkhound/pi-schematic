@@ -180,7 +180,9 @@ function raiseRouteFailure(violations: ConstraintViolation[], group: ResolvedMod
 		const missingFromGroup = groupViolations.flatMap((violation) => violation.satisfaction.missing as ModelGroupModality[] ?? []);
 		const modelViolations = modalityViolations.filter((violation) => violation.scope === "model");
 		const missingFromModel = modelViolations.flatMap((violation) => violation.satisfaction.missing as ModelGroupModality[] ?? []);
-		const codec = registry.get("modalities")!.requirement;
+		const descriptor = registry.get("modalities");
+		if (!descriptor) {throw new Error("Modality violations require a modalities descriptor in the constraint registry.");}
+		const codec = descriptor.requirement;
 		const ordered = (values: readonly ModelGroupModality[]) => {
 			const decoded = codec.decode({ required: values }, "modalities");
 			return decoded.ok ? decoded.value as ModelGroupModality[] : [...values];
@@ -205,20 +207,20 @@ export function resolveSpawnModelRoute(options: SpawnRouteOptions): SpawnModelRo
 	const registry = options.constraintRegistry ?? productionConstraintRegistry;
 	const getDeclaredRequirements = decodeDeclared(registry, requirements);
 	const group = requestedGroup ? effectiveGroupMap(options.groups).get(requestedGroup) : undefined;
-	let route = !requestedGroup
-		? inheritedRoute("inherited", requestedGroup, options.parentModel, options.parentThinking)
-		: !group
-			? inheritedRoute("unknown-fallback", requestedGroup, options.parentModel, options.parentThinking)
-			: undefined;
-	if (group) {
+	let route: SpawnModelRoute;
+	if (!requestedGroup) {
+		route = inheritedRoute("inherited", requestedGroup, options.parentModel, options.parentThinking);
+	} else if (!group) {
+		route = inheritedRoute("unknown-fallback", requestedGroup, options.parentModel, options.parentThinking);
+	} else {
 		if (group.models.length === 0) {throw new SpawnRouteError(group.name, "empty");}
 		const usable = usableMembers(group, options.modelRegistry);
 		if (!usable.length) {throw new SpawnRouteError(group.name, "no-usable-models");}
 		const selected = selectMember(usable, getDeclaredRequirements(), options.rng);
-		route = buildRoutedRoute(group, requestedGroup!, usable, selected, options);
+		route = buildRoutedRoute(group, requestedGroup, usable, selected, options);
 	}
 	const resolution = group ? resolveConstraintMembers(group.models, options.modelRegistry) : { members: [] };
-	route = attachCeilings(route!, group, resolution, registry);
+	route = attachCeilings(route, group, resolution, registry);
 	if (!Object.keys(requirements).length) {return route;}
 	const violations = collectViolations(getDeclaredRequirements, group, resolution, route, registry);
 	return violations.length ? raiseRouteFailure(violations, group, requestedGroup, route, registry) : route;

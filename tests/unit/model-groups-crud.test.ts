@@ -22,6 +22,7 @@ import { createConstraintRegistry } from "../../model-groups/constraints/registr
 import { testMinContext } from "./model-groups-constraints-fixture.js";
 import { createModelRegistry, recordOf, testModel, withTempAgentDir } from "./helpers.js";
 import { withTemp } from "./model-groups-helpers.js";
+import { assertPresent } from "../assertions.js";
 
 function access(cwd: string, policy: ModelGroupsAccess["policy"] = "global-project"): ModelGroupsAccess { return { cwd, policy }; }
 
@@ -133,13 +134,14 @@ test("model groups load recovery handles malformed, schema-invalid, unsupported 
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { bad: { models: [{ provider: 1 }] } } }), "utf8");
 	loaded = loadModelGroups(access(cwd));
-	const schemaIssue = loaded.issues.find((i) => i.scope === "project")!;
+	const schemaIssue = loaded.issues.find((i) => i.scope === "project");
+	assertPresent(schemaIssue, "the project config reports a load issue");
 	expect(schemaIssue.kind).toBe("schema-invalid");
 	expect(schemaIssue.scope).toBe("project");
 	expect(schemaIssue.sourcePath).toBe(modelGroupsPath("project", cwd));
 	expect(schemaIssue.backupPath).toBe(`${modelGroupsPath("project", cwd)}.bak`);
 	expect(schemaIssue.message).toMatch(/provider/);
-	expect(schemaIssue.backupPath!).toSatisfy(fs.existsSync);
+	expect(schemaIssue.backupPath).toSatisfy(fs.existsSync);
 	expect(Object.keys(loaded.configs.project.groups)).toHaveLength(0);
 
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 99, groups: {} }), "utf8");
@@ -150,7 +152,8 @@ test("model groups load recovery handles malformed, schema-invalid, unsupported 
 	fs.writeFileSync(modelGroupsPath("project", cwd), "{bad", "utf8");
 	__setModelGroupsFsForTests({ copyFileSync: () => { throw new Error("denied"); } });
 	loaded = loadModelGroups(access(cwd));
-	const issue = loaded.issues.find((i) => i.scope === "project")!;
+	const issue = loaded.issues.find((i) => i.scope === "project");
+	assertPresent(issue, "the project config reports a load issue");
 	expect(issue.backupFailed).toBe(true);
 	expect(fs.readFileSync(modelGroupsPath("project", cwd), "utf8")).toBe("{bad");
 	expect(() => { createGroup("project", access(cwd), "must-not-overwrite", { models: [] }, createModelRegistry(registryFields())); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
@@ -302,7 +305,8 @@ test("model groups strictly partitions schema and legacy version domains", () =>
 		fs.rmSync(`${projectPath}.bak`, { force: true });
 		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
 		const loaded = loadModelGroups(access(cwd));
-		const issue = loaded.issues.find((candidate) => candidate.scope === "project")!;
+		const issue = loaded.issues.find((candidate) => candidate.scope === "project");
+		assertPresent(issue, "the project config reports a load issue");
 		expect(issue.kind, label).toBe("schema-invalid");
 		expect(issue.message, label).toMatch(message);
 		expect(`${projectPath}.bak`, label).toSatisfy(fs.existsSync);
@@ -325,7 +329,8 @@ test("legacy constraints recover as schema-invalid instead of crashing load", ()
 		fs.rmSync(`${projectPath}.bak`, { force: true });
 		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
 		const loaded = loadModelGroups(access(cwd));
-		const issue = loaded.issues.find((candidate) => candidate.scope === "project")!;
+		const issue = loaded.issues.find((candidate) => candidate.scope === "project");
+		assertPresent(issue, "the project config reports a load issue");
 		expect(issue.kind).toBe("schema-invalid");
 		expect(issue.message).toMatch(/constraints/);
 		expect(`${projectPath}.bak`).toSatisfy(fs.existsSync);
@@ -442,10 +447,15 @@ test("opaque constraint values are deep-cloned on load — no aliasing between s
 	const nested = { min: 5, tags: ["a", "b"] };
 	saveModelGroups("project", a, { version: 2, groups: { deep: { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { testMinContext: nested } } } });
 	const loaded = loadModelGroups(a);
-	const merged = loaded.merged.find((g) => g.name === "deep")!;
-	recordOf(merged.constraints!.testMinContext, "the merged constraint value").min = 99;
-	expect(recordOf(loaded.configs.project.groups.deep.constraints!.testMinContext, "the stored constraint value").min, "mutating the merged view must not alias the store copy").toBe(5);
-	expect(merged.constraints!.testMinContext, "nested constraint values must be distinct objects").not.toBe((loaded.configs.project.groups.deep.constraints!.testMinContext));
+	const merged = loaded.merged.find((g) => g.name === "deep");
+	assertPresent(merged, "the merged view holds the deep group");
+	const mergedConstraints = merged.constraints;
+	const storedConstraints = loaded.configs.project.groups.deep.constraints;
+	assertPresent(mergedConstraints, "the merged group keeps its constraints");
+	assertPresent(storedConstraints, "the stored group keeps its constraints");
+	recordOf(mergedConstraints.testMinContext, "the merged constraint value").min = 99;
+	expect(recordOf(storedConstraints.testMinContext, "the stored constraint value").min, "mutating the merged view must not alias the store copy").toBe(5);
+	expect(mergedConstraints.testMinContext, "nested constraint values must be distinct objects").not.toBe(storedConstraints.testMinContext);
 }));
 
 test("v2 config load rejects non-array, duplicate, and out-of-vocabulary modality constraints", () => withTemp(({ cwd }) => {
@@ -460,7 +470,8 @@ test("v2 config load rejects non-array, duplicate, and out-of-vocabulary modalit
 		fs.rmSync(`${projectPath}.bak`, { force: true });
 		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
 		const loaded = loadModelGroups(access(cwd));
-		const issue = loaded.issues.find((candidate) => candidate.scope === "project")!;
+		const issue = loaded.issues.find((candidate) => candidate.scope === "project");
+		assertPresent(issue, "the project config reports a load issue");
 		expect(issue.kind, label).toBe("schema-invalid");
 		expect(issue.message, label).toMatch(message);
 		expect(`${projectPath}.bak`, label).toSatisfy(fs.existsSync);

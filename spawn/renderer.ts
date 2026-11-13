@@ -1101,9 +1101,10 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		// Track new tool call IDs so flushPendingUpdates can create components
 		for (const content of event.message.content ?? []) {
 			if (content.type !== "toolCall") {continue;}
-			if (this.pendingTools.has(content.id)) {
+			const pendingTool = this.pendingTools.get(content.id);
+			if (pendingTool) {
 				// Already tracked — just update args (cheap)
-				this.pendingTools.get(content.id)!.updateArgs(content.arguments ?? {});
+				pendingTool.updateArgs(content.arguments ?? {});
 			} else {
 				// Keep the latest announced args until frame-time creation.
 				// Streamed tool-call arguments often grow over multiple chunks before

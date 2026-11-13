@@ -115,10 +115,20 @@ function rendered(c: { render: (width: number) => string[] }, width = 100): stri
 	return c.render(width).join("\n");
 }
 
+function findSelectedRow(c: { render: (width: number) => string[] }): string | undefined {
+	return stripAnsi(rendered(c)).split("\n").find((line) => line.includes("→"));
+}
+
+function selectedRow(c: { render: (width: number) => string[] }): string {
+	const row = findSelectedRow(c);
+	assertPresent(row, "the rendered screen has a selected row marked →");
+	return row;
+}
+
 function selectRenderedLabel(c: { handleInput?: (data: string) => void; render: (width: number) => string[] }, label: string): void {
 	for (let i = 0; i < 32; i++) {
-		const selected = stripAnsi(rendered(c)).split("\n").find((line) => line.includes("→"));
-		if (selected?.includes(label)) {return;}
+		// A screen without a selected row is not this label yet: keep pressing DOWN.
+		if (findSelectedRow(c)?.includes(label) === true) {return;}
 		press(c, DOWN);
 	}
 	expect.unreachable(`did not select rendered label: ${label}`);
@@ -772,7 +782,7 @@ test("model groups TUI move, wizard add, model thinking, and remove persist thro
 	c.handleInput?.("\r"); // model edit
 	c.handleInput?.("\u001b[B"); // off
 	c.handleInput?.("\r");
-	expect(calls.at(-1)!).toMatch(/update:global:review:openai\/gpt-5\/off/);
+	expect(calls.at(-1)).toMatch(/update:global:review:openai\/gpt-5\/off/);
 
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B");
@@ -786,7 +796,7 @@ test("model groups TUI move, wizard add, model thinking, and remove persist thro
 	press(c, ENTER); // claude model
 	expect(rendered(c)).toMatch(/Step 3\/3 Thinking/);
 	press(c, ENTER); // inherit thinking
-	expect(calls.at(-1)!).toMatch(/anthropic\/claude\/inherit/);
+	expect(calls.at(-1)).toMatch(/anthropic\/claude\/inherit/);
 
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B");
@@ -1375,14 +1385,13 @@ test("model groups TUI MODEL_EDIT stale level on an available model keeps its ro
 	const removeRow = lines.findIndex((line) => line.includes("Remove model"));
 	expect(staleRow).toBe(inheritRow + 1);
 	expect(removeRow).toBe(staleRow + 1);
-	const selectedLine = () => stripAnsi(rendered(c)).split("\n").find((line) => line.includes("→"))!;
 	// UP → inherit, DOWN walks back through the stale row to Remove model.
 	press(c, UP);
-	expect(selectedLine()).toMatch(/Thinking: inherit/);
+	expect(selectedRow(c)).toMatch(/Thinking: inherit/);
 	press(c, DOWN);
-	expect(selectedLine()).toMatch(/Thinking: high ⚠ current, unavailable/);
+	expect(selectedRow(c)).toMatch(/Thinking: high ⚠ current, unavailable/);
 	press(c, DOWN);
-	expect(selectedLine()).toMatch(/Remove model/);
+	expect(selectedRow(c)).toMatch(/Remove model/);
 	press(c, ENTER);
 	// Enter on the final row removes the member in the stale-value case.
 	expect(calls).toHaveLength(1);
@@ -1498,7 +1507,7 @@ test("model groups TUI MODEL_EDIT dropping a stale level back to inherit deliber
 	// Explicitly choosing inherit drops the stale value; this path is already green on
 	// the pre-fix baseline, so it is sealed rather than claimed as red-first.
 	press(c, UP);
-	expect(stripAnsi(rendered(c)).split("\n").find((line) => line.includes("→"))!).toMatch(/Thinking: inherit/);
+	expect(selectedRow(c)).toMatch(/Thinking: inherit/);
 	press(c, ENTER);
 	expect(calls).toHaveLength(1);
 	expect(calls[0].models[0]).not.toHaveProperty("thinkingLevel");

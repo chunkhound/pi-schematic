@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { expect, onTestFinished, test, vi } from "vitest";
+import { assertPresent } from "../assertions.js";
 import { createTestHarness, useTestHarness } from "../test-utils.js";
 import {
 	__setSingletons,
@@ -57,14 +58,15 @@ test("write lock serializes concurrent writers and completes all", async () => {
 			// Grab the current tail promise before acquiring the lock
 			const prev = s.writeLock.tail;
 			// Simulate acquiring the lock by chaining onto the tail
-			let release: () => void;
+			let release: (() => void) | undefined;
 			const next = new Promise<void>((resolve) => { release = resolve; });
+			assertPresent(release, "the Promise executor hands out the release");
 			s.writeLock.pending += 1;
 			s.writeLock.tail = next;
 			await prev;
 			order.push(i);
 			s.writeLock.pending -= 1;
-			release!();
+			release();
 		})(),
 	);
 
