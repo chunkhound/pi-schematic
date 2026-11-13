@@ -1762,7 +1762,7 @@
       "count": 1
     },
     "vitest/max-expects": {
-      "count": 16
+      "count": 15
     },
     "vitest/no-conditional-expect": {
       "count": 4

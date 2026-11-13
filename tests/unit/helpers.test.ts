@@ -238,10 +238,14 @@ test("a UI override set to undefined keeps the throwing stub", () => {
 	expect(() => { ui.notify("probe"); }).toThrow("ctx.ui.notify is not stubbed");
 });
 
+function assertFunction(value: unknown, member: string): asserts value is (...args: never[]) => unknown {
+	expect(value, `createToolRenderContext built no ${member} function.`).toBeTypeOf("function");
+}
+
 // Read reflectively: the pinned pi's render context type has no keybinding formatters.
 test.for(["keyText", "keyHint"])("an unstubbed render context %s throws naming itself and where to stub it", (member) => {
 	const formatter: unknown = Reflect.get(createToolRenderContext(), member);
-	if (typeof formatter !== "function") {throw new Error(`createToolRenderContext built no ${member} function.`);}
+	assertFunction(formatter, member);
 
 	expect(() => { Reflect.apply(formatter, undefined, ["app.tools.expand", "to expand"]); }).toThrow(
 		`context.${member} is not stubbed in this test context; assign it to the context createToolRenderContext returned.`,

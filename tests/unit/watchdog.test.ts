@@ -59,10 +59,7 @@ function assertWatchdogReminder(message: ContextMessage | undefined): asserts me
 	expect(message).toMatchObject({ role: "custom", customType: "pi-schematic-watchdog", display: false });
 }
 
-test("context injects watchdog reminder before each LLM call", async () => {
-	// One token below the handoff minimum, so the reminder does not prefer a handoff.
-	const tokens = MIN_HANDOFF_TOKENS - 1;
-	const percent = 70;
+async function injectReminderAt(tokens: number, percent: number): Promise<ContextMessage[]> {
 	const contextWindow = Math.round((tokens * 100) / percent);
 	const pi = await createTestHost();
 	await getCommand(pi, "notebook").handler("oauth", createCommandContext());
@@ -77,6 +74,12 @@ test("context injects watchdog reminder before each LLM call", async () => {
 	assertPresent(result);
 	const { messages } = result;
 	assertPresent(messages);
+	return messages;
+}
+
+test("context injects watchdog reminder before each LLM call", async () => {
+	const messages = await injectReminderAt(MIN_HANDOFF_TOKENS - 1, 70);
+
 	expect(messages).toHaveLength(2);
 	const [first, reminder] = messages;
 	expect(first).toStrictEqual({ role: "user", content: "hi", timestamp: 1 });
@@ -86,6 +89,13 @@ test("context injects watchdog reminder before each LLM call", async () => {
 	expect(reminder.content).toMatch(/spawn/i);
 	expect(reminder.content).toMatch(/parent context/i);
 	expect(reminder.content).not.toMatch(/draft a clear prompt|what comes next/i);
+});
+
+test("below the handoff minimum the reminder asks to continue instead of preferring a handoff", async () => {
+	// One token below the handoff minimum, so the reminder does not prefer a handoff.
+	const [, reminder] = await injectReminderAt(MIN_HANDOFF_TOKENS - 1, 70);
+
+	assertWatchdogReminder(reminder);
 	expect(reminder.content).toContain("continue working until handoff is available");
 	expect(reminder.content).not.toContain("prefer a deliberate handoff");
 });
