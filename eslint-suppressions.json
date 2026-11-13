@@ -1001,44 +1001,17 @@
     }
   },
   "tests/unit/notebook.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 123
-    },
     "@typescript-eslint/no-non-null-assertion": {
-      "count": 50
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 62
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 68
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 100
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 158
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 2
+      "count": 18
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 108
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
+      "count": 8
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
     },
     "vitest/max-expects": {
       "count": 55
-    },
-    "vitest/no-conditional-in-test": {
-      "count": 1
     }
   },
   "tests/unit/notifications.test.ts": {
@@ -1107,18 +1080,6 @@
     }
   },
   "tests/unit/prompt-sections.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 6
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 5
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 13
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 8
-    },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
     }
@@ -1451,18 +1412,6 @@
     }
   },
   "tests/unit/system-prompt.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 7
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 12
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 9
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 4
-    },
     "vitest/max-expects": {
       "count": 31
     }
@@ -1512,25 +1461,8 @@
     }
   },
   "tests/unit/topic.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 6
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 6
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 13
-    },
     "vitest/max-expects": {
       "count": 3
-    }
-  },
-  "tests/unit/tui-indicators.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 14
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 12
     }
   },
   "tests/unit/watchdog.test.ts": {
