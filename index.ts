@@ -452,6 +452,123 @@ function refreshModelGroupsState(state: SchematicState, ctx: ExtensionContext) {
 	return state.modelGroups.validation;
 }
 
+// Pi has no extension API to suspend the TUI, so the "pager" result carries
+// custom()'s handle for openInPager, which runs after done() closes the list.
+// It is Pi's long-lived TUI reference, so it stays valid past done().
+type NotebookListResult =
+	| { action: "pager"; name: string; body: string; tui: TUI; pager: ResolvedPager }
+	| { action: "reopen"; name: string }
+	| undefined;
+
+/** Shows the /notebook page list once, preselecting lastSelectedName; undefined means the list was closed. */
+function openNotebookList(
+	ctx: ExtensionContext,
+	state: SchematicState,
+	pager: ResolvedPager | undefined,
+	lastSelectedName: string | undefined,
+): Promise<NotebookListResult> {
+	return ctx.ui.custom<NotebookListResult>((tui, theme, _kb, done) => {
+		const container = new Container();
+
+		container.addChild(
+			new DynamicBorder((s: string) => theme.fg("accent", s)),
+		);
+		container.addChild(
+			new Text(theme.fg("accent", theme.bold(` Notebook (${state.notebookPages.size} pages) `)), 1, 0),
+		);
+
+		const entries = Array.from(state.notebookPages.entries()).sort(([a], [b]) => a.localeCompare(b));
+		let selectList: SelectList | undefined;
+		let previewName: string | undefined;
+		let finished = false;
+
+		if (entries.length === 0) {
+			container.addChild(
+				new Text(theme.fg("dim", " (empty) — use notebook_write to create pages"), 1, 0),
+			);
+		} else {
+			const items: SelectItem[] = entries.map(([name, content]) => ({
+				value: name,
+				label: name,
+				description: formatPageTuiPreview(content, state.clippedPages.has(name)),
+			}));
+
+			selectList = new SelectList(items, Math.min(items.length, 10), {
+				selectedPrefix: (t) => theme.fg("accent", t),
+				selectedText: (t) => theme.fg("accent", t),
+				description: (t) => theme.fg("muted", t),
+				scrollInfo: (t) => theme.fg("dim", t),
+				noMatch: (t) => theme.fg("warning", t),
+			});
+			if (lastSelectedName !== undefined) {
+				const idx = items.findIndex((it) => it.value === lastSelectedName);
+				if (idx >= 0) {selectList.setSelectedIndex(idx);}
+			}
+			selectList.onSelect = ({ value }) => {
+				const body = state.notebookPages.get(value);
+				// A handoff discard can apply while the list is open (the cut completes during the agent run).
+				if (body === undefined) {
+					finished = true;
+					done({ action: "reopen", name: value });
+					return;
+				}
+				// Prefer a real pager when available; else fall back to a
+				// truncated inline preview.
+				if (pager) {
+					finished = true;
+					done({ action: "pager", name: value, body, tui, pager });
+					return;
+				}
+				container.clear();
+				container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+				container.addChild(new Text(theme.fg("accent", theme.bold(` ${value} `)), 1, 0));
+				const truncated = body.length > 500;
+				container.addChild(new Text(theme.fg("toolOutput", truncated ? body.slice(0, 500) : body), 1, 0));
+				if (truncated) {container.addChild(new Text(theme.fg("dim", " ... set $PI_PAGER to a full-screen pager (e.g. less) to view the full page "), 1, 0));}
+				container.addChild(new Text(theme.fg("dim", " any key back "), 1, 0));
+				container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+				previewName = value;
+				selectList = undefined;
+				tui.requestRender();
+			};
+			selectList.onCancel = () => {
+				if (finished) {return;}
+				finished = true;
+				done(undefined);
+			};
+			container.addChild(selectList);
+		}
+
+		container.addChild(
+			new Text(theme.fg("dim", entries.length === 0
+				? " esc close "
+				: " \u2191\u2195 navigate \u2022 enter view \u2022 esc close "), 1, 0),
+		);
+		container.addChild(
+			new DynamicBorder((s: string) => theme.fg("accent", s)),
+		);
+
+		return {
+			render: (w) => container.render(w),
+			invalidate: () => { container.invalidate(); },
+			handleInput: (data) => {
+				if (finished) {return;}
+				if (!selectList) {
+					// Any key leaves the inline preview (back to the list) or the empty notebook.
+					finished = true;
+					done(previewName === undefined ? undefined : { action: "reopen", name: previewName });
+					return;
+				}
+				selectList.handleInput?.(data);
+				// Conservative: always repaint after key input.
+				// SelectList.handleInput returns void in the current API,
+				// so we can't conditionally skip — the cost is negligible.
+				tui.requestRender();
+			},
+		};
+	});
+}
+
 export default function (pi: ExtensionAPI): void {
 	const state: SchematicState = createState();
 
@@ -657,115 +774,11 @@ export default function (pi: ExtensionAPI): void {
 			let lastSelectedName: string | undefined;
 			// Resolve once per /notebook so onSelect doesn't run `command -v less` on every Enter.
 			const pager = pagerRuntime.resolvePager();
-			while (true) {
-				// Pi has no extension API to suspend the TUI, so the "pager" result carries
-				// custom()'s handle for openInPager, which runs after done() closes the list.
-				// It is Pi's long-lived TUI reference, so it stays valid past done().
-				const result = await ctx.ui.custom<
-					| { action: "pager"; name: string; body: string; tui: TUI; pager: ResolvedPager }
-					| { action: "reopen"; name: string }
-					| undefined
-				>((tui, theme, _kb, done) => {
-					const container = new Container();
-
-					container.addChild(
-						new DynamicBorder((s: string) => theme.fg("accent", s)),
-					);
-					container.addChild(
-						new Text(theme.fg("accent", theme.bold(` Notebook (${state.notebookPages.size} pages) `)), 1, 0),
-					);
-
-					const entries = Array.from(state.notebookPages.entries()).sort(([a], [b]) => a.localeCompare(b));
-					let selectList: SelectList | undefined;
-					let previewName: string | undefined;
-					let finished = false;
-
-					if (entries.length === 0) {
-						container.addChild(
-							new Text(theme.fg("dim", " (empty) — use notebook_write to create pages"), 1, 0),
-						);
-					} else {
-						const items: SelectItem[] = entries.map(([name, content]) => ({
-							value: name,
-							label: name,
-							description: formatPageTuiPreview(content, state.clippedPages.has(name)),
-						}));
-
-						selectList = new SelectList(items, Math.min(items.length, 10), {
-							selectedPrefix: (t) => theme.fg("accent", t),
-							selectedText: (t) => theme.fg("accent", t),
-							description: (t) => theme.fg("muted", t),
-							scrollInfo: (t) => theme.fg("dim", t),
-							noMatch: (t) => theme.fg("warning", t),
-						});
-						if (lastSelectedName !== undefined) {
-							const idx = items.findIndex((it) => it.value === lastSelectedName);
-							if (idx >= 0) {selectList.setSelectedIndex(idx);}
-						}
-						selectList.onSelect = ({ value }) => {
-							const body = state.notebookPages.get(value);
-							// A handoff discard can apply while the list is open (the cut completes during the agent run).
-							if (body === undefined) {
-								finished = true;
-								done({ action: "reopen", name: value });
-								return;
-							}
-							// Prefer a real pager when available; else fall back to a
-							// truncated inline preview.
-							if (pager) {
-								finished = true;
-								done({ action: "pager", name: value, body, tui, pager });
-								return;
-							}
-							container.clear();
-							container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-							container.addChild(new Text(theme.fg("accent", theme.bold(` ${value} `)), 1, 0));
-							const truncated = body.length > 500;
-							container.addChild(new Text(theme.fg("toolOutput", truncated ? body.slice(0, 500) : body), 1, 0));
-							if (truncated) {container.addChild(new Text(theme.fg("dim", " ... set $PI_PAGER to a full-screen pager (e.g. less) to view the full page "), 1, 0));}
-							container.addChild(new Text(theme.fg("dim", " any key back "), 1, 0));
-							container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-							previewName = value;
-							selectList = undefined;
-							tui.requestRender();
-						};
-						selectList.onCancel = () => {
-							if (finished) {return;}
-							finished = true;
-							done(undefined);
-						};
-						container.addChild(selectList);
-					}
-
-					container.addChild(
-						new Text(theme.fg("dim", entries.length === 0
-							? " esc close "
-							: " \u2191\u2195 navigate \u2022 enter view \u2022 esc close "), 1, 0),
-					);
-					container.addChild(
-						new DynamicBorder((s: string) => theme.fg("accent", s)),
-					);
-
-					return {
-						render: (w) => container.render(w),
-						invalidate: () => { container.invalidate(); },
-						handleInput: (data) => {
-							if (finished) {return;}
-							if (!selectList) {
-								// Any key leaves the inline preview (back to the list) or the empty notebook.
-								finished = true;
-								done(previewName === undefined ? undefined : { action: "reopen", name: previewName });
-								return;
-							}
-							selectList.handleInput?.(data);
-							// Conservative: always repaint after key input.
-							// SelectList.handleInput returns void in the current API,
-							// so we can't conditionally skip — the cost is negligible.
-							tui.requestRender();
-						},
-					};
-				});
-				if (!result) {return;}
+			for (
+				let result = await openNotebookList(ctx, state, pager, lastSelectedName);
+				result !== undefined;
+				result = await openNotebookList(ctx, state, pager, lastSelectedName)
+			) {
 				lastSelectedName = result.name;
 				if (result.action === "pager") {
 					const err = await openInPager(result.tui, result.body, result.pager);
