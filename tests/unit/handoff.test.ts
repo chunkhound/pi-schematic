@@ -78,7 +78,7 @@ import {
 function assertSuccessorTurn(content: string, input: { nextInstruction: string; context?: string }): void {
 	const expected = [`## Next instruction\n\n${input.nextInstruction}`];
 	const context = input.context?.trim();
-	if (context) {expected.push(`## Context\n\n${context}`);}
+	if (context !== undefined && context !== "") {expected.push(`## Context\n\n${context}`);}
 	const prefix = expected.join("\n\n");
 	expectPrefix(content, prefix, "successor turn must start with the delivered instruction and context:");
 }

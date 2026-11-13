@@ -83,7 +83,7 @@ function shouldSwallowPromptError(error: unknown, isStale: () => boolean, wasAbo
 	if (isStale()) {return false;}
 	if (!wasAborted) {return false;}
 	// Pi contracts AbortError via AbortSignal standard
-	return (error as Error)?.name === "AbortError";
+	return (error as Error | null | undefined)?.name === "AbortError";
 }
 
 interface ChildAccounting {
@@ -161,7 +161,7 @@ function collectChildAccounting(session: Pick<AgentSession, "sessionManager">): 
 				const message = entry.message;
 				if (message.role === "assistant") {
 					assistantTurns++;
-					if (message.usage) {usage = combineUsage(usage, message.usage);}
+					usage = combineUsage(usage, message.usage);
 				} else if (message.role === "toolResult" && message.usage) {
 					usage = combineUsage(usage, message.usage);
 				}
@@ -396,8 +396,8 @@ export interface SpawnParameters { prompt: string; group?: string; constraints?:
 
 /** Validate the public constraint envelope once, rejecting unknown keys before routing. */
 export function normalizeSpawnRequirements(params: Pick<SpawnParameters, "constraints">, registry: ConstraintRegistry = productionConstraintRegistry): SpawnConstraintRequirements {
-	const raw = params.constraints;
-	if (raw !== undefined && (!raw || typeof raw !== "object" || Array.isArray(raw))) {throw new Error("Spawn constraints must be an object.");}
+	const raw: unknown = params.constraints;
+	if (raw !== undefined && (raw === null || typeof raw !== "object" || Array.isArray(raw))) {throw new Error("Spawn constraints must be an object.");}
 	const normalized: SpawnConstraintRequirements = {};
 	for (const [key, value] of Object.entries(raw ?? {})) {
 		const descriptor = registry.get(key);
@@ -508,7 +508,7 @@ export function executeSpawn(
 	// Constraint descriptors own child-facing orientation for explicit group
 	// ceilings; spawn only presents the generic notes supplied by the route.
 	const capabilityNotice =
-		route.status === "routed" && route.groupCapabilityCeilings?.length
+		route.status === "routed" && route.groupCapabilityCeilings !== undefined && route.groupCapabilityCeilings.length > 0
 			? `\n\n## Model Group capability ceiling\n${route.groupCapabilityCeilings.join("\n")}\n\n`
 			: "";
 	const fullPrompt =
@@ -572,7 +572,7 @@ export function executeSpawn(
 			state.childSessions.set(toolCallId, session);
 
 			try {
-				if (signal?.aborted) {
+				if (signal?.aborted === true) {
 					await abortBeforePrompt(signal);
 				}
 
@@ -588,7 +588,7 @@ export function executeSpawn(
 					details: buildBaseDetails(false, "running"),
 				});
 
-				if (signal?.aborted) {
+				if (signal?.aborted === true) {
 					await abortBeforePrompt(signal);
 				}
 				if (isStale()) {
@@ -622,9 +622,9 @@ export function executeSpawn(
 			}
 			const errorMessage = lastAssistant?.errorMessage;
 			const failureLine = outcome === "error"
-				? `Child agent failed: ${errorMessage || "no error message"}`
+				? `Child agent failed: ${errorMessage !== undefined && errorMessage !== "" ? errorMessage : "no error message"}`
 				: outcome === "aborted"
-					? describeAbort(signal?.aborted ? signal.reason : errorMessage || undefined)
+					? describeAbort(signal?.aborted === true ? signal.reason : errorMessage === "" ? undefined : errorMessage)
 					: undefined;
 			const fullText = failureLine === undefined ? resultText : `${failureLine}${resultText ? `\n\n${resultText}` : ""}`;
 			const { text: finalText, truncated } = limitResultText(fullText);
@@ -681,7 +681,7 @@ export function executeSpawn(
 	} catch (error) {
 		const accounting = collectChildAccounting(session);
 		const { text, truncated } = limitResultText(failureMessage(error));
-		const outcome = signal?.aborted && !isStale() ? "aborted" : "error";
+		const outcome = signal?.aborted === true && !isStale() ? "aborted" : "error";
 		return {
 			content: [{ type: "text" as const, text }] as TextContent[],
 			details: buildResultDetails(truncated, outcome, accounting),

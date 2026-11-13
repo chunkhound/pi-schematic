@@ -36,7 +36,7 @@ export function buildContinuationFrame(): string {
 export function buildNextUserMessage(input: { nextInstruction: string; context?: string }): string {
 	const context = input.context?.trim();
 	const parts = ["## Next instruction", "", input.nextInstruction];
-	if (context) {parts.push("", "## Context", "", context);}
+	if (context !== undefined && context !== "") {parts.push("", "## Context", "", context);}
 	return parts.join("\n");
 }
 

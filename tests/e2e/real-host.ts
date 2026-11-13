@@ -121,9 +121,9 @@ export interface RealHostOptions {
 
 function pathEnv(): Record<string, string> {
 	const key = Object.keys(process.env).find((name) => name.toUpperCase() === "PATH");
-	if (!key) {throw new Error("No PATH variable in the test environment");}
+	if (key === undefined || key === "") {throw new Error("No PATH variable in the test environment");}
 	const current = process.env[key];
-	return { [key]: current ? `${dirname(process.execPath)}${delimiter}${current}` : dirname(process.execPath) };
+	return { [key]: current !== undefined && current !== "" ? `${dirname(process.execPath)}${delimiter}${current}` : dirname(process.execPath) };
 }
 
 function requireString(event: RpcEvent, field: string): string {
@@ -388,7 +388,7 @@ export class RealHost {
 		const failures = this.events.slice(mark).filter((event) => event.type === "extension_error");
 		const own = commandPath === undefined ? undefined : failures.find((event) => event.extensionPath === commandPath);
 		if (own) {throw new Error(`${action} failed: ${requireString(own, "error")}`);}
-		const failure = failures[0];
+		const failure = failures.at(0);
 		if (!failure) {return;}
 		throw new Error(
 			`${action} raised an extension error in ${requireString(failure, "extensionPath")} ` +

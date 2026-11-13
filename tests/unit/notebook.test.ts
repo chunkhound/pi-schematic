@@ -832,7 +832,7 @@ test("/notebook enter suspends the TUI, awaits the pager, then restores the TUI 
 	const tui = {
 		stop: () => events.push("stop"),
 		start: () => events.push("start"),
-		requestRender: (force?: boolean) => events.push(`render:${force ? "force" : "soft"}`),
+		requestRender: (force?: boolean) => events.push(`render:${force === true ? "force" : "soft"}`),
 	};
 
 	let customCalls = 0;

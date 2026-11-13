@@ -27,7 +27,7 @@ export function decodeDisplayLabel(encoded: string): DisplayDecodeResult {
 			value += char;
 			continue;
 		}
-		const escape = encoded[++index];
+		const escape = encoded.at(++index);
 		if (escape === undefined) {return { ok: false, message: "Incomplete display escape" };}
 		if (escape === "\\") {value += "\\";}
 		else if (escape === "n") {value += "\n";}

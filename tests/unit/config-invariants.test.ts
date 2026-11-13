@@ -106,7 +106,7 @@ function runAuditCi(): { status: number | null; diagnostics: string } {
 
 test("pinned Pi compatibility metadata stays exact", () => {
 	const packageJson = parsePackageJson();
-	const lock = JSON.parse(readText(LOCK_PATH)) as { packages: Record<string, { version?: string }> };
+	const lock = JSON.parse(readText(LOCK_PATH)) as { packages: Partial<Record<string, { version?: string }>> };
 	for (const name of PINNED_PI_PACKAGES) {
 		expect(packageJson.peerDependencies[name], `${name} peer must require ${EXPECTED_PI_PEER}`).toBe(EXPECTED_PI_PEER);
 	}
@@ -124,7 +124,7 @@ test("pinned Pi compatibility metadata stays exact", () => {
 
 test("package and lockfile versions agree", () => {
 	const packageJson = parsePackageJson();
-	const lock = JSON.parse(readText(LOCK_PATH)) as { version?: string; packages: Record<string, { version?: string }> };
+	const lock = JSON.parse(readText(LOCK_PATH)) as { version?: string; packages: Partial<Record<string, { version?: string }>> };
 	expect(lock.version, "package-lock.json version must match package.json").toBe(packageJson.version);
 	expect(lock.packages[""]?.version, "package-lock.json root package version must match package.json").toBe(packageJson.version);
 });

@@ -415,7 +415,7 @@ test("nested spawn ignores child renderer invalidations during parent rebuild", 
 			? {
 				name: "reentrant",
 				renderCall(_args: unknown, _theme: unknown, context: { state: Record<string, unknown>; invalidate: () => void }) {
-					if (!context.state.didInvalidate) {
+					if (context.state.didInvalidate !== true) {
 						context.state.didInvalidate = true;
 						context.invalidate();
 					}

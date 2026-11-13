@@ -194,7 +194,7 @@ function assertRegisteredHandler(value: unknown, event: string): asserts value i
 // dispatch. Throws when none is registered.
 function registeredHandlers(pi: TestPI, event: string): unknown[] {
 	const handlers: unknown[] | undefined = pi.handlers.get(event);
-	if (!handlers?.length) {throw new Error(`No handlers registered for "${event}"`);}
+	if (handlers === undefined || handlers.length === 0) {throw new Error(`No handlers registered for "${event}"`);}
 	return handlers;
 }
 
@@ -659,7 +659,7 @@ export async function runRealChildInvocation(params: {
 	// readonly bash guard (which only permits writes under the session temp root)
 	// actually fires. The child's working dir still lives under the fixture temp
 	// root, so the fixture stays portable under a restricted $HOME.
-	const readonlyWriteTarget = params.cwdOutsideTemp
+	const readonlyWriteTarget = params.cwdOutsideTemp === true
 		? resolve(os.tmpdir(), "..", `readonly-child-escape-${process.pid}-${Date.now()}`)
 		: "readonly-child-escape";
 	const agentDir = join(tempRoot, "agent");
@@ -793,13 +793,13 @@ export default function(pi) {
 			allTools: activeTools,
 		});
 		const controller = new AbortController();
-		if (params.abortBeforeStart) {controller.abort(new Error("fixture abort"));}
+		if (params.abortBeforeStart === true) {controller.abort(new Error("fixture abort"));}
 		// Expose live references for the provider (separate module scope) to act on.
 		setProbeGlobal("__agenticE2eState", state);
 		setProbeGlobal("__agenticE2eController", controller);
 		const prompts = params.prompts ?? [params.prompt];
 		const updates: unknown[] = [];
-		const onUpdate = params.resetOnRunningUpdate
+		const onUpdate = params.resetOnRunningUpdate === true
 			? (result: unknown) => {
 				updates.push(result);
 				resetState(state);

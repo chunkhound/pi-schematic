@@ -5,7 +5,7 @@ export function notebookTopicSection(state: SchematicState): PromptSection {
 	return {
 		name: "schematic_topic",
 		render() {
-			if (state.activeNotebookTopic) {
+			if (state.activeNotebookTopic !== null && state.activeNotebookTopic !== "") {
 				return `## Active Notebook Topic\n` +
 					`Current topic: \`${state.activeNotebookTopic}\` (${state.activeNotebookTopicSource ?? "unknown"}-set).\n` +
 					`Treat this as the current semantic frame. If new work fits it, prefer spawn for isolated noisy subtasks. If it does not fit it, prefer handoff.`;

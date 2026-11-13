@@ -28,7 +28,7 @@ export function registerNotebookTopicTool(
 		execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			return asPromise(() => {
 				const normalized = normalizeNotebookTopic(params.topic);
-				if (state.activeNotebookTopic) {
+				if (state.activeNotebookTopic !== null && state.activeNotebookTopic !== "") {
 					if (state.activeNotebookTopic !== normalized) {
 						throw new Error(
 							state.activeNotebookTopicSource === "human"

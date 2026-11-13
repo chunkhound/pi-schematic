@@ -75,7 +75,7 @@ export const modalitiesConstraint: ConstraintDescriptor<"modalities", ModelGroup
 	},
 	requirement: {
 		decode(value, path) {
-			if (!value || typeof value !== "object" || Array.isArray(value) || !("required" in value)) {return { ok: false, message: `${path} must be an object with required modalities` };}
+			if (value === null || typeof value !== "object" || Array.isArray(value) || !("required" in value)) {return { ok: false, message: `${path} must be an object with required modalities` };}
 			return modalityCodec().decode((value).required, `${path}.required`);
 		},
 		encode: (value) => ({ required: [...value] }),
@@ -108,7 +108,7 @@ export function deriveModalitiesEvaluation(
 export function assertModalitiesOverrideSupported(evaluation: ConstraintEvaluation<ModelGroupModalities, ModelGroupModality[]>, override: ModelGroupModality[] | undefined): void {
 	if (override === undefined) {return;}
 	const missing = evaluation.diagnostics.find((diagnostic) => diagnostic.code === "unsupported-override")?.details as ModelGroupModality[] | undefined;
-	if (missing?.length) {throw new Error(`Model group modality override includes unsupported modalities: ${missing.join(", ")}.`);}
+	if (missing !== undefined && missing.length > 0) {throw new Error(`Model group modality override includes unsupported modalities: ${missing.join(", ")}.`);}
 }
 
 export function getMissingModalitiesFromModel(model: Model<Api>, required: readonly ModelGroupModality[]): ModelGroupModality[] {

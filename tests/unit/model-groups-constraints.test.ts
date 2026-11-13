@@ -16,7 +16,7 @@ function model(fields: Pick<Model<Api>, "provider" | "id" | "input" | "reasoning
 
 const rich = model({ provider: "p", id: "rich", input: ["text", "image"], reasoning: true, contextWindow: 100 });
 const text = model({ provider: "p", id: "text", input: ["text"], reasoning: false, contextWindow: 10 });
-const resolution = (members: readonly { provider: string; modelId: string; model?: Model<Api> }[]): ConstraintMemberResolution => ({ members: members.map(({ provider, modelId, model: resolved }) => ({ ref: { provider, modelId }, ...(resolved ? { model: resolved } : {}) })) });
+const resolution = (members: readonly { provider: string; modelId: string; model?: Model<Api> }[]): ConstraintMemberResolution => ({ members: members.map(({ provider, modelId, model: resolved }) => ({ ref: { provider, modelId }, ...(resolved !== undefined ? { model: resolved } : {}) })) });
 
 test("constraint registry orders descriptors and rejects duplicate keys", () => {
 	const registry = createConstraintRegistry([testMinContext, modalitiesConstraint]);

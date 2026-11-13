@@ -261,13 +261,13 @@ export function saveModelGroups(scope: ModelGroupScope, access: ModelGroupsAcces
 }
 function loadScopeConfig(scope: ModelGroupScope, access: ModelGroupsAccess, registry: ConstraintRegistry = productionConstraintRegistry): ModelGroupsConfig {
 	const loaded = loadScope(scope, access, registry);
-	if (loaded.issue?.backupFailed || loaded.issue?.kind === "unsupported-version") {
+	if (loaded.issue?.backupFailed === true || loaded.issue?.kind === "unsupported-version") {
 		throw persistenceError({
 			operation: "save",
 			scope,
 			sourcePath: loaded.issue.sourcePath,
 			targetPath: loaded.issue.backupPath,
-			phase: loaded.issue?.kind === "unsupported-version" ? "config-validation" : "load-recovery",
+			phase: loaded.issue.kind === "unsupported-version" ? "config-validation" : "load-recovery",
 			message: `Refusing to overwrite ${scope} model-groups config after ${loaded.issue.kind} recovery because ${loaded.issue.message}`,
 			cause: loaded.issue,
 		});

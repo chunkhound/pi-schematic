@@ -61,7 +61,7 @@ function isKnownNotebookVersion(value: unknown): boolean {
  * (or a retry on a restarted process) therefore cannot reuse that staged epoch
  * and resurrect orphaned survivors; the next discard pass moves past it.
  */
-export function reconstructNotebook(state: SchematicState, branch: readonly SessionEntry[]): void {
+export function reconstructNotebook(state: SchematicState, branch: readonly (SessionEntry | null | undefined)[]): void {
 	// A generation is visible only after its marker is appended. Staged
 	// survivor entries from an interrupted discard therefore cannot eclipse
 	// the last durable notebook generation.
@@ -71,7 +71,7 @@ export function reconstructNotebook(state: SchematicState, branch: readonly Sess
 		if (entry?.type !== "custom") {continue;}
 		const customEntry = entry;
 		if (customEntry.customType === GENERATION_ENTRY_TYPE) {
-			const data = customEntry.data as NotebookGenerationData;
+			const data = customEntry.data as NotebookGenerationData | undefined;
 			if (isKnownNotebookVersion(data?.version) && isNotebookEpoch(data?.epoch)) {
 				committedEpoch = Math.max(committedEpoch ?? 0, data.epoch);
 				maxObservedEpoch = Math.max(maxObservedEpoch, data.epoch);
@@ -79,8 +79,8 @@ export function reconstructNotebook(state: SchematicState, branch: readonly Sess
 			continue;
 		}
 		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) {continue;}
-		const data = customEntry.data as NotebookEntryData;
-		if (isKnownNotebookVersion(data?.version) && data?.name && typeof data.content === "string") {
+		const data = customEntry.data as NotebookEntryData | undefined;
+		if (isKnownNotebookVersion(data?.version) && (data?.name ?? "") && typeof data?.content === "string") {
 			if (isNotebookEpoch(data.epoch)) {
 				maxObservedEpoch = Math.max(maxObservedEpoch, data.epoch);
 			}
@@ -99,9 +99,9 @@ export function reconstructNotebook(state: SchematicState, branch: readonly Sess
 		if (entry?.type !== "custom") {continue;}
 		const customEntry = entry;
 		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) {continue;}
-		const data = customEntry.data as NotebookEntryData;
+		const data = customEntry.data as NotebookEntryData | undefined;
 		const epoch = isNotebookEpoch(data?.epoch) ? data.epoch : 0;
-		if (!isKnownNotebookVersion(data?.version) || !data?.name || typeof data.content !== "string" || epoch !== currentEpoch || candidates.has(data.name)) {continue;}
+		if (!isKnownNotebookVersion(data?.version) || !(data?.name ?? "") || typeof data?.content !== "string" || epoch !== currentEpoch || candidates.has(data.name)) {continue;}
 		candidates.set(data.name, { epoch, content: data.content, clipped: data.clipped === true });
 	}
 

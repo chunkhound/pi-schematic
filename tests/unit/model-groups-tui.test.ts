@@ -74,7 +74,7 @@ function reconciledEffective(def: ModelGroupDef, supported: ModelGroupModality[]
 
 // A copy of `constraints` whose `modalities` array, when present, is a fresh array.
 function cloneConstraints(constraints: ModelGroupDef["constraints"]): ModelGroupDef["constraints"] {
-	return constraints ? { ...constraints, ...(isUnknownArray(constraints.modalities) ? { modalities: [...constraints.modalities] } : {}) } : undefined;
+	return constraints !== undefined ? { ...constraints, ...(isUnknownArray(constraints.modalities) ? { modalities: [...constraints.modalities] } : {}) } : undefined;
 }
 
 function boot(groups: ResolvedModelGroup[]): ModelGroupsBootValidation { return { groups, loadIssues: [] }; }
@@ -124,7 +124,7 @@ function rendered(c: { render: (width: number) => string[] }, width = 100): stri
 function selectRenderedLabel(c: { handleInput?: (data: string) => void; render: (width: number) => string[] }, label: string): void {
 	for (let i = 0; i < 32; i++) {
 		const selected = stripAnsi(rendered(c)).split("\n").find((line) => line.includes("→"));
-		if (selected?.includes(label)) {return;}
+		if (selected?.includes(label) === true) {return;}
 		press(c, DOWN);
 	}
 	expect.unreachable(`did not select rendered label: ${label}`);
@@ -355,11 +355,9 @@ test("model groups TUI modality editor preserves state and notifies on updateGro
 	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] });
 	review.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text"] };
 	const messages: string[] = [];
-	const failing = true;
 	const store = {
-		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, _name: string, def: ModelGroupDef) => {
-			if (failing) {throw new ModelGroupsPersistenceError({ operation: "save", scope: "project", sourcePath: "/tmp/.pi/pi-schematic/model-groups.json", phase: "rename", message: "modality write denied" });}
-			review.constraints = cloneConstraints(def.constraints);
+		updateGroup: () => {
+			throw new ModelGroupsPersistenceError({ operation: "save", scope: "project", sourcePath: "/tmp/.pi/pi-schematic/model-groups.json", phase: "rename", message: "modality write denied" });
 		},
 		listResolvedModelGroups: () => boot([review]),
 	};

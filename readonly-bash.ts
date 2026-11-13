@@ -59,7 +59,7 @@ const GIT_MUTABLE = new Set([
 	"rebase", "reset", "restore", "revert", "rm", "switch",
 ]);
 
-const GIT_MIXED: Record<string, (sub: string) => boolean> = {
+const GIT_MIXED: Partial<Record<string, (sub: string) => boolean>> = {
 	reflog: (sub) => sub === "" || sub === "show" || sub.startsWith("show "),
 	branch: (sub) =>
 		sub === "" || sub === "-l" || sub === "--show-current" ||
@@ -129,12 +129,12 @@ export function classifyBashCommand(cmd: string, cwd: string = process.cwd(), de
 		}
 
 		const redirectTarget = getUnsafeWriteRedirectTarget(segment, cwd, localVars);
-		if (redirectTarget) {
+		if (redirectTarget !== null && redirectTarget !== "") {
 			return { ok: false, reason: `write redirect blocked outside temp dir: ${redirectTarget}` };
 		}
 
 		const mutationReason = getFilesystemMutationReason(segment, cwd, depth, localVars);
-		if (mutationReason) {return { ok: false, reason: mutationReason };}
+		if (mutationReason !== null && mutationReason !== "") {return { ok: false, reason: mutationReason };}
 
 		for (const [name, value] of getStandaloneShellAssignments(segment, cwd, localVars)) {
 			localVars.set(name, value);
@@ -233,7 +233,7 @@ function classifyWget(command: string, tokens: string[], cwd: string, shellVars:
 	const hasOutputFlag = wArgs.some((a) => a === "-O" || a.startsWith("-O") || a === "--output-document" || a.startsWith("--output-document="));
 	if (hasOutputFlag) {return null;}
 	const outputDir = getWgetOutputDir(tokens);
-	if (outputDir && !isTempPath(outputDir, cwd, shellVars)) {return `wget download dir blocked outside temp dir: ${outputDir}`;}
+	if (outputDir !== null && outputDir !== "" && !isTempPath(outputDir, cwd, shellVars)) {return `wget download dir blocked outside temp dir: ${outputDir}`;}
 	return null;
 }
 
@@ -516,7 +516,7 @@ function getMutationTargets(command: string, tokens: string[]): string[] | null 
 
 function getFindMutationTargets(args: string[]): string[] | null {
 	// Skip glob-pattern args (e.g., -name '*.txt') — these cannot be filesystem roots.
-	const roots = args.filter((arg) => arg && !arg.startsWith("-") && !/[*?{}()[\]~]/.test(arg));
+	const roots = args.filter((arg) => arg !== "" && !arg.startsWith("-") && !/[*?{}()[\]~]/.test(arg));
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 		if (arg === "-delete") {return roots.length > 0 ? roots : ["."];}
@@ -716,7 +716,7 @@ function getStandaloneShellAssignments(segment: string, cwd: string, shellVars: 
 		const assignmentVars = new Map(shellVars);
 		for (const [assignedName, assignedValue] of assignments) {assignmentVars.set(assignedName, assignedValue);}
 		const syntheticMktempPath = getSafeMktempSyntheticPath(value, cwd, assignmentVars, name);
-		if (syntheticMktempPath) {
+		if (syntheticMktempPath !== null && syntheticMktempPath !== "") {
 			assignments.set(name, syntheticMktempPath);
 			continue;
 		}
@@ -734,7 +734,7 @@ function unwrapCommandSubstitution(rawValue: string): string | null {
 
 function getSafeMktempSyntheticPath(rawValue: string, cwd: string, shellVars: ReadonlyMap<string, string>, name: string): string | null {
 	const innerCmd = unwrapCommandSubstitution(rawValue);
-	if (!innerCmd) {return null;}
+	if (innerCmd === null || innerCmd === "") {return null;}
 
 	const innerTokens = getCommandTokens(innerCmd);
 	if (innerTokens[0] !== "mktemp") {return null;}
@@ -808,7 +808,7 @@ function getSafeMktempSyntheticPath(rawValue: string, cwd: string, shellVars: Re
 
 	if (tmpdirBase !== null) {
 		if (!isTempPath(tmpdirBase, cwd, shellVars)) {return null;}
-		if (!template) {return path.join(TEMP_DIR, `.pi-mktemp-${name.toLowerCase()}`);}
+		if (template === null || template === "") {return path.join(TEMP_DIR, `.pi-mktemp-${name.toLowerCase()}`);}
 		if (path.isAbsolute(template)) {return null;}
 		const joinedTemplate = path.join(tmpdirBase, template);
 		return isTempPath(joinedTemplate, cwd, shellVars)
@@ -816,7 +816,7 @@ function getSafeMktempSyntheticPath(rawValue: string, cwd: string, shellVars: Re
 			: null;
 	}
 
-	if (template && !isTempPath(template, cwd, shellVars)) {return null;}
+	if (template !== null && template !== "" && !isTempPath(template, cwd, shellVars)) {return null;}
 	return path.join(TEMP_DIR, `.pi-mktemp-${name.toLowerCase()}`);
 }
 

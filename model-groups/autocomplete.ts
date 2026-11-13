@@ -30,7 +30,7 @@ export type DescriptionColorizer = (color: ThemeColor, text: string) => string;
  * Handles an edge case where the group has no effective media modalities.
  */
 function buildCapsLetters(group: ResolvedModelGroup, colorize: DescriptionColorizer): string {
-	return modalityLetterRun(group.modalities?.effective, {
+	return modalityLetterRun(group.modalities.effective, {
 		render: (modality, letter) => colorize(MODALITY_FG[modality], letter),
 		separator: colorize("muted", " "),
 		// OpenRouter-style: text is the implied base, so only show I when image is
@@ -71,7 +71,7 @@ export function createModelGroupAutocompleteProvider(state: SchematicState, colo
 				return current.getSuggestions(lines, cursorLine, cursorCol, options);
 			}
 
-			const partial = (match[1] ?? "").toLowerCase();
+			const partial = match[1].toLowerCase();
 			const groups = getEffectiveModelGroups(state.modelGroups.groups);
 			const matched = groups.filter((group) => group.name.toLowerCase().startsWith(partial));
 			const rows = matched.map((group) => ({
@@ -87,7 +87,7 @@ export function createModelGroupAutocompleteProvider(state: SchematicState, colo
 				label: row.label,
 				description: buildSuggestionDescription(row.route, row.letters, capsWidth, colorize),
 			}));
-			return { prefix: `#${match[1] ?? ""}`, items };
+			return { prefix: `#${match[1]}`, items };
 		},
 
 		applyCompletion(lines, cursorLine, cursorCol, item, prefix) {

@@ -2394,7 +2394,7 @@ test("executeSpawn aborts stale child when resetState fires during prompt", asyn
 	let resolvePromptStarted!: () => void;
 	const promptStartedPromise = new Promise<void>((r) => { resolvePromptStarted = r; });
 	const abort = vi.fn(() => {
-		rejectPrompt?.(new Error("aborted"));
+		rejectPrompt(new Error("aborted"));
 		return Promise.resolve();
 	});
 	const dispose = vi.fn();

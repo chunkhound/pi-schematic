@@ -374,7 +374,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		const result = onlyResult(toolResults(entries, "handoff"), "handoff");
 		expect(result.isError).toBe(true);
 		expect(result.text).toContain("Empty handoff nextInstruction rejected");
-		expect(entries.filter((entry) => userText(entry)?.includes("Handoff failed")), "no failure follow-up user message").toHaveLength(0);
+		expect(entries.filter((entry) => userText(entry)?.includes("Handoff failed") === true), "no failure follow-up user message").toHaveLength(0);
 		expect(customMessages(entries, HANDOFF_FAILED_CUSTOM_TYPE), "no failure message").toHaveLength(0);
 	}));
 
