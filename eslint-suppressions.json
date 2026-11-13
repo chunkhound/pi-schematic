@@ -756,36 +756,6 @@
     }
   },
   "tests/unit/model-group-frontmatter.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 77
-    },
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 79
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 67
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 59
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 50
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 12
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 4
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 4
-    },
     "vitest/max-expects": {
       "count": 9
     }
@@ -952,38 +922,14 @@
     }
   },
   "tests/unit/model-groups-tui.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 71
-    },
     "@typescript-eslint/no-non-null-assertion": {
       "count": 4
     },
     "@typescript-eslint/no-unnecessary-condition": {
       "count": 1
     },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 13
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 49
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 19
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 90
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 6
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 6
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 14
-    },
     "@typescript-eslint/strict-boolean-expressions": {
-      "count": 4
+      "count": 1
     },
     "no-control-regex": {
       "count": 3
