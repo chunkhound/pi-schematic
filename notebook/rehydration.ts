@@ -9,7 +9,7 @@
  * notebook_index remain available after rehydration.
  */
 
-import type { CustomEntry, ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { SchematicState } from "../state.js";
 import { NOTEBOOK_ENTRY_VERSION } from "./store.js";
 

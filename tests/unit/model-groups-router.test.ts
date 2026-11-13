@@ -3,7 +3,6 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { getEffectiveModelGroupNames, resolveSpawnModelRoute, SpawnRouteError } from "../../model-groups/router.js";
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
-import type { ResolvedModelGroup } from "../../model-groups/types.js";
 import { group } from "./model-groups-helpers.js";
 import { testMaxBudget, testMinContext } from "./model-groups-constraints-fixture.js";
 
@@ -84,7 +83,6 @@ test("capability pre-selection excludes unauthenticated capable models and picks
 	const parent = model("p", "parent");
 	const capA = model("p", "cap-a", { input: ["text", "image"] });
 	const capB = model("p", "cap-b", { input: ["text", "image"] });
-	const unavailable = model("p", "cap-unavailable", { input: ["text", "image"] });
 	const text = model("p", "text");
 	const routed = group("mixed", { models: [
 		{ provider: "p", modelId: "text" },

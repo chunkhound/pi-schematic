@@ -77,7 +77,7 @@ function _hasBwrap(): boolean {
 			try {
 				execSync("bwrap --ro-bind / / true 2>/dev/null", { stdio: "ignore", timeout: 2000 });
 				_bwrapResult = true;
-			} catch (e) {
+			} catch {
 				_bwrapResult = false;
 			}
 		} else {
@@ -95,7 +95,7 @@ function _hasSandboxExec(): boolean {
 				execSync("echo true | sandbox-exec -p '(version 1)(allow default)' /bin/bash 2>/dev/null",
 					{ stdio: "ignore", timeout: 2000 });
 				_sandboxExecResult = true;
-			} catch (e) {
+			} catch {
 				_sandboxExecResult = false;
 			}
 		} else {
