@@ -1,21 +1,75 @@
 import { expect, test, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import type { AutocompleteProviderFactory } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { ModelRegistry, type AutocompleteProviderFactory, type ExtensionContext, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { escapeDisplayLabel } from "../../model-groups/display.js";
 import { __setModelGroupsFsForTests, modelGroupsPath } from "../../model-groups/store.js";
-import { theme } from "./helpers.js";
-import { createBeforeAgentStartEvent, createTestHost } from "./test-host.js";
+import { assertPresent } from "../assertions.js";
+import { createCommandContext, createExtensionContext, createUIContext, theme } from "./helpers.js";
+import { createBeforeAgentStartEvent, createTestHost, getCommand, getHandler, getHandlers, type HostEvent, type HostHandler, type TestPI } from "./test-host.js";
 import { withTemp } from "./model-groups-helpers.js";
 
-function registry(available = new Set(["openai:gpt-5"])): any {
-	const models = [{ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } }];
+type RegistryFields = Pick<ModelRegistry, "getAll" | "getAvailable" | "find" | "hasConfiguredAuth">;
+
+function model(fields: Pick<Model<Api>, "provider" | "id" | "input" | "reasoning"> & Partial<Model<Api>>): Model<Api> {
+	return {
+		name: fields.id, api: "test-api", baseUrl: "http://localhost.invalid",
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 0, maxTokens: 0, ...fields,
+	};
+}
+
+const MODEL_REGISTRY_MEMBERS = new Set(Object.getOwnPropertyNames(ModelRegistry.prototype).filter((name) => name !== "constructor"));
+
+// A ModelRegistry whose listed members are `fields`; reading any other ModelRegistry member throws.
+function modelRegistry(fields: RegistryFields): ModelRegistry {
+	const target: unknown = Object.create(ModelRegistry.prototype);
+	if (!(target instanceof ModelRegistry)) {throw new Error("Object.create did not produce a ModelRegistry instance.");}
+	return new Proxy(Object.assign(target, fields), {
+		get(registry, property, receiver) {
+			if (typeof property === "string" && MODEL_REGISTRY_MEMBERS.has(property) && !Object.hasOwn(fields, property)) {
+				throw new Error(`modelRegistry.${property} is not stubbed in this test registry; add it to the fields.`);
+			}
+			const value: unknown = Reflect.get(registry, property, receiver);
+			return value;
+		},
+	});
+}
+
+function registryFields(available = new Set(["openai:gpt-5"])): RegistryFields {
+	const models = [model({ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } })];
 	return {
 		getAll: () => models,
 		getAvailable: () => models.filter((m) => available.has(`${m.provider}:${m.id}`)),
-		find: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id),
-		hasConfiguredAuth: (model: any) => available.has(`${model.provider}:${model.id}`),
+		find: (provider, id) => models.find((m) => m.provider === provider && m.id === id),
+		hasConfiguredAuth: (entry) => available.has(`${entry.provider}:${entry.id}`),
 	};
+}
+
+function registry(available?: Set<string>): ModelRegistry {
+	return modelRegistry(registryFields(available));
+}
+
+const SESSION_START: HostEvent<"session_start"> = { type: "session_start", reason: "startup" };
+
+// The last of the extension's two session_start handlers: the one that refreshes the model groups (the first rehydrates the notebook).
+function sessionStartHandler(pi: TestPI): HostHandler<"session_start"> {
+	const handler = getHandlers(pi, "session_start").at(-1);
+	assertPresent(handler);
+	return handler;
+}
+
+function sessionStartContext(cwd: string, ui: Partial<ExtensionUIContext>, overrides: Partial<ExtensionContext> = {}): ExtensionContext {
+	return createExtensionContext({
+		hasUI: true,
+		mode: "tui",
+		isProjectTrusted: () => true,
+		cwd,
+		modelRegistry: registry(),
+		getContextUsage: () => ({ tokens: null, contextWindow: 0, percent: 10 }),
+		ui: createUIContext({ setStatus: vi.fn(), setWidget: vi.fn(), addAutocompleteProvider: vi.fn(), ...ui }),
+		...overrides,
+	});
 }
 
 test("/model-groups command registers and opens ctx.ui.custom with live registry/cwd", async () => withTemp(async ({ cwd }) => {
@@ -23,14 +77,14 @@ test("/model-groups command registers and opens ctx.ui.custom with live registry
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 1, groups: { "cwd-sentinel-group": { models: [{ provider: "openai", modelId: "gpt-5" }] } } }), "utf8");
 	const pi = await createTestHost();
 	const findCalls: string[] = [];
-	const registrySentinel = {
-		...registry(),
-		find: (provider: string, id: string) => {
+	const registrySentinel = modelRegistry({
+		...registryFields(),
+		find: (provider, id) => {
 			findCalls.push(`${provider}:${id}`);
-			return { provider, id, reasoning: true, thinkingLevelMap: { xhigh: "x" } };
+			return model({ provider, id, input: [], reasoning: true, thinkingLevelMap: { xhigh: "x" } });
 		},
 		hasConfiguredAuth: () => true,
-	};
+	});
 
 	expect([...pi.commands.keys()]).toContain("model-groups");
 	let customCalled = 0;
@@ -64,22 +118,8 @@ test("index session_start stores model group validation and notifies load and va
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 1, groups: { shadow: { models: [] } } }), "utf8");
 	const pi = await createTestHost();
 	const notifications: string[] = [];
-	const ctx = {
-		hasUI: true,
-		mode: "tui",
-		isProjectTrusted: () => true,
-		cwd,
-		modelRegistry: registry(),
-		getContextUsage: () => ({ percent: 10 }),
-		ui: {
-			theme,
-			notify: (message: string) => notifications.push(message),
-			setStatus: vi.fn(),
-			setWidget: vi.fn(),
-		},
-	};
-	const handler = pi.handlers.get("session_start")!.at(-1)!;
-	await handler({ reason: "load" }, ctx);
+	const ctx = sessionStartContext(cwd, { notify: (message) => { notifications.push(message); } });
+	await sessionStartHandler(pi)(SESSION_START, ctx);
 	expect(notifications).toContainEqual(expect.stringMatching(/1 unavailable model references · 1 project overrides/));
 }));
 
@@ -93,17 +133,8 @@ test("index session_start notifies empty-common and stale-override boot counts",
 	} }), "utf8");
 	const pi = await createTestHost();
 	const notifications: string[] = [];
-	const ctx = {
-		hasUI: true,
-		mode: "tui",
-		isProjectTrusted: () => true,
-		cwd,
-		modelRegistry: registry(),
-		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: vi.fn(), setWidget: vi.fn() },
-	};
-	const handler = pi.handlers.get("session_start")!.at(-1)!;
-	await handler({ reason: "load" }, ctx);
+	const ctx = sessionStartContext(cwd, { notify: (message) => { notifications.push(message); } });
+	await sessionStartHandler(pi)(SESSION_START, ctx);
 	expect(notifications, JSON.stringify(notifications, null, 2)).toContainEqual(expect.stringMatching(/1 unavailable model references · 0 project overrides · 2 groups with no common modalities · 1 stale modality overrides/));
 }));
 
@@ -114,17 +145,8 @@ test("index session_start notifies corrupt/schema/unsupported load issues", asyn
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 99, groups: {} }), "utf8");
 	const pi = await createTestHost();
 	const notifications: string[] = [];
-	const ctx = {
-		hasUI: true,
-		mode: "tui",
-		isProjectTrusted: () => true,
-		cwd,
-		modelRegistry: registry(),
-		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: vi.fn(), setWidget: vi.fn() },
-	};
-	const handler = pi.handlers.get("session_start")!.at(-1)!;
-	await handler({ reason: "load" }, ctx);
+	const ctx = sessionStartContext(cwd, { notify: (message) => { notifications.push(message); } });
+	await sessionStartHandler(pi)(SESSION_START, ctx);
 	expect(notifications).toContainEqual(expect.stringMatching(/corrupt-json/));
 	expect(notifications).toContainEqual(expect.stringMatching(/unsupported-version/));
 }));
@@ -134,17 +156,8 @@ test("index session_start notifies schema-invalid load issues", async () => with
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 1, groups: { broken: { models: [{ provider: 1 }] } } }), "utf8");
 	const pi = await createTestHost();
 	const notifications: string[] = [];
-	const ctx = {
-		hasUI: true,
-		mode: "tui",
-		isProjectTrusted: () => true,
-		cwd,
-		modelRegistry: registry(),
-		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: vi.fn(), setWidget: vi.fn() },
-	};
-	const handler = pi.handlers.get("session_start")!.at(-1)!;
-	await handler({ reason: "load" }, ctx);
+	const ctx = sessionStartContext(cwd, { notify: (message) => { notifications.push(message); } });
+	await sessionStartHandler(pi)(SESSION_START, ctx);
 	expect(notifications).toContainEqual(expect.stringMatching(/schema-invalid/));
 	expect(notifications).toContainEqual(expect.stringMatching(/project scope/));
 	expect(notifications).toContainEqual(expect.stringContaining(escapeDisplayLabel(modelGroupsPath("project", cwd))));
@@ -156,17 +169,8 @@ test("index session_start includes backup-failure detail in load issue notificat
 	__setModelGroupsFsForTests({ copyFileSync: () => { throw new Error("backup denied"); } });
 	const pi = await createTestHost();
 	const notifications: string[] = [];
-	const ctx = {
-		hasUI: true,
-		mode: "tui",
-		isProjectTrusted: () => true,
-		cwd,
-		modelRegistry: registry(),
-		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: vi.fn(), setWidget: vi.fn() },
-	};
-	const handler = pi.handlers.get("session_start")!.at(-1)!;
-	await handler({ reason: "load" }, ctx);
+	const ctx = sessionStartContext(cwd, { notify: (message) => { notifications.push(message); } });
+	await sessionStartHandler(pi)(SESSION_START, ctx);
 	const notification = notifications.find((m) => m.includes("corrupt-json"));
 	expect(notification, "notifications: " + notifications.join(" / ")).toMatch(/backup failed.*original file left untouched/);
 	expect(notification).toContain(escapeDisplayLabel(modelGroupsPath("project", cwd)));
@@ -176,9 +180,9 @@ test("before_agent_start writes fresh names-and-effective-modalities guidance", 
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 1, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }), "utf8");
 	const pi = await createTestHost();
-	const handler = pi.handlers.get("before_agent_start")![0];
+	const handler = getHandler(pi, "before_agent_start");
 	const event = createBeforeAgentStartEvent();
-	await handler(event, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
+	await handler(event, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: registry() }));
 	const section = event.systemPromptOptions.sections.schematic_model_groups;
 	expect(section).toMatch(/## Model Groups for spawn/);
 	expect(section).toMatch(/Available Model Groups: review \(text, image, reasoning\)/);
@@ -194,15 +198,15 @@ test("before_agent_start exposes union-effective modalities for automatic mixed 
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { mixed: { models: [{ provider: "openai", modelId: "gpt-5" }, { provider: "google", modelId: "gemini-text" }] } } }), "utf8");
 	const pi = await createTestHost();
-	const handler = pi.handlers.get("before_agent_start")![0];
+	const handler = getHandler(pi, "before_agent_start");
 	const models = [
-		{ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } },
-		{ provider: "google", id: "gemini-text", input: ["text"], reasoning: false },
+		model({ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } }),
+		model({ provider: "google", id: "gemini-text", input: ["text"], reasoning: false }),
 	];
-	const reg = { getAll: () => models, getAvailable: () => models, find: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id), hasConfiguredAuth: () => true };
+	const reg = modelRegistry({ getAll: () => models, getAvailable: () => models, find: (provider, id) => models.find((m) => m.provider === provider && m.id === id), hasConfiguredAuth: () => true });
 	// Automatic mixed group: guidance lists the union — image/reasoning present via the capable member.
 	const event = createBeforeAgentStartEvent();
-	await handler(event, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: reg, getContextUsage: () => null });
+	await handler(event, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: reg }));
 	expect(event.systemPromptOptions.sections.schematic_model_groups).toMatch(/Available Model Groups: mixed \(text, image, reasoning\)/);
 }));
 
@@ -210,9 +214,9 @@ test("before_agent_start labels empty effective modalities unambiguously", async
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { foo: { models: [] }, "foo (none)": { models: [] } } }), "utf8");
 	const pi = await createTestHost();
-	const handler = pi.handlers.get("before_agent_start")![0];
+	const handler = getHandler(pi, "before_agent_start");
 	const event = createBeforeAgentStartEvent();
-	await handler(event, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
+	await handler(event, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: registry() }));
 	const section = event.systemPromptOptions.sections.schematic_model_groups;
 	expect(section).toMatch(/foo \(no common modalities\)/);
 	expect(section).toMatch(/foo \(none\) \(no common modalities\)/);
@@ -222,21 +226,21 @@ test("before_agent_start labels empty effective modalities unambiguously", async
 test("before_agent_start rewrites updated effective modalities after registry changes", async () => withTemp(async ({ cwd }) => {
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }), "utf8");
-	let model = { provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: false, thinkingLevelMap: { xhigh: "x" } };
-	const changingRegistry = {
-		getAll: () => [model],
-		getAvailable: () => [model],
-		find: () => model,
+	let current = model({ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: false, thinkingLevelMap: { xhigh: "x" } });
+	const changingRegistry = modelRegistry({
+		getAll: () => [current],
+		getAvailable: () => [current],
+		find: () => current,
 		hasConfiguredAuth: () => true,
-	};
+	});
 	const pi = await createTestHost();
-	const handler = pi.handlers.get("before_agent_start")![0];
-	const ctx = { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: changingRegistry, getContextUsage: () => null };
+	const handler = getHandler(pi, "before_agent_start");
+	const ctx = createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: changingRegistry });
 	const initial = createBeforeAgentStartEvent();
 	await handler(initial, ctx);
 	expect(initial.systemPromptOptions.sections.schematic_model_groups).toMatch(/review \(text, image\)/);
 
-	model = { ...model, input: ["text"], reasoning: true };
+	current = { ...current, input: ["text"], reasoning: true };
 	const refreshed = createBeforeAgentStartEvent();
 	await handler(refreshed, ctx);
 	const refreshedSection = refreshed.systemPromptOptions.sections.schematic_model_groups;
@@ -261,33 +265,15 @@ test("before_agent_start clears stale Model Groups guidance when registry become
 test("session_start registers Model Groups autocomplete provider when UI supports it", async () => withTemp(async ({ cwd }) => {
 	const pi = await createTestHost();
 	const providers: AutocompleteProviderFactory[] = [];
-	const handler = pi.handlers.get("session_start")!.at(-1)!;
-	await handler({ reason: "load" }, {
-		hasUI: true,
-		mode: "tui",
-		isProjectTrusted: () => true,
-		cwd,
-		modelRegistry: registry(),
-		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn(), addAutocompleteProvider: (factory: AutocompleteProviderFactory) => providers.push(factory) },
-	});
+	await sessionStartHandler(pi)(SESSION_START, sessionStartContext(cwd, { notify: vi.fn(), addAutocompleteProvider: (factory) => { providers.push(factory); } }));
 	expect(providers).toHaveLength(1);
 }));
 
 test("index session_start does not notify when load and validation issues are absent", async () => withTemp(async ({ cwd }) => {
 	const pi = await createTestHost();
 	const notifications: string[] = [];
-	const ctx = {
-		hasUI: true,
-		mode: "tui",
-		isProjectTrusted: () => true,
-		cwd,
-		modelRegistry: registry(),
-		getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: vi.fn(), setWidget: vi.fn() },
-	};
-	const handler = pi.handlers.get("session_start")!.at(-1)!;
-	await handler({ reason: "load" }, ctx);
+	const ctx = sessionStartContext(cwd, { notify: (message) => { notifications.push(message); } });
+	await sessionStartHandler(pi)(SESSION_START, ctx);
 	expect(notifications).toStrictEqual([]);
 }));
 
@@ -295,14 +281,14 @@ test.for(["rpc", "json", "print"] as const)("root-recorded /model-groups rejects
 	const pi = await createTestHost();
 	const notifications: string[] = [];
 	let customCalls = 0;
-	await pi.commands.get("model-groups")!.handler("", {
+	await getCommand(pi, "model-groups").handler("", createCommandContext({
 		mode,
 		hasUI: mode === "rpc",
 		cwd: "/must-not-load",
 		modelRegistry: registry(),
 		isProjectTrusted: () => true,
-		ui: { notify: (message: string) => notifications.push(message), custom: () => { customCalls++; return Promise.resolve(); } },
-	});
+		ui: createUIContext({ notify: (message) => { notifications.push(message); }, custom: () => { customCalls++; return Promise.reject(new Error("/model-groups must not open custom UI outside TUI mode")); } }),
+	}));
 	expect(customCalls, mode).toBe(0);
 	expect(notifications, mode).toStrictEqual(mode === "rpc" ? ["/model-groups requires TUI mode"] : []);
 });
@@ -318,11 +304,9 @@ test("model groups untrusted root flow never probes project data and publishes g
 		return fs.existsSync(candidate);
 	} });
 	const pi = await createTestHost();
-	const baseUi = { theme, notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn(), addAutocompleteProvider: vi.fn() };
-	await pi.handlers.get("session_start")!.at(-1)!({ reason: "load" }, {
-		mode: "tui", hasUI: true, isProjectTrusted: () => false, cwd, modelRegistry: registry(), getContextUsage: () => ({ percent: 10 }), ui: baseUi,
-	});
+	await sessionStartHandler(pi)(SESSION_START, sessionStartContext(cwd, { notify: vi.fn() }, { isProjectTrusted: () => false }));
 	expect(projectProbe).toBe(false);
+	const baseUi = { theme, notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn(), addAutocompleteProvider: vi.fn() };
 	let rendered = "";
 	await pi.commands.get("model-groups")!.handler("", {
 		mode: "tui", hasUI: true, isProjectTrusted: () => false, cwd, modelRegistry: registry(),
@@ -343,10 +327,7 @@ test("model groups boot load-issue notifications escape hostile source, backup, 
 	});
 	const pi = await createTestHost();
 	const notifications: string[] = [];
-	await pi.handlers.get("session_start")!.at(-1)!({ reason: "load" }, {
-		mode: "tui", hasUI: true, isProjectTrusted: () => true, cwd: hostileCwd, modelRegistry: registry(), getContextUsage: () => ({ percent: 10 }),
-		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: vi.fn(), setWidget: vi.fn(), addAutocompleteProvider: vi.fn() },
-	});
+	await sessionStartHandler(pi)(SESSION_START, sessionStartContext(hostileCwd, { notify: (message) => { notifications.push(message); } }));
 	const notification = notifications.find((message) => message.includes("corrupt-json"))!;
 	expect(notification).toContain(`project scope (${escapeDisplayLabel(projectPath)})`);
 	expect(notification).toContain(`backup failed (${escapeDisplayLabel(`${projectPath}.bak`)}), original file left untouched`);
