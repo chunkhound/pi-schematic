@@ -46,12 +46,12 @@ describe("spawnNode", () => {
 
 	// The child would exit on its own after 10 s; the deadline must not wait for it.
 	test.skipIf(process.platform === "win32")("kills a child that catches SIGTERM instead of waiting it out", () => {
-		const startedAt = Date.now();
+		const startedAt = performance.now();
 		const child = 'process.on("SIGTERM", () => {}); setTimeout(() => {}, 10_000)';
 		expect(() => spawnNode(["--eval", child], { cwd: REPO_ROOT, timeoutMs: 500 })).toThrow(
 			/^Node child process did not exit within 500 ms/,
 		);
-		expect(Date.now() - startedAt).toBeLessThan(5_000);
+		expect(performance.now() - startedAt).toBeLessThan(5_000);
 	});
 
 	test("throws the spawn error for a working directory that does not exist", () => {

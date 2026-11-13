@@ -1,4 +1,4 @@
-// Runs a Node child process for a unit test. This module imports no test runner, so test files on
+// Runs a Node or git child process for a unit test. This module imports no test runner, so test files on
 // either runner can use it.
 
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
@@ -41,4 +41,36 @@ export function spawnNode(args: readonly string[], options: SpawnNodeOptions): S
 	}
 	if (spawnError) {throw spawnError;}
 	return result;
+}
+
+export interface RunGitOptions {
+	cwd: string;
+	timeoutMs?: number;
+}
+
+/**
+ * Run `git ...args` to completion and return its stdout. Throws when git fails to spawn, outlives
+ * the deadline, dies from a signal, or exits non-zero; the message names the command, the exit
+ * status or signal, and stderr.
+ */
+export function runGit(args: readonly string[], options: RunGitOptions): string {
+	const timeoutMs = options.timeoutMs ?? CHILD_TIMEOUT_MS;
+	const command = ["git", ...args].join(" ");
+	const result = spawnSync("git", args, {
+		cwd: options.cwd,
+		encoding: "utf8",
+		timeout: timeoutMs,
+		killSignal: "SIGKILL",
+	});
+	if (result.error) {
+		// A timeout surfaces here as ETIMEDOUT, after the SIGKILL.
+		throw new Error(`${command} failed to run or did not exit within ${String(timeoutMs)} ms: ${result.error.message}`, { cause: result.error });
+	}
+	if (result.signal !== null) {
+		throw new Error(`${command} was killed by ${result.signal}; stderr: ${result.stderr}`);
+	}
+	if (result.status !== 0) {
+		throw new Error(`${command} exited with status ${String(result.status)}; stderr: ${result.stderr}`);
+	}
+	return result.stdout;
 }

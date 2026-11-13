@@ -39,7 +39,7 @@ import {
 	getSingletons,
 	type RuntimeSingletons,
 } from "../runtime-singletons.js";
-import { onTestFinished } from "vitest";
+import { onTestFinished, vi } from "vitest";
 import { SpawnFrameScheduler } from "../spawn/renderer.js";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -84,37 +84,25 @@ export function createTestHarness(): TestHarness {
 		frameScheduler: new SpawnFrameScheduler(),
 	};
 	const warnings: { level: string; args: unknown[] }[] = [];
-	const originalDebug = console.debug;
-	const originalLog = console.log;
-	const originalWarn = console.warn;
-	const originalError = console.error;
 
 	// Install the fresh container in one call; no write is pending (checked
 	// above), so the harness always runs on its own lock and context.
 	__setSingletons(singletons);
 
 	// Capture every forbidden TUI-corrupting console level for assertions.
-	console.debug = (...args: unknown[]) => {
-		warnings.push({ level: "debug", args });
-	};
-	console.log = (...args: unknown[]) => {
-		warnings.push({ level: "log", args });
-	};
-	console.warn = (...args: unknown[]) => {
-		warnings.push({ level: "warn", args });
-	};
-	console.error = (...args: unknown[]) => {
-		warnings.push({ level: "error", args });
-	};
+	const consoleSpies = (["debug", "log", "warn", "error"] as const).map((level) =>
+		vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+			warnings.push({ level, args });
+		}),
+	);
 
 	return {
 		warnings,
 		teardown: () => {
 			const pendingWrites = singletons.writeLock.pending;
-			console.debug = originalDebug;
-			console.log = originalLog;
-			console.warn = originalWarn;
-			console.error = originalError;
+			for (const spy of consoleSpies) {
+				spy.mockRestore();
+			}
 			// A write still running keeps the lock and context it captured; forcing
 			// the swap only stops the harness lock from leaking into the next test.
 			__setSingletons(previousSingletons, { forceWriteLock: true });

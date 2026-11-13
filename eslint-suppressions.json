@@ -227,11 +227,6 @@
       "count": 1
     }
   },
-  "tests/e2e/pty-harness.ts": {
-    "ban/wall-clock": {
-      "count": 3
-    }
-  },
   "tests/e2e/real-host-child-probe.ts": {
     "ban/wall-clock": {
       "count": 1
@@ -274,21 +269,8 @@
     "@typescript-eslint/prefer-promise-reject-errors": {
       "count": 1
     },
-    "ban/wall-clock": {
-      "count": 3
-    },
     "preserve-caught-error": {
       "count": 1
-    }
-  },
-  "tests/e2e/test-host.ts": {
-    "ban/wall-clock": {
-      "count": 1
-    }
-  },
-  "tests/test-utils.ts": {
-    "ban/console-assignment": {
-      "count": 8
     }
   },
   "tests/unit/brand-assets.test.ts": {
@@ -299,12 +281,6 @@
   "tests/unit/config-invariants.test.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 4
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 1
-    },
-    "ban/spawn-sync-import": {
-      "count": 1
     },
     "ban/wall-clock": {
       "count": 1
@@ -317,9 +293,6 @@
     }
   },
   "tests/unit/frontmatter-cache.test.ts": {
-    "ban/wall-clock": {
-      "count": 11
-    },
     "vitest/max-expects": {
       "count": 112
     }
@@ -609,9 +582,6 @@
     "@typescript-eslint/no-non-null-assertion": {
       "count": 1
     },
-    "ban/wall-clock": {
-      "count": 1
-    },
     "vitest/max-expects": {
       "count": 7
     }
@@ -657,17 +627,9 @@
       "count": 4
     }
   },
-  "tests/unit/test-infra.test.ts": {
-    "ban/wall-clock": {
-      "count": 2
-    }
-  },
   "tests/unit/time-format.test.ts": {
     "@typescript-eslint/no-non-null-assertion": {
       "count": 2
-    },
-    "ban/wall-clock": {
-      "count": 1
     },
     "vitest/max-expects": {
       "count": 3
@@ -684,9 +646,6 @@
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 2
-    },
-    "ban/wall-clock": {
-      "count": 1
     },
     "vitest/max-expects": {
       "count": 15
