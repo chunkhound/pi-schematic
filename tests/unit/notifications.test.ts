@@ -124,6 +124,7 @@ test("bash guard uses centralized readonly block copy", () => {
 test("parent readonly tool-call consumer uses centralized block copy", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await getCommand(pi, "readonly").handler("", createCommandContext({
+		mode: "tui",
 		hasUI: true,
 		getContextUsage: () => undefined,
 		ui: createUIContext({

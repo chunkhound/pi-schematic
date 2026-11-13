@@ -15,7 +15,13 @@ interface CompatFixtureModule {
 	writeCompatArtifacts: (artifactDir: string | undefined, sourceDir: string, versions: PiVersions) => void;
 }
 
-const COMPAT_FIXTURE_EXPORTS = ["packEntry", "parseNpmViewValue", "resolveLatestPi", "writeCompatArtifacts"] as const;
+// Keyed by the interface, so tsc rejects a member the guard does not check.
+const COMPAT_FIXTURE_EXPORTS = Object.keys({
+	packEntry: true,
+	parseNpmViewValue: true,
+	resolveLatestPi: true,
+	writeCompatArtifacts: true,
+} satisfies Record<keyof CompatFixtureModule, true>);
 
 // The script is plain JavaScript, so its exports arrive untyped: each one the tests call must be a function.
 function assertCompatFixtureModule(value: unknown): asserts value is CompatFixtureModule {

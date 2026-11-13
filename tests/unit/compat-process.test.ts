@@ -27,7 +27,15 @@ interface CompatProcessModule {
 	isValidNpmExecpath: (npmExecpath: string) => boolean;
 }
 
-const COMPAT_PROCESS_EXPORTS = ["npmInvocation", "repoRootFromScript", "runChecked", "runNpm", "runNpmWithRetry", "isValidNpmExecpath"] as const;
+// Keyed by the interface, so tsc rejects a member the guard does not check.
+const COMPAT_PROCESS_EXPORTS = Object.keys({
+	npmInvocation: true,
+	repoRootFromScript: true,
+	runChecked: true,
+	runNpm: true,
+	runNpmWithRetry: true,
+	isValidNpmExecpath: true,
+} satisfies Record<keyof CompatProcessModule, true>);
 
 // The script is plain JavaScript, so its exports arrive untyped: each one the tests call must be a function.
 function assertCompatProcessModule(value: unknown): asserts value is CompatProcessModule {
