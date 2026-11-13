@@ -63,9 +63,16 @@ for (const { label, prior } of priors) {
 		});
 	});
 
-	test(`withTempAgentDir restores ${label} PI_CODING_AGENT_DIR when the run throws`, async () => {
+	test(`withTempAgentDir restores ${label} PI_CODING_AGENT_DIR when the run rejects`, async () => {
 		await withPriorAgentDir(prior, async () => {
 			await expect(withTempAgentDir(() => Promise.reject(new Error("run failed")))).rejects.toThrow(/run failed/);
+			assertAgentDirRestored(prior);
+		});
+	});
+
+	test(`withTempAgentDir restores ${label} PI_CODING_AGENT_DIR when the run throws synchronously`, async () => {
+		await withPriorAgentDir(prior, async () => {
+			await expect(withTempAgentDir(() => { throw new Error("run failed"); })).rejects.toThrow(/run failed/);
 			assertAgentDirRestored(prior);
 		});
 	});
@@ -81,9 +88,16 @@ for (const { label, prior } of priors) {
 		});
 	});
 
-	test(`withTempHome restores ${label} PI_CODING_AGENT_DIR when the run throws`, async () => {
+	test(`withTempHome restores ${label} PI_CODING_AGENT_DIR when the run rejects`, async () => {
 		await withPriorAgentDir(prior, async () => {
 			await expect(withTempHome(() => Promise.reject(new Error("run failed")))).rejects.toThrow(/run failed/);
+			assertAgentDirRestored(prior);
+		});
+	});
+
+	test(`withTempHome restores ${label} PI_CODING_AGENT_DIR when the run throws synchronously`, async () => {
+		await withPriorAgentDir(prior, async () => {
+			await expect(withTempHome(() => { throw new Error("run failed"); })).rejects.toThrow(/run failed/);
 			assertAgentDirRestored(prior);
 		});
 	});

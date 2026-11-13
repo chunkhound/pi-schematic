@@ -479,7 +479,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 	// Minimal TUI mock for ToolExecutionComponent/BashExecutionComponent.
 	// Parent invalidation is one-way from child session events below.
 	private readonly fakeUi = {
-		requestRender: () => { /* Child invalidations must not re-enter the parent render loop. */ },
+		requestRender: () => { /* Render requests from the nested ToolExecutionComponent/BashExecutionComponent instances must not re-enter the parent render loop. */ },
 	};
 	private details?: SpawnResultDetails;
 	private nestTheme?: Theme;
@@ -725,7 +725,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			// Share the deduplicated abort promise with the other abort paths (spawn
 			// invalidation, /reset) so one session never receives a second abort.
 			try {
-				void abortChildSession(state, session).catch(() => { /* No ExtensionContext to notify; the spawn path reports abort failures. */ });
+				void abortChildSession(state, session).catch(() => { /* No ExtensionContext to notify. The spawn reports a failure of this shared abort only when its tool signal aborts or it detects a reset; an abort started here with neither goes unreported. */ });
 			} finally {
 				state.liveChildSessions.delete(ownedToolCallId);
 			}

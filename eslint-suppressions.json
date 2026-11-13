@@ -25,18 +25,12 @@
     "@typescript-eslint/prefer-optional-chain": {
       "count": 1
     },
-    "@typescript-eslint/require-await": {
-      "count": 5
-    },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 2
     }
   },
   "handoff/command.ts": {
     "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
-    },
-    "@typescript-eslint/require-await": {
       "count": 1
     },
     "@typescript-eslint/strict-boolean-expressions": {
@@ -50,9 +44,6 @@
   },
   "handoff/tool.ts": {
     "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
-    },
-    "@typescript-eslint/require-await": {
       "count": 1
     },
     "@typescript-eslint/restrict-plus-operands": {
@@ -77,9 +68,6 @@
     },
     "@typescript-eslint/prefer-nullish-coalescing": {
       "count": 2
-    },
-    "@typescript-eslint/require-await": {
-      "count": 9
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 1
@@ -215,9 +203,6 @@
     "@typescript-eslint/no-dynamic-delete": {
       "count": 1
     },
-    "@typescript-eslint/no-empty-function": {
-      "count": 3
-    },
     "@typescript-eslint/no-invalid-void-type": {
       "count": 1
     },
@@ -244,9 +229,6 @@
     }
   },
   "notebook/pager.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 1
-    },
     "@typescript-eslint/prefer-nullish-coalescing": {
       "count": 1
     },
@@ -274,9 +256,6 @@
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 1
-    },
-    "@typescript-eslint/require-await": {
-      "count": 1
     }
   },
   "notebook/store.ts": {
@@ -294,17 +273,11 @@
     "@typescript-eslint/no-unused-vars": {
       "count": 1
     },
-    "@typescript-eslint/require-await": {
-      "count": 2
-    },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 4
     }
   },
   "notebook/topic-tool.ts": {
-    "@typescript-eslint/require-await": {
-      "count": 1
-    },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
     }
@@ -367,9 +340,6 @@
     }
   },
   "runtime-singletons.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 4
-    },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
     }
@@ -404,9 +374,6 @@
     }
   },
   "spawn/renderer.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 4
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 5
     },
@@ -450,15 +417,7 @@
       "count": 1
     }
   },
-  "state.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 1
-    }
-  },
   "tests/e2e/pty-harness.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 1
-    },
     "ban/wall-clock": {
       "count": 3
     }
@@ -474,9 +433,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 4
-    },
-    "@typescript-eslint/require-await": {
-      "count": 17
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
@@ -497,17 +453,11 @@
     }
   },
   "tests/e2e/real-host.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 1
-    },
     "@typescript-eslint/no-non-null-assertion": {
       "count": 7
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 6
-    },
-    "@typescript-eslint/require-await": {
-      "count": 4
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
@@ -526,9 +476,6 @@
     }
   },
   "tests/e2e/real-host.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 1
-    },
     "@typescript-eslint/no-unnecessary-condition": {
       "count": 1
     },
@@ -549,9 +496,6 @@
     }
   },
   "tests/e2e/test-host.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 15
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 2
     },
@@ -594,9 +538,6 @@
     }
   },
   "tests/unit/abort-child-session.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 3
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 1
     },
@@ -611,9 +552,6 @@
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
-    },
-    "@typescript-eslint/require-await": {
-      "count": 2
     }
   },
   "tests/unit/brand-assets.test.ts": {
@@ -715,17 +653,11 @@
     }
   },
   "tests/unit/handoff-boundary-session.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 14
-    },
     "@typescript-eslint/no-non-null-assertion": {
       "count": 2
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 7
-    },
-    "@typescript-eslint/require-await": {
-      "count": 18
     },
     "@typescript-eslint/unbound-method": {
       "count": 1
@@ -740,9 +672,6 @@
     }
   },
   "tests/unit/handoff.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 7
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 22
     },
@@ -770,9 +699,6 @@
     "@typescript-eslint/no-unused-vars": {
       "count": 1
     },
-    "@typescript-eslint/require-await": {
-      "count": 1
-    },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 4
     },
@@ -792,17 +718,11 @@
   "tests/unit/helpers.test.ts": {
     "@typescript-eslint/no-dynamic-delete": {
       "count": 2
-    },
-    "@typescript-eslint/require-await": {
-      "count": 5
     }
   },
   "tests/unit/helpers.ts": {
     "@typescript-eslint/no-dynamic-delete": {
       "count": 2
-    },
-    "@typescript-eslint/no-empty-function": {
-      "count": 8
     },
     "@typescript-eslint/no-explicit-any": {
       "count": 46
@@ -822,9 +742,6 @@
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 38
     },
-    "@typescript-eslint/require-await": {
-      "count": 1
-    },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 2
     },
@@ -839,11 +756,8 @@
     }
   },
   "tests/unit/model-group-frontmatter.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 3
-    },
     "@typescript-eslint/no-explicit-any": {
-      "count": 78
+      "count": 77
     },
     "@typescript-eslint/no-non-null-assertion": {
       "count": 79
@@ -869,9 +783,6 @@
     "@typescript-eslint/no-unused-vars": {
       "count": 4
     },
-    "@typescript-eslint/require-await": {
-      "count": 26
-    },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 4
     },
@@ -880,9 +791,6 @@
     }
   },
   "tests/unit/model-groups-autocomplete.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 1
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 2
     },
@@ -890,9 +798,6 @@
       "count": 2
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 2
-    },
-    "@typescript-eslint/require-await": {
       "count": 2
     },
     "@typescript-eslint/unbound-method": {
@@ -952,9 +857,6 @@
     "@typescript-eslint/no-unused-vars": {
       "count": 3
     },
-    "@typescript-eslint/require-await": {
-      "count": 3
-    },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 2
     },
@@ -976,9 +878,6 @@
     }
   },
   "tests/unit/model-groups-integration.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 27
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 4
     },
@@ -993,9 +892,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 9
-    },
-    "@typescript-eslint/require-await": {
-      "count": 3
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 2
@@ -1056,14 +952,8 @@
     }
   },
   "tests/unit/model-groups-tui.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 1
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 71
-    },
-    "@typescript-eslint/no-misused-spread": {
-      "count": 14
     },
     "@typescript-eslint/no-non-null-assertion": {
       "count": 4
@@ -1111,9 +1001,6 @@
     }
   },
   "tests/unit/notebook.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 22
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 123
     },
@@ -1141,9 +1028,6 @@
     "@typescript-eslint/no-unused-vars": {
       "count": 1
     },
-    "@typescript-eslint/require-await": {
-      "count": 14
-    },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 2
     },
@@ -1158,9 +1042,6 @@
     }
   },
   "tests/unit/notifications.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 3
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 1
     },
@@ -1243,9 +1124,6 @@
     }
   },
   "tests/unit/readonly-bash-classifier.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 1
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 1
     },
@@ -1263,9 +1141,6 @@
     }
   },
   "tests/unit/readonly-frontmatter.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 2
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 40
     },
@@ -1295,9 +1170,6 @@
     }
   },
   "tests/unit/readonly-handoff.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 3
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 95
     },
@@ -1405,9 +1277,6 @@
     }
   },
   "tests/unit/render-snapshots.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 6
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
@@ -1435,14 +1304,8 @@
     }
   },
   "tests/unit/spawn-event.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 8
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 10
-    },
-    "@typescript-eslint/no-misused-spread": {
-      "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 3
@@ -1473,14 +1336,8 @@
     }
   },
   "tests/unit/spawn-lifecycle.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 5
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 8
-    },
-    "@typescript-eslint/no-misused-spread": {
-      "count": 5
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 17
@@ -1499,9 +1356,6 @@
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 6
-    },
-    "@typescript-eslint/require-await": {
-      "count": 1
     }
   },
   "tests/unit/spawn-render.test.ts": {
@@ -1560,14 +1414,8 @@
     }
   },
   "tests/unit/spawn.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 49
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 113
-    },
-    "@typescript-eslint/no-misused-spread": {
-      "count": 2
     },
     "@typescript-eslint/no-non-null-assertion": {
       "count": 4
@@ -1599,9 +1447,6 @@
     "@typescript-eslint/only-throw-error": {
       "count": 1
     },
-    "@typescript-eslint/require-await": {
-      "count": 62
-    },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 1
     },
@@ -1610,9 +1455,6 @@
     }
   },
   "tests/unit/state-invariants.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 1
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 2
     },
@@ -1650,20 +1492,11 @@
     }
   },
   "tests/unit/test-host.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 1
-    },
-    "@typescript-eslint/require-await": {
       "count": 1
     }
   },
   "tests/unit/test-host.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 2
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 11
     },
@@ -1672,9 +1505,6 @@
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 5
-    },
-    "@typescript-eslint/require-await": {
-      "count": 2
     },
     "@typescript-eslint/unbound-method": {
       "count": 2
@@ -1728,9 +1558,6 @@
     }
   },
   "tests/unit/watchdog.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 3
-    },
     "@typescript-eslint/no-explicit-any": {
       "count": 24
     },
@@ -1792,9 +1619,6 @@
   "watchdog.ts": {
     "@typescript-eslint/no-non-null-assertion": {
       "count": 3
-    },
-    "@typescript-eslint/require-await": {
-      "count": 2
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1

@@ -24,9 +24,8 @@ export function registerHandoffCommand(pi: ExtensionAPI, state: SchematicState):
 			"Store the next context's instruction verbatim from your direction, have the LLM " +
 			"curate the notebook and supply the remaining context, then perform the handoff automatically.",
 
-		handler: (args, ctx) =>
+		handler: (direction, ctx) =>
 			asPromise(() => {
-				const direction = args;
 				if (!direction.trim()) {
 					if (ctx.hasUI) {ctx.ui.notify("Usage: /handoff <direction>", "error");}
 					return;

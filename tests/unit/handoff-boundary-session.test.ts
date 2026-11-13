@@ -116,7 +116,6 @@ function observer(observed: Observed): ExtensionFactory {
 	return (pi) => {
 		const record = (name: string) => () => {
 			observed.events.push(name);
-			return Promise.resolve();
 		};
 		pi.on("before_agent_start", record("before_agent_start"));
 		pi.on("agent_start", record("agent_start"));

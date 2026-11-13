@@ -370,42 +370,42 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 
 	pi.registerCommand(PROBE_COMMAND.dropNextCut, {
 		description: "Drop the next handoff cut and its continuation from the turn_end boundary",
-		handler: () => {
-			nextCutTamper = "drop";
-			return Promise.resolve();
-		},
+		handler: () =>
+			asPromise(() => {
+				nextCutTamper = "drop";
+			}),
 	});
 
 	pi.registerCommand(PROBE_COMMAND.dropNextSuccessor, {
 		description: "Keep the next handoff cut but drop its successor from the turn_end boundary",
-		handler: () => {
-			nextCutTamper = "dropSuccessor";
-			return Promise.resolve();
-		},
+		handler: () =>
+			asPromise(() => {
+				nextCutTamper = "dropSuccessor";
+			}),
 	});
 
 	pi.registerCommand(PROBE_COMMAND.compactAfterNextCut, {
 		description: "Append a compaction after the next handoff cut in the turn_end boundary",
-		handler: () => {
-			nextCutTamper = "compactAfter";
-			return Promise.resolve();
-		},
+		handler: () =>
+			asPromise(() => {
+				nextCutTamper = "compactAfter";
+			}),
 	});
 
 	pi.registerCommand(PROBE_COMMAND.dropNotebookRewriteAtNextCut, {
 		description: "Keep the next handoff cut and its successor but drop the notebook rewrite from the turn_end boundary",
-		handler: () => {
-			nextCutTamper = "dropNotebookRewrite";
-			return Promise.resolve();
-		},
+		handler: () =>
+			asPromise(() => {
+				nextCutTamper = "dropNotebookRewrite";
+			}),
 	});
 
 	pi.registerCommand(PROBE_COMMAND.abortAfterHandoff, {
 		description: "Abort the run once the next handoff call has returned without error",
-		handler: () => {
-			abortAfterHandoff = true;
-			return Promise.resolve();
-		},
+		handler: () =>
+			asPromise(() => {
+				abortAfterHandoff = true;
+			}),
 	});
 
 	pi.registerCommand(PROBE_COMMAND.tools, {

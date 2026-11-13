@@ -20,6 +20,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { RpcClient, type RpcClientOptions, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import type { TestContext } from "vitest";
+import { asPromise } from "../../as-promise.js";
 import { piManifestPath } from "../../pi-packages.mjs";
 import {
 	parseBarrierReport,
@@ -557,6 +558,6 @@ export async function withRealHost(t: TestContext, run: (host: RealHost) => void
 	}, 0);
 	const host = await starting;
 	t.signal.throwIfAborted();
-	body = Promise.resolve(run(host));
+	body = asPromise(() => run(host));
 	await body;
 }

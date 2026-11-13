@@ -998,7 +998,6 @@ test("saveNotebookPage serializes concurrent writes and preserves completion ord
 	});
 	const second = saveNotebookPage(pi, state, "entry-a", "second", () => {
 		order.push("second:start");
-		return Promise.resolve();
 	});
 	// Both writes hold the module-level lock, so a failing check must not leave them running into the next test.
 	onTestFinished(async () => {
@@ -1038,7 +1037,6 @@ test("saveNotebookPage keeps write order across runtime singleton swaps", async 
 		});
 		const second = saveNotebookPage(pi, state, "entry-a", "second", () => {
 			order.push("second:start");
-			return Promise.resolve();
 		});
 
 		await Promise.resolve();
