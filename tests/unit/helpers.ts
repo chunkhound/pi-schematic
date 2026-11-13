@@ -96,7 +96,15 @@ export type RenderContext = Parameters<NonNullable<ToolDefinition["renderResult"
  * whose override is `undefined` keep these defaults.
  */
 export function createToolRenderContext(overrides: Partial<RenderContext> = {}): RenderContext {
+	// Newer pi versions add the keybinding formatters `keyText` and `keyHint` to the
+	// render context. Spreading them from a variable keeps the literal valid against
+	// versions without them; calling one throws naming it.
+	const keybindingHints = {
+		keyText: unstubbed("context.keyText"),
+		keyHint: unstubbed("context.keyHint"),
+	};
 	return {
+		...keybindingHints,
 		args: {},
 		toolCallId: "tool-call-1",
 		invalidate: () => undefined,
