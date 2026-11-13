@@ -5,9 +5,8 @@
  * that must hold after every operation on a pure SchematicState.
  */
 
-import { expect, test } from "vitest";
+import { afterEach, expect, test } from "vitest";
 import * as fc from "fast-check";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
 import { createState, resetState, abortAndClearChildSessions, invalidateHandoffState, newRequestedHandoff } from "../../state.js";
 import type { SchematicState } from "../../state.js";
@@ -18,10 +17,14 @@ import {
 import { saveNotebookPage } from "../../notebook/store.js";
 import { useTestHarness } from "../test-utils.js";
 import { createSession } from "./helpers.js";
+import { createTestHost } from "./test-host.js";
 
-// ── Mock ExtensionAPI ─────────────────────────────────────────────────
+// ── Host API ──────────────────────────────────────────────────────────
 
-const mockPi = { appendEntry: () => {} } as unknown as ExtensionAPI;
+// A host with nothing registered; saveNotebookPage only appends entries to it.
+const mockPi = await createTestHost(() => {});
+// No test reads the entries; dropping them keeps the shared host from growing across tests.
+afterEach(() => { mockPi.appendedEntries.length = 0; });
 
 /** First line fits, second line alone exceeds the byte cap: truncates to a clipped head. */
 const CLIPPED_BODY = "head\n" + "x".repeat(DEFAULT_MAX_BYTES + 1);

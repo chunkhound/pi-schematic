@@ -20,7 +20,7 @@ import {
 import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModel, type ModelGroupScope, type ModelGroupsAccess, type ResolvedModelGroup } from "../../model-groups/types.js";
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import { testMinContext } from "./model-groups-constraints-fixture.js";
-import { createModelRegistry, testModel, withTempAgentDir } from "./helpers.js";
+import { createModelRegistry, recordOf, testModel, withTempAgentDir } from "./helpers.js";
 import { withTemp } from "./model-groups-helpers.js";
 
 function access(cwd: string, policy: ModelGroupsAccess["policy"] = "global-project"): ModelGroupsAccess { return { cwd, policy }; }
@@ -443,8 +443,8 @@ test("opaque constraint values are deep-cloned on load — no aliasing between s
 	saveModelGroups("project", a, { version: 2, groups: { deep: { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { testMinContext: nested } } } });
 	const loaded = loadModelGroups(a);
 	const merged = loaded.merged.find((g) => g.name === "deep")!;
-	(merged.constraints!.testMinContext as { min: number }).min = 99;
-	expect((loaded.configs.project.groups.deep.constraints!.testMinContext as { min: number }).min, "mutating the merged view must not alias the store copy").toBe(5);
+	recordOf(merged.constraints!.testMinContext, "the merged constraint value").min = 99;
+	expect(recordOf(loaded.configs.project.groups.deep.constraints!.testMinContext, "the stored constraint value").min, "mutating the merged view must not alias the store copy").toBe(5);
 	expect(merged.constraints!.testMinContext, "nested constraint values must be distinct objects").not.toBe((loaded.configs.project.groups.deep.constraints!.testMinContext));
 }));
 

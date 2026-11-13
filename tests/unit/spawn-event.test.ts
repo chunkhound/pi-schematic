@@ -1,6 +1,6 @@
 import type { Component } from "@earendil-works/pi-tui";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { beforeAll, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { createState, type SchematicState } from "../../state.js";
 import { createSession, createSubscribableSession, createToolRenderContext, theme } from "./helpers.js";
 import { createTestHost, getToolRenderResult, type ToolRenderResult } from "./test-host.js";
@@ -117,10 +117,14 @@ test("frame scheduler contains invalidate callback failures and continues health
 
 test("frame scheduler creates only one timer for a failed-target recovery frame", () => {
 	const scheduler = getSingletons().frameScheduler;
-	const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation((callback: () => void) => {
-		return { callback } as unknown as ReturnType<typeof setTimeout>;
+	// Fake timers hand out a distinct handle per call and never fire. The spy is restored before the
+	// real timers come back, so the next test's spy restore cannot reinstall the fake.
+	vi.useFakeTimers();
+	const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+	onTestFinished(() => {
+		setTimeoutSpy.mockRestore();
+		vi.useRealTimers();
 	});
-	vi.spyOn(globalThis, "clearTimeout").mockImplementation((() => {}));
 	const failing = {
 		flushPendingUpdates() { throw new Error("retry later"); },
 		clearRenderCache() {},

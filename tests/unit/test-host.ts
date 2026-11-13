@@ -63,14 +63,17 @@ type ThinkingLevel = ReturnType<ExtensionAPI["getThinkingLevel"]>;
 async function importInternal<T>(relativePath: string, exportNames: readonly string[]): Promise<T> {
 	const guidance = "This host pins Pi's internal dist layout; update tests/unit/test-host.ts for the installed Pi version.";
 	const url = pathToFileURL(join(dirname(piManifestPath), "dist", relativePath)).href;
-	let mod: Record<string, unknown>;
+	let mod: unknown;
 	try {
-		mod = (await import(url)) as Record<string, unknown>;
+		mod = await import(url);
 	} catch (cause) {
 		throw new Error(`The test host could not load pi's internal module at ${url}. ${guidance}`, { cause });
 	}
+	if (typeof mod !== "object" || mod === null) {
+		throw new Error(`pi's internal module at ${url} is not a module namespace object. ${guidance}`);
+	}
 	for (const exportName of exportNames) {
-		if (typeof mod[exportName] !== "function") {
+		if (typeof Reflect.get(mod, exportName) !== "function") {
 			throw new Error(`pi's internal module at ${url} does not export ${exportName} as a function. ${guidance}`);
 		}
 	}
@@ -317,25 +320,31 @@ const hosts = new WeakMap<ExtensionAPI, { extension: Extension; state: HostState
 
 function stampAccessors(api: ExtensionAPI, extension: Extension, state: HostState): TestPI {
 	hosts.set(api, { extension, state });
-	const pi = api as TestPI;
-	pi.handlers = extension.handlers;
-	pi.commands = extension.commands;
-	pi.shortcuts = extension.shortcuts;
-	pi.sentUserMessages = state.sentUserMessages;
-	pi.sentMessages = state.sentMessages;
-	pi.appendedEntries = state.appendedEntries;
-	Object.defineProperty(pi, "tools", { get: () => deriveTools(extension), configurable: true });
+	// `tools` and `activeTools` start as values so the stamped object is typed as a TestPI; the
+	// non-enumerable accessors below replace them.
+	const pi: TestPI = Object.assign(api, {
+		handlers: extension.handlers,
+		commands: extension.commands,
+		shortcuts: extension.shortcuts,
+		sentUserMessages: state.sentUserMessages,
+		sentMessages: state.sentMessages,
+		appendedEntries: state.appendedEntries,
+		tools: deriveTools(extension),
+		activeTools: state.activeTools,
+		setCommands: (commands: SlashCommandInfo[]) => {
+			state.commands = [...commands];
+		},
+		exec: async () => {
+			throw new Error("pi.exec is not available in the test host; override pi.exec in the test if needed.");
+		},
+	});
+	Object.defineProperty(pi, "tools", { get: () => deriveTools(extension), enumerable: false, configurable: true });
 	Object.defineProperty(pi, "activeTools", {
 		get: () => state.activeTools,
 		set: (tools: string[]) => { applyActiveTools(state, tools); },
+		enumerable: false,
 		configurable: true,
 	});
-	pi.setCommands = (commands: SlashCommandInfo[]) => {
-		state.commands = [...commands];
-	};
-	pi.exec = async () => {
-		throw new Error("pi.exec is not available in the test host; override pi.exec in the test if needed.");
-	};
 	return pi;
 }
 

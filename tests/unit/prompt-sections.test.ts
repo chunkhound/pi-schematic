@@ -7,7 +7,7 @@ import { modelGroupsPath } from "../../model-groups/store.js";
 import { assertPresent } from "../assertions.js";
 import { createBeforeAgentStartEvent, createTestHost, emitBeforeAgentStart, getCommand, getHandler, getTool } from "./test-host.js";
 import { withTemp } from "./model-groups-helpers.js";
-import { callHandlers, createCommandContext, handoffToolResult, makeTUICtx, turnEndEvent } from "./helpers.js";
+import { boundaryEntries, callHandlers, createCommandContext, handoffToolResult, makeTUICtx, turnEndEvent } from "./helpers.js";
 
 type HostContext = ExtensionCommandContext & ExtensionToolContext;
 
@@ -264,8 +264,7 @@ test("re-renders the topic and notebook sections after a handoff completes", asy
 		handoffCtx,
 	);
 	const results = await callHandlers(pi, "turn_end", turnEndEvent({ toolResults: [handoffToolResult("handoff")] }), handoffCtx);
-	const boundary = results.find((result) => result !== undefined) as { entries: Record<string, unknown>[] };
-	branch = boundary.entries.map((entry, index) => ({ ...entry, id: `entry-${index}` }));
+	branch = boundaryEntries(results).map((entry, index) => ({ ...entry, id: `entry-${index}` }));
 	await callHandlers(pi, "turn_start", { type: "turn_start", turnIndex: 1, timestamp: 0 }, handoffCtx);
 	const afterHandoff = createBeforeAgentStartEvent();
 	await handler(afterHandoff, ctx);

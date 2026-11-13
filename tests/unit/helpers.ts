@@ -30,10 +30,12 @@ import { assertPresent } from "../assertions.js";
 import { AGENT_DIR_ENV_KEY } from "../paths.js";
 import { createTestHost, getTool, loadTestKeybindings, type TestPI } from "./test-host.js";
 
-export const theme = {
+export const theme = createTheme({
 	fg: (_name: string, text: string) => text,
 	bold: (text: string) => text,
-} as unknown as Theme;
+	// No `bg`: renderers that find none skip the shell background.
+	bg: undefined,
+});
 
 export const EMPTY_CHILD_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 
@@ -84,11 +86,11 @@ export function assertErrorResult(result: unknown, text: string, usage: unknown)
 	expect(result.usage).toStrictEqual(usage);
 }
 
-export const ansiTheme = {
+export const ansiTheme = createTheme({
 	fg: (_name: string, text: string) => `\u001b[38;5;245m${text}\u001b[39m`,
 	bg: (_name: string, text: string) => `\u001b[48;5;236m${text}\u001b[49m`,
 	bold: (text: string) => text,
-} as unknown as Theme;
+});
 
 const HOME_ENV_KEYS = ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"] as const;
 
@@ -100,7 +102,7 @@ function restoreEnv(key: string, value: string | undefined): void {
 // pi resolves its agent directory from PI_CODING_AGENT_DIR before HOME, so the home helpers clear
 // it; otherwise an exported variable redirects global paths away from the temp home.
 export function setTempHome(home: string): () => void {
-	const snapshot = Object.fromEntries(HOME_ENV_KEYS.map((key) => [key, process.env[key]])) as Record<typeof HOME_ENV_KEYS[number], string | undefined>;
+	const snapshot = new Map<typeof HOME_ENV_KEYS[number], string | undefined>(HOME_ENV_KEYS.map((key) => [key, process.env[key]]));
 	const previousAgentDir = process.env[AGENT_DIR_ENV_KEY];
 	process.env.HOME = home;
 	process.env.USERPROFILE = home;
@@ -108,7 +110,7 @@ export function setTempHome(home: string): () => void {
 	delete process.env.HOMEPATH;
 	delete process.env[AGENT_DIR_ENV_KEY];
 	return () => {
-		for (const key of HOME_ENV_KEYS) {restoreEnv(key, snapshot[key]);}
+		for (const key of HOME_ENV_KEYS) {restoreEnv(key, snapshot.get(key));}
 		restoreEnv(AGENT_DIR_ENV_KEY, previousAgentDir);
 	};
 }
@@ -192,6 +194,13 @@ export function createSubscribableSession(messages: unknown[] = []) {
 		} as unknown as import("@earendil-works/pi-coding-agent").AgentSession,
 		emit: (event: unknown) => handler?.(event),
 	};
+}
+
+/** The entries of the first `turn_end` handler result that is not `undefined`; throws unless they are an array of objects. */
+export function boundaryEntries(results: unknown[]): Record<string, unknown>[] {
+	const { entries } = recordOf(results.find((result) => result !== undefined), "the turn_end boundary result");
+	if (!Array.isArray(entries)) {throw new Error("Expected the turn_end boundary result to carry an entries array.");}
+	return entries.map((entry: unknown) => recordOf(entry, "a turn_end boundary entry"));
 }
 
 export function stripAnsi(text: string): string {
@@ -364,6 +373,11 @@ function guardedInstance<T extends object>(prototype: T, members: Partial<T>, un
 			return value;
 		},
 	});
+}
+
+/** A `Theme` whose members are `members`; reading any other `Theme` member throws, naming it. */
+export function createTheme(members: Partial<Theme>): Theme {
+	return guardedInstance(Theme.prototype, members, (property) => new Error(`theme.${property} is not stubbed in this test theme; add it to the members.`));
 }
 
 /** A `ModelRegistry` whose methods are `members`; reading any other `ModelRegistry` method throws, naming it. */
@@ -885,14 +899,18 @@ export default function(pi) {
 		} catch (error) {
 			// Attach the partial proof so rejecting tests can assert bookkeeping
 			// (e.g. that no update was published before an early abort).
-			throw Object.assign(error as Error, {
-				proof: {
-					state,
-					updates,
-					observedMessages: probeGlobal("__agenticE2eMessages") ?? [],
-					observedThinking: probeGlobal("__agenticE2eThinking") ?? [],
-				},
-			});
+			// A primitive or null rejection cannot carry the proof and is rethrown unchanged.
+			if (typeof error === "object" && error !== null) {
+				Object.assign(error, {
+					proof: {
+						state,
+						updates,
+						observedMessages: probeGlobal("__agenticE2eMessages") ?? [],
+						observedThinking: probeGlobal("__agenticE2eThinking") ?? [],
+					},
+				});
+			}
+			throw error;
 		}
 		const bashWriteExists = existsSync(readonlyWriteTarget);
 		return {

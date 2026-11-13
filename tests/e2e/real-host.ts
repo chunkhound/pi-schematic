@@ -19,7 +19,6 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { RpcClient, type RpcClientOptions, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
-import type { TestContext } from "vitest";
 import { piManifestPath } from "../../pi-packages.mjs";
 import {
 	isJsonObject,
@@ -527,6 +526,12 @@ function removeRoot(root: string): void {
 	rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
 
+/** The members of a Vitest test context `withRealHost` uses. */
+export interface HostTestContext {
+	signal: AbortSignal;
+	onTestFinished(fn: () => Promise<void>, timeout?: number): void;
+}
+
 /**
  * Start a host and run `run` against it. The host closes once, from `t`'s finish callback,
  * whether the test passed, failed or timed out, a timeout during start included; a close error
@@ -535,7 +540,7 @@ function removeRoot(root: string): void {
  * finishes its step against a live host, bounded by its own deadlines, and does not run into the
  * next test.
  */
-export async function withRealHost(t: TestContext, run: (host: RealHost) => Promise<void>, options?: RealHostOptions): Promise<void> {
+export async function withRealHost(t: HostTestContext, run: (host: RealHost) => Promise<void>, options?: RealHostOptions): Promise<void> {
 	const starting = RealHost.start(options);
 	let body: Promise<void> | undefined;
 	// The explicit 0 keeps the close independent of the project's hookTimeout. Under a nonzero
