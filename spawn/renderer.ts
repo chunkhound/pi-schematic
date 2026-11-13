@@ -98,10 +98,13 @@ interface SpawnChildMessage {
 
 /** Runtime guard: validate that a value is structurally compatible with ToolResultLike. */
 function asToolResult(value: unknown): ToolResultLike {
-	if (typeof value === "object" && value !== null && "content" in value && Array.isArray(value.content)) {
-		return value as ToolResultLike;
-	}
+	if (isToolResultLike(value)) {return value;}
 	return { content: [] };
+}
+
+// An object whose `content` is an array; the content blocks themselves are not checked.
+function isToolResultLike(value: unknown): value is ToolResultLike {
+	return isRecord(value) && Array.isArray(value.content);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
