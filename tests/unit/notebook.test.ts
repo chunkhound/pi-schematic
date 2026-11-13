@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { TUI, Text } from "@earendil-works/pi-tui";
+import type { TUI } from "@earendil-works/pi-tui";
 import type {
 	AgentToolResult,
 	AgentToolUpdateCallback,
@@ -18,13 +18,13 @@ import type {
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, SessionManager } from "@earendil-works/pi-coding-agent";
 import { createState, resetState, invalidateHandoffState } from "../../state.js";
 import { registerNotebookRehydration, reconstructNotebook } from "../../notebook/rehydration.js";
-import { buildNotebookDiscardDrafts, formatByteCap, formatPagePreview, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
+import { buildNotebookDiscardDrafts, formatByteCap, formatPagePreview, formatPageTuiPreview, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
 import { openInPager, resolvePager, spawnPager, __setPagerRuntimeForTests } from "../../notebook/pager.js";
 import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
 import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
 import { assertPresent, expectSuffix } from "../assertions.js";
-import { detailsOf, firstText, isRecord, recordOf, callHandlers, createCommandContext, createExtensionContext, createToolContext, createToolRenderContext, createUIContext, handoffToolResult, turnEndEvent, makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
+import { boundaryEntries, detailsOf, firstText, isRecord, recordOf, callHandlers, createCommandContext, createExtensionContext, createToolContext, createToolRenderContext, createUIContext, handoffToolResult, turnEndEvent, makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
 import { createBeforeAgentStartEvent, createTestHost, getCommand, getHandler, getHandlers, getHostRecords, getTool } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
 
@@ -488,7 +488,7 @@ test("notebook tool renderers expose stable call/result summaries", async () => 
 	const state = createState();
 	const [notebookWrite, notebookRead, notebookIndex] = createNotebookToolDefinitions(pi, state);
 
-	const addCall = notebookWrite.renderCall!({ name: "entry-a", content: "first line\nsecond line" }, theme, createToolRenderContext()) as Text;
+	const addCall = notebookWrite.renderCall!({ name: "entry-a", content: "first line\nsecond line" }, theme, createToolRenderContext());
 	expect(stripAnsi(addCall.render(120).join("\n"))).toMatch(/notebook_write "entry-a": first line/);
 
 	const addResult = notebookWrite.renderResult!(
@@ -496,7 +496,7 @@ test("notebook tool renderers expose stable call/result summaries", async () => 
 		{ expanded: true, isPartial: false },
 		theme,
 		createToolRenderContext({ args: { name: "entry-a", content: "first line\nsecond line" } }),
-	) as Text;
+	);
 	expect(stripAnsi(addResult.render(120).join("\n"))).toMatch(/Saved "entry-a": first line/);
 	expect(stripAnsi(addResult.render(120).join("\n"))).toMatch(/entry-a/);
 
@@ -505,7 +505,7 @@ test("notebook tool renderers expose stable call/result summaries", async () => 
 		{ expanded: true, isPartial: false },
 		theme,
 		createToolRenderContext({ args: { name: "entry-a" } }),
-	) as Text;
+	);
 	expect(stripAnsi(getResult.render(120).join("\n"))).toMatch(/"entry-a"/);
 	expect(stripAnsi(getResult.render(120).join("\n"))).toMatch(/body/);
 
@@ -514,7 +514,7 @@ test("notebook tool renderers expose stable call/result summaries", async () => 
 		{ expanded: true, isPartial: false },
 		theme,
 		createToolRenderContext({ args: { name: "entry-a" } }),
-	) as Text;
+	);
 	expect(stripAnsi(getResultWithDelimiters.render(120).join("\n"))).toMatch(/line 1/);
 	expect(stripAnsi(getResultWithDelimiters.render(120).join("\n"))).toMatch(/line 2/);
 
@@ -523,7 +523,7 @@ test("notebook tool renderers expose stable call/result summaries", async () => 
 		{ expanded: true, isPartial: false },
 		theme,
 		createToolRenderContext(),
-	) as Text;
+	);
 	expect(stripAnsi(listResult.render(120).join("\n"))).toMatch(/2 pages/);
 	expect(stripAnsi(listResult.render(120).join("\n"))).toMatch(/entry-a/);
 	expect(stripAnsi(listResult.render(120).join("\n"))).toMatch(/entry-b/);
@@ -969,8 +969,7 @@ test("/notebook reopens the list when the selected page vanished while it was op
 	});
 	await getTool(pi, "handoff").execute("2", { nextInstruction: "continue", discardPages: ["alpha"] }, undefined, undefined, handoffCtx);
 	const results = await callHandlers(pi, "turn_end", turnEndEvent({ toolResults: [handoffToolResult("2")] }), handoffCtx);
-	const boundary = results.find((result) => result !== undefined) as { entries: Record<string, unknown>[] };
-	branch = boundary.entries.map((entry, index) => ({ ...entry, id: `entry-${index}` }));
+	branch = boundaryEntries(results).map((entry, index) => ({ ...entry, id: `entry-${index}` }));
 
 	// turn_start applies the discard after the list was built with alpha and before Enter selects it.
 	const { custom, reopens } = enterOnFirstOpen(async () => {
@@ -1735,11 +1734,7 @@ test("discard survivor retains its durable clipped flag", async () => {
 	expect(detailsOf(read).clipped).toBe(true);
 });
 
-test("formatPageTuiPreview appends a badge only when clipped", async () => {
-	const mod = (await import("../../notebook/store.js")) as unknown as Record<string, unknown>;
-	expect(mod.formatPageTuiPreview).toBeTypeOf("function");
-	const formatPageTuiPreview = mod.formatPageTuiPreview as (content: string, clipped: boolean) => string;
-
+test("formatPageTuiPreview appends a badge only when clipped", () => {
 	expect(formatPageTuiPreview(L(2000), true)).toBe("x [truncated]");
 	expect(formatPageTuiPreview(C, false)).toBe("first");
 	expect(formatPageTuiPreview("p".repeat(81) + "\ntail", true)).toBe("p".repeat(77) + "... [truncated]");

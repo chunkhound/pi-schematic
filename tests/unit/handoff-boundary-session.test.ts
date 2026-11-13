@@ -57,8 +57,8 @@ import {
 } from "../../handoff/copy.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS, buildNudge } from "../../watchdog.js";
-import { createDeferred, setTempHome } from "./helpers.js";
-import { assertPresent } from "../assertions.js";
+import { createDeferred, createUIContext, recordOf, setTempHome } from "./helpers.js";
+import { assertPresent, assertString } from "../assertions.js";
 
 type ExtensionFactory = (pi: ExtensionAPI) => void;
 type ContextUsage = ReturnType<AgentSession["getContextUsage"]>;
@@ -137,10 +137,10 @@ function observer(observed: Observed): ExtensionFactory {
 /**
  * A UI context that records each notify as `notify:<level>:<message>` and each
  * setStatus as `status:<key>:<text>` in `log`, in call order. Attaching it makes
- * `ctx.hasUI` true. The theme returns text unstyled.
+ * `ctx.hasUI` true. The theme returns text unstyled, and `custom` rejects.
  */
 function recordingUI(log: string[]): ExtensionUIContext {
-	const ui = {
+	return createUIContext({
 		select: async () => undefined,
 		confirm: async () => false,
 		input: async () => undefined,
@@ -155,7 +155,6 @@ function recordingUI(log: string[]): ExtensionUIContext {
 		setFooter: () => {},
 		setHeader: () => {},
 		setTitle: () => {},
-		custom: async () => undefined,
 		pasteToEditor: () => {},
 		setEditorText: () => {},
 		getEditorText: () => "",
@@ -163,14 +162,12 @@ function recordingUI(log: string[]): ExtensionUIContext {
 		addAutocompleteProvider: () => {},
 		setEditorComponent: () => {},
 		getEditorComponent: () => undefined,
-		theme: { fg: (_color: string, text: string) => text, bold: (text: string) => text },
 		getAllThemes: () => [],
 		getTheme: () => undefined,
 		setTheme: () => ({ success: false, error: "UI not available" }),
 		getToolsExpanded: () => false,
 		setToolsExpanded: () => {},
-	};
-	return ui as unknown as ExtensionUIContext;
+	});
 }
 
 /**
@@ -306,8 +303,8 @@ describe("handoff boundary in a real agent session", () => {
 		assertEntryType(cut, "compaction");
 		expect(cut.firstKeptEntryId, "a retain-none cut keeps nothing before itself").toBe(cut.id);
 		expect(cut.summary).toBe(buildContinuationFrame());
-		const handoffId = (cut.details as { handoffId?: unknown }).handoffId;
-		expect(handoffId).toBeTypeOf("string");
+		const handoffId = recordOf(cut.details, "the cut details").handoffId;
+		assertString(handoffId);
 		const [successor] = entriesOf(sessionManager, "custom_message", HANDOFF_SUCCESSOR_CUSTOM_TYPE);
 		const [note] = entriesOf(sessionManager, "custom_message", HANDOFF_NOTE_CUSTOM_TYPE);
 		assertEntryType(successor, "custom_message");
@@ -520,8 +517,8 @@ describe("handoff boundary in a real agent session", () => {
 		expect(cuts, "the cut is persisted").toHaveLength(1);
 		const [cut] = cuts;
 		assertEntryType(cut, "compaction");
-		const handoffId = (cut.details as { handoffId?: unknown }).handoffId;
-		expect(handoffId).toBeTypeOf("string");
+		const handoffId = recordOf(cut.details, "the cut details").handoffId;
+		assertString(handoffId);
 		const successors = entriesOf(sessionManager, "custom_message", HANDOFF_SUCCESSOR_CUSTOM_TYPE);
 		expect(successors, "the successor is persisted").toHaveLength(1);
 		assertEntryType(successors[0], "custom_message");
@@ -693,9 +690,9 @@ describe("failed handoff cut in a real agent session", () => {
 			expect(failures).toHaveLength(1);
 			const [failure] = failures;
 			assertEntryType(failure, "custom_message");
-			expect(failure.content).toBeTypeOf("string");
-			expect((failure.content as string), "the failure carries the instruction").toContain("## Next instruction\n\nfinish the report");
-			expect((failure.content as string), "the failure carries the context").toContain(HANDOFF_CONTEXT);
+			assertString(failure.content);
+			expect(failure.content, "the failure carries the instruction").toContain("## Next instruction\n\nfinish the report");
+			expect(failure.content, "the failure carries the context").toContain(HANDOFF_CONTEXT);
 			expect(failure.display).toBe(true);
 			expect(uiAfterHandoffRun, JSON.stringify(uiAfterHandoffRun)).toContain(`notify:error:Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}. The instruction is in the failure message.`);
 			expect(uiAfterHandoffRun.filter((line) => line.startsWith("notify:info:Handoff complete")), "no completion notice").toStrictEqual([]);
@@ -742,9 +739,9 @@ describe("failed handoff cut in a real agent session", () => {
 		expect(failures).toHaveLength(1);
 		const [failure] = failures;
 		assertEntryType(failure, "custom_message");
-		expect(failure.content).toBeTypeOf("string");
-		expect((failure.content as string), "the failure carries the instruction").toContain("## Next instruction\n\nfinish the report");
-		expect((failure.content as string), "the failure carries the context").toContain(HANDOFF_CONTEXT);
+		assertString(failure.content);
+		expect(failure.content, "the failure carries the instruction").toContain("## Next instruction\n\nfinish the report");
+		expect(failure.content, "the failure carries the context").toContain(HANDOFF_CONTEXT);
 		expect(ui, JSON.stringify(ui)).toContain(`notify:error:Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}. The instruction is in the failure message.`);
 		expect(ui.filter((line) => line.startsWith("notify:info:Handoff complete")), "no completion notice").toStrictEqual([]);
 		expect(ui, "no successor-not-run warning").not.toContain(`notify:warning:${HANDOFF_SUCCESSOR_NOT_RUN}`);

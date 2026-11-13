@@ -8,27 +8,33 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { Type, type Static } from "typebox";
+import { Value } from "typebox/value";
 import { expect, test } from "vitest";
+import { assertString } from "../assertions.js";
 import { REPO_ROOT, REPO_ROOT_URL } from "../paths.js";
+import { parseJson } from "./parse-json.js";
 import { CHILD_TIMEOUT_MS, spawnNode } from "./spawn-node.js";
 
-interface AuditRecord {
-	active: boolean;
-	expiry: string;
-	notes: string;
-}
+// The schemas check only the shape the parsers need; the tests assert each field with a message
+// that names the offending entry.
+const JsonRecord = Type.Record(Type.String(), Type.Unknown());
 
-interface AuditConfig {
-	$schema: string;
-	moderate: boolean;
-	allowlist: Record<string, AuditRecord>[];
-}
+const AuditConfig = Type.Object({
+	$schema: Type.Unknown(),
+	moderate: Type.Unknown(),
+	allowlist: Type.Array(Type.Unknown()),
+});
+type AuditConfig = Static<typeof AuditConfig>;
 
-interface PackageJson {
-	version: string;
-	peerDependencies: Record<string, string>;
-	devDependencies: Record<string, string>;
-}
+const PackageJson = Type.Object({
+	version: Type.String(),
+	peerDependencies: JsonRecord,
+	devDependencies: JsonRecord,
+});
+type PackageJson = Static<typeof PackageJson>;
+
+const LockPackages = Type.Record(Type.String(), Type.Object({ version: Type.Optional(Type.String()) }));
 
 const AUDIT_SCHEMA = "https://github.com/IBM/audit-ci/raw/main/docs/schema.json";
 const AUDIT_CONFIG_PATH = new URL("audit-ci.jsonc", REPO_ROOT_URL);
@@ -69,11 +75,11 @@ function parseAuditConfig(): AuditConfig {
 	const lines = readText(AUDIT_CONFIG_PATH)
 		.split("\n")
 		.filter((line) => !line.trimStart().startsWith("//"));
-	return JSON.parse(lines.join("\n")) as AuditConfig;
+	return parseJson(AuditConfig, lines.join("\n"), "audit-ci.jsonc");
 }
 
 function parsePackageJson(): PackageJson {
-	return JSON.parse(readText(PACKAGE_JSON_PATH)) as PackageJson;
+	return parseJson(PackageJson, readText(PACKAGE_JSON_PATH), "package.json");
 }
 
 function stepIndex(workflow: string, step: string): number {
@@ -90,11 +96,11 @@ function stepBlock(workflow: string, step: string): string {
 	return workflow.slice(afterName, end);
 }
 
-function allowlistEntries(config: AuditConfig): [string, AuditRecord][] {
+function allowlistEntries(config: AuditConfig): [string, Record<string, unknown>][] {
 	return config.allowlist.map((entry) => {
-		const [key, value] = Object.entries(entry)[0] ?? [];
-		expect(key, "allowlist entry must define exactly one scoped advisory path").toBeTruthy();
-		expect(value, `missing metadata for allowlist entry: ${key}`).toBeTruthy();
+		const [key, value] = Value.Check(JsonRecord, entry) ? Object.entries(entry)[0] ?? [] : [];
+		if (key === undefined || key === "") {throw new Error("allowlist entry must define exactly one scoped advisory path");}
+		if (!Value.Check(JsonRecord, value)) {throw new Error(`missing metadata for allowlist entry: ${key}`);}
 		return [key, value];
 	});
 }
@@ -121,7 +127,7 @@ function runAuditCi(): void {
 
 test("pinned Pi compatibility metadata stays exact", () => {
 	const packageJson = parsePackageJson();
-	const lock = JSON.parse(readText(LOCK_PATH)) as { packages: Record<string, { version?: string }> };
+	const lock = parseJson(Type.Object({ packages: LockPackages }), readText(LOCK_PATH), "package-lock.json");
 	for (const name of PINNED_PI_PACKAGES) {
 		expect(packageJson.peerDependencies[name], `${name} peer must require ${EXPECTED_PI_PEER}`).toBe(EXPECTED_PI_PEER);
 	}
@@ -139,7 +145,7 @@ test("pinned Pi compatibility metadata stays exact", () => {
 
 test("package and lockfile versions agree", () => {
 	const packageJson = parsePackageJson();
-	const lock = JSON.parse(readText(LOCK_PATH)) as { version?: string; packages: Record<string, { version?: string }> };
+	const lock = parseJson(Type.Object({ version: Type.Optional(Type.String()), packages: LockPackages }), readText(LOCK_PATH), "package-lock.json");
 	expect(lock.version, "package-lock.json version must match package.json").toBe(packageJson.version);
 	expect(lock.packages[""]?.version, "package-lock.json root package version must match package.json").toBe(packageJson.version);
 });
@@ -195,10 +201,12 @@ test("audit-ci config enforces the reviewed allowlist policy", () => {
 	const today = Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
 	for (const [key, value] of entries) {
 		expect(key).toMatch(/^GHSA-[a-z0-9-]+(?:\|[^|>]+(?:>[^|>]+)*)?$/);
-		expect(value.active).toBe(true);
+		expect(value.active, `allowlist entry must be active: ${key}`).toBe(true);
+		assertString(value.expiry, `allowlist entry needs an expiry date: ${key}`);
 		expect(value.expiry).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 		expect(parseIsoDate(value.expiry), `expired allowlist entry: ${key}`).toBeGreaterThanOrEqual(today);
-		expect(value.notes.trim()).not.toBe("");
+		assertString(value.notes, `allowlist entry needs notes: ${key}`);
+		expect(value.notes.trim(), `allowlist entry needs notes: ${key}`).not.toBe("");
 	}
 });
 

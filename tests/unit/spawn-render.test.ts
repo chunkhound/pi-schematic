@@ -11,7 +11,7 @@
 import { beforeAll, beforeEach, expect, onTestFinished, test } from "vitest";
 import { resetCapabilitiesCache, setCapabilities } from "@earendil-works/pi-tui";
 import { assertPresent, expectPrefix } from "../assertions.js";
-import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { createState, type SchematicState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
 import { renderSpawnResult } from "../../spawn/renderer.js";
@@ -24,6 +24,7 @@ import {
 	getRenderedLine,
 	getLineContaining,
 	assertShellBackgroundPreserved,
+	createTheme,
 } from "./helpers.js";
 import { createTestHost, getToolRenderResult, type ToolRenderResult } from "./test-host.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
@@ -227,11 +228,11 @@ test("collapsed nested spawn truncation preserves shell background across previe
 });
 
 test("collapsed nested spawn keeps truncated stats line calm", async () => {
-	const markerTheme = {
+	const markerTheme = createTheme({
 		fg: (name: string, text: string) => `<${name}>${text}</${name}>`,
 		bg: (_name: string, text: string) => text,
 		bold: (text: string) => text,
-	} as unknown as Theme;
+	});
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
 	const session = createSession([

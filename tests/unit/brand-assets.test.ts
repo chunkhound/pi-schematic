@@ -8,9 +8,11 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { Type } from "typebox";
 import { expect, test } from "vitest";
 import { assertPresent } from "../assertions.js";
 import { REPO_ROOT_URL } from "../paths.js";
+import { parseJson } from "./parse-json.js";
 
 const PACKAGE_JSON_URL = new URL("package.json", REPO_ROOT_URL);
 const README_URL = new URL("README.md", REPO_ROOT_URL);
@@ -46,7 +48,11 @@ function pathFills(svg: string): string[] {
 }
 
 function piImage(): { url: string; repoPath: string } {
-	const packageJson = JSON.parse(readText(PACKAGE_JSON_URL)) as { pi?: { image?: string } };
+	const packageJson = parseJson(
+		Type.Object({ pi: Type.Optional(Type.Object({ image: Type.Optional(Type.String()) })) }),
+		readText(PACKAGE_JSON_URL),
+		"package.json",
+	);
 	const url = packageJson.pi?.image;
 	assertPresent(url, "pi.image must be set for the pi.dev gallery");
 	const path = (PI_IMAGE_PATTERN.exec(url))?.groups?.path;

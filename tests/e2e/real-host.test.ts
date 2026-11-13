@@ -4,7 +4,7 @@
  * follow-up handling, compaction, branch lineage and tree navigation are pi's own.
  */
 
-import type { ChildProcess } from "node:child_process";
+import { ChildProcess } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import os from "node:os";
 import { join, resolve } from "node:path";
@@ -35,7 +35,7 @@ import {
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { buildNudge, MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
-import { assertPresent, expectPrefix, expectSuffix } from "../assertions.js";
+import { assertInstanceOf, assertPresent, assertString, expectPrefix, expectSuffix } from "../assertions.js";
 import {
 	cleanupOnFailure,
 	messageText,
@@ -45,6 +45,7 @@ import {
 	SCHEMATIC_ENTRY,
 	toolResults,
 	withRealHost,
+	type HostTestContext,
 	type RpcEvent,
 } from "./real-host.js";
 import {
@@ -54,6 +55,7 @@ import {
 	PROBE_COMMAND,
 	PROBE_CONTEXT_WINDOW,
 	cutHandoffId,
+	isJsonObject,
 	type ProbeRecord,
 	type ScriptedCall,
 } from "./real-host-protocol.js";
@@ -122,8 +124,17 @@ function requestsAfterCut(log: ProbeRecord[], handoffId: string): RequestRecord[
 /** Indexes of the `entry_appended` events in `events` that carry a handoff cut. */
 function cutAppendedIndexes(events: RpcEvent[]): number[] {
 	return events.flatMap((event, index) =>
-		event.type === "entry_appended" && cutHandoffId(event.entry as SessionEntry) !== null ? [index] : []
+		event.type === "entry_appended" && cutHandoffId(appendedEntry(event)) !== null ? [index] : []
 	);
+}
+
+/** The entry an `entry_appended` event carries; throws unless it is an object with a string `type`. */
+function appendedEntry(event: RpcEvent): { type: string; details?: unknown } {
+	const { entry } = event;
+	if (!isJsonObject(entry) || typeof entry.type !== "string") {
+		throw new Error(`entry_appended event without an entry object: ${JSON.stringify(event)}`);
+	}
+	return { type: entry.type, details: entry.details };
 }
 
 /** The first request record whose script deep-equals `calls` at step `step`. */
@@ -192,26 +203,25 @@ function onlyResult<T>(results: T[], label: string): T {
  * before its own call.
  */
 function handBuiltContext(vitest: TestContext): {
-	t: TestContext;
+	t: HostTestContext;
 	abort: (reason: Error) => void;
 	registered: () => number;
 	finish: () => Promise<unknown[]>;
 } {
 	const controller = new AbortController();
-	const callbacks: Parameters<TestContext["onTestFinished"]>[0][] = [];
-	const context: Pick<TestContext, "signal" | "onTestFinished"> = {
+	const callbacks: (() => Promise<void>)[] = [];
+	const t: HostTestContext = {
 		signal: controller.signal,
 		onTestFinished: (fn) => {
 			callbacks.push(fn);
 		},
 	};
-	const t = context as TestContext;
 	let finished: Promise<unknown[]> | undefined;
 	const finish = () => finished ??= (async () => {
 		const errors: unknown[] = [];
 		for (const callback of [...callbacks].reverse()) {
 			try {
-				await callback(t);
+				await callback();
 			} catch (error) {
 				errors.push(error);
 			}
@@ -232,8 +242,8 @@ function captureHostChildren(): ChildProcess[] {
 		const host = await start(options);
 		// withRealHost does not close a host whose start rejected, so close it here.
 		return cleanupOnFailure(async () => {
-			const child = (host.client as unknown as { process: ChildProcess | null }).process;
-			assertPresent(child, "the started host has a CLI process");
+			const child: unknown = Reflect.get(host.client, "process");
+			assertInstanceOf(child, ChildProcess, "the started host has a CLI process");
 			children.push(child);
 			return host;
 		}, () => host.close());
@@ -500,12 +510,11 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			"failure notified",
 		).toHaveLength(1);
 		const failure = onlyCustomMessage(failed.entries, HANDOFF_FAILED_CUSTOM_TYPE);
-		expect(failure.content).toBeTypeOf("string");
-		const failureText = failure.content as string;
-		expect(failureText, "the failure names its reason").toContain(REASON_NOT_PERSISTED);
-		expect(failureText, "the failure says the handoff stays required").toContain("The required handoff remains pending");
+		assertString(failure.content);
+		expect(failure.content, "the failure names its reason").toContain(REASON_NOT_PERSISTED);
+		expect(failure.content, "the failure says the handoff stays required").toContain("The required handoff remains pending");
 		expect(failure.display, "the failure is shown").toBe(true);
-		expect(userEntriesWithText(failed.entries, failureText), "no follow-up user message").toHaveLength(0);
+		expect(userEntriesWithText(failed.entries, failure.content), "no follow-up user message").toHaveLength(0);
 		const handoffStatuses = host.statuses.filter((status) => status.statusKey === STATUS_KEY_HANDOFF);
 		expect(handoffStatuses.at(-1)?.statusText, "the handoff stays required").toBe(HANDOFF_REQUIRED_STATUS);
 
@@ -530,10 +539,9 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			const handoffId = cutHandoffId(cut)!;
 			expect(requestsAfterCut(host.probeLog(), handoffId), "the run is aborted before the model is called after the cut").toStrictEqual([]);
 			const failure = onlyCustomMessage(failed.entries, HANDOFF_FAILED_CUSTOM_TYPE);
-			expect(failure.content).toBeTypeOf("string");
-			const failureText = failure.content as string;
-			expect(failureText, "the failure carries the instruction").toContain("## Next instruction\n\nfinish the report");
-			expect(failureText, "the failure carries the context").toContain("mid-task state");
+			assertString(failure.content);
+			expect(failure.content, "the failure carries the instruction").toContain("## Next instruction\n\nfinish the report");
+			expect(failure.content, "the failure carries the context").toContain("mid-task state");
 			expect(failure.display, "the failure is shown").toBe(true);
 			expect(
 				notificationsStartingWith(host, `Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}.`),
@@ -602,10 +610,9 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		expect(handoffCuts(entries), "no handoff cut after the abort").toHaveLength(0);
 		expect(host.cuts(), "no cut reached the turn_end boundary").toStrictEqual([]);
 		const failure = onlyCustomMessage(entries, HANDOFF_FAILED_CUSTOM_TYPE);
-		expect(failure.content).toBeTypeOf("string");
-		const failureText = failure.content as string;
-		expect(failureText, "the failure names its reason").toContain(REASON_ABORTED);
-		expect(failureText, "the failure says no handoff stays required").toContain("No required handoff remains pending");
+		assertString(failure.content);
+		expect(failure.content, "the failure names its reason").toContain(REASON_ABORTED);
+		expect(failure.content, "the failure says no handoff stays required").toContain("No required handoff remains pending");
 		expect(failure.display, "the failure is shown").toBe(true);
 		expect(
 			notificationsStartingWith(host, `Handoff failed: ${REASON_ABORTED}.`),

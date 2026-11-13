@@ -3,9 +3,11 @@ import { findPackageJSON } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { Type } from "typebox";
 import { expect, test } from "vitest";
 import { piManifestPath } from "../../pi-packages.mjs";
 import { assertPresent, expectPrefix } from "../assertions.js";
+import { parseJson } from "./parse-json.js";
 import { spawnNode } from "./spawn-node.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -57,7 +59,7 @@ test("register-loader resolves typebox exports from pi's dependency tree", () =>
 		);
 
 		expect(result.status, result.stderr || result.stdout).toBe(0);
-		const resolved = JSON.parse(result.stdout.trim()) as Record<string, string>;
+		const resolved = parseJson(Type.Record(Type.String(), Type.String()), result.stdout.trim(), "the resolved specifiers");
 		const [rootSpecifier, ...subpathSpecifiers] = Object.keys(resolved);
 		const typeboxRoot = resolved[rootSpecifier].replace(/(?:build\/)?index\.m?js$/, "");
 		expectPrefix(typeboxRoot, "file:");

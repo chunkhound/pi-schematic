@@ -12,7 +12,6 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 
-import type { Theme } from "@earendil-works/pi-coding-agent";
 import { createState, type SchematicState } from "../../state.js";
 import {
 	renderSpawnCall,
@@ -20,7 +19,7 @@ import {
 } from "../../spawn/renderer.js";
 import { updateIndicators } from "../../tui.js";
 import { useTestHarness } from "../test-utils.js";
-import { createSession, makeTUICtx } from "./helpers.js";
+import { createSession, makeTUICtx, theme } from "./helpers.js";
 
 // ── Paths ─────────────────────────────────────────────────────────────
 
@@ -39,13 +38,6 @@ class RenderTestBackend {
 		return this.lines.join("\n");
 	}
 }
-
-// ── Theme: identity (no styling tokens, clean golden files) ───────────
-
-const theme: Theme = {
-	fg: (_name: string, text: string) => text,
-	bold: (text: string) => text,
-} as unknown as Theme;
 
 // ── Snapshot helpers ──────────────────────────────────────────────────
 

@@ -15,7 +15,7 @@ import {
 	type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { assertPresent, expectPrefix, expectSuffix } from "../assertions.js";
+import { assertInstanceOf, assertPresent, expectPrefix, expectSuffix } from "../assertions.js";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createState, resetState, type SchematicState } from "../../state.js";
@@ -666,6 +666,12 @@ test("spawn execute derives result stats from the child entries", async () => {
 
 // ── Child usage ──────────────────────────────────────────────────────
 
+/** `error` as a SpawnRouteError; fails the test unless it is one. */
+function routeErrorOf(error: unknown, message?: string): SpawnRouteError {
+	assertInstanceOf(error, SpawnRouteError, message);
+	return error;
+}
+
 function messageEntry(id: string, message: Record<string, unknown>): SessionEntry {
 	return { type: "message", id, parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message } as unknown as SessionEntry;
 }
@@ -684,7 +690,7 @@ async function executeWithEntries(getEntries: () => SessionEntry[], opts: Parame
 
 test("spawn execute returns the child usage summed over every counted entry kind", async () => {
 	// Each entry kind owns one decimal place, so a missing or doubled entry shows in the totals.
-	const entries = [
+	const entries: SessionEntry[] = [
 		messageEntry("u1", { role: "user", content: "task", timestamp: 1 }),
 		messageEntry("a1", {
 			role: "assistant", content: [{ type: "text", text: "child result" }], stopReason: "stop",
@@ -693,11 +699,11 @@ test("spawn execute returns the child usage summed over every counted entry kind
 		{
 			type: "compaction", id: "c1", parentId: "a1", timestamp: "2026-01-01T00:00:01.000Z", summary: "s", firstKeptEntryId: "a1", tokensBefore: 1,
 			usage: { input: 100, output: 200, cacheRead: 300, cacheWrite: 400, reasoning: 100, totalTokens: 1000, cost: { input: 500, output: 600, cacheRead: 700, cacheWrite: 800, total: 2600 } },
-		} as unknown as SessionEntry,
+		},
 		{
 			type: "branch_summary", id: "b1", parentId: "c1", timestamp: "2026-01-01T00:00:02.000Z", fromId: "a1", summary: "s",
 			usage: { input: 1000, output: 2000, cacheRead: 3000, cacheWrite: 4000, totalTokens: 10000, cost: { input: 5000, output: 6000, cacheRead: 7000, cacheWrite: 8000, total: 26000 } },
-		} as unknown as SessionEntry,
+		},
 		messageEntry("t1", {
 			role: "toolResult", toolCallId: "ext", toolName: "ext_tool", content: [], isError: false, timestamp: 2,
 			usage: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, reasoning: 10, totalTokens: 100, cost: { input: 50, output: 60, cacheRead: 70, cacheWrite: 80, total: 260 } },
@@ -706,8 +712,8 @@ test("spawn execute returns the child usage summed over every counted entry kind
 		{
 			type: "usage", id: "x1", parentId: "t2", timestamp: "2026-01-01T00:00:03.000Z", kind: "cache_warm", provider: "p", model: "m",
 			usage: { input: 10000, output: 20000, cacheRead: 30000, cacheWrite: 40000, cacheWrite1h: 10000, totalTokens: 100000, cost: { input: 50000, output: 60000, cacheRead: 70000, cacheWrite: 80000, total: 260000 } },
-		} as unknown as SessionEntry,
-		{ type: "model_change", id: "m1", parentId: "x1", timestamp: "2026-01-01T00:00:04.000Z", provider: "p", modelId: "m2" } as unknown as SessionEntry,
+		},
+		{ type: "model_change", id: "m1", parentId: "x1", timestamp: "2026-01-01T00:00:04.000Z", provider: "p", modelId: "m2" },
 	];
 	const result = await executeWithEntries(() => entries);
 
@@ -733,7 +739,7 @@ test("spawn execute omits cacheWrite1h and reasoning when no counted usage repor
 		{
 			type: "usage", id: "x1", parentId: "a1", timestamp: "2026-01-01T00:00:03.000Z", kind: "cache_warm", provider: "p", model: "m",
 			usage: { input: 1, output: 0, cacheRead: 2, cacheWrite: 0, totalTokens: 3, cost: { input: 1, output: 0, cacheRead: 1, cacheWrite: 0, total: 2 } },
-		} as unknown as SessionEntry,
+		},
 	]);
 
 	expect(result.usage).toStrictEqual({
@@ -823,10 +829,10 @@ test("spawn execute counts a compaction or branch summary only when it carries u
 	const result = await executeWithEntries(() => [
 		{
 			type: "compaction", id: "c1", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", summary: "s", firstKeptEntryId: "a1", tokensBefore: 1,
-		} as unknown as SessionEntry,
+		},
 		{
 			type: "branch_summary", id: "b1", parentId: "c1", timestamp: "2026-01-01T00:00:02.000Z", fromId: "c1", summary: "s",
-		} as unknown as SessionEntry,
+		},
 		messageEntry("a1", {
 			role: "assistant", content: [{ type: "text", text: "child result" }], stopReason: "stop",
 			usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 10, cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, total: 3 } },
@@ -1377,8 +1383,7 @@ test("executeSpawn propagates unusable-group errors before creating child work",
 			sessionFactory,
 		),
 	).rejects.toSatisfy((error: unknown) => {
-		expect(error, "route error must propagate without wrapping").toBeInstanceOf(SpawnRouteError);
-		const routeError = error as SpawnRouteError;
+		const routeError = routeErrorOf(error, "route error must propagate without wrapping");
 		expect(routeError.kind).toBe("unusable-group");
 		expect(routeError.group).toBe("broken");
 		expect(routeError.reason).toBe("no-usable-models");
@@ -1403,8 +1408,7 @@ test("executeSpawn propagates missing modalities before creating child work", as
 		model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
 		modelRegistry: { find: (_provider, id) => spawnModel({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
 	}), state, { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, "medium", sessionFactory)).rejects.toSatisfy((error: unknown) => {
-		expect(error).toBeInstanceOf(SpawnRouteError);
-		expect((error as SpawnRouteError).reason).toBe("missing-modality");
+		expect(routeErrorOf(error).reason).toBe("missing-modality");
 		return true;
 	});
 	expect(sessionFactory).not.toHaveBeenCalled();
@@ -1437,8 +1441,7 @@ test("registered spawn tool rejects missing modalities before creating child wor
 			modelRegistry: { find: (_provider, id) => spawnModel({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
 		})),
 	).rejects.toSatisfy((error: unknown) => {
-		expect(error).toBeInstanceOf(SpawnRouteError);
-		const routeError = error as SpawnRouteError;
+		const routeError = routeErrorOf(error);
 		expect(routeError.kind).toBe("unusable-group");
 		expect(routeError.reason).toBe("missing-modality");
 		return true;
@@ -1460,8 +1463,7 @@ test("registered spawn tool rejects injected scalar group and model requirements
 			modelRegistry: { find: (_provider, id) => spawnModel({ provider: "openai", id, input: ["text"], reasoning: false, contextWindow: id === "small" ? 10 : 100 }), hasConfiguredAuth: () => true },
 		})),
 	).rejects.toSatisfy((error: unknown) => {
-		expect(error).toBeInstanceOf(SpawnRouteError);
-		const routeError = error as SpawnRouteError;
+		const routeError = routeErrorOf(error);
 		expect(routeError.reason).toBe("constraint-unsatisfied");
 		expect(routeError.constraintUnsatisfied).toHaveLength(2);
 		expect(routeError.missingModalities).toHaveLength(0);

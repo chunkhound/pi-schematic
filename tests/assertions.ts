@@ -10,6 +10,16 @@ export function assertPresent<T>(value: T, message?: string): asserts value is N
 	expect(value, message).not.toBeNullable();
 }
 
+/** Asserts `value` is a string. */
+export function assertString(value: unknown, message?: string): asserts value is string {
+	expect(value, message).toBeTypeOf("string");
+}
+
+/** Asserts `value` is an instance of `Class`. */
+export function assertInstanceOf<T>(value: unknown, Class: abstract new (...args: never[]) => T, message?: string): asserts value is T {
+	expect(value, message).toBeInstanceOf(Class);
+}
+
 // The failure message carries the full string, so a mismatch shows the string the compared part was cut from.
 function withActual(actual: string, message: string | undefined): string {
 	return message === undefined ? actual : `${message}\n${actual}`;
