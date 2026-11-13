@@ -5,6 +5,7 @@ import { createModelGroupAutocompleteProvider, registerModelGroupAutocomplete } 
 import { createState } from "../../state.js";
 import { group } from "./model-groups-helpers.js";
 import { assertPresent } from "../assertions.js";
+import { createExtensionContext, createUIContext } from "./helpers.js";
 
 function suggestOptions() {
 	return { signal: new AbortController().signal };
@@ -119,9 +120,9 @@ test("#group autocomplete prepends colored effective modal letters when a colori
 test("registerModelGroupAutocomplete uses ctx.ui.addAutocompleteProvider once", () => {
 	const state = createState();
 	const providers: AutocompleteProviderFactory[] = [];
-	const ctx = { hasUI: true, ui: { addAutocompleteProvider: (factory: AutocompleteProviderFactory) => providers.push(factory) } };
-	registerModelGroupAutocomplete(ctx as any, state);
-	registerModelGroupAutocomplete(ctx as any, state);
+	const ctx = createExtensionContext({ hasUI: true, ui: createUIContext({ addAutocompleteProvider: (factory) => { providers.push(factory); } }) });
+	registerModelGroupAutocomplete(ctx, state);
+	registerModelGroupAutocomplete(ctx, state);
 	expect(providers.length).toBe(1);
 });
 
