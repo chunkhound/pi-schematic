@@ -16,7 +16,7 @@ export function createCompatCopy(root, prefix) {
   const copy = join(temp, "source");
   cpSync(root, copy, {
     recursive: true,
-    filter: (source) => ![".git", "node_modules", "openspec"].includes(basename(source)),
+    filter: (source) => ![".git", ".cache", "coverage", "node_modules", "openspec"].includes(basename(source)),
   });
   return { temp, copy };
 }
