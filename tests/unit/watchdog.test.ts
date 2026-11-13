@@ -6,11 +6,13 @@ import { buildNudge } from "../../watchdog.js";
 import { registerHandoffCommand } from "../../handoff/command.js";
 import { registerHandoffTool } from "../../handoff/tool.js";
 import { registerHandoffBoundary } from "../../handoff/boundary.js";
-import { callHandlers, emitAll, handoffToolResult, makeReadonlyUICtx, registerReadonlyPI, turnEndEvent } from "./helpers.js";
+import { callHandlers, createCommandContext, createExtensionContext, emitAll, handoffToolResult, makeReadonlyUICtx, registerReadonlyPI, turnEndEvent } from "./helpers.js";
 import { assertPresent } from "../assertions.js";
-import { createTestHost } from "./test-host.js";
+import { createTestHost, getCommand, getHandler, invokeHandler } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
+import type { ContextEventResult } from "@earendil-works/pi-coding-agent";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
+import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
 
 test("watchdog records context usage without user notifications", async () => {
 	const state = createState();
@@ -42,31 +44,60 @@ test.for([Number.NaN, Number.POSITIVE_INFINITY, -1])("watchdog ignores malformed
 test("watchdog records overflow percentages", async () => {
 	const state = createState();
 	const pi = await createTestHost((api) => { registerWatchdog(api, state); });
-	const [handler] = pi.handlers.get("agent_end")!;
-	await handler({}, { hasUI: false, getContextUsage: () => ({ percent: 125 }) });
+	const handler = getHandler(pi, "agent_end");
+	await handler(
+		{ type: "agent_end", messages: [] },
+		createExtensionContext({ getContextUsage: () => ({ tokens: 250_000, contextWindow: 200_000, percent: 125 }) }),
+	);
 	expect(state.lastContextPercent).toBe(125);
 });
 
-test("context injects watchdog reminder before each LLM call", async () => {
-	const pi = await createTestHost();
-	const [handler] = pi.handlers.get("context")!;
-	await pi.commands.get("notebook")!.handler("oauth", { hasUI: false, getContextUsage: () => null });
+type ContextMessage = NonNullable<ContextEventResult["messages"]>[number];
 
-	const result = await handler(
-		{ messages: [{ role: "user", content: "hi", timestamp: 1 }] },
-		{
-			getContextUsage: () => ({ percent: 70 }),
-		},
+/** Asserts `message` is the hidden watchdog reminder and narrows it to a custom message. */
+function assertWatchdogReminder(message: ContextMessage | undefined): asserts message is Extract<ContextMessage, { role: "custom" }> {
+	expect(message).toMatchObject({ role: "custom", customType: "pi-schematic-watchdog", display: false });
+}
+
+async function injectReminderAt(tokens: number, percent: number): Promise<ContextMessage[]> {
+	const contextWindow = Math.round((tokens * 100) / percent);
+	const pi = await createTestHost();
+	await getCommand(pi, "notebook").handler("oauth", createCommandContext());
+
+	const result = await invokeHandler(
+		pi,
+		"context",
+		{ type: "context", messages: [{ role: "user", content: "hi", timestamp: 1 }] },
+		createExtensionContext({ getContextUsage: () => ({ tokens, contextWindow, percent }) }),
 	);
 
-	expect(result.messages).toHaveLength(2);
-	expect(result.messages[0]).toStrictEqual({ role: "user", content: "hi", timestamp: 1 });
-	expect(result.messages[1]).toMatchObject({ role: "custom", customType: "pi-schematic-watchdog", display: false });
-	expect(result.messages[1].content).toMatch(/70%/);
-	expect(result.messages[1].content).toMatch(/oauth/);
-	expect(result.messages[1].content).toMatch(/spawn/i);
-	expect(result.messages[1].content).toMatch(/parent context/i);
-	expect(result.messages[1].content).not.toMatch(/draft a clear prompt|what comes next/i);
+	assertPresent(result);
+	const { messages } = result;
+	assertPresent(messages);
+	return messages;
+}
+
+test("context injects watchdog reminder before each LLM call", async () => {
+	const messages = await injectReminderAt(MIN_HANDOFF_TOKENS - 1, 70);
+
+	expect(messages).toHaveLength(2);
+	const [first, reminder] = messages;
+	expect(first).toStrictEqual({ role: "user", content: "hi", timestamp: 1 });
+	assertWatchdogReminder(reminder);
+	expect(reminder.content).toMatch(/70%/);
+	expect(reminder.content).toMatch(/oauth/);
+	expect(reminder.content).toMatch(/spawn/i);
+	expect(reminder.content).toMatch(/parent context/i);
+	expect(reminder.content).not.toMatch(/draft a clear prompt|what comes next/i);
+});
+
+test("below the handoff minimum the reminder asks to continue instead of preferring a handoff", async () => {
+	// One token below the handoff minimum, so the reminder does not prefer a handoff.
+	const [, reminder] = await injectReminderAt(MIN_HANDOFF_TOKENS - 1, 70);
+
+	assertWatchdogReminder(reminder);
+	expect(reminder.content).toContain("continue working until handoff is available");
+	expect(reminder.content).not.toContain("prefer a deliberate handoff");
 });
 
 

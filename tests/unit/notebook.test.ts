@@ -14,7 +14,7 @@ import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
 import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
 import { assertPresent, expectSuffix } from "../assertions.js";
-import { callHandlers, handoffToolResult, turnEndEvent, makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
+import { callHandlers, createToolContext, handoffToolResult, turnEndEvent, makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
 import { createBeforeAgentStartEvent, createTestHost } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
 
@@ -312,9 +312,9 @@ test("child notebook tools reject stale access after reset", async () => {
 	const [notebookWrite, notebookRead, notebookIndex] = createNotebookToolDefinitions(pi, state, { isStale: () => stale });
 
 	stale = true;
-	await expect(notebookWrite.execute("1", { name: "entry-a", content: "alpha" }, undefined, undefined, {} as any)).rejects.toThrow(/invalidated by reset/i);
-	await expect(notebookRead.execute("2", { name: "entry-a" }, undefined, undefined, {} as any)).rejects.toThrow(/invalidated by reset/i);
-	await expect(notebookIndex.execute("3", {}, undefined, undefined, {} as any)).rejects.toThrow(/invalidated by reset/i);
+	await expect(notebookWrite.execute("1", { name: "entry-a", content: "alpha" }, undefined, undefined, createToolContext())).rejects.toThrow(/invalidated by reset/i);
+	await expect(notebookRead.execute("2", { name: "entry-a" }, undefined, undefined, createToolContext())).rejects.toThrow(/invalidated by reset/i);
+	await expect(notebookIndex.execute("3", {}, undefined, undefined, createToolContext())).rejects.toThrow(/invalidated by reset/i);
 	expect(state.notebookPages.get("entry-a")).toBe("alpha");
 	expect(pi.appendedEntries).toHaveLength(0);
 });
@@ -324,7 +324,7 @@ test("child notebook_write succeeds while child session is fresh", async () => {
 	const state = createState();
 	const [notebookWrite] = createNotebookToolDefinitions(pi, state, { isStale: () => false });
 
-	const result = await notebookWrite.execute("1", { name: "entry-a", content: "alpha" }, undefined, undefined, {} as any);
+	const result = await notebookWrite.execute("1", { name: "entry-a", content: "alpha" }, undefined, undefined, createToolContext());
 	expect(result.details).toStrictEqual({ entries: ["entry-a"], preview: "alpha", truncation: null, clipped: false });
 	expect(state.notebookPages.get("entry-a")).toBe("alpha");
 	expect(pi.appendedEntries).toHaveLength(1);
