@@ -1,5 +1,5 @@
 import { expect, onTestFinished, test, vi } from "vitest";
-import { assertPresent, expectPrefix } from "../assertions.js";
+import { assertPresent, expectPrefix, isRecord } from "../assertions.js";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,10 +12,6 @@ import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
 import { createTestHost, getTool } from "./test-host.js";
 import { assertErrorResult, createExtensionContext, EMPTY_CHILD_USAGE, runRealChildInvocation } from "./helpers.js";
 import { REPO_ROOT_URL } from "../paths.js";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
 
 // The fields isSpawnToolResult checks; everything else stays unknown.
 interface CheckedSpawnResult {

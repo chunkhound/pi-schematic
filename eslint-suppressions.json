@@ -557,9 +557,6 @@
     "@typescript-eslint/no-dynamic-delete": {
       "count": 2
     },
-    "@typescript-eslint/no-explicit-any": {
-      "count": 4
-    },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 6
     },
@@ -628,20 +625,8 @@
     }
   },
   "tests/unit/model-groups-integration.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    },
     "@typescript-eslint/no-non-null-assertion": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 10
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 6
+      "count": 1
     },
     "no-control-regex": {
       "count": 1
@@ -882,9 +867,6 @@
     }
   },
   "tests/unit/test-host.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 7
-    },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 4
     },

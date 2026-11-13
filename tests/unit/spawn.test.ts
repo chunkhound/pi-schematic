@@ -3,7 +3,7 @@ import {
 	createExtensionRuntime,
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
-	ModelRegistry,
+	type ModelRegistry,
 	type AgentSession,
 	type AgentToolResult,
 	type AgentToolUpdateCallback,
@@ -37,7 +37,7 @@ import { IsObject, type TObject, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { testMinContext } from "./model-groups-constraints-fixture.js";
 import { group } from "./model-groups-helpers.js";
-import { assertErrorResult, createSession, createToolContext, createToolRenderContext, createUIContext, theme, createDeferred, EMPTY_CHILD_USAGE } from "./helpers.js";
+import { assertErrorResult, createModelRegistry, createSession, createToolContext, createToolRenderContext, createUIContext, theme, createDeferred, EMPTY_CHILD_USAGE } from "./helpers.js";
 import { createTestHost, getTool, getToolRenderCall, getToolRenderResult, type TestPI } from "./test-host.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
 
@@ -54,11 +54,9 @@ function testModel(fields: Partial<Model<Api>> & Pick<Model<Api>, "id">): Model<
 	};
 }
 
-/** A model registry whose `find` and `hasConfiguredAuth` are `members`; its other methods are unusable. */
+/** A model registry whose `find` and `hasConfiguredAuth` are `members`; reading its other methods throws. */
 function testModelRegistry(members: Pick<ModelRegistry, "find" | "hasConfiguredAuth">): ModelRegistry {
-	const registry: unknown = Object.create(ModelRegistry.prototype);
-	if (!(registry instanceof ModelRegistry)) {throw new Error("Object.create did not produce a ModelRegistry instance.");}
-	return Object.assign(registry, members);
+	return createModelRegistry(members);
 }
 
 /**

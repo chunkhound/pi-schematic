@@ -7,13 +7,14 @@ import {
 	bashResult,
 	callHandlers,
 	createCommandContext,
+	createExtensionContext,
 	emitAll,
 	registerReadonlyPI,
 	SANDBOX_DENIAL_PHRASES,
 	textOf,
 	uiCommandContext,
 } from "./helpers.js";
-import { createBeforeAgentStartEvent, getCommand, getShortcut, type TestPI } from "./test-host.js";
+import { createBeforeAgentStartEvent, getCommand, getHandler, getShortcut, type TestPI } from "./test-host.js";
 import { assertPresent, expectSuffix, isRecord } from "../assertions.js";
 
 // The tool_result handler returns a patch of the result or nothing.
@@ -74,18 +75,10 @@ test("readonly toggle is a no-op in headless mode", async () => {
 	// is a no-op, preserving the contract: readonly is a TUI-only feature.
 	await getCommand(pi, "readonly").handler("", createCommandContext({ getContextUsage: () => undefined }));
 
-	// These contexts have no `modelRegistry`, which `ExtensionContext` requires, so the one
-	// input and before_agent_start handlers run through emitAll.
-	await emitAll(pi, "input", { text: "/review", source: "interactive" }, {
-		hasUI: false,
-		getContextUsage: () => null,
-	});
-	await emitAll(pi, "before_agent_start", createBeforeAgentStartEvent({ skills: [] }), {
-		hasUI: false,
-		cwd: process.cwd(),
-		isProjectTrusted: () => false,
-		getContextUsage: () => null,
-	});
+	// Without a model registry the handlers load no model groups.
+	const headless = createExtensionContext({ isProjectTrusted: () => false, getContextUsage: () => undefined, modelRegistry: undefined });
+	await getHandler(pi, "input")({ type: "input", text: "/review", source: "interactive" }, headless);
+	await getHandler(pi, "before_agent_start")(createBeforeAgentStartEvent({ skills: [] }), headless);
 
 	// Write should remain unblocked for both manual and deferred readonly paths.
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();

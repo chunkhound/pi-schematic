@@ -8,13 +8,11 @@
 import { beforeAll, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { BeforeAgentStartEvent, ContextEvent, InputEvent } from "@earendil-works/pi-coding-agent";
+import type { BeforeAgentStartEvent, ContextEvent, ExtensionContext, InputEvent, SlashCommandSource } from "@earendil-works/pi-coding-agent";
 import {
 	callHandlers,
 	createExtensionContext,
 	createUIContext,
-	emitAll,
-	makeReadonlyUICtx,
 	registerReadonlyPI,
 	testWithDir,
 	tmpDir,
@@ -22,7 +20,7 @@ import {
 	withTempHome,
 	type ToolCall,
 } from "./helpers.js";
-import { createBeforeAgentStartEvent, getCommand, getHostRecords, invokeHandler, type AppendedEntry, type TestPI } from "./test-host.js";
+import { createBeforeAgentStartEvent, getCommand, getHandler, getHostRecords, invokeHandler, type AppendedEntry, type TestPI } from "./test-host.js";
 import { assertPresent, isRecord } from "../assertions.js";
 
 // pi's agent directory holds global prompts; an empty one keeps an exported
@@ -38,17 +36,18 @@ beforeEach(() => {
 
 type CustomAgentMessage = Extract<ContextEvent["messages"][number], { customType: string }>;
 
-// The extension registers one input and one before_agent_start handler. Most contexts here have no
-// `modelRegistry`, which `ExtensionContext` requires, so the handlers run untyped: the input handler
-// through callHandlers, which returns its result, and the before_agent_start handler through emitAll.
+// The extension registers one input and one before_agent_start handler.
 function frontmatterHandlers(pi: TestPI) {
 	return {
-		inputHandler: async (event: Omit<InputEvent, "type">, ctx: unknown): Promise<unknown> => {
-			const [result] = await callHandlers(pi, "input", event, ctx);
-			return result;
-		},
-		beforeStartHandler: (event: BeforeAgentStartEvent, ctx: unknown) => emitAll(pi, "before_agent_start", event, ctx),
+		inputHandler: (event: Omit<InputEvent, "type">, ctx: ExtensionContext) => getHandler(pi, "input")({ type: "input", ...event }, ctx),
+		beforeStartHandler: (event: BeforeAgentStartEvent, ctx: ExtensionContext) => getHandler(pi, "before_agent_start")(event, ctx),
 	};
+}
+
+// A context for the input and before_agent_start handlers: without UI unless overridden, no context
+// usage and no model registry, so the handlers load no model groups.
+function handlerContext(overrides: Partial<ExtensionContext> = {}): ExtensionContext {
+	return createExtensionContext({ getContextUsage: () => undefined, modelRegistry: undefined, ...overrides });
 }
 
 /**
@@ -77,32 +76,32 @@ async function writePrompt(dir: string, name: string, readonly: boolean): Promis
 	return filePath;
 }
 
-function makeBeforeStartCtx(cwd = process.cwd()) {
-	return {
-		...makeReadonlyUICtx(),
+function makeBeforeStartCtx(cwd = process.cwd()): ExtensionContext {
+	return handlerContext({
+		hasUI: true,
+		ui: createUIContext({ notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn() }),
 		cwd,
 		isProjectTrusted: () => true,
-	};
+	});
 }
 
 function makeNotifyBeforeStartCtx() {
 	const notifications: { message: string; level: string | undefined }[] = [];
 	return {
-		ctx: createExtensionContext({
+		ctx: handlerContext({
 			hasUI: true,
 			ui: createUIContext({
 				notify: (message, level) => { notifications.push({ message, level }); },
 				setStatus: vi.fn(),
 				setWidget: vi.fn(),
 			}),
-			getContextUsage: () => undefined,
 			isProjectTrusted: () => true,
 		}),
 		notifications,
 	};
 }
 
-function makeResolvedCommand(name: string, filePath: string, source: "prompt" | "builtin" | "skill" = "prompt") {
+function makeResolvedCommand(name: string, filePath: string, source: SlashCommandSource = "prompt") {
 	return {
 		name,
 		source,
@@ -265,7 +264,7 @@ testWithDir("late-resolved non-prompt /name does not inherit readonly from a sam
 	const ctx = makeBeforeStartCtx(workspace);
 
 	await inputHandler({ text: "/shared", source: "interactive" }, ctx);
-	pi.setCommands([makeResolvedCommand("shared", promptPath, "builtin")]);
+	pi.setCommands([makeResolvedCommand("shared", promptPath, "extension")]);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
@@ -280,7 +279,7 @@ testWithDir("known non-prompt /name already present in the registry does not enq
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx(workspace);
 
-	pi.setCommands([makeResolvedCommand("shared-known", promptPath, "builtin")]);
+	pi.setCommands([makeResolvedCommand("shared-known", promptPath, "extension")]);
 	await inputHandler({ text: "/shared-known", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
@@ -294,16 +293,8 @@ testWithDir("headless /name frontmatter stays a no-op through the deferred pipel
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	pi.setCommands([makePromptCommand("headless-review", filePath)]);
 
-	await inputHandler({ text: "/headless-review", source: "interactive" }, {
-		hasUI: false,
-		getContextUsage: () => null,
-	});
-	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), {
-		hasUI: false,
-		cwd: process.cwd(),
-		isProjectTrusted: () => false,
-		getContextUsage: () => null,
-	});
+	await inputHandler({ text: "/headless-review", source: "interactive" }, handlerContext());
+	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), handlerContext({ isProjectTrusted: () => false }));
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
 	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
@@ -315,16 +306,8 @@ testWithDir("extension input stays a no-op when hasUI is false", async ({ dir })
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	pi.setCommands([makePromptCommand("headless-extension", filePath)]);
 
-	await inputHandler({ text: "/headless-extension", source: "extension" }, {
-		hasUI: false,
-		getContextUsage: () => null,
-	});
-	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), {
-		hasUI: false,
-		cwd: process.cwd(),
-		isProjectTrusted: () => false,
-		getContextUsage: () => null,
-	});
+	await inputHandler({ text: "/headless-extension", source: "extension" }, handlerContext());
+	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), handlerContext({ isProjectTrusted: () => false }));
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
 	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
