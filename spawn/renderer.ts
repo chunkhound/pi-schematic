@@ -1250,6 +1250,10 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 				case "tool_execution_start": this.handleToolExecutionStart(event); break;
 				case "tool_execution_update": this.handleToolExecutionUpdate(event); break;
 				case "tool_execution_end": this.handleToolExecutionEnd(event); break;
+				// Of the session events, the component renders only message and
+				// tool-execution state, which these do not carry. Listing them keeps
+				// the switch exhaustive, so a new pi event type fails lint until it is
+				// handled or listed here.
 				case "agent_start":
 				case "agent_end":
 				case "agent_settled":
