@@ -173,6 +173,7 @@ function getOutcomeMarker(outcome: SpawnOutcome): string {
 			return "✗ ";
 		case "error":
 			return "⚠ ";
+		case "running":
 		default:
 			return "";
 	}
@@ -186,6 +187,7 @@ function getOutcomeStatusText(outcome: SpawnOutcome): string | undefined {
 			return "💬 aborted";
 		case "error":
 			return "💬 error";
+		case "running":
 		default:
 			return undefined;
 	}
@@ -1248,6 +1250,28 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 				case "tool_execution_start": this.handleToolExecutionStart(event); break;
 				case "tool_execution_update": this.handleToolExecutionUpdate(event); break;
 				case "tool_execution_end": this.handleToolExecutionEnd(event); break;
+				// Of the session events, the component renders only message and
+				// tool-execution state, which these do not carry. Listing them keeps
+				// the switch exhaustive, so a new pi event type fails lint until it is
+				// handled or listed here.
+				case "agent_start":
+				case "agent_end":
+				case "agent_settled":
+				case "turn_start":
+				case "turn_end":
+				case "queue_update":
+				case "compaction_start":
+				case "compaction_end":
+				case "auto_retry_start":
+				case "auto_retry_end":
+				case "summarization_retry_scheduled":
+				case "summarization_retry_attempt_start":
+				case "summarization_retry_finished":
+				case "bash_execution_update":
+				case "entry_appended":
+				case "session_info_changed":
+				case "thinking_level_changed":
+					break;
 			}
 			// Per-event cache clear ensures render() returns fresh data if called
 			// between frame ticks. The frame scheduler also clears the cache during

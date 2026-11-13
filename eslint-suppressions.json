@@ -258,9 +258,6 @@
     },
     "ban/shell-option": {
       "count": 1
-    },
-    "import-x/no-mutable-exports": {
-      "count": 1
     }
   },
   "notebook/prompt.ts": {
@@ -451,9 +448,6 @@
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 25
-    },
-    "@typescript-eslint/switch-exhaustiveness-check": {
-      "count": 3
     },
     "ban/module-level-set-singletons": {
       "count": 1

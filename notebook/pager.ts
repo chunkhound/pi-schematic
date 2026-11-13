@@ -164,9 +164,9 @@ interface PagerRuntime {
 const defaultPagerRuntime: PagerRuntime = { resolvePager, spawnPager };
 
 /** Test seam: index.ts and openInPager call pagerRuntime.* so tests can swap per-test. */
-export let pagerRuntime: PagerRuntime = defaultPagerRuntime;
+export const pagerRuntime: PagerRuntime = { ...defaultPagerRuntime };
 
 /** Test seam: swap one or more pagerRuntime methods; pass null to restore the originals. */
 export function __setPagerRuntimeForTests(next: Partial<PagerRuntime> | null): void {
-	pagerRuntime = next ? { ...defaultPagerRuntime, ...next } : defaultPagerRuntime;
+	Object.assign(pagerRuntime, defaultPagerRuntime, next);
 }
