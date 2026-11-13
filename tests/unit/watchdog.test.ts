@@ -86,6 +86,8 @@ test("context injects watchdog reminder before each LLM call", async () => {
 	expect(reminder.content).toMatch(/spawn/i);
 	expect(reminder.content).toMatch(/parent context/i);
 	expect(reminder.content).not.toMatch(/draft a clear prompt|what comes next/i);
+	expect(reminder.content).toContain("continue working until handoff is available");
+	expect(reminder.content).not.toContain("prefer a deliberate handoff");
 });
 
 
