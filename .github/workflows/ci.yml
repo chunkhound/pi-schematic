@@ -40,6 +40,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Knip
+        run: npm run knip
+
   # ── Cross-platform test matrix ──────────────────────────────────────
   # Every platform runs two tracks: the floor (Pi's minimum Node.js version) and the
   # current Node.js LTS, both as exact versions. Platform-specific code paths
