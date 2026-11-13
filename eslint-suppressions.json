@@ -219,6 +219,9 @@
     },
     "no-unsafe-finally": {
       "count": 2
+    },
+    "preserve-caught-error": {
+      "count": 1
     }
   },
   "spawn/renderer.ts": {
@@ -296,6 +299,9 @@
     },
     "ban/wall-clock": {
       "count": 3
+    },
+    "preserve-caught-error": {
+      "count": 1
     }
   },
   "tests/e2e/test-host.ts": {

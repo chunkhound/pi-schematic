@@ -670,7 +670,7 @@ export function executeSpawn(
 				}
 				if (!notified) {
 					// Without a cleanup notice the result names both failures.
-					throw new Error(`Spawn failed and cleanup failed: ${failureMessage(primary.error)}; ${failureMessage(cleanupError)}`, { cause: cleanupError });
+					throw new Error(`Spawn failed and cleanup failed: ${failureMessage(primary.error)}; ${failureMessage(cleanupError)}`);
 				}
 			}
 		}

@@ -169,7 +169,6 @@ export async function cleanupOnFailure<T>(body: () => T | Promise<T>, cleanup: (
 			throw new AggregateError(
 				[failure, cleanupError],
 				`${describeError(failure)}; cleanup also failed: ${describeError(cleanupError)}`,
-				{ cause: cleanupError },
 			);
 		}
 		throw failure;
