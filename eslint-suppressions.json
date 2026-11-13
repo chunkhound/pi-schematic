@@ -372,9 +372,6 @@
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
-    },
-    "no-console": {
-      "count": 1
     }
   },
   "spawn/index.ts": {

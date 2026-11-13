@@ -21,7 +21,7 @@ test("createTestHarness swaps singleton state atomically and restores it on tear
 	expect(during.frameScheduler).not.toBe(before.frameScheduler);
 });
 
-test("__setSingletons warns and preserves lock + write context during in-flight writes", () => {
+test("__setSingletons preserves lock + write context during in-flight writes without console output", () => {
 	// Use harness to isolate the test's singleton manipulation
 	const outer = getSingletons();
 	const h = createTestHarness();
@@ -40,9 +40,7 @@ test("__setSingletons warns and preserves lock + write context during in-flight 
 		frameScheduler: before.frameScheduler,
 	});
 	const after = getSingletons();
-	const warnings = h.warnings.filter((entry) => entry.level === "warn");
-	expect(warnings).toHaveLength(1);
-	expect(String(warnings[0].args[0])).toMatch(/pending/);
+	expect(h.warnings).toStrictEqual([]);
 	expect(after.writeLock).toBe(before.writeLock);
 	expect(after.writeContext).toBe(before.writeContext);
 });

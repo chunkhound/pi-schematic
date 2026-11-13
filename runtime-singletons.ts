@@ -69,12 +69,6 @@ export function __setSingletons(
 	options?: { forceWriteLock?: boolean },
 ): void {
 	if (!options?.forceWriteLock && current.writeLock.pending > 0) {
-		console.warn(
-			"[runtime-singletons] writeLock has %d pending operation(s) — " +
-				"preserving existing lock chain to avoid breaking in-flight writes. " +
-				"Use { forceWriteLock: true } to override.",
-			current.writeLock.pending,
-		);
 		// Preserve both lock and ALS context together. Swapping only the context
 		// breaks reentrancy detection for writers already running inside the old lock.
 		current = {
