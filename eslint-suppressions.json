@@ -436,7 +436,7 @@
       "count": 3
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 10
+      "count": 9
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 3

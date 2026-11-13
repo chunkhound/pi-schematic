@@ -31,8 +31,9 @@ const pi = await createTestHost();
 const commands: Map<string, unknown> = pi.commands;
 const tools: Map<string, unknown> = pi.tools;
 
-// pi's registrations reach this host untyped; each one is checked where it is called.
-type Callable = (...args: unknown[]) => Promise<unknown>;
+// pi's registrations reach this host untyped; each one is checked where it is called. A call may return a
+// promise or a plain value.
+type Callable = (...args: unknown[]) => unknown;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -166,8 +167,9 @@ for await (const line of rl) {
 			continue;
 		}
 		try {
-			const [handler] = handlersFor("context");
-			assertCallable(handler, "the context handler");
+			const handlers = handlersFor("context");
+			if (handlers.length === 0) {throw new Error("no context handler is registered");}
+			const [handler] = handlers;
 			const result = await handler(payload, mockCtx);
 			process.stdout.write("OK:" + JSON.stringify(result ?? null) + "\n");
 		} catch (e) {

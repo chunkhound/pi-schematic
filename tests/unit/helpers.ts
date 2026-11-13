@@ -40,9 +40,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** A failure after the child session exists is returned as an error result, not thrown. */
 export function assertErrorResult(result: unknown, text: string, usage: unknown): void {
-	if (!isRecord(result) || !isRecord(result.details)) {throw new Error("Expected a tool result object with a details object.");}
+	if (!isRecord(result)) {throw new Error(`Expected a tool result object, got ${JSON.stringify(result)}.`);}
 	expect(result.isError).toBe(true);
 	expect(result.content).toStrictEqual([{ type: "text", text }]);
+	if (!isRecord(result.details)) {throw new Error(`Expected a tool result with a details object, got ${JSON.stringify(result)}.`);}
 	expect(result.details.outcome).toBe("error");
 	expect(result.usage).toStrictEqual(usage);
 }
@@ -186,20 +187,18 @@ export function createDeferred() {
 	return { promise, resolve };
 }
 
-// pi stores every handler as a wrapper taking the event and context and returning a promise; only that it is
-// a function can be checked at run time.
-function assertRegisteredHandler(value: unknown, event: string): asserts value is (...args: unknown[]) => Promise<unknown> {
+// pi stores every handler as a wrapper that passes its arguments on and returns whatever the handler returns,
+// a promise or a plain value; only that it is a function can be checked at run time.
+function assertRegisteredHandler(value: unknown, event: string): asserts value is (...args: unknown[]) => unknown {
 	if (typeof value !== "function") {throw new Error(`A "${event}" handler on the test host is not a function.`);}
 }
 
-// The handlers registered for `event`. Throws when none is registered or one is not a function.
-function registeredHandlers(pi: TestPI, event: string): ((...args: unknown[]) => Promise<unknown>)[] {
+// The live list of handlers registered for `event`, so a handler appended during a dispatch runs in that
+// dispatch. Throws when none is registered.
+function registeredHandlers(pi: TestPI, event: string): unknown[] {
 	const handlers: unknown[] | undefined = pi.handlers.get(event);
 	if (!handlers?.length) {throw new Error(`No handlers registered for "${event}"`);}
-	return handlers.map((handler) => {
-		assertRegisteredHandler(handler, event);
-		return handler;
-	});
+	return handlers;
 }
 
 /**
@@ -210,6 +209,7 @@ function registeredHandlers(pi: TestPI, event: string): ((...args: unknown[]) =>
  */
 export async function emitAll(pi: TestPI, event: string, payload: unknown, ctx: unknown): Promise<void> {
 	for (const handler of registeredHandlers(pi, event)) {
+		assertRegisteredHandler(handler, event);
 		await handler(payload, ctx);
 	}
 }
@@ -222,6 +222,7 @@ export async function emitAll(pi: TestPI, event: string, payload: unknown, ctx: 
 export async function callHandlers(pi: TestPI, event: string, payload: unknown, ctx: unknown): Promise<unknown[]> {
 	const results: unknown[] = [];
 	for (const handler of registeredHandlers(pi, event)) {
+		assertRegisteredHandler(handler, event);
 		results.push(await handler(payload, ctx));
 	}
 	return results;
@@ -431,6 +432,7 @@ export async function registerReadonlyPI(): Promise<{ pi: TestPI; toolCall: Tool
 	// Pi runs tool_call handlers in registration order and the first block wins.
 	const toolCall: ToolCall = async (event, ctx) => {
 		for (const handler of registeredHandlers(pi, "tool_call")) {
+			assertRegisteredHandler(handler, "tool_call");
 			const result = await handler(event, ctx);
 			if (isRecord(result) && Boolean(result.block)) {return result;}
 		}
@@ -573,9 +575,10 @@ function probeNumber(name: ProbeGlobal): number {
 	return value;
 }
 
-// The probe global `name` as an array of items `isItem` accepts; an unset global reads as an empty array.
-function probeArray<T>(name: ProbeGlobal, isItem: (item: unknown) => item is T): T[] {
-	const value = probeGlobal(name) ?? [];
+// The probe global `name` as an array of items `isItem` accepts. An unset global throws unless `unsetAsEmpty`
+// is true, which reads it as an empty array.
+function probeArray<T>(name: ProbeGlobal, isItem: (item: unknown) => item is T, unsetAsEmpty = false): T[] {
+	const value = unsetAsEmpty ? probeGlobal(name) ?? [] : probeGlobal(name);
 	if (!Array.isArray(value)) {throw new Error(`The probe left ${name} as ${typeof value}, not an array.`);}
 	const items: unknown[] = value;
 	if (!items.every(isItem)) {throw new Error(`The probe left an unexpected item in ${name}.`);}
@@ -784,9 +787,9 @@ export default function(pi) {
 				resetState(state);
 			}
 			: (result: unknown) => { updates.push(result); };
-		const spawn = getTool(pi, "spawn");
 		let results;
 		try {
+			const spawn = getTool(pi, "spawn");
 			results = await Promise.all(prompts.map((prompt, index) => spawn.execute(
 				`spawn-${params.thinking ?? "inherited"}-${index}`,
 				{ prompt, thinking: params.thinking },
@@ -819,8 +822,8 @@ export default function(pi) {
 			outboundFetches,
 			state,
 			updates,
-			observedMessages: probeArray("__agenticE2eMessages", isString),
-			observedThinking: probeArray("__agenticE2eThinking", isOptionalString),
+			observedMessages: probeArray("__agenticE2eMessages", isString, true),
+			observedThinking: probeArray("__agenticE2eThinking", isOptionalString, true),
 		};
 	} finally {
 		if (previousAgentDir === undefined) {delete process.env.PI_CODING_AGENT_DIR;}
