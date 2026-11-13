@@ -486,7 +486,6 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 	// States: "⏳ initializing…" → "💭 thinking…" → "[tool] …/preview" or live text → terminal outcome
 	private lastAction = "";
 	private readonly toolNames = new Map<string, string>();
-	private readonly toolComponentFailures = new Set<string>();
 	private cachedWidth?: number;
 	private cachedExpanded?: boolean;
 	private cachedLines?: string[];
@@ -638,7 +637,6 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		this.resetRenderBatching();
 		this.liveOutcome = this.details?.outcome ?? "running";
 		this.toolNames.clear();
-		this.toolComponentFailures.clear();
 		this.clearRenderCache();
 		this.rebuildFromSession();
 		try {
@@ -712,7 +710,6 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		this.nestTheme = undefined;
 		this.liveOutcome = "running";
 		this.toolNames.clear();
-		this.toolComponentFailures.clear();
 		this.session = undefined;
 		this.ownedToolCallId = undefined;
 		this.state = undefined;
