@@ -43,15 +43,7 @@
       "count": 1
     }
   },
-  "handoff/eligibility.ts": {
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
-    }
-  },
   "handoff/format.ts": {
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
-    },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
     }
@@ -64,9 +56,6 @@
       "count": 1
     },
     "@typescript-eslint/restrict-plus-operands": {
-      "count": 1
-    },
-    "@typescript-eslint/restrict-template-expressions": {
       "count": 1
     },
     "@typescript-eslint/strict-boolean-expressions": {
@@ -93,7 +82,7 @@
       "count": 9
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 6
+      "count": 1
     },
     "@typescript-eslint/return-await": {
       "count": 1
@@ -215,9 +204,6 @@
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 6
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 6
-    },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
     }
@@ -252,9 +238,6 @@
     },
     "@typescript-eslint/prefer-optional-chain": {
       "count": 1
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 6
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 10
@@ -303,9 +286,6 @@
     "@typescript-eslint/no-non-null-assertion": {
       "count": 2
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 3
-    },
     "ban/set-singletons-import": {
       "count": 1
     }
@@ -320,9 +300,6 @@
     "@typescript-eslint/require-await": {
       "count": 2
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 6
-    },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 4
     }
@@ -332,11 +309,6 @@
       "count": 1
     },
     "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
-    }
-  },
-  "notifications.ts": {
-    "@typescript-eslint/restrict-template-expressions": {
       "count": 1
     }
   },
@@ -424,9 +396,6 @@
     "@typescript-eslint/prefer-nullish-coalescing": {
       "count": 2
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
-    },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 10
     },
@@ -478,7 +447,7 @@
       "count": 1
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 6
+      "count": 1
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 25
@@ -497,9 +466,6 @@
   },
   "tests/e2e/pty-harness.ts": {
     "@typescript-eslint/no-empty-function": {
-      "count": 1
-    },
-    "@typescript-eslint/restrict-template-expressions": {
       "count": 1
     },
     "ban/wall-clock": {
@@ -521,9 +487,6 @@
     "@typescript-eslint/require-await": {
       "count": 17
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 10
-    },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
     },
@@ -536,9 +499,6 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 2
-    },
-    "@typescript-eslint/restrict-template-expressions": {
       "count": 2
     },
     "preserve-caught-error": {
@@ -557,9 +517,6 @@
     },
     "@typescript-eslint/require-await": {
       "count": 4
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 6
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
@@ -586,9 +543,6 @@
     },
     "@typescript-eslint/prefer-promise-reject-errors": {
       "count": 1
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 17
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 3
@@ -636,9 +590,6 @@
     }
   },
   "tests/test-utils.ts": {
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
-    },
     "ban/console-assignment": {
       "count": 8
     }
@@ -674,9 +625,6 @@
   "tests/unit/brand-assets.test.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
     }
   },
   "tests/unit/compat-fixture.test.ts": {
@@ -705,9 +653,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 4
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 1
     }
   },
   "tests/unit/config-invariants.test.ts": {
@@ -762,9 +707,6 @@
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 3
-    },
     "ban/wall-clock": {
       "count": 11
     }
@@ -782,16 +724,8 @@
     "@typescript-eslint/require-await": {
       "count": 18
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
-    },
     "@typescript-eslint/unbound-method": {
       "count": 1
-    }
-  },
-  "tests/unit/handoff-eligibility.test.ts": {
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
     }
   },
   "tests/unit/handoff.test.ts": {
@@ -829,7 +763,7 @@
       "count": 1
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 10
+      "count": 4
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 2
@@ -872,7 +806,7 @@
       "count": 1
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 5
+      "count": 2
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 6
@@ -944,7 +878,7 @@
   },
   "tests/unit/model-groups-constraints-fixture.ts": {
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 10
+      "count": 2
     }
   },
   "tests/unit/model-groups-constraints.test.ts": {
@@ -1113,7 +1047,7 @@
       "count": 6
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 20
+      "count": 14
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 4
@@ -1162,7 +1096,7 @@
       "count": 14
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 4
+      "count": 2
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
@@ -1193,7 +1127,7 @@
   },
   "tests/unit/os-sandbox.test.ts": {
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 7
+      "count": 2
     },
     "ban/wall-clock": {
       "count": 3
@@ -1238,9 +1172,6 @@
       "count": 8
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    },
-    "@typescript-eslint/restrict-template-expressions": {
       "count": 1
     }
   },
@@ -1321,9 +1252,6 @@
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 81
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 4
-    },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 7
     },
@@ -1376,9 +1304,6 @@
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 5
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 5
-    },
     "ban/wall-clock": {
       "count": 3
     }
@@ -1407,17 +1332,11 @@
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 1
-    },
     "no-control-regex": {
       "count": 1
     }
   },
   "tests/unit/resolve-path.test.ts": {
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
-    },
     "ban/wall-clock": {
       "count": 2
     }
@@ -1494,11 +1413,6 @@
       "count": 1
     }
   },
-  "tests/unit/spawn-node.ts": {
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 1
-    }
-  },
   "tests/unit/spawn-render.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
@@ -1543,9 +1457,6 @@
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 6
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 1
     },
     "ban/wall-clock": {
       "count": 1
@@ -1595,7 +1506,7 @@
       "count": 62
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 5
+      "count": 1
     }
   },
   "tests/unit/state-invariants.test.ts": {
@@ -1612,7 +1523,7 @@
       "count": 3
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 7
+      "count": 2
     }
   },
   "tests/unit/system-prompt.test.ts": {
@@ -1659,9 +1570,6 @@
     "@typescript-eslint/require-await": {
       "count": 2
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
-    },
     "@typescript-eslint/unbound-method": {
       "count": 2
     }
@@ -1683,9 +1591,6 @@
   "tests/unit/time-format.test.ts": {
     "@typescript-eslint/no-non-null-assertion": {
       "count": 2
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 5
     },
     "ban/wall-clock": {
       "count": 1
@@ -1736,7 +1641,7 @@
       "count": 18
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 13
+      "count": 5
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 3
@@ -1762,9 +1667,6 @@
     }
   },
   "tui.ts": {
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 5
-    },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 2
     }
@@ -1775,9 +1677,6 @@
     },
     "@typescript-eslint/require-await": {
       "count": 2
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 4
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1

@@ -342,9 +342,10 @@ export default defineConfig([
 				"error",
 				{ allowAny: false, allowBoolean: false, allowNullish: false, allowNumberAndString: false, allowRegExp: false },
 			],
+			// Numbers interpolate the same with or without String(); objects, nullish and unknown values still fail.
 			"@typescript-eslint/restrict-template-expressions": [
 				"error",
-				{ allowAny: false, allowBoolean: false, allowNever: false, allowNullish: false, allowNumber: false, allowRegExp: false },
+				{ allowAny: false, allowBoolean: false, allowNever: false, allowNullish: false, allowNumber: true, allowRegExp: false },
 			],
 			"@typescript-eslint/return-await": ["error", "error-handling-correctness-only"],
 			"@typescript-eslint/triple-slash-reference": "error",
