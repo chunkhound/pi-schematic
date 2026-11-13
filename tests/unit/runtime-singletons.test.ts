@@ -106,9 +106,9 @@ test("teardown restores the console and singletons when clearing the harness sch
 	const { debug, log, warn, error } = console;
 	const h = createTestHarness();
 	onTestFinished(() => {
-		// Undo the swaps teardown should have made, so a failure here does not
-		// leave the console captured and the harness singletons installed.
-		Object.assign(console, { debug, log, warn, error });
+		// Undo the singleton swap teardown should have made, so a failure here
+		// does not leave the harness singletons installed. restoreMocks restores
+		// the console spies before the next test.
 		__setSingletons(outer, { forceWriteLock: true });
 	});
 	vi.spyOn(getSingletons().frameScheduler, "clear").mockImplementation(() => {

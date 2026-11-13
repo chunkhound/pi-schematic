@@ -255,9 +255,6 @@
     "@typescript-eslint/unbound-method": {
       "count": 2
     },
-    "ban/wall-clock": {
-      "count": 1
-    },
     "ban/zero-delay-timeout": {
       "count": 1
     },
@@ -524,7 +521,7 @@
       "count": 1
     },
     "ban/wall-clock": {
-      "count": 3
+      "count": 1
     },
     "vitest/max-expects": {
       "count": 7
