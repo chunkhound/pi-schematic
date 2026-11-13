@@ -11,6 +11,7 @@ import {
 	type ExtensionToolContext,
 	type ExtensionUIContext,
 	type Theme,
+	type ToolCallEventResult,
 	type ToolDefinition,
 	type TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
@@ -23,7 +24,7 @@ import os from "node:os";
 import { test as base, expect, vi } from "vitest";
 import { createState, resetState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
-import { assertPresent } from "../assertions.js";
+import { assertPresent, isRecord } from "../assertions.js";
 import { AGENT_DIR_ENV_KEY } from "../paths.js";
 import { createTestHost, type TestPI } from "./test-host.js";
 
@@ -404,23 +405,46 @@ export function createToolContext(overrides: Partial<ExtensionToolContext> = {})
 
 // ── Readonly test helpers ────────────────────────────────────────────
 
-export type ToolCall = (event: { toolName: string; toolCallId?: string; input?: Record<string, unknown> }, ctx: { cwd?: string }) => Promise<any>;
+/** The composed tool_call handlers: the first blocking result, or `undefined` when none blocks. */
+export type ToolCall = (event: { toolName: string; toolCallId?: string; input?: Record<string, unknown> }, ctx: { cwd?: string }) => Promise<ToolCallEventResult | undefined>;
+
+// The tests pass a partial event and context, which the typed handlers do not admit, so each
+// handler runs untyped and its result is checked to be a tool_call result or nothing.
+type UntypedToolCallHandler = (event: Parameters<ToolCall>[0], ctx: Parameters<ToolCall>[1]) => Promise<unknown>;
+
+function assertToolCallResult(value: unknown): asserts value is ToolCallEventResult | undefined {
+	if (value === undefined) {return;}
+	if (!isRecord(value) || typeof value.block !== "boolean" || (value.reason !== undefined && typeof value.reason !== "string")) {
+		throw new Error("A tool_call handler returned something other than a tool_call result.");
+	}
+}
 
 /**
  * Create a test PI instance with pi-schematic registered and its tool_call handlers composed as pi runs them.
  */
 export async function registerReadonlyPI(): Promise<{ pi: TestPI; toolCall: ToolCall }> {
 	const pi = await createTestHost();
-	const handlers = pi.handlers.get("tool_call") as ToolCall[];
+	const handlers = pi.handlers.get("tool_call") as UntypedToolCallHandler[];
 	// Pi runs tool_call handlers in registration order and the first block wins.
 	const toolCall: ToolCall = async (event, ctx) => {
 		for (const handler of handlers) {
 			const result = await handler(event, ctx);
-			if (result?.block) {return result;}
+			assertToolCallResult(result);
+			if (result?.block === true) {return result;}
 		}
 		return undefined;
 	};
 	return { pi, toolCall };
+}
+
+/** A UI command context whose notifications, statuses and widgets go nowhere, with no context usage. */
+export function uiCommandContext(overrides: Partial<ExtensionCommandContext> = {}): ExtensionCommandContext {
+	return createCommandContext({
+		hasUI: true,
+		ui: createUIContext({ notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn() }),
+		getContextUsage: () => undefined,
+		...overrides,
+	});
 }
 
 /**

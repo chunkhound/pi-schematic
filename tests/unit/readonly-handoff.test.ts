@@ -8,7 +8,7 @@ import type {
 	ExtensionContext,
 	ExtensionToolContext,
 	SessionBoundaryDraft,
-	ToolCallEventResult,
+	TurnEndEvent,
 	TurnEndEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { execFileSync } from "node:child_process";
@@ -28,6 +28,7 @@ import {
 	handoffToolResult,
 	registerReadonlyPI,
 	turnEndEvent,
+	uiCommandContext,
 	type ToolCall,
 } from "./helpers.js";
 import { getCommand, getHandlers, getHostRecords, getTool, invokeHandler, type TestPI } from "./test-host.js";
@@ -40,45 +41,14 @@ import { READONLY_POWERSHELL_BLOCK_REASON, READONLY_WRITE_EDIT_BLOCK_REASON } fr
 
 type AgentMessage = ContextEvent["messages"][number];
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
-// The composed tool_call handlers return the first blocking result or nothing.
-function assertToolCallResult(value: unknown): asserts value is ToolCallEventResult | undefined {
-	if (value === undefined) {return;}
-	if (!isRecord(value) || typeof value.block !== "boolean" || (value.reason !== undefined && typeof value.reason !== "string")) {
-		throw new Error("The tool_call handlers returned something other than a tool_call result.");
-	}
-}
-
-type ReadonlyToolCall = (event: Parameters<ToolCall>[0], ctx: Parameters<ToolCall>[1]) => Promise<ToolCallEventResult | undefined>;
-
-function checkedToolCall(toolCall: ToolCall): ReadonlyToolCall {
-	return async (event, ctx) => {
-		const result: unknown = await toolCall(event, ctx);
-		assertToolCallResult(result);
-		return result;
-	};
-}
-
 async function createHandoffPI() {
 	const { pi, toolCall } = await registerReadonlyPI();
 	const agentSettled = (ctx: unknown) => emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
-	// The contexts these tests pass stub `sessionManager` with a branch only, so the one session_tree handler runs through emitAll.
+	// One context these tests pass stubs `sessionManager` with a branch only, which `ExtensionContext` does not admit,
+	// so the one session_tree handler runs untyped through emitAll.
 	const sessionTree = (event: unknown, ctx: unknown) => emitAll(pi, "session_tree", event, ctx);
 	const sessionStart = (event: unknown, ctx: unknown) => emitAll(pi, "session_start", event, ctx);
-	return { pi, toolCall: checkedToolCall(toolCall), agentSettled, sessionTree, sessionStart };
-}
-
-/** A UI command context whose notifications, statuses and widgets go nowhere, with no context usage. */
-function uiCommandContext(overrides: Partial<ExtensionCommandContext> = {}): ExtensionCommandContext {
-	return createCommandContext({
-		hasUI: true,
-		ui: createUIContext({ notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn() }),
-		getContextUsage: () => undefined,
-		...overrides,
-	});
+	return { pi, toolCall, agentSettled, sessionTree, sessionStart };
 }
 
 /** A command context without UI and without context usage. */
@@ -96,12 +66,11 @@ function contextHandlerOf(pi: TestPI) {
 	return (event: Omit<ContextEvent, "type">, ctx: ExtensionContext) => invokeHandler(pi, "context", { type: "context", ...event }, ctx);
 }
 
-/** The content of the last message `result` returns; "" when that message has none. Throws when there is no result. */
+/** The content of the last message `result` returns. Throws when there is no result or that message has no text content. */
 function lastMessageContent(result: ContextEventResult | undefined): string {
 	if (result?.messages === undefined) {throw new Error("The context handler returned no messages.");}
 	const last = result.messages.at(-1);
-	if (last === undefined || !("content" in last)) {return "";}
-	if (typeof last.content !== "string") {throw new Error("The last context message has no text content.");}
+	if (last === undefined || !("content" in last) || typeof last.content !== "string") {throw new Error("The last context message has no text content.");}
 	return last.content;
 }
 
@@ -127,7 +96,7 @@ function makeReadonlyResumeCtx(branch: unknown[]) {
 /** Dispatch a tool call as pi does: run the composed tool_call handlers and execute the tool only when none blocks. Returns the block or the tool's result. */
 async function dispatchTool(
 	pi: TestPI,
-	toolCall: ReadonlyToolCall,
+	toolCall: ToolCall,
 	event: { toolName: string; toolCallId: string; input: Record<string, unknown> },
 	ctx: ExtensionToolContext,
 ): Promise<unknown> {
@@ -143,22 +112,31 @@ async function stageHandoff(pi: TestPI, toolCallId: string, params: Record<strin
 	await getTool(pi, "handoff").execute(toolCallId, params, undefined, undefined, createToolContext({ getContextUsage: () => ELIGIBLE_USAGE }));
 }
 
-/** Whether a handler result carries boundary entries. */
-function hasEntries(result: unknown): boolean {
-	return isRecord(result) && Boolean(result.entries);
+/** Whether a turn_end handler result carries boundary entries. */
+function hasEntries(result: TurnEndEventResult | undefined): boolean {
+	return result?.entries !== undefined;
+}
+
+/** A context without UI whose signal is aborted or not. */
+function turnEndContext(aborted: boolean): ExtensionContext {
+	const controller = new AbortController();
+	if (aborted) {controller.abort();}
+	return createExtensionContext({ signal: controller.signal });
+}
+
+/** Every turn_end handler's result for `event`, in registration order; each handler sees the same event. */
+async function turnEndResults(pi: TestPI, event: TurnEndEvent, ctx: ExtensionContext): Promise<(TurnEndEventResult | undefined)[]> {
+	const results: (TurnEndEventResult | undefined)[] = [];
+	for (let index = 0; index < getHandlers(pi, "turn_end").length; index++) {
+		results.push(await invokeHandler(pi, "turn_end", event, ctx, index));
+	}
+	return results;
 }
 
 /** End the staging turn and return the entries the boundary handler asked pi to commit. */
 async function endStagingTurn(pi: TestPI, toolCallId: string): Promise<SessionBoundaryDraft[]> {
-	const event = turnEndEvent({ toolResults: [handoffToolResult(toolCallId)] });
-	const ctx = createExtensionContext({ signal: new AbortController().signal });
-	const results: (TurnEndEventResult | undefined)[] = [];
-	for (const handler of getHandlers(pi, "turn_end")) {
-		// pi types a handler's result as possibly `void`; `?? undefined` reads that as no result.
-		const result = await handler(event, ctx);
-		results.push(result ?? undefined);
-	}
-	const boundary = results.find((result) => result?.entries !== undefined);
+	const results = await turnEndResults(pi, turnEndEvent({ toolResults: [handoffToolResult(toolCallId)] }), turnEndContext(false));
+	const boundary = results.find(hasEntries);
 	assertPresent(boundary?.entries, "the staging turn_end must return boundary entries");
 	expect(boundary.continue).toBe(true);
 	return boundary.entries;
@@ -223,7 +201,7 @@ async function handoffCutAcrossReadonlyToggle(readonlyAfterCut: boolean) {
 	return { summary: compactionSummary(drafts), nudgeContent: lastReadonlyNudge(next) };
 }
 
-async function assertNonTempBashBlocked(toolCall: ReadonlyToolCall): Promise<void> {
+async function assertNonTempBashBlocked(toolCall: ToolCall): Promise<void> {
 	const target = path.join(os.homedir(), `readonly-handoff-test-${process.pid}-${Date.now()}`);
 	const command = `touch "${target}"`;
 	await rm(target, { force: true });
@@ -280,12 +258,7 @@ test("readonly blocks a non-requested handoff", async () => {
 	const blocked = await dispatchTool(pi, toolCall, { toolName: "handoff", toolCallId: "blocked-1", input }, ctx);
 	expect(blocked).toMatchObject({ block: true });
 
-	const results = await callHandlers(
-		pi,
-		"turn_end",
-		turnEndEvent({ toolResults: [handoffToolResult("blocked-1")] }),
-		{ hasUI: false, signal: { aborted: false }, getContextUsage: () => null },
-	);
+	const results = await turnEndResults(pi, turnEndEvent({ toolResults: [handoffToolResult("blocked-1")] }), turnEndContext(false));
 	expect(results.filter(hasEntries), "a blocked handoff leaves no boundary to write").toStrictEqual([]);
 });
 
@@ -314,12 +287,7 @@ test("a write sharing a message with handoff keeps its readonly block while the 
 	);
 	expect(handoff).toStrictEqual({ block: true, reason: HANDOFF_NOT_ALONE_REFUSAL, terminate: true });
 
-	const results = await callHandlers(
-		pi,
-		"turn_end",
-		turnEndEvent({ toolResults: [handoffToolResult("call-handoff")] }),
-		{ hasUI: false, signal: { aborted: false }, getContextUsage: () => null },
-	);
+	const results = await turnEndResults(pi, turnEndEvent({ toolResults: [handoffToolResult("call-handoff")] }), turnEndContext(false));
 	expect(results.filter(hasEntries), "a refused handoff stages nothing").toStrictEqual([]);
 });
 
@@ -428,12 +396,7 @@ test("an aborted handoff keeps the bypass and persists the failure without start
 	await getCommand(pi, "handoff").handler("continue readonly work", uiCommandContext({ isIdle: () => true }));
 
 	await stageHandoff(pi, "handoff-1", { nextInstruction: "Continue readonly work" });
-	const results = await callHandlers(
-		pi,
-		"turn_end",
-		turnEndEvent({ toolResults: [handoffToolResult("handoff-1")] }),
-		{ hasUI: false, signal: { aborted: true }, getContextUsage: () => null },
-	);
+	const results = await turnEndResults(pi, turnEndEvent({ toolResults: [handoffToolResult("handoff-1")] }), turnEndContext(true));
 	expect(results.filter(hasEntries)).toStrictEqual([]);
 	const userMessagesBefore = getHostRecords(pi).sentUserMessages.length;
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => [] } });
@@ -706,25 +669,16 @@ test("session tree drops a staged handoff, releases the overlap guard, and a sta
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "stale"]]);
 
 	await stageHandoff(pi, "branch-handoff", { nextInstruction: "continue branch work" });
-	await sessionTree({}, {
+	await sessionTree({}, createExtensionContext({
 		hasUI: true,
-		ui: {
-			theme: { fg: (_name: string, text: string) => text },
-			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-			setWidget: vi.fn(),
-		},
-		getContextUsage: () => null,
-	});
+		ui: createUIContext({ setStatus: (key, value) => { statuses.set(key, value); }, setWidget: vi.fn() }),
+		getContextUsage: () => undefined,
+	}));
 
 	expect(statuses.get(STATUS_KEY_HANDOFF)).toBeUndefined();
 	expect(await toolCall({ toolName: "handoff", input: {} }, {}), "non-readonly branch should not retain a stale readonly handoff block").toBeUndefined();
 
-	const staleResults = await callHandlers(
-		pi,
-		"turn_end",
-		turnEndEvent({ toolResults: [handoffToolResult("branch-handoff")] }),
-		{ hasUI: false, signal: { aborted: false }, getContextUsage: () => null },
-	);
+	const staleResults = await turnEndResults(pi, turnEndEvent({ toolResults: [handoffToolResult("branch-handoff")] }), turnEndContext(false));
 	expect(staleResults.filter(hasEntries), "the dropped handoff must not write a cut").toStrictEqual([]);
 
 	const drafts = await completeHandoffCut(pi, "fresh-branch-handoff", { nextInstruction: "continue fresh branch work" });

@@ -15,7 +15,7 @@ import {
 	type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { assertPresent, expectPrefix, expectSuffix } from "../assertions.js";
+import { assertPresent, expectPrefix, expectSuffix, isRecord } from "../assertions.js";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createState, resetState, type SchematicState } from "../../state.js";
@@ -44,10 +44,6 @@ import { createTestHarness, type TestHarness } from "../test-utils.js";
 let h: TestHarness;
 
 // ── Test helpers ─────────────────────────────────────────────────────
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
 /** A chat model with `fields` over placeholder metadata: no reasoning, text input, zero cost. */
 function testModel(fields: Partial<Model<Api>> & Pick<Model<Api>, "id">): Model<Api> {
 	return {

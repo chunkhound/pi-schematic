@@ -725,19 +725,19 @@
       "count": 2
     },
     "@typescript-eslint/no-explicit-any": {
-      "count": 46
+      "count": 45
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 9
+      "count": 8
     },
     "@typescript-eslint/no-unsafe-call": {
       "count": 3
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 37
+      "count": 36
     },
     "@typescript-eslint/no-unsafe-return": {
-      "count": 2
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 38
@@ -746,7 +746,7 @@
       "count": 2
     },
     "@typescript-eslint/strict-boolean-expressions": {
-      "count": 6
+      "count": 5
     },
     "ban/wall-clock": {
       "count": 1
@@ -1021,9 +1021,6 @@
     "@typescript-eslint/no-non-null-assertion": {
       "count": 1
     },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-call": {
       "count": 1
     },
@@ -1111,9 +1108,6 @@
   "tests/unit/readonly-spawn.test.ts": {
     "@typescript-eslint/no-base-to-string": {
       "count": 1
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 3
     },
     "ban/wall-clock": {
       "count": 3
@@ -1369,7 +1363,7 @@
       "count": 24
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 51
+      "count": 50
     },
     "@typescript-eslint/no-unsafe-call": {
       "count": 63

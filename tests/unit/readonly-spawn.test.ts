@@ -13,15 +13,10 @@ import {
 	createReadonlyChildBashTool,
 	filterReadonlyToolNames,
 } from "../../spawn/index.js";
-import { expectSuffix } from "../assertions.js";
+import { expectSuffix, isRecord } from "../assertions.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
 import { createToolContext, runRealChildInvocation, SANDBOX_DENIAL_PHRASES, textOf, tmpDir } from "./helpers.js";
-import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
 
 function fulfilledValue<T>(result: PromiseSettledResult<T>): T {
 	expect(result.status).toBe("fulfilled");
@@ -127,10 +122,9 @@ function runChildBash(
 	command: string,
 	options: { timeout?: number; signal?: AbortSignal; onUpdate?: (update: { content: { type: string; text?: string }[] }) => void } = {},
 ) {
-	// Without a ctx, pi's bash tool skips the session environment, which these tests do not need;
-	// pi types `ctx` as required.
+	// The default tool context runs the command in the process directory, the tool's own cwd.
 	return createReadonlyChildBashTool(process.cwd())
-		.execute("child-bash", { command, timeout: options.timeout }, options.signal, options.onUpdate, undefined as unknown as ExtensionToolContext);
+		.execute("child-bash", { command, timeout: options.timeout }, options.signal, options.onUpdate, createToolContext());
 }
 
 /** Return `command` after checking that the readonly guard sandboxes it rather than blocking it. */
@@ -237,7 +231,7 @@ test.skipIf(skipWithoutDenialPhrase)("child bash call the readonly guard blocks 
 test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("child bash call the readonly guard blocks gets no block notice after a sandboxed call on the same tool", async () => {
 	const target = outsideTempPath("blocked-after-sandboxed");
 	const tool = createReadonlyChildBashTool(process.cwd());
-	const run = (command: string) => tool.execute("child-bash", { command }, undefined, undefined, undefined as unknown as ExtensionToolContext);
+	const run = (command: string) => tool.execute("child-bash", { command }, undefined, undefined, createToolContext());
 	await run(sandboxed("echo sandboxed-first"));
 
 	await expect(run(`echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(target)}`)).rejects.toSatisfy((error: Error) => {
@@ -252,7 +246,7 @@ test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("concurrent child bas
 	const sandboxedTarget = outsideTempPath("concurrent-sandboxed");
 	const blockedTarget = outsideTempPath("concurrent-blocked");
 	const tool = createReadonlyChildBashTool(process.cwd());
-	const run = (toolCallId: string, command: string) => tool.execute(toolCallId, { command }, undefined, undefined, undefined as unknown as ExtensionToolContext);
+	const run = (toolCallId: string, command: string) => tool.execute(toolCallId, { command }, undefined, undefined, createToolContext());
 	const [sandboxedResult, blockedResult] = await Promise.allSettled([
 		run("child-bash-sandboxed", nodeCommand(`require("fs").writeFileSync(${JSON.stringify(sandboxedTarget)}, "x")`)),
 		run("child-bash-blocked", `echo '${SANDBOX_DENIAL_PHRASE}' > ${quoteShellArgument(blockedTarget)}`),
