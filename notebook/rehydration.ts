@@ -68,8 +68,8 @@ export function reconstructNotebook(state: SchematicState, branch: readonly Sess
 	let committedEpoch: number | null = null;
 	let maxObservedEpoch = 0;
 	for (const entry of branch) {
-		if (entry?.type !== "custom") continue;
-		const customEntry = entry as CustomEntry;
+		if (entry?.type !== "custom") {continue;}
+		const customEntry = entry;
 		if (customEntry.customType === GENERATION_ENTRY_TYPE) {
 			const data = customEntry.data as NotebookGenerationData;
 			if (isKnownNotebookVersion(data?.version) && isNotebookEpoch(data?.epoch)) {
@@ -78,7 +78,7 @@ export function reconstructNotebook(state: SchematicState, branch: readonly Sess
 			}
 			continue;
 		}
-		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) continue;
+		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) {continue;}
 		const data = customEntry.data as NotebookEntryData;
 		if (isKnownNotebookVersion(data?.version) && data?.name && typeof data.content === "string") {
 			if (isNotebookEpoch(data.epoch)) {
@@ -96,12 +96,12 @@ export function reconstructNotebook(state: SchematicState, branch: readonly Sess
 	const candidates = new Map<string, NotebookCandidate>();
 	for (let i = branch.length - 1; i >= 0; i--) {
 		const entry = branch[i];
-		if (entry?.type !== "custom") continue;
-		const customEntry = entry as CustomEntry;
-		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) continue;
+		if (entry?.type !== "custom") {continue;}
+		const customEntry = entry;
+		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) {continue;}
 		const data = customEntry.data as NotebookEntryData;
 		const epoch = isNotebookEpoch(data?.epoch) ? data.epoch : 0;
-		if (!isKnownNotebookVersion(data?.version) || !data?.name || typeof data.content !== "string" || epoch !== currentEpoch || candidates.has(data.name)) continue;
+		if (!isKnownNotebookVersion(data?.version) || !data?.name || typeof data.content !== "string" || epoch !== currentEpoch || candidates.has(data.name)) {continue;}
 		candidates.set(data.name, { epoch, content: data.content, clipped: data.clipped === true });
 	}
 
@@ -109,7 +109,7 @@ export function reconstructNotebook(state: SchematicState, branch: readonly Sess
 	state.clippedPages.clear();
 	for (const [name, candidate] of candidates) {
 		state.notebookPages.set(name, candidate.content);
-		if (candidate.clipped) state.clippedPages.add(name);
+		if (candidate.clipped) {state.clippedPages.add(name);}
 	}
 }
 
@@ -125,7 +125,7 @@ export function ensureNotebookToolsActive(pi: ExtensionAPI): void {
 		active.push("notebook_index");
 		changed = true;
 	}
-	if (changed) pi.setActiveTools(active);
+	if (changed) {pi.setActiveTools(active);}
 }
 
 // ── Registration ──────────────────────────────────────────────────────

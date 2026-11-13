@@ -27,7 +27,7 @@ export function canPromoteBoundary(
 /** Consume a boundary that cannot authorize a readonly handoff. */
 export function discardNonHumanBoundary(state: SchematicState): boolean {
 	const boundary = state.pendingTopicBoundaryHint;
-	if (!boundary || boundary.source === "human") return false;
+	if (!boundary || boundary.source === "human") {return false;}
 	state.pendingTopicBoundaryHint = null;
 	return true;
 }
@@ -54,8 +54,8 @@ export function promoteBoundary(state: SchematicState, ctx: ExtensionContext): v
  */
 export function markBoundaryAdvisory(state: SchematicState): boolean {
 	const boundary = state.pendingTopicBoundaryHint;
-	if (!boundary || boundary.source !== "human") return false;
-	if (boundary.advisoryDelivered) return false;
+	if (!boundary || boundary.source !== "human") {return false;}
+	if (boundary.advisoryDelivered) {return false;}
 	boundary.advisoryDelivered = true;
 	return true;
 }

@@ -115,7 +115,7 @@ test("bash guard uses centralized readonly block copy", () => {
 	if (result.action === "block") {
 		const verdict = classifyBashCommand(command, process.cwd());
 		expect(verdict.ok).toBe(false);
-		if (verdict.ok === false) {
+		if (!verdict.ok) {
 			expect(result.reason).toBe(buildReadonlyBashBlockReason(verdict.reason, command));
 		}
 	}

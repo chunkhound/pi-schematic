@@ -25,14 +25,14 @@ export function prepareCompatCopy(copy) {
   rmSync(join(copy, "package-lock.json"), { force: true });
   const packagePath = join(copy, "package.json");
   const packageJson = JSON.parse(readFileSync(packagePath, "utf8"));
-  if (packageJson.scripts) delete packageJson.scripts.prepare;
+  if (packageJson.scripts) {delete packageJson.scripts.prepare;}
   writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
 }
 
 // `npm view --json` prints empty stdout and exits 0 for an undeclared field, and
 // npm 12 wraps a single value in a one-element array.
 export function parseNpmViewValue(stdout) {
-  if (!stdout.trim()) return undefined;
+  if (!stdout.trim()) {return undefined;}
   let value;
   try {
     value = JSON.parse(stdout);
@@ -51,8 +51,8 @@ export function packEntry(stdout) {
     throw new Error(`Unexpected npm pack --json output: ${JSON.stringify(stdout)}`, { cause });
   }
   let entry;
-  if (Array.isArray(packJson) && packJson.length === 1) entry = packJson[0];
-  else if (packJson && typeof packJson === "object" && Object.keys(packJson).length === 1) entry = Object.values(packJson)[0];
+  if (Array.isArray(packJson) && packJson.length === 1) {entry = packJson[0];}
+  else if (packJson && typeof packJson === "object" && Object.keys(packJson).length === 1) {entry = Object.values(packJson)[0];}
   if (typeof entry?.filename !== "string" || !entry.filename) {
     throw new Error(`Unexpected npm pack --json output: ${JSON.stringify(stdout)}`);
   }
@@ -88,7 +88,7 @@ export function latestPiDependencies({ piVersion, typeboxVersion }) {
 function copyCompatPackageLock(artifactDir, sourceDir, required = false) {
   const packageLock = join(sourceDir, "package-lock.json");
   if (!existsSync(packageLock)) {
-    if (required) throw new Error(`Expected compatibility package lock at ${packageLock}`);
+    if (required) {throw new Error(`Expected compatibility package lock at ${packageLock}`);}
     return;
   }
   copyFileSync(packageLock, join(artifactDir, "package-lock.json"));
@@ -96,7 +96,7 @@ function copyCompatPackageLock(artifactDir, sourceDir, required = false) {
 
 /** Write successful compatibility artifacts if configured. */
 export function writeCompatArtifacts(artifactDir, sourceDir, { piVersion, typeboxVersion }) {
-  if (!artifactDir) return;
+  if (!artifactDir) {return;}
   mkdirSync(artifactDir, { recursive: true });
   copyCompatPackageLock(artifactDir, sourceDir, true);
   writeFileSync(join(artifactDir, "versions.txt"), `pi=${piVersion}\ntypebox=${typeboxVersion}\nnode=${process.version}\n`);
@@ -104,7 +104,7 @@ export function writeCompatArtifacts(artifactDir, sourceDir, { piVersion, typebo
 
 /** Write failure diagnostics to artifact directory if configured. */
 export function writeCompatDiagnostics(artifactDir, sourceDir, error) {
-  if (!artifactDir) return;
+  if (!artifactDir) {return;}
   mkdirSync(artifactDir, { recursive: true });
   copyCompatPackageLock(artifactDir, sourceDir);
   writeFileSync(join(artifactDir, "failure.txt"), String(error));

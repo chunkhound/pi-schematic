@@ -20,7 +20,7 @@ export function normalizeContextPercent(value: number | null | undefined): numbe
 
 /** Estimate session tokens from exact usage or percentage/context-window data. */
 export function estimateHandoffContextTokens(usage: HandoffContextUsage): number | null {
-	if (!usage) return null;
+	if (!usage) {return null;}
 	if (usage.tokens !== null && usage.tokens !== undefined) {
 		return isFiniteNonNegative(usage.tokens) ? usage.tokens : null;
 	}
@@ -40,7 +40,7 @@ export function isHandoffEligible(usage: HandoffContextUsage): boolean {
 
 /** Format exact or estimated usage for user-facing handoff errors. */
 export function formatHandoffContextUsage(usage: HandoffContextUsage): string {
-	if (isFiniteNonNegative(usage?.tokens)) return `${usage.tokens} tokens`;
+	if (isFiniteNonNegative(usage?.tokens)) {return `${usage.tokens} tokens`;}
 	const estimated = estimateHandoffContextTokens(usage);
 	return `~${estimated === null ? "unknown" : Math.round(estimated)} tokens estimated from context usage`;
 }

@@ -47,7 +47,7 @@ test("writeCompatArtifacts rejects a successful artifact without its package loc
 	});
 });
 
-const parseAccepted: Array<[string, string, unknown]> = [
+const parseAccepted: [string, string, unknown][] = [
 	["a bare JSON string", '"1.2.0"', "1.2.0"],
 	["a one-element array, unwrapped", '["1.2.0"]', "1.2.0"],
 	["empty output, as undeclared", "", undefined],
@@ -73,7 +73,7 @@ test("parseNpmViewValue rejects non-JSON output, naming the command and keeping 
 
 const packEntryFixture = { filename: "chunkhound-pi-schematic-1.0.0.tgz" };
 
-const packEntryAccepted: Array<[string, unknown]> = [
+const packEntryAccepted: [string, unknown][] = [
 	["a one-element array", [packEntryFixture]],
 	["an object keyed by package name", { "@chunkhound/pi-schematic": packEntryFixture }],
 ];
@@ -84,7 +84,7 @@ for (const [shape, packJson] of packEntryAccepted) {
 	});
 }
 
-const packEntryRejected: Array<[string, unknown]> = [
+const packEntryRejected: [string, unknown][] = [
 	["a two-element array", [packEntryFixture, packEntryFixture]],
 	["an object with two keys", { a: packEntryFixture, b: packEntryFixture }],
 	["an entry with an empty filename", [{ filename: "" }]],

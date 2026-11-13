@@ -38,7 +38,7 @@ function mockSessionFactory(opts: {
 		messages: [] as any[],
 		get thinkingLevel() { return opts.thinkingLevel; },
 		prompt: async (p?: string) => {
-			if (opts.prompt) await opts.prompt(p);
+			if (opts.prompt) {await opts.prompt(p);}
 			session.messages = opts.result ?? defaultResult;
 		},
 		abort: opts.abort ?? (async () => {}),
@@ -54,7 +54,7 @@ function mockFactoryWith(opts: Parameters<typeof mockSessionFactory>[0] = {}) {
 }
 
 async function makeChildSpawnTool(state: any) {
-	const pi = await createTestHost((api) => registerSpawnTool(api, state));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 	return pi.tools.get("spawn");
 }
 
@@ -74,10 +74,10 @@ async function executeWithFailingCleanup(primaryFailure: unknown, cleanupFailure
 	});
 	return {
 		execution: executeSpawn(
-			"spawn-cleanup-failure", pi as any,
+			"spawn-cleanup-failure", pi,
 			{ model: { id: "mock-model" }, cwd: "/tmp", hasUI: false, ...context } as any,
 			state, { prompt: "Do the task" }, undefined, undefined, "medium",
-			async () => ({ extensionsResult: undefined as any, session: session as any }),
+			async () => ({ extensionsResult: undefined as any, session: session }),
 		),
 		state,
 	};
@@ -93,10 +93,10 @@ test("spawn execute passes broad active registered tool formula to child session
 	const requestedCwd = "/tmp";
 
 	let seenConfig: any;
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, async (config: any) => {
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, async (config: any) => {
 		seenConfig = config;
 		return { session: mockSessionFactory({ prompt: async () => {} }), extensionsResult: undefined as any };
-	}), { toolSources: { "project_search": "project", "inactive_registered": "extension" }, activeTools: ["read", "bash", "spawn", "handoff", "project_search", "phantom_tool"], allTools: ["read", "bash", "spawn", "handoff", "project_search", "inactive_registered"] });
+	}); }, { toolSources: { "project_search": "project", "inactive_registered": "extension" }, activeTools: ["read", "bash", "spawn", "handoff", "project_search", "phantom_tool"], allTools: ["read", "bash", "spawn", "handoff", "project_search", "inactive_registered"] });
 
 	await pi.tools.get("spawn").execute(
 		"spawn-1",
@@ -121,10 +121,10 @@ test("spawn forwards requested thinking and reports the session effective thinki
 	const state = createState();
 	const updates: any[] = [];
 	let seenConfig: any;
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, async (config: any) => {
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, async (config: any) => {
 		seenConfig = config;
 		return { session: mockSessionFactory({ thinkingLevel: "off", prompt: async () => {} }), extensionsResult: undefined as any };
-	}), { activeTools: ["read", "spawn"] });
+	}); }, { activeTools: ["read", "spawn"] });
 
 	const result = await pi.tools.get("spawn").execute(
 		"spawn-effective-thinking",
@@ -157,12 +157,12 @@ test("spawn execute composes Model Group routing with readonly child guards", as
 	};
 	let seenConfig: any;
 	let seenPrompt = "";
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, async (config: any) => {
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, async (config: any) => {
 		seenConfig = config;
 		return { session: mockSessionFactory({
 			prompt: async (p?: string) => { seenPrompt = p ?? ""; },
 		}), extensionsResult: undefined as any };
-	}), { activeTools: ["read", "bash", "write", "edit", "powershell", "spawn", "handoff"], allTools: ["read", "bash", "write", "edit", "powershell", "spawn", "handoff"] });
+	}); }, { activeTools: ["read", "bash", "write", "edit", "powershell", "spawn", "handoff"], allTools: ["read", "bash", "write", "edit", "powershell", "spawn", "handoff"] });
 
 	const result = await pi.tools.get("spawn").execute(
 		"spawn-routed",
@@ -192,10 +192,10 @@ test("readonly child without a bash tool gets the no-shell summary and no bash r
 	const state = createState();
 	state.readonlyEnabled = true;
 	let seenPrompt = "";
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, async () => ({
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, async () => ({
 		session: mockSessionFactory({ prompt: async (p?: string) => { seenPrompt = p ?? ""; } }),
 		extensionsResult: undefined as any,
-	})), { activeTools: ["read", "powershell", "edit", "write"], allTools: ["read", "powershell", "edit", "write"] });
+	})); }, { activeTools: ["read", "powershell", "edit", "write"], allTools: ["read", "powershell", "edit", "write"] });
 
 	await pi.tools.get("spawn").execute(
 		"spawn-no-shell",
@@ -223,10 +223,10 @@ test("spawn routes capability requirements to capable members via random selecti
 		modalities: { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] },
 	} as any];
 	const seenModels: string[] = [];
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, async (config: any) => {
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, async (config: any) => {
 		seenModels.push(config.model.id);
 		return { session: mockSessionFactory({ prompt: async () => {} }), extensionsResult: undefined as any };
-	}), { activeTools: ["read", "bash", "spawn"] });
+	}); }, { activeTools: ["read", "bash", "spawn"] });
 	const ctx = { model: { provider: "openai", id: "parent" }, cwd: "/tmp", modelRegistry: {
 		find: (_p: string, id: string) => id === "gpt-cap-a" ? capA : id === "gpt-cap-b" ? capB : id === "gpt-text" ? textOnly : undefined,
 		hasConfiguredAuth: (m: any) => m === capA || m === capB || m === textOnly,
@@ -266,10 +266,10 @@ test("spawn injects a capability ceiling notice for a routed group with image di
 		hasConfiguredAuth: (model: any) => model === routedModel,
 	};
 	let seenPrompt = "";
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, async (config: any) => ({
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, async (config: any) => ({
 		session: mockSessionFactory({ prompt: async (p?: string) => { seenPrompt = p ?? ""; } }),
 		extensionsResult: undefined as any,
-	})), { activeTools: ["read", "bash", "spawn"] });
+	})); }, { activeTools: ["read", "bash", "spawn"] });
 	await pi.tools.get("spawn").execute(
 		"spawn-quick",
 		{ prompt: "Read the image in file.png", group: "quick" },
@@ -293,10 +293,10 @@ test("spawn injects descriptor-provided scalar capability ceilings", async () =>
 		modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
 	} as any];
 	let seenPrompt = "";
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, async () => ({
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, async () => ({
 		session: mockSessionFactory({ prompt: async (prompt?: string) => { seenPrompt = prompt ?? ""; } }),
 		extensionsResult: undefined as any,
-	}), createConstraintRegistry([testMinContext])), { activeTools: ["read", "bash", "spawn"] });
+	}), createConstraintRegistry([testMinContext])); }, { activeTools: ["read", "bash", "spawn"] });
 	await pi.tools.get("spawn").execute("spawn-context-cap", { prompt: "Do the task", group: "context-capped" }, undefined, undefined, {
 		model: { provider: "openai", id: "parent", contextWindow: 100 }, cwd: "/tmp",
 		modelRegistry: { find: (_provider: string, id: string) => id === "small" ? small : id === "large" ? large : undefined, hasConfiguredAuth: () => true },
@@ -310,9 +310,9 @@ test("spawn execute builds prompt with notebook pages and task", async () => {
 	state.notebookPages.set("entry-a", "preview line\nfull body");
 
 	let seenPrompt = "";
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactoryWith({
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactoryWith({
 		prompt: async (p?: string) => { seenPrompt = p ?? ""; },
-	})), { activeTools: ["read", "bash", "spawn"] });
+	})); }, { activeTools: ["read", "bash", "spawn"] });
 
 	await pi.tools.get("spawn").execute(
 		"spawn-1",
@@ -345,10 +345,10 @@ test("spawn emits no capability notice when the routed group has no explicit ove
 		hasConfiguredAuth: (model: any) => model === routedModel,
 	};
 	let seenPrompt = "";
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, async (config: any) => ({
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, async (config: any) => ({
 		session: mockSessionFactory({ prompt: async (p?: string) => { seenPrompt = p ?? ""; } }),
 		extensionsResult: undefined as any,
-	})), { activeTools: ["read", "bash", "spawn"] });
+	})); }, { activeTools: ["read", "bash", "spawn"] });
 	await pi.tools.get("spawn").execute(
 		"spawn-open",
 		{ prompt: "Do the task", group: "open" },
@@ -478,7 +478,7 @@ test("buildChildToolNames (2-arg fallback) handles both empty inputs", () => {
 test("spawn renderResult falls back to static text when no live session is stored", async () => {
 	const state = createState();
 
-	const pi = await createTestHost((api) => registerSpawnTool(api, state));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 
 	const result = pi.tools.get("spawn").renderResult(
 		{
@@ -488,7 +488,7 @@ test("spawn renderResult falls back to static text when no live session is store
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	const lines = result.render(120);
 	expect(lines).toContainEqual(expect.stringContaining("m • low"));
@@ -498,7 +498,7 @@ test("spawn renderResult falls back to static text when no live session is store
 test("spawn renderResult distinguishes aborted and error outcomes", async () => {
 	const state = createState();
 
-	const pi = await createTestHost((api) => registerSpawnTool(api, state));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 
 	const aborted = pi.tools.get("spawn").renderResult(
 		{
@@ -508,7 +508,7 @@ test("spawn renderResult distinguishes aborted and error outcomes", async () => 
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 	const error = pi.tools.get("spawn").renderResult(
 		{
 			content: [{ type: "text", text: "failed" }],
@@ -517,7 +517,7 @@ test("spawn renderResult distinguishes aborted and error outcomes", async () => 
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	const abortedLines = aborted.render(120);
 	const errorLines = error.render(120);
@@ -531,13 +531,13 @@ test("spawn execute derives result stats from the child entries", async () => {
 	const state = createState();
 
 	const updates: any[] = [];
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactoryWith({
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactoryWith({
 		prompt: async () => {},
 		getEntries: () => [messageEntry("a1", {
 			role: "assistant", content: [{ type: "text", text: "child result" }],
 			usage: { input: 11, output: 22, cacheRead: 3, cacheWrite: 4, totalTokens: 999, cost: { input: 0.1, output: 0.2, cacheRead: 0.1, cacheWrite: 0.1, total: 0.5 } },
 		})],
-	})), { activeTools: ["read", "bash", "spawn"] });
+	})); }, { activeTools: ["read", "bash", "spawn"] });
 
 	const result = await pi.tools.get("spawn").execute(
 		"spawn-1",
@@ -573,7 +573,7 @@ function messageEntry(id: string, message: Record<string, unknown>): SessionEntr
 
 async function executeWithEntries(getEntries: () => SessionEntry[], opts: Parameters<typeof mockSessionFactory>[0] = {}) {
 	const state = createState();
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactoryWith({ prompt: async () => {}, getEntries, ...opts })), { activeTools: ["read", "bash", "spawn"] });
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactoryWith({ prompt: async () => {}, getEntries, ...opts })); }, { activeTools: ["read", "bash", "spawn"] });
 	return pi.tools.get("spawn").execute(
 		"spawn-usage",
 		{ prompt: "Do the task" },
@@ -772,7 +772,7 @@ test("aborted spawn returns the partial child usage", async () => {
 	let promptStarted!: () => void;
 	let rejectPrompt!: (err: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactoryWith({
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactoryWith({
 		prompt: async () => {
 			promptStarted();
 			await new Promise<void>((_, reject) => { rejectPrompt = reject; });
@@ -788,7 +788,7 @@ test("aborted spawn returns the partial child usage", async () => {
 				usage: { input: 60, output: 2, cacheRead: 10, cacheWrite: 0, totalTokens: 72, cost: { input: 6, output: 1, cacheRead: 1, cacheWrite: 0, total: 8 } },
 			}),
 		],
-	})), { activeTools: ["read", "bash", "spawn"] });
+	})); }, { activeTools: ["read", "bash", "spawn"] });
 
 	const execution = pi.tools.get("spawn").execute(
 		"spawn-aborted-usage",
@@ -860,7 +860,7 @@ test("a failed child abort during the prompt is reported through the UI notice",
 		abort: async () => { resolvePrompt(); throw new Error("abort failed"); },
 	});
 	const pi = await createTestHost((_api) => {});
-	const execution = executeSpawn("spawn-abort-failure", pi as any,
+	const execution = executeSpawn("spawn-abort-failure", pi,
 		{ model: { id: "mock-model" }, cwd: "/tmp", hasUI: true,
 			ui: { notify: (message: string) => { notifications.push(message); } } } as any,
 		state, { prompt: "Do the task" }, controller.signal, undefined, "medium",
@@ -919,10 +919,10 @@ async function hostWithFailedUsage(opts: NonNullable<Parameters<typeof mockSessi
 	const state = createState();
 	let entryReads = 0;
 	const getEntries = opts.getEntries ?? failedChildEntries;
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactoryWith({
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactoryWith({
 		...opts,
 		getEntries: () => { entryReads++; return getEntries(); },
-	})), { activeTools: ["read", "bash", "spawn"] });
+	})); }, { activeTools: ["read", "bash", "spawn"] });
 	return {
 		state,
 		get entryReads() { return entryReads; },
@@ -967,7 +967,7 @@ test("a completed spawn whose dispose fails returns the dispose error with the c
 test("a spawn invalidated by a reset after its prompt started returns an error result with the child usage", async () => {
 	const resetInPrompt: { run: () => void } = { run: () => {} };
 	const host = await hostWithFailedUsage({ prompt: async () => { resetInPrompt.run(); } });
-	resetInPrompt.run = () => resetState(host.state);
+	resetInPrompt.run = () => { resetState(host.state); };
 
 	expect(await host.execute("spawn-reset-mid-run")).toStrictEqual(failedSpawnResult("Spawn invalidated by reset."));
 	assertChildRegistriesCleared(host.state);
@@ -1067,14 +1067,14 @@ for (const { name, input, precondition, expectedText } of [
 		name: "spawn result cuts an oversized line of 3-byte characters on a character boundary",
 		input: "語".repeat(FITTING_3_BYTE_CHARS + 1),
 		// The precondition puts the byte limit inside a character, so the cut must back off.
-		precondition: () => expect(DEFAULT_MAX_BYTES % 3, "byte limit must not be a multiple of 3").not.toBe(0),
+		precondition: () => { expect(DEFAULT_MAX_BYTES % 3, "byte limit must not be a multiple of 3").not.toBe(0); },
 		expectedText: "語".repeat(FITTING_3_BYTE_CHARS) + TRUNCATION_MARKER,
 	},
 	{
 		name: "spawn result cuts an oversized line of surrogate pairs without splitting one",
 		input: "x" + "😀".repeat(FITTING_EMOJI + 1),
 		// The precondition puts the byte limit inside an emoji, so the cut must back off.
-		precondition: () => expect((DEFAULT_MAX_BYTES - 1) % 4, "byte limit minus 1 must not be a multiple of 4").not.toBe(0),
+		precondition: () => { expect((DEFAULT_MAX_BYTES - 1) % 4, "byte limit minus 1 must not be a multiple of 4").not.toBe(0); },
 		expectedText: "x" + "😀".repeat(FITTING_EMOJI) + TRUNCATION_MARKER,
 	},
 ]) {
@@ -1181,9 +1181,9 @@ test("a prompt pre-check failure resolves with zero usage before an agent run st
 
 	assertErrorResult(
 		await executeSpawn(
-			"spawn-pre-run-failure", pi as any, { model: { id: "mock-model" }, cwd: "/tmp", hasUI: false } as any,
+			"spawn-pre-run-failure", pi, { model: { id: "mock-model" }, cwd: "/tmp", hasUI: false } as any,
 			state, { prompt: "Do the task" }, undefined, undefined, "medium",
-			async () => ({ extensionsResult: undefined as any, session: session as any }),
+			async () => ({ extensionsResult: undefined as any, session: session }),
 		),
 		"No API key found for test-provider.",
 		EMPTY_CHILD_USAGE,
@@ -1193,7 +1193,7 @@ test("a prompt pre-check failure resolves with zero usage before an agent run st
 });
 
 test("UI spawn notifies when cleanup also fails after a primary failure", async () => {
-	const notifications: Array<[string, string]> = [];
+	const notifications: [string, string][] = [];
 	const { execution, state } = await executeWithFailingCleanup(new Error("prompt failed"), new Error("dispose failed"), {
 		hasUI: true,
 		ui: { notify: (message: string, level: string) => { notifications.push([message, level]); } },
@@ -1219,9 +1219,9 @@ test("UI spawn names both failures when the cleanup notice throws", async () => 
 test("spawn execute clears childSessions after successful completion when unrendered", async () => {
 	const state = createState();
 
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactoryWith({
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactoryWith({
 		prompt: async () => {},
-	})), { activeTools: ["read", "bash", "spawn"] });
+	})); }, { activeTools: ["read", "bash", "spawn"] });
 	const result = await pi.tools.get("spawn").execute(
 		"spawn-1",
 		{ prompt: "Do the task" },
@@ -1340,7 +1340,7 @@ test("registered spawn tool rejects missing modalities before creating child wor
 		validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
 	}];
 	const sessionFactory = vi.fn(async () => { throw new Error("sessionFactory must not be called"); });
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, sessionFactory as any), { activeTools: ["read", "bash", "spawn"] });
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, sessionFactory); }, { activeTools: ["read", "bash", "spawn"] });
 
 	await expect(
 		pi.tools.get("spawn").execute("registered-missing-modality", { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, {
@@ -1364,7 +1364,7 @@ test("registered spawn tool rejects injected scalar group and model requirements
 	state.modelGroups.groups = [
 		{ name: "small", scope: "project", sourcePath: "<test>", models: [{ provider: "openai", modelId: "small" }], modalities: { common: ["text"], supported: ["text"], effective: ["text"] }, validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] } },
 	];
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, sessionFactory as any, createConstraintRegistry([testMinContext])), { activeTools: ["spawn"] });
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, sessionFactory, createConstraintRegistry([testMinContext])); }, { activeTools: ["spawn"] });
 	await expect(
 		pi.tools.get("spawn").execute("registered-scalar", { prompt: "Do the task", group: "small", constraints: { testMinContext: 20 } }, undefined, undefined, {
 			model: { provider: "openai", id: "parent", input: ["text"], reasoning: false, contextWindow: 100 }, cwd: "/tmp",
@@ -1384,7 +1384,7 @@ test("registered spawn tool rejects injected scalar group and model requirements
 });
 
 test("registered spawn tool schema accepts injected scalar requirements", async () => {
-	const pi = await createTestHost((api) => registerSpawnTool(api, createState(), undefined, createConstraintRegistry([testMinContext])));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, createState(), undefined, createConstraintRegistry([testMinContext])); });
 	const schema = pi.tools.get("spawn").parameters;
 	expect(Value.Check(schema, { prompt: "Do the task", constraints: { testMinContext: 20 } }), "the registered schema accepts an injected descriptor's scalar requirement").toBe(true);
 	expect(Value.Check(schema, { prompt: "Do the task", constraints: { testMinContext: 0 } }), "the injected descriptor retains its requirement schema").toBe(false);
@@ -1403,9 +1403,9 @@ test("spawn requirements validate the canonical envelope and keep its shape", ()
 
 test("spawn tool schema validates constraints via Value.Check", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerSpawnTool(api, state));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 	const tool = pi.tools.get("spawn");
-	const schema = (tool as any).parameters;
+	const schema = (tool).parameters;
 	expect(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["text", "image"] } } }), "valid generic envelope accepted").toBe(true);
 	expect(Value.Check(schema, { prompt: "Do the task", constraints: { unknown: {} } }), "unknown generic requirement rejected").toBe(false);
 	expect(Value.Check(schema, { prompt: "Do the task" }), "omitted constraints allowed").toBe(true);
@@ -1419,15 +1419,15 @@ test("spawn tool schema validates constraints via Value.Check", async () => {
 });
 
 test("spawn constraints description enumerates the registry keys (production)", async () => {
-	const pi = await createTestHost((api) => registerSpawnTool(api, createState()));
-	const parameters = (pi.tools.get("spawn") as any).parameters;
+	const pi = await createTestHost((api) => { registerSpawnTool(api, createState()); });
+	const parameters = (pi.tools.get("spawn")).parameters;
 	const constraintsDesc = parameters.properties.constraints.description as string;
 	expect(constraintsDesc, "description names the production constraint key").toContain("Keys: modalities");
 });
 
 test("spawn constraints description enumerates injected registry keys", async () => {
-	const pi = await createTestHost((api) => registerSpawnTool(api, createState(), undefined, createConstraintRegistry([testMinContext])));
-	const parameters = (pi.tools.get("spawn") as any).parameters;
+	const pi = await createTestHost((api) => { registerSpawnTool(api, createState(), undefined, createConstraintRegistry([testMinContext])); });
+	const parameters = (pi.tools.get("spawn")).parameters;
 	const constraintsDesc = parameters.properties.constraints.description as string;
 	expect(constraintsDesc, "description names the injected registry's constraint key").toContain("Keys: testMinContext");
 });
@@ -1443,8 +1443,8 @@ test("executeSpawn forwards inherited constraints to routing and succeeds when s
 		sessionManager: { getEntries: () => [] },
 	};
 	const sessionFactory = vi.fn(async () => ({ session: session as any, extensionsResult: undefined as any }));
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, sessionFactory as any), { activeTools: ["read", "spawn"] });
-	const result = await executeSpawn("spawn-inherited-rm", pi as any, {
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, sessionFactory); }, { activeTools: ["read", "spawn"] });
+	const result = await executeSpawn("spawn-inherited-rm", pi, {
 		model: { provider: "openai", id: "parent", input: ["text", "image"], reasoning: false }, cwd: "/tmp",
 		modelRegistry: { find: (_p: string, id: string) => ({ provider: "openai", id, input: ["text", "image"], reasoning: false }), hasConfiguredAuth: () => true },
 	} as any, state, { prompt: "Do the task", constraints: { modalities: { required: ["text", "image"] } } }, undefined, undefined, "medium", sessionFactory);
@@ -1461,14 +1461,14 @@ test("spawn renderResult transfers session ownership out of shared state", async
 	state.childSessions.set("tool-call-1", session);
 
 
-	const pi = await createTestHost((api) => registerSpawnTool(api, state));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 
 	const component = pi.tools.get("spawn").renderResult(
 		{ content: [{ type: "text", text: "hello" }], details: { model: "m", thinking: "low", truncated: false } },
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
 	const lines = component.render(120);
@@ -1483,7 +1483,7 @@ test("spawn renderResult reuses lastComponent", async () => {
 	state.childSessions.set("tool-call-1", session);
 
 
-	const pi = await createTestHost((api) => registerSpawnTool(api, state));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 
 	const first = pi.tools.get("spawn").renderResult(
 		{ content: [{ type: "text", text: "hello" }], details: { model: "m", thinking: "low", truncated: false } },
@@ -1516,7 +1516,7 @@ test("spawn render shows success state when stats are unavailable", async () => 
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	const lines = component.render(120);
 	expect(lines).toContainEqual(expect.stringContaining("✅ mock-model • medium"));
@@ -1549,7 +1549,7 @@ test("spawn execute aborts child session when signal fires during execution", as
 		return { session: session as any };
 	};
 
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactory as any), { activeTools: ["read", "bash", "spawn"] });
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactory as any); }, { activeTools: ["read", "bash", "spawn"] });
 
 	const controller = new AbortController();
 	const executePromise = pi.tools.get("spawn").execute(
@@ -1589,7 +1589,7 @@ test("a completed child error after parent cancellation is reported as aborted",
 	});
 	const pi = await createTestHost((_api) => {});
 	const execution = executeSpawn(
-		"spawn-provider-error-after-abort", pi as any,
+		"spawn-provider-error-after-abort", pi,
 		{ model: { id: "mock-model" }, cwd: "/tmp" } as any,
 		state, { prompt: "Do the task" }, controller.signal, undefined, "medium",
 		async () => ({ session, extensionsResult: undefined as any }),
@@ -1623,7 +1623,7 @@ test("spawn execute swallows prompt rejection when signal aborts mid-flight", as
 			dispose,
 		}) };
 	};
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactory as any), { activeTools: ["read", "bash", "spawn"] });
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactory as any); }, { activeTools: ["read", "bash", "spawn"] });
 
 	const executePromise = pi.tools.get("spawn").execute(
 		"spawn-aborted-throw",
@@ -1652,13 +1652,13 @@ test("a real prompt failure that races with a parent abort keeps its text under 
 	let rejectPrompt!: (error: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
 	const promptError = new Error("prompt failed despite abort");
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, async () => ({ session: mockSessionFactory({
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, async () => ({ session: mockSessionFactory({
 		prompt: async () => {
 			promptStarted();
 			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
 		},
 		dispose,
-	}), extensionsResult: undefined as any })), { activeTools: ["read", "bash", "spawn"] });
+	}), extensionsResult: undefined as any })); }, { activeTools: ["read", "bash", "spawn"] });
 
 	const execution = pi.tools.get("spawn").execute(
 		"spawn-abort-real-error", { prompt: "Do the task" }, controller.signal,
@@ -1694,7 +1694,7 @@ test("spawn invalidation wins the abort and prompt-rejection race", async () => 
 		abort,
 		dispose,
 	}) });
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactory as any), { activeTools: ["read", "bash", "spawn"] });
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactory as any); }, { activeTools: ["read", "bash", "spawn"] });
 
 	const execution = pi.tools.get("spawn").execute(
 		"spawn-abort-reset-race", { prompt: "Do the task" }, controller.signal,
@@ -1727,7 +1727,7 @@ test("executeSpawn reports the invalidation and abort failure when abort rejects
 		abort: async () => { throw abortError; },
 		dispose,
 	}), extensionsResult: undefined as any });
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactory as any), { activeTools: ["read", "bash", "spawn"] });
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactory); }, { activeTools: ["read", "bash", "spawn"] });
 
 	const execution = pi.tools.get("spawn").execute(
 		"spawn-abort-rejects", { prompt: "Do the task" }, undefined,
@@ -1764,7 +1764,7 @@ test("reset before registration returns the invalidation and abort failure", asy
 		};
 	};
 
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactory as any), { activeTools: ["read", "bash", "spawn"] });
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactory); }, { activeTools: ["read", "bash", "spawn"] });
 
 	const execution = pi.tools.get("spawn").execute(
 		"spawn-pre-reg-abort-reject", { prompt: "Do the task" }, undefined,
@@ -1788,7 +1788,7 @@ test("reset during prompt reports a failed abort once through the UI", async () 
 	const dispose = vi.fn();
 	const abortError = new Error("abort failed");
 	const abort = vi.fn(async () => { throw abortError; });
-	const notifications: Array<[string, string]> = [];
+	const notifications: [string, string][] = [];
 	const mockFactory = async () => ({ session: mockSessionFactory({
 		prompt: async () => {
 			promptStarted();
@@ -1800,7 +1800,7 @@ test("reset during prompt reports a failed abort once through the UI", async () 
 	let promptStarted!: () => void;
 	let rejectPrompt!: (error: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactory as any), { activeTools: ["read", "bash", "spawn"] });
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactory); }, { activeTools: ["read", "bash", "spawn"] });
 
 	const execution = pi.tools.get("spawn").execute(
 		"spawn-reset-prompt-abort-reject-ui",
@@ -1840,7 +1840,7 @@ test("a throwing notice for a failed reset abort does not emit an unhandled reje
 			abort: async () => { throw abortError; },
 			dispose: () => {},
 		}), extensionsResult: undefined as any });
-		const pi = await createTestHost((api) => registerSpawnTool(api, state, mockFactory as any), { activeTools: ["read", "bash", "spawn"] });
+		const pi = await createTestHost((api) => { registerSpawnTool(api, state, mockFactory); }, { activeTools: ["read", "bash", "spawn"] });
 
 		const execution = pi.tools.get("spawn").execute(
 			"spawn-throwing-notify",
@@ -1868,7 +1868,7 @@ test("a throwing notice for a failed reset abort does not emit an unhandled reje
 test("spawn renderCall shows prompt preview and optional routing controls", async () => {
 	const state = createState();
 
-	const pi = await createTestHost((api) => registerSpawnTool(api, state));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 
 	const tool = pi.tools.get("spawn");
 
@@ -1930,7 +1930,7 @@ test("nested spawn invalidate rebuilds from the attached session transcript", as
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	const firstRender = component.render(120);
 	expect(firstRender).toContainEqual(expect.stringContaining("before"));
@@ -1956,7 +1956,7 @@ test("nested spawn attachSession rebuilds after appended session messages", asyn
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	const firstRender = component.render(120);
 	expect(firstRender).toContainEqual(expect.stringContaining("before"));
@@ -1970,7 +1970,7 @@ test("nested spawn attachSession rebuilds after appended session messages", asyn
 		{ expanded: false },
 		theme,
 		createRenderContext({ lastComponent: component }),
-	) as any;
+	);
 
 	const secondRender = sameComponent.render(120);
 	expect(firstRender).not.toBe(secondRender);
@@ -1989,7 +1989,7 @@ test("nested spawn attachSession rebuilds after replacing session transcript str
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	const firstRender = component.render(120);
 	expect(firstRender).toContainEqual(expect.stringContaining("before"));
@@ -2003,7 +2003,7 @@ test("nested spawn attachSession rebuilds after replacing session transcript str
 		{ expanded: false },
 		theme,
 		createRenderContext({ lastComponent: component }),
-	) as any;
+	);
 
 	const secondRender = sameComponent.render(120);
 	expect(firstRender).not.toBe(secondRender);
@@ -2033,7 +2033,7 @@ test("nested spawn rebuildFromSession quietly tolerates missing tool definitions
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	const lines = component.render(120);
 	expect(lines).toContainEqual(expect.stringContaining("⚠ m • low"));
@@ -2060,7 +2060,7 @@ test("nested spawn attachSession recovers from subscribe throwing", async () => 
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
 	const lines = component.render(120);
@@ -2105,7 +2105,7 @@ test("concurrent spawn executions produce independent results", async () => {
 		return { session: session as any };
 	};
 
-	const pi = await createTestHost((api) => registerSpawnTool(api, state, sharedFactory as any));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state, sharedFactory as any); });
 	const spawnTool = pi.tools.get("spawn");
 
 	const resultP1 = spawnTool.execute(
@@ -2143,7 +2143,7 @@ test("executeSpawn detects stale session before session creation", async () => {
 
 	const executePromise = executeSpawn(
 		"spawn-1",
-		pi as any,
+		pi,
 		{ model: { id: "mock-model" }, cwd: "/tmp" } as any,
 		state,
 		{ prompt: "Do the task" },
@@ -2186,7 +2186,7 @@ test("executeSpawn does not prompt when onUpdate synchronously resets the child 
 
 	const execution = executeSpawn(
 		"spawn-1",
-		pi as any,
+		pi,
 		{ model: { id: "mock-model" }, cwd: "/tmp" } as any,
 		state,
 		{ prompt: "Do the task" },
@@ -2219,7 +2219,7 @@ test("executeSpawn does not prompt when onUpdate synchronously aborts the signal
 
 	const execution = executeSpawn(
 		"spawn-1",
-		pi as any,
+		pi,
 		{ model: { id: "mock-model" }, cwd: "/tmp" } as any,
 		state,
 		{ prompt: "Do the task" },
@@ -2252,7 +2252,7 @@ test("an abort during a running update notifies a failed child abort once", asyn
 	const notifications: string[] = [];
 	const prompt = vi.fn(async () => {});
 	const result = await executeSpawn(
-		"spawn-update-abort-failure", pi as any,
+		"spawn-update-abort-failure", pi,
 		{ model: { id: "mock-model" }, cwd: "/tmp", hasUI: true,
 			ui: { notify: (message: string) => { notifications.push(message); } } } as any,
 		state, { prompt: "Do the task" }, controller.signal,
@@ -2276,7 +2276,7 @@ test("reset during a running update reports one failed abort", async () => {
 	const notifications: string[] = [];
 	const prompt = vi.fn(async () => {});
 	const result = await executeSpawn(
-		"spawn-reset-abort-failure", pi as any,
+		"spawn-reset-abort-failure", pi,
 		{ model: { id: "mock-model" }, cwd: "/tmp", hasUI: true,
 			ui: { notify: (message: string) => { notifications.push(message); } } } as any,
 		state, { prompt: "Do the task" }, undefined,
@@ -2306,7 +2306,7 @@ test("executeSpawn aborts stale child when resetState fires during prompt", asyn
 
 	const executePromise = executeSpawn(
 		"spawn-1",
-		pi as any,
+		pi,
 		{ model: { id: "mock-model" }, cwd: "/tmp" } as any,
 		state,
 		{ prompt: "Do the task" },
@@ -2365,7 +2365,7 @@ test("executeSpawn suppresses a successful stale prompt that ignores reset abort
 
 	const execution = executeSpawn(
 		"spawn-1",
-		pi as any,
+		pi,
 		{ model: { id: "mock-model" }, cwd: "/tmp" } as any,
 		state,
 		{ prompt: "Do the task" },
@@ -2402,7 +2402,7 @@ test("nested spawn setExpanded and setShowImages no-op when value matches", asyn
 		{ expanded: false },
 		theme,
 		createRenderContext(),
-	) as any;
+	);
 
 	component.setExpanded(false);
 	component.setExpanded(true);
@@ -2480,7 +2480,7 @@ test("abortAndClearChildSessions deduplicates sessions across both maps", () => 
 
 test("spawn tool definitions include prompt hints when registered", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerSpawnTool(api, state));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 
 	const spawnTool = pi.tools.get("spawn")!;
 	expect(spawnTool.promptSnippet, "spawn should have promptSnippet").toBeTypeOf("string");
@@ -2494,7 +2494,7 @@ test("spawn tool definitions include prompt hints when registered", async () => 
 
 test("registerSpawnTool registers a tool with correct name and metadata", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerSpawnTool(api, state));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 
 	const tool = pi.tools.get("spawn");
 	assertPresent(tool, "spawn tool should be registered");
@@ -2510,7 +2510,7 @@ test("registerSpawnTool registers a tool with correct name and metadata", async 
 	expect(tool.renderResult).toBeTypeOf("function");
 	expect(tool.renderShell).toBe("self");
 	assertPresent(tool.parameters, "should have parameters");
-	const constraints = (tool.parameters as any).properties.constraints;
+	const constraints = (tool.parameters).properties.constraints;
 	expect(constraints.type).toBe("object");
 	expect(constraints.properties.modalities).toBeTypeOf("object");
 	expect(constraints.properties.modalities).not.toBeNull();
@@ -2535,7 +2535,7 @@ test("renderSpawnResult handles result with no details field", () => {
 test("spawn docs document active registered inheritance", async () => {
 	const readme = await readFile("README.md", "utf8");
 	const changelog = await readFile("CHANGELOG.md", "utf8");
-	const spawnSection = /\| \*\*Spawn\*\* \|[^\|]*\|/.exec(readme)?.[0] ?? "";
+	const spawnSection = /\| \*\*Spawn\*\* \|[^|]*\|/.exec(readme)?.[0] ?? "";
 	const v040 = /## \[0\.4\.0\][\s\S]*?## \[0\.3\.0\]/.exec(changelog)?.[0] ?? "";
 
 	expect(spawnSection).toMatch(/active registered (parent )?tools executable in the child session/);
@@ -2553,7 +2553,7 @@ test("spawn docs document active registered inheritance", async () => {
 test("spawn abort before its prompt returns the failed abort and notifies the UI", async () => {
 	const pi = await createTestHost((_api) => {});
 	const state = createState();
-	const notifications: Array<[string, string]> = [];
+	const notifications: [string, string][] = [];
 	const ctx = {
 		model: { id: "mock-model" },
 		cwd: "/tmp",
@@ -2567,14 +2567,14 @@ test("spawn abort before its prompt returns the failed abort and notifies the UI
 
 	const result = await executeSpawn(
 		"spawn-abort-cleanup",
-		pi as any,
+		pi,
 		ctx,
 		state,
 		{ prompt: "Do the task" },
 		controller.signal,
 		undefined,
 		"medium",
-		async () => ({ session: session as any, extensionsResult: undefined as any }),
+		async () => ({ session: session, extensionsResult: undefined as any }),
 	);
 	expect(result.isError).toBe(true);
 	expect(result.details.outcome).toBe("aborted");
@@ -2584,7 +2584,7 @@ test("spawn abort before its prompt returns the failed abort and notifies the UI
 });
 
 test("a completed UI spawn whose dispose fails returns the dispose error without a notice", async () => {
-	const notifications: Array<[string, string]> = [];
+	const notifications: [string, string][] = [];
 	const host = await hostWithFailedUsage({
 		prompt: async () => {},
 		dispose: () => { throw new Error("dispose failed"); },

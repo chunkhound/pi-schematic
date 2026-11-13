@@ -20,7 +20,7 @@ export function notebookPagesSection(state: SchematicState): PromptSection {
 	return {
 		name: "schematic_notebook",
 		render() {
-			if (state.notebookPages.size === 0) return undefined;
+			if (state.notebookPages.size === 0) {return undefined;}
 			// Code-unit order, matching Array.prototype.sort() without a comparator.
 			const listing = [...state.notebookPages]
 				.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))

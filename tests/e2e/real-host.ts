@@ -40,7 +40,7 @@ const PROBE_ENTRY = resolve(HERE, "real-host-probe.ts");
 const CHILD_PROBE_ENTRY = resolve(HERE, "real-host-child-probe.ts");
 // The CLI is the file pi's manifest declares as `bin.pi`, the one the `pi` command runs.
 const PI_BIN: unknown = JSON.parse(readFileSync(piManifestPath, "utf8")).bin?.pi;
-if (typeof PI_BIN !== "string") throw new Error(`No string bin.pi in pi's manifest at ${piManifestPath}.`);
+if (typeof PI_BIN !== "string") {throw new Error(`No string bin.pi in pi's manifest at ${piManifestPath}.`);}
 const CLI_PATH = resolve(dirname(piManifestPath), PI_BIN);
 const REQUIRED_COMMANDS = ["handoff", "notebook", "readonly", PROBE_COMMAND.barrier];
 
@@ -66,7 +66,7 @@ function testTimeoutFor(waitMs: number): number {
 
 function readTimeout(): number {
 	const raw = process.env.E2E_REAL_HOST_TIMEOUT_MS;
-	if (raw === undefined) return 20_000;
+	if (raw === undefined) {return 20_000;}
 	const value = Number(raw);
 	if (!Number.isInteger(value) || value <= 0) {
 		throw new Error(`E2E_REAL_HOST_TIMEOUT_MS must be a positive integer, got: ${raw}`);
@@ -101,10 +101,10 @@ export function stripAnsi(text: string): string {
 	return stripTerminalSequences(text);
 }
 
-export type RpcEvent = { type: string; [key: string]: unknown };
-export type Notification = { message: string; notifyType: string | undefined };
-export type Status = { statusKey: string; statusText: string | undefined };
-export type ToolResult = { isError: boolean; text: string };
+export interface RpcEvent { type: string; [key: string]: unknown }
+export interface Notification { message: string; notifyType: string | undefined }
+export interface Status { statusKey: string; statusText: string | undefined }
+export interface ToolResult { isError: boolean; text: string }
 
 /** pi settings a test sets; each section is merged over the harness default for it. */
 export interface RealHostSettings {
@@ -118,14 +118,14 @@ export interface RealHostOptions {
 
 function pathEnv(): Record<string, string> {
 	const key = Object.keys(process.env).find((name) => name.toUpperCase() === "PATH");
-	if (!key) throw new Error("No PATH variable in the test environment");
+	if (!key) {throw new Error("No PATH variable in the test environment");}
 	const current = process.env[key];
 	return { [key]: current ? `${dirname(process.execPath)}${delimiter}${current}` : dirname(process.execPath) };
 }
 
 function requireString(event: RpcEvent, field: string): string {
 	const value = event[field];
-	if (typeof value !== "string") throw new Error(`${event.type} field ${field} is not a string: ${JSON.stringify(event)}`);
+	if (typeof value !== "string") {throw new Error(`${event.type} field ${field} is not a string: ${JSON.stringify(event)}`);}
 	return value;
 }
 
@@ -191,8 +191,8 @@ export function projectStatuses(events: RpcEvent[]): Status[] {
 
 /** Text of a message's content: string content as is, text blocks joined by newlines. */
 export function messageText(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) throw new Error(`Unexpected message content: ${JSON.stringify(content)}`);
+	if (typeof content === "string") {return content;}
+	if (!Array.isArray(content)) {throw new Error(`Unexpected message content: ${JSON.stringify(content)}`);}
 	return content
 		.filter((block): block is { type: "text"; text: string } => block?.type === "text" && typeof block.text === "string")
 		.map((block) => block.text)
@@ -202,7 +202,7 @@ export function messageText(content: unknown): string {
 /** Tool results named `name` in an `entries()` snapshot, in session order. */
 export function toolResults(entries: SessionEntry[], name: string): ToolResult[] {
 	return entries.flatMap((entry) => {
-		if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== name) return [];
+		if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== name) {return [];}
 		return [{ isError: entry.message.isError, text: messageText(entry.message.content) }];
 	});
 }
@@ -230,7 +230,7 @@ export class RealHost {
 	}
 
 	static async start(options: RealHostOptions = {}): Promise<RealHost> {
-		if (!existsSync(CLI_PATH)) throw new Error(`pi CLI not found at ${CLI_PATH}`);
+		if (!existsSync(CLI_PATH)) {throw new Error(`pi CLI not found at ${CLI_PATH}`);}
 		const root = mkdtempSync(join(os.tmpdir(), "pi-schematic-e2e-"));
 		return cleanupOnFailure(async () => {
 			const agentDir = join(root, "agent");
@@ -238,7 +238,7 @@ export class RealHost {
 			const projectDir = join(root, "project");
 			const sessionsDir = join(root, "sessions");
 			const logPath = join(root, "probe.jsonl");
-			for (const dir of [agentDir, homeDir, projectDir, sessionsDir]) mkdirSync(dir);
+			for (const dir of [agentDir, homeDir, projectDir, sessionsDir]) {mkdirSync(dir);}
 			writeFileSync(logPath, "");
 			// Spawned child sessions discover extensions in the agent directory; the parent
 			// runs with --no-extensions and loads only the -e entries below.
@@ -277,7 +277,7 @@ export class RealHost {
 			};
 			const { client, events } = await startClient(clientOptions);
 			return new RealHost(root, logPath, client, events);
-		}, () => removeRoot(root));
+		}, () => { removeRoot(root); });
 	}
 
 	get notifications(): Notification[] {
@@ -295,10 +295,10 @@ export class RealHost {
 
 	/** Run an extension command; it must report "handled" without an extension_error, from the command or from any handler it triggers. */
 	async command(text: string): Promise<void> {
-		if (!text.startsWith("/")) throw new Error(`command() needs a slash command, got: ${text}`);
+		if (!text.startsWith("/")) {throw new Error(`command() needs a slash command, got: ${text}`);}
 		const mark = this.events.length;
 		const disposition = await this.client.prompt(text);
-		if (disposition !== "handled") throw new Error(`${text} reported "${disposition}", expected "handled"`);
+		if (disposition !== "handled") {throw new Error(`${text} reported "${disposition}", expected "handled"`);}
 		const spaceIndex = text.indexOf(" ");
 		const name = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
 		this.assertNoExtensionErrors(mark, text, `command:${name}`);
@@ -308,7 +308,7 @@ export class RealHost {
 	async say(text: string, runs: number): Promise<void> {
 		const mark = this.events.length;
 		const disposition = await this.client.prompt(text);
-		if (disposition !== "started") throw new Error(`"${text}" reported "${disposition}", expected "started"`);
+		if (disposition !== "started") {throw new Error(`"${text}" reported "${disposition}", expected "started"`);}
 		await this.step(mark, `"${text}"`, runs);
 	}
 
@@ -346,7 +346,7 @@ export class RealHost {
 	}
 
 	/** Handoff cuts the probe saw in turn_end boundaries, in order, with whether it dropped each one. */
-	cuts(): Array<Extract<ProbeRecord, { kind: "cut" }>> {
+	cuts(): Extract<ProbeRecord, { kind: "cut" }>[] {
 		return this.probeLog().filter((record): record is Extract<ProbeRecord, { kind: "cut" }> => record.kind === "cut");
 	}
 
@@ -364,7 +364,7 @@ export class RealHost {
 	close(): Promise<void> {
 		this.closing ??= withCleanup(
 			() => withCleanup(() => this.assertNoUnexpectedRuns(), () => this.client.stop()),
-			() => removeRoot(this.root),
+			() => { removeRoot(this.root); },
 		);
 		return this.closing;
 	}
@@ -373,7 +373,7 @@ export class RealHost {
 		this.startBarrierPhase();
 		await this.barrier(REAL_HOST_TIMEOUT_MS);
 		const unexpected = countRuns(this.events) - this.stepRuns;
-		if (unexpected !== 0) throw new Error(`${unexpected} run(s) started outside every step; no step expected them`);
+		if (unexpected !== 0) {throw new Error(`${unexpected} run(s) started outside every step; no step expected them`);}
 	}
 
 	/**
@@ -383,9 +383,9 @@ export class RealHost {
 	private assertNoExtensionErrors(mark: number, action: string, commandPath?: string): void {
 		const failures = this.events.slice(mark).filter((event) => event.type === "extension_error");
 		const own = commandPath === undefined ? undefined : failures.find((event) => event.extensionPath === commandPath);
-		if (own) throw new Error(`${action} failed: ${requireString(own, "error")}`);
+		if (own) {throw new Error(`${action} failed: ${requireString(own, "error")}`);}
 		const failure = failures[0];
-		if (!failure) return;
+		if (!failure) {return;}
 		throw new Error(
 			`${action} raised an extension error in ${requireString(failure, "extensionPath")} ` +
 			`(event ${requireString(failure, "event")}): ${requireString(failure, "error")}`,
@@ -411,19 +411,19 @@ export class RealHost {
 		let started = 0;
 		for (;;) {
 			const remaining = deadline - Date.now();
-			if (remaining <= 0) break;
+			if (remaining <= 0) {break;}
 			rounds++;
 			await this.barrier(remaining);
 			this.assertNoExtensionErrors(mark, action);
 			started = countRuns(this.events.slice(mark));
-			if (started >= runs) break;
+			if (started >= runs) {break;}
 			// Wait for the event the missing run shows up as; the checks at the top of the
 			// loop then decide whether the step has another round left.
 			await this.waitForEvent(this.events.length, deadline);
 		}
 		this.stepRuns += started;
-		if (started === runs) return;
-		if (started > runs) throw new Error(`${action} started ${started} run(s), expected ${runs}`);
+		if (started === runs) {return;}
+		if (started > runs) {throw new Error(`${action} started ${started} run(s), expected ${runs}`);}
 		throw new Error(
 			`${action} started ${started} run(s), expected ${runs}; ` +
 			`the ${STEP_BUDGET_MS} ms step budget expired after ${rounds} barrier round(s)`,
@@ -448,14 +448,14 @@ export class RealHost {
 	 * found nothing outstanding never spins.
 	 */
 	private async waitForEvent(seen: number, deadline: number): Promise<void> {
-		if (this.events.length > seen) return;
+		if (this.events.length > seen) {return;}
 		await new Promise<void>((resolve) => {
 			const timer = setTimeout(() => {
 				unsubscribe();
 				resolve();
 			}, Math.max(deadline - Date.now(), 0));
 			const unsubscribe = this.client.onEvent(() => {
-				if (this.events.length <= seen) return;
+				if (this.events.length <= seen) {return;}
 				clearTimeout(timer);
 				unsubscribe();
 				resolve();
@@ -469,9 +469,9 @@ export class RealHost {
 		const mark = this.events.length;
 		const findReport = (): BarrierReport | undefined => {
 			for (const event of this.events.slice(mark)) {
-				if (event.type !== "extension_ui_request" || event.method !== "setStatus" || event.statusKey !== PROBE_BARRIER_STATUS_KEY) continue;
+				if (event.type !== "extension_ui_request" || event.method !== "setStatus" || event.statusKey !== PROBE_BARRIER_STATUS_KEY) {continue;}
 				const report = parseBarrierReport(requireString(event, "statusText"));
-				if (report.id === id) return report;
+				if (report.id === id) {return report;}
 			}
 			return undefined;
 		};
@@ -492,13 +492,13 @@ export class RealHost {
 					rejectWait(error);
 					return;
 				}
-				if (!found) return;
+				if (!found) {return;}
 				clearTimeout(timer);
 				unsubscribe();
 				resolveWait(found);
 			});
 		});
-		if (report.failure !== null) throw new Error(`Barrier ${id} failed: ${report.failure}`);
+		if (report.failure !== null) {throw new Error(`Barrier ${id} failed: ${report.failure}`);}
 	}
 }
 
@@ -506,7 +506,7 @@ async function startClient(options: RpcClientOptions): Promise<{ client: RpcClie
 	const client = new RpcClient(options);
 	const events: RpcEvent[] = [];
 	client.onEvent((event) => {
-		events.push(event as unknown as RpcEvent);
+		events.push(event);
 	});
 	await cleanupOnFailure(async () => {
 		await client.start();
@@ -545,7 +545,7 @@ export async function withRealHost(t: TestContext, run: (host: RealHost) => Prom
 			host = await starting;
 		} catch (error) {
 			// A test that timed out cannot report the start error through the body any more.
-			if (t.signal.aborted) throw error;
+			if (t.signal.aborted) {throw error;}
 			return; // the start error already reached the test through the body
 		}
 		// No timeout on this wait, on purpose: every wait the harness gives a body has a deadline,

@@ -102,7 +102,7 @@ test("spawn routes through the public registry and keeps source boundaries exact
 
 test("spawn schema advertises the thinking levels as a plain string enum and rejects other values", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => registerSpawnTool(api, state));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
 	const tool = pi.tools.get("spawn");
 	const thinkingSchema = JSON.parse(JSON.stringify(tool.parameters)).properties.thinking;
 	expect(thinkingSchema.type).toBe("string");
@@ -114,7 +114,7 @@ test("spawn schema advertises the thinking levels as a plain string enum and rej
 });
 
 test.for([...THINKING_LEVELS])("spawn schema accepts thinking: %s", async (thinking) => {
-	const pi = await createTestHost((api) => registerSpawnTool(api, createState()));
+	const pi = await createTestHost((api) => { registerSpawnTool(api, createState()); });
 	expect(Value.Check(pi.tools.get("spawn").parameters, { prompt: "work", thinking })).toBe(true);
 });
 
@@ -172,7 +172,7 @@ test("a parent-transient selected model fails explicitly in the real child runti
 		maxTokens: 1024,
 	};
 	const result = await executeSpawn(
-		"spawn-transient", pi as any, { model, cwd } as any, state,
+		"spawn-transient", pi, { model, cwd } as any, state,
 		{ prompt: "work" }, undefined, undefined, "medium",
 	);
 
@@ -275,7 +275,7 @@ test("real child usage matches the session stats across assistant, tool result, 
 	const pi = await createTestHost();
 	const state = createState();
 	const result = await executeSpawn(
-		"spawn-usage-parity", pi as any, { model, cwd: root } as any, state,
+		"spawn-usage-parity", pi, { model, cwd: root } as any, state,
 		{ prompt: "work" }, undefined, undefined, "medium",
 		async (config) => {
 			const created = await createAgentSession({ ...config, agentDir: root, modelRuntime, resourceLoader });

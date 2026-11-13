@@ -14,19 +14,19 @@ const KEY = "PI_CODING_AGENT_DIR";
 
 async function withPriorAgentDir(prior: string | undefined, body: () => Promise<void>): Promise<void> {
 	const ambient = process.env[KEY];
-	if (prior === undefined) delete process.env[KEY];
-	else process.env[KEY] = prior;
+	if (prior === undefined) {delete process.env[KEY];}
+	else {process.env[KEY] = prior;}
 	try {
 		await body();
 	} finally {
-		if (ambient === undefined) delete process.env[KEY];
-		else process.env[KEY] = ambient;
+		if (ambient === undefined) {delete process.env[KEY];}
+		else {process.env[KEY] = ambient;}
 	}
 }
 
 function assertAgentDirRestored(prior: string | undefined): void {
-	if (prior === undefined) expect(process.env[KEY]).toBeUndefined();
-	else expect(process.env[KEY]).toBe(prior);
+	if (prior === undefined) {expect(process.env[KEY]).toBeUndefined();}
+	else {expect(process.env[KEY]).toBe(prior);}
 }
 
 const priors = [

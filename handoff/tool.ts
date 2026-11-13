@@ -133,14 +133,14 @@ export function registerHandoffTool(
 		}),
 
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-			if (state.stagedHandoff) throw new Error(HANDOFF_ALREADY_STAGED);
+			if (state.stagedHandoff) {throw new Error(HANDOFF_ALREADY_STAGED);}
 			const { nextInstruction, context } = resolveHandoffRequest(state, params);
 			// The error result is the only report of a rejected call: a queued follow-up
 			// would outlive this run and reach a later successor.
 			try {
 				validateHandoffRequest(nextInstruction, ctx);
 			} catch (error) {
-				if (!state.pendingRequestedHandoff || !(error instanceof Error)) throw error;
+				if (!state.pendingRequestedHandoff || !(error instanceof Error)) {throw error;}
 				throw new Error(formatHandoffFailure(error.message, true));
 			}
 			// Status first: a throwing UI call must leave no staged handoff behind.
@@ -158,7 +158,7 @@ export function registerHandoffTool(
 				phase: "staged",
 				declineReason: null,
 			};
-			if (state.pendingRequestedHandoff) state.pendingRequestedHandoff.toolCalled = true;
+			if (state.pendingRequestedHandoff) {state.pendingRequestedHandoff.toolCalled = true;}
 
 			return {
 				content: [{ type: "text", text: HANDOFF_STAGED_RESULT }],

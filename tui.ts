@@ -32,7 +32,7 @@ export const STATUS_KEY_READONLY = "pi-schematic-readonly";
 
 /** Update TUI indicators: context usage, notebook count, topic, warning widget. */
 export function updateIndicators(ctx: ExtensionContext, state: SchematicState): void {
-	if (!ctx.hasUI) return;
+	if (!ctx.hasUI) {return;}
 
 	const theme = ctx.ui.theme;
 

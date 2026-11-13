@@ -132,7 +132,7 @@ export function buildMacProfile(tempDir: string): string {
 	// user's own command need this fallback.
 	const writePaths = new Set<string>();
 	writePaths.add(canon);
-	if (original !== canon) writePaths.add(original);
+	if (original !== canon) {writePaths.add(original);}
 	writePaths.add("/private/tmp");
 	writePaths.add("/tmp");
 
@@ -255,7 +255,7 @@ export function appendSandboxBlockNoticeToResult(
 	result: Pick<AgentToolResult, "content" | "structuredContent" | "isError">,
 	platform: NodeJS.Platform = process.platform,
 ): Pick<AgentToolResult, "content" | "structuredContent"> | undefined {
-	if (result.isError !== true) return undefined;
+	if (result.isError !== true) {return undefined;}
 
 	const structured = result.structuredContent;
 	const structuredObject = typeof structured === "object" && structured !== null && !Array.isArray(structured)
@@ -264,11 +264,11 @@ export function appendSandboxBlockNoticeToResult(
 	const output = typeof structuredObject?.output === "string" ? structuredObject.output : undefined;
 	const matched = result.content.some((block) => block.type === "text" && containsSandboxDenial(block.text, platform))
 		|| (output !== undefined && containsSandboxDenial(output, platform));
-	if (!matched) return undefined;
+	if (!matched) {return undefined;}
 
 	let lastTextIndex = -1;
 	result.content.forEach((block, index) => {
-		if (block.type === "text") lastTextIndex = index;
+		if (block.type === "text") {lastTextIndex = index;}
 	});
 	const content = lastTextIndex === -1
 		? [...result.content, { type: "text" as const, text: READONLY_SANDBOX_BLOCK_NOTICE }]

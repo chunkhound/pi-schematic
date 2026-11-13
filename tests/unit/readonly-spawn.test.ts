@@ -85,7 +85,7 @@ test("readonly bash guard blocks non-temp writes and allows temp writes", () => 
 
 function outsideTempPath(label: string): string {
 	const target = path.join(os.homedir(), `readonly-child-${label}-${process.pid}-${Date.now()}`);
-	onTestFinished(() => fs.rmSync(target, { force: true }));
+	onTestFinished(() => { fs.rmSync(target, { force: true }); });
 	return target;
 }
 
@@ -95,7 +95,7 @@ function runChildBash(
 	options: { timeout?: number; signal?: AbortSignal; onUpdate?: (update: { content: { type: string; text?: string }[] }) => void } = {},
 ) {
 	return createReadonlyChildBashTool(process.cwd())
-		.execute("child-bash", { command, timeout: options.timeout }, options.signal, options.onUpdate as any, undefined as any);
+		.execute("child-bash", { command, timeout: options.timeout }, options.signal, options.onUpdate, undefined as any);
 }
 
 /** Return `command` after checking that the readonly guard sandboxes it rather than blocking it. */
@@ -120,7 +120,7 @@ function runChildBashUntil(command: string, marker: string) {
 		timeout: 20,
 		signal: controller.signal,
 		onUpdate: (update) => {
-			if (textOf(update).toLowerCase().includes(marker.toLowerCase())) controller.abort();
+			if (textOf(update).toLowerCase().includes(marker.toLowerCase())) {controller.abort();}
 		},
 	});
 }
@@ -224,10 +224,10 @@ test.skipIf(!canUseOsSandbox() || skipWithoutDenialPhrase)("concurrent child bas
 	]);
 
 	expect(sandboxedResult.status).toBe("fulfilled");
-	if (sandboxedResult.status !== "fulfilled") expect.unreachable();
+	if (sandboxedResult.status !== "fulfilled") {expect.unreachable();}
 	expectSuffix(textOf(sandboxedResult.value), READONLY_SANDBOX_BLOCK_NOTICE);
 	expect(blockedResult.status).toBe("rejected");
-	if (blockedResult.status !== "rejected") expect.unreachable();
+	if (blockedResult.status !== "rejected") {expect.unreachable();}
 	expect(blockedResult.reason).toBeInstanceOf(Error);
 	expect(blockedResult.reason.message).toMatch(/Readonly mode:/);
 	expect(blockedResult.reason.message, blockedResult.reason.message).not.toContain(READONLY_SANDBOX_BLOCK_NOTICE);

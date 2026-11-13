@@ -19,11 +19,11 @@ const DEFAULT_TIMEOUT_MS = 5000;
 const TIMEOUT_MS = parseInt(process.env.E2E_TIMEOUT_MS ?? "", 10) || DEFAULT_TIMEOUT_MS;
 
 export class ProcessHarness {
-	private child: ChildProcessWithoutNullStreams;
+	private readonly child: ChildProcessWithoutNullStreams;
 	private output = "";
 	private readOffset = 0;
-	private timeoutMs: number;
-	private waiters = new Set<() => void>();
+	private readonly timeoutMs: number;
+	private readonly waiters = new Set<() => void>();
 
 	constructor(
 		scriptPath = DEFAULT_SCRIPT,
@@ -51,7 +51,7 @@ export class ProcessHarness {
 
 		const append = (chunk: string | Buffer) => {
 			this.output += chunk.toString();
-			for (const wake of this.waiters) wake();
+			for (const wake of this.waiters) {wake();}
 			this.waiters.clear();
 		};
 
@@ -60,7 +60,7 @@ export class ProcessHarness {
 	}
 
 	private async waitForOutput(ms: number): Promise<void> {
-		if (ms <= 0) return;
+		if (ms <= 0) {return;}
 		await new Promise<void>((resolve) => {
 			const wake = () => {
 				clearTimeout(timer);
@@ -84,7 +84,7 @@ export class ProcessHarness {
 			await this.waitForOutput(deadline - Date.now());
 		}
 		throw new Error(
-			`waitForText timeout after ${this.timeoutMs}ms looking for fresh \"${text}\".\n` +
+			`waitForText timeout after ${this.timeoutMs}ms looking for fresh "${text}".\n` +
 				`Output so far:\n${this.output}`,
 		);
 	}
@@ -108,6 +108,6 @@ export class ProcessHarness {
 	/** Kill the child process. */
 	close(): void {
 		this.child.stdin.end();
-		if (!this.child.killed) this.child.kill();
+		if (!this.child.killed) {this.child.kill();}
 	}
 }

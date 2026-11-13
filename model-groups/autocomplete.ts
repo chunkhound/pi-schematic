@@ -5,14 +5,14 @@ import { getEffectiveModelGroups } from "./router.js";
 import { MODALITY_FG, modalityLetterRun } from "./modality.js";
 import type { ModelGroupModel, ResolvedModelGroup } from "./types.js";
 
-const registeredUis = new WeakSet<object>();
+const registeredUis = new WeakSet();
 
 function isUnavailable(group: ResolvedModelGroup, entry: ModelGroupModel): boolean {
 	return group.validation.unavailableRefs.some((ref) => ref.provider === entry.provider && ref.modelId === entry.modelId);
 }
 
 function formatModelGroupRouteDetails(group: ResolvedModelGroup): string {
-	if (group.models.length === 0) return "No models configured";
+	if (group.models.length === 0) {return "No models configured";}
 	return group.models
 		.map((entry) => {
 			const thinking = entry.thinkingLevel ?? "inherit";
@@ -51,9 +51,9 @@ function buildCapsLetters(group: ResolvedModelGroup, colorize: DescriptionColori
  * unchanged (rows are inherently aligned to the left edge).
  */
 function buildSuggestionDescription(route: string, letters: string, capsWidth: number, colorize?: DescriptionColorizer): string {
-	if (!colorize) return route;
+	if (!colorize) {return route;}
 	const gap = colorize("muted", "  ");
-	if (capsWidth === 0) return colorize("muted", route);
+	if (capsWidth === 0) {return colorize("muted", route);}
 	const pad = Math.max(0, capsWidth - visibleWidth(letters));
 	const padded = letters
 		? `${letters}${colorize("muted", " ".repeat(pad))}`
@@ -66,7 +66,7 @@ export function createModelGroupAutocompleteProvider(state: SchematicState, colo
 		async getSuggestions(lines, cursorLine, cursorCol, options) {
 			const line = lines[cursorLine] ?? "";
 			const beforeCursor = line.slice(0, cursorCol);
-			const match = beforeCursor.match(/(?:^|[\t ])#([^\s#]*)$/);
+			const match = /(?:^|[\t ])#([^\s#]*)$/.exec(beforeCursor);
 			if (!match) {
 				return current.getSuggestions(lines, cursorLine, cursorCol, options);
 			}
@@ -101,10 +101,10 @@ export function createModelGroupAutocompleteProvider(state: SchematicState, colo
 }
 
 export function registerModelGroupAutocomplete(ctx: ExtensionContext, state: SchematicState): void {
-	if (!ctx.hasUI) return;
+	if (!ctx.hasUI) {return;}
 	const ui = ctx.ui;
-	if (typeof ui.addAutocompleteProvider !== "function") return;
-	if (registeredUis.has(ui)) return;
+	if (typeof ui.addAutocompleteProvider !== "function") {return;}
+	if (registeredUis.has(ui)) {return;}
 	registeredUis.add(ui);
 	// Lazy adapter so the colorizer reflects the live theme (not a snapshot).
 	const colorize: DescriptionColorizer | undefined = ui.theme

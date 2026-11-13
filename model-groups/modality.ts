@@ -43,7 +43,7 @@ export function modalityLetterRun(
 	effective: readonly ModelGroupModality[] | null | undefined,
 	options: ModalityLetterRunOptions = {},
 ): string {
-	if (!effective || effective.length === 0) return "";
+	if (!effective || effective.length === 0) {return "";}
 	const includeReasoning = options.includeReasoning ?? false;
 	const hideTextWhenOtherMedia = options.hideTextWhenOtherMedia ?? false;
 	const render = options.render ?? ((_modality: ModelGroupModality, letter: string) => letter);
@@ -52,16 +52,16 @@ export function modalityLetterRun(
 	const rendered: string[] = [];
 	let hasOtherMedia = false;
 	for (const modality of MODEL_GROUP_MODALITIES) {
-		if (!seen.has(modality)) continue;
-		if (!includeReasoning && modality === "reasoning") continue;
-		if (modality !== "text") hasOtherMedia = true;
+		if (!seen.has(modality)) {continue;}
+		if (!includeReasoning && modality === "reasoning") {continue;}
+		if (modality !== "text") {hasOtherMedia = true;}
 	}
 	for (const modality of MODEL_GROUP_MODALITIES) {
-		if (!seen.has(modality)) continue;
-		if (!includeReasoning && modality === "reasoning") continue;
-		if (hideTextWhenOtherMedia && modality === "text" && hasOtherMedia) continue;
+		if (!seen.has(modality)) {continue;}
+		if (!includeReasoning && modality === "reasoning") {continue;}
+		if (hideTextWhenOtherMedia && modality === "text" && hasOtherMedia) {continue;}
 		rendered.push(render(modality, MODALITY_LETTER[modality]));
 	}
-	if (rendered.length === 0) return "";
+	if (rendered.length === 0) {return "";}
 	return rendered.join(separator);
 }

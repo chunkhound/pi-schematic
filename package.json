@@ -1,6 +1,8 @@
 {
   "name": "@chunkhound/pi-schematic",
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "version": "0.7.1",
   "type": "module",
   "description": "Context management primitives for the pi coding agent — spawn, notebook, handoff",
@@ -44,20 +46,29 @@
     "test:snapshots:update": "vitest run --project unit --update=all tests/unit/render-snapshots.test.ts",
     "test:compat:current": "node ./scripts/test-compat-current.mjs",
     "test:package-host": "node ./scripts/test-package-host.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "1.2.0",
     "@earendil-works/pi-ai": "1.2.0",
     "@earendil-works/pi-coding-agent": "1.2.0",
     "@earendil-works/pi-tui": "1.2.0",
+    "@eslint-community/eslint-plugin-eslint-comments": "^4.8.1",
     "@types/node": "^22.20.5",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "@vitest/coverage-v8": "5.1.0",
     "audit-ci": "^7.1.0",
+    "eslint": "^10.14.0",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "eslint-plugin-import-x": "^4.18.0",
+    "eslint-plugin-n": "^18.5.0",
     "fast-check": "^4.8.0",
+    "globals": "^17.14.0",
     "husky": "^9.1.7",
     "typebox": "1.3.27",
-    "typescript": "^7.0.0",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "typescript-eslint": "^8.72.1",
     "vite": "8.3.7",
     "vitest": "5.1.0"
   },

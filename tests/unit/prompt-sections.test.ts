@@ -41,7 +41,7 @@ test("omits a section whose body is empty", () => {
 for (const name of ["schematic", "schematic_model_groups"]) {
 	test(`accepts names with the schematic prefix: ${name}`, () => {
 		const registry = createPromptSectionRegistry();
-		expect(() => registry.register({ name, render: () => "body" })).not.toThrow();
+		expect(() => { registry.register({ name, render: () => "body" }); }).not.toThrow();
 		expect(registry.render()).toStrictEqual([{ name, body: "body" }]);
 	});
 }
@@ -56,7 +56,7 @@ for (const { name, reason } of [
 ]) {
 	test(`rejects names outside the schematic prefix: ${name} (${reason})`, () => {
 		const registry = createPromptSectionRegistry();
-		expect(() => registry.register({ name, render: () => "body" })).toThrow(/Invalid schematic prompt section name/);
+		expect(() => { registry.register({ name, render: () => "body" }); }).toThrow(/Invalid schematic prompt section name/);
 	});
 }
 
@@ -64,7 +64,7 @@ test("rejects a duplicate section name", () => {
 	const registry = createPromptSectionRegistry();
 	registry.register({ name: "schematic_topic", render: () => "first" });
 
-	expect(() => registry.register({ name: "schematic_topic", render: () => "second" })).toThrow(
+	expect(() => { registry.register({ name: "schematic_topic", render: () => "second" }); }).toThrow(
 		/Duplicate schematic prompt section/,
 	);
 });
@@ -250,7 +250,7 @@ test("re-renders the topic and notebook sections after a handoff completes", asy
 		handoffCtx,
 	);
 	const results = await callHandlers(pi, "turn_end", turnEndEvent({ toolResults: [handoffToolResult("handoff")] }), handoffCtx);
-	const boundary = results.find((result) => result !== undefined) as { entries: Array<Record<string, unknown>> };
+	const boundary = results.find((result) => result !== undefined) as { entries: Record<string, unknown>[] };
 	branch = boundary.entries.map((entry, index) => ({ ...entry, id: `entry-${index}` }));
 	await callHandlers(pi, "turn_start", { type: "turn_start", turnIndex: 1, timestamp: 0 }, handoffCtx);
 	const afterHandoff = createBeforeAgentStartEvent();

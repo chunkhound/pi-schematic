@@ -8,5 +8,5 @@ export function resolveConstraintMembers(
 	members: readonly ModelGroupModel[],
 	modelRegistry: Pick<ModelRegistry, "find">,
 ): ConstraintMemberResolution {
-	return { members: members.map((ref) => ({ ref, model: modelRegistry.find(ref.provider, ref.modelId) as Model<Api> | undefined })) };
+	return { members: members.map((ref) => ({ ref, model: modelRegistry.find(ref.provider, ref.modelId) })) };
 }

@@ -40,7 +40,7 @@ function makeBeforeStartCtx(cwd = process.cwd()) {
 }
 
 function makeNotifyBeforeStartCtx() {
-	const notifications: Array<{ message: string; level: string }> = [];
+	const notifications: { message: string; level: string }[] = [];
 	return {
 		ctx: {
 			...makeReadonlyUICtx({
@@ -150,7 +150,7 @@ testWithDir("embedded-slash prompt and skill tokens do not apply readonly frontm
 		const [inputHandler] = pi.handlers.get("input")!;
 		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const ctx = makeBeforeStartCtx();
-		if (scenario.type === "prompt") pi.setCommands([makePromptCommand("review", filePath)]);
+		if (scenario.type === "prompt") {pi.setCommands([makePromptCommand("review", filePath)]);}
 
 		const result = await inputHandler({ text: scenario.text, source: "interactive" }, ctx);
 		expect(result).toStrictEqual({ action: "continue" });

@@ -26,11 +26,11 @@ export function registerHandoffCommand(pi: ExtensionAPI, state: SchematicState):
 		handler: async (args, ctx) => {
 			const direction = args;
 			if (!direction.trim()) {
-				if (ctx.hasUI) ctx.ui.notify("Usage: /handoff <direction>", "error");
+				if (ctx.hasUI) {ctx.ui.notify("Usage: /handoff <direction>", "error");}
 				return;
 			}
 
-			if (state.stagedHandoff) throw new Error(HANDOFF_COMMAND_BUSY);
+			if (state.stagedHandoff) {throw new Error(HANDOFF_COMMAND_BUSY);}
 			state.pendingRequestedHandoff = newRequestedHandoff(direction);
 
 			if (ctx.hasUI && state.readonlyEnabled) {

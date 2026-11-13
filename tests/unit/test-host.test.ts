@@ -48,7 +48,7 @@ test("a factory's event handler is registered on the host", async () => {
 		});
 	});
 	const handlers = pi.handlers.get("tool_call") ?? [];
-	for (const registered of handlers) await registered("probe-event", {});
+	for (const registered of handlers) {await registered("probe-event", {});}
 
 	expect(handlers).toHaveLength(1);
 	expect(seen).toStrictEqual(["probe-event"]);
@@ -129,7 +129,7 @@ function assertLoadErrorMessage(error: Error, expected: RegExp[]): void {
 	expect(lines[0]).toBe("pi reported extension load errors:");
 	expect(lines).toHaveLength(expected.length + 1);
 	for (const [index, pattern] of expected.entries()) {
-		const line = lines[index + 1]!;
+		const line = lines[index + 1];
 		expect(line).toMatch(/^[^\n]+: [^\n]+$/);
 		expect(line).toMatch(pattern);
 	}
@@ -162,7 +162,7 @@ test("an action called during registration fails the load", async () => {
 test("a duplicate tool registration is listed as a load error", async () => {
 	await expect(
 		emitBeforeAgentStart({
-			before: [(pi) => registerNamedTool(pi, "duplicate_tool"), (pi) => registerNamedTool(pi, "duplicate_tool")],
+			before: [(pi) => { registerNamedTool(pi, "duplicate_tool"); }, (pi) => { registerNamedTool(pi, "duplicate_tool"); }],
 		}),
 	).rejects.toSatisfy((error: Error) => {
 		assertLoadErrorMessage(error, [/duplicate_tool/]);
@@ -173,8 +173,8 @@ test("a duplicate tool registration is listed as a load error", async () => {
 test("every load error starts a new line", async () => {
 	await expect(
 		emitBeforeAgentStart({
-			before: [(pi) => registerNamedTool(pi, "first_duplicate"), (pi) => registerNamedTool(pi, "first_duplicate")],
-			after: [(pi) => registerNamedTool(pi, "second_duplicate"), (pi) => registerNamedTool(pi, "second_duplicate")],
+			before: [(pi) => { registerNamedTool(pi, "first_duplicate"); }, (pi) => { registerNamedTool(pi, "first_duplicate"); }],
+			after: [(pi) => { registerNamedTool(pi, "second_duplicate"); }, (pi) => { registerNamedTool(pi, "second_duplicate"); }],
 		}),
 	).rejects.toSatisfy((error: Error) => {
 		assertLoadErrorMessage(error, [

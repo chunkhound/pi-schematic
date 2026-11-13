@@ -49,7 +49,7 @@ function usageOf(inputTokens: number): AssistantMessage["usage"] {
 
 function parseScript(args: string): ScriptedStep[] {
 	const parsed: unknown = JSON.parse(args);
-	if (!Array.isArray(parsed)) throw new Error(`/e2e-script expects a JSON array, got: ${args}`);
+	if (!Array.isArray(parsed)) {throw new Error(`/e2e-script expects a JSON array, got: ${args}`);}
 	return parsed.map((step: unknown, index) => parseScriptedStep(step, (reason) => {
 		throw new Error(`/e2e-script step ${index}: ${reason}`);
 	}));
@@ -58,7 +58,7 @@ function parseScript(args: string): ScriptedStep[] {
 /** The run count `/e2e-turn` takes: none means one, otherwise one positive integer. */
 function parseTurnCount(args: string): number {
 	const text = args.trim();
-	if (text === "") return 1;
+	if (text === "") {return 1;}
 	const count = Number(text);
 	if (!/^[1-9][0-9]*$/.test(text) || !Number.isSafeInteger(count)) {
 		throw new Error(`/e2e-turn expects no argument or a positive decimal run count, got: ${args}`);
@@ -81,7 +81,7 @@ function messageText(content: unknown): string {
 }
 
 /** Text of every context message: block arrays reduced to their text blocks, strings as is. */
-function contextTexts(messages: ReadonlyArray<{ content?: unknown }>): string[] {
+function contextTexts(messages: readonly { content?: unknown }[]): string[] {
 	return messages.flatMap((message) => {
 		const content = message.content;
 		if (Array.isArray(content)) {
@@ -95,8 +95,8 @@ function contextTexts(messages: ReadonlyArray<{ content?: unknown }>): string[] 
 
 export default function realHostProbe(pi: ExtensionAPI): void {
 	const logPath = process.env[PROBE_LOG_ENV_VAR];
-	if (!logPath) throw new Error(`${PROBE_LOG_ENV_VAR} is not set`);
-	const log = (record: ProbeRecord) => appendFileSync(logPath, JSON.stringify(record) + "\n");
+	if (!logPath) {throw new Error(`${PROBE_LOG_ENV_VAR} is not set`);}
+	const log = (record: ProbeRecord) => { appendFileSync(logPath, JSON.stringify(record) + "\n"); };
 
 	let armedScript: ScriptedStep[] | null = null;
 	let runScript: ScriptedStep[] | null = null;
@@ -118,11 +118,11 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	const inputsAwaitingDelivery: string[] = [];
 	let runsAwaitingSettle = 0;
 	const accountingErrors: string[] = [];
-	let wakeBarriers: Array<() => void> = [];
+	let wakeBarriers: (() => void)[] = [];
 	const wake = () => {
 		const waiting = wakeBarriers;
 		wakeBarriers = [];
-		for (const resolve of waiting) resolve();
+		for (const resolve of waiting) {resolve();}
 	};
 
 	const startTurn = () => {
@@ -144,19 +144,19 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	const awaitQuiet = async (ctx: ExtensionCommandContext, deadlineMs: number): Promise<void> => {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const deadline = new Promise<"deadline">((resolve) => {
-			timer = setTimeout(() => resolve("deadline"), deadlineMs);
+			timer = setTimeout(() => { resolve("deadline"); }, deadlineMs);
 		});
 		const fail = (reason: string) => new Error(`/e2e-barrier ${reason}; outstanding: ${outstanding(ctx).join("; ") || "nothing"}`);
 		try {
 			for (;;) {
 				// Subscribed before the checks, so an event between them is not missed.
-				const changed = new Promise<"changed">((resolve) => wakeBarriers.push(() => resolve("changed")));
+				const changed = new Promise<"changed">((resolve) => wakeBarriers.push(() => { resolve("changed"); }));
 				const idle = ctx.waitForIdle().then(() => "idle" as const);
-				if (await Promise.race([idle, deadline]) === "deadline") throw fail(`timed out after ${deadlineMs} ms waiting for idle`);
-				if (accountingErrors.length > 0) throw fail(`cannot account for: ${accountingErrors.join("; ")}`);
-				if (outstanding(ctx).length === 0) return;
-				if (!ctx.isIdle()) continue;
-				if (await Promise.race([changed, deadline]) === "deadline") throw fail(`timed out after ${deadlineMs} ms`);
+				if (await Promise.race([idle, deadline]) === "deadline") {throw fail(`timed out after ${deadlineMs} ms waiting for idle`);}
+				if (accountingErrors.length > 0) {throw fail(`cannot account for: ${accountingErrors.join("; ")}`);}
+				if (outstanding(ctx).length === 0) {return;}
+				if (!ctx.isIdle()) {continue;}
+				if (await Promise.race([changed, deadline]) === "deadline") {throw fail(`timed out after ${deadlineMs} ms`);}
 			}
 		} finally {
 			clearTimeout(timer);
@@ -217,7 +217,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	pi.on("agent_start", async (_event, ctx) => {
 		// pi starts a pass with agent_start for each automatic retry or continuation inside a
 		// run; only the run's first agent_start, with no run awaiting agent_settled, starts one.
-		if (runsAwaitingSettle > 0) return;
+		if (runsAwaitingSettle > 0) {return;}
 		runScript = armedScript;
 		armedScript = null;
 		step = 0;
@@ -227,8 +227,8 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_settled", async () => {
-		if (runsAwaitingSettle === 0) accountingErrors.push("agent_settled without an agent_start");
-		else runsAwaitingSettle--;
+		if (runsAwaitingSettle === 0) {accountingErrors.push("agent_settled without an agent_start");}
+		else {runsAwaitingSettle--;}
 		// pi defers a send from an agent_settled handler until the handlers return, so the
 		// chained run starts after this one has settled.
 		if (chainedTurns > 0) {
@@ -239,9 +239,9 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	});
 
 	pi.on("message_start", async (event) => {
-		if (event.message.role !== "user") return;
+		if (event.message.role !== "user") {return;}
 		const index = inputsAwaitingDelivery.indexOf(messageText(event.message.content));
-		if (index === -1) return;
+		if (index === -1) {return;}
 		inputsAwaitingDelivery.splice(index, 1);
 		wake();
 	});
@@ -260,7 +260,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 			});
 		}
 		// A handoff call that returned without error has staged a cut for its turn_end.
-		if (event.toolName !== "handoff" || event.isError) return;
+		if (event.toolName !== "handoff" || event.isError) {return;}
 		handoffCallsAwaitingBoundary.push(event.toolCallId);
 		if (abortAfterHandoff) {
 			abortAfterHandoff = false;
@@ -271,14 +271,14 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 
 	pi.on("turn_end", async (event) => {
 		for (const result of event.toolResults) {
-			if (result.toolName !== "handoff" || result.isError) continue;
+			if (result.toolName !== "handoff" || result.isError) {continue;}
 			const index = handoffCallsAwaitingBoundary.indexOf(result.toolCallId);
-			if (index === -1) accountingErrors.push(`turn_end holds handoff result ${result.toolCallId} without its tool_execution_end`);
-			else handoffCallsAwaitingBoundary.splice(index, 1);
+			if (index === -1) {accountingErrors.push(`turn_end holds handoff result ${result.toolCallId} without its tool_execution_end`);}
+			else {handoffCallsAwaitingBoundary.splice(index, 1);}
 		}
 		const handoffId = event.entries.map(cutHandoffId).find((id) => id !== null);
 		wake();
-		if (handoffId === undefined) return undefined;
+		if (handoffId === undefined) {return undefined;}
 		const tamper = nextCutTamper;
 		nextCutTamper = null;
 		log({ kind: "cut", handoffId, dropped: tamper === "drop" });
@@ -298,7 +298,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	});
 
 	pi.on("input", async (event) => {
-		if (event.source !== "extension") return { action: "continue" };
+		if (event.source !== "extension") {return { action: "continue" };}
 		inputsAwaitingDelivery.push(event.text);
 		wake();
 		return { action: "continue" };
@@ -313,7 +313,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	pi.registerCommand(PROBE_COMMAND.script, {
 		description: "Arm a scripted tool-call sequence for the next run",
 		handler: async (args) => {
-			if (armedScript) throw new Error(`a script is already armed: ${JSON.stringify(armedScript)}`);
+			if (armedScript) {throw new Error(`a script is already armed: ${JSON.stringify(armedScript)}`);}
 			armedScript = parseScript(args);
 		},
 	});
@@ -336,13 +336,13 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 			// next step's window or in close(), which fails on any run no step expected. Closing
 			// this needs a pi API upstream declined (#9632, #10451, #9969).
 			const [idText, deadlineText, ...rest] = args.trim().split(/\s+/);
-			if (rest.length > 0) throw new Error(`/e2e-barrier expects "<id> <deadlineMs>", got: ${args}`);
+			if (rest.length > 0) {throw new Error(`/e2e-barrier expects "<id> <deadlineMs>", got: ${args}`);}
 			const id = parseBarrierArgument(idText, "id", args);
 			const deadlineMs = parseBarrierArgument(deadlineText, "deadlineMs", args);
-			const report = (outcome: BarrierReport) => ctx.ui.setStatus(PROBE_BARRIER_STATUS_KEY, JSON.stringify(outcome));
+			const report = (outcome: BarrierReport) => { ctx.ui.setStatus(PROBE_BARRIER_STATUS_KEY, JSON.stringify(outcome)); };
 			void awaitQuiet(ctx, deadlineMs).then(
-				() => report({ id, failure: null }),
-				(error: unknown) => report({ id, failure: error instanceof Error ? error.message : String(error) }),
+				() => { report({ id, failure: null }); },
+				(error: unknown) => { report({ id, failure: error instanceof Error ? error.message : String(error) }); },
 			);
 		},
 	});
@@ -351,7 +351,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		description: "Navigate the session tree to an entry",
 		handler: async (args, ctx) => {
 			const entryId = args.trim();
-			if (!entryId) throw new Error("/e2e-tree needs an entry id");
+			if (!entryId) {throw new Error("/e2e-tree needs an entry id");}
 			await ctx.navigateTree(entryId);
 		},
 	});

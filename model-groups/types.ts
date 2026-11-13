@@ -20,7 +20,7 @@ export interface ModelGroupDef {
 }
 export interface ModelGroupsConfig { version: 2; groups: Record<string, ModelGroupDef> }
 export interface ModelGroupValidation {
-	unavailableRefs: Array<{ provider: string; modelId: string }>;
+	unavailableRefs: { provider: string; modelId: string }[];
 	shadowedByProject: boolean;
 	degraded: boolean;
 	emptyCommonModalities: boolean;

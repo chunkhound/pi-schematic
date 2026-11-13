@@ -137,13 +137,13 @@ function isBuiltinReadonlyBypassCommand(name: string): boolean {
 	return READONLY_BYPASS_COMMANDS.has(name);
 }
 
-type PendingCommand = { type: "skill" | "command"; name: string };
-type ModelSelection = {
+interface PendingCommand { type: "skill" | "command"; name: string }
+interface ModelSelection {
 	model: string | null;
 	group: string | null;
 	thinking: ModelThinkingLevel | null;
 	issue: FrontmatterIssue | null;
-};
+}
 
 const cacheResolver = {
 	skill: {
@@ -226,7 +226,7 @@ function consumePendingReadonlyCommands(
 	// cache builder marks their names as shadowed and never loads fallback files.
 	while (state.pendingReadonlyCommands.length > 0) {
 		const pendingCommand = state.pendingReadonlyCommands.shift();
-		if (!pendingCommand) return;
+		if (!pendingCommand) {return;}
 
 		const readonly = pendingCommand.type === "skill"
 			? cacheLookupSkill(state, pendingCommand.name)
@@ -235,7 +235,7 @@ function consumePendingReadonlyCommands(
 			const issue = pendingCommand.type === "skill"
 				? cacheLookupSkillIssue(state, pendingCommand.name)
 				: cacheLookupCommandIssue(state, pendingCommand.name);
-			if (issue && isReadonlyFrontmatterIssue(issue)) recordFrontmatterIssue(ctx, pi, pendingCommand, issue);
+			if (issue && isReadonlyFrontmatterIssue(issue)) {recordFrontmatterIssue(ctx, pi, pendingCommand, issue);}
 			continue;
 		}
 
@@ -257,7 +257,7 @@ function consumePendingReadonlyCommands(
 
 async function safeSetModel(pi: ExtensionAPI, model: Model<Api>, onError: () => void): Promise<boolean> {
 	try {
-		if (await pi.setModel(model)) return true;
+		if (await pi.setModel(model)) {return true;}
 	} catch {
 		// Pi can reject after its configured-auth check succeeds.
 	}
@@ -272,14 +272,14 @@ async function preflightModelSelection(
 	pending: PendingCommand,
 	selection = resolveModelSelection(state, pending),
 ): Promise<boolean> {
-	if (!ctx.hasUI || !ctx.model) return false;
+	if (!ctx.hasUI || !ctx.model) {return false;}
 	if (selection.issue && !isReadonlyFrontmatterIssue(selection.issue)) {
 		recordFrontmatterIssue(ctx, pi, pending, selection.issue);
 	}
 	const commandRef = formatCommandRef(pending);
-	if (selection.model) return handleExplicitModelFrontmatter(ctx, pi, selection, commandRef);
-	if (selection.group) return handleModelGroupFrontmatter(state, ctx, pi, selection, commandRef, ctx.model);
-	if (selection.thinking) return handleThinkingOnlyFrontmatter(ctx, pi, selection.thinking, commandRef, ctx.model);
+	if (selection.model) {return handleExplicitModelFrontmatter(ctx, pi, selection, commandRef);}
+	if (selection.group) {return handleModelGroupFrontmatter(state, ctx, pi, selection, commandRef, ctx.model);}
+	if (selection.thinking) {return handleThinkingOnlyFrontmatter(ctx, pi, selection.thinking, commandRef, ctx.model);}
 	return false;
 }
 
@@ -295,7 +295,7 @@ function findExplicitModel(ctx: ExtensionContext, raw: string, commandRef: strin
 		ctx.ui.notify(buildModelFrontmatterErrorNotification(provider, modelId, commandRef, "not found in registry"), "error");
 		return null;
 	}
-	if (isUsableModel(ctx.modelRegistry, model)) return model;
+	if (isUsableModel(ctx.modelRegistry, model)) {return model;}
 	ctx.ui.notify(buildModelFrontmatterAuthErrorNotification(provider, modelId, commandRef), "error");
 	return null;
 }
@@ -308,7 +308,7 @@ function recordExplicitModelSwitch(
 	commandRef: string,
 ): void {
 	const { provider, modelId } = splitModelId(modelRef);
-	if (thinking) pi.setThinkingLevel(thinking);
+	if (thinking) {pi.setThinkingLevel(thinking);}
 	ctx.ui.notify(buildModelFrontmatterNotification(provider, modelId, commandRef), "info");
 	pi.appendEntry("pi-schematic-model-switch", { command: commandRef, provider, modelId, thinking });
 }
@@ -319,14 +319,14 @@ async function handleExplicitModelFrontmatter(
 	selection: ModelSelection,
 	commandRef: string,
 ): Promise<boolean> {
-	if (selection.group) ctx.ui.notify(buildModelGroupOverrideWarningNotification(selection.group, commandRef), "warning");
+	if (selection.group) {ctx.ui.notify(buildModelGroupOverrideWarningNotification(selection.group, commandRef), "warning");}
 	const model = findExplicitModel(ctx, selection.model!, commandRef);
-	if (!model) return true;
+	if (!model) {return true;}
 	const notifyError = () => {
 		const { provider, modelId } = splitModelId(selection.model!);
 		ctx.ui.notify(buildModelFrontmatterSetModelErrorNotification(provider, modelId, commandRef), "error");
 	};
-	if (!await safeSetModel(pi, model, notifyError)) return true;
+	if (!await safeSetModel(pi, model, notifyError)) {return true;}
 	const thinking = selection.thinking ? clampThinkingLevel(model, selection.thinking) : null;
 	recordExplicitModelSwitch(ctx, pi, selection.model!, thinking, commandRef);
 	return false;
@@ -368,10 +368,10 @@ async function applyModelGroupRoute(
 	commandRef: string,
 ): Promise<boolean> {
 	const groupName = selection.group!;
-	const onError = () => ctx.ui.notify(
+	const onError = () => { ctx.ui.notify(
 		buildModelGroupSetModelErrorNotification(groupName, route.provider, route.modelId, commandRef), "error",
-	);
-	if (!await safeSetModel(pi, route.model, onError)) return true;
+	); };
+	if (!await safeSetModel(pi, route.model, onError)) {return true;}
 	const thinking = selection.thinking ? clampThinkingLevel(route.model, selection.thinking) : route.thinking;
 	recordModelGroupSwitch(ctx, pi, route, groupName, thinking, commandRef);
 	return false;
@@ -399,12 +399,12 @@ async function handleModelGroupFrontmatter(
 ): Promise<boolean> {
 	try {
 		const route = resolveModelGroupRoute(state, ctx, pi, selection.group!, currentModel);
-		if (route.status !== "unknown-fallback") return applyModelGroupRoute(ctx, pi, route, selection, commandRef);
+		if (route.status !== "unknown-fallback") {return applyModelGroupRoute(ctx, pi, route, selection, commandRef);}
 		const detail = unknownGroupDetail(state, selection.group!);
 		ctx.ui.notify(buildModelGroupErrorNotification(selection.group!, commandRef, detail), "error");
 		return true;
 	} catch (error) {
-		if (!(error instanceof SpawnRouteError)) throw error;
+		if (!(error instanceof SpawnRouteError)) {throw error;}
 		ctx.ui.notify(buildModelGroupErrorNotification(selection.group!, commandRef, error.message), "error");
 		return true;
 	}
@@ -431,12 +431,12 @@ function blockStreamingFrontmatter(
 	readonly: boolean | null,
 	streamingBehavior: "steer" | "followUp" | undefined,
 ): boolean {
-	if (!streamingBehavior) return false;
+	if (!streamingBehavior) {return false;}
 	if (hasModelSelection(selection)) {
 		ctx.ui.notify(buildStreamingModelSelectionBlockedNotification(formatCommandRef(pending)), "warning");
 		return true;
 	}
-	if (readonly === null) return false;
+	if (readonly === null) {return false;}
 	ctx.ui.notify(buildStreamingReadonlyFrontmatterBlockedNotification(formatCommandRef(pending)), "warning");
 	return true;
 }
@@ -444,7 +444,7 @@ function blockStreamingFrontmatter(
 function refreshModelGroupsState(state: SchematicState, ctx: ExtensionContext) {
 	state.modelGroups.groups = [];
 	state.modelGroups.validation = null;
-	if (!ctx.cwd || !ctx.modelRegistry) return null;
+	if (!ctx.cwd || !ctx.modelRegistry) {return null;}
 	const loadedModelGroups = loadModelGroups(createModelGroupsAccess(ctx.cwd, ctx.isProjectTrusted()));
 	const resolvedModelGroups = validateModelGroups(loadedModelGroups, ctx.modelRegistry);
 	state.modelGroups.groups = resolvedModelGroups;
@@ -491,7 +491,7 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	function toggleReadonly(ctx: ExtensionContext): void {
-		if (!ctx.hasUI) return; // Toggle is a UI-only command, no-op in headless.
+		if (!ctx.hasUI) {return;} // Toggle is a UI-only command, no-op in headless.
 		state.readonlyEnabled = !state.readonlyEnabled;
 		// A pendingRequestedHandoff is a promise to perform a real handoff later; tell
 		// the user which mode the fresh context will follow, then nudge the model.
@@ -515,13 +515,13 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.registerCommand("readonly", {
 		description: READONLY_COMMAND_DESCRIPTION,
-		handler: async (_args, ctx) => toggleReadonly(ctx),
+		handler: async (_args, ctx) => { toggleReadonly(ctx); },
 	});
 
 	pi.registerShortcut("ctrl+shift+r", {
 		description: "Toggle readonly mode",
 		handler: async (ctx) => {
-			if (ctx.isIdle()) toggleReadonly(ctx);
+			if (ctx.isIdle()) {toggleReadonly(ctx);}
 		},
 	});
 
@@ -549,7 +549,7 @@ export default function (pi: ExtensionAPI): void {
 		// avoids context-cache invalidation from tools disappearing mid-session.
 		// Children use the opposite approach (remove from tool list entirely)
 		// because they start with a fresh context — see spawn/index.ts.
-		if (!state.readonlyEnabled) return;
+		if (!state.readonlyEnabled) {return;}
 
 		if (event.toolName === "write" || event.toolName === "edit") {
 			return {
@@ -589,9 +589,9 @@ export default function (pi: ExtensionAPI): void {
 	// The sandbox wrapper passes the command's output through unchanged, so the
 	// block is reported here, on the failed result of a sandboxed call.
 	pi.on("tool_result", async (event) => {
-		if (!isBashToolResult(event)) return;
+		if (!isBashToolResult(event)) {return;}
 		const wasSandboxed = state.sandboxedBashCallIds.delete(event.toolCallId);
-		if (!wasSandboxed) return;
+		if (!wasSandboxed) {return;}
 		return appendSandboxBlockNoticeToResult(event);
 	});
 
@@ -599,17 +599,17 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("input", async (event, ctx) => {
 		// Extension-sourced steer/followUp text and headless sessions must not
 		// mutate the interactive frontmatter state.
-		if (!ctx.hasUI || event.source === "extension") return { action: "continue" };
+		if (!ctx.hasUI || event.source === "extension") {return { action: "continue" };}
 
-		const skillName = event.text.match(/^\/skill:([^\s]+)/)?.[1];
-		const commandName = event.text.match(/^\/([^\s]+)/)?.[1];
-		if (!skillName && !commandName) return { action: "continue" };
+		const skillName = (/^\/skill:([^\s]+)/.exec(event.text))?.[1];
+		const commandName = (/^\/([^\s]+)/.exec(event.text))?.[1];
+		if (!skillName && !commandName) {return { action: "continue" };}
 
 		const commands = pi.getCommands();
 		const pending = skillName
 			? { type: "skill" as const, name: skillName }
 			: { type: "command" as const, name: commandName! };
-		if (!skillName && isBuiltinReadonlyBypassCommand(pending.name)) return { action: "continue" };
+		if (!skillName && isBuiltinReadonlyBypassCommand(pending.name)) {return { action: "continue" };}
 		if (!skillName && commands.some((command) => command.name === pending.name && command.source !== "prompt")) {
 			return { action: "continue" };
 		}
@@ -624,7 +624,7 @@ export default function (pi: ExtensionAPI): void {
 		if (blockStreamingFrontmatter(ctx, pending, selection, readonly, event.streamingBehavior)) {
 			return { action: "handled" };
 		}
-		if (await preflightModelSelection(state, ctx, pi, pending, selection)) return { action: "handled" };
+		if (await preflightModelSelection(state, ctx, pi, pending, selection)) {return { action: "handled" };}
 
 		// Readonly intentionally remains deferred: its authority is resolved with
 		// Pi's final skill metadata in before_agent_start.
@@ -700,7 +700,7 @@ export default function (pi: ExtensionAPI): void {
 						});
 						if (lastSelectedName !== undefined) {
 							const idx = items.findIndex((it) => it.value === lastSelectedName);
-							if (idx >= 0) selectList.setSelectedIndex(idx);
+							if (idx >= 0) {selectList.setSelectedIndex(idx);}
 						}
 						selectList.onSelect = ({ value }) => {
 							const body = state.notebookPages.get(value);
@@ -722,7 +722,7 @@ export default function (pi: ExtensionAPI): void {
 							container.addChild(new Text(theme.fg("accent", theme.bold(` ${value} `)), 1, 0));
 							const truncated = body.length > 500;
 							container.addChild(new Text(theme.fg("toolOutput", truncated ? body.slice(0, 500) : body), 1, 0));
-							if (truncated) container.addChild(new Text(theme.fg("dim", " ... set $PI_PAGER to a full-screen pager (e.g. less) to view the full page "), 1, 0));
+							if (truncated) {container.addChild(new Text(theme.fg("dim", " ... set $PI_PAGER to a full-screen pager (e.g. less) to view the full page "), 1, 0));}
 							container.addChild(new Text(theme.fg("dim", " any key back "), 1, 0));
 							container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 							previewName = value;
@@ -730,7 +730,7 @@ export default function (pi: ExtensionAPI): void {
 							tui.requestRender();
 						};
 						selectList.onCancel = () => {
-							if (finished) return;
+							if (finished) {return;}
 							finished = true;
 							done(undefined);
 						};
@@ -748,9 +748,9 @@ export default function (pi: ExtensionAPI): void {
 
 					return {
 						render: (w) => container.render(w),
-						invalidate: () => container.invalidate(),
+						invalidate: () => { container.invalidate(); },
 						handleInput: (data) => {
-							if (finished) return;
+							if (finished) {return;}
 							if (!selectList) {
 								// Any key leaves the inline preview (back to the list) or the empty notebook.
 								finished = true;
@@ -765,11 +765,11 @@ export default function (pi: ExtensionAPI): void {
 						},
 					};
 				});
-				if (!result) return;
+				if (!result) {return;}
 				lastSelectedName = result.name;
 				if (result.action === "pager") {
 					const err = await openInPager(result.tui, result.body, result.pager);
-					if (err) ctx.ui.notify(`pager failed: ${err.message}`, "warning");
+					if (err) {ctx.ui.notify(`pager failed: ${err.message}`, "warning");}
 				}
 			}
 		},
@@ -888,7 +888,7 @@ export default function (pi: ExtensionAPI): void {
 		}
 
 		const nudge = buildAndRecordNudge(state, percent, isHandoffEligible(usage));
-		if (!retainIneligibleHumanBoundary) state.pendingTopicBoundaryHint = null;
+		if (!retainIneligibleHumanBoundary) {state.pendingTopicBoundaryHint = null;}
 		return {
 			messages: [
 				...event.messages,
@@ -943,7 +943,7 @@ export default function (pi: ExtensionAPI): void {
 	//    branch-scoped notebook state, then rehydrate readonly ──
 	pi.on("session_tree", async (_event, ctx: ExtensionContext) => {
 		invalidateHandoffState(state);
-		if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
+		if (ctx.hasUI) {ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);}
 		// Notebook persistence is branch-scoped: pages, the committed epoch, and
 		// the discard watermark follow the branch the user navigated to. Reconstruction
 		// runs immediately after invalidation, so the watermark derived from the new

@@ -90,4 +90,4 @@ async function main() {
   }
 }
 
-if (isMain) await main();
+if (isMain) {await main();}

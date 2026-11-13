@@ -33,10 +33,10 @@ async function main() {
     const graph = JSON.parse((await runNpmWithRetry(host, ["ls", "--json", "@chunkhound/pi-schematic",
       "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"], { capture: true })).stdout);
     const extension = graph.dependencies?.["@chunkhound/pi-schematic"];
-    if (!extension) throw new Error("Packed extension is missing from host graph");
+    if (!extension) {throw new Error("Packed extension is missing from host graph");}
     for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"]) {
       const nested = join(host, "node_modules", "@chunkhound", "pi-schematic", "node_modules", ...name.split("/"), "package.json");
-      if (existsSync(nested)) throw new Error(`Packed extension owns nested peer ${name}`);
+      if (existsSync(nested)) {throw new Error(`Packed extension owns nested peer ${name}`);}
     }
 
     writeFileSync(join(host, "smoke.mjs"), `
@@ -63,9 +63,9 @@ if (loaded.extensions.length !== 1) throw new Error("packed extension did not lo
     writeCompatDiagnostics(artifactDir, host, error);
     throw error;
   } finally {
-    if (tarball) rmSync(tarball, { force: true });
+    if (tarball) {rmSync(tarball, { force: true });}
     rmSync(temp, { recursive: true, force: true });
   }
 }
 
-if (isMain) await main();
+if (isMain) {await main();}

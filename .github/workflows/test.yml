@@ -48,11 +48,14 @@ jobs:
 
       - run: npm ci
 
-      # Uniform pre-flight checks — type errors and security issues on every platform.
+      # Uniform pre-flight checks — type errors, lint findings and security issues on every platform.
       # audit-ci fails on moderate-or-higher advisories; reviewed exceptions, if ever
       # needed, must be explicit and expiry-tracked in audit-ci.jsonc.
       - name: Type check
         run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
 
       - name: Security audit
         run: npx audit-ci --config audit-ci.jsonc

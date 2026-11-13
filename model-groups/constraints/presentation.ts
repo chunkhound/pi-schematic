@@ -44,19 +44,19 @@ export function constraintEditorRows(
 	evaluation: ErasedConstraintEvaluation,
 	override?: unknown,
 ): readonly ConstraintEditorRow[] {
-	const editor = descriptor.editor as ConstraintEditorSpec<unknown, unknown>;
+	const editor = descriptor.editor;
 	if (editor.kind === "multi-select") {
-		const choices = editor.choices(evaluation as ConstraintEvaluation<unknown, unknown>);
-		const effective = (evaluation as ConstraintEvaluation<unknown, unknown>).effective as readonly string[] | undefined;
-		const rows: ConstraintEditorRow[] = [{ kind: "automatic", label: editor.automatic(evaluation as ConstraintEvaluation<unknown, unknown>) }];
+		const choices = editor.choices(evaluation);
+		const effective = (evaluation).effective as readonly string[] | undefined;
+		const rows: ConstraintEditorRow[] = [{ kind: "automatic", label: editor.automatic(evaluation) }];
 		for (const choice of choices) {
 			rows.push({ kind: "toggle", label: choice, value: choice, active: effective?.includes(choice) ?? false });
 		}
 		return rows;
 	}
 	return [
-		{ kind: "automatic", label: editor.automatic(evaluation as ConstraintEvaluation<unknown, unknown>) },
-		{ kind: "number", label: editor.label, value: editor.value(evaluation as ConstraintEvaluation<unknown, unknown>), unit: editor.unit, min: editor.min, step: editor.step },
+		{ kind: "automatic", label: editor.automatic(evaluation) },
+		{ kind: "number", label: editor.label, value: editor.value(evaluation), unit: editor.unit, min: editor.min, step: editor.step },
 	];
 }
 

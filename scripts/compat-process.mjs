@@ -14,7 +14,7 @@ function formatInvocation(command, args) {
 
 // Keep CI logs bounded; failure.txt receives the same truncated diagnostics.
 function truncateOutput(value, limit = 8192) {
-  if (!value) return "";
+  if (!value) {return "";}
   return value.length > limit ? `${value.slice(0, limit)}\n… [truncated ${value.length - limit} chars]` : value;
 }
 
@@ -44,7 +44,7 @@ export function runChecked(command, args, options = {}) {
 
 /** Resolve to the absolute npm CLI JS path, or undefined when not a real npm CLI file. */
 function resolveNpmExecpath(npmExecpath) {
-  if (!npmExecpath) return undefined;
+  if (!npmExecpath) {return undefined;}
   const resolved = isAbsolute(npmExecpath) ? npmExecpath : resolve(npmExecpath);
   let stat;
   try {
@@ -52,7 +52,7 @@ function resolveNpmExecpath(npmExecpath) {
   } catch {
     return undefined;
   }
-  if (!stat.isFile()) return undefined;
+  if (!stat.isFile()) {return undefined;}
   const base = basename(resolved, ".js").toLowerCase();
   return base === "npm-cli" || base === "npm" ? resolved : undefined;
 }
@@ -110,7 +110,7 @@ export async function runNpmWithRetry(cwd, args, options = {}, retryOptions = {}
       return runNpm(cwd, args, options);
     } catch (error) {
       lastError = error;
-      if (attempt === retries) break;
+      if (attempt === retries) {break;}
       await sleep(baseMs * 2 ** attempt);
     }
   }

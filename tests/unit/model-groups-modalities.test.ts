@@ -55,6 +55,6 @@ test("caps stale overrides without mutation and restores them when catalog suppo
 	expect(def.constraints?.modalities).toStrictEqual(["text", "image"]);
 	models[0].input.push("image");
 	expect(deriveModelGroupModalities(def, registry(models)).effective).toStrictEqual(["text", "image"]);
-	expect(() => assertModalityOverrideSupported(def, registry([{ provider: "p", id: "m", input: ["text"], reasoning: false }]))).toThrow(/unsupported modalities: image/);
+	expect(() => { assertModalityOverrideSupported(def, registry([{ provider: "p", id: "m", input: ["text"], reasoning: false }])); }).toThrow(/unsupported modalities: image/);
 	expect(getMissingModelModalities(models[0], ["text", "reasoning"])).toStrictEqual(["reasoning"]);
 });

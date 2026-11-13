@@ -8,7 +8,7 @@ export type SpawnRouteDetails =
 	| { status: "routed"; group: string; provider: string; modelId: string }
 	| { status: "unknown-fallback"; requestedGroup: string; provider: string; modelId: string };
 
-export type SpawnResultDetails = {
+export interface SpawnResultDetails {
 	model: string;
 	/** Effective child-session level after Pi applies model capability clamping. */
 	thinking: ModelThinkingLevel;
@@ -17,14 +17,14 @@ export type SpawnResultDetails = {
 	route?: SpawnRouteDetails;
 	stats?: Record<string, number>;
 	statsUnavailable?: boolean;
-};
+}
 
-export type SpawnToolResult = { content: TextContent[]; details: SpawnResultDetails; usage: Usage; isError?: true };
+export interface SpawnToolResult { content: TextContent[]; details: SpawnResultDetails; usage: Usage; isError?: true }
 
 /** Maps the failure stop reasons to their outcome; every other stop reason has none. */
 export function getStopReasonOutcome(stopReason: StopReason | undefined): SpawnOutcome | undefined {
-	if (stopReason === "aborted") return "aborted";
-	if (stopReason === "error") return "error";
+	if (stopReason === "aborted") {return "aborted";}
+	if (stopReason === "error") {return "error";}
 	return undefined;
 }
 
@@ -34,9 +34,9 @@ export function getStopReasonOutcome(stopReason: StopReason | undefined): SpawnO
 export function getLastAssistantText(messages: AgentSession["messages"]): string {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
-		if (msg.role !== "assistant") continue;
+		if (msg.role !== "assistant") {continue;}
 		const text = contentText(msg.content).trim();
-		if (text) return text;
+		if (text) {return text;}
 	}
 	return "";
 }

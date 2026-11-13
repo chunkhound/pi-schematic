@@ -36,7 +36,7 @@ export function buildContinuationFrame(): string {
 export function buildNextUserMessage(input: { nextInstruction: string; context?: string }): string {
 	const context = input.context?.trim();
 	const parts = ["## Next instruction", "", input.nextInstruction];
-	if (context) parts.push("", "## Context", "", context);
+	if (context) {parts.push("", "## Context", "", context);}
 	return parts.join("\n");
 }
 
@@ -66,7 +66,7 @@ export function formatLostSuccessorFailure(reason: string, successor: string): s
 
 /** Completion report; with a discard request it states the notebook outcome. */
 export function formatHandoffComplete(discardRequested: boolean, kept: number, discarded: number): string {
-	if (!discardRequested) return "Handoff complete.";
+	if (!discardRequested) {return "Handoff complete.";}
 	return `Handoff complete. Notebook: ${kept} page${kept === 1 ? "" : "s"} kept` +
 		(discarded > 0 ? `, ${discarded} discarded.` : ".");
 }

@@ -87,9 +87,9 @@ function buildHandoffBoundaryDrafts(
 
 /** The `handoffId` of a handoff cut, or undefined for any other entry. */
 function getHandoffId(entry: SessionEntry): string | undefined {
-	if (entry.type !== "compaction") return undefined;
+	if (entry.type !== "compaction") {return undefined;}
 	const details: unknown = entry.details;
-	if (typeof details !== "object" || details === null) return undefined;
+	if (typeof details !== "object" || details === null) {return undefined;}
 	const { handoff, handoffId } = details as Record<string, unknown>;
 	return handoff === true && typeof handoffId === "string" ? handoffId : undefined;
 }
@@ -98,14 +98,14 @@ function getHandoffId(entry: SessionEntry): string | undefined {
 function findHandoffCut(branch: readonly SessionEntry[], handoffId: string): SessionEntry | undefined {
 	// The cut sits at or near the leaf; scan from there.
 	for (let index = branch.length - 1; index >= 0; index--) {
-		if (getHandoffId(branch[index]) === handoffId) return branch[index];
+		if (getHandoffId(branch[index]) === handoffId) {return branch[index];}
 	}
 	return undefined;
 }
 
 /** The `handoffId` in a successor's details, or undefined when it has none. */
 function successorHandoffId(details: unknown): string | undefined {
-	if (typeof details !== "object" || details === null) return undefined;
+	if (typeof details !== "object" || details === null) {return undefined;}
 	const { handoffId } = details as Record<string, unknown>;
 	return typeof handoffId === "string" ? handoffId : undefined;
 }
@@ -117,9 +117,9 @@ function successorHandoffId(details: unknown): string | undefined {
 function successorFollowsCut(branch: readonly SessionEntry[], cut: SessionEntry, handoffId: string): boolean {
 	let found = false;
 	for (const entry of branch.slice(branch.indexOf(cut) + 1)) {
-		if (entry.type === "compaction") return false;
+		if (entry.type === "compaction") {return false;}
 		if (entry.type === "custom_message" && entry.customType === HANDOFF_SUCCESSOR_CUSTOM_TYPE &&
-			successorHandoffId(entry.details) === handoffId) found = true;
+			successorHandoffId(entry.details) === handoffId) {found = true;}
 	}
 	return found;
 }
@@ -129,7 +129,7 @@ function finalizeHandoffState(state: SchematicState): void {
 	state.pendingRequestedHandoff = null;
 	clearActiveNotebookTopic(state);
 	// Announce ON readonly on the first post-handoff request; rehydration covers other transitions.
-	if (state.readonlyEnabled) state.readonlyNudgePending = true;
+	if (state.readonlyEnabled) {state.readonlyNudgePending = true;}
 }
 
 function completeHandoff(
@@ -149,7 +149,7 @@ function completeHandoff(
 	const notDiscarded = staged.discardedPages.filter((name) => state.notebookPages.has(name));
 	finalizeHandoffState(state);
 	state.stagedHandoff = null;
-	if (!ctx.hasUI) return;
+	if (!ctx.hasUI) {return;}
 	ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
 	if (successorRan) {
 		const discarded = staged.discardedPages.length - notDiscarded.length;
@@ -157,7 +157,7 @@ function completeHandoff(
 	} else {
 		ctx.ui.notify(HANDOFF_SUCCESSOR_NOT_RUN, "warning");
 	}
-	if (notDiscarded.length > 0) ctx.ui.notify(formatDiscardNotPersisted(notDiscarded), "warning");
+	if (notDiscarded.length > 0) {ctx.ui.notify(formatDiscardNotPersisted(notDiscarded), "warning");}
 	updateIndicators(ctx, state);
 }
 
@@ -166,7 +166,7 @@ function notifyHandoffFailure(
 	reason: string,
 	pendingRequest: SchematicState["pendingRequestedHandoff"],
 ): void {
-	if (!ctx.hasUI) return;
+	if (!ctx.hasUI) {return;}
 	if (pendingRequest && ctx.ui.theme) {
 		const status = isHandoffEligible(ctx.getContextUsage())
 			? HANDOFF_REQUIRED_STATUS
@@ -189,7 +189,7 @@ function failStagedHandoff(
 	const request = state.pendingRequestedHandoff;
 	// On the attempt that exhausts the enforcement budget the watchdog cancels the
 	// request in this run's settle, so the failure must not call it pending.
-	if (request) request.toolCalled = false;
+	if (request) {request.toolCalled = false;}
 	const exhausted = request !== null && settleExhaustsHandoffBudget(request);
 	const pendingRequest = exhausted ? null : request;
 	// Never start a run from here: a cause that drops every cut (another
@@ -229,7 +229,7 @@ function failLostSuccessor(
 		state.readonlyNudgeRearmAtSettle = state.readonlyNudgePending;
 		ctx.abort();
 	}
-	if (!ctx.hasUI) return;
+	if (!ctx.hasUI) {return;}
 	ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
 	ctx.ui.notify(`Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}. The instruction is in the failure message.`, "error");
 	updateIndicators(ctx, state);
@@ -242,7 +242,7 @@ function resolveStagedHandoff(
 	at: "turn_start" | "agent_settled",
 ): void {
 	const staged = state.stagedHandoff;
-	if (!staged) return;
+	if (!staged) {return;}
 	switch (staged.phase) {
 		case "staged":
 			// Still staged means no boundary was submitted (pi skipped turn_end, or building
@@ -252,7 +252,7 @@ function resolveStagedHandoff(
 			}
 			return;
 		case "declined":
-			if (staged.declineReason === null) throw new Error("Declined handoff has no decline reason.");
+			if (staged.declineReason === null) {throw new Error("Declined handoff has no decline reason.");}
 			failStagedHandoff(pi, state, ctx, staged.declineReason);
 			return;
 		case "submitted": {
@@ -273,10 +273,10 @@ function resolveStagedHandoff(
 }
 
 function declineReason(event: TurnEndEvent, ctx: ExtensionContext, staged: StagedHandoff): string | null {
-	if (ctx.signal?.aborted === true || event.outcome === "aborted") return REASON_ABORTED;
-	if (event.outcome === "error") return REASON_TURN_FAILED;
+	if (ctx.signal?.aborted === true || event.outcome === "aborted") {return REASON_ABORTED;}
+	if (event.outcome === "error") {return REASON_TURN_FAILED;}
 	const result = event.toolResults.find((toolResult) => toolResult.toolCallId === staged.toolCallId);
-	if (!result || result.isError) return REASON_RESULT_MISSING;
+	if (!result || result.isError) {return REASON_RESULT_MISSING;}
 	return null;
 }
 
@@ -288,11 +288,11 @@ function declineReason(event: TurnEndEvent, ctx: ExtensionContext, staged: Stage
  */
 export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState): void {
 	pi.on("message_end", async (event) => {
-		if (event.message.role !== "assistant") return;
+		if (event.message.role !== "assistant") {return;}
 		state.handoffRefusals.clear();
 		const calls = event.message.content.filter((block) => block.type === "toolCall");
 		const handoffCalls = calls.filter((call) => call.name === HANDOFF_TOOL_NAME);
-		if (handoffCalls.length === 0) return;
+		if (handoffCalls.length === 0) {return;}
 		// Nothing is staged when another call shares the message, so those calls go
 		// to their own handlers and their results, lacking terminate, keep the batch
 		// from ending the run.
@@ -305,14 +305,14 @@ export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState)
 	pi.on("tool_call", async (event) => {
 		const reason = state.handoffRefusals.get(event.toolCallId) ??
 			(event.toolName === HANDOFF_TOOL_NAME && state.handoffFailedInRun ? HANDOFF_FAILED_IN_RUN_REFUSAL : undefined);
-		if (reason) return { block: true, reason, terminate: true };
+		if (reason) {return { block: true, reason, terminate: true };}
 		return undefined;
 	});
 
 	pi.on("turn_end", async (event, ctx) => {
 		state.handoffRefusals.clear();
 		const staged = state.stagedHandoff;
-		if (!staged || staged.phase !== "staged") return undefined;
+		if (!staged || staged.phase !== "staged") {return undefined;}
 		const reason = declineReason(event, ctx, staged);
 		if (reason !== null) {
 			staged.phase = "declined";

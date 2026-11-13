@@ -35,7 +35,7 @@ export function registerNotebookTopicTool(
 					);
 				}
 				return {
-					content: [{ type: "text", text: `Notebook topic already set to \"${state.activeNotebookTopic}\".` }],
+					content: [{ type: "text", text: `Notebook topic already set to "${state.activeNotebookTopic}".` }],
 					details: {
 						topic: state.activeNotebookTopic,
 						source: state.activeNotebookTopicSource,
@@ -45,7 +45,7 @@ export function registerNotebookTopicTool(
 			}
 			const result = setActiveNotebookTopic(state, params.topic, "agent");
 			return {
-				content: [{ type: "text", text: `Active notebook topic: \"${result.current}\".` }],
+				content: [{ type: "text", text: `Active notebook topic: "${result.current}".` }],
 				details: { topic: result.current, source: "agent" as const, changed: result.changed },
 			};
 		},

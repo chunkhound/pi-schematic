@@ -8,7 +8,7 @@ export function registerModelGroupsCommand(pi: ExtensionAPI, state: SchematicSta
 		description: "Manage Model Groups",
 		handler: async (_args, ctx) => {
 			if (ctx.mode !== "tui") {
-				if (ctx.mode === "rpc") ctx.ui.notify("/model-groups requires TUI mode");
+				if (ctx.mode === "rpc") {ctx.ui.notify("/model-groups requires TUI mode");}
 				return;
 			}
 			if (!ctx.cwd || !ctx.modelRegistry) {
@@ -19,7 +19,7 @@ export function registerModelGroupsCommand(pi: ExtensionAPI, state: SchematicSta
 			await ctx.ui.custom<void>((tui, theme, _keybindings, done) =>
 				createModelGroupsComponent(tui, theme, ctx.modelRegistry, access, done, {
 					initialValidation: state.modelGroups.validation,
-					notify: (message, type) => ctx.ui.notify(message, type),
+					notify: (message, type) => { ctx.ui.notify(message, type); },
 					onRefresh: (validation) => {
 						state.modelGroups.groups = validation.groups;
 						state.modelGroups.validation = validation;

@@ -154,7 +154,7 @@ describe("prompt sections in a real agent session", () => {
 			await session.prompt("/handoff finish the report");
 			await Promise.race([
 				handoffRunRequested.promise,
-				new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the /handoff run sent no provider request")), 5_000).unref()),
+				new Promise<never>((_, reject) => setTimeout(() => { reject(new Error("the /handoff run sent no provider request")); }, 5_000).unref()),
 			]);
 			await session.waitForIdle();
 		} finally {
@@ -177,8 +177,8 @@ describe("prompt sections in a real agent session", () => {
 		const sections: Record<string, string> = {};
 		for (const message of handoffRunRequest.filter((candidate): candidate is SystemMessage => candidate.role === "system")) {
 			for (const [name, body] of Object.entries(message.sections ?? {})) {
-				if (body === null) delete sections[name];
-				else sections[name] = body;
+				if (body === null) {delete sections[name];}
+				else {sections[name] = body;}
 			}
 		}
 		expect(sections.schematic, `schematic section missing; sections: ${Object.keys(sections).join(", ")}`).toBeDefined();

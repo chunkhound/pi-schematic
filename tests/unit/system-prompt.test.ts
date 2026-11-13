@@ -152,5 +152,5 @@ test("does not copy the base prompt into schematic's sections", async () => {
 		.filter(([name]) => name.startsWith("schematic"))
 		.map(([, body]) => body);
 	expect(schematicBodies.length).toBeGreaterThan(0);
-	for (const body of schematicBodies) expect(body).not.toMatch(/Base system prompt\./);
+	for (const body of schematicBodies) {expect(body).not.toMatch(/Base system prompt\./);}
 });

@@ -31,6 +31,7 @@ export function spawnNode(args: readonly string[], options: SpawnNodeOptions): S
 		// The timeout otherwise sends SIGTERM and waits, so a child that handles SIGTERM outlives it.
 		killSignal: "SIGKILL",
 	});
+	// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- the ErrnoException cast exposes the code property the ETIMEDOUT check reads
 	const spawnError = result.error as NodeJS.ErrnoException | undefined;
 	if (spawnError?.code === "ETIMEDOUT") {
 		throw new Error(`Node child process did not exit within ${timeoutMs} ms (${spawnError.message})`);
@@ -38,6 +39,6 @@ export function spawnNode(args: readonly string[], options: SpawnNodeOptions): S
 	if (result.signal !== null) {
 		throw new Error(`Node child process was killed by ${result.signal}${spawnError ? ` (${spawnError.message})` : ""}`);
 	}
-	if (spawnError) throw spawnError;
+	if (spawnError) {throw spawnError;}
 	return result;
 }

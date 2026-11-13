@@ -26,7 +26,7 @@ const PROBE_EXTENSION_PATH = fileURLToPath(new URL("fixtures/shared-module-probe
 // pass through the resolver under test. pi-ai only re-exports typebox, so comparing against
 // pi-ai's `Type` would match whichever typebox the resolver picked.
 const piTypeboxManifest = findPackageJSON("typebox", pathToFileURL(piManifestPath));
-if (piTypeboxManifest === undefined) throw new Error("pi's dependency tree has no typebox");
+if (piTypeboxManifest === undefined) {throw new Error("pi's dependency tree has no typebox");}
 const PI_TYPEBOX_URL = pathToFileURL(
 	join(dirname(piTypeboxManifest), JSON.parse(readFileSync(piTypeboxManifest, "utf8")).exports["."].import),
 ).href;

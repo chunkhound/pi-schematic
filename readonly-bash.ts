@@ -114,12 +114,12 @@ const UNPARSABLE_SHELLS = new Set(["pwsh", "pwsh.exe", "powershell", "powershell
  * @returns {ok: true} if allowed, or {ok: false, reason} with explanation
  */
 
-export function classifyBashCommand(cmd: string, cwd: string = process.cwd(), depth: number = 0, shellVars: ReadonlyMap<string, string> = new Map()): Verdict {
-	if (depth > 10) return { ok: false, reason: "recursion depth exceeded in command classification" };
+export function classifyBashCommand(cmd: string, cwd: string = process.cwd(), depth = 0, shellVars: ReadonlyMap<string, string> = new Map()): Verdict {
+	if (depth > 10) {return { ok: false, reason: "recursion depth exceeded in command classification" };}
 	const localVars = new Map(shellVars);
 	for (const rawSegment of splitUnquotedShellSegments(cmd)) {
 		const segment = rawSegment.trim();
-		if (!segment) continue;
+		if (!segment) {continue;}
 
 		for (const subcommand of extractCommandSubstitutions(segment)) {
 			const nested = classifyBashCommand(subcommand, cwd, depth + 1, localVars);
@@ -134,7 +134,7 @@ export function classifyBashCommand(cmd: string, cwd: string = process.cwd(), de
 		}
 
 		const mutationReason = getFilesystemMutationReason(segment, cwd, depth, localVars);
-		if (mutationReason) return { ok: false, reason: mutationReason };
+		if (mutationReason) {return { ok: false, reason: mutationReason };}
 
 		for (const [name, value] of getStandaloneShellAssignments(segment, cwd, localVars)) {
 			localVars.set(name, value);
@@ -158,14 +158,14 @@ export function classifyBashCommand(cmd: string, cwd: string = process.cwd(), de
 
 /** Strip subshell parens: (rm file) → rm file, then classify recursively. */
 function classifySubshellSegment(segment: string, cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
-	if (!segment.startsWith("(") || !segment.endsWith(")")) return null;
+	if (!segment.startsWith("(") || !segment.endsWith(")")) {return null;}
 	const inner = segment.slice(1, -1).trim();
 	return inner ? getFilesystemMutationReason(inner, cwd, depth, shellVars) : null;
 }
 
 /** eval/exec: recursively classify the remaining argument string. */
 function classifyEvalExec(command: string, tokens: string[], cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
-	if (command !== "eval" && command !== "exec") return null;
+	if (command !== "eval" && command !== "exec") {return null;}
 	const inner = tokens.slice(1).map(stripMatchingQuotes).join(" ");
 	const nested = classifyBashCommand(inner, cwd, depth + 1, shellVars);
 	return nested.ok ? null : nested.reason;
@@ -173,22 +173,22 @@ function classifyEvalExec(command: string, tokens: string[], cwd: string, depth:
 
 /** sudo: classify the command after sudo flags. */
 function classifySudo(command: string, tokens: string[], cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
-	if (command !== "sudo") return null;
+	if (command !== "sudo") {return null;}
 	const nested = classifyBashCommand(tokens.slice(findSudoCommandIndex(tokens)).join(" "), cwd, depth + 1, shellVars);
 	return nested.ok ? null : nested.reason;
 }
 
 /** env: handle env prefix including -S/--split-string. */
 function classifyEnv(command: string, segment: string, tokens: string[], cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
-	if (command !== "env") return null;
+	if (command !== "env") {return null;}
 	if (tokens.length > 1) {
 		const nested = classifyBashCommand(tokens.slice(1).join(" "), cwd, depth + 1, shellVars);
 		return nested.ok ? null : nested.reason;
 	}
 	// env with only flags (e.g., env -S "cmd") — extract -S value
-	const sMatch = segment.match(/\benv\b.*?(?:-S|--split-string)\s+/);
-	if (!sMatch) return null;
-	const afterS = segment.slice(sMatch.index! + sMatch[0].length).trim();
+	const sMatch = /\benv\b.*?(?:-S|--split-string)\s+/.exec(segment);
+	if (!sMatch) {return null;}
+	const afterS = segment.slice(sMatch.index + sMatch[0].length).trim();
 	const nested = classifyBashCommand(stripMatchingQuotes(afterS), cwd, depth + 1, shellVars);
 	return nested.ok ? null : nested.reason;
 }
@@ -196,50 +196,50 @@ function classifyEnv(command: string, segment: string, tokens: string[], cwd: st
 /** PowerShell and cmd: block unconditionally — their syntax is not parsed. */
 function classifyUnparsableShell(command: string): string | null {
 	const shell = stripMatchingQuotes(command).split(/[\\/]/).pop()!;
-	if (!UNPARSABLE_SHELLS.has(shell)) return null;
+	if (!UNPARSABLE_SHELLS.has(shell)) {return null;}
 	return `${shell} blocked: readonly cannot inspect commands run through ${shell}`;
 }
 
 /** git: classify subcommand via three-tier allowlist (immutable/mutable/mixed). */
 function classifyGit(command: string, tokens: string[]): string | null {
-	if (command !== "git") return null;
+	if (command !== "git") {return null;}
 	return isSafeGitCommand(tokens.slice(1).join(" ")) ? null : "mutable git command blocked outside temp dir";
 }
 
 /** Interpreters with inline-execution flags — classify inline code recursively. */
 function classifyInterpreter(command: string, tokens: string[], cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
-	if (!INTERPRETERS.has(command)) return null;
+	if (!INTERPRETERS.has(command)) {return null;}
 	const args = tokens.slice(1);
 	for (const flag of INTERPRETER_EXEC_FLAGS[command]) {
 		const idx = args.indexOf(flag);
-		if (idx === -1 || idx + 1 >= args.length) continue;
+		if (idx === -1 || idx + 1 >= args.length) {continue;}
 		const nested = classifyBashCommand(stripMatchingQuotes(args[idx + 1]), cwd, depth + 1, shellVars);
-		if (!nested.ok) return `${command} ${flag} blocked: ${nested.reason}`;
+		if (!nested.ok) {return `${command} ${flag} blocked: ${nested.reason}`;}
 	}
 	return null;
 }
 
 /** dd of= target check. */
 function classifyDdOutput(segment: string, cwd: string, shellVars: ReadonlyMap<string, string>): string | null {
-	const ddMatch = segment.match(/\bof=([^\s]+)/);
-	if (!ddMatch || isTempPath(ddMatch[1], cwd, shellVars)) return null;
+	const ddMatch = /\bof=([^\s]+)/.exec(segment);
+	if (!ddMatch || isTempPath(ddMatch[1], cwd, shellVars)) {return null;}
 	return `dd output blocked outside temp dir: ${stripMatchingQuotes(ddMatch[1])}`;
 }
 
 /** wget -P/--download-dir outside temp — block. No-flag case falls through to classifyGenericMutation. */
 function classifyWget(command: string, tokens: string[], cwd: string, shellVars: ReadonlyMap<string, string>): string | null {
-	if (command !== "wget") return null;
+	if (command !== "wget") {return null;}
 	const wArgs = tokens.slice(1);
 	const hasOutputFlag = wArgs.some((a) => a === "-O" || a.startsWith("-O") || a === "--output-document" || a.startsWith("--output-document="));
-	if (hasOutputFlag) return null;
+	if (hasOutputFlag) {return null;}
 	const outputDir = getWgetOutputDir(tokens);
-	if (outputDir && !isTempPath(outputDir, cwd, shellVars)) return `wget download dir blocked outside temp dir: ${outputDir}`;
+	if (outputDir && !isTempPath(outputDir, cwd, shellVars)) {return `wget download dir blocked outside temp dir: ${outputDir}`;}
 	return null;
 }
 
 /** curl -O/--remote-name writes to disk — block unless cwd is temp. */
 function classifyCurl(command: string, tokens: string[], cwd: string, shellVars: ReadonlyMap<string, string>): string | null {
-	if (command !== "curl") return null;
+	if (command !== "curl") {return null;}
 	const { hasRemoteName, outputDir } = getCurlWriteTargets(tokens);
 	if (hasRemoteName && !isTempPath(outputDir ?? ".", cwd, shellVars)) {
 		return "curl blocked outside temp dir: current directory (use -o /tmp/... to write to temp)";
@@ -249,7 +249,7 @@ function classifyCurl(command: string, tokens: string[], cwd: string, shellVars:
 
 /** xargs: classify the command xargs would run + block targetless mutation commands. */
 function classifyXargs(command: string, tokens: string[], cwd: string, depth: number, shellVars: ReadonlyMap<string, string>): string | null {
-	if (command !== "xargs") return null;
+	if (command !== "xargs") {return null;}
 	const xArgs = tokens.slice(1);
 	const XARGS_FLAGS_WITH_VALUE = new Set(["-I", "-L", "-n", "-P", "-d", "-E", "-s"]);
 	let cmdStart = 0;
@@ -258,31 +258,31 @@ function classifyXargs(command: string, tokens: string[], cwd: string, depth: nu
 		if (xArgs[cmdStart].startsWith("-")) { cmdStart++; continue; }
 		break;
 	}
-	if (cmdStart >= xArgs.length) return null;
+	if (cmdStart >= xArgs.length) {return null;}
 	const xTokens = xArgs.slice(cmdStart);
 	const nested = classifyBashCommand(xTokens.join(" "), cwd, depth + 1, shellVars);
-	if (!nested.ok) return nested.reason;
+	if (!nested.ok) {return nested.reason;}
 	const xCmd = xTokens[0]?.toLowerCase();
-	if (xCmd && getMutationTargets(xCmd, xTokens) !== null) return `xargs ${xCmd} blocked: mutation command via xargs`;
+	if (xCmd && getMutationTargets(xCmd, xTokens) !== null) {return `xargs ${xCmd} blocked: mutation command via xargs`;}
 	return null;
 }
 
 /** Generic mutation: extract targets via getMutationTargets, block non-temp paths. */
 function classifyGenericMutation(command: string, tokens: string[], cwd: string, shellVars: ReadonlyMap<string, string>): string | null {
 	const paths = getMutationTargets(command, tokens);
-	if (!paths) return null;
+	if (!paths) {return null;}
 	for (const target of paths) {
-		if (!isTempPath(target, cwd, shellVars)) return `${command} blocked outside temp dir: ${stripMatchingQuotes(target)}`;
+		if (!isTempPath(target, cwd, shellVars)) {return `${command} blocked outside temp dir: ${stripMatchingQuotes(target)}`;}
 	}
 	return null;
 }
 
 // ── Main dispatcher ─────────────────────────────────────────────────
 
-function getFilesystemMutationReason(segment: string, cwd: string, depth: number = 0, shellVars: ReadonlyMap<string, string> = new Map()): string | null {
+function getFilesystemMutationReason(segment: string, cwd: string, depth = 0, shellVars: ReadonlyMap<string, string> = new Map()): string | null {
 	const tokens = getCommandTokens(segment);
 	const command = tokens[0]?.toLowerCase();
-	if (!command) return null;
+	if (!command) {return null;}
 
 	return classifySubshellSegment(segment, cwd, depth, shellVars)
 		?? classifyEvalExec(command, tokens, cwd, depth, shellVars)
@@ -301,8 +301,8 @@ function getFilesystemMutationReason(segment: string, cwd: string, depth: number
 
 /** Package manager mutation: block unconditionally regardless of target path. */
 function classifyPackageManager(command: string, tokens: string[]): string | null {
-	if (!PACKAGE_MANAGERS.has(command)) return null;
-	if (!isPackageMutation(tokens.slice(1))) return null;
+	if (!PACKAGE_MANAGERS.has(command)) {return null;}
+	if (!isPackageMutation(tokens.slice(1))) {return null;}
 	const args = tokens.slice(1).join(" ");
 	return buildReadonlyPackageManagerBlockReason(command, args);
 }
@@ -327,7 +327,7 @@ function getCurlWriteTargets(tokens: string[]): { hasRemoteName: boolean; output
 	let hasRemoteName = false;
 	let outputDir: string | null = null;
 	for (let i = 0; i < cArgs.length; i++) {
-		if (cArgs[i] === "--") break; // end of options; remaining args are URLs
+		if (cArgs[i] === "--") {break;} // end of options; remaining args are URLs
 		if ((cArgs[i] === "-o" || cArgs[i] === "--output") && cArgs[i + 1]) {
 			outputs.push(cArgs[i + 1]);
 			i++;
@@ -372,12 +372,12 @@ const CURL_VALUE_SHORT_FLAGS = new Set([
 ]);
 
 function isCurlShortFlagBundleWithRemoteName(token: string): boolean {
-	if (!token.startsWith("-") || token.startsWith("--") || token.length <= 2) return false;
+	if (!token.startsWith("-") || token.startsWith("--") || token.length <= 2) {return false;}
 	const flags = token.slice(1);
-	if (!/^[A-Za-z]+$/.test(flags)) return false;
+	if (!/^[A-Za-z]+$/.test(flags)) {return false;}
 	for (const flag of flags) {
-		if (flag === "O") return true;
-		if (CURL_VALUE_SHORT_FLAGS.has(flag)) return false;
+		if (flag === "O") {return true;}
+		if (CURL_VALUE_SHORT_FLAGS.has(flag)) {return false;}
 	}
 	return false;
 }
@@ -389,7 +389,7 @@ function isCurlShortFlagBundleWithRemoteName(token: string): boolean {
 function getWgetOutputDir(tokens: string[]): string | null {
 	const wArgs = tokens.slice(1);
 	for (let i = 0; i < wArgs.length; i++) {
-		if (wArgs[i] === "--") break;
+		if (wArgs[i] === "--") {break;}
 		if (wArgs[i] === "-P" && wArgs[i + 1]) {
 			return wArgs[i + 1];
 		}
@@ -435,7 +435,7 @@ function getTeeTargets(tokens: string[]): string[] {
 }
 
 function getPerlRubyTargets(tokens: string[]): string[] | null {
-	if (!tokens.slice(1).some((arg) => /^-p?i/.test(arg))) return null;
+	if (!tokens.slice(1).some((arg) => /^-p?i/.test(arg))) {return null;}
 	return nonOptionArgs(tokens.slice(1));
 }
 
@@ -460,12 +460,12 @@ function filterSedExpressionTokens(sedTokens: string[]): { filtered: string[]; h
 
 /** sed -i target extraction with -e/--expression and backup-extension handling. */
 function getSedTargets(tokens: string[]): string[] | null {
-	if (!tokens.slice(1).some((arg) => arg === "-i" || arg.startsWith("-i"))) return null;
+	if (!tokens.slice(1).some((arg) => arg === "-i" || arg.startsWith("-i"))) {return null;}
 	const { filtered, hasExpression } = filterSedExpressionTokens(tokens.slice(1));
 	const args = nonOptionArgs(filtered);
 	const extArg = args.length > 0 ? stripMatchingQuotes(args[0]) : "";
 	const hasBackupExt = args.length > 0 && (extArg === "" || /^[a-zA-Z0-9._-]{1,10}$/.test(extArg));
-	if (hasBackupExt) return hasExpression ? (extArg === "" ? args.slice(1) : args) : args.slice(2);
+	if (hasBackupExt) {return hasExpression ? (extArg === "" ? args.slice(1) : args) : args.slice(2);}
 	return hasExpression ? args : args.slice(1);
 }
 
@@ -479,9 +479,9 @@ function getWgetTargets(tokens: string[]): string[] {
 		if (wArgs[i] === "--output-document" && wArgs[i + 1]) { outputTarget = wArgs[i + 1]; i++; continue; }
 		if (wArgs[i].startsWith("--output-document=")) { outputTarget = wArgs[i].slice("--output-document=".length); }
 	}
-	if (outputTarget !== null) return stripMatchingQuotes(outputTarget) === "-" ? ["/dev/null"] : [outputTarget];
+	if (outputTarget !== null) {return stripMatchingQuotes(outputTarget) === "-" ? ["/dev/null"] : [outputTarget];}
 	const outputDir = getWgetOutputDir(tokens);
-	if (outputDir !== null) return [outputDir];
+	if (outputDir !== null) {return [outputDir];}
 	return ["."]; // safety net — unreachable via getFilesystemMutationReason
 }
 
@@ -490,8 +490,8 @@ function getCurlTargets(tokens: string[]): string[] | null {
 	const { hasRemoteName, outputs, outputDir } = getCurlWriteTargets(tokens);
 	const mapped = outputs.map((o) => stripMatchingQuotes(o) === "-" ? "/dev/null" : o);
 	const remoteNameTarget = outputDir ?? ".";
-	if (mapped.length > 0) return hasRemoteName ? [...mapped, remoteNameTarget] : mapped;
-	if (hasRemoteName) return [remoteNameTarget];
+	if (mapped.length > 0) {return hasRemoteName ? [...mapped, remoteNameTarget] : mapped;}
+	if (hasRemoteName) {return [remoteNameTarget];}
 	return null;
 }
 
@@ -516,11 +516,11 @@ function getMutationTargets(command: string, tokens: string[]): string[] | null 
 
 function getFindMutationTargets(args: string[]): string[] | null {
 	// Skip glob-pattern args (e.g., -name '*.txt') — these cannot be filesystem roots.
-	const roots = args.filter((arg) => arg && !arg.startsWith("-") && !/[*?{}()\[\]~]/.test(arg));
+	const roots = args.filter((arg) => arg && !arg.startsWith("-") && !/[*?{}()[\]~]/.test(arg));
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
-		if (arg === "-delete") return roots.length > 0 ? roots : ["."];
-		if (["-exec", "-execdir", "-ok", "-okdir"].includes(arg)) return roots.length > 0 ? roots : ["."];
+		if (arg === "-delete") {return roots.length > 0 ? roots : ["."];}
+		if (["-exec", "-execdir", "-ok", "-okdir"].includes(arg)) {return roots.length > 0 ? roots : ["."];}
 		if (["-fprintf", "-fprint", "-fprint0", "-fls"].includes(arg)) {
 			const output = args[i + 1];
 			return output ? [output] : ["."];
@@ -542,10 +542,10 @@ function findSudoCommandIndex(tokens: string[]): number {
 	let i = 1;
 	while (i < tokens.length) {
 		const token = tokens[i];
-		if (token === "--") return i + 1;
-		if (!token.startsWith("-")) return i;
-		if (FLAGS_WITH_VALUE.has(token)) i += 2;
-		else i += 1;
+		if (token === "--") {return i + 1;}
+		if (!token.startsWith("-")) {return i;}
+		if (FLAGS_WITH_VALUE.has(token)) {i += 2;}
+		else {i += 1;}
 	}
 	return tokens.length;
 }
@@ -573,14 +573,14 @@ function getCommandTokens(segment: string): string[] {
 				i++; // valueless flag
 			}
 		}
-		while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++;
+		while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) {i++;}
 		// Skip -- separator between env assignments and the command
-		if (i < tokens.length && tokens[i] === "--") i++;
-		if (i >= tokens.length) return ["env"];
+		if (i < tokens.length && tokens[i] === "--") {i++;}
+		if (i >= tokens.length) {return ["env"];}
 	}
 
-	while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++;
-	if (tokens[i] === "command") i++;
+	while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) {i++;}
+	if (tokens[i] === "command") {i++;}
 	return tokens.slice(i);
 }
 
@@ -592,7 +592,7 @@ function nonOptionArgs(args: string[]): string[] {
 			stopOptions = true;
 			continue;
 		}
-		if (!stopOptions && arg.startsWith("-") && arg !== "-") continue;
+		if (!stopOptions && arg.startsWith("-") && arg !== "-") {continue;}
 		result.push(arg);
 	}
 	return result;
@@ -600,7 +600,7 @@ function nonOptionArgs(args: string[]): string[] {
 
 function isSafeGitCommand(rest: string): boolean {
 	const trimmed = rest.trim();
-	if (!trimmed) return false;
+	if (!trimmed) {return false;}
 
 	const tokens = trimmed.split(/\s+/);
 	const FLAGS_WITH_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace"]);
@@ -609,16 +609,16 @@ function isSafeGitCommand(rest: string): boolean {
 	for (let i = 0; i < tokens.length; i++) {
 		const token = tokens[i];
 		if (FLAGS_WITH_VALUE.has(token)) { i++; continue; }
-		if (token.startsWith("-")) continue;
+		if (token.startsWith("-")) {continue;}
 		subcommand = token;
 		break;
 	}
 
-	if (!subcommand) return false;
-	if (GIT_IMMUTABLE.has(subcommand)) return true;
-	if (GIT_MUTABLE.has(subcommand)) return false;
+	if (!subcommand) {return false;}
+	if (GIT_IMMUTABLE.has(subcommand)) {return true;}
+	if (GIT_MUTABLE.has(subcommand)) {return false;}
 	const mixed = GIT_MIXED[subcommand];
-	if (!mixed) return false;
+	if (!mixed) {return false;}
 	const afterSub = trimmed.slice(trimmed.indexOf(subcommand) + subcommand.length).trim();
 	return mixed(afterSub);
 }
@@ -639,21 +639,21 @@ function stripMatchingQuotes(token: string): string {
  * to process.env. Returns null if the path contains no variable reference
  * or the variable is unknown.
  */
-function expandShellVariable(rawPath: string, shellVars: ReadonlyMap<string, string>, visited: Set<string> = new Set()): string | null {
-	const braceMatch = rawPath.match(/^\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:-|:=)([^}]*))?\}(.*)$/);
+function expandShellVariable(rawPath: string, shellVars: ReadonlyMap<string, string>, visited = new Set<string>()): string | null {
+	const braceMatch = /^\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:-|:=)([^}]*))?\}(.*)$/.exec(rawPath);
 	if (braceMatch) {
 		const [, varName, operator, fallback = "", suffix] = braceMatch;
-		if (visited.has(varName)) return null;
+		if (visited.has(varName)) {return null;}
 		visited.add(varName);
 		const value = shellVars.get(varName) ?? process.env[varName];
-		if (value !== undefined && value !== "") return value + suffix;
-		if (operator === ":-" || operator === ":=") return fallback + suffix;
+		if (value !== undefined && value !== "") {return value + suffix;}
+		if (operator === ":-" || operator === ":=") {return fallback + suffix;}
 		return null;
 	}
-	const plainMatch = rawPath.match(/^\$([A-Za-z_][A-Za-z0-9_]*)(.*)$/);
+	const plainMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)(.*)$/.exec(rawPath);
 	if (plainMatch) {
 		const varName = plainMatch[1];
-		if (visited.has(varName)) return null;
+		if (visited.has(varName)) {return null;}
 		visited.add(varName);
 		const value = shellVars.get(varName) ?? process.env[varName];
 		return value !== undefined && value !== "" ? value + plainMatch[2] : null;
@@ -672,20 +672,20 @@ function expandShellVariable(rawPath: string, shellVars: ReadonlyMap<string, str
 function getStandaloneShellAssignments(segment: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map()): Map<string, string> {
 	const assignments = new Map<string, string>();
 	let tokens: string[] = segment.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
-	if (tokens.length === 0) return assignments;
+	if (tokens.length === 0) {return assignments;}
 
 	// Skip declaration keywords and their flags (export -x, declare -r, etc.)
 	const DECL_KEYWORDS = new Set(["export", "declare", "typeset", "local", "readonly"]);
-	if (tokens.length > 0 && DECL_KEYWORDS.has(tokens[0]!)) {
-		tokens = tokens.slice(1) as string[];
+	if (tokens.length > 0 && DECL_KEYWORDS.has(tokens[0])) {
+		tokens = tokens.slice(1);
 		// Skip flags after the keyword (e.g., declare -r -x VAR=val)
-		while (tokens.length > 0 && tokens[0]!.startsWith("-")) {
-			tokens = tokens.slice(1) as string[];
+		while (tokens.length > 0 && tokens[0].startsWith("-")) {
+			tokens = tokens.slice(1);
 		}
 	}
 	for (let i = 0; i < tokens.length; i++) {
-		const match = tokens[i]?.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-		if (!match) continue;
+		const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(tokens[i]);
+		if (!match) {continue;}
 		const [, name, initialRawValue] = match;
 		let rawValue = initialRawValue;
 		const quoteWrapped = rawValue.startsWith('"');
@@ -696,14 +696,14 @@ function getStandaloneShellAssignments(segment: string, cwd: string, shellVars: 
 		if (substitutionStart.startsWith("$(")) {
 			let depth = 1;
 			for (const ch of substitutionStart.slice(2)) {
-				if (ch === "(") depth++;
-				if (ch === ")") depth--;
+				if (ch === "(") {depth++;}
+				if (ch === ")") {depth--;}
 			}
 			while ((depth > 0 || (quoteWrapped && !rawValue.endsWith('"'))) && i + 1 < tokens.length) {
 				rawValue += ` ${tokens[++i]}`;
-				for (const ch of tokens[i]!) {
-					if (ch === "(") depth++;
-					if (ch === ")") depth--;
+				for (const ch of tokens[i]) {
+					if (ch === "(") {depth++;}
+					if (ch === ")") {depth--;}
 				}
 			}
 		} else if (substitutionStart.startsWith("`")) {
@@ -714,7 +714,7 @@ function getStandaloneShellAssignments(segment: string, cwd: string, shellVars: 
 
 		const value = stripMatchingQuotes(rawValue);
 		const assignmentVars = new Map(shellVars);
-		for (const [assignedName, assignedValue] of assignments) assignmentVars.set(assignedName, assignedValue);
+		for (const [assignedName, assignedValue] of assignments) {assignmentVars.set(assignedName, assignedValue);}
 		const syntheticMktempPath = getSafeMktempSyntheticPath(value, cwd, assignmentVars, name);
 		if (syntheticMktempPath) {
 			assignments.set(name, syntheticMktempPath);
@@ -727,32 +727,32 @@ function getStandaloneShellAssignments(segment: string, cwd: string, shellVars: 
 
 function unwrapCommandSubstitution(rawValue: string): string | null {
 	const normalized = stripMatchingQuotes(rawValue);
-	if (normalized.startsWith("$(") && normalized.endsWith(")")) return normalized.slice(2, -1);
-	if (normalized.startsWith("`") && normalized.endsWith("`")) return normalized.slice(1, -1);
+	if (normalized.startsWith("$(") && normalized.endsWith(")")) {return normalized.slice(2, -1);}
+	if (normalized.startsWith("`") && normalized.endsWith("`")) {return normalized.slice(1, -1);}
 	return null;
 }
 
 function getSafeMktempSyntheticPath(rawValue: string, cwd: string, shellVars: ReadonlyMap<string, string>, name: string): string | null {
 	const innerCmd = unwrapCommandSubstitution(rawValue);
-	if (!innerCmd) return null;
+	if (!innerCmd) {return null;}
 
 	const innerTokens = getCommandTokens(innerCmd);
-	if (innerTokens[0] !== "mktemp") return null;
+	if (innerTokens[0] !== "mktemp") {return null;}
 
 	let template: string | null = null;
 	let tmpdirBase: string | null = null;
 	const args = innerTokens.slice(1);
 
 	for (let i = 0; i < args.length; i++) {
-		const arg = stripMatchingQuotes(args[i]!);
-		if (!arg) continue;
+		const arg = stripMatchingQuotes(args[i]);
+		if (!arg) {continue;}
 		if (arg === "--") {
 			template = stripMatchingQuotes(args[i + 1] ?? "");
 			break;
 		}
 		if (arg === "-p") {
 			tmpdirBase = stripMatchingQuotes(args[i + 1] ?? "");
-			if (!tmpdirBase) return null;
+			if (!tmpdirBase) {return null;}
 			i++;
 			continue;
 		}
@@ -761,17 +761,17 @@ function getSafeMktempSyntheticPath(rawValue: string, cwd: string, shellVars: Re
 			continue;
 		}
 		if (arg === "-t") {
-			if (process.platform !== "darwin") return null;
+			if (process.platform !== "darwin") {return null;}
 			template = stripMatchingQuotes(args[i + 1] ?? "");
-			if (!template) return null;
+			if (!template) {return null;}
 			tmpdirBase = TEMP_DIR;
 			i++;
 			continue;
 		}
 		if (arg.startsWith("-t") && arg.length > 2) {
-			if (process.platform !== "darwin") return null;
+			if (process.platform !== "darwin") {return null;}
 			template = stripMatchingQuotes(arg.slice(2));
-			if (!template) return null;
+			if (!template) {return null;}
 			tmpdirBase = TEMP_DIR;
 			continue;
 		}
@@ -801,22 +801,22 @@ function getSafeMktempSyntheticPath(rawValue: string, cwd: string, shellVars: Re
 			i++;
 			continue;
 		}
-		if (arg.startsWith("--suffix=")) continue;
-		if (arg.startsWith("-")) continue;
+		if (arg.startsWith("--suffix=")) {continue;}
+		if (arg.startsWith("-")) {continue;}
 		template = arg;
 	}
 
 	if (tmpdirBase !== null) {
-		if (!isTempPath(tmpdirBase, cwd, shellVars)) return null;
-		if (!template) return path.join(TEMP_DIR, `.pi-mktemp-${name.toLowerCase()}`);
-		if (path.isAbsolute(template)) return null;
+		if (!isTempPath(tmpdirBase, cwd, shellVars)) {return null;}
+		if (!template) {return path.join(TEMP_DIR, `.pi-mktemp-${name.toLowerCase()}`);}
+		if (path.isAbsolute(template)) {return null;}
 		const joinedTemplate = path.join(tmpdirBase, template);
 		return isTempPath(joinedTemplate, cwd, shellVars)
 			? path.join(TEMP_DIR, `.pi-mktemp-${name.toLowerCase()}`)
 			: null;
 	}
 
-	if (template && !isTempPath(template, cwd, shellVars)) return null;
+	if (template && !isTempPath(template, cwd, shellVars)) {return null;}
 	return path.join(TEMP_DIR, `.pi-mktemp-${name.toLowerCase()}`);
 }
 
@@ -831,24 +831,24 @@ function getSafeMktempSyntheticPath(rawValue: string, cwd: string, shellVars: Re
 function expandHiddenGlobPatterns(pattern: string): string[] {
 	const segments = pattern.split("/");
 	const options = segments.map((segment) => {
-		if (segment === "**") return [segment, "**/.*", "**/.*/**"];
+		if (segment === "**") {return [segment, "**/.*", "**/.*/**"];}
 		// Literal or already-dotfile segments need no expansion.
 		// Brace patterns ({a,b}) get a redundant .{a,b} variant — harmless.
-		if (!/[*?{}\[\]]/.test(segment) || segment.startsWith(".")) return [segment];
+		if (!/[*?{}[\]]/.test(segment) || segment.startsWith(".")) {return [segment];}
 		return [segment, `.${segment}`];
 	});
 	const patterns = new Set<string>();
 	const visit = (index: number, built: string[]) => {
-		if (index === options.length) return void patterns.add(built.join("/"));
-		for (const option of options[index]) visit(index + 1, [...built, option]);
+		if (index === options.length) {return void patterns.add(built.join("/"));}
+		for (const option of options[index]) {visit(index + 1, [...built, option]);}
 	};
 	visit(0, []);
 	return [...patterns];
 }
 
-function isTempPath(rawPath: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map(), visited: Set<string> = new Set()): boolean {
+function isTempPath(rawPath: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map(), visited = new Set<string>()): boolean {
 	const normalized = stripMatchingQuotes(rawPath);
-	if (!normalized || normalized === "/dev/null" || /^&\d+$/.test(normalized)) return true;
+	if (!normalized || normalized === "/dev/null" || /^&\d+$/.test(normalized)) {return true;}
 
 	// Expand ~ and ~/path to the home directory (os.homedir()).
 	// ~user/path is not resolvable without getpwuid — block conservatively.
@@ -871,13 +871,13 @@ function isTempPath(rawPath: string, cwd: string, shellVars: ReadonlyMap<string,
 		return false;
 	}
 
-	if (/[*?{}\[\]]/.test(normalized)) {
+	if (/[*?{}[\]]/.test(normalized)) {
 		// Glob pattern - resolve against cwd and check each target individually.
 		// Expand hidden variants explicitly because node:fs globSync skips dotfiles.
 		// Empty glob (no matches) is allowed — no files to mutate.
 		try {
 			const matches = globSync(expandHiddenGlobPatterns(normalized), { cwd });
-			if (matches.length === 0) return true;
+			if (matches.length === 0) {return true;}
 			return matches.every((m) => isTempPath(m, cwd));
 		} catch {
 			return false;
@@ -903,8 +903,8 @@ function readRedirectTarget(
 	start: number,
 ): { target: string; end: number } {
 	let i = start;
-	while (i < cmd.length && /\s/.test(cmd[i])) i++;
-	if (i >= cmd.length) return { target: "", end: i };
+	while (i < cmd.length && /\s/.test(cmd[i])) {i++;}
+	if (i >= cmd.length) {return { target: "", end: i };}
 
 	const first = cmd[i];
 	if (first === '"' || first === "'") {
@@ -931,8 +931,8 @@ function readRedirectTarget(
 	let target = "";
 	while (i < cmd.length) {
 		const ch = cmd[i];
-		if (/\s/.test(ch) || ch === ";" || ch === "|" || ch === "\n") break;
-		if (ch === "&" && target !== "") break;
+		if (/\s/.test(ch) || ch === ";" || ch === "|" || ch === "\n") {break;}
+		if (ch === "&" && target !== "") {break;}
 		target += ch;
 		i++;
 	}
@@ -954,19 +954,19 @@ function getUnsafeWriteRedirectTarget(cmd: string, cwd: string, shellVars: Reado
 		const ch = cmd[i];
 		if (escaped) { escaped = false; continue; }
 		if (ch === "\\") { escaped = true; continue; }
-		if (quote) { if (ch === quote) quote = null; continue; }
+		if (quote) { if (ch === quote) {quote = null;} continue; }
 		if (ch === '"' || ch === "'") { quote = ch; continue; }
-		if (ch !== ">") continue;
+		if (ch !== ">") {continue;}
 
 		const next = cmd[i + 1];
 		// >&N = fd redirect (e.g., 2>&1) — not a file write, skip
-		if (next === "&" && /^[\d-]$/.test(cmd[i + 2] ?? "")) continue;
+		if (next === "&" && /^[\d-]$/.test(cmd[i + 2] ?? "")) {continue;}
 		// >= is the comparison operator (e.g., in [[ or node -e), not a write redirect
-		if (next === "=") continue;
+		if (next === "=") {continue;}
 		// >& = combined stdout+stderr redirect to a file, treat as 2-char operator
 		const opLen = next === ">" || next === "|" || next === "&" ? 2 : 1;
 		const { target, end } = readRedirectTarget(cmd, i + opLen);
-		if (!isTempPath(target, cwd, shellVars)) return stripMatchingQuotes(target) || "(unknown target)";
+		if (!isTempPath(target, cwd, shellVars)) {return stripMatchingQuotes(target) || "(unknown target)";}
 		i = Math.max(i, end - 1);
 	}
 
@@ -1008,7 +1008,7 @@ function splitUnquotedShellSegments(cmd: string): string[] {
 		}
 		if (quote) {
 			current += ch;
-			if (ch === quote) quote = null;
+			if (ch === quote) {quote = null;}
 			continue;
 		}
 		if (ch === '"' || ch === "'") {
@@ -1056,21 +1056,21 @@ function extractCommandSubstitutions(line: string): string[] {
 	const backtickRe = /`([^`]*)`/g;
 	let match: RegExpExecArray | null;
 	while ((match = backtickRe.exec(line)) !== null) {
-		if (match[1].trim()) commands.push(match[1].trim());
+		if (match[1].trim()) {commands.push(match[1].trim());}
 	}
 
 	// $() substitutions: handles arbitrary nesting via depth counter
 	for (let i = 0; i < line.length; i++) {
-		if (line[i] !== "$" || line[i + 1] !== "(") continue;
+		if (line[i] !== "$" || line[i + 1] !== "(") {continue;}
 		let depth = 1;
 		let cmd = "";
 		let j = i + 2;
 		for (; j < line.length && depth > 0; j++) {
-			if (line[j] === "(" && line[j - 1] === "$") depth++;
-			else if (line[j] === ")") depth--;
-			if (depth > 0) cmd += line[j];
+			if (line[j] === "(" && line[j - 1] === "$") {depth++;}
+			else if (line[j] === ")") {depth--;}
+			if (depth > 0) {cmd += line[j];}
 		}
-		if (cmd.trim()) commands.push(cmd.trim());
+		if (cmd.trim()) {commands.push(cmd.trim());}
 		i = j;
 	}
 
@@ -1079,7 +1079,7 @@ function extractCommandSubstitutions(line: string): string[] {
 	const procSubRe = /<\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g;
 	let procMatch: RegExpExecArray | null;
 	while ((procMatch = procSubRe.exec(line)) !== null) {
-		if (procMatch[1].trim()) commands.push(procMatch[1].trim());
+		if (procMatch[1].trim()) {commands.push(procMatch[1].trim());}
 	}
 
 	return commands;
@@ -1113,7 +1113,7 @@ export function applyReadonlyBashGuard(cmd: unknown, cwd: string): ReadonlyBashG
 	// L1: OS sandbox (primary enforcement when available)
 	if (canUseOsSandbox()) {
 		const verdict = classifyBashCommand(cmd, cwd);
-		if (verdict.ok === false) {
+		if (!verdict.ok) {
 			return { action: "block", reason: buildReadonlyBashBlockReason(verdict.reason, cmd) };
 		}
 		return { action: "sandbox", sandboxedCommand: wrapCommandWithOsSandbox(cmd) };
@@ -1121,7 +1121,7 @@ export function applyReadonlyBashGuard(cmd: unknown, cwd: string): ReadonlyBashG
 
 	// L2: Pattern inspection fallback (no sandbox available)
 	const verdict = classifyBashCommand(cmd, cwd);
-	if (verdict.ok === false) {
+	if (!verdict.ok) {
 		return { action: "block", reason: buildReadonlyBashBlockReason(verdict.reason, cmd) };
 	}
 	return { action: "allow" };
