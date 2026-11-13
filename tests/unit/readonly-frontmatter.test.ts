@@ -8,12 +8,13 @@
 import { beforeAll, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { BeforeAgentStartEvent, ExtensionCommandContext, InputEvent, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
+import type { BeforeAgentStartEvent, ExtensionCommandContext, ExtensionContext, InputEvent, SlashCommandSource } from "@earendil-works/pi-coding-agent";
 import {
+	isRecord,
 	callHandlers,
 	createCommandContext,
+	createExtensionContext,
 	createUIContext,
-	emitAll,
 	makeReadonlyUICtx,
 	registerReadonlyPI,
 	testWithDir,
@@ -21,7 +22,7 @@ import {
 	withTempHome,
 	type ToolCall,
 } from "./helpers.js";
-import { createBeforeAgentStartEvent, getCommand, getHostRecords, type AppendedEntry, type TestPI } from "./test-host.js";
+import { createBeforeAgentStartEvent, getCommand, getHandler, getHostRecords, type AppendedEntry, type TestPI } from "./test-host.js";
 import { assertPresent } from "../assertions.js";
 
 // pi's agent directory holds global prompts; an empty one keeps an exported
@@ -35,43 +36,18 @@ beforeEach(() => {
 	vi.stubEnv("PI_CODING_AGENT_DIR", isolatedAgentDir);
 });
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
-// The composed tool_call handlers return the first blocking result or nothing.
-function assertToolCallResult(value: unknown): asserts value is ToolCallEventResult | undefined {
-	if (value === undefined) {return;}
-	if (!isRecord(value) || typeof value.block !== "boolean" || (value.reason !== undefined && typeof value.reason !== "string")) {
-		throw new Error("The tool_call handlers returned something other than a tool_call result.");
-	}
-}
-
-type ReadonlyToolCall = (event: Parameters<ToolCall>[0], ctx: Parameters<ToolCall>[1]) => Promise<ToolCallEventResult | undefined>;
-
-/** `registerReadonlyPI` with a `toolCall` whose result is checked to be a tool_call result or nothing. */
-async function registerCheckedPI(): Promise<{ pi: TestPI; toolCall: ReadonlyToolCall }> {
-	const { pi, toolCall } = await registerReadonlyPI();
-	return {
-		pi,
-		toolCall: async (event, ctx) => {
-			const result: unknown = await toolCall(event, ctx);
-			assertToolCallResult(result);
-			return result;
-		},
-	};
-}
-
-// The extension registers one input and one before_agent_start handler. The contexts here have no
-// `modelRegistry`, which `ExtensionContext` requires, so the handlers run through callHandlers.
+// The extension registers one input and one before_agent_start handler.
 function frontmatterHandlers(pi: TestPI) {
 	return {
-		inputHandler: async (event: Omit<InputEvent, "type">, ctx: unknown): Promise<unknown> => {
-			const [result] = await callHandlers(pi, "input", event, ctx);
-			return result;
-		},
-		beforeStartHandler: (event: BeforeAgentStartEvent, ctx: unknown) => emitAll(pi, "before_agent_start", event, ctx),
+		inputHandler: (event: Omit<InputEvent, "type">, ctx: ExtensionContext) => getHandler(pi, "input")({ type: "input", ...event }, ctx),
+		beforeStartHandler: (event: BeforeAgentStartEvent, ctx: ExtensionContext) => getHandler(pi, "before_agent_start")(event, ctx),
 	};
+}
+
+// A context for the input and before_agent_start handlers: without UI unless overridden, no context
+// usage and no model registry, so the handlers load no model groups.
+function handlerContext(overrides: Partial<ExtensionContext> = {}): ExtensionContext {
+	return createExtensionContext({ getContextUsage: () => undefined, modelRegistry: undefined, ...overrides });
 }
 
 /**
@@ -110,33 +86,32 @@ async function writePrompt(dir: string, name: string, readonly: boolean): Promis
 	return filePath;
 }
 
-function makeBeforeStartCtx(cwd = process.cwd()) {
-	return {
-		...makeReadonlyUICtx(),
+function makeBeforeStartCtx(cwd = process.cwd()): ExtensionContext {
+	return handlerContext({
+		hasUI: true,
+		ui: createUIContext({ notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn() }),
 		cwd,
 		isProjectTrusted: () => true,
-	};
+	});
 }
 
 function makeNotifyBeforeStartCtx() {
 	const notifications: { message: string; level: string | undefined }[] = [];
 	return {
-		ctx: {
-			...makeReadonlyUICtx({
-				ui: createUIContext({
-					notify: (message, level) => { notifications.push({ message, level }); },
-					setStatus: vi.fn(),
-					setWidget: vi.fn(),
-				}),
+		ctx: handlerContext({
+			hasUI: true,
+			ui: createUIContext({
+				notify: (message, level) => { notifications.push({ message, level }); },
+				setStatus: vi.fn(),
+				setWidget: vi.fn(),
 			}),
-			cwd: process.cwd(),
 			isProjectTrusted: () => true,
-		},
+		}),
 		notifications,
 	};
 }
 
-function makeResolvedCommand(name: string, filePath: string, source: "prompt" | "builtin" | "skill" = "prompt") {
+function makeResolvedCommand(name: string, filePath: string, source: SlashCommandSource = "prompt") {
 	return {
 		name,
 		source,
@@ -168,11 +143,11 @@ async function runPromptToggle(
 	text: string,
 	readonly: boolean,
 	name = text.slice(1),
-): Promise<{ toolCall: ReadonlyToolCall; pi: TestPI }> {
+): Promise<{ toolCall: ToolCall; pi: TestPI }> {
 	const dir = await tmpDir();
 	onTestFinished(() => rm(dir, { recursive: true, force: true }));
 	const filePath = await writePrompt(dir, name, readonly);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([makePromptCommand(name, filePath)]);
@@ -188,7 +163,7 @@ test("single /name input activates readonly frontmatter", async () => {
 
 testWithDir("readonly: false frontmatter keeps readonly disabled and stays silent when already disabled", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "safe-prompt", false);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const contextHook = (event: unknown, ctx: unknown) => runContextHandler(pi, event, ctx);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
@@ -223,7 +198,7 @@ testWithDir("embedded-slash prompt and skill tokens do not apply readonly frontm
 	for (const scenario of cases) {
 		const caseDir = await mkdtemp(join(dir, "case-"));
 		const filePath = await writePrompt(caseDir, "review", true);
-		const { pi, toolCall } = await registerCheckedPI();
+		const { pi, toolCall } = await registerReadonlyPI();
 		const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 		const ctx = makeBeforeStartCtx();
 		if (scenario.type === "prompt") {pi.setCommands([makePromptCommand("review", filePath)]);}
@@ -237,7 +212,7 @@ testWithDir("embedded-slash prompt and skill tokens do not apply readonly frontm
 });
 
 test("unknown /command without frontmatter produces no toggle", async () => {
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 
@@ -249,7 +224,7 @@ test("unknown /command without frontmatter produces no toggle", async () => {
 
 testWithDir("unknown /command does not delay the next valid prompt frontmatter toggle", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "review", true);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([makePromptCommand("review", filePath)]);
@@ -267,7 +242,7 @@ testWithDir("unknown /command does not delay the next valid prompt frontmatter t
 testWithDir("before_agent_start skips readonly cache population while no slash-command toggle is pending", async ({ dir }) => {
 	const filePath = join(dir, "broken.md");
 	await writeFile(filePath, `---\nreadonly: "yes"\n---\n\nBody content.\n`);
-	const { pi } = await registerCheckedPI();
+	const { pi } = await registerReadonlyPI();
 	const { beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([makePromptCommand("broken", filePath)]);
@@ -279,7 +254,7 @@ testWithDir("before_agent_start skips readonly cache population while no slash-c
 
 testWithDir("input handler queues a prompt command even when the registry is unavailable until before_agent_start", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "late-review", true);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 
@@ -294,12 +269,12 @@ testWithDir("late-resolved non-prompt /name does not inherit readonly from a sam
 	const promptDir = join(workspace, ".pi", "prompts");
 	await mkdir(promptDir, { recursive: true });
 	const promptPath = await writePrompt(promptDir, "shared", true);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx(workspace);
 
 	await inputHandler({ text: "/shared", source: "interactive" }, ctx);
-	pi.setCommands([makeResolvedCommand("shared", promptPath, "builtin")]);
+	pi.setCommands([makeResolvedCommand("shared", promptPath, "extension")]);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
@@ -310,11 +285,11 @@ testWithDir("known non-prompt /name already present in the registry does not enq
 	const promptDir = join(workspace, ".pi", "prompts");
 	await mkdir(promptDir, { recursive: true });
 	const promptPath = await writePrompt(promptDir, "shared-known", true);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx(workspace);
 
-	pi.setCommands([makeResolvedCommand("shared-known", promptPath, "builtin")]);
+	pi.setCommands([makeResolvedCommand("shared-known", promptPath, "extension")]);
 	await inputHandler({ text: "/shared-known", source: "interactive" }, ctx);
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
@@ -324,20 +299,12 @@ testWithDir("known non-prompt /name already present in the registry does not enq
 
 testWithDir("headless /name frontmatter stays a no-op through the deferred pipeline", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "headless-review", true);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	pi.setCommands([makePromptCommand("headless-review", filePath)]);
 
-	await inputHandler({ text: "/headless-review", source: "interactive" }, {
-		hasUI: false,
-		getContextUsage: () => null,
-	});
-	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), {
-		hasUI: false,
-		cwd: process.cwd(),
-		isProjectTrusted: () => false,
-		getContextUsage: () => null,
-	});
+	await inputHandler({ text: "/headless-review", source: "interactive" }, handlerContext());
+	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), handlerContext({ isProjectTrusted: () => false }));
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
 	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
@@ -345,27 +312,19 @@ testWithDir("headless /name frontmatter stays a no-op through the deferred pipel
 
 testWithDir("extension input stays a no-op when hasUI is false", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "headless-extension", true);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	pi.setCommands([makePromptCommand("headless-extension", filePath)]);
 
-	await inputHandler({ text: "/headless-extension", source: "extension" }, {
-		hasUI: false,
-		getContextUsage: () => null,
-	});
-	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), {
-		hasUI: false,
-		cwd: process.cwd(),
-		isProjectTrusted: () => false,
-		getContextUsage: () => null,
-	});
+	await inputHandler({ text: "/headless-extension", source: "extension" }, handlerContext());
+	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), handlerContext({ isProjectTrusted: () => false }));
 
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
 	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly")).toBeUndefined();
 });
 
 test("extension plain text without a slash stays a no-op", async () => {
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 
@@ -380,7 +339,7 @@ testWithDir("unresolved /name uses trusted cwd/.pi/prompts frontmatter via defer
 	const promptDir = join(workspace, ".pi", "prompts");
 	await mkdir(promptDir, { recursive: true });
 	await writePrompt(promptDir, "fallback-only", true);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx(workspace);
 
@@ -397,7 +356,7 @@ testWithDir("unresolved /name uses ~/.pi/agent/prompts frontmatter via deferred 
 		const promptDir = join(homeDir, ".pi", "agent", "prompts");
 		await mkdir(promptDir, { recursive: true });
 		await writePrompt(promptDir, "global-fallback", true);
-		const { pi, toolCall } = await registerCheckedPI();
+		const { pi, toolCall } = await registerReadonlyPI();
 		const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 		const ctx = makeBeforeStartCtx(workspace);
 
@@ -411,7 +370,7 @@ testWithDir("unresolved /name uses ~/.pi/agent/prompts frontmatter via deferred 
 
 testWithDir("queued slash + extension message preserves the first pending command", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "my-prompt", true);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([makePromptCommand("my-prompt", filePath)]);
@@ -433,7 +392,7 @@ testWithDir("streaming readonly frontmatter is blocked without a delayed toggle"
 	for (const scenario of cases) {
 		const caseDir = await mkdtemp(join(dir, "case-"));
 		const targetPath = await writePrompt(caseDir, "target", scenario.readonly);
-		const { pi, toolCall } = await registerCheckedPI();
+		const { pi, toolCall } = await registerReadonlyPI();
 		const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 		const { ctx, notifications } = makeNotifyBeforeStartCtx();
 		const commands = [scenario.type === "skill" ? makeSkillCommand("target", targetPath) : makePromptCommand("target", targetPath)];
@@ -466,7 +425,7 @@ testWithDir("streaming readonly frontmatter is blocked without a delayed toggle"
 testWithDir("queued slash commands are consumed FIFO across before_agent_start calls", async ({ dir }) => {
 	const filePathA = await writePrompt(dir, "cmd-a", true);
 	const filePathB = await writePrompt(dir, "cmd-b", false);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([
@@ -488,7 +447,7 @@ testWithDir("queued slash commands are consumed FIFO across before_agent_start c
 
 testWithDir("non-prompt slash commands do not delay the next prompt frontmatter toggle", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "review", true);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([makePromptCommand("review", filePath)]);
@@ -505,7 +464,7 @@ testWithDir("non-prompt slash commands do not delay the next prompt frontmatter 
 
 testWithDir("/skill:name activates readonly from skill frontmatter", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "my-skill", true);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 
@@ -517,7 +476,7 @@ testWithDir("/skill:name activates readonly from skill frontmatter", async ({ di
 
 testWithDir("/skill:name preserves dotted skill names for readonly frontmatter", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "review.pr", true);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 
@@ -530,7 +489,7 @@ testWithDir("/skill:name preserves dotted skill names for readonly frontmatter",
 testWithDir("readonly success notifications use the exact slash-command source", async ({ dir }) => {
 	const promptPath = await writePrompt(dir, "shared", true);
 	const skillPath = await writePrompt(dir, "shared-skill", false);
-	const { pi } = await registerCheckedPI();
+	const { pi } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([makePromptCommand("shared", promptPath)]);
@@ -548,7 +507,7 @@ testWithDir("readonly success notifications use the exact slash-command source",
 testWithDir("invalid /prompt readonly value records a warning for the prompt source", async ({ dir }) => {
 	const filePath = join(dir, "broken-prompt.md");
 	await writeFile(filePath, `---\nreadonly: "yes"\ndescription: "Broken"\n---\n\nBody content.\n`);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([makePromptCommand("broken-prompt", filePath)]);
@@ -566,7 +525,7 @@ testWithDir("invalid /prompt readonly value records a warning for the prompt sou
 testWithDir("invalid /skill:name readonly value records a warning for the skill source", async ({ dir }) => {
 	const filePath = join(dir, "broken-skill.md");
 	await writeFile(filePath, `---\nreadonly: "yes"\ndescription: "Broken"\n---\n\nBody content.\n`);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 
@@ -583,7 +542,7 @@ testWithDir("invalid /skill:name readonly value records a warning for the skill 
 testWithDir("unreadable /prompt frontmatter records a warning for the prompt source", async ({ dir }) => {
 	const filePath = join(dir, "dir-prompt.md");
 	await mkdir(filePath, { recursive: true });
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([makePromptCommand("dir-prompt", filePath)]);
@@ -601,7 +560,7 @@ testWithDir("unreadable /prompt frontmatter records a warning for the prompt sou
 testWithDir("unreadable /skill:name frontmatter records a warning for the skill source", async ({ dir }) => {
 	const filePath = join(dir, "dir-skill.md");
 	await mkdir(filePath, { recursive: true });
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 
@@ -619,7 +578,7 @@ testWithDir("invalid queued frontmatter warns and the next valid queued command 
 	const brokenPath = join(dir, "broken-then-valid.md");
 	await writeFile(brokenPath, `---\nreadonly: "yes"\n---\n\nBody content.\n`);
 	const validPath = await writePrompt(dir, "valid-after-broken", true);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([
@@ -642,7 +601,7 @@ testWithDir("invalid queued frontmatter warns and the next valid queued command 
 testWithDir("prompt without readonly frontmatter stays a silent no-op through the deferred pipeline", async ({ dir }) => {
 	const filePath = join(dir, "no-readonly.md");
 	await writeFile(filePath, `---\ndescription: "No readonly"\n---\n\nBody content.\n`);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([makePromptCommand("no-readonly", filePath)]);
@@ -659,7 +618,7 @@ testWithDir("prompt without readonly frontmatter stays a silent no-op through th
 testWithDir("skill without readonly frontmatter stays a silent no-op through the deferred pipeline", async ({ dir }) => {
 	const filePath = join(dir, "no-readonly-skill.md");
 	await writeFile(filePath, `---\ndescription: "No readonly"\n---\n\nBody content.\n`);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 
@@ -675,7 +634,7 @@ testWithDir("skill without readonly frontmatter stays a silent no-op through the
 testWithDir("/readonly bypasses deferred frontmatter lookup", async ({ dir }) => {
 	const filePath = join(dir, "readonly.md");
 	await writeFile(filePath, `---\nreadonly: "yes"\n---\n\nBody content.\n`);
-	const { pi } = await registerCheckedPI();
+	const { pi } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([makePromptCommand("readonly", filePath)]);
@@ -691,7 +650,7 @@ testWithDir("/readonly bypasses deferred frontmatter lookup", async ({ dir }) =>
 testWithDir("/handoff bypasses deferred frontmatter lookup", async ({ dir }) => {
 	const filePath = join(dir, "handoff.md");
 	await writeFile(filePath, `---\nreadonly: "yes"\n---\n\nBody content.\n`);
-	const { pi } = await registerCheckedPI();
+	const { pi } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([makePromptCommand("handoff", filePath)]);
@@ -708,7 +667,7 @@ testWithDir("/notebook bypasses deferred frontmatter lookup", async ({ dir: work
 	const promptDir = join(workspace, ".pi", "prompts");
 	await mkdir(promptDir, { recursive: true });
 	await writeFile(join(promptDir, "notebook.md"), `---\nreadonly: "yes"\n---\n\nBody content.\n`);
-	const { pi } = await registerCheckedPI();
+	const { pi } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 
@@ -727,7 +686,7 @@ testWithDir("/notebook bypasses deferred frontmatter lookup", async ({ dir: work
 testWithDir("malformed /prompt frontmatter records a parse warning for the prompt source", async ({ dir }) => {
 	const filePath = join(dir, "broken-yaml-prompt.md");
 	await writeFile(filePath, `---\nreadonly: [\n---\n\nBody content.\n`);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 	pi.setCommands([makePromptCommand("broken-yaml-prompt", filePath)]);
@@ -744,7 +703,7 @@ testWithDir("malformed /prompt frontmatter records a parse warning for the promp
 testWithDir("malformed /skill:name frontmatter records a parse warning for the skill source", async ({ dir }) => {
 	const filePath = join(dir, "broken-yaml-skill.md");
 	await writeFile(filePath, `---\nreadonly: [\n---\n\nBody content.\n`);
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
 
@@ -760,7 +719,7 @@ testWithDir("malformed /skill:name frontmatter records a parse warning for the s
 
 testWithDir("deferred readonly enable emits a one-shot context nudge", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "nudge-on", true);
-	const { pi } = await registerCheckedPI();
+	const { pi } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const contextHook = (event: unknown, ctx: unknown) => runContextHandler(pi, event, ctx);
 	const ctx = makeBeforeStartCtx();
@@ -779,7 +738,7 @@ testWithDir("deferred readonly enable emits a one-shot context nudge", async ({ 
 
 testWithDir("deferred readonly disable emits a one-shot context nudge", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "nudge-off", false);
-	const { pi } = await registerCheckedPI();
+	const { pi } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const contextHook = (event: unknown, ctx: unknown) => runContextHandler(pi, event, ctx);
 	const ctx = makeBeforeStartCtx();
@@ -799,7 +758,7 @@ testWithDir("deferred readonly disable emits a one-shot context nudge", async ({
 
 testWithDir("one readonly entry is appended per consumed queued toggle", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "prompt-a", true);
-	const { pi } = await registerCheckedPI();
+	const { pi } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
 	pi.setCommands([makePromptCommand("prompt-a", filePath)]);
@@ -816,7 +775,7 @@ async function assertHandoffAlignment(name: string, readonly: boolean, direction
 	const dir = await tmpDir();
 	try {
 		const filePath = await writePrompt(dir, name, readonly);
-		const { pi } = await registerCheckedPI();
+		const { pi } = await registerReadonlyPI();
 		const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 		const ctx = makeBeforeStartCtx();
 

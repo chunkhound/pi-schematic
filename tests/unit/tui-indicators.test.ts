@@ -1,27 +1,13 @@
 import { expect, test } from "vitest";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
 import { updateIndicators, STATUS_KEY_TOPIC, STATUS_KEY_READONLY } from "../../tui.js";
 import { makeTUICtx } from "./helpers.js";
 import { assertPresent } from "../assertions.js";
 
-// makeTUICtx builds a partial context with the members updateIndicators uses. Reading a member it
-// lacks yields undefined; calling or dereferencing one throws a TypeError. Only that the value is an
-// object can be checked at run time.
-function assertContext(value: unknown): asserts value is ExtensionContext {
-	if (typeof value !== "object" || value === null) {throw new Error("makeTUICtx did not return a context object.");}
-}
-
-function tuiContext(options: Parameters<typeof makeTUICtx>[0]): ExtensionContext {
-	const ctx: unknown = makeTUICtx(options);
-	assertContext(ctx);
-	return ctx;
-}
-
 test("updateIndicators sets context usage status with correct color tone", () => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = tuiContext({ percent: 42, record });
+	const ctx = makeTUICtx({ percent: 42, record });
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get("pi-schematic-ctx");
@@ -32,7 +18,7 @@ test("updateIndicators sets context usage status with correct color tone", () =>
 test("updateIndicators uses error tone at 70%+ context", () => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = tuiContext({ percent: 85, record });
+	const ctx = makeTUICtx({ percent: 85, record });
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get("pi-schematic-ctx");
@@ -44,7 +30,7 @@ test("updateIndicators uses error tone at 70%+ context", () => {
 test("updateIndicators uses warning tone at 50-69% context", () => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = tuiContext({ percent: 55, record });
+	const ctx = makeTUICtx({ percent: 55, record });
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get("pi-schematic-ctx");
@@ -54,7 +40,7 @@ test("updateIndicators uses warning tone at 50-69% context", () => {
 test("updateIndicators uses accent tone at 30-49% context", () => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = tuiContext({ percent: 30, record });
+	const ctx = makeTUICtx({ percent: 30, record });
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get("pi-schematic-ctx");
@@ -64,7 +50,7 @@ test("updateIndicators uses accent tone at 30-49% context", () => {
 test("updateIndicators handles null context usage", () => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = tuiContext({ percent: null, record });
+	const ctx = makeTUICtx({ percent: null, record });
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get("pi-schematic-ctx");
@@ -74,7 +60,7 @@ test("updateIndicators handles null context usage", () => {
 test.for([Number.NaN, Number.POSITIVE_INFINITY, -1])("updateIndicators treats malformed percentages as unavailable: %s", (percent) => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	updateIndicators(tuiContext({ percent, record }), state);
+	updateIndicators(makeTUICtx({ percent, record }), state);
 	expect(record.statuses.get("pi-schematic-ctx")).toContain("--%");
 	expect(record.widgets.get("pi-schematic-warning")).toBeUndefined();
 });
@@ -82,7 +68,7 @@ test.for([Number.NaN, Number.POSITIVE_INFINITY, -1])("updateIndicators treats ma
 test("updateIndicators preserves overflow context percentages", () => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	updateIndicators(tuiContext({ percent: 125, record }), state);
+	updateIndicators(makeTUICtx({ percent: 125, record }), state);
 	expect(record.statuses.get("pi-schematic-ctx")).toContain("125%");
 	expect(record.widgets.get("pi-schematic-warning")?.[0]).toContain("125%");
 });
@@ -90,7 +76,7 @@ test("updateIndicators preserves overflow context percentages", () => {
 test("updateIndicators no-ops when ctx.hasUI is false", () => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = tuiContext({ hasUI: false, record });
+	const ctx = makeTUICtx({ hasUI: false, record });
 
 	updateIndicators(ctx, state);
 	expect(record.statuses.size, "no-op should not call any setStatus").toBe(0);
@@ -102,7 +88,7 @@ test("updateIndicators shows notebook page count in status", () => {
 	state.notebookPages.set("entry-1", "first entry");
 	state.notebookPages.set("entry-2", "second entry");
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = tuiContext({ percent: null, record });
+	const ctx = makeTUICtx({ percent: null, record });
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get("pi-schematic-notebook");
@@ -113,7 +99,7 @@ test("updateIndicators shows active notebook topic when set", () => {
 	const state = createState();
 	state.activeNotebookTopic = "oauth";
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = tuiContext({ percent: 30, record });
+	const ctx = makeTUICtx({ percent: 30, record });
 
 	updateIndicators(ctx, state);
 	expect(record.statuses.get(STATUS_KEY_TOPIC)).toBe("🧭 oauth");
@@ -123,7 +109,7 @@ test("updateIndicators shows readonly indicator when enabled", () => {
 	const state = createState();
 	state.readonlyEnabled = true;
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = tuiContext({ percent: null, record });
+	const ctx = makeTUICtx({ percent: null, record });
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get(STATUS_KEY_READONLY);
@@ -135,7 +121,7 @@ test("updateIndicators hides readonly indicator when disabled", () => {
 	const state = createState();
 	state.readonlyEnabled = false;
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = tuiContext({ percent: null, record });
+	const ctx = makeTUICtx({ percent: null, record });
 
 	updateIndicators(ctx, state);
 	expect(record.statuses.get(STATUS_KEY_READONLY), "readonly indicator should be undefined when disabled").toBeUndefined();
@@ -145,7 +131,7 @@ test("updateIndicators shows readonly-specific warning widget at 70%+ context", 
 	const state = createState();
 	state.readonlyEnabled = true;
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = tuiContext({ percent: 85, record });
+	const ctx = makeTUICtx({ percent: 85, record });
 
 	updateIndicators(ctx, state);
 	const w = record.widgets.get("pi-schematic-warning");
@@ -161,7 +147,7 @@ test("updateIndicators hides widget below 70% context", () => {
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
 	// Pre-set a widget to verify it gets cleared
 	record.widgets.set("pi-schematic-warning", ["existing"]);
-	const ctx = tuiContext({ percent: 30, record });
+	const ctx = makeTUICtx({ percent: 30, record });
 
 	updateIndicators(ctx, state);
 	expect(record.widgets.get("pi-schematic-warning"), "warning widget should be cleared below 70%").toBeUndefined();

@@ -3,37 +3,24 @@ import os from "node:os";
 import { READONLY_POWERSHELL_BLOCK_REASON, READONLY_SANDBOX_BLOCK_NOTICE } from "../../notifications.js";
 import type {
 	ExtensionCommandContext,
-	ExtensionShortcut,
-	ToolCallEventResult,
 	ToolResultEvent,
 	ToolResultEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { canUseOsSandbox } from "../../os-sandbox.js";
 import {
+	isRecord,
 	bashResult,
 	callHandlers,
 	createCommandContext,
+	createExtensionContext,
 	createUIContext,
 	emitAll,
 	registerReadonlyPI,
 	SANDBOX_DENIAL_PHRASES,
 	textOf,
-	type ToolCall,
 } from "./helpers.js";
-import { createBeforeAgentStartEvent, getCommand, type TestPI } from "./test-host.js";
+import { createBeforeAgentStartEvent, getCommand, getHandler, type TestPI } from "./test-host.js";
 import { assertPresent, expectSuffix } from "../assertions.js";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
-// The composed tool_call handlers return the first blocking result or nothing.
-function assertToolCallResult(value: unknown): asserts value is ToolCallEventResult | undefined {
-	if (value === undefined) {return;}
-	if (!isRecord(value) || typeof value.block !== "boolean" || (value.reason !== undefined && typeof value.reason !== "string")) {
-		throw new Error("The tool_call handlers returned something other than a tool_call result.");
-	}
-}
 
 // The tool_result handler returns a patch of the result or nothing.
 function assertToolResultEventResult(value: unknown): asserts value is ToolResultEventResult | undefined {
@@ -41,21 +28,6 @@ function assertToolResultEventResult(value: unknown): asserts value is ToolResul
 	if (!isRecord(value) || (value.content !== undefined && !Array.isArray(value.content)) || (value.isError !== undefined && typeof value.isError !== "boolean")) {
 		throw new Error("The tool_result handler returned something other than a tool_result result.");
 	}
-}
-
-type ReadonlyToolCall = (event: Parameters<ToolCall>[0], ctx: Parameters<ToolCall>[1]) => Promise<ToolCallEventResult | undefined>;
-
-/** `registerReadonlyPI` with a `toolCall` whose result is checked to be a tool_call result or nothing. */
-async function registerCheckedPI(): Promise<{ pi: TestPI; toolCall: ReadonlyToolCall }> {
-	const { pi, toolCall } = await registerReadonlyPI();
-	return {
-		pi,
-		toolCall: async (event, ctx) => {
-			const result: unknown = await toolCall(event, ctx);
-			assertToolCallResult(result);
-			return result;
-		},
-	};
 }
 
 /** A UI command context whose notifications, statuses and widgets go nowhere, with no context usage. */
@@ -68,12 +40,6 @@ function uiCommandContext(overrides: Partial<ExtensionCommandContext> = {}): Ext
 	});
 }
 
-// The test host has no typed shortcut getter. pi stores each registered shortcut as an
-// `ExtensionShortcut`; only that its handler is a function can be checked at run time.
-function assertShortcut(value: unknown): asserts value is Pick<ExtensionShortcut, "handler"> {
-	if (!isRecord(value) || typeof value.handler !== "function") {throw new Error("The registered shortcut has no handler function.");}
-}
-
 /** The messages the one context handler returned. The contexts here report partial usage, which `ExtensionContext` does not admit. */
 async function contextMessages(pi: TestPI, event: unknown, ctx: unknown): Promise<Record<string, unknown>[]> {
 	const [result] = await callHandlers(pi, "context", event, ctx);
@@ -84,7 +50,7 @@ async function contextMessages(pi: TestPI, event: unknown, ctx: unknown): Promis
 }
 
 test("readonly toggle on blocks write, edit, powershell, handoff, and bash mutations", async () => {
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const ctx = uiCommandContext();
 
 	await getCommand(pi, "readonly").handler("", ctx);
@@ -101,7 +67,7 @@ test("readonly toggle on blocks write, edit, powershell, handoff, and bash mutat
 });
 
 test("readonly toggle off restores write, powershell, handoff, and bash access", async () => {
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	const ctx = uiCommandContext();
 
 	await getCommand(pi, "readonly").handler("", ctx);
@@ -114,34 +80,26 @@ test("readonly toggle off restores write, powershell, handoff, and bash access",
 });
 
 test("readonly toggle is a no-op in headless mode", async () => {
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 
 	// Toggle readonly via the command handler with hasUI: false.
 	// The handler guards on ctx.hasUI — in headless mode the toggle
 	// is a no-op, preserving the contract: readonly is a TUI-only feature.
 	await getCommand(pi, "readonly").handler("", createCommandContext({ getContextUsage: () => undefined }));
 
-	// These contexts have no `modelRegistry`, which `ExtensionContext` requires, so the one
-	// input and before_agent_start handlers run through emitAll.
-	await emitAll(pi, "input", { text: "/review", source: "interactive" }, {
-		hasUI: false,
-		getContextUsage: () => null,
-	});
-	await emitAll(pi, "before_agent_start", createBeforeAgentStartEvent({ skills: [] }), {
-		hasUI: false,
-		cwd: process.cwd(),
-		isProjectTrusted: () => false,
-		getContextUsage: () => null,
-	});
+	// Without a model registry the handlers load no model groups.
+	const headless = createExtensionContext({ isProjectTrusted: () => false, getContextUsage: () => undefined, modelRegistry: undefined });
+	await getHandler(pi, "input")({ type: "input", text: "/review", source: "interactive" }, headless);
+	await getHandler(pi, "before_agent_start")(createBeforeAgentStartEvent({ skills: [] }), headless);
 
 	// Write should remain unblocked for both manual and deferred readonly paths.
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
 });
 
 test("readonly shortcut only toggles while idle", async () => {
-	const { pi, toolCall } = await registerCheckedPI();
-	const shortcut: unknown = pi.shortcuts.get("ctrl+shift+r");
-	assertShortcut(shortcut);
+	const { pi, toolCall } = await registerReadonlyPI();
+	const shortcut = pi.shortcuts.get("ctrl+shift+r");
+	assertPresent(shortcut, "the readonly shortcut must be registered");
 
 	await shortcut.handler(uiCommandContext({ isIdle: () => false }));
 	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
@@ -151,7 +109,7 @@ test("readonly shortcut only toggles while idle", async () => {
 });
 
 test("readonly toggle delivers an activation nudge via context hook", async () => {
-	const { pi } = await registerCheckedPI();
+	const { pi } = await registerReadonlyPI();
 
 	await getCommand(pi, "readonly").handler("", uiCommandContext());
 
@@ -167,7 +125,7 @@ test("readonly toggle delivers an activation nudge via context hook", async () =
 });
 
 test("readonly toggle off delivers a deactivation nudge via context hook", async () => {
-	const { pi } = await registerCheckedPI();
+	const { pi } = await registerReadonlyPI();
 
 	await getCommand(pi, "readonly").handler("", uiCommandContext());
 	await getCommand(pi, "readonly").handler("", uiCommandContext());
@@ -189,7 +147,7 @@ const SANDBOX_DENIAL_PHRASE = SANDBOX_DENIAL_PHRASES[process.platform];
 const skipWithoutSandbox = !canUseOsSandbox();
 
 async function registerReadonlyBash() {
-	const { pi, toolCall } = await registerCheckedPI();
+	const { pi, toolCall } = await registerReadonlyPI();
 	await getCommand(pi, "readonly").handler("", uiCommandContext());
 	return {
 		pi,

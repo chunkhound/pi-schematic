@@ -16,12 +16,8 @@ import {
 import { expectSuffix } from "../assertions.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
-import { createToolContext, runRealChildInvocation, SANDBOX_DENIAL_PHRASES, textOf, tmpDir } from "./helpers.js";
+import { isRecord, createToolContext, runRealChildInvocation, SANDBOX_DENIAL_PHRASES, textOf, tmpDir } from "./helpers.js";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
 
 // ── Tool filtering ───────────────────────────────────────────────────
 

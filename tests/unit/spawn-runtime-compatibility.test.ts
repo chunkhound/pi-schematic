@@ -10,12 +10,8 @@ import { createState } from "../../state.js";
 import { THINKING_LEVELS } from "../../thinking-levels.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
 import { createTestHost, getTool } from "./test-host.js";
-import { assertErrorResult, createExtensionContext, EMPTY_CHILD_USAGE, runRealChildInvocation } from "./helpers.js";
+import { isRecord, assertErrorResult, createExtensionContext, EMPTY_CHILD_USAGE, runRealChildInvocation } from "./helpers.js";
 import { REPO_ROOT_URL } from "../paths.js";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
 
 // The fields isSpawnToolResult checks; everything else stays unknown.
 interface CheckedSpawnResult {

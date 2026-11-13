@@ -52,6 +52,7 @@ import {
 	createUIContext,
 	emitAll,
 	handoffToolResult,
+	makeTUICtx,
 	turnEndEvent,
 } from "./helpers.js";
 import {
@@ -1609,16 +1610,8 @@ test("session_start new clears stale handoff status and warning widget", async (
 	const pi = await createTestHost();
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "stale"]]);
 	const widgets = new Map<string, string[] | undefined>([[WIDGET_KEY_WARNING, ["stale"]]]);
-	const ctx = {
-		hasUI: true,
-		ui: {
-			theme: { fg: (_name: string, text: string) => text },
-			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-			setWidget: (key: string, value: string[] | undefined) => { widgets.set(key, value); },
-		},
-		sessionManager: { getBranch: () => [] },
-		getContextUsage: () => null,
-	};
+	const tui = makeTUICtx({ record: { statuses, widgets } });
+	const ctx = { ...tui, ui: { ...tui.ui, addAutocompleteProvider: () => undefined } };
 	await emitAll(pi, "session_start", { type: "session_start", reason: "new" }, ctx);
 
 	expect(statuses.get(STATUS_KEY_HANDOFF)).toBeUndefined();

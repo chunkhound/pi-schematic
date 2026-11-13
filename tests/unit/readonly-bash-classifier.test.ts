@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { ToolCallEventResult } from "@earendil-works/pi-coding-agent";
-import { createCommandContext, createUIContext, registerReadonlyPI } from "./helpers.js";
+import { isRecord, createCommandContext, createUIContext, registerReadonlyPI } from "./helpers.js";
 import type { ToolCall } from "./helpers.js";
 import { getCommand, type TestPI } from "./test-host.js";
 
@@ -15,10 +15,6 @@ async function enableReadonly(pi: TestPI) {
 		ui: createUIContext({ notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn() }),
 		getContextUsage: () => undefined,
 	}));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
 }
 
 /** The tool_call result for a bash `command`, checked to be the first blocking result or nothing. */

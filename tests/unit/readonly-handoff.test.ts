@@ -8,7 +8,6 @@ import type {
 	ExtensionContext,
 	ExtensionToolContext,
 	SessionBoundaryDraft,
-	ToolCallEventResult,
 	TurnEndEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { execFileSync } from "node:child_process";
@@ -19,6 +18,7 @@ import { createState } from "../../state.js";
 import { canPromoteBoundary, discardNonHumanBoundary } from "../../readonly-boundary.js";
 import { setActiveNotebookTopic } from "../../notebook/topic.js";
 import {
+	isRecord,
 	callHandlers,
 	createCommandContext,
 	createExtensionContext,
@@ -40,35 +40,13 @@ import { READONLY_POWERSHELL_BLOCK_REASON, READONLY_WRITE_EDIT_BLOCK_REASON } fr
 
 type AgentMessage = ContextEvent["messages"][number];
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
-// The composed tool_call handlers return the first blocking result or nothing.
-function assertToolCallResult(value: unknown): asserts value is ToolCallEventResult | undefined {
-	if (value === undefined) {return;}
-	if (!isRecord(value) || typeof value.block !== "boolean" || (value.reason !== undefined && typeof value.reason !== "string")) {
-		throw new Error("The tool_call handlers returned something other than a tool_call result.");
-	}
-}
-
-type ReadonlyToolCall = (event: Parameters<ToolCall>[0], ctx: Parameters<ToolCall>[1]) => Promise<ToolCallEventResult | undefined>;
-
-function checkedToolCall(toolCall: ToolCall): ReadonlyToolCall {
-	return async (event, ctx) => {
-		const result: unknown = await toolCall(event, ctx);
-		assertToolCallResult(result);
-		return result;
-	};
-}
-
 async function createHandoffPI() {
 	const { pi, toolCall } = await registerReadonlyPI();
 	const agentSettled = (ctx: unknown) => emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 	// The contexts these tests pass stub `sessionManager` with a branch only, so the one session_tree handler runs through emitAll.
 	const sessionTree = (event: unknown, ctx: unknown) => emitAll(pi, "session_tree", event, ctx);
 	const sessionStart = (event: unknown, ctx: unknown) => emitAll(pi, "session_start", event, ctx);
-	return { pi, toolCall: checkedToolCall(toolCall), agentSettled, sessionTree, sessionStart };
+	return { pi, toolCall, agentSettled, sessionTree, sessionStart };
 }
 
 /** A UI command context whose notifications, statuses and widgets go nowhere, with no context usage. */
@@ -127,7 +105,7 @@ function makeReadonlyResumeCtx(branch: unknown[]) {
 /** Dispatch a tool call as pi does: run the composed tool_call handlers and execute the tool only when none blocks. Returns the block or the tool's result. */
 async function dispatchTool(
 	pi: TestPI,
-	toolCall: ReadonlyToolCall,
+	toolCall: ToolCall,
 	event: { toolName: string; toolCallId: string; input: Record<string, unknown> },
 	ctx: ExtensionToolContext,
 ): Promise<unknown> {
@@ -223,7 +201,7 @@ async function handoffCutAcrossReadonlyToggle(readonlyAfterCut: boolean) {
 	return { summary: compactionSummary(drafts), nudgeContent: lastReadonlyNudge(next) };
 }
 
-async function assertNonTempBashBlocked(toolCall: ReadonlyToolCall): Promise<void> {
+async function assertNonTempBashBlocked(toolCall: ToolCall): Promise<void> {
 	const target = path.join(os.homedir(), `readonly-handoff-test-${process.pid}-${Date.now()}`);
 	const command = `touch "${target}"`;
 	await rm(target, { force: true });

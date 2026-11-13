@@ -26,6 +26,7 @@ import type {
 	ExtensionHandler,
 	ExtensionRuntime,
 	InputEventResult,
+	KeybindingsManager,
 	MessageEndEventResult,
 	ModelRegistry,
 	NormalizedBuildSystemPromptOptions,
@@ -86,8 +87,18 @@ const { normalizeBuildSystemPromptOptions, buildSystemPrompt } = await importInt
 	["normalizeBuildSystemPromptOptions", "buildSystemPrompt"],
 );
 
-/** Raw tool definitions as tests consume them (unwrapped; loose to keep call sites ergonomic). */
-export type TestToolMap = Map<string, any>;
+// pi's package root exports `KeybindingsManager` as a type only.
+interface InternalKeybindings {
+	KeybindingsManager: typeof KeybindingsManager;
+}
+
+const internalKeybindings = await importInternal<InternalKeybindings>("core/keybindings.js", ["KeybindingsManager"]);
+
+/** pi's keybindings with the default bindings, for the `keybindings` argument of a `ctx.ui.custom` factory. */
+export const testKeybindings: KeybindingsManager = new internalKeybindings.KeybindingsManager();
+
+/** The tool definitions the extension registered, by tool name. */
+export type TestToolMap = Map<string, ToolDefinition>;
 
 /**
  * Test-only accessors stamped onto the real api. Registration state is backed by
@@ -95,15 +106,15 @@ export type TestToolMap = Map<string, any>;
  * exists so tests can observe registration and drive host side effects.
  */
 export interface TestAccessors {
-	handlers: Map<string, any[]>;
+	handlers: Extension["handlers"];
 	tools: TestToolMap;
-	commands: Map<string, any>;
-	shortcuts: Map<string, any>;
+	commands: Extension["commands"];
+	shortcuts: Extension["shortcuts"];
 	sentUserMessages: SentUserMessage[];
-	sentMessages: { message: any; options?: SentMessage["options"] }[];
-	appendedEntries: { customType: string; data: any }[];
+	sentMessages: SentMessage[];
+	appendedEntries: AppendedEntry[];
 	activeTools: string[];
-	setCommands(commands: any[]): void;
+	setCommands(commands: SlashCommandInfo[]): void;
 }
 
 export type TestPI = ExtensionAPI & TestAccessors;

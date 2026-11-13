@@ -2,8 +2,7 @@ import { expect, test, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
-import { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
 	__setModelGroupsFsForTests,
 	createGroup,
@@ -21,7 +20,7 @@ import {
 import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModel, type ModelGroupScope, type ModelGroupsAccess, type ResolvedModelGroup } from "../../model-groups/types.js";
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import { testMinContext } from "./model-groups-constraints-fixture.js";
-import { withTempAgentDir } from "./helpers.js";
+import { createModelRegistry, testModel, withTempAgentDir } from "./helpers.js";
 import { withTemp } from "./model-groups-helpers.js";
 
 function access(cwd: string, policy: ModelGroupsAccess["policy"] = "global-project"): ModelGroupsAccess { return { cwd, policy }; }
@@ -61,34 +60,10 @@ function read(scope: ModelGroupScope, cwd: string): PersistedConfig {
 
 type RegistryFields = Pick<ModelRegistry, "getAll" | "getAvailable" | "find" | "hasConfiguredAuth">;
 
-function model(fields: Pick<Model<Api>, "provider" | "id" | "input" | "reasoning"> & Partial<Model<Api>>): Model<Api> {
-	return {
-		name: fields.id, api: "test-api", baseUrl: "http://localhost.invalid",
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 0, maxTokens: 0, ...fields,
-	};
-}
-
-const MODEL_REGISTRY_MEMBERS = new Set(Object.getOwnPropertyNames(ModelRegistry.prototype).filter((name) => name !== "constructor"));
-
-// A ModelRegistry whose listed members are `fields`; reading any other ModelRegistry member throws.
-function modelRegistry(fields: RegistryFields): ModelRegistry {
-	const target: unknown = Object.create(ModelRegistry.prototype);
-	if (!(target instanceof ModelRegistry)) {throw new Error("Object.create did not produce a ModelRegistry instance.");}
-	return new Proxy(Object.assign(target, fields), {
-		get(registry, property, receiver) {
-			if (typeof property === "string" && MODEL_REGISTRY_MEMBERS.has(property) && !Object.hasOwn(fields, property)) {
-				throw new Error(`modelRegistry.${property} is not stubbed in this test registry; add it to the fields.`);
-			}
-			const value: unknown = Reflect.get(registry, property, receiver);
-			return value;
-		},
-	});
-}
-
 function registryFields(available = new Set(["openai:gpt-5", "anthropic:claude"])): RegistryFields {
 	const models = [
-		model({ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } }),
-		model({ provider: "anthropic", id: "claude", input: ["text"], reasoning: false }),
+		testModel({ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } }),
+		testModel({ provider: "anthropic", id: "claude", input: ["text"], reasoning: false }),
 	];
 	return {
 		getAll: () => models,
@@ -99,14 +74,14 @@ function registryFields(available = new Set(["openai:gpt-5", "anthropic:claude"]
 }
 
 function registry(available?: Set<string>): ModelRegistry {
-	return modelRegistry(registryFields(available));
+	return createModelRegistry(registryFields(available));
 }
 
 // The registry above plus `ctxModel`, whose 100-token contextWindow supports injected testMinContext overrides up to 100; the other models have a contextWindow of 0.
 function registryWithContextModel(): ModelRegistry {
-	const ctxModel = model({ provider: "openai", id: "gpt-ctx", input: ["text"], reasoning: false, contextWindow: 100 });
+	const ctxModel = testModel({ provider: "openai", id: "gpt-ctx", input: ["text"], reasoning: false, contextWindow: 100 });
 	const fields = registryFields();
-	return modelRegistry({ ...fields, find: (provider, id) => id === "gpt-ctx" ? ctxModel : fields.find(provider, id) });
+	return createModelRegistry({ ...fields, find: (provider, id) => id === "gpt-ctx" ? ctxModel : fields.find(provider, id) });
 }
 
 test("model groups store creates, round-trips, validates, renames, updates, deletes, and moves", () => withTemp(({ cwd }) => {

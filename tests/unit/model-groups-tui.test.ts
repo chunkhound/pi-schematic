@@ -1,11 +1,11 @@
 import { expect, test, vi } from "vitest";
-import { ModelRegistry, Theme } from "@earendil-works/pi-coding-agent";
+import { Theme, type ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { CURSOR_MARKER, fuzzyFilter, renderFakeCursor, TuiMainScreen, visibleWidth, type TUI } from "@earendil-works/pi-tui";
 import { createModelGroupsComponent, type ModelGroupsComponentOptions, type ModelGroupsStoreOps } from "../../model-groups/tui.js";
 import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModality, type ModelGroupModel, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ResolvedModelGroup } from "../../model-groups/types.js";
 import { assertPresent } from "../assertions.js";
-import { stripAnsi, theme } from "./helpers.js";
+import { createModelRegistry, stripAnsi, stubInstance, theme } from "./helpers.js";
 import { group } from "./model-groups-helpers.js";
 
 const GPT5_THINKING_OPTIONS = ["inherit", "off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -23,13 +23,11 @@ function configuredAuthOf(model: Model<Api>): unknown {
 	return "configuredAuth" in model ? model.configuredAuth : undefined;
 }
 
-// A `ModelRegistry` that lists, finds and authenticates from `entries`; every other
-// method is the class's own and fails without a runtime.
+// A `ModelRegistry` that lists, finds and authenticates from `entries`; reading any
+// other method throws.
 function registryOf(entries: readonly CatalogEntry[], hasConfiguredAuth: (model: Model<Api>) => boolean): ModelRegistry {
 	const models = entries.map(catalogModel);
-	const target: unknown = Object.create(ModelRegistry.prototype);
-	if (!(target instanceof ModelRegistry)) {throw new Error("Object.create did not produce a ModelRegistry instance.");}
-	return Object.assign(target, {
+	return createModelRegistry({
 		getAll: () => models,
 		getAvailable: () => models,
 		find: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id),
@@ -48,16 +46,12 @@ function registry(): ModelRegistry {
 
 // A render theme with `fg` as its colorizer and an identity `bold`.
 function renderTheme(fg: (name: string, text: string) => string): Theme {
-	const target: unknown = Object.create(Theme.prototype);
-	if (!(target instanceof Theme)) {throw new Error("Object.create did not produce a Theme instance.");}
-	return Object.assign(target, { fg, bold: (text: string) => text });
+	return stubInstance(Theme.prototype, { fg, bold: (text: string) => text });
 }
 
 // A TUI whose `requestRender` calls `onRender`; the component uses no other member.
 function renderCountingTui(onRender: () => void): TUI {
-	const target: unknown = Object.create(TuiMainScreen.prototype);
-	if (!(target instanceof TuiMainScreen)) {throw new Error("Object.create did not produce a TuiMainScreen instance.");}
-	return Object.assign(target, { requestRender: onRender });
+	return stubInstance(TuiMainScreen.prototype, { requestRender: onRender });
 }
 
 function isUnknownArray(value: unknown): value is unknown[] {

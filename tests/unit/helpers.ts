@@ -6,16 +6,18 @@ import {
 	CONFIG_DIR_NAME,
 	ModelRegistry,
 	SessionManager,
+	Theme,
+	type AgentToolResult,
 	type ExtensionCommandContext,
 	type ExtensionContext,
 	type ExtensionToolContext,
 	type ExtensionUIContext,
-	type Theme,
+	type ToolCallEventResult,
 	type ToolDefinition,
 	type TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model, ToolResultMessage } from "@earendil-works/pi-ai";
-import { stripTerminalSequences } from "@earendil-works/pi-tui";
+import { stripTerminalSequences, TuiMainScreen, type Component } from "@earendil-works/pi-tui";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -25,7 +27,7 @@ import { createState, resetState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
 import { assertPresent } from "../assertions.js";
 import { AGENT_DIR_ENV_KEY } from "../paths.js";
-import { createTestHost, getTool, type TestPI } from "./test-host.js";
+import { createTestHost, getTool, testKeybindings, type TestPI } from "./test-host.js";
 
 export const theme = {
 	fg: (_name: string, text: string) => text,
@@ -34,8 +36,41 @@ export const theme = {
 
 export const EMPTY_CHILD_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
+}
+
+/** `value` as a record; throws, naming `what`, unless it is an object. */
+export function recordOf(value: unknown, what: string): Record<string, unknown> {
+	if (!isRecord(value)) {throw new Error(`Expected ${what} to be an object.`);}
+	return value;
+}
+
+/** The details of a tool result; throws unless they are an object. */
+export function detailsOf(result: AgentToolResult<unknown>): Record<string, unknown> {
+	return recordOf(result.details, "the tool result details");
+}
+
+/** The text of the result's first content block; throws unless that block is text. */
+export function firstText(result: AgentToolResult<unknown>): string {
+	const block = result.content.at(0);
+	if (block?.type !== "text") {throw new Error("Expected the tool result to start with a text block.");}
+	return block.text;
+}
+
+/**
+ * An object whose prototype is `prototype`, with `members` as own properties, so it
+ * passes `instanceof` checks for the class. Every member left out is the class's own
+ * and usually fails, because the object never ran the constructor.
+ */
+export function stubInstance<T extends object>(prototype: T, members: Partial<T>): T {
+	const target: unknown = Object.create(prototype);
+	if (!hasPrototype(target, prototype)) {throw new Error("Object.create did not produce an object with the given prototype.");}
+	return Object.assign(target, members);
+}
+
+function hasPrototype<T extends object>(value: unknown, prototype: T): value is T {
+	return typeof value === "object" && value !== null && Object.getPrototypeOf(value) === prototype;
 }
 
 /** A failure after the child session exists is returned as an error result, not thrown. */
@@ -154,7 +189,7 @@ export function createSubscribableSession(messages: unknown[] = []) {
 			sessionManager: { getCwd: () => process.cwd() },
 			abort: async () => {},
 		} as unknown as import("@earendil-works/pi-coding-agent").AgentSession,
-		emit: (event: any) => handler?.(event),
+		emit: (event: unknown) => handler?.(event),
 	};
 }
 
@@ -315,20 +350,38 @@ function definedOverrides<T extends object>(overrides: Partial<T>): Partial<T> {
 // The methods `ModelRegistry` declares; its only data member, `runtime`, is private.
 const MODEL_REGISTRY_MEMBERS = new Set(Object.getOwnPropertyNames(ModelRegistry.prototype).filter((name) => name !== "constructor"));
 
-// A model registry on which reading any `ModelRegistry` method throws naming
-// `ctx.modelRegistry`. Every other access behaves as on an empty object, so copying,
-// comparing, printing or awaiting a context does not throw; only using the registry
-// does, on the original context and on every copy.
-function unstubbedModelRegistry(): ModelRegistry {
-	const target: unknown = Object.create(ModelRegistry.prototype);
-	if (!(target instanceof ModelRegistry)) {throw new Error("Object.create did not produce a ModelRegistry instance.");}
-	return new Proxy(target, {
+// A `ModelRegistry` with `members` as its own; reading any other `ModelRegistry` method
+// throws `unstubbed(property)`. Every other access behaves as on an empty object, so
+// copying, comparing, printing or awaiting the registry does not throw.
+function guardedModelRegistry(members: Partial<ModelRegistry>, unstubbed: (property: string) => Error): ModelRegistry {
+	return new Proxy(stubInstance(ModelRegistry.prototype, members), {
 		get(registry, property, receiver) {
-			if (typeof property === "string" && MODEL_REGISTRY_MEMBERS.has(property)) {throw unstubbedError("ctx.modelRegistry");}
+			if (typeof property === "string" && MODEL_REGISTRY_MEMBERS.has(property) && !Object.hasOwn(members, property)) {
+				throw unstubbed(property);
+			}
 			const value: unknown = Reflect.get(registry, property, receiver);
 			return value;
 		},
 	});
+}
+
+/** A `ModelRegistry` whose methods are `members`; reading any other `ModelRegistry` method throws, naming it. */
+export function createModelRegistry(members: Partial<ModelRegistry>): ModelRegistry {
+	return guardedModelRegistry(members, (property) => new Error(`modelRegistry.${property} is not stubbed in this test registry; add it to the members.`));
+}
+
+// A model registry on which reading any `ModelRegistry` method throws naming
+// `ctx.modelRegistry`, on the original context and on every copy.
+function unstubbedModelRegistry(): ModelRegistry {
+	return guardedModelRegistry({}, () => unstubbedError("ctx.modelRegistry"));
+}
+
+/** A model with `fields` over placeholder metadata: the id as name, a test api and base URL, zero cost and limits. */
+export function testModel(fields: Pick<Model<Api>, "provider" | "id" | "input" | "reasoning"> & Partial<Model<Api>>): Model<Api> {
+	return {
+		name: fields.id, api: "test-api", baseUrl: "http://localhost.invalid",
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 0, maxTokens: 0, ...fields,
+	};
 }
 
 /** An `ExtensionUIContext` with `theme` as its theme; every other member fails on call unless overridden. */
@@ -370,11 +423,14 @@ export function createUIContext(overrides: Partial<ExtensionUIContext> = {}): Ex
  * An `ExtensionContext` without UI: `hasUI` false, mode `print`, `cwd` the process
  * directory, no model, an in-memory session manager for `cwd` and `createUIContext()`
  * as `ui`. `modelRegistry` throws on use unless overridden; every method fails on
- * call unless overridden.
+ * call unless overridden. `modelRegistry: undefined` is the one override set to
+ * `undefined` that counts: it builds a context without a registry, as code that
+ * checks for a missing registry sees one.
  */
 export function createExtensionContext(overrides: Partial<ExtensionContext> = {}): ExtensionContext {
 	const defined = definedOverrides(overrides);
 	const cwd = defined.cwd ?? process.cwd();
+	const registry: Partial<Pick<ExtensionContext, "modelRegistry">> = Object.hasOwn(overrides, "modelRegistry") ? { modelRegistry: overrides.modelRegistry } : {};
 	return {
 		ui: createUIContext(),
 		mode: "print",
@@ -394,6 +450,7 @@ export function createExtensionContext(overrides: Partial<ExtensionContext> = {}
 		compact: unstubbed("ctx.compact"),
 		getSystemPrompt: unstubbed("ctx.getSystemPrompt"),
 		...defined,
+		...registry,
 	};
 }
 
@@ -420,9 +477,37 @@ export function createToolContext(overrides: Partial<ExtensionToolContext> = {})
 	});
 }
 
+/**
+ * A `ctx.ui.custom` that builds the component with a TUI whose `requestRender` does
+ * nothing, `renderTheme` and pi's default keybindings, then runs `onOpen` with it.
+ * It resolves to the value the component passed to `done` by the time `onOpen`
+ * finished, and rejects when the component did not call `done` by then.
+ */
+export function createCustomUI(renderTheme: Theme, onOpen: (component: Component) => void | Promise<void>): ExtensionUIContext["custom"] {
+	const tui = stubInstance(TuiMainScreen.prototype, { requestRender: () => undefined });
+	return async <T,>(factory: (tui: TuiMainScreen, theme: Theme, keybindings: typeof testKeybindings, done: (result: T) => void) => Component | Promise<Component>): Promise<T> => {
+		const results: T[] = [];
+		const component = await factory(tui, renderTheme, testKeybindings, (result) => { results.push(result); });
+		await onOpen(component);
+		if (results.length === 0) {throw new Error("The custom component did not call done.");}
+		return results[0];
+	};
+}
+
 // ── Readonly test helpers ────────────────────────────────────────────
 
-export type ToolCall = (event: { toolName: string; toolCallId?: string; input?: Record<string, unknown> }, ctx: { cwd?: string }) => Promise<any>;
+export type ToolCall = (event: { toolName: string; toolCallId?: string; input?: Record<string, unknown> }, ctx: { cwd?: string }) => Promise<ToolCallEventResult | undefined>;
+
+// A blocking tool_call result; throws when its members are not the ones `ToolCallEventResult` declares.
+function assertToolCallEventResult(value: Record<string, unknown>): asserts value is Record<string, unknown> & ToolCallEventResult {
+	if (
+		typeof value.block !== "boolean"
+		|| (value.reason !== undefined && typeof value.reason !== "string")
+		|| (value.terminate !== undefined && typeof value.terminate !== "boolean")
+	) {
+		throw new Error(`Expected a tool_call result, got ${JSON.stringify(value)}.`);
+	}
+}
 
 /**
  * Create a test PI instance with pi-schematic registered and its tool_call handlers composed as pi runs them.
@@ -434,7 +519,10 @@ export async function registerReadonlyPI(): Promise<{ pi: TestPI; toolCall: Tool
 		for (const handler of registeredHandlers(pi, "tool_call")) {
 			assertRegisteredHandler(handler, "tool_call");
 			const result = await handler(event, ctx);
-			if (isRecord(result) && Boolean(result.block)) {return result;}
+			if (isRecord(result) && Boolean(result.block)) {
+				assertToolCallEventResult(result);
+				return result;
+			}
 		}
 		return undefined;
 	};
@@ -523,8 +611,8 @@ export async function withTempAgentDir<T>(run: (agentDir: string) => Promise<T>)
 // ── Real child invocation helper ────────────────────────────────────
 
 export interface RealChildInvocationResult {
-	result: any;
-	results: any[];
+	result: AgentToolResult<unknown>;
+	results: AgentToolResult<unknown>[];
 	expectedText: string;
 	modelId: string;
 	probeCalls: number;
@@ -839,29 +927,49 @@ export default function(pi) {
 
 // ── TUI context factory ───────────────────────────────────────────────
 
+// The theme of `makeTUICtx`: `fg` marks the color as `[name:text]`; every other member is the class's own.
+const tuiTheme = stubInstance(Theme.prototype, { fg: (name: string, text: string) => `[${name}:${text}]` });
+
+function isOptionalStringArray(value: unknown): value is string[] | undefined {
+	return value === undefined || isStringArray(value);
+}
+
+/**
+ * A TUI command and tool context: UI on unless `hasUI` is false, `tuiTheme` as the
+ * theme, `setStatus` and `setWidget` recorded into `record`, `notify` a no-op unless
+ * overridden, and context usage at `percent` (none when `percent` is null, the
+ * default). It has no model registry, so code that refreshes model groups skips
+ * them. `setWidget` throws for a component widget, which `record` cannot hold.
+ */
 export function makeTUICtx(
 	overrides: Partial<{
 		percent: number | null;
 		hasUI: boolean;
 		record: { statuses: Map<string, string | undefined>; widgets: Map<string, string[] | undefined> };
-		notify: (message: string, level: string) => void;
-		custom: (build: unknown) => Promise<unknown>;
+		notify: ExtensionUIContext["notify"];
+		custom: ExtensionUIContext["custom"];
 	}> = {},
-): any {
+): ExtensionCommandContext & ExtensionToolContext {
 	const record = overrides.record ?? { statuses: new Map(), widgets: new Map() };
 	const hasUI = overrides.hasUI ?? true;
 	const percent = overrides.percent !== undefined ? overrides.percent : null;
-	return {
-		hasUI,
-		ui: {
-			theme: {
-				fg: (name: string, text: string) => `[${name}:${text}]`,
-			},
-			notify: overrides.notify ?? (() => {}),
-			setStatus: (key: string, status: string | undefined) => { record.statuses.set(key, status); },
-			setWidget: (key: string, content: string[] | undefined) => { record.widgets.set(key, content); },
-			...(overrides.custom !== undefined ? { custom: overrides.custom } : {}),
+	const ui = createUIContext({
+		theme: tuiTheme,
+		notify: overrides.notify ?? (() => undefined),
+		setStatus: (key, status) => { record.statuses.set(key, status); },
+		setWidget: (key: string, content: unknown) => {
+			if (!isOptionalStringArray(content)) {throw new Error(`makeTUICtx records only string widgets; "${key}" got a component.`);}
+			record.widgets.set(key, content);
 		},
-		getContextUsage: () => (percent !== null ? { percent } : null),
-	};
+		custom: overrides.custom,
+	});
+	return Object.assign(
+		createCommandContext({
+			hasUI,
+			ui,
+			modelRegistry: undefined,
+			getContextUsage: () => (percent !== null ? { tokens: null, contextWindow: 0, percent } : undefined),
+		}),
+		{ tools: [], executeTool: unstubbedAsync("ctx.executeTool") },
+	);
 }
