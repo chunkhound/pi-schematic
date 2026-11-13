@@ -77,7 +77,7 @@ function markCells(svg: string): Set<string> {
 
 test("pi.image resolves to an existing brand asset", () => {
 	const { repoPath: target } = piImage();
-	expect(existsSync(repoPath(target)), `missing pi.image target: ${target}`).toBeTruthy();
+	expect(existsSync(repoPath(target)), `missing pi.image target: ${target}`).toBe(true);
 });
 
 test("the gallery image is a 360x360 GIF89a", () => {
@@ -104,7 +104,7 @@ test("every local asset referenced by README exists", () => {
 	].map((match) => match[1]);
 	expect(refs.length, "README references no assets").toBeGreaterThan(0);
 	for (const ref of refs) {
-		expect(existsSync(repoPath(ref)), `missing README asset: ${ref}`).toBeTruthy();
+		expect(existsSync(repoPath(ref)), `missing README asset: ${ref}`).toBe(true);
 	}
 });
 

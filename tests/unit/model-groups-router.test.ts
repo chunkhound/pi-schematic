@@ -65,7 +65,7 @@ test("automatic mixed groups default effective to the union so a capability rout
 	expect(route.status).toBe("routed");
 	expect(route.modelId).toBe("image");
 	// Automatic groups carry no ceiling.
-	expect(route.groupCapabilityCeilings).toBe(undefined);
+	expect(route.groupCapabilityCeilings).toBeUndefined();
 	// The union never invents capabilities no member has: a reasoning requirement on
 	// members that all lack reasoning still rejects with the group miss.
 	const textNr = model("p", "text-nr", { reasoning: false });
@@ -187,7 +187,7 @@ test("groups without an explicit override get no modality ceiling", () => {
 	g.modalities.effective = ["text", "image", "reasoning"];
 	const route = resolveSpawnModelRoute({ requestedGroup: "openbox", groups: [g], parentModel: parent, parentThinking: "medium", modelRegistry: registry([parent, vision]) });
 	expect(route.status).toBe("routed");
-	expect(route.groupCapabilityCeilings).toBe(undefined);
+	expect(route.groupCapabilityCeilings).toBeUndefined();
 });
 
 test("explicit override stays a subtractive ceiling even when a capable member exists", () => {

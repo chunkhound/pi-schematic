@@ -7,6 +7,7 @@ import { createTypeScriptImportResolver } from "eslint-import-resolver-typescrip
 import n from "eslint-plugin-n";
 import comments from "@eslint-community/eslint-plugin-eslint-comments/configs";
 import globals from "globals";
+import vitest from "@vitest/eslint-plugin";
 
 const nodeFloor = readFileSync(new URL(".node-version", import.meta.url), "utf8").trim();
 if (nodeFloor === "") {
@@ -408,6 +409,61 @@ export default defineConfig([
 		rules: {
 			"no-restricted-imports": restrictedImports({ tests: true }),
 			"no-restricted-syntax": ["error", ...TEST_SYNTAX],
+		},
+	},
+	{
+		files: ["tests/**/*.ts"],
+		plugins: { vitest },
+		rules: {
+			// @vitest/eslint-plugin recommended
+			// The suite's assertion helpers make a counted expect on every path; "expect" and "assert" are the rule's defaults.
+			"vitest/expect-expect": [
+				"error",
+				{
+					assertFunctionNames: [
+						"expect",
+						"assert",
+						"expectPrefix",
+						"expectSuffix",
+						"expectGoldenFile",
+						"assertAllowed",
+						"assertBlocked",
+						"assertChildRegistriesCleared",
+						"assertErrorResult",
+						"assertHandoffAlignment",
+						"assertResetClears",
+						"assertTopicSourceCoupling",
+					],
+				},
+			],
+			"vitest/no-commented-out-tests": "error",
+			"vitest/no-conditional-expect": "error",
+			// An error, not the preset's warn: lint exits 0 on warnings, so a disabled test would pass unnoticed.
+			"vitest/no-disabled-tests": "error",
+			"vitest/no-focused-tests": "error",
+			"vitest/no-identical-title": "error",
+			"vitest/no-import-node-test": "error",
+			"vitest/no-interpolation-in-snapshots": "error",
+			"vitest/no-mocks-import": "error",
+			// testWithDir is Vitest's test extended with a temp-directory fixture.
+			"vitest/no-standalone-expect": ["error", { additionalTestBlockFunctions: ["testWithDir"] }],
+			"vitest/no-unneeded-async-expect-function": "error",
+			"vitest/prefer-called-exactly-once-with": "error",
+			"vitest/require-local-test-context-for-concurrent-snapshots": "error",
+			"vitest/valid-describe-callback": "error",
+			// The suite passes a failure message as the second argument: expect(value, message).
+			"vitest/valid-expect": ["error", { maxArgs: 2 }],
+			"vitest/valid-expect-in-promise": "error",
+			// Table-driven tests loop over a case list and pass each case's name variable as the title.
+			"vitest/valid-title": ["error", { allowArguments: true }],
+
+			"vitest/max-expects": "error",
+			"vitest/no-conditional-in-test": "error",
+			"vitest/no-conditional-tests": "error",
+			"vitest/no-restricted-vi-methods": ["error", { mock: "vi.mock is not allowed.", doMock: "vi.doMock is not allowed." }],
+			"vitest/prefer-strict-boolean-matchers": "error",
+			"vitest/prefer-to-be": "error",
+			"vitest/prefer-to-contain": "error",
 		},
 	},
 	{

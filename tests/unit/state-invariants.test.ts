@@ -169,7 +169,7 @@ test("Property 1: Topic-source coupling invariant", async () => {
 
 test("Property 2: Child session containment invariant", async () => {
 	useTestHarness();
-	await fc.assert(
+	await expect(fc.assert(
 		fc.asyncProperty(
 			fc.array(
 				fc.oneof(
@@ -188,7 +188,7 @@ test("Property 2: Child session containment invariant", async () => {
 			},
 		),
 		{ numRuns: 100 },
-	);
+	)).resolves.toBeUndefined();
 });
 
 test("Property 3: childSessionEpoch only changes on reset", async () => {

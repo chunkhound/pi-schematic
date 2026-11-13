@@ -72,11 +72,11 @@ test("injected scalar traverses resolution, aggregation, persistence, reconcilia
 	expect({ testMinContext: testMinContext.persistence.override.encode(decoded.ok ? decoded.value : 0) }).toStrictEqual(envelope);
 	expect(evaluateConstraints(resolved, envelope, injected)[0].effective).toBe(12);
 	const unsupported = evaluateConstraints(resolved, { testMinContext: 101 }, injected)[0];
-	expect(unsupported.effective).toBe(null);
+	expect(unsupported.effective).toBeNull();
 	expect(unsupported.diagnostics).toStrictEqual([{ key: "testMinContext", code: "unsupported-override", details: 101 }]);
 	expect(productionConstraintRegistry.descriptors.map((descriptor) => descriptor.key)).toStrictEqual(["modalities"]);
-	expect(productionConstraintRegistry.get("testMinContext")).toBe(undefined);
-	expect(productionConstraintRegistry.get("testMaxBudget")).toBe(undefined);
+	expect(productionConstraintRegistry.get("testMinContext")).toBeUndefined();
+	expect(productionConstraintRegistry.get("testMaxBudget")).toBeUndefined();
 });
 
 test("injected lower-is-better budget rejects an override above the supported cap", () => {
@@ -91,7 +91,7 @@ test("injected lower-is-better budget rejects an override above the supported ca
 	const capped = evaluateConstraints(resolved, { testMaxBudget: 1 }, injected)[0];
 	expect(capped.effective).toBe(1);
 	const unsupported = evaluateConstraints(resolved, { testMaxBudget: 2 }, injected)[0];
-	expect(unsupported.effective).toBe(null);
+	expect(unsupported.effective).toBeNull();
 	expect(unsupported.diagnostics).toStrictEqual([{ key: "testMaxBudget", code: "unsupported-override", details: 2 }]);
 });
 

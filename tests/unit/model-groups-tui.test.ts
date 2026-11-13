@@ -620,7 +620,7 @@ test("model groups TUI MODEL_EDIT shows an unsupported/unavailable current level
 	// Assert a NEW persist happened; `calls.at(-1)` alone would also pass if the
 	// second Enter did nothing and simply re-read the first call's value.
 	expect(calls).toHaveLength(2);
-	expect(calls.at(-1)).toStrictEqual("anthropic/claude/high,missing/nope/max");
+	expect(calls.at(-1)).toBe("anthropic/claude/high,missing/nope/max");
 });
 
 test("model groups TUI notifies and preserves location on move collision", () => {

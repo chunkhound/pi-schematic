@@ -92,7 +92,7 @@ function parseIsoDate(value: string): number {
 
 // Runs the installed audit-ci bin, the one `npx audit-ci` resolves to in CI, as a Node child so it
 // gets spawnNode's deadline and cleared NODE_OPTIONS.
-function runAuditCi(): void {
+function runAuditCi(): { status: number | null; diagnostics: string } {
 	const args = [fileURLToPath(AUDIT_CI_BIN_URL), "--config", "audit-ci.jsonc"];
 	const result = spawnNode(args, { cwd: REPO_ROOT });
 	const diagnostics = [
@@ -101,7 +101,7 @@ function runAuditCi(): void {
 		`stdout:\n${result.stdout}`,
 		`stderr:\n${result.stderr}`,
 	].join("\n");
-	expect(result.status, diagnostics).toBe(0);
+	return { status: result.status, diagnostics };
 }
 
 test("pinned Pi compatibility metadata stays exact", () => {
@@ -188,5 +188,6 @@ test("audit-ci config enforces the reviewed allowlist policy", () => {
 });
 
 test("audit-ci config matches the CI audit command", () => {
-	runAuditCi();
+	const { status, diagnostics } = runAuditCi();
+	expect(status, diagnostics).toBe(0);
 });

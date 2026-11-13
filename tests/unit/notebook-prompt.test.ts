@@ -56,5 +56,5 @@ test("truncates a page summary at 80 characters", () => {
 test("omits the pages section when the notebook is empty", () => {
 	const state = createState();
 
-	expect(notebookPagesSection(state).render()).toBe(undefined);
+	expect(notebookPagesSection(state).render()).toBeUndefined();
 });

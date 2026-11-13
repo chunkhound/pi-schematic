@@ -21,7 +21,7 @@ beforeEach(() => {
 	};
 });
 
-test("test harness captures every forbidden console output level", () => {
+test("harness captures every forbidden console output level", () => {
 	for (const level of ["debug", "log", "warn", "error"] as const) {
 		globalThis.console[level](`sentinel-${level}`);
 	}
