@@ -98,10 +98,6 @@ function assertString(value: unknown, message: string): asserts value is string 
 	if (typeof value !== "string") {throw new Error(message);}
 }
 
-function skipOnWindows(skip: (note?: string) => never, note: string): void {
-	if (process.platform === "win32") {skip(note);}
-}
-
 // ctx.ui.custom receives the overlay factory of the /notebook command; only that it is a function
 // can be checked at run time.
 function assertOverlayFactory(value: unknown): asserts value is OverlayFactory {
@@ -774,8 +770,8 @@ test("resolvePager leaves other pagers and wrappers unchanged", () => {
 	}
 });
 
-test("spawnPager rejects with a readable error when the pager binary is missing", async ({ skip }) => {
-	skipOnWindows(skip, "shell: true reports a missing binary only as a cmd.exe exit code");
+// Skipped on Windows: with shell: true a missing binary shows up only as a cmd.exe exit code.
+test.skipIf(process.platform === "win32")("spawnPager rejects with a readable error when the pager binary is missing", async () => {
 	await expect(spawnPager("body", { cmd: "pi-schematic-definitely-missing-xyz", args: [] })).rejects.toThrow(/pi-schematic-definitely-missing-xyz not found/);
 });
 
