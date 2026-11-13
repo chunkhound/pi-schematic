@@ -47,14 +47,14 @@ test("updateIndicators uses accent tone at 30-49% context", () => {
 	expect(s, "30% should use accent tone").toContain("[accent:30%]");
 });
 
-test("updateIndicators handles null context usage", () => {
+test("updateIndicators handles missing context usage", () => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
 	const ctx = makeTUICtx({ percent: null, record });
 
 	updateIndicators(ctx, state);
 	const s = record.statuses.get("pi-schematic-ctx");
-	expect(s, "null usage shows --%").toContain("--%");
+	expect(s, "missing usage shows --%").toContain("--%");
 });
 
 test.for([Number.NaN, Number.POSITIVE_INFINITY, -1])("updateIndicators treats malformed percentages as unavailable: %s", (percent) => {

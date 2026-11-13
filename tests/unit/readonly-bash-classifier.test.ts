@@ -14,7 +14,7 @@ async function enableReadonly(pi: TestPI) {
 }
 
 /** The tool_call result for a bash `command`: the first blocking result or nothing. */
-async function bashCall(toolCall: ToolCall, command: unknown, cwd = "/workspace"): Promise<ToolCallEventResult | undefined> {
+function bashCall(toolCall: ToolCall, command: unknown, cwd = "/workspace"): Promise<ToolCallEventResult | undefined> {
 	return toolCall({ toolName: "bash", input: { command } }, { cwd });
 }
 

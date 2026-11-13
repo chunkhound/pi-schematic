@@ -14,6 +14,7 @@ import {
 	getCommand,
 	getHandler,
 	getHandlers,
+	getOnlyHandler,
 	getTool,
 	getToolRenderCall,
 	getToolRenderResult,
@@ -104,6 +105,12 @@ async function hostWithTwoInputHandlers(): Promise<TestPI> {
 		api.on("input", () => ({ action: "transform", text: "second" }));
 	});
 }
+
+test("a sole-handler lookup throws naming the event and count when two are registered", async () => {
+	const pi = await hostWithTwoInputHandlers();
+
+	expect(() => getOnlyHandler(pi, "input")).toThrow('Expected one "input" handler on the test host; 2 registered.');
+});
 
 test("handlers of one event are returned in registration order", async () => {
 	const pi = await hostWithTwoInputHandlers();
