@@ -5,7 +5,7 @@ import { runNpmWithRetry } from "./compat-process.mjs";
 
 // 3 direct Pi peers for host lane; current lane sync-asserts 4 (PI_SYNC_PACKAGES adds pi-agent-core transitively).
 // Keep distinct — don't unify.
-export const PI_PACKAGES = [
+const PI_PACKAGES = [
   "@earendil-works/pi-ai",
   "@earendil-works/pi-coding-agent",
   "@earendil-works/pi-tui",

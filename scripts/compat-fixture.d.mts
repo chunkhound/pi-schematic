@@ -3,9 +3,6 @@ interface PiVersions {
 	typeboxVersion: string;
 }
 
-/** The direct Pi peer packages the host lane installs. */
-export declare const PI_PACKAGES: string[];
-
 /** Copies the repository into a new temp directory, without .git, caches, coverage and node_modules. */
 export declare function createCompatCopy(root: string, prefix: string): { temp: string; copy: string };
 

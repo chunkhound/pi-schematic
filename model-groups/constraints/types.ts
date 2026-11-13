@@ -2,7 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { TSchema } from "typebox";
 import type { ModelGroupModel } from "../types.js";
 
-export type DecodeResult<T> = { ok: true; value: T } | { ok: false; message: string };
+type DecodeResult<T> = { ok: true; value: T } | { ok: false; message: string };
 
 export interface ConstraintMemberResolution {
 	members: readonly { ref: ModelGroupModel; model?: Model<Api> }[];
@@ -33,7 +33,7 @@ export interface ConstraintViolation {
 	satisfaction: ConstraintSatisfaction;
 }
 
-export type ConstraintEditorSpec<Aggregate, Effective> =
+type ConstraintEditorSpec<Aggregate, Effective> =
 	| { kind: "multi-select"; label: string; choices(evaluation: ConstraintEvaluation<Aggregate, Effective>): readonly string[]; automatic(evaluation: ConstraintEvaluation<Aggregate, Effective>): string }
 	| { kind: "number"; label: string; unit: string; min: number; step: number; automatic(evaluation: ConstraintEvaluation<Aggregate, Effective>): string; value(evaluation: ConstraintEvaluation<Aggregate, Effective>): number | null };
 

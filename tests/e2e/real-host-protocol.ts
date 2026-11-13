@@ -13,7 +13,7 @@ import { buildNextUserMessage } from "../../handoff/format.js";
 
 /** Provider, API and model the probe registers and the harness selects. */
 export const PROBE_PROVIDER = "schematic-e2e";
-export const PROBE_API = "schematic-e2e-api";
+const PROBE_API = "schematic-e2e-api";
 export const PROBE_MODEL_ID = "schematic-e2e-model";
 /** Context window of the probe model, which pi's threshold compaction measures usage against. */
 export const PROBE_CONTEXT_WINDOW = 200000;
@@ -72,13 +72,13 @@ export const NEXT_INSTRUCTION_PREFIX = buildNextUserMessage({ nextInstruction: "
 export interface ScriptedCall { name: string; arguments: ToolCall["arguments"] }
 
 /** A provider error the model call ends with; pi retries it when retry is enabled and `error` matches a retryable pattern. */
-export interface ScriptedError { error: string }
+interface ScriptedError { error: string }
 
 /** A text reply that reports `inputTokens` of context usage in place of the probe's default. */
-export interface ScriptedReply { text: string; inputTokens: number }
+interface ScriptedReply { text: string; inputTokens: number }
 
 /** Several tool calls the model makes in one assistant message, in order. */
-export interface ScriptedBatch { calls: ScriptedCall[] }
+interface ScriptedBatch { calls: ScriptedCall[] }
 
 /** One scripted model response: what `/e2e-script` arms, one per model call of the run, and what the log carries. */
 export type ScriptedStep = ScriptedCall | ScriptedBatch | ScriptedError | ScriptedReply;

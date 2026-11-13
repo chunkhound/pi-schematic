@@ -53,7 +53,7 @@ export function getPageNames(state: SchematicState): string[] {
 	return Array.from(state.notebookPages.keys()).sort();
 }
 
-export const PREVIEW_MAX_CHARS = 80;
+const PREVIEW_MAX_CHARS = 80;
 const ELLIPSIS_LENGTH = 3;
 
 export function formatPagePreview(content: string): string {

@@ -19,7 +19,7 @@ export const STATUS_KEY_HANDOFF = "pi-schematic-handoff";
 export const WIDGET_KEY_WARNING = "pi-schematic-warning";
 
 /** Status bar key for context usage percentage. */
-export const STATUS_KEY_CTX = "pi-schematic-ctx";
+const STATUS_KEY_CTX = "pi-schematic-ctx";
 
 /** Status bar key for notebook page count. */
 export const STATUS_KEY_NOTEBOOK = "pi-schematic-notebook";
