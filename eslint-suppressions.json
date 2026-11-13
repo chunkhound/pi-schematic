@@ -732,29 +732,8 @@
     "@typescript-eslint/no-empty-function": {
       "count": 7
     },
-    "@typescript-eslint/no-explicit-any": {
-      "count": 22
-    },
     "@typescript-eslint/no-non-null-assertion": {
-      "count": 20
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 10
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 56
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 44
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 90
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 8
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 10
+      "count": 4
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 1
@@ -763,10 +742,10 @@
       "count": 1
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 10
+      "count": 6
     },
     "@typescript-eslint/strict-boolean-expressions": {
-      "count": 2
+      "count": 1
     }
   },
   "tests/unit/helpers.test.ts": {
@@ -1306,32 +1285,14 @@
     "@typescript-eslint/no-empty-function": {
       "count": 3
     },
-    "@typescript-eslint/no-explicit-any": {
-      "count": 24
-    },
     "@typescript-eslint/no-non-null-assertion": {
-      "count": 24
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 51
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 63
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 67
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 3
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 18
+      "count": 2
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 13
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 3
     },
     "ban/wall-clock": {
       "count": 1

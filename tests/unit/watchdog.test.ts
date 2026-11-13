@@ -6,27 +6,73 @@ import { buildNudge } from "../../watchdog.js";
 import { registerHandoffCommand } from "../../handoff/command.js";
 import { registerHandoffTool } from "../../handoff/tool.js";
 import { registerHandoffBoundary } from "../../handoff/boundary.js";
-import { callHandlers, createCommandContext, createExtensionContext, emitAll, handoffToolResult, makeReadonlyUICtx, registerReadonlyPI, turnEndEvent } from "./helpers.js";
+import {
+	callHandlers,
+	createCommandContext,
+	createExtensionContext,
+	createToolContext,
+	createUIContext,
+	emitAll,
+	handoffToolResult,
+	makeReadonlyUICtx,
+	registerReadonlyPI,
+	turnEndEvent,
+} from "./helpers.js";
 import { assertPresent } from "../assertions.js";
-import { createTestHost, getCommand, getHandler, invokeHandler } from "./test-host.js";
+import { createTestHost, getCommand, getHandler, getHandlers, getHostRecords, getTool, invokeHandler } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
-import type { ContextEventResult } from "@earendil-works/pi-coding-agent";
+import type {
+	ContextEvent,
+	ContextEventResult,
+	ContextUsage,
+	ExtensionCommandContext,
+	SessionBoundaryDraft,
+	TurnEndEventResult,
+} from "@earendil-works/pi-coding-agent";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
+
+/**
+ * Usage with only `percent` set: unknown tokens and a zero context window give no
+ * token estimate, so the percentage alone drives the watchdog.
+ */
+function percentUsage(percent: number): ContextUsage {
+	return { tokens: null, contextWindow: 0, percent };
+}
+
+function contextEvent(content: string, timestamp: number): ContextEvent {
+	return { type: "context", messages: [{ role: "user", content, timestamp }] };
+}
+
+/** Runs the first context handler on one user message, with `usage` as the session's context usage. */
+async function runContext(pi: TestPI, usage: ContextUsage | undefined, content = "hi", timestamp = 1): Promise<ContextEventResult | undefined> {
+	return invokeHandler(pi, "context", contextEvent(content, timestamp), createExtensionContext({ getContextUsage: () => usage }));
+}
+
+/** A command context with UI for an idle session; notifications, statuses and widgets go nowhere. */
+function idleUICommandContext(): ExtensionCommandContext {
+	const ignore = (): void => undefined;
+	return createCommandContext({
+		hasUI: true,
+		ui: createUIContext({ notify: ignore, setStatus: ignore, setWidget: ignore }),
+		getContextUsage: () => undefined,
+		isIdle: () => true,
+	});
+}
 
 test("watchdog records context usage without user notifications", async () => {
 	const state = createState();
 	const pi = await createTestHost((api) => { registerWatchdog(api, state); });
-	const [handler] = pi.handlers.get("agent_end")!;
+	const handler = getHandler(pi, "agent_end");
 
 	const notifications: string[] = [];
 	await handler(
-		{},
-		{
+		{ type: "agent_end", messages: [] },
+		createExtensionContext({
 			hasUI: true,
-			ui: { notify: (message: string) => notifications.push(message) },
-			getContextUsage: () => ({ percent: 70 }),
-		},
+			ui: createUIContext({ notify: (message: string) => notifications.push(message) }),
+			getContextUsage: () => percentUsage(70),
+		}),
 	);
 
 	expect(notifications).toStrictEqual([]);
@@ -36,8 +82,8 @@ test("watchdog records context usage without user notifications", async () => {
 test.for([Number.NaN, Number.POSITIVE_INFINITY, -1])("watchdog ignores malformed percentages: %s", async (percent) => {
 	const state = createState();
 	const pi = await createTestHost((api) => { registerWatchdog(api, state); });
-	const [handler] = pi.handlers.get("agent_end")!;
-	await handler({}, { hasUI: false, getContextUsage: () => ({ percent }) });
+	const handler = getHandler(pi, "agent_end");
+	await handler({ type: "agent_end", messages: [] }, createExtensionContext({ getContextUsage: () => percentUsage(percent) }));
 	expect(state.lastContextPercent).toBeNull();
 });
 
@@ -54,9 +100,29 @@ test("watchdog records overflow percentages", async () => {
 
 type ContextMessage = NonNullable<ContextEventResult["messages"]>[number];
 
+type CustomContextMessage = Extract<ContextMessage, { role: "custom" }>;
+
 /** Asserts `message` is the hidden watchdog reminder and narrows it to a custom message. */
-function assertWatchdogReminder(message: ContextMessage | undefined): asserts message is Extract<ContextMessage, { role: "custom" }> {
+function assertWatchdogReminder(message: ContextMessage | undefined): asserts message is CustomContextMessage {
 	expect(message).toMatchObject({ role: "custom", customType: "pi-schematic-watchdog", display: false });
+}
+
+// The messages the context hook returned; throws when it returned none.
+function resultMessages(result: ContextEventResult | undefined): ContextMessage[] {
+	if (result?.messages === undefined) {throw new Error("The context hook returned no messages.");}
+	return result.messages;
+}
+
+/** The message the context hook returned at `index` (negative counts from the end); throws unless it is a custom message. */
+function customMessageAt(result: ContextEventResult | undefined, index: number): CustomContextMessage {
+	const message = resultMessages(result).at(index);
+	if (message?.role !== "custom") {throw new Error(`The context hook returned no custom message at index ${String(index)}.`);}
+	return message;
+}
+
+/** The custom message of `customType` the context hook returned, or undefined when it returned none. */
+function findCustomMessage(result: ContextEventResult | undefined, customType: string): CustomContextMessage | undefined {
+	return resultMessages(result).find((message): message is CustomContextMessage => message.role === "custom" && message.customType === customType);
 }
 
 test("context injects watchdog reminder before each LLM call", async () => {
@@ -93,64 +159,50 @@ test("context injects watchdog reminder before each LLM call", async () => {
 
 test("context injects a boundary nudge below 30% after an explicit topic change", async () => {
 	const pi = await createTestHost();
-	const [handler] = pi.handlers.get("context")!;
-	await pi.commands.get("notebook")!.handler("oauth", { hasUI: false, getContextUsage: () => null });
-	await pi.commands.get("notebook")!.handler("billing", { hasUI: false, getContextUsage: () => null });
+	await getCommand(pi, "notebook").handler("oauth", createCommandContext({ getContextUsage: () => undefined }));
+	await getCommand(pi, "notebook").handler("billing", createCommandContext({ getContextUsage: () => undefined }));
 
-	const result = await handler(
-		{ messages: [{ role: "user", content: "hi", timestamp: 1 }] },
-		{ getContextUsage: () => ({ percent: 20 }) },
-	);
+	const nudge = customMessageAt(await runContext(pi, percentUsage(20)), 1);
 
-	expect(result.messages[1].display).toBe(false);
-	expect(result.messages[1].content).toMatch(/oauth/i);
-	expect(result.messages[1].content).toMatch(/billing/i);
-	expect(result.messages[1].content).toMatch(/topic changed/i);
+	expect(nudge.display).toBe(false);
+	expect(nudge.content).toMatch(/oauth/i);
+	expect(nudge.content).toMatch(/billing/i);
+	expect(nudge.content).toMatch(/topic changed/i);
 });
 
 
 test("context treats malformed percentages as unavailable", async () => {
 	const pi = await createTestHost();
-	const [handler] = pi.handlers.get("context")!;
 
 	for (const percent of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
-		const result = await handler(
-			{ messages: [{ role: "user", content: "hi", timestamp: 1 }] },
-			{ getContextUsage: () => ({ percent }) },
-		);
+		const result = await runContext(pi, percentUsage(percent));
 		expect(result).toBeUndefined();
 	}
 });
 
 test("context injects a no-topic nudge when context is high", async () => {
 	const pi = await createTestHost();
-	const [handler] = pi.handlers.get("context")!;
 
-	const result = await handler(
-		{ messages: [{ role: "user", content: "hi", timestamp: 1 }] },
-		{ getContextUsage: () => ({ percent: 70 }) },
-	);
+	const result = await runContext(pi, percentUsage(70));
 
-	expect(result.messages).toHaveLength(2);
-	expect(result.messages[1]).toMatchObject({ role: "custom", customType: "pi-schematic-watchdog", display: false });
-	expect(result.messages[1].content).toMatch(/no active notebook topic/i);
-	expect(result.messages[1].content).toMatch(/fresh topic/i);
-	expect(result.messages[1].content).toMatch(/handoff/i);
+	expect(resultMessages(result)).toHaveLength(2);
+	const reminder = resultMessages(result)[1];
+	assertWatchdogReminder(reminder);
+	expect(reminder.content).toMatch(/no active notebook topic/i);
+	expect(reminder.content).toMatch(/fresh topic/i);
+	expect(reminder.content).toMatch(/handoff/i);
 });
 
 
 test("context nudges at band crossings and after a below-30% reset", async () => {
 	const pi = await createTestHost();
-	const [handler] = pi.handlers.get("context")!;
-
-	for (const [percent, shouldNudge] of [
+	const steps: [percent: number, shouldNudge: boolean][] = [
 		[29, false], [30, true], [49, false], [50, true],
 		[69, false], [70, true], [29, false], [30, true],
-	]) {
-		const result = await handler(
-			{ messages: [{ role: "user", content: `at ${percent}`, timestamp: percent }] },
-			{ getContextUsage: () => ({ percent }) },
-		);
+	];
+
+	for (const [percent, shouldNudge] of steps) {
+		const result = await runContext(pi, percentUsage(percent), `at ${percent}`, percent);
 		if (shouldNudge) {expect(result, `watchdog nudge at ${percent}%`).toBeDefined();}
 		else {expect(result, `watchdog nudge at ${percent}%`).toBeUndefined();}
 	}
@@ -159,22 +211,15 @@ test("context nudges at band crossings and after a below-30% reset", async () =>
 
 test("context consumes a boundary hint after the first injected nudge", async () => {
 	const pi = await createTestHost();
-	const [handler] = pi.handlers.get("context")!;
-	await pi.commands.get("notebook")!.handler("oauth", { hasUI: false, getContextUsage: () => null });
-	await pi.commands.get("notebook")!.handler("billing", { hasUI: false, getContextUsage: () => null });
+	await getCommand(pi, "notebook").handler("oauth", createCommandContext({ getContextUsage: () => undefined }));
+	await getCommand(pi, "notebook").handler("billing", createCommandContext({ getContextUsage: () => undefined }));
 
-	const first = await handler(
-		{ messages: [{ role: "user", content: "hi", timestamp: 1 }] },
-		{ getContextUsage: () => ({ percent: 20 }) },
-	);
-	expect(first.messages[1].content).toMatch(/oauth/i);
-	expect(first.messages[1].content).toMatch(/billing/i);
-	expect(first.messages[1].content).toMatch(/topic changed/i);
+	const first = customMessageAt(await runContext(pi, percentUsage(20)), 1);
+	expect(first.content).toMatch(/oauth/i);
+	expect(first.content).toMatch(/billing/i);
+	expect(first.content).toMatch(/topic changed/i);
 
-	const second = await handler(
-		{ messages: [{ role: "user", content: "hi", timestamp: 2 }] },
-		{ getContextUsage: () => ({ percent: 20 }) },
-	);
+	const second = await runContext(pi, percentUsage(20), "hi", 2);
 	expect(second).toBeUndefined();
 });
 
@@ -187,12 +232,8 @@ test("buildNudge emits topic and spawn guidance", () => {
 
 test("default watchdog guidance respects token eligibility", async () => {
 	const pi = await createTestHost();
-	const [handler] = pi.handlers.get("context")!;
-	const result = await handler(
-		{ messages: [{ role: "user", content: "small window", timestamp: 1 }] },
-		{ getContextUsage: () => ({ percent: 30, contextWindow: 64_000 }) },
-	);
-	const nudge = result.messages.at(-1).content;
+	const result = await runContext(pi, { tokens: null, contextWindow: 64_000, percent: 30 }, "small window");
+	const nudge = customMessageAt(result, -1).content;
 	expect(nudge).toMatch(/continue working until handoff is available/i);
 	expect(nudge).not.toMatch(/prefer a deliberate handoff/i);
 });
@@ -274,17 +315,14 @@ async function createPendingHandoffHost() {
 		registerHandoffCommand(api, state);
 		registerWatchdog(api, state);
 	});
-	await pi.commands.get("handoff").handler("implement auth", {
-		...makeReadonlyUICtx(),
-		isIdle: () => true,
-	} as any);
+	await getCommand(pi, "handoff").handler("implement auth", idleUICommandContext());
 	expect(state.pendingRequestedHandoff?.toolCalled).toBe(false);
-	const [agentEnd] = pi.handlers.get("agent_end")!;
-	const [agentSettled] = pi.handlers.get("agent_settled")!;
+	const agentEnd = getHandler(pi, "agent_end");
+	const agentSettled = getHandler(pi, "agent_settled");
 	return { state, agentEnd, agentSettled };
 }
 
-const eligibleUsage = () => ({ tokens: 50000, percent: 25, contextWindow: 200000 });
+const eligibleUsage = (): ContextUsage => ({ tokens: 50000, percent: 25, contextWindow: 200000 });
 
 test("watchdog stays advisory for a fresh user-requested handoff", async () => {
 	const { state, agentSettled } = await createPendingHandoffHost();
@@ -292,15 +330,15 @@ test("watchdog stays advisory for a fresh user-requested handoff", async () => {
 	const notifications: string[] = [];
 	deliverEligibleNudge(state);
 	await agentSettled(
-		{},
-		{
+		{ type: "agent_settled", aborted: false },
+		createExtensionContext({
 			hasUI: true,
-			ui: {
+			ui: createUIContext({
 				notify: (message: string) => notifications.push(message),
 				setStatus: () => {},
-			},
+			}),
 			getContextUsage: eligibleUsage,
-		},
+		}),
 	);
 
 	expect(state.pendingRequestedHandoff?.toolCalled).toBe(false);
@@ -322,32 +360,28 @@ async function createStagingHost() {
 }
 
 async function stageHandoff(pi: TestPI, toolCallId: string): Promise<void> {
-	await pi.tools.get("handoff").execute(toolCallId, { nextInstruction: "continue work" }, undefined, undefined, {
-		hasUI: false,
+	await getTool(pi, "handoff").execute(toolCallId, { nextInstruction: "continue work" }, undefined, undefined, createToolContext({
 		getContextUsage: eligibleUsage,
-	});
+	}));
 }
 
 /** End the staging turn and return the entries the boundary handler asked pi to commit. */
-async function endStagingTurn(pi: TestPI, toolCallId: string): Promise<any[]> {
-	const results = await callHandlers(
-		pi,
-		"turn_end",
-		turnEndEvent({ toolResults: [handoffToolResult(toolCallId)] }),
-		{ hasUI: false, signal: { aborted: false }, getContextUsage: eligibleUsage },
-	);
-	const boundary = results.find((result: any) => result?.entries) as { entries: any[] } | undefined;
-	assertPresent(boundary, "the staging turn_end must return boundary entries");
+async function endStagingTurn(pi: TestPI, toolCallId: string): Promise<SessionBoundaryDraft[]> {
+	const event = turnEndEvent({ toolResults: [handoffToolResult(toolCallId)] });
+	const ctx = createExtensionContext({ getContextUsage: eligibleUsage });
+	const results: (TurnEndEventResult | undefined)[] = [];
+	for (let index = 0; index < getHandlers(pi, "turn_end").length; index++) {
+		results.push(await invokeHandler(pi, "turn_end", event, ctx, index));
+	}
+	const boundary = results.find((result) => result?.entries !== undefined);
+	assertPresent(boundary?.entries, "the staging turn_end must return boundary entries");
 	return boundary.entries;
 }
 
 test("a staged handoff that completes at the settle is neither counted nor cancelled", async () => {
 	const { state, pi } = await createStagingHost();
 	const notifications: string[] = [];
-	await pi.commands.get("handoff").handler("continue work", {
-		...makeReadonlyUICtx(),
-		isIdle: () => true,
-	} as any);
+	await getCommand(pi, "handoff").handler("continue work", idleUICommandContext());
 	// Spend all but the last attempt so a miscount would cancel the request.
 	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS - 1; i++) {
 		deliverEligibleNudge(state);
@@ -377,30 +411,30 @@ test("watchdog auto-cancels a required handoff after enough unanswered settled r
 
 	const notifications: unknown[] = [];
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "handoff pending"]]);
-	const ctx = {
+	const ctx = createExtensionContext({
 		hasUI: true,
-		ui: {
+		ui: createUIContext({
 			notify: (message: unknown) => notifications.push(message),
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-		},
+		}),
 		getContextUsage: eligibleUsage,
-	};
+	});
 
 	// Runs without the eligible nudge do not consume the cancellation budget.
 	for (let i = 0; i < 3; i++) {
-		await handler({}, ctx);
+		await handler({ type: "agent_settled", aborted: false }, ctx);
 	}
 	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(0);
 
 	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS - 1; i++) {
 		deliverEligibleNudge(state);
-		await handler({}, ctx);
+		await handler({ type: "agent_settled", aborted: false }, ctx);
 	}
 	assertPresent(state.pendingRequestedHandoff, "handoff must remain pending before the final attempt");
 	expect(notifications, "cancellation must not notify early").toStrictEqual([]);
 
 	deliverEligibleNudge(state);
-	await handler({}, ctx);
+	await handler({ type: "agent_settled", aborted: false }, ctx);
 	expect(state.pendingRequestedHandoff, "pending handoff should be auto-cancelled").toBeNull();
 	expect(statuses.get(STATUS_KEY_HANDOFF), "cancellation should clear the handoff status").toBeUndefined();
 	expect(notifications, "user should receive a cancellation notification").toHaveLength(1);
@@ -410,10 +444,7 @@ test("watchdog auto-cancels a required handoff after enough unanswered settled r
 
 test("a nudged run whose staged handoff cut was not persisted counts one attempt", async () => {
 	const { state, pi } = await createStagingHost();
-	await pi.commands.get("handoff").handler("continue work", {
-		...makeReadonlyUICtx(),
-		isIdle: () => true,
-	} as any);
+	await getCommand(pi, "handoff").handler("continue work", idleUICommandContext());
 
 	deliverEligibleNudge(state);
 	await stageHandoff(pi, "dropped-cut");
@@ -426,16 +457,13 @@ test("a nudged run whose staged handoff cut was not persisted counts one attempt
 	expect(state.pendingRequestedHandoff?.toolCalled, "the failure resets toolCalled before the watchdog counts").toBe(false);
 	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
 	expect(pi.sentUserMessages, "a dropped cut starts no run").toHaveLength(userMessagesBeforeSettle);
-	expect(pi.sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
+	expect(getHostRecords(pi).sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
 	expect(pi.sentMessages.at(-1)?.options?.triggerTurn).toBe(false);
 });
 
 test("a nudged run whose handoff was aborted counts one attempt and starts no run", async () => {
 	const { state, pi } = await createStagingHost();
-	await pi.commands.get("handoff").handler("continue work", {
-		...makeReadonlyUICtx(),
-		isIdle: () => true,
-	} as any);
+	await getCommand(pi, "handoff").handler("continue work", idleUICommandContext());
 
 	deliverEligibleNudge(state);
 	await stageHandoff(pi, "aborted-cut");
@@ -451,51 +479,51 @@ test("a nudged run whose handoff was aborted counts one attempt and starts no ru
 	expect(state.pendingRequestedHandoff?.toolCalled).toBe(false);
 	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
 	expect(pi.sentUserMessages, "an abort must not start another run").toHaveLength(userMessagesBeforeSettle);
-	expect(pi.sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
+	expect(getHostRecords(pi).sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
 	expect(pi.sentMessages.at(-1)?.options?.triggerTurn).toBe(false);
 });
 
 test("agent_end events within a run add no attempt", async () => {
 	const { state, agentEnd, agentSettled } = await createPendingHandoffHost();
-	const ctx = { hasUI: false, getContextUsage: eligibleUsage };
+	const ctx = createExtensionContext({ getContextUsage: eligibleUsage });
 
 	// One run whose first attempt failed and was retried automatically, then a second run.
 	deliverEligibleNudge(state);
-	await agentEnd({}, ctx);
-	await agentEnd({}, ctx);
+	await agentEnd({ type: "agent_end", messages: [] }, ctx);
+	await agentEnd({ type: "agent_end", messages: [] }, ctx);
 	expect(state.pendingRequestedHandoff?.enforcementAttempts, "agent_end must not count an attempt").toBe(0);
-	await agentSettled({ type: "agent_settled" }, ctx);
+	await agentSettled({ type: "agent_settled", aborted: false }, ctx);
 	deliverEligibleNudge(state);
-	await agentEnd({}, ctx);
-	await agentSettled({ type: "agent_settled" }, ctx);
+	await agentEnd({ type: "agent_end", messages: [] }, ctx);
+	await agentSettled({ type: "agent_settled", aborted: false }, ctx);
 
 	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(2);
 });
 
 test("a continued run cancels only after MAX_HANDOFF_ATTEMPTS settled runs", async () => {
 	const { state, agentEnd, agentSettled } = await createPendingHandoffHost();
-	const notifications: { message: string; level: string }[] = [];
+	const notifications: { message: string; level: string | undefined }[] = [];
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "handoff pending"]]);
-	const ctx = {
+	const ctx = createExtensionContext({
 		hasUI: true,
-		ui: {
-			notify: (message: string, level: string) => notifications.push({ message, level }),
+		ui: createUIContext({
+			notify: (message: string, level?: string) => notifications.push({ message, level }),
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-		},
+		}),
 		getContextUsage: eligibleUsage,
-	};
+	});
 
 	for (let run = 1; run < MAX_HANDOFF_ATTEMPTS; run++) {
 		deliverEligibleNudge(state);
-		for (let i = 0; i < 3; i++) {await agentEnd({}, ctx);}
-		await agentSettled({ type: "agent_settled" }, ctx);
+		for (let i = 0; i < 3; i++) {await agentEnd({ type: "agent_end", messages: [] }, ctx);}
+		await agentSettled({ type: "agent_settled", aborted: false }, ctx);
 		assertPresent(state.pendingRequestedHandoff, `handoff must remain pending after settled run ${run}`);
 		expect(notifications, "cancellation must not notify early").toStrictEqual([]);
 	}
 
 	deliverEligibleNudge(state);
-	for (let i = 0; i < 3; i++) {await agentEnd({}, ctx);}
-	await agentSettled({ type: "agent_settled" }, ctx);
+	for (let i = 0; i < 3; i++) {await agentEnd({ type: "agent_end", messages: [] }, ctx);}
+	await agentSettled({ type: "agent_settled", aborted: false }, ctx);
 	expect(state.pendingRequestedHandoff).toBeNull();
 	expect(statuses.get(STATUS_KEY_HANDOFF)).toBeUndefined();
 	expect(notifications).toHaveLength(1);
@@ -506,11 +534,11 @@ test("a continued run cancels only after MAX_HANDOFF_ATTEMPTS settled runs", asy
 test("a settled run without the eligible nudge does not count", async () => {
 	const { state, agentSettled } = await createPendingHandoffHost();
 
-	await agentSettled({ type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage });
+	await agentSettled({ type: "agent_settled", aborted: false }, createExtensionContext({ getContextUsage: eligibleUsage }));
 	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(0);
 
 	deliverEligibleNudge(state);
-	await agentSettled({ type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage });
+	await agentSettled({ type: "agent_settled", aborted: false }, createExtensionContext({ getContextUsage: eligibleUsage }));
 	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
 });
 
@@ -518,8 +546,8 @@ test("the eligible nudge counts once per settled run", async () => {
 	const { state, agentSettled } = await createPendingHandoffHost();
 
 	deliverEligibleNudge(state);
-	await agentSettled({ type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage });
-	await agentSettled({ type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage });
+	await agentSettled({ type: "agent_settled", aborted: false }, createExtensionContext({ getContextUsage: eligibleUsage }));
+	await agentSettled({ type: "agent_settled", aborted: false }, createExtensionContext({ getContextUsage: eligibleUsage }));
 
 	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
 	expect(state.pendingRequestedHandoff?.eligibleNudgeDelivered).toBe(false);
@@ -529,7 +557,7 @@ test("an aborted settle after the eligible nudge counts as an attempt", async ()
 	const { state, agentSettled } = await createPendingHandoffHost();
 
 	deliverEligibleNudge(state);
-	await agentSettled({ type: "agent_settled", aborted: true }, { hasUI: false, getContextUsage: eligibleUsage });
+	await agentSettled({ type: "agent_settled", aborted: true }, createExtensionContext({ getContextUsage: eligibleUsage }));
 
 	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
 });
@@ -537,37 +565,31 @@ test("an aborted settle after the eligible nudge counts as an attempt", async ()
 // Full-host runs: the real context hook decides whether the eligible nudge was delivered.
 async function createRequestedHandoffSession() {
 	const pi = await createTestHost();
-	const [contextHook] = pi.handlers.get("context")!;
 	const warnings: string[] = [];
-	const ctxAt = (usage: unknown) => ({
+	const ctxAt = (usage: ContextUsage) => createExtensionContext({
 		hasUI: true,
-		ui: {
-			notify: (message: string, level: string) => { if (level === "warning") {warnings.push(message);} },
-			theme: { fg: (_name: string, text: string) => text },
+		ui: createUIContext({
+			notify: (message: string, level?: string) => { if (level === "warning") {warnings.push(message);} },
 			setStatus: () => {},
 			setWidget: () => {},
-		},
+		}),
 		getContextUsage: () => usage,
 	});
-	await pi.commands.get("handoff").handler("implement auth", {
-		...makeReadonlyUICtx(),
-		isIdle: () => true,
-	} as any);
-	const runContextHook = async (usage: unknown): Promise<string> => {
-		const result = await contextHook(
-			{ messages: [{ role: "user", content: "work", timestamp: 1 }] },
-			ctxAt(usage),
-		);
-		return result.messages.find((message: any) => message.customType === "pi-schematic-watchdog").content;
+	await getCommand(pi, "handoff").handler("implement auth", idleUICommandContext());
+	const runContextHook = async (usage: ContextUsage): Promise<string> => {
+		const result = await invokeHandler(pi, "context", contextEvent("work", 1), ctxAt(usage));
+		const nudge = findCustomMessage(result, "pi-schematic-watchdog");
+		if (typeof nudge?.content !== "string") {throw new Error("The context hook injected no watchdog nudge text.");}
+		return nudge.content;
 	};
-	const settle = (usage: unknown) => emitAll(pi, "agent_settled", { type: "agent_settled" }, ctxAt(usage));
+	const settle = (usage: ContextUsage) => emitAll(pi, "agent_settled", { type: "agent_settled" }, ctxAt(usage));
 	return { warnings, runContextHook, settle };
 }
 
 test("a run nudged while eligible counts when it settles after compaction", async () => {
 	const { warnings, runContextHook, settle } = await createRequestedHandoffSession();
 	// After compaction pi reports unknown token counts until the next assistant response.
-	const postCompactionUsage = { tokens: null, contextWindow: 200000, percent: null };
+	const postCompactionUsage: ContextUsage = { tokens: null, contextWindow: 200000, percent: null };
 
 	for (let run = 1; run < MAX_HANDOFF_ATTEMPTS; run++) {
 		expect(await runContextHook(eligibleUsage())).toMatch(/A real handoff is required/);
@@ -596,9 +618,9 @@ test("a run nudged only to keep working does not count", async () => {
 test("agent_settled does not record context usage", async () => {
 	const state = createState();
 	const pi = await createTestHost((api) => { registerWatchdog(api, state); });
-	const [handler] = pi.handlers.get("agent_settled")!;
+	const handler = getHandler(pi, "agent_settled");
 
-	await handler({ type: "agent_settled" }, { hasUI: false, getContextUsage: () => ({ percent: 70 }) });
+	await handler({ type: "agent_settled", aborted: false }, createExtensionContext({ getContextUsage: () => percentUsage(70) }));
 
 	expect(state.lastContextPercent).toBeNull();
 });
@@ -606,67 +628,46 @@ test("agent_settled does not record context usage", async () => {
 // ── Readonly-specific injection contracts ─────────────────────────
 
 async function drainReadonlyNudge(pi: TestPI): Promise<void> {
-	const [handler] = pi.handlers.get("context")!;
-	await handler(
-		{ messages: [{ role: "user", content: "drain initial readonly nudge", timestamp: 1 }] },
-		{ getContextUsage: () => null } as any,
-	);
+	await runContext(pi, undefined, "drain initial readonly nudge");
 }
 
 test("context hook suppresses watchdog after readonly toggle nudge is drained", async () => {
 	const pi = await createTestHost();
-	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
-	const [handler] = pi.handlers.get("context")!;
+	await getCommand(pi, "readonly").handler("", idleUICommandContext());
 
 	// First call: drain the one-shot toggle nudge
-	await handler(
-		{ messages: [{ role: "user", content: "first", timestamp: 1 }] },
-		{ getContextUsage: () => null },
-	);
+	await runContext(pi, undefined, "first");
 
 	// Repeated calls across watchdog bands remain silent while readonly is active.
 	for (const percent of [70, 30, 50, 80]) {
-		const result = await handler(
-			{ messages: [{ role: "user", content: `second at ${percent}`, timestamp: percent }] },
-			{ getContextUsage: () => ({ percent }) },
-		);
+		const result = await runContext(pi, percentUsage(percent), `second at ${percent}`, percent);
 		expect(result, `watchdog must be suppressed at ${percent}% in readonly mode`).toBeUndefined();
 	}
 });
 
 test("context injects a readonly-mode nudge after toggle", async () => {
 	const pi = await createTestHost();
-	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
-	const [handler] = pi.handlers.get("context")!;
+	await getCommand(pi, "readonly").handler("", idleUICommandContext());
 
-	const result = await handler(
-		{ messages: [{ role: "user", content: "hi", timestamp: 1 }] },
-		{ getContextUsage: () => null },
-	);
+	const result = await runContext(pi, undefined);
 
-	expect(result.messages).toHaveLength(2);
-	expect(result.messages[1].customType).toBe("pi-schematic-readonly-nudge");
-	expect(result.messages[1].content).toMatch(/readonly/i);
-	expect(result.messages[1].content).toMatch(/write\/edit\/powershell blocked/i);
-	expect(result.messages[1].content).toMatch(/bash writes/i);
-	expect(result.messages[1].content).toMatch(/handoff/i);
+	expect(resultMessages(result)).toHaveLength(2);
+	const nudge = customMessageAt(result, 1);
+	expect(nudge.customType).toBe("pi-schematic-readonly-nudge");
+	expect(nudge.content).toMatch(/readonly/i);
+	expect(nudge.content).toMatch(/write\/edit\/powershell blocked/i);
+	expect(nudge.content).toMatch(/bash writes/i);
+	expect(nudge.content).toMatch(/handoff/i);
 });
 
 test("context injects readonly handoff guidance after explicit user /handoff", async () => {
 	const pi = await createTestHost();
-	const [handler] = pi.handlers.get("context")!;
-	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
+	await getCommand(pi, "readonly").handler("", idleUICommandContext());
 	await drainReadonlyNudge(pi);
-	await pi.commands.get("handoff").handler("continue readonly work", {
-		...makeReadonlyUICtx(),
-		isIdle: () => true,
-	} as any);
+	await getCommand(pi, "handoff").handler("continue readonly work", idleUICommandContext());
 
-	const result = await handler(
-		{ messages: [{ role: "user", content: "hi", timestamp: 2 }] },
-		{ getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }) },
-	);
-	const watchdogMessage = result.messages.find((message: any) => message.customType === "pi-schematic-watchdog");
+	const result = await runContext(pi, eligibleUsage(), "hi", 2);
+	const watchdogMessage = findCustomMessage(result, "pi-schematic-watchdog");
 
 	assertPresent(watchdogMessage, "requested handoff should inject watchdog guidance");
 	expect(watchdogMessage.content).toMatch(/handoff/i);
@@ -679,19 +680,12 @@ test("context injects readonly handoff guidance after explicit user /handoff", a
 
 test("readonly toggle nudge aligns with handoff exception in the same turn", async () => {
 	const pi = await createTestHost();
-	const [handler] = pi.handlers.get("context")!;
-	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
-	await pi.commands.get("handoff").handler("continue readonly work", {
-		...makeReadonlyUICtx(),
-		isIdle: () => true,
-	} as any);
+	await getCommand(pi, "readonly").handler("", idleUICommandContext());
+	await getCommand(pi, "handoff").handler("continue readonly work", idleUICommandContext());
 
-	const result = await handler(
-		{ messages: [{ role: "user", content: "hi", timestamp: 2 }] },
-		{ getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }) },
-	);
-	const readonlyMessage = result.messages.find((message: any) => message.customType === "pi-schematic-readonly-nudge");
-	const watchdogMessage = result.messages.find((message: any) => message.customType === "pi-schematic-watchdog");
+	const result = await runContext(pi, eligibleUsage(), "hi", 2);
+	const readonlyMessage = findCustomMessage(result, "pi-schematic-readonly-nudge");
+	const watchdogMessage = findCustomMessage(result, "pi-schematic-watchdog");
 
 	assertPresent(readonlyMessage, "readonly toggle should still emit its one-shot nudge");
 	assertPresent(watchdogMessage, "handoff guidance should still be injected");
@@ -703,33 +697,23 @@ test("readonly toggle nudge aligns with handoff exception in the same turn", asy
 
 test("eligible readonly human topic boundary auto-creates handoff bypass equivalent to /handoff", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
-	const [handler] = pi.handlers.get("context")!;
 
-	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
+	await getCommand(pi, "readonly").handler("", idleUICommandContext());
 	await drainReadonlyNudge(pi);
-	await pi.commands.get("notebook").handler(
-		"oauth",
-		{ hasUI: false, getContextUsage: () => null } as any,
-	);
-	await pi.commands.get("notebook").handler(
-		"billing",
-		{ hasUI: false, getContextUsage: () => null } as any,
-	);
+	await getCommand(pi, "notebook").handler("oauth", createCommandContext({ getContextUsage: () => undefined }));
+	await getCommand(pi, "notebook").handler("billing", createCommandContext({ getContextUsage: () => undefined }));
 
-	const result = await handler(
-		{ messages: [{ role: "user", content: "hi", timestamp: 2 }] },
-		{ getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }) },
-	);
+	const result = await runContext(pi, eligibleUsage(), "hi", 2);
 
 	// An eligible topic boundary in readonly mode creates the handoff bypass and injects
 	// watchdog guidance — equivalent to explicit /handoff or a human topic boundary.
 	assertPresent(result, "topic boundary should inject watchdog guidance");
-	const watchdogMessage = result.messages.find((m: any) => m.customType === "pi-schematic-watchdog");
+	const watchdogMessage = findCustomMessage(result, "pi-schematic-watchdog");
 	assertPresent(watchdogMessage, "watchdog message should be present");
 	expect(watchdogMessage.content).toMatch(/handoff/i);
 	expect(watchdogMessage.content).toMatch(/temporary handoff exception active/i);
 
-	const blockResult = await toolCall({ toolName: "handoff", input: {} }, { cwd: "/tmp" });
+	const blockResult: unknown = await toolCall({ toolName: "handoff", input: {} }, { cwd: "/tmp" });
 	expect(blockResult, "handoff tool should be unblocked after topic boundary creates bypass").toBeUndefined();
 });
 
@@ -741,16 +725,11 @@ test("watchdog band-crossing: nudge iff context enters a higher band", async () 
 			fc.array(fc.nat({ max: 150 }), { minLength: 1, maxLength: 20 }),
 			async (percentages) => {
 				const pi = await createTestHost();
-				const [handler] = pi.handlers.get("context")!;
 				let lastBand: number | null = null;
 				for (const raw of percentages) {
-					const pct = { percent: raw };
-					const result = await handler(
-						{ messages: [{ role: "user", content: String(raw), timestamp: Date.now() }] },
-						{ getContextUsage: () => pct },
-					);
+					const result = await runContext(pi, percentUsage(raw), String(raw), Date.now());
 					const didNudge = result?.messages?.some(
-						(message: any) => message.customType === "pi-schematic-watchdog",
+						(message) => message.role === "custom" && message.customType === "pi-schematic-watchdog",
 					) ?? false;
 					if (raw < 30) {
 						// Below 30% resets lastWatchdogBand and never nudges.
