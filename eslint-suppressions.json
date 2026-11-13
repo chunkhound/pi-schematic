@@ -818,15 +818,6 @@
     "@typescript-eslint/no-empty-function": {
       "count": 1
     },
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/require-await": {
       "count": 2
     },
@@ -839,53 +830,24 @@
       "count": 10
     }
   },
-  "tests/unit/model-groups-constraints.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 19
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 3
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
-    }
-  },
   "tests/unit/model-groups-crud.test.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 12
+      "count": 1
     },
     "@typescript-eslint/no-non-null-assertion": {
       "count": 11
     },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 41
-    },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 21
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 47
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 2
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 6
+      "count": 3
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 3
     },
     "@typescript-eslint/require-await": {
       "count": 3
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
     }
   },
   "tests/unit/model-groups-display.test.ts": {
@@ -895,74 +857,36 @@
   },
   "tests/unit/model-groups-integration.test.ts": {
     "@typescript-eslint/no-empty-function": {
-      "count": 27
+      "count": 14
     },
     "@typescript-eslint/no-explicit-any": {
-      "count": 4
+      "count": 2
     },
     "@typescript-eslint/no-non-null-assertion": {
-      "count": 27
+      "count": 4
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 31
+      "count": 4
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 25
+      "count": 10
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 9
+      "count": 6
     },
     "@typescript-eslint/require-await": {
-      "count": 3
-    },
-    "@typescript-eslint/restrict-template-expressions": {
       "count": 2
     },
     "no-control-regex": {
       "count": 1
     }
   },
-  "tests/unit/model-groups-modalities.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 5
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    }
-  },
   "tests/unit/model-groups-router.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 5
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 88
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 6
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unused-vars": {
       "count": 2
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 5
+      "count": 1
     }
   },
   "tests/unit/model-groups-tui.test.ts": {

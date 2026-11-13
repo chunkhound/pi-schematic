@@ -1,18 +1,23 @@
 import { expect, test } from "vitest";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { getEffectiveModelGroupNames, resolveSpawnModelRoute, SpawnRouteError } from "../../model-groups/router.js";
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import type { ResolvedModelGroup } from "../../model-groups/types.js";
 import { group } from "./model-groups-helpers.js";
 import { testMaxBudget, testMinContext } from "./model-groups-constraints-fixture.js";
 
-function model(provider: string, id: string, overrides: Record<string, unknown> = {}): any {
-	return { provider, id, reasoning: true, input: ["text"], ...overrides };
+function model(provider: string, id: string, overrides: Partial<Model<Api>> = {}): Model<Api> {
+	return {
+		provider, id, name: id, api: "test-api", baseUrl: "http://localhost.invalid", reasoning: true, input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 0, maxTokens: 0, ...overrides,
+	};
 }
 
-function registry(models: any[], authenticated = new Set(models.map((m) => `${m.provider}:${m.id}`))): any {
+function registry(models: Model<Api>[], authenticated = new Set(models.map((m) => `${m.provider}:${m.id}`))): Pick<ModelRegistry, "find" | "hasConfiguredAuth"> {
 	return {
-		find: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id),
-		hasConfiguredAuth: (m: any) => authenticated.has(`${m.provider}:${m.id}`),
+		find: (provider, id) => models.find((m) => m.provider === provider && m.id === id),
+		hasConfiguredAuth: (m) => authenticated.has(`${m.provider}:${m.id}`),
 	};
 }
 
@@ -135,7 +140,7 @@ test("generic scalar requirements narrow mixed groups in both comparison directi
 test("bare-array constraint requirements are rejected by the descriptor codec", () => {
 	const parent = model("p", "parent");
 	const text = model("p", "text");
-	expect(() => resolveSpawnModelRoute({ requestedGroup: "g", constraints: { modalities: ["image"] } as any, groups: [group("g", { models: [{ provider: "p", modelId: "text" }] })], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent, text]) })).toThrow(/must be an object with required modalities/);
+	expect(() => resolveSpawnModelRoute({ requestedGroup: "g", constraints: { modalities: ["image"] }, groups: [group("g", { models: [{ provider: "p", modelId: "text" }] })], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent, text]) })).toThrow(/must be an object with required modalities/);
 });
 
 test("routed empty modality requirements select by RNG across usable members", () => {
