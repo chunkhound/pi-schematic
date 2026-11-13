@@ -10,10 +10,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ModelRegistry, type ExtensionContext, type SlashCommandInfo } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, ModelRegistry, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { modelGroupsPath } from "../../model-groups/store.js";
-import { createExtensionContext, createUIContext, testWithDir, tmpDir } from "./helpers.js";
+import { isRecord } from "../assertions.js";
+import { createExtensionContext, createModelRegistry, createUIContext, testWithDir, tmpDir } from "./helpers.js";
 import { createBeforeAgentStartEvent, createTestHost, getHandler, getHandlers, getHostRecords, type AppendedEntry, type HostHandler, type TestPI } from "./test-host.js";
 import { withTemp } from "./model-groups-helpers.js";
 
@@ -31,21 +32,15 @@ function mockModel(provider: string, id: string): Model<Api> {
 }
 
 // A `ModelRegistry` whose `find` and `hasConfiguredAuth` answer from `models` and
-// `authenticated`; every other method is the class's own and fails without a runtime.
+// `authenticated`; reading any other method throws.
 function mockRegistry(
 	models: Model<Api>[] = [mockModel("openai", "gpt-4o")],
 	authenticated = new Set(models.map((m) => `${m.provider}:${m.id}`)),
 ): ModelRegistry {
-	const registry: unknown = Object.create(ModelRegistry.prototype);
-	if (!(registry instanceof ModelRegistry)) {throw new Error("Object.create did not produce a ModelRegistry instance.");}
-	return Object.assign(registry, {
+	return createModelRegistry({
 		find: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id),
 		hasConfiguredAuth: (m: Model<Api>) => authenticated.has(`${m.provider}:${m.id}`),
 	});
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
 }
 
 /** `value` as a record; throws, naming `label`, when it is not an object. */

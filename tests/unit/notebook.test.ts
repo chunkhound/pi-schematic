@@ -24,7 +24,7 @@ import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
 import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
 import { assertPresent, expectSuffix, isRecord } from "../assertions.js";
-import { callHandlers, createCommandContext, createExtensionContext, createToolContext, createToolRenderContext, createUIContext, handoffToolResult, turnEndEvent, makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
+import { detailsOf, firstText, recordOf, callHandlers, createCommandContext, createExtensionContext, createToolContext, createToolRenderContext, createUIContext, handoffToolResult, turnEndEvent, makeTUICtx, createDeferred, theme, stripAnsi, runRealChildInvocation } from "./helpers.js";
 import { createBeforeAgentStartEvent, createTestHost, getCommand, getHandler, getHandlers, getHostRecords, getTool } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
 
@@ -42,25 +42,12 @@ function hostContext(value: unknown): HostContext {
 	return value;
 }
 
-function tuiContext(options?: Parameters<typeof makeTUICtx>[0]): HostContext {
-	return hostContext(makeTUICtx(options));
-}
-
-/** `value` as a record; throws, naming `what`, unless it is an object. */
-function recordOf(value: unknown, what: string): Record<string, unknown> {
-	if (!isRecord(value)) {throw new Error(`Expected ${what} to be an object.`);}
-	return value;
-}
-
-function detailsOf(result: AgentToolResult<unknown>): Record<string, unknown> {
-	return recordOf(result.details, "the tool result details");
-}
-
-/** The text of the result's first content block; throws unless that block is text. */
-function firstText(result: AgentToolResult<unknown>): string {
-	const block = result.content.at(0);
-	if (block?.type !== "text") {throw new Error("Expected the tool result to start with a text block.");}
-	return block.text;
+// The /notebook tests type the overlay factory `ctx.ui.custom` receives themselves, which pi's generic
+// `custom` does not admit, so a context with such a `custom` goes through hostContext.
+function tuiContext(options: Omit<NonNullable<Parameters<typeof makeTUICtx>[0]>, "custom"> & { custom?: (build: unknown) => Promise<unknown> } = {}): HostContext {
+	const { custom, ...rest } = options;
+	const ctx = makeTUICtx(rest);
+	return custom === undefined ? ctx : hostContext({ ...ctx, ui: { ...ctx.ui, custom } });
 }
 
 /** The data of the appended entry at `index` (negative counts from the end); throws unless it is an object. */
@@ -959,10 +946,10 @@ test("/notebook surfaces pager spawn errors as a warning notification", async ()
 	const notebookWrite = getTool(pi, "notebook_write");
 	await notebookWrite.execute("1", { name: "alpha", content: "body" }, undefined, undefined, tuiContext());
 
-	const notifications: { message: string; level: string }[] = [];
+	const notifications: { message: string; level: string | undefined }[] = [];
 	await getCommand(pi, "notebook").handler("", tuiContext({
 		percent: 20,
-		notify: (message: string, level: string) => { notifications.push({ message, level }); },
+		notify: (message, level) => { notifications.push({ message, level }); },
 		custom: enterOnFirstOpen().custom,
 	}));
 
