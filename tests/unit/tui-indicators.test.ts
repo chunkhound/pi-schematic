@@ -5,8 +5,9 @@ import { updateIndicators, STATUS_KEY_TOPIC, STATUS_KEY_READONLY } from "../../t
 import { makeTUICtx } from "./helpers.js";
 import { assertPresent } from "../assertions.js";
 
-// makeTUICtx builds a partial context with the members updateIndicators reads; reading a member
-// it lacks fails the test. Only that the value is an object can be checked at run time.
+// makeTUICtx builds a partial context with the members updateIndicators uses. Reading a member it
+// lacks yields undefined; calling or dereferencing one throws a TypeError. Only that the value is an
+// object can be checked at run time.
 function assertContext(value: unknown): asserts value is ExtensionContext {
 	if (typeof value !== "object" || value === null) {throw new Error("makeTUICtx did not return a context object.");}
 }
