@@ -277,8 +277,8 @@ async function preflightModelSelection(
 		recordFrontmatterIssue(ctx, pi, pending, selection.issue);
 	}
 	const commandRef = formatCommandRef(pending);
-	if (selection.model) {return handleExplicitModelFrontmatter(ctx, pi, selection, commandRef);}
-	if (selection.group) {return handleModelGroupFrontmatter(state, ctx, pi, selection, commandRef, ctx.model);}
+	if (selection.model) {return handleExplicitModelFrontmatter(ctx, pi, selection, selection.model, commandRef);}
+	if (selection.group) {return handleModelGroupFrontmatter(state, ctx, pi, selection, selection.group, commandRef, ctx.model);}
 	if (selection.thinking) {return handleThinkingOnlyFrontmatter(ctx, pi, selection.thinking, commandRef, ctx.model);}
 	return false;
 }
@@ -316,19 +316,20 @@ function recordExplicitModelSwitch(
 async function handleExplicitModelFrontmatter(
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
-	selection: ModelSelection,
+	selection: Pick<ModelSelection, "group" | "thinking">,
+	modelRef: string,
 	commandRef: string,
 ): Promise<boolean> {
 	if (selection.group) {ctx.ui.notify(buildModelGroupOverrideWarningNotification(selection.group, commandRef), "warning");}
-	const model = findExplicitModel(ctx, selection.model!, commandRef);
+	const model = findExplicitModel(ctx, modelRef, commandRef);
 	if (!model) {return true;}
 	const notifyError = () => {
-		const { provider, modelId } = splitModelId(selection.model!);
+		const { provider, modelId } = splitModelId(modelRef);
 		ctx.ui.notify(buildModelFrontmatterSetModelErrorNotification(provider, modelId, commandRef), "error");
 	};
 	if (!await safeSetModel(pi, model, notifyError)) {return true;}
 	const thinking = selection.thinking ? clampThinkingLevel(model, selection.thinking) : null;
-	recordExplicitModelSwitch(ctx, pi, selection.model!, thinking, commandRef);
+	recordExplicitModelSwitch(ctx, pi, modelRef, thinking, commandRef);
 	return false;
 }
 
@@ -364,10 +365,10 @@ async function applyModelGroupRoute(
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
 	route: Exclude<ModelRoute, { status: "unknown-fallback" }>,
-	selection: ModelSelection,
+	selection: Pick<ModelSelection, "thinking">,
+	groupName: string,
 	commandRef: string,
 ): Promise<boolean> {
-	const groupName = selection.group!;
 	const onError = () => { ctx.ui.notify(
 		buildModelGroupSetModelErrorNotification(groupName, route.provider, route.modelId, commandRef), "error",
 	); };
@@ -395,17 +396,17 @@ function resolveModelGroupRoute(
 
 async function handleModelGroupFrontmatter(
 	state: SchematicState, ctx: ExtensionContext, pi: ExtensionAPI,
-	selection: ModelSelection, commandRef: string, currentModel: Model<Api>,
+	selection: Pick<ModelSelection, "thinking">, groupName: string, commandRef: string, currentModel: Model<Api>,
 ): Promise<boolean> {
 	try {
-		const route = resolveModelGroupRoute(state, ctx, pi, selection.group!, currentModel);
-		if (route.status !== "unknown-fallback") {return applyModelGroupRoute(ctx, pi, route, selection, commandRef);}
-		const detail = unknownGroupDetail(state, selection.group!);
-		ctx.ui.notify(buildModelGroupErrorNotification(selection.group!, commandRef, detail), "error");
+		const route = resolveModelGroupRoute(state, ctx, pi, groupName, currentModel);
+		if (route.status !== "unknown-fallback") {return applyModelGroupRoute(ctx, pi, route, selection, groupName, commandRef);}
+		const detail = unknownGroupDetail(state, groupName);
+		ctx.ui.notify(buildModelGroupErrorNotification(groupName, commandRef, detail), "error");
 		return true;
 	} catch (error) {
 		if (!(error instanceof SpawnRouteError)) {throw error;}
-		ctx.ui.notify(buildModelGroupErrorNotification(selection.group!, commandRef, error.message), "error");
+		ctx.ui.notify(buildModelGroupErrorNotification(groupName, commandRef, error.message), "error");
 		return true;
 	}
 }
@@ -603,12 +604,12 @@ export default function (pi: ExtensionAPI): void {
 
 		const skillName = (/^\/skill:([^\s]+)/.exec(event.text))?.[1];
 		const commandName = (/^\/([^\s]+)/.exec(event.text))?.[1];
-		if (!skillName && !commandName) {return { action: "continue" };}
-
-		const commands = pi.getCommands();
+		if (commandName === undefined) {return { action: "continue" };}
 		const pending = skillName
 			? { type: "skill" as const, name: skillName }
-			: { type: "command" as const, name: commandName! };
+			: { type: "command" as const, name: commandName };
+
+		const commands = pi.getCommands();
 		if (!skillName && isBuiltinReadonlyBypassCommand(pending.name)) {return { action: "continue" };}
 		if (!skillName && commands.some((command) => command.name === pending.name && command.source !== "prompt")) {
 			return { action: "continue" };
@@ -871,16 +872,16 @@ export default function (pi: ExtensionAPI): void {
 		// Below primacy-zone threshold (~30%), skip watchdog unless a boundary
 		// hint or a sticky user-requested handoff is pending — context is still
 		// fresh enough that ordinary nudges add noise.
-		if (!mustEnforceRequestedHandoff && !state.pendingTopicBoundaryHint && (percent === null || percent < 30)) {
-			state.lastWatchdogBand = null;
-			return appendReadonlyNudge();
-		}
-
-		// Throttle: only nudge when crossing into a higher context-percentage band.
-		// Bands: null (<30), 0 (30-49), 1 (50-69), 2 (70+). This prevents nudging
-		// every turn once past 30%.
 		if (!mustEnforceRequestedHandoff && !state.pendingTopicBoundaryHint) {
-			const band = percent! < 50 ? 0 : percent! < 70 ? 1 : 2;
+			if (percent === null || percent < 30) {
+				state.lastWatchdogBand = null;
+				return appendReadonlyNudge();
+			}
+
+			// Throttle: only nudge when crossing into a higher context-percentage band.
+			// Bands: null (<30), 0 (30-49), 1 (50-69), 2 (70+). This prevents nudging
+			// every turn once past 30%.
+			const band = percent < 50 ? 0 : percent < 70 ? 1 : 2;
 			if (state.lastWatchdogBand !== null && band <= state.lastWatchdogBand) {
 				return appendReadonlyNudge();
 			}

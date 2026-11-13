@@ -882,8 +882,11 @@ describe("failed handoff cut in a real agent session", () => {
 		const cancelledAt = ui.flatMap((line, index) =>
 			(line.startsWith(`notify:warning:Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts`) ? [index] : []));
 		expect(cancelledAt, JSON.stringify(ui)).toHaveLength(1);
-		expect(cancelledAt[0], "the watchdog cancels the request at the settle of the run whose cut failed last").toBeGreaterThan(failureAt.at(-1)!);
-		expect(cancelledAt[0], "the watchdog cancels the request at the settle of the run whose cut failed last").toBeLessThan(uiAtExhaustingSettle!);
+		const lastFailureAt = failureAt.at(-1);
+		assertPresent(lastFailureAt, "the last cut failure is in the UI log");
+		assertPresent(uiAtExhaustingSettle, "the UI log length before the exhausting run is recorded");
+		expect(cancelledAt[0], "the watchdog cancels the request at the settle of the run whose cut failed last").toBeGreaterThan(lastFailureAt);
+		expect(cancelledAt[0], "the watchdog cancels the request at the settle of the run whose cut failed last").toBeLessThan(uiAtExhaustingSettle);
 		expect(observed.requests.at(-1) ?? [], "the cancelled request is no longer enforced").not.toSatisfy(carriesRequiredNudge);
 		expect(observed.extensionErrors).toStrictEqual([]);
 	});

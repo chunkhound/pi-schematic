@@ -130,10 +130,11 @@ function validateConfig(raw: unknown, registry: ConstraintRegistry): { ok: true;
 	const normalized = normalizeGroups(raw.groups, sourceVersion, registry); return normalized.ok ? { ok: true, config: { version: CURRENT_VERSION, groups: normalized.groups } } : normalized;
 }
 function backupAndIssue(scope: ModelGroupScope, sourcePath: string, kind: ModelGroupsLoadIssue["kind"], message: string, version?: number): ModelGroupsLoadIssue {
-	const issue: ModelGroupsLoadIssue = { scope, sourcePath, kind, message, backupPath: `${sourcePath}.bak`, version };
+	const backupPath = `${sourcePath}.bak`;
+	const issue: ModelGroupsLoadIssue = { scope, sourcePath, kind, message, backupPath, version };
 	if (kind === "unsupported-version") {return issue;}
 	try {
-		fsOps.copyFileSync(sourcePath, issue.backupPath!);
+		fsOps.copyFileSync(sourcePath, backupPath);
 	} catch (cause) {
 		issue.backupFailed = true;
 		issue.message = `${message}; backup failed: ${cause instanceof Error ? cause.message : String(cause)}`;

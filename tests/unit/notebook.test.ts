@@ -488,10 +488,14 @@ test("notebook tool renderers expose stable call/result summaries", async () => 
 	const state = createState();
 	const [notebookWrite, notebookRead, notebookIndex] = createNotebookToolDefinitions(pi, state);
 
-	const addCall = notebookWrite.renderCall!({ name: "entry-a", content: "first line\nsecond line" }, theme, createToolRenderContext());
+	assertPresent(notebookWrite.renderCall, "notebook_write has a call renderer");
+	assertPresent(notebookWrite.renderResult, "notebook_write has a result renderer");
+	assertPresent(notebookRead.renderResult, "notebook_read has a result renderer");
+	assertPresent(notebookIndex.renderResult, "notebook_index has a result renderer");
+	const addCall = notebookWrite.renderCall({ name: "entry-a", content: "first line\nsecond line" }, theme, createToolRenderContext());
 	expect(stripAnsi(addCall.render(120).join("\n"))).toMatch(/notebook_write "entry-a": first line/);
 
-	const addResult = notebookWrite.renderResult!(
+	const addResult = notebookWrite.renderResult(
 		{ content: [{ type: "text", text: "" }], details: { entries: ["entry-a"], preview: "first line", truncation: null, clipped: false } },
 		{ expanded: true, isPartial: false },
 		theme,
@@ -500,7 +504,7 @@ test("notebook tool renderers expose stable call/result summaries", async () => 
 	expect(stripAnsi(addResult.render(120).join("\n"))).toMatch(/Saved "entry-a": first line/);
 	expect(stripAnsi(addResult.render(120).join("\n"))).toMatch(/entry-a/);
 
-	const getResult = notebookRead.renderResult!(
+	const getResult = notebookRead.renderResult(
 		{ content: [{ type: "text", text: "ignored" }], details: { entries: ["entry-a"], found: true, body: "body", clipped: false } },
 		{ expanded: true, isPartial: false },
 		theme,
@@ -509,7 +513,7 @@ test("notebook tool renderers expose stable call/result summaries", async () => 
 	expect(stripAnsi(getResult.render(120).join("\n"))).toMatch(/"entry-a"/);
 	expect(stripAnsi(getResult.render(120).join("\n"))).toMatch(/body/);
 
-	const getResultWithDelimiters = notebookRead.renderResult!(
+	const getResultWithDelimiters = notebookRead.renderResult(
 		{ content: [{ type: "text", text: "ignored" }], details: { entries: ["entry-a"], found: true, body: "line 1\n---\nline 2", clipped: false } },
 		{ expanded: true, isPartial: false },
 		theme,
@@ -518,7 +522,7 @@ test("notebook tool renderers expose stable call/result summaries", async () => 
 	expect(stripAnsi(getResultWithDelimiters.render(120).join("\n"))).toMatch(/line 1/);
 	expect(stripAnsi(getResultWithDelimiters.render(120).join("\n"))).toMatch(/line 2/);
 
-	const listResult = notebookIndex.renderResult!(
+	const listResult = notebookIndex.renderResult(
 		{ content: [{ type: "text", text: "" }], details: { entries: ["entry-a", "entry-b"] } },
 		{ expanded: true, isPartial: false },
 		theme,
@@ -1215,26 +1219,27 @@ test("notebook tool definitions include prompt hints when withPromptHints is tru
 	const state = createState();
 	const tools = createNotebookToolDefinitions(pi, state, { withPromptHints: true });
 
+	// Structural invariants: every tool has a snippet, and all guidelines exist and are non-trivial
 	for (const tool of tools) {
 		expect(tool.promptSnippet, `${tool.name} should have promptSnippet when withPromptHints=true`).toBeTypeOf("string");
-		expect(tool.promptGuidelines, `${tool.name} should have promptGuidelines when withPromptHints=true`).toSatisfy(Array.isArray);
+		assertPresent(tool.promptGuidelines, `${tool.name} should have promptGuidelines when withPromptHints=true`);
+		expect(tool.promptGuidelines.length, `${tool.name} should have at least 2 promptGuidelines`).toBeGreaterThanOrEqual(2);
+		expect(tool.promptGuidelines.filter((g: string) => !(g.length > 10)), `${tool.name} each guideline should be non-trivial`).toStrictEqual([]);
 	}
-	const notebookWrite = tools.find(t => t.name === "notebook_write")!;
-	const notebookRead = tools.find(t => t.name === "notebook_read")!;
-	const notebookIndex = tools.find(t => t.name === "notebook_index")!;
+	const notebookWrite = tools.find(t => t.name === "notebook_write");
+	const notebookRead = tools.find(t => t.name === "notebook_read");
+	const notebookIndex = tools.find(t => t.name === "notebook_index");
+	assertPresent(notebookWrite, "notebook_write is registered");
+	assertPresent(notebookRead, "notebook_read is registered");
+	assertPresent(notebookIndex, "notebook_index is registered");
 
-	// Structural invariants: all guidelines exist and are non-trivial
-	for (const tool of tools) {
-		expect(tool.promptGuidelines!.length, `${tool.name} should have at least 2 promptGuidelines`).toBeGreaterThanOrEqual(2);
-		expect(tool.promptGuidelines!.filter((g: string) => !(g.length > 10)), `${tool.name} each guideline should be non-trivial`).toStrictEqual([]);
-	}
-
-	// Conceptual: notebook_write is future-context oriented
-	const writeGuidelines = notebookWrite.promptGuidelines!.join(" ");
+	// Conceptual: notebook_write is future-context oriented. The loop above already
+	// asserted that every tool has promptGuidelines.
+	const writeGuidelines = notebookWrite.promptGuidelines?.join(" ");
 	expect(writeGuidelines).toMatch(/subject-oriented pages/i);
 	expect(writeGuidelines).toMatch(/fresh context/i);
 	expect(writeGuidelines).toMatch(/belongs in handoff/i);
-	expect(notebookIndex.promptGuidelines!.join(" ")).toMatch(/relevant memory pages/i);
+	expect(notebookIndex.promptGuidelines?.join(" ")).toMatch(/relevant memory pages/i);
 
 	// Conceptual: descriptions mention the notebook-page metaphor and durable memory contract
 	expect(notebookWrite.description).toMatch(/page|future contexts/i);
@@ -1311,7 +1316,8 @@ test("buildNotebookDiscardDrafts keeps a survivor's clipped flag", async () => {
 
 	const { drafts } = buildNotebookDiscardDrafts(state, ["drop"]);
 
-	const survivor = drafts.find((draft) => draft.customType === "notebook-entry")!;
+	const survivor = drafts.find((draft) => draft.customType === "notebook-entry");
+	assertPresent(survivor, "the kept page survives as a notebook entry");
 	expect(survivor.data).toStrictEqual({ version: 1, epoch: 2, name: "keep", content: L(2000), clipped: true });
 });
 
@@ -1749,9 +1755,11 @@ test("/notebook selector badges clipped pages without changing stored bodies", a
 	const overlay = await openNotebookOverlay(pi, () => {});
 
 	const lines = stripAnsi(overlay.render(200).join("\n")).split("\n");
-	const clippedLine = lines.find((line) => line.includes("clipped-page"))!;
+	const clippedLine = lines.find((line) => line.includes("clipped-page"));
+	assertPresent(clippedLine, "the selector shows a clipped-page row");
 	expect(clippedLine).toMatch(/x \[truncated\]/);
-	const completeLine = lines.find((line) => line.includes("complete-page"))!;
+	const completeLine = lines.find((line) => line.includes("complete-page"));
+	assertPresent(completeLine, "the selector shows a complete-page row");
 	expect(completeLine).toMatch(/first/);
 	expect(completeLine).not.toMatch(/\[truncated\]/);
 
@@ -1803,7 +1811,7 @@ test("line overflow retains exactly 2000 whole lines", async () => {
 	const state = createState();
 	await saveNotebookPage(pi, state, "page", L(2001));
 	expect(state.notebookPages.get("page")).toBe(L(2000));
-	expect(state.notebookPages.get("page")!.split("\n")).toHaveLength(2000);
+	expect(state.notebookPages.get("page")?.split("\n")).toHaveLength(2000);
 });
 
 test("byte overflow preserves the first whole line in ASCII and UTF-8", async () => {
@@ -1811,10 +1819,10 @@ test("byte overflow preserves the first whole line in ASCII and UTF-8", async ()
 	const state = createState();
 	await saveNotebookPage(pi, state, "page", B);
 	expect(state.notebookPages.get("page")).toBe("a".repeat(25600));
-	expect(state.notebookPages.get("page")!).not.toContain("\n");
+	expect(state.notebookPages.get("page")).not.toContain("\n");
 	await saveNotebookPage(pi, state, "page", U);
 	expect(state.notebookPages.get("page")).toBe("é".repeat(12800));
-	expect(state.notebookPages.get("page")!).not.toContain("\n");
+	expect(state.notebookPages.get("page")).not.toContain("\n");
 });
 
 test("complete and empty bodies remain accepted at the existing caps", async () => {

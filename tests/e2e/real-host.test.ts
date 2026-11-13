@@ -86,6 +86,12 @@ function handoffCuts(entries: SessionEntry[]): CompactionEntry[] {
 	return entries.filter((entry): entry is CompactionEntry => cutHandoffId(entry) !== null);
 }
 
+function handoffIdOf(cut: CompactionEntry): string {
+	const handoffId = cutHandoffId(cut);
+	assertPresent(handoffId, "the handoff cut carries its handoff id");
+	return handoffId;
+}
+
 function onlyHandoffCut(entries: SessionEntry[]): CompactionEntry {
 	const cuts = handoffCuts(entries);
 	expect(cuts, "exactly one handoff cut entry").toHaveLength(1);
@@ -411,7 +417,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		expect(cutAppendedIndexes(handoffRun), "the cut arrives as one entry_appended event").toHaveLength(1);
 		expect(eventsOfType(handoffRun, "compaction_end"), "the cut fires no compaction_end").toHaveLength(0);
 		expect(
-			requestsAfterCut(host.probeLog(), cutHandoffId(cut)!).filter((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
+			requestsAfterCut(host.probeLog(), handoffIdOf(cut)).filter((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
 			"readonly is re-announced after the handoff",
 		).toHaveLength(1);
 		expect(await host.client.clearQueue()).toStrictEqual({ steering: [], followUp: [] });
@@ -426,7 +432,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		expect(eventsOfType(handoffRun, "agent_start"), "the successor turn starts no second pass").toHaveLength(1);
 		expect(eventsOfType(handoffRun, "agent_settled"), "the run settles once").toHaveLength(1);
 		const cut = onlyHandoffCut((await host.entries()).entries);
-		const [successorRequest] = requestsAfterCut(host.probeLog(), cutHandoffId(cut)!);
+		const [successorRequest] = requestsAfterCut(host.probeLog(), handoffIdOf(cut));
 		assertPresent(successorRequest, "the model is called after the cut");
 		expect(successorRequest.texts.filter((text) => text.startsWith(NEXT_INSTRUCTION_PREFIX)), "the successor request carries the successor once").toStrictEqual([buildNextUserMessage(payload)]);
 		expect(successorRequest.texts, "the pre-cut user turn is gone from the successor request").not.toContain("go");
@@ -536,7 +542,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 
 			const failed = await host.entries();
 			const cut = onlyHandoffCut(failed.entries);
-			const handoffId = cutHandoffId(cut)!;
+			const handoffId = handoffIdOf(cut);
 			expect(requestsAfterCut(host.probeLog(), handoffId), "the run is aborted before the model is called after the cut").toStrictEqual([]);
 			const failure = onlyCustomMessage(failed.entries, HANDOFF_FAILED_CUSTOM_TYPE);
 			assertString(failure.content);
@@ -559,7 +565,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			expect(results[1].text, "a later handoff is accepted").toBe(HANDOFF_STAGED_RESULT);
 			const laterCut = handoffCuts(retried.entries).find((entry) => entry.id !== cut.id);
 			assertPresent(laterCut, "the later handoff lands its cut");
-			const [laterRequest] = requestsAfterCut(host.probeLog(), cutHandoffId(laterCut)!);
+			const [laterRequest] = requestsAfterCut(host.probeLog(), handoffIdOf(laterCut));
 			assertPresent(laterRequest, "the model is called after the later cut");
 			expect(laterRequest.texts.filter((text) => text.startsWith(NEXT_INSTRUCTION_PREFIX)), "only the later successor reaches the model").toStrictEqual([buildNextUserMessage({ nextInstruction: "later work" })]);
 		}));
@@ -597,7 +603,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		await host.turn("/" + PROBE_COMMAND.turn, 1);
 
 		const cut = onlyHandoffCut((await host.entries()).entries);
-		const laterRequests = requestsAfterCut(host.probeLog(), cutHandoffId(cut)!);
+		const laterRequests = requestsAfterCut(host.probeLog(), handoffIdOf(cut));
 		expect(laterRequests, "the later run calls the model").toHaveLength(2);
 		expect(laterRequests.filter((record) => containsText(record, READONLY_ACTIVE_SUMMARY)), "readonly is re-announced after the failed handoff").toHaveLength(1);
 	}));
@@ -681,7 +687,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		expect(handoffResults[0].text).toBe(HANDOFF_STAGED_RESULT);
 		const cut = onlyHandoffCut(entries);
 		expect(
-			requestsAfterCut(host.probeLog(), cutHandoffId(cut)!).filter((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
+			requestsAfterCut(host.probeLog(), handoffIdOf(cut)).filter((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
 			"readonly is re-announced after the handoff",
 		).toHaveLength(1);
 		expect(handoffResults[1], "handoff is blocked again after the cut").toMatchObject({ isError: true, text: READONLY_HANDOFF_BLOCK_REASON });
@@ -749,7 +755,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 		expect(handoffResults[0].text).toBe(HANDOFF_STAGED_RESULT);
 		const cut = onlyHandoffCut(entries);
 		expect(
-			requestsAfterCut(log, cutHandoffId(cut)!).filter((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
+			requestsAfterCut(log, handoffIdOf(cut)).filter((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
 			"readonly is re-announced after the handoff",
 		).toHaveLength(1);
 		expect(handoffResults[1], "handoff is blocked again after the cut").toMatchObject({ isError: true, text: READONLY_HANDOFF_BLOCK_REASON });

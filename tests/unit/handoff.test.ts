@@ -304,7 +304,9 @@ test("handoff stages the request, marks it called, shows progress and appends no
 		details: {},
 		terminate: true,
 	});
-	const { handoffId, ...staged } = state.stagedHandoff!;
+	const stagedHandoff = state.stagedHandoff;
+	assertPresent(stagedHandoff, "the handoff is staged");
+	const { handoffId, ...staged } = stagedHandoff;
 	expect(handoffId).toMatch(UUID_PATTERN);
 	expect(staged).toStrictEqual({
 		toolCallId: "call-1",
@@ -378,7 +380,9 @@ test("handoff is rejected while another handoff is staged, and /handoff reports 
 test("turn_end appends the cut, successor and note after the existing entries and continues", async () => {
 	const { state, pi } = await boundaryHost();
 	await executeHandoff(pi, makeCtx().ctx, { nextInstruction: "Goal: ship", context: "left off at step 3" });
-	const handoffId = state.stagedHandoff!.handoffId;
+	const stagedHandoff = state.stagedHandoff;
+	assertPresent(stagedHandoff, "the handoff is staged");
+	const handoffId = stagedHandoff.handoffId;
 	const foreign: SessionBoundaryDraft = { type: "custom", customType: "other-extension", data: { kept: true } };
 
 	const result = await endTurn(pi, makeCtx().ctx, { entries: [foreign] });
@@ -420,7 +424,9 @@ test("turn_end with discardPages writes the notebook rewrite before the cut", as
 		s.clippedPages.add("keep");
 	});
 	await executeHandoff(pi, makeCtx().ctx, { nextInstruction: "go", discardPages: ["stale", "ghost"] });
-	const handoffId = state.stagedHandoff!.handoffId;
+	const stagedHandoff = state.stagedHandoff;
+	assertPresent(stagedHandoff, "the handoff is staged");
+	const handoffId = stagedHandoff.handoffId;
 
 	const result = await endTurn(pi, makeCtx().ctx);
 
@@ -552,7 +558,9 @@ test("a discard naming no page reports the kept pages without a discarded count"
 	});
 	const { ctx, notifications, session } = makeCtx();
 	await executeHandoff(pi, ctx, { nextInstruction: "go", discardPages: ["ghost"] });
-	const handoffId = state.stagedHandoff!.handoffId;
+	const stagedHandoff = state.stagedHandoff;
+	assertPresent(stagedHandoff, "the handoff is staged");
+	const handoffId = stagedHandoff.handoffId;
 	const result = await endTurn(pi, ctx);
 	session.branch = persist([
 		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },

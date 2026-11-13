@@ -307,7 +307,8 @@ test("buildNudge handles null percent and boundary hints before topic guidance",
 
 /** Stand in for the context hook injecting the eligible required-handoff nudge during the current run. */
 function deliverEligibleNudge(state: ReturnType<typeof createState>): void {
-	state.pendingRequestedHandoff!.eligibleNudgeDelivered = true;
+	assertPresent(state.pendingRequestedHandoff, "a handoff is requested");
+	state.pendingRequestedHandoff.eligibleNudgeDelivered = true;
 }
 
 async function createPendingHandoffHost() {

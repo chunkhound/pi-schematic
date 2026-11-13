@@ -68,7 +68,11 @@ const ZONE_FIELDS: Intl.DateTimeFormatOptions = {
 function zoneFields(date: Date, zone: string) {
 	const rendered = usableZone(zone);
 	const parts = new Intl.DateTimeFormat("en-US", { ...ZONE_FIELDS, timeZone: rendered }).formatToParts(date);
-	const field = (type: string) => parts.find((candidate) => candidate.type === type)!.value;
+	const field = (type: string) => {
+		const part = parts.find((candidate) => candidate.type === type);
+		if (!part) {throw new Error(`Intl.DateTimeFormat returned no ${type} part for ${rendered}.`);}
+		return part.value;
+	};
 	return {
 		rendered,
 		day: `${field("year")}-${field("month")}-${field("day")}`,

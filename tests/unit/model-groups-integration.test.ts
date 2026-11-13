@@ -307,7 +307,8 @@ test("model groups boot load-issue notifications escape hostile source, backup, 
 	const pi = await createTestHost();
 	const notifications: string[] = [];
 	await sessionStartHandler(pi)(SESSION_START, sessionStartContext(hostileCwd, { notify: (message) => { notifications.push(message); } }));
-	const notification = notifications.find((message) => message.includes("corrupt-json"))!;
+	const notification = notifications.find((message) => message.includes("corrupt-json"));
+	assertPresent(notification, "a corrupt-json notification is shown");
 	expect(notification).toContain(`project scope (${escapeDisplayLabel(projectPath)})`);
 	expect(notification).toContain(`backup failed (${escapeDisplayLabel(`${projectPath}.bak`)}), original file left untouched`);
 	expect(notification).toMatch(/backup\\n\\x1B\[31mfailed\\x07/);

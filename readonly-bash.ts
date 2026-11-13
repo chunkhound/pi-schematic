@@ -195,7 +195,8 @@ function classifyEnv(command: string, segment: string, tokens: string[], cwd: st
 
 /** PowerShell and cmd: block unconditionally — their syntax is not parsed. */
 function classifyUnparsableShell(command: string): string | null {
-	const shell = stripMatchingQuotes(command).split(/[\\/]/).pop()!;
+	const shell = stripMatchingQuotes(command).split(/[\\/]/).pop();
+	if (shell === undefined) {throw new Error("String split returned no segments.");}
 	if (!UNPARSABLE_SHELLS.has(shell)) {return null;}
 	return `${shell} blocked: readonly cannot inspect commands run through ${shell}`;
 }
