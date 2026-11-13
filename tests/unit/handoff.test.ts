@@ -31,8 +31,41 @@ import {
 } from "../../handoff/format.js";
 import { STATUS_KEY_HANDOFF, STATUS_KEY_NOTEBOOK, STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS, registerWatchdog } from "../../watchdog.js";
-import { callHandlers, emitAll, handoffToolResult, turnEndEvent } from "./helpers.js";
-import { createTestHost, type TestPI } from "./test-host.js";
+import {
+	SessionManager,
+	type ContextEvent,
+	type ContextUsage,
+	type CustomMessageEntryDraft,
+	type ExtensionContext,
+	type ExtensionToolContext,
+	type SessionBoundaryDraft,
+	type SessionEntry,
+	type ToolCallEventResult,
+	type TurnEndEventResult,
+} from "@earendil-works/pi-coding-agent";
+import { assertPresent } from "../assertions.js";
+import {
+	callHandlers,
+	createCommandContext,
+	createExtensionContext,
+	createToolContext,
+	createUIContext,
+	emitAll,
+	handoffToolResult,
+	turnEndEvent,
+} from "./helpers.js";
+import {
+	createTestHost,
+	getCommand,
+	getHandlers,
+	getHostRecords,
+	getTool,
+	invokeHandler,
+	type HostEvent,
+	type HostEventName,
+	type HostEventResult,
+	type TestPI,
+} from "./test-host.js";
 
 /**
  * The successor turn must OPEN with the delivered instruction + context.
@@ -50,30 +83,77 @@ function assertSuccessorTurn(content: string, input: { nextInstruction: string; 
 	expectPrefix(content, prefix, "successor turn must start with the delivered instruction and context:");
 }
 
-type Usage = { tokens: number | null; percent: number | null; contextWindow: number | null } | null;
-const ELIGIBLE_USAGE: Usage = { tokens: 50_000, percent: 25, contextWindow: 200_000 };
+const ELIGIBLE_USAGE: ContextUsage = { tokens: 50_000, percent: 25, contextWindow: 200_000 };
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** Recording UI context; `session.branch` is what `sessionManager.getBranch()` returns. */
-function makeCtx(options: { usage?: Usage; aborted?: boolean; hasUI?: boolean } = {}) {
+function makeCtx(options: { usage?: ContextUsage; aborted?: boolean; hasUI?: boolean } = {}) {
 	const statuses = new Map<string, string | undefined>();
 	const widgets = new Map<string, string[] | undefined>();
-	const notifications: { message: string; level: string }[] = [];
-	const session = { branch: [] as any[], usage: options.usage === undefined ? ELIGIBLE_USAGE : options.usage };
-	const ctx: any = {
+	const notifications: { message: string; level: string | undefined }[] = [];
+	const session: { branch: SessionEntry[]; usage: ContextUsage | undefined } = { branch: [], usage: options.usage ?? ELIGIBLE_USAGE };
+	const ctx = createToolContext({
 		hasUI: options.hasUI ?? true,
-		signal: options.aborted ? AbortSignal.abort() : undefined,
-		ui: {
-			theme: { fg: (_name: string, text: string) => text },
+		signal: options.aborted === true ? AbortSignal.abort() : undefined,
+		ui: createUIContext({
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-			setWidget: (key: string, value: string[] | undefined) => { widgets.set(key, value); },
-			notify: (message: string, level: string) => { notifications.push({ message, level }); },
-		},
+			setWidget: (key: string, value: string[] | ((...args: never[]) => unknown) | undefined) => {
+				if (typeof value === "function") {throw new Error("This test context records only text widgets.");}
+				widgets.set(key, value);
+			},
+			notify: (message: string, level?: string) => { notifications.push({ message, level }); },
+		}),
 		getContextUsage: () => session.usage,
-		sessionManager: { getBranch: () => session.branch },
-	};
+		// An in-memory session whose branch is `session.branch`.
+		sessionManager: Object.assign(SessionManager.inMemory(), { getBranch: () => session.branch }),
+	});
 	return { ctx, statuses, widgets, notifications, session };
 }
+
+/**
+ * Runs every `event` handler in registration order on the same payload, as pi
+ * does, and returns the first result a handler returned.
+ */
+async function firstHandlerResult<K extends HostEventName>(
+	pi: TestPI,
+	event: K,
+	payload: HostEvent<K>,
+	ctx: ExtensionContext,
+): Promise<HostEventResult<K> | undefined> {
+	const results: (HostEventResult<K> | undefined)[] = [];
+	for (let index = 0; index < getHandlers(pi, event).length; index++) {
+		results.push(await invokeHandler(pi, event, payload, ctx, index));
+	}
+	return results.find((result) => result !== undefined);
+}
+
+/** The entries of a boundary result; throws when there is no result or it carries no entries. */
+function boundaryEntries(result: TurnEndEventResult | undefined): SessionBoundaryDraft[] {
+	if (result?.entries === undefined) {throw new Error("turn_end returned no boundary entries.");}
+	return result.entries;
+}
+
+/** `draft` as a custom-message draft; throws on any other draft. */
+function customMessageDraft(draft: SessionBoundaryDraft | undefined): CustomMessageEntryDraft {
+	if (draft?.type !== "custom_message") {throw new Error(`Expected a custom_message draft, got ${draft?.type ?? "none"}.`);}
+	return draft;
+}
+
+/** The text of a custom-message draft; throws on any other draft or on non-text content. */
+function customMessageText(draft: SessionBoundaryDraft | undefined): string {
+	const { content } = customMessageDraft(draft);
+	if (typeof content !== "string") {throw new Error("The custom_message draft has no text content.");}
+	return content;
+}
+
+/** The text of the message the host recorded at `index` of its `pi.sendMessage` calls; throws unless it is text. */
+function sentMessageText(pi: TestPI, index: number): string {
+	const content = getHostRecords(pi).sentMessages[index]?.message.content;
+	if (typeof content !== "string") {throw new Error(`The sent message at index ${String(index)} has no text content.`);}
+	return content;
+}
+
+const ignore = (): void => undefined;
 
 async function boundaryHost(seed: (state: SchematicState) => void = () => { /* No seed: a fresh state. */ }) {
 	const state = createState();
@@ -90,33 +170,38 @@ function requestHandoff(state: SchematicState, nextInstruction: string | null = 
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction };
 }
 
-function executeHandoff(pi: TestPI, ctx: unknown, params: Record<string, unknown> = { nextInstruction: "continue work", context: "state" }, toolCallId = "call-1") {
-	return pi.tools.get("handoff").execute(toolCallId, params, undefined, undefined, ctx);
+function executeHandoff(pi: TestPI, ctx: ExtensionToolContext, params: Record<string, unknown> = { nextInstruction: "continue work", context: "state" }, toolCallId = "call-1") {
+	return getTool(pi, "handoff").execute(toolCallId, params, undefined, undefined, ctx);
 }
 
 /** Run the turn_end handlers and return the boundary result (the one handler that answers). */
-async function endTurn(pi: TestPI, ctx: unknown, overrides: Parameters<typeof turnEndEvent>[0] = {}, toolCallId = "call-1"): Promise<any> {
-	const results = await callHandlers(pi, "turn_end", turnEndEvent({ toolResults: [handoffToolResult(toolCallId)], ...overrides }), ctx);
-	return results.find((result) => result !== undefined);
+async function endTurn(pi: TestPI, ctx: ExtensionContext, overrides: Parameters<typeof turnEndEvent>[0] = {}, toolCallId = "call-1"): Promise<TurnEndEventResult | undefined> {
+	return firstHandlerResult(pi, "turn_end", turnEndEvent({ toolResults: [handoffToolResult(toolCallId)], ...overrides }), ctx);
 }
 
-/** What pi persists for submitted drafts: the same entries with ids and parents. */
-function persist(drafts: any[]): any[] {
-	return drafts.map((draft, index) => ({
-		...draft,
-		id: `entry-${index}`,
-		parentId: index === 0 ? null : `entry-${index - 1}`,
-		timestamp: "2026-01-01T00:00:00.000Z",
-	}));
+/**
+ * What pi persists for submitted drafts: the same entries with ids and parents. A
+ * compaction also gets the fields pi adds: a draft without a first kept entry keeps
+ * itself, and `tokensBefore` is a placeholder the extension never reads.
+ */
+function persist(drafts: readonly SessionBoundaryDraft[]): SessionEntry[] {
+	return drafts.map((draft, index): SessionEntry => {
+		const id = `entry-${index}`;
+		const persisted = { id, parentId: index === 0 ? null : `entry-${index - 1}`, timestamp: "2026-01-01T00:00:00.000Z" };
+		if (draft.type !== "compaction") {return { ...draft, ...persisted };}
+		return { ...draft, ...persisted, firstKeptEntryId: draft.firstKeptEntryId ?? id, tokensBefore: 0, fromHook: true };
+	});
 }
 
 /** A failed handoff stages nothing, starts no run and reports through one displayed message; returns its content. */
 function assertFailedWithoutRun(state: SchematicState, pi: TestPI): string {
 	expect(state.stagedHandoff).toBeNull();
 	expect(pi.sentUserMessages, "a failed handoff must not start a new run").toStrictEqual([]);
-	const content = pi.sentMessages[0]?.message.content;
+	const { sentMessages } = getHostRecords(pi);
+	const content = sentMessages[0]?.message.content;
 	expect(content).toBeTypeOf("string");
-	expect(pi.sentMessages).toStrictEqual([{
+	if (typeof content !== "string") {throw new Error("The failure message has no text content.");}
+	expect(sentMessages).toStrictEqual([{
 		message: { customType: "pi-schematic-handoff-failed", content, display: true },
 		options: { triggerTurn: false },
 	}]);
@@ -129,12 +214,12 @@ test("/handoff sends the direction back through the LLM without opening the edit
 		registerHandoffCommand(api, state);
 	});
 
-	await pi.commands.get("handoff")!.handler("implement auth", {
+	await getCommand(pi, "handoff").handler("implement auth", createCommandContext({
 		hasUI: true,
 		isIdle: () => true,
-		getContextUsage: () => null,
-		ui: { notify: vi.fn() },
-	});
+		getContextUsage: () => undefined,
+		ui: createUIContext({ notify: vi.fn(), setStatus: ignore }),
+	}));
 
 	expect(state.pendingRequestedHandoff).toStrictEqual({
 		enforcementAttempts: 0,
@@ -162,11 +247,11 @@ test("/handoff requires a direction", async () => {
 	});
 
 	const notifications: string[] = [];
-	await pi.commands.get("handoff")!.handler("   ", {
+	await getCommand(pi, "handoff").handler("   ", createCommandContext({
 		hasUI: true,
 		isIdle: () => true,
-		ui: { notify: (message: string) => notifications.push(message) },
-	});
+		ui: createUIContext({ notify: (message: string) => notifications.push(message) }),
+	}));
 
 	expect(notifications).toStrictEqual(["Usage: /handoff <direction>"]);
 	expect(pi.sentUserMessages).toStrictEqual([]);
@@ -210,7 +295,7 @@ test("handoff stages the request, marks it called, shows progress and appends no
 test("a pending human direction wins over a model-supplied nextInstruction in the staged request", async () => {
 	const { state, pi } = await boundaryHost();
 	const direction = "  Audit the retry budget.  ";
-	await pi.commands.get("handoff")!.handler(direction, { hasUI: false, isIdle: () => true, getContextUsage: () => null } as any);
+	await getCommand(pi, "handoff").handler(direction, createCommandContext({ isIdle: () => true, getContextUsage: () => undefined }));
 
 	await executeHandoff(pi, makeCtx().ctx, {
 		nextInstruction: "Verify the audit is done",
@@ -223,7 +308,7 @@ test("a pending human direction wins over a model-supplied nextInstruction in th
 
 test("a pending human direction needs no tool arguments", async () => {
 	const { state, pi } = await boundaryHost();
-	await pi.commands.get("handoff")!.handler("finish the migration", { hasUI: false, isIdle: () => true } as any);
+	await getCommand(pi, "handoff").handler("finish the migration", createCommandContext({ isIdle: () => true }));
 
 	await executeHandoff(pi, makeCtx().ctx, {});
 
@@ -251,7 +336,7 @@ test("handoff is rejected while another handoff is staged, and /handoff reports 
 	await executeHandoff(pi, ctx, { nextInstruction: "first task" }, "first");
 
 	await expect(executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second")).rejects.toThrow(new Error(HANDOFF_ALREADY_STAGED));
-	await expect(pi.commands.get("handoff")!.handler("replacement direction", { hasUI: false, isIdle: () => true } as any)).rejects.toThrow(new Error(HANDOFF_COMMAND_BUSY));
+	await expect(getCommand(pi, "handoff").handler("replacement direction", createCommandContext({ isIdle: () => true }))).rejects.toThrow(new Error(HANDOFF_COMMAND_BUSY));
 
 	expect(state.stagedHandoff?.nextInstruction, "the first staged request must survive").toBe("first task");
 	expect(state.stagedHandoff?.toolCallId).toBe("first");
@@ -264,9 +349,9 @@ test("turn_end appends the cut, successor and note after the existing entries an
 	const { state, pi } = await boundaryHost();
 	await executeHandoff(pi, makeCtx().ctx, { nextInstruction: "Goal: ship", context: "left off at step 3" });
 	const handoffId = state.stagedHandoff!.handoffId;
-	const foreign = { type: "custom", customType: "other-extension", data: { kept: true } };
+	const foreign: SessionBoundaryDraft = { type: "custom", customType: "other-extension", data: { kept: true } };
 
-	const result = await endTurn(pi, makeCtx().ctx, { entries: [foreign as any] });
+	const result = await endTurn(pi, makeCtx().ctx, { entries: [foreign] });
 
 	expect(result).toStrictEqual({
 		entries: [
@@ -309,13 +394,13 @@ test("turn_end with discardPages writes the notebook rewrite before the cut", as
 
 	const result = await endTurn(pi, makeCtx().ctx);
 
-	expect(result.entries.slice(0, 3)).toStrictEqual([
+	expect(boundaryEntries(result).slice(0, 3)).toStrictEqual([
 		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
 		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 2, name: "keep", content: "durable", clipped: true } },
 		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 2 } },
 	]);
-	expect(result.entries[3].type).toBe("compaction");
-	expect(result.entries[4].details).toStrictEqual({ handoffId });
+	expect(boundaryEntries(result)[3].type).toBe("compaction");
+	expect(customMessageDraft(boundaryEntries(result)[4]).details).toStrictEqual({ handoffId });
 	expect(state.stagedHandoff?.discardedPages, "only the requested page that existed is discarded").toStrictEqual(["stale"]);
 	expect([...state.notebookPages.keys()], "the in-memory notebook changes only once the cut is confirmed").toContain("stale");
 });
@@ -331,7 +416,9 @@ test("the discard epoch moves past the discard watermark", async () => {
 
 	const result = await endTurn(pi, makeCtx().ctx);
 
-	expect(result.entries.map((entry: any) => entry.data?.epoch).slice(0, 3)).toStrictEqual([1, 4, 4]);
+	const epochs = boundaryEntries(result).map((entry) =>
+		entry.type === "custom" && typeof entry.data === "object" && entry.data !== null && "epoch" in entry.data ? entry.data.epoch : undefined);
+	expect(epochs.slice(0, 3)).toStrictEqual([1, 4, 4]);
 });
 
 test.for([{ discardPages: [] }, { discardPages: ["ghost"] }])("turn_end adds no notebook entries when discardPages is empty or names no page (when discardPages is $discardPages)", async ({ discardPages }) => {
@@ -343,7 +430,7 @@ test.for([{ discardPages: [] }, { discardPages: ["ghost"] }])("turn_end adds no 
 
 	const result = await endTurn(pi, makeCtx().ctx);
 
-	expect(result.entries.map((entry: any) => entry.type), `discardPages ${JSON.stringify(discardPages)}`).toStrictEqual(["compaction", "custom_message", "custom_message"]);
+	expect(boundaryEntries(result).map((entry) => entry.type), `discardPages ${JSON.stringify(discardPages)}`).toStrictEqual(["compaction", "custom_message", "custom_message"]);
 });
 
 const declineCases: { name: string; reason: string; ctx?: { aborted: boolean }; event: Parameters<typeof turnEndEvent>[0] }[] = [
@@ -386,7 +473,7 @@ test("turn_start with the cut on the branch completes the handoff", async () => 
 	const { ctx, statuses, widgets, notifications, session } = makeCtx();
 	await executeHandoff(pi, ctx, { discardPages: ["stale"] });
 	const result = await endTurn(pi, ctx);
-	session.branch = persist(result.entries);
+	session.branch = persist(boundaryEntries(result));
 	widgets.set(WIDGET_KEY_WARNING, ["⚠ Context at 85% — readonly"]);
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
@@ -419,7 +506,7 @@ test("a completed handoff without discardPages notifies a plain completion", asy
 		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
 		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "a", content: "one", clipped: false } },
 		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "b", content: "two", clipped: false } },
-		...result.entries,
+		...boundaryEntries(result),
 	]);
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
@@ -442,7 +529,7 @@ test("a discard naming no page reports the kept pages without a discarded count"
 		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
 		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "a", content: "one", clipped: false } },
 		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "b", content: "two", clipped: false } },
-		...result.entries,
+		...boundaryEntries(result),
 	]);
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
@@ -464,7 +551,7 @@ test("a discard dropped from the boundary is counted from the branch and warned 
 		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
 		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "a", content: "one", clipped: false } },
 		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "stale", content: "obsolete", clipped: false } },
-		...result.entries.filter((entry: any) => entry.type !== "custom"),
+		...boundaryEntries(result).filter((entry) => entry.type !== "custom"),
 	]);
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
@@ -490,7 +577,7 @@ test("a page created under a requested discard name after staging is neither cou
 	session.branch = persist([
 		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
 		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "stale", content: "obsolete", clipped: false } },
-		...result.entries,
+		...boundaryEntries(result),
 		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 2, name: "ghost", content: "created after staging", clipped: false } },
 	]);
 
@@ -506,7 +593,7 @@ test("a completed handoff leaves the readonly nudge off when readonly is off", a
 	const { state, pi } = await boundaryHost();
 	const { ctx, session } = makeCtx();
 	await executeHandoff(pi, ctx);
-	session.branch = persist((await endTurn(pi, ctx)).entries);
+	session.branch = persist(boundaryEntries(await endTurn(pi, ctx)));
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
@@ -559,7 +646,7 @@ test("a failed handoff shows the waiting status when usage becomes unavailable",
 	const { ctx, statuses, session } = makeCtx();
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, ctx);
-	session.usage = null;
+	session.usage = undefined;
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
@@ -578,9 +665,9 @@ test("a failed handoff without a pending request clears the status and says noth
 	expect(statuses.get(STATUS_KEY_HANDOFF), "the in-progress status the tool set is cleared").toBeUndefined();
 	expect(pi.sentUserMessages).toStrictEqual([]);
 	expect(pi.sentMessages).toHaveLength(1);
-	expect(pi.sentMessages[0].message.customType).toBe("pi-schematic-handoff-failed");
-	expect(pi.sentMessages[0].message.display).toBe(true);
-	expectSuffix(pi.sentMessages[0].message.content, "No required handoff remains pending; retry when ready.");
+	expect(getHostRecords(pi).sentMessages[0].message.customType).toBe("pi-schematic-handoff-failed");
+	expect(getHostRecords(pi).sentMessages[0].message.display).toBe(true);
+	expectSuffix(sentMessageText(pi, 0), "No required handoff remains pending; retry when ready.");
 	expect(pi.sentMessages[0].options).toStrictEqual({ triggerTurn: false });
 });
 
@@ -606,7 +693,7 @@ for (const { attemptsBefore, nudged, requestSurvives } of [
 		if (requestSurvives) {expect(state.pendingRequestedHandoff).not.toBeNull();}
 		else {expect(state.pendingRequestedHandoff).toBeNull();}
 		expect(pi.sentMessages).toHaveLength(1);
-		expectSuffix(pi.sentMessages[0].message.content, requestSurvives
+		expectSuffix(sentMessageText(pi, 0), requestSurvives
 			? "The required handoff remains pending; retry when context usage is eligible."
 			: "No required handoff remains pending; retry when ready.");
 		expect(statuses.get(STATUS_KEY_HANDOFF)).toBe(requestSurvives ? "🤝 Handoff required — ready to compact" : undefined);
@@ -618,7 +705,7 @@ test("agent_settled with the cut on the branch completes with the successor-did-
 	const { state, pi } = await boundaryHost((s) => { requestHandoff(s); });
 	const { ctx, notifications, session } = makeCtx();
 	await executeHandoff(pi, ctx);
-	session.branch = persist((await endTurn(pi, ctx)).entries);
+	session.branch = persist(boundaryEntries(await endTurn(pi, ctx)));
 
 	await emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
 
@@ -675,14 +762,14 @@ test("a submitted handoff whose cut is missing but whose notebook drafts persist
 	const { ctx, session } = makeCtx();
 	await executeHandoff(pi, ctx, { nextInstruction: "go", discardPages: ["stale"] });
 	const result = await endTurn(pi, ctx);
-	session.branch = persist(result.entries.filter((entry: any) => entry.type !== "compaction"));
+	session.branch = persist(boundaryEntries(result).filter((entry) => entry.type !== "compaction"));
 	const expected = createState();
 	reconstructNotebook(expected, session.branch);
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
 	expect(state.stagedHandoff).toBeNull();
-	expect(pi.sentMessages[0].message.customType).toBe("pi-schematic-handoff-failed");
+	expect(getHostRecords(pi).sentMessages[0].message.customType).toBe("pi-schematic-handoff-failed");
 	expect([...state.notebookPages], "the discard drafts persisted, so the discard applies").toStrictEqual([["keep", "durable"]]);
 	expect(state.epoch).toBe(2);
 	expect([...state.notebookPages]).toStrictEqual([...expected.notebookPages]);
@@ -699,9 +786,9 @@ test("a failed handoff, a retry and the second cut deliver the human direction a
 		s.notebookPages.set("other", "also durable");
 	});
 	const { ctx, session } = makeCtx();
-	const persistedNotebook = [
+	const persistedNotebook: SessionBoundaryDraft[] = [
 		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
-		...["stale", "keep", "other"].map((name) => ({
+		...["stale", "keep", "other"].map((name): SessionBoundaryDraft => ({
 			type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name, content: state.notebookPages.get(name), clipped: false },
 		})),
 	];
@@ -715,11 +802,11 @@ test("a failed handoff, a retry and the second cut deliver the human direction a
 
 	await executeHandoff(pi, ctx, { nextInstruction: "second model instruction", discardPages: ["stale"] }, "second");
 	const result = await endTurn(pi, ctx, {}, "second");
-	session.branch = persist([...persistedNotebook, ...result.entries]);
+	session.branch = persist([...persistedNotebook, ...boundaryEntries(result)]);
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
-	const successor = result.entries.find((entry: any) => entry.customType === "pi-schematic-handoff");
-	expect(successor.content).toBe("## Next instruction\n\nhuman direction");
+	const successor = boundaryEntries(result).find((entry) => entry.type === "custom_message" && entry.customType === "pi-schematic-handoff");
+	expect(customMessageText(successor)).toBe("## Next instruction\n\nhuman direction");
 	expect(state.stagedHandoff).toBeNull();
 	expect(state.pendingRequestedHandoff).toBeNull();
 	expect([...state.notebookPages].sort()).toStrictEqual([["keep", "durable"], ["other", "also durable"]]);
@@ -728,21 +815,30 @@ test("a failed handoff, a retry and the second cut deliver the human direction a
 test("a handoff whose branch holds only an earlier handoff's cut fails as not persisted", async () => {
 	const { state, pi } = await boundaryHost();
 	const { ctx, session } = makeCtx();
-	session.branch = [{ type: "compaction", id: "old-cut", parentId: null, details: { handoff: true, handoffId: "handoff-a" } }];
+	session.branch = [{
+		type: "compaction",
+		id: "old-cut",
+		parentId: null,
+		timestamp: "2026-01-01T00:00:00.000Z",
+		summary: buildContinuationFrame(),
+		firstKeptEntryId: "old-cut",
+		tokensBefore: 0,
+		details: { handoff: true, handoffId: "handoff-a" },
+	}];
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, ctx);
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 
 	expect(state.stagedHandoff).toBeNull();
-	expectPrefix(pi.sentMessages[0].message.content, `Handoff failed — ${REASON_NOT_PERSISTED}.`);
+	expectPrefix(sentMessageText(pi, 0), `Handoff failed — ${REASON_NOT_PERSISTED}.`);
 });
 
 test("agent_settled after a handoff completed at turn_start sends and notifies nothing", async () => {
 	const { pi } = await boundaryHost((s) => { requestHandoff(s); });
 	const { ctx, notifications, session } = makeCtx({ hasUI: true });
 	await executeHandoff(pi, ctx);
-	session.branch = persist((await endTurn(pi, ctx)).entries);
+	session.branch = persist(boundaryEntries(await endTurn(pi, ctx)));
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
 	const notificationsAtCompletion = notifications.length;
 
@@ -766,9 +862,8 @@ function assistantMessage(...calls: { id: string; name: string }[]) {
 	};
 }
 
-async function toolCall(pi: TestPI, toolCallId: string, toolName: string): Promise<any> {
-	const results = await callHandlers(pi, "tool_call", { type: "tool_call", toolCallId, toolName, input: {} }, makeCtx().ctx);
-	return results.find((result) => result !== undefined);
+async function toolCall(pi: TestPI, toolCallId: string, toolName: string): Promise<ToolCallEventResult | undefined> {
+	return firstHandlerResult(pi, "tool_call", { type: "tool_call", toolCallId, toolName, input: {} }, makeCtx().ctx);
 }
 
 test("in a message holding only handoff calls, the first runs and the others are refused", async () => {
@@ -811,7 +906,7 @@ test("refusals last until the next assistant message and are not cleared by othe
 	await callHandlers(pi, "message_end", assistantMessage({ id: "h1", name: "handoff" }, { id: "w1", name: "write" }), ctx);
 
 	await callHandlers(pi, "message_end", { type: "message_end", message: { role: "toolResult", content: [] } }, ctx);
-	expect((await toolCall(pi, "h1", "handoff")).block, "a tool result message must not clear refusals").toBe(true);
+	expect((await toolCall(pi, "h1", "handoff"))?.block, "a tool result message must not clear refusals").toBe(true);
 
 	await callHandlers(pi, "message_end", assistantMessage({ id: "w2", name: "write" }), ctx);
 	expect(await toolCall(pi, "h1", "handoff"), "the next assistant message clears the previous refusals").toBeUndefined();
@@ -835,7 +930,7 @@ test("session_tree invalidates a staged handoff and the handoff refusals", async
 	await executeHandoff(pi, ctx, { nextInstruction: "first task" }, "first");
 	await callHandlers(pi, "message_end", assistantMessage({ id: "h1", name: "handoff" }, { id: "w1", name: "write" }), ctx);
 	await expect(executeHandoff(pi, ctx, { nextInstruction: "second task" }, "second")).rejects.toThrow(new Error(HANDOFF_ALREADY_STAGED));
-	expect((await toolCall(pi, "h1", "handoff")).block).toBe(true);
+	expect((await toolCall(pi, "h1", "handoff"))?.block).toBe(true);
 
 	await emitAll(pi, "session_tree", { type: "session_tree" }, ctx);
 
@@ -876,7 +971,7 @@ test("session_tree clears the failed-in-run refusal", async () => {
 	await executeHandoff(pi, ctx);
 	await endTurn(pi, ctx);
 	await emitAll(pi, "turn_start", { type: "turn_start" }, ctx);
-	expect((await toolCall(pi, "again", "handoff")).block).toBe(true);
+	expect((await toolCall(pi, "again", "handoff"))?.block).toBe(true);
 
 	await emitAll(pi, "session_tree", { type: "session_tree" }, ctx);
 
@@ -887,7 +982,7 @@ test("the handoff tool definition declares model-only exposure", async () => {
 	const { pi } = await boundaryHost();
 
 	// The host does not model Pi's nested-call runner; the field is what Pi reads.
-	expect(pi.tools.get("handoff").exposure).toBe("model-only");
+	expect(getTool(pi, "handoff").exposure).toBe("model-only");
 });
 
 // ── Registration order ───────────────────────────────────────────────
@@ -896,15 +991,9 @@ test("the boundary settles a failed handoff before the watchdog counts the run, 
 	const pi = await createTestHost();
 	const { ctx, notifications } = makeCtx();
 	const warnings = () => notifications.filter((notification) => notification.level === "warning");
-	const nudge = async () => {
-		const result = await pi.handlers.get("context")![0](
-			{ messages: [{ role: "user", content: "work", timestamp: 1 }] },
-			ctx,
-		);
-		return result.messages.find((message: any) => message.customType === "pi-schematic-watchdog").content;
-	};
+	const nudge = () => watchdogNudge(pi, ctx);
 
-	await pi.commands.get("handoff")!.handler("continue work", { hasUI: false, isIdle: () => true } as any);
+	await getCommand(pi, "handoff").handler("continue work", createCommandContext({ isIdle: () => true }));
 	for (let attempt = 1; attempt <= MAX_HANDOFF_ATTEMPTS; attempt++) {
 		expect(await nudge(), `attempt ${attempt} is still nudged`).toMatch(/A real handoff is required/);
 		await executeHandoff(pi, ctx, { nextInstruction: "continue work" });
@@ -917,11 +1006,18 @@ test("the boundary settles a failed handoff before the watchdog counts the run, 
 	expectPrefix(warnings()[0].message, `Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts`);
 });
 
+type ContextMessage = ContextEvent["messages"][number];
+
 /** The watchdog nudge the real context hook injects for `ctx`, or undefined when it injects none. */
-async function watchdogNudge(pi: TestPI, ctx: unknown): Promise<string | undefined> {
-	const [contextHook] = pi.handlers.get("context")!;
-	const result = await contextHook({ messages: [{ role: "user", content: "work", timestamp: 1 }] }, ctx);
-	return result?.messages.find((message: any) => message.customType === "pi-schematic-watchdog")?.content;
+async function watchdogNudge(pi: TestPI, ctx: ExtensionContext): Promise<string | undefined> {
+	const result = await invokeHandler(pi, "context", { type: "context", messages: [{ role: "user", content: "work", timestamp: 1 }] }, ctx);
+	if (result === undefined) {return undefined;}
+	if (result.messages === undefined) {throw new Error("The context hook returned a result without messages.");}
+	const nudge = result.messages.find((message): message is Extract<ContextMessage, { role: "custom" }> =>
+		message.role === "custom" && message.customType === "pi-schematic-watchdog");
+	if (nudge === undefined) {return undefined;}
+	if (typeof nudge.content !== "string") {throw new Error("The watchdog nudge has no text content.");}
+	return nudge.content;
 }
 
 test("unready runs do not consume the enforcement budget", async () => {
@@ -930,8 +1026,8 @@ test("unready runs do not consume the enforcement budget", async () => {
 	const pi = await createTestHost();
 	const warnings: string[] = [];
 	const small = makeCtx({ usage: { tokens: 5000, percent: 2.5, contextWindow: 200000 } });
-	small.ctx.ui.notify = (message: string, level: string) => { if (level === "warning") {warnings.push(message);} };
-	await pi.commands.get("handoff")!.handler("continue work", { hasUI: false, isIdle: () => true } as any);
+	small.ctx.ui.notify = (message: string, level?: string) => { if (level === "warning") {warnings.push(message);} };
+	await getCommand(pi, "handoff").handler("continue work", createCommandContext({ isIdle: () => true }));
 
 	for (let run = 0; run < MAX_HANDOFF_ATTEMPTS; run++) {
 		expect(await watchdogNudge(pi, small.ctx) ?? "").toMatch(/not yet ready for compaction/);
@@ -946,15 +1042,15 @@ test("unready runs do not consume the enforcement budget", async () => {
 test("a completed handoff clears the requested-handoff nudge", async () => {
 	const pi = await createTestHost();
 	const eligible = makeCtx();
-	await pi.commands.get("handoff")!.handler("continue work", { hasUI: false, isIdle: () => true } as any);
+	await getCommand(pi, "handoff").handler("continue work", createCommandContext({ isIdle: () => true }));
 	expect(await watchdogNudge(pi, eligible.ctx) ?? "").toMatch(/A real handoff is required/);
 	await executeHandoff(pi, eligible.ctx, { nextInstruction: "continue work" });
 	const result = await endTurn(pi, eligible.ctx);
-	eligible.session.branch = persist(result.entries);
+	eligible.session.branch = persist(boundaryEntries(result));
 
 	await emitAll(pi, "turn_start", { type: "turn_start" }, eligible.ctx);
 
-	assertSuccessorTurn(result.entries[1].content, { nextInstruction: "continue work" });
+	assertSuccessorTurn(customMessageText(boundaryEntries(result)[1]), { nextInstruction: "continue work" });
 	expect(await watchdogNudge(pi, eligible.ctx), "a completed handoff leaves no requested-handoff nudge").toBeUndefined();
 });
 
@@ -965,16 +1061,15 @@ test("/handoff sets the handoff status indicator", async () => {
 	});
 	const statuses = new Map<string, string | undefined>();
 
-	await pi.commands.get("handoff")!.handler("implement auth", {
+	await getCommand(pi, "handoff").handler("implement auth", createCommandContext({
 		hasUI: true,
 		isIdle: () => true,
-		ui: {
-			theme: { fg: (_name: string, text: string) => text },
+		ui: createUIContext({
 			notify: vi.fn(),
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-		},
-		getContextUsage: () => null,
-	});
+		}),
+		getContextUsage: () => undefined,
+	}));
 
 	expect(statuses.get(STATUS_KEY_HANDOFF)).toBe("🤝 Handoff requested — waiting for eligible context");
 });
@@ -986,16 +1081,15 @@ test("/handoff shows ready status when context is eligible", async () => {
 	});
 	const statuses = new Map<string, string | undefined>();
 
-	await pi.commands.get("handoff")!.handler("implement auth", {
+	await getCommand(pi, "handoff").handler("implement auth", createCommandContext({
 		hasUI: true,
 		isIdle: () => true,
 		getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
-		ui: {
-			theme: { fg: (_name: string, text: string) => text },
+		ui: createUIContext({
 			notify: vi.fn(),
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-		},
-	});
+		}),
+	}));
 
 	expect(statuses.get(STATUS_KEY_HANDOFF)).toBe("🤝 Handoff required — ready to compact");
 });
@@ -1003,27 +1097,27 @@ test("/handoff shows ready status when context is eligible", async () => {
 test("handoff status becomes ready when later context becomes eligible", async () => {
 	const pi = await createTestHost();
 	const statuses = new Map<string, string | undefined>();
-	const commandContext = {
+	const commandContext = createCommandContext({
 		hasUI: true,
 		isIdle: () => true,
-		getContextUsage: () => null,
-		ui: {
-			theme: { fg: (_name: string, text: string) => text },
+		getContextUsage: () => undefined,
+		ui: createUIContext({
 			notify: vi.fn(),
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-		},
-	};
-	await pi.commands.get("handoff")!.handler("implement auth", commandContext);
+		}),
+	});
+	await getCommand(pi, "handoff").handler("implement auth", commandContext);
 	expect(statuses.get(STATUS_KEY_HANDOFF)).toBe("🤝 Handoff requested — waiting for eligible context");
 
-	const [context] = pi.handlers.get("context")!;
-	await context(
-		{ messages: [] },
-		{
+	await invokeHandler(
+		pi,
+		"context",
+		{ type: "context", messages: [] },
+		createExtensionContext({
 			hasUI: true,
 			getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
 			ui: commandContext.ui,
-		},
+		}),
 	);
 
 	expect(statuses.get(STATUS_KEY_HANDOFF)).toBe("🤝 Handoff required — ready to compact");
@@ -1040,12 +1134,12 @@ test("handoff rejects malformed numeric context usage", async () => {
 		{ tokens: Number.POSITIVE_INFINITY, percent: 20, contextWindow: 200000 },
 		{ tokens: null, percent: Number.NaN, contextWindow: 200000 },
 	]) {
-		await expect(pi.tools.get("handoff").execute(
+		await expect(getTool(pi, "handoff").execute(
 				"invalid-usage",
 				{ nextInstruction: "continue work" },
 				undefined,
 				undefined,
-				{ getContextUsage: () => usage },
+				createToolContext({ getContextUsage: () => usage }),
 			)).rejects.toThrow(/Context usage unavailable/);
 	}
 });
@@ -1053,16 +1147,15 @@ test("handoff rejects malformed numeric context usage", async () => {
 test("turn_end fallback keeps requested handoff status sticky until real handoff happens", async () => {
 	const pi = await createTestHost();
 	const statuses = new Map<string, string | undefined>();
-	await pi.commands.get("handoff")!.handler("implement auth", {
+	await getCommand(pi, "handoff").handler("implement auth", createCommandContext({
 		hasUI: true,
 		isIdle: () => true,
-		getContextUsage: () => null,
-		ui: {
-			theme: { fg: (_name: string, text: string) => text },
+		getContextUsage: () => undefined,
+		ui: createUIContext({
 			notify: vi.fn(),
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-		},
-	});
+		}),
+	}));
 
 	await emitAll(pi, "turn_end", turnEndEvent(), {
 		hasUI: true,
@@ -1083,7 +1176,8 @@ test("handoff tool metadata and schema describe the prompt contract", async () =
 		registerHandoffTool(api, state);
 	});
 
-	const tool = pi.tools.get("handoff");
+	const tool = getTool(pi, "handoff");
+	assertPresent(tool.promptGuidelines);
 	expect(tool.description).toMatch(/past ~30%/i);
 	expect(tool.description).toMatch(/call handoff/i);
 	expect(tool.description).toMatch(/current notebook/i);
@@ -1165,12 +1259,12 @@ test("handoff tool rejects an empty nextInstruction with context usage", async (
 		registerHandoffTool(api, state);
 	});
 
-	await expect(pi.tools.get("handoff").execute(
+	await expect(getTool(pi, "handoff").execute(
 			"1",
 			{ nextInstruction: "" },
 			undefined,
 			undefined,
-			{ getContextUsage: () => ({ percent: 42 }) },
+			createToolContext({ getContextUsage: () => ({ tokens: null, contextWindow: 0, percent: 42 }) }),
 		)).rejects.toSatisfy((error: Error) => {
 			expect(error).toBeInstanceOf(Error);
 			expect(error.message).toContain("Empty handoff nextInstruction rejected");
@@ -1188,12 +1282,12 @@ test("handoff tool rejects small session with clear error", async () => {
 		registerHandoffTool(api, state);
 	});
 
-	await expect(pi.tools.get("handoff").execute(
+	await expect(getTool(pi, "handoff").execute(
 			"1",
 			{ nextInstruction: "Goal: continue" },
 			undefined,
 			undefined,
-			{ getContextUsage: () => ({ tokens: 5000, percent: 2.5, contextWindow: 200000 }) },
+			createToolContext({ getContextUsage: () => ({ tokens: 5000, percent: 2.5, contextWindow: 200000 }) }),
 		)).rejects.toSatisfy((error: Error) => {
 			expect(error).toBeInstanceOf(Error);
 			expect(error.message).toContain("handoff unavailable yet");
@@ -1212,21 +1306,21 @@ test("a small-session rejection keeps the pending request and states it in the e
 		registerHandoffTool(api, state);
 	});
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "🤝 Handoff in progress"]]);
-	const notifications: { message: string; level: string }[] = [];
+	const notifications: { message: string; level: string | undefined }[] = [];
 
-	await expect(pi.tools.get("handoff").execute(
+	await expect(getTool(pi, "handoff").execute(
 			"1",
 			{ nextInstruction: "Goal: continue" },
 			undefined,
 			undefined,
-			{
+			createToolContext({
 				hasUI: true,
-				ui: {
+				ui: createUIContext({
 					setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-					notify: (message: string, level: string) => { notifications.push({ message, level }); },
-				},
+					notify: (message: string, level?: string) => { notifications.push({ message, level }); },
+				}),
 				getContextUsage: () => ({ tokens: 5000, percent: 2.5, contextWindow: 200000 }),
-			},
+			}),
 		)).rejects.toSatisfy((error: Error) => {
 			expect(error).toBeInstanceOf(Error);
 			expect(error.message).toContain("handoff unavailable yet");
@@ -1251,12 +1345,12 @@ test("handoff tool rejects small session with null percent without crashing", as
 		registerHandoffTool(api, state);
 	});
 
-	await expect(pi.tools.get("handoff").execute(
+	await expect(getTool(pi, "handoff").execute(
 			"1",
 			{ nextInstruction: "Goal: continue" },
 			undefined,
 			undefined,
-			{ getContextUsage: () => ({ tokens: 5000, percent: null, contextWindow: 200000 }) },
+			createToolContext({ getContextUsage: () => ({ tokens: 5000, percent: null, contextWindow: 200000 }) }),
 		)).rejects.toSatisfy((error: Error) => {
 			expect(error).toBeInstanceOf(Error);
 			expect(error.message).toContain("handoff unavailable yet");
@@ -1274,12 +1368,12 @@ test("handoff tool rejects small session estimated from percent when tokens are 
 		registerHandoffTool(api, state);
 	});
 
-	await expect(pi.tools.get("handoff").execute(
+	await expect(getTool(pi, "handoff").execute(
 			"1",
 			{ nextInstruction: "Goal: continue" },
 			undefined,
 			undefined,
-			{ getContextUsage: () => ({ tokens: null, percent: 10, contextWindow: 200000 }) },
+			createToolContext({ getContextUsage: () => ({ tokens: null, percent: 10, contextWindow: 200000 }) }),
 		)).rejects.toSatisfy((error: Error) => {
 			expect(error).toBeInstanceOf(Error);
 			expect(error.message).toContain("handoff unavailable yet");
@@ -1297,14 +1391,14 @@ test("handoff tool accepts large estimated session when tokens are unavailable",
 		registerHandoffTool(api, state);
 	});
 
-	await expect(pi.tools.get("handoff").execute(
+	await expect(getTool(pi, "handoff").execute(
 			"1",
 			{ nextInstruction: "Goal: continue" },
 			undefined,
 			undefined,
-			{
+			createToolContext({
 				getContextUsage: () => ({ tokens: null, percent: 20, contextWindow: 200000 }),
-			},
+			}),
 		)).resolves.toMatchObject({ terminate: true });
 	expect(state.stagedHandoff?.phase, "an accepted handoff must stage").toBe("staged");
 });
@@ -1315,14 +1409,14 @@ test("handoff tool accepts the exact 30000-token minimum", async () => {
 		registerHandoffTool(api, state);
 	});
 
-	await expect(pi.tools.get("handoff").execute(
+	await expect(getTool(pi, "handoff").execute(
 			"1",
 			{ nextInstruction: "Goal: continue" },
 			undefined,
 			undefined,
-			{
+			createToolContext({
 				getContextUsage: () => ({ tokens: 30000, percent: 15, contextWindow: 200000 }),
-			},
+			}),
 		)).resolves.toMatchObject({ terminate: true });
 	expect(state.stagedHandoff?.phase, "an accepted handoff must stage").toBe("staged");
 });
@@ -1333,12 +1427,12 @@ test("handoff tool rejects session just below the 30000-token minimum", async ()
 		registerHandoffTool(api, state);
 	});
 
-	await expect(pi.tools.get("handoff").execute(
+	await expect(getTool(pi, "handoff").execute(
 			"1",
 			{ nextInstruction: "Goal: continue" },
 			undefined,
 			undefined,
-			{ getContextUsage: () => ({ tokens: 29999, percent: 15, contextWindow: 200000 }) },
+			createToolContext({ getContextUsage: () => ({ tokens: 29999, percent: 15, contextWindow: 200000 }) }),
 		)).rejects.toSatisfy((error: Error) => {
 			expect(error).toBeInstanceOf(Error);
 			expect(error.message).toContain("handoff unavailable yet");
@@ -1356,12 +1450,12 @@ test("handoff tool rejects a whitespace-only nextInstruction", async () => {
 		registerHandoffTool(api, state);
 	});
 
-	await expect(pi.tools.get("handoff").execute(
+	await expect(getTool(pi, "handoff").execute(
 			"1",
 			{ nextInstruction: "   \t\n " },
 			undefined,
 			undefined,
-			{ getContextUsage: () => null },
+			createToolContext({ getContextUsage: () => undefined }),
 		)).rejects.toSatisfy((error: Error) => {
 			expect(error).toBeInstanceOf(Error);
 			expect(error.message).toContain("Empty handoff nextInstruction rejected");
@@ -1378,7 +1472,7 @@ test("/handoff queues as a followUp while a run is active", async () => {
 		registerHandoffCommand(api, state);
 	});
 
-	await pi.commands.get("handoff")!.handler("continue work", { hasUI: false, isIdle: () => false } as any);
+	await getCommand(pi, "handoff").handler("continue work", createCommandContext({ isIdle: () => false }));
 
 	expect(pi.sentUserMessages[0]?.options?.deliverAs, "a direction sent mid-run must queue instead of being rejected").toBe("followUp");
 });
@@ -1392,9 +1486,9 @@ test("handoff tool ignores a legacy task field and rejects the resulting empty i
 	// The harness calls execute directly, bypassing Pi's schema validation. TypeBox
 	// tolerates the unknown key, so this pins that the removed fused field is never
 	// consumed as the instruction: with no nextInstruction the call fails loudly.
-	await expect(pi.tools.get("handoff").execute("legacy-task", { task: "old field" } as any, undefined, undefined, {
+	await expect(getTool(pi, "handoff").execute("legacy-task", { task: "old field" }, undefined, undefined, createToolContext({
 			getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
-		})).rejects.toThrow(/Empty handoff nextInstruction rejected/);
+		}))).rejects.toThrow(/Empty handoff nextInstruction rejected/);
 
 	expect(state.stagedHandoff, "a legacy task field must not stage").toBeNull();
 });
@@ -1405,12 +1499,12 @@ test("handoff tool rejects when context usage is unavailable", async () => {
 		registerHandoffTool(api, state);
 	});
 
-	await expect(pi.tools.get("handoff").execute(
+	await expect(getTool(pi, "handoff").execute(
 			"1",
 			{ nextInstruction: "Goal: continue" },
 			undefined,
 			undefined,
-			{ getContextUsage: () => null },
+			createToolContext({ getContextUsage: () => undefined }),
 		)).rejects.toSatisfy((error: Error) => {
 			expect(error).toBeInstanceOf(Error);
 			expect(error.message).toContain("Context usage unavailable");
@@ -1428,21 +1522,21 @@ test("an unavailable-usage rejection keeps the pending request and states it in 
 		registerHandoffTool(api, state);
 	});
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "🤝 Handoff in progress"]]);
-	const notifications: { message: string; level: string }[] = [];
+	const notifications: { message: string; level: string | undefined }[] = [];
 
-	await expect(pi.tools.get("handoff").execute(
+	await expect(getTool(pi, "handoff").execute(
 			"1",
 			{ nextInstruction: "Goal: continue" },
 			undefined,
 			undefined,
-			{
+			createToolContext({
 				hasUI: true,
-				ui: {
+				ui: createUIContext({
 					setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
-					notify: (message: string, level: string) => { notifications.push({ message, level }); },
-				},
-				getContextUsage: () => null,
-			},
+					notify: (message: string, level?: string) => { notifications.push({ message, level }); },
+				}),
+				getContextUsage: () => undefined,
+			}),
 		)).rejects.toSatisfy((error: Error) => {
 			expect(error).toBeInstanceOf(Error);
 			expect(error.message).toContain("Context usage unavailable");
@@ -1467,12 +1561,12 @@ test("handoff tool rejects when context usage cannot be estimated", async () => 
 		registerHandoffTool(api, state);
 	});
 
-	await expect(pi.tools.get("handoff").execute(
+	await expect(getTool(pi, "handoff").execute(
 			"1",
 			{ nextInstruction: "Goal: continue" },
 			undefined,
 			undefined,
-			{ getContextUsage: () => ({ tokens: null, percent: 20, contextWindow: null }) },
+			createToolContext({ getContextUsage: () => ({ tokens: null, percent: 20, contextWindow: Number.NaN }) }),
 		)).rejects.toSatisfy((error: Error) => {
 			expect(error).toBeInstanceOf(Error);
 			expect(error.message).toContain("Context usage unavailable");
