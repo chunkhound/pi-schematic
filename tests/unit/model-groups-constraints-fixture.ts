@@ -37,10 +37,8 @@ export const testMinContext: ConstraintDescriptor<"testMinContext", number, Test
 	requirement: positiveIntegerCodec,
 	editor: { kind: "number", label: "Test minimum context", unit: "tokens", min: 1, step: 1, automatic: () => "Automatic", value: (evaluation) => evaluation.effective },
 	present: {
-		group: (evaluation) => `minimum ${evaluation.effective ?? "unknown"} tokens`,
 		prompt: (evaluation) => `minimum ${evaluation.effective ?? "unknown"} tokens`,
 		diagnostic: (diagnostic) => diagnostic.code === "unsupported-override" ? `unsupported minimum ${diagnostic.details} tokens` : "minimum context unknown",
-		violation: () => "minimum context unsatisfied",
 		ceiling: (evaluation) => evaluation.effective !== null && (evaluation.aggregate.automatic === null || evaluation.effective > evaluation.aggregate.automatic)
 			? `Minimum context is capped at ${evaluation.effective} tokens for this group.`
 			: undefined,
@@ -74,10 +72,8 @@ export const testMaxBudget: ConstraintDescriptor<"testMaxBudget", number, TestMa
 	requirement: positiveIntegerCodec,
 	editor: { kind: "number", label: "Test maximum budget", unit: "credits", min: 1, step: 1, automatic: () => "Automatic", value: (evaluation) => evaluation.effective },
 	present: {
-		group: (evaluation) => `maximum ${evaluation.effective ?? "unknown"} credits`,
 		prompt: (evaluation) => `maximum ${evaluation.effective ?? "unknown"} credits`,
 		diagnostic: (diagnostic) => diagnostic.code === "unsupported-override" ? `unsupported maximum ${diagnostic.details} credits` : "maximum budget unknown",
-		violation: () => "maximum budget unsatisfied",
 		ceiling: (evaluation) => evaluation.effective !== null && (evaluation.aggregate.automatic === null || evaluation.effective < evaluation.aggregate.automatic)
 			? `Maximum output budget is capped at ${evaluation.effective} credits for this group.`
 			: undefined,
