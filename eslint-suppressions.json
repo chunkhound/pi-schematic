@@ -537,11 +537,6 @@
       "count": 1
     }
   },
-  "tests/unit/abort-child-session.test.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    }
-  },
   "tests/unit/brand-assets.test.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
@@ -1025,11 +1020,6 @@
       "count": 6
     }
   },
-  "tests/unit/spawn-lifecycle.test.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    }
-  },
   "tests/unit/spawn-render.test.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
@@ -1038,7 +1028,7 @@
       "count": 1
     },
     "vitest/max-expects": {
-      "count": 2
+      "count": 1
     }
   },
   "tests/unit/spawn-runtime-compatibility.test.ts": {

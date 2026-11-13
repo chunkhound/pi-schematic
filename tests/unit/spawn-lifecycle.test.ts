@@ -1,4 +1,3 @@
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import { beforeEach, expect, test, vi } from "vitest";
 import { createState, resetState, abortChildSession, type SchematicState } from "../../state.js";
@@ -34,9 +33,7 @@ beforeEach(() => {
 test("resetState aborts and clears child session registries", () => {
 	const state = createState();
 	const abort = vi.fn(() => Promise.resolve());
-	const session = {
-		abort,
-	} as unknown as AgentSession;
+	const session = Object.assign(createSession([]), { abort });
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
 	resetState(state);
