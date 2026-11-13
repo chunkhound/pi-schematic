@@ -3,7 +3,7 @@ import { ModelRegistry, Theme } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { CURSOR_MARKER, fuzzyFilter, renderFakeCursor, TuiMainScreen, visibleWidth, type TUI } from "@earendil-works/pi-tui";
 import { createModelGroupsComponent, type ModelGroupsComponentOptions, type ModelGroupsStoreOps } from "../../model-groups/tui.js";
-import { MODEL_GROUP_MODALITIES, ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModality, type ModelGroupModel, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ResolvedModelGroup } from "../../model-groups/types.js";
+import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModality, type ModelGroupModel, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ResolvedModelGroup } from "../../model-groups/types.js";
 import { assertPresent } from "../assertions.js";
 import { stripAnsi, theme } from "./helpers.js";
 import { group } from "./model-groups-helpers.js";
@@ -60,12 +60,21 @@ function renderCountingTui(onRender: () => void): TUI {
 	return Object.assign(target, { requestRender: onRender });
 }
 
-function isModality(value: unknown): value is ModelGroupModality {
-	return MODEL_GROUP_MODALITIES.some((modality) => modality === value);
-}
-
 function isUnknownArray(value: unknown): value is unknown[] {
 	return Array.isArray(value);
+}
+
+// Mirrors production reconciliation for mock stores: an override narrows effective to
+// the supported modalities it lists; automatic stays at the union. Text stays first.
+function reconciledEffective(def: ModelGroupDef, supported: ModelGroupModality[]): ModelGroupModality[] {
+	const override = def.constraints?.modalities;
+	const base = isUnknownArray(override) ? supported.filter((m) => override.includes(m)) : [...supported];
+	return ["text", ...base.filter((m) => m !== "text")];
+}
+
+// A copy of `constraints` whose `modalities` array, when present, is a fresh array.
+function cloneConstraints(constraints: ModelGroupDef["constraints"]): ModelGroupDef["constraints"] {
+	return constraints ? { ...constraints, ...(isUnknownArray(constraints.modalities) ? { modalities: [...constraints.modalities] } : {}) } : undefined;
 }
 
 function boot(groups: ResolvedModelGroup[]): ModelGroupsBootValidation { return { groups, loadIssues: [] }; }
@@ -239,11 +248,6 @@ test("model groups TUI editor rows show per-model capability chips and modalitie
 	];
 	// Mock store mirrors production reconciliation so the toggle can persist.
 	let groups = [review];
-	const reconciledEffective = (def: ModelGroupDef, supported: ModelGroupModality[]): ModelGroupModality[] => {
-		const override = def.constraints?.modalities;
-		const base = isUnknownArray(override) ? override.filter(isModality).filter((m) => supported.includes(m)) : [...supported];
-		return ["text", ...base.filter((m) => m !== "text")];
-	};
 	const store = {
 		updateGroup: (scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
 			groups = [group(name, { scope, models: def.models, constraints: def.constraints })];
@@ -287,16 +291,9 @@ test("model groups TUI modality editor commits override and Automatic through up
 	review.modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image", "reasoning"] };
 	const calls: { scope: ModelGroupScope; name: string; def: ModelGroupDef }[] = [];
 	let groups = [review];
-	// Mock mirrors production reconciliation: an override narrows effective to its
-	// supported list; automatic stays at the union.
-	const reconciledEffective = (def: ModelGroupDef, supported: ModelGroupModality[]): ModelGroupModality[] => {
-		const override = def.constraints?.modalities;
-		const base = isUnknownArray(override) ? override.filter(isModality).filter((m) => supported.includes(m)) : [...supported];
-		return ["text", ...base.filter((m) => m !== "text")];
-	};
 	const store = {
 		updateGroup: (scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
-			calls.push({ scope, name, def: { ...def, constraints: def.constraints ? { ...def.constraints, ...(isUnknownArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) } : undefined } });
+			calls.push({ scope, name, def: { ...def, constraints: cloneConstraints(def.constraints) } });
 			groups = [group(name, { scope, models: def.models, constraints: def.constraints })];
 			groups[0].modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: reconciledEffective(def, ["text", "image", "reasoning"]) };
 		},
@@ -333,14 +330,9 @@ test("model groups TUI Space also toggles a modality and stays on screen", () =>
 	review.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
 	const calls: { scope: ModelGroupScope; name: string; def: ModelGroupDef }[] = [];
 	let groups = [review];
-	const reconciledEffective = (def: ModelGroupDef, supported: ModelGroupModality[]): ModelGroupModality[] => {
-		const override = def.constraints?.modalities;
-		const base = isUnknownArray(override) ? override.filter(isModality).filter((m) => supported.includes(m)) : [...supported];
-		return ["text", ...base.filter((m) => m !== "text")];
-	};
 	const store = {
 		updateGroup: (scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
-			calls.push({ scope, name, def: { ...def, constraints: def.constraints ? { ...def.constraints, ...(isUnknownArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) } : undefined } });
+			calls.push({ scope, name, def: { ...def, constraints: cloneConstraints(def.constraints) } });
 			groups = [group(name, { scope, models: def.models, constraints: def.constraints })];
 			groups[0].modalities = { common: ["text"], supported: ["text", "image"], effective: reconciledEffective(def, ["text", "image"]) };
 		},
@@ -367,7 +359,7 @@ test("model groups TUI modality editor preserves state and notifies on updateGro
 	const store = {
 		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, _name: string, def: ModelGroupDef) => {
 			if (failing) {throw new ModelGroupsPersistenceError({ operation: "save", scope: "project", sourcePath: "/tmp/.pi/pi-schematic/model-groups.json", phase: "rename", message: "modality write denied" });}
-			review.constraints = def.constraints ? { ...def.constraints, ...(isUnknownArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) } : undefined;
+			review.constraints = cloneConstraints(def.constraints);
 		},
 		listResolvedModelGroups: () => boot([review]),
 	};
@@ -429,7 +421,7 @@ test("model groups TUI computes unique new-group names and opens editor after cr
 	const calls: string[] = [];
 	const store = {
 		createGroup: (scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
-			calls.push(`${scope}:${name}:${def.models.length}`);
+			calls.push(`${scope}:${name}:${String(def.models.length)}`);
 			groups = [...groups, group(name, { scope: "project" })];
 		},
 		listResolvedModelGroups: () => boot(groups),
@@ -692,7 +684,7 @@ test("model groups TUI notifies and preserves model edit state when updateGroup 
 				scope: "project",
 				sourcePath: "/tmp/project/.pi/pi-schematic/model-groups.json",
 				phase: "temp-write",
-				message: `update failed ${attemptedModels.length}`,
+				message: `update failed ${String(attemptedModels.length)}`,
 			});
 		},
 		listResolvedModelGroups: () => boot(groups),

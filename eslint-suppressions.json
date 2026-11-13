@@ -810,9 +810,6 @@
     "@typescript-eslint/no-empty-function": {
       "count": 3
     },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 4
-    },
     "@typescript-eslint/require-await": {
       "count": 26
     }
@@ -982,7 +979,7 @@
       "count": 1
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 7
+      "count": 5
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
