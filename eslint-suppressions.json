@@ -1423,14 +1423,11 @@
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 13
     },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
-    },
     "@typescript-eslint/only-throw-error": {
       "count": 1
     },
     "vitest/max-expects": {
-      "count": 60
+      "count": 59
     }
   },
   "tests/unit/state-invariants.test.ts": {
