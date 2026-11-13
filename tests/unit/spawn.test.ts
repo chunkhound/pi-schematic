@@ -69,6 +69,7 @@ async function executeWithFailingCleanup(primaryFailure: unknown, cleanupFailure
 	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
 	const state = createState();
 	const session = mockSessionFactory({
+		// Rejects with any value, primitives included, on purpose; prefer-promise-reject-errors refuses Promise.reject with a non-Error.
 		prompt: () => new Promise<never>(() => { throw primaryFailure; }),
 		dispose: () => { throw cleanupFailure; },
 	});
@@ -940,6 +941,7 @@ test("a spawn whose child prompt fails returns an error result with the child us
 });
 
 test("a spawn whose child prompt rejects with a non-Error value returns its string form as an error result", async () => {
+	// The non-Error rejection is the case under test; prefer-promise-reject-errors refuses Promise.reject("boom-string").
 	const host = await hostWithFailedUsage({ prompt: () => new Promise<never>(() => { throw "boom-string"; }) });
 
 	expect(await host.execute("spawn-prompt-non-error")).toStrictEqual(failedSpawnResult("boom-string"));

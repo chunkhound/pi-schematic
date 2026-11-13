@@ -20,6 +20,7 @@ import {
 	HANDOFF_STAGED_RESULT,
 } from "./copy.js";
 import { formatHandoffFailure } from "./format.js";
+import { asPromise } from "../as-promise.js";
 import {
 	MIN_HANDOFF_TOKENS,
 	estimateHandoffContextTokens,
@@ -133,8 +134,7 @@ export function registerHandoffTool(
 		}),
 
 		execute(toolCallId, params, _signal, _onUpdate, ctx) {
-			// The executor turns every throw into a rejection, as the async form did.
-			return new Promise((resolve) => {
+			return asPromise(() => {
 				if (state.stagedHandoff) {throw new Error(HANDOFF_ALREADY_STAGED);}
 				const { nextInstruction, context } = resolveHandoffRequest(state, params);
 				// The error result is the only report of a rejected call: a queued follow-up
@@ -162,11 +162,11 @@ export function registerHandoffTool(
 				};
 				if (state.pendingRequestedHandoff) {state.pendingRequestedHandoff.toolCalled = true;}
 
-				resolve({
+				return {
 					content: [{ type: "text", text: HANDOFF_STAGED_RESULT }],
 					details: {},
 					terminate: true,
-				});
+				};
 			});
 		},
 

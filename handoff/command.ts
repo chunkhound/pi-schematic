@@ -10,6 +10,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { HANDOFF_COMMAND_BUSY, HANDOFF_REQUESTED_STATUS, HANDOFF_REQUIRED_STATUS } from "./copy.js";
 import { isHandoffEligible } from "./eligibility.js";
+import { asPromise } from "../as-promise.js";
 import {
 	READONLY_HANDOFF_EXCEPTION_NOTIFICATION,
 	buildReadonlyHandoffCommandNotice,
@@ -24,12 +25,10 @@ export function registerHandoffCommand(pi: ExtensionAPI, state: SchematicState):
 			"curate the notebook and supply the remaining context, then perform the handoff automatically.",
 
 		handler: (args, ctx) =>
-			// The executor turns every throw into a rejection, as the async form did.
-			new Promise((resolve) => {
+			asPromise(() => {
 				const direction = args;
 				if (!direction.trim()) {
 					if (ctx.hasUI) {ctx.ui.notify("Usage: /handoff <direction>", "error");}
-					resolve();
 					return;
 				}
 
@@ -71,7 +70,6 @@ Preparation duties for this context:
 2. Call the handoff tool with \`context\`: the situational context still missing from the notebook — current state, blockers, unresolved questions, failed paths worth avoiding, and the concrete next step. Do NOT repeat the instruction; it is already stored and will be delivered verbatim.${readonlyNotice}`,
 					ctx.isIdle() ? undefined : { deliverAs: "followUp" },
 				);
-				resolve();
 			}),
 	});
 }

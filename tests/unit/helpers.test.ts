@@ -27,7 +27,7 @@ import {
 
 const KEY = "PI_CODING_AGENT_DIR";
 
-async function withPriorAgentDir(prior: string | undefined, body: () => Promise<void>): Promise<void> {
+async function withPriorAgentDir(prior: string | undefined, body: () => void | Promise<void>): Promise<void> {
 	const ambient = process.env[KEY];
 	if (prior === undefined) {delete process.env[KEY];}
 	else {process.env[KEY] = prior;}
@@ -57,7 +57,6 @@ for (const { label, prior } of priors) {
 			await withTempAgentDir((agentDir) => {
 				seen = process.env[KEY];
 				created = agentDir;
-				return Promise.resolve();
 			});
 			expect(seen).toBe(created);
 			assertAgentDirRestored(prior);
@@ -76,7 +75,6 @@ for (const { label, prior } of priors) {
 			let during: { value: string | undefined } | undefined;
 			await withTempHome(() => {
 				during = { value: process.env[KEY] };
-				return Promise.resolve();
 			});
 			expect(during).toStrictEqual({ value: undefined });
 			assertAgentDirRestored(prior);
@@ -97,7 +95,6 @@ for (const { label, prior } of priors) {
 			restoreHome();
 			expect(whileSet).toStrictEqual({ value: undefined });
 			assertAgentDirRestored(prior);
-			return Promise.resolve();
 		});
 	});
 }

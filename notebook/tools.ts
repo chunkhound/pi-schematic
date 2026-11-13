@@ -10,6 +10,7 @@ import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-age
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
+import { asPromise } from "../as-promise.js";
 import type { SchematicState } from "../state.js";
 import { updateIndicators } from "../tui.js";
 import { formatByteCap, formatPageList, formatPagePreview, getPageNames, saveNotebookPage, type TruncationReport } from "./store.js";
@@ -191,14 +192,13 @@ export function createNotebookToolDefinitions(
 		},
 
 		execute(_toolCallId, params: ReadArgs, _signal, _onUpdate, _ctx) {
-			// The executor turns every throw into a rejection, as the async form did.
-			return new Promise((resolve) => {
+			return asPromise(() => {
 				assertFresh();
 				const content = state.notebookPages.get(params.name);
 				const names = getPageNames(state);
 
 				if (content === undefined) {
-					resolve({
+					return {
 						content: [
 							{
 								type: "text" as const,
@@ -208,12 +208,11 @@ export function createNotebookToolDefinitions(
 							},
 						],
 						details: { entries: names, found: false },
-					});
-					return;
+					};
 				}
 
 				const clipped = state.clippedPages.has(params.name);
-				resolve({
+				return {
 					content: [
 						{
 							type: "text" as const,
@@ -226,7 +225,7 @@ export function createNotebookToolDefinitions(
 						},
 					],
 					details: { entries: names, found: true, body: content, clipped },
-				});
+				};
 			});
 		},
 	};
@@ -261,11 +260,10 @@ export function createNotebookToolDefinitions(
 		},
 
 		execute() {
-			// The executor turns every throw into a rejection, as the async form did.
-			return new Promise((resolve) => {
+			return asPromise(() => {
 				assertFresh();
 				const names = getPageNames(state);
-				resolve({
+				return {
 					content: [
 						{
 							type: "text" as const,
@@ -273,7 +271,7 @@ export function createNotebookToolDefinitions(
 						},
 					],
 					details: { entries: names },
-				});
+				};
 			});
 		},
 	};

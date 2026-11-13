@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { asPromise } from "../as-promise.js";
 import type { SchematicState } from "../state.js";
 import { normalizeNotebookTopic, setActiveNotebookTopic } from "./topic.js";
 
@@ -25,8 +26,7 @@ export function registerNotebookTopicTool(
 			}),
 		}),
 		execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-			// The executor turns every throw into a rejection, as the async form did.
-			return new Promise((resolve) => {
+			return asPromise(() => {
 				const normalized = normalizeNotebookTopic(params.topic);
 				if (state.activeNotebookTopic) {
 					if (state.activeNotebookTopic !== normalized) {
@@ -36,21 +36,20 @@ export function registerNotebookTopicTool(
 								: "Active notebook topic already exists. Use handoff instead of changing it mid-session.",
 						);
 					}
-					resolve({
+					return {
 						content: [{ type: "text", text: `Notebook topic already set to "${state.activeNotebookTopic}".` }],
 						details: {
 							topic: state.activeNotebookTopic,
 							source: state.activeNotebookTopicSource,
 							changed: false,
 						},
-					});
-					return;
+					};
 				}
 				const result = setActiveNotebookTopic(state, params.topic, "agent");
-				resolve({
+				return {
 					content: [{ type: "text", text: `Active notebook topic: "${result.current}".` }],
 					details: { topic: result.current, source: "agent" as const, changed: result.changed },
-				});
+				};
 			});
 		},
 	});

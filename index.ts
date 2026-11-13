@@ -21,6 +21,7 @@ import {
 	Text,
 	type TUI,
 } from "@earendil-works/pi-tui";
+import { asPromise } from "./as-promise.js";
 import { createState, invalidateHandoffState, resetState, type SchematicState } from "./state.js";
 import { contextPrimerSection, currentDateSection } from "./system-prompt.js";
 import { createPromptSectionRegistry, applyPromptSections } from "./prompt-sections.js";
@@ -632,16 +633,14 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.registerCommand("readonly", {
 		description: READONLY_COMMAND_DESCRIPTION,
-		// The executor turns a throw into a rejection, as the async form did.
-		handler: (_args, ctx) => new Promise((resolve) => { toggleReadonly(ctx); resolve(); }),
+		handler: (_args, ctx) => asPromise(() => { toggleReadonly(ctx); }),
 	});
 
 	pi.registerShortcut("ctrl+shift+r", {
 		description: "Toggle readonly mode",
 		// pi wraps the result in Promise.resolve(...).catch, which a synchronous throw would escape.
-		handler: (ctx) => new Promise((resolve) => {
+		handler: (ctx) => asPromise(() => {
 			if (ctx.isIdle()) {toggleReadonly(ctx);}
-			resolve();
 		}),
 	});
 

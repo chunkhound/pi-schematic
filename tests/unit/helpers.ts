@@ -478,7 +478,7 @@ export const testWithDir = base.extend<{ dir: string }>({
 	},
 });
 
-export async function withTempHome<T>(run: (homeDir: string) => Promise<T>): Promise<T> {
+export async function withTempHome<T>(run: (homeDir: string) => T | Promise<T>): Promise<T> {
 	const homeDir = await tmpDir();
 	const restore = setTempHome(homeDir);
 	try {
@@ -490,7 +490,7 @@ export async function withTempHome<T>(run: (homeDir: string) => Promise<T>): Pro
 }
 
 /** Nest inside `withTempHome`, not around it: `withTempHome` clears `PI_CODING_AGENT_DIR` for its run. */
-export async function withTempAgentDir<T>(run: (agentDir: string) => Promise<T>): Promise<T> {
+export async function withTempAgentDir<T>(run: (agentDir: string) => T | Promise<T>): Promise<T> {
 	const previousAgentDir = process.env[AGENT_DIR_ENV_KEY];
 	const agentDir = await tmpDir();
 	process.env[AGENT_DIR_ENV_KEY] = agentDir;

@@ -231,12 +231,12 @@ function captureHostChildren(): ChildProcess[] {
 	vi.spyOn(RealHost, "start").mockImplementation(async (options) => {
 		const host = await start(options);
 		// withRealHost does not close a host whose start rejected, so close it here.
-		return cleanupOnFailure(() => new Promise((resolve) => {
+		return cleanupOnFailure(() => {
 			const child = (host.client as unknown as { process: ChildProcess | null }).process;
 			assertPresent(child, "the started host has a CLI process");
 			children.push(child);
-			resolve(host);
-		}), () => host.close());
+			return host;
+		}, () => host.close());
 	});
 	return children;
 }
@@ -794,7 +794,6 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			let bodyRan = false;
 			const running = withRealHost(t, () => {
 				bodyRan = true;
-				return Promise.resolve();
 			});
 			// A callback registered only once start settled would never run after a real timeout during start.
 			expect(registered(), "the finish callback is registered before start settles").toBe(1);
@@ -816,7 +815,6 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			let bodyRan = false;
 			const running = withRealHost(t, () => {
 				bodyRan = true;
-				return Promise.resolve();
 			});
 			await expect(running, "withRealHost rejects with the start error").rejects.toBe(startError);
 			expect(bodyRan, "the body never ran").toBe(false);
@@ -837,7 +835,6 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			let bodyRan = false;
 			const running = withRealHost(t, () => {
 				bodyRan = true;
-				return Promise.resolve();
 			});
 			abort(new Error("hand-built timeout"));
 			rejectStart(startError);
@@ -856,7 +853,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 				throw closeError;
 			});
 			const { t, finish } = handBuiltContext(vitest);
-			await withRealHost(t, async () => { /* No steps: only the close runs. */ });
+			await withRealHost(t, () => { /* No steps: only the close runs. */ });
 			expect(await finish(), "the close error, once").toStrictEqual([closeError]);
 			expect(stop, "the host closed once").toHaveBeenCalledOnce();
 			expectOneExitedChild(children);

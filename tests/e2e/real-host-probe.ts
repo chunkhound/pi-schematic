@@ -17,6 +17,7 @@ import { appendFileSync } from "node:fs";
 import { createAssistantMessageEventStream, type AssistantMessage, type ToolCall } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { asPromise } from "../../as-promise.js";
 import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
 import { HANDOFF_SUCCESSOR_CUSTOM_TYPE } from "../../handoff/format.js";
 import {
@@ -313,17 +314,16 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	pi.registerCommand(PROBE_COMMAND.script, {
 		description: "Arm a scripted tool-call sequence for the next run",
 		handler: (args) =>
-			new Promise((resolve) => {
+			asPromise(() => {
 				if (armedScript) {throw new Error(`a script is already armed: ${JSON.stringify(armedScript)}`);}
 				armedScript = parseScript(args);
-				resolve();
 			}),
 	});
 
 	pi.registerCommand(PROBE_COMMAND.barrier, {
 		description: "Report under PROBE_BARRIER_STATUS_KEY once no accounted work is outstanding",
 		handler: (args, ctx) =>
-			new Promise((resolve) => {
+			asPromise(() => {
 				// Returns at once and reports through a status, so the wait is bounded by the
 				// deadline the harness passes, not by RpcClient's fixed request timeout.
 				// Still assumed: a send that a command handler starts (schematic's /handoff
@@ -347,7 +347,6 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 					() => { report({ id, failure: null }); },
 					(error: unknown) => { report({ id, failure: error instanceof Error ? error.message : String(error) }); },
 				);
-				resolve();
 			}),
 	});
 
@@ -363,10 +362,9 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	pi.registerCommand(PROBE_COMMAND.turn, {
 		description: "Start a run without a user turn; with a count, start each further run once the previous one settles",
 		handler: (args) =>
-			new Promise((resolve) => {
+			asPromise(() => {
 				chainedTurns = parseTurnCount(args) - 1;
 				startTurn();
-				resolve();
 			}),
 	});
 
@@ -413,9 +411,8 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	pi.registerCommand(PROBE_COMMAND.tools, {
 		description: "Log the names of every registered tool",
 		handler: () =>
-			new Promise((resolve) => {
+			asPromise(() => {
 				log({ kind: "tools", names: pi.getAllTools().map((tool) => tool.name) });
-				resolve();
 			}),
 	});
 }

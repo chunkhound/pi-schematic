@@ -477,8 +477,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 	private requestRender: () => void = () => { /* No parent render loop until one is attached. */ };
 	private readonly markdownTheme = getMarkdownTheme();
 	// Minimal TUI mock for ToolExecutionComponent/BashExecutionComponent.
-	// Parent invalidation is one-way from child session events below; renderer-
-	// internal invalidations must not re-enter the parent render loop.
+	// Parent invalidation is one-way from child session events below.
 	private readonly fakeUi = {
 		requestRender: () => { /* Child invalidations must not re-enter the parent render loop. */ },
 	};
@@ -725,8 +724,6 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		if (session && ownedToolCallId && state?.liveChildSessions.get(ownedToolCallId) === session) {
 			// Share the deduplicated abort promise with the other abort paths (spawn
 			// invalidation, /reset) so one session never receives a second abort.
-			// Renderer has no ExtensionContext, so abort failures are intentionally
-			// not notified here — spawn path notifies via ctx.ui.notify. Silent swallow is correct.
 			try {
 				void abortChildSession(state, session).catch(() => { /* No ExtensionContext to notify; the spawn path reports abort failures. */ });
 			} finally {
