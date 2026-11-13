@@ -1,9 +1,44 @@
+import type { SpawnSyncReturns } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test } from "vitest";
 
+interface ProcessOptions {
+	capture?: boolean;
+	cwd?: string;
+	env?: NodeJS.ProcessEnv;
+	platform?: NodeJS.Platform;
+	execPath?: string;
+}
+
+interface CompatProcessModule {
+	npmInvocation: (args: string[], options?: ProcessOptions) => { command: string; args: string[] };
+	repoRootFromScript: (importMetaUrl: string) => string;
+	runChecked: (command: string, args: string[], options?: ProcessOptions) => SpawnSyncReturns<string>;
+	runNpm: (cwd: string, args: string[], options?: ProcessOptions) => SpawnSyncReturns<string>;
+	runNpmWithRetry: (
+		cwd: string,
+		args: string[],
+		options?: ProcessOptions,
+		retryOptions?: { retries?: number; baseMs?: number },
+	) => Promise<SpawnSyncReturns<string>>;
+	isValidNpmExecpath: (npmExecpath: string) => boolean;
+}
+
+const COMPAT_PROCESS_EXPORTS = ["npmInvocation", "repoRootFromScript", "runChecked", "runNpm", "runNpmWithRetry", "isValidNpmExecpath"] as const;
+
+// The script is plain JavaScript, so its exports arrive untyped: each one the tests call must be a function.
+function assertCompatProcessModule(value: unknown): asserts value is CompatProcessModule {
+	if (typeof value !== "object" || value === null) {throw new Error("scripts/compat-process.mjs did not load as a module.");}
+	for (const name of COMPAT_PROCESS_EXPORTS) {
+		if (typeof Reflect.get(value, name) !== "function") {throw new Error(`scripts/compat-process.mjs does not export a function "${name}".`);}
+	}
+}
+
+const compatProcess: unknown = await import(new URL("../../scripts/compat-process.mjs", import.meta.url).href);
+assertCompatProcessModule(compatProcess);
 const {
 	npmInvocation,
 	repoRootFromScript,
@@ -11,7 +46,7 @@ const {
 	runNpm,
 	runNpmWithRetry,
 	isValidNpmExecpath,
-} = await import(new URL("../../scripts/compat-process.mjs", import.meta.url).href);
+} = compatProcess;
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 

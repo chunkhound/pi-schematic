@@ -17,6 +17,7 @@ import {
 } from "../../notebook/topic.js";
 import { saveNotebookPage } from "../../notebook/store.js";
 import { useTestHarness } from "../test-utils.js";
+import { createSession } from "./helpers.js";
 
 // ── Mock ExtensionAPI ─────────────────────────────────────────────────
 
@@ -73,8 +74,8 @@ async function apply(
 			await saveNotebookPage(mockPi, state, action.name, CLIPPED_BODY);
 			break;
 		case "addChildSession":
-			state.childSessions.set(action.id, { abort: () => Promise.resolve() } as any);
-			state.liveChildSessions.set(action.id, { abort: () => Promise.resolve() } as any);
+			state.childSessions.set(action.id, createSession([]));
+			state.liveChildSessions.set(action.id, createSession([]));
 			break;
 		case "abortChildren":
 			abortAndClearChildSessions(state);
