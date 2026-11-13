@@ -9,6 +9,7 @@ import type {
 	ExtensionToolContext,
 	SessionBoundaryDraft,
 	ToolCallEventResult,
+	TurnEndEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { execFileSync } from "node:child_process";
 import { access, rm } from "node:fs/promises";
@@ -29,7 +30,7 @@ import {
 	turnEndEvent,
 	type ToolCall,
 } from "./helpers.js";
-import { getCommand, getHostRecords, getTool, invokeHandler, type TestPI } from "./test-host.js";
+import { getCommand, getHandlers, getHostRecords, getTool, invokeHandler, type TestPI } from "./test-host.js";
 import { assertPresent, expectPrefix } from "../assertions.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
@@ -147,37 +148,20 @@ function hasEntries(result: unknown): boolean {
 	return isRecord(result) && Boolean(result.entries);
 }
 
-function isBoundaryDraft(value: unknown): value is SessionBoundaryDraft {
-	if (!isRecord(value)) {return false;}
-	switch (value.type) {
-		case "custom":
-			return typeof value.customType === "string";
-		case "custom_message":
-			return typeof value.customType === "string" && typeof value.display === "boolean" && (typeof value.content === "string" || Array.isArray(value.content));
-		case "context_edit":
-			return typeof value.targetId === "string";
-		case "compaction":
-			return typeof value.summary === "string";
-		default:
-			return false;
-	}
-}
-
 /** End the staging turn and return the entries the boundary handler asked pi to commit. */
 async function endStagingTurn(pi: TestPI, toolCallId: string): Promise<SessionBoundaryDraft[]> {
-	const results = await callHandlers(
-		pi,
-		"turn_end",
-		turnEndEvent({ toolResults: [handoffToolResult(toolCallId)] }),
-		{ hasUI: false, signal: { aborted: false }, getContextUsage: () => null },
-	);
-	const boundary = results.find(hasEntries);
-	assertPresent(boundary, "the staging turn_end must return boundary entries");
-	if (!isRecord(boundary) || !Array.isArray(boundary.entries)) {throw new Error("The staging turn_end returned entries that are not an array.");}
-	const entries: unknown[] = boundary.entries;
-	if (!entries.every(isBoundaryDraft)) {throw new Error("The staging turn_end returned an entry that is not a boundary draft.");}
+	const event = turnEndEvent({ toolResults: [handoffToolResult(toolCallId)] });
+	const ctx = createExtensionContext({ signal: new AbortController().signal });
+	const results: (TurnEndEventResult | undefined)[] = [];
+	for (const handler of getHandlers(pi, "turn_end")) {
+		// pi types a handler's result as possibly `void`; `?? undefined` reads that as no result.
+		const result = await handler(event, ctx);
+		results.push(result ?? undefined);
+	}
+	const boundary = results.find((result) => result?.entries !== undefined);
+	assertPresent(boundary?.entries, "the staging turn_end must return boundary entries");
 	expect(boundary.continue).toBe(true);
-	return entries;
+	return boundary.entries;
 }
 
 /** The summary of the compaction draft in `drafts`. */
@@ -246,7 +230,7 @@ async function assertNonTempBashBlocked(toolCall: ReadonlyToolCall): Promise<voi
 	try {
 		const event = { toolName: "bash", input: { command } };
 		const result = await toolCall(event, { cwd: process.cwd() });
-		if (!result?.block) {
+		if (result?.block !== true) {
 			try {
 				execFileSync("bash", ["-lc", event.input.command], { cwd: process.cwd(), stdio: "ignore" });
 			} catch {

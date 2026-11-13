@@ -35,6 +35,14 @@ function assertToolCallResult(value: unknown): asserts value is ToolCallEventRes
 	}
 }
 
+// The tool_result handler returns a patch of the result or nothing.
+function assertToolResultEventResult(value: unknown): asserts value is ToolResultEventResult | undefined {
+	if (value === undefined) {return;}
+	if (!isRecord(value) || (value.content !== undefined && !Array.isArray(value.content)) || (value.isError !== undefined && typeof value.isError !== "boolean")) {
+		throw new Error("The tool_result handler returned something other than a tool_result result.");
+	}
+}
+
 type ReadonlyToolCall = (event: Parameters<ToolCall>[0], ctx: Parameters<ToolCall>[1]) => Promise<ToolCallEventResult | undefined>;
 
 /** `registerReadonlyPI` with a `toolCall` whose result is checked to be a tool_call result or nothing. */
@@ -133,7 +141,6 @@ test("readonly toggle is a no-op in headless mode", async () => {
 test("readonly shortcut only toggles while idle", async () => {
 	const { pi, toolCall } = await registerCheckedPI();
 	const shortcut: unknown = pi.shortcuts.get("ctrl+shift+r");
-	assertPresent(shortcut);
 	assertShortcut(shortcut);
 
 	await shortcut.handler(uiCommandContext({ isIdle: () => false }));
@@ -199,7 +206,8 @@ async function registerReadonlyBash() {
 				...overrides,
 			};
 			const [result] = await callHandlers(pi, "tool_result", event, {});
-			return result as ToolResultEventResult | undefined;
+			assertToolResultEventResult(result);
+			return result;
 		},
 	};
 }

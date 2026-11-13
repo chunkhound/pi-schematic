@@ -1134,9 +1134,6 @@
     }
   },
   "tests/unit/readonly-frontmatter.test.ts": {
-    "@typescript-eslint/no-empty-function": {
-      "count": 2
-    },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 1
     }
@@ -1148,17 +1145,11 @@
     "@typescript-eslint/restrict-template-expressions": {
       "count": 4
     },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
-    },
     "ban/wall-clock": {
       "count": 1
     }
   },
   "tests/unit/readonly-mode.test.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 3
     }
@@ -1168,7 +1159,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
+      "count": 3
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 5
