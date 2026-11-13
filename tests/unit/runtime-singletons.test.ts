@@ -6,6 +6,7 @@ import {
 	createWriteLock,
 	getSingletons,
 } from "../../runtime-singletons.js";
+import { SpawnFrameScheduler } from "../../spawn/renderer.js";
 
 test("createTestHarness swaps singleton state atomically and restores it on teardown", () => {
 	const before = getSingletons();
@@ -21,7 +22,7 @@ test("createTestHarness swaps singleton state atomically and restores it on tear
 	expect(during.frameScheduler).not.toBe(before.frameScheduler);
 });
 
-test("__setSingletons preserves lock + write context during in-flight writes without console output", () => {
+test("__setSingletons keeps the lock and write context of an in-flight write and takes the other fields from the caller", () => {
 	// Use harness to isolate the test's singleton manipulation
 	const outer = getSingletons();
 	const h = createTestHarness();
@@ -34,15 +35,17 @@ test("__setSingletons preserves lock + write context during in-flight writes wit
 		expect(getSingletons()).toBe(outer);
 	});
 	before.writeLock.pending = 1; // simulate in-flight write on test singleton
+	const frameScheduler = new SpawnFrameScheduler();
 	__setSingletons({
 		writeLock: createWriteLock(),
 		writeContext: new AsyncLocalStorage<true>(),
-		frameScheduler: before.frameScheduler,
+		frameScheduler,
 	});
 	const after = getSingletons();
 	expect(h.warnings).toStrictEqual([]);
 	expect(after.writeLock).toBe(before.writeLock);
 	expect(after.writeContext).toBe(before.writeContext);
+	expect(after.frameScheduler).toBe(frameScheduler);
 });
 
 test("write lock serializes concurrent writers and completes all", async () => {
