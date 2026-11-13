@@ -34,7 +34,9 @@ import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
 
 /**
  * Usage with only `percent` set: unknown tokens and a zero context window give no
- * token estimate, so the percentage alone drives the watchdog.
+ * token estimate, so the percentage alone drives the watchdog and the session is
+ * never handoff-eligible. pi never reports a zero context window; the shape is
+ * synthetic, because a real window would make the percentage eligible from 15%.
  */
 function percentUsage(percent: number): ContextUsage {
 	return { tokens: null, contextWindow: 0, percent };
@@ -380,8 +382,8 @@ async function endStagingTurn(pi: TestPI, toolCallId: string): Promise<SessionBo
 	const event = turnEndEvent({ toolResults: [handoffToolResult(toolCallId)] });
 	const ctx = createExtensionContext({ getContextUsage: eligibleUsage });
 	const results: (TurnEndEventResult | undefined)[] = [];
-	for (let index = 0; index < getHandlers(pi, "turn_end").length; index++) {
-		results.push(await invokeHandler(pi, "turn_end", event, ctx, index));
+	for (const handler of getHandlers(pi, "turn_end")) {
+		results.push((await handler(event, ctx)) ?? undefined);
 	}
 	const boundary = results.find((result) => result?.entries !== undefined);
 	assertPresent(boundary?.entries, "the staging turn_end must return boundary entries");
@@ -395,7 +397,7 @@ test("a staged handoff that completes at the settle is neither counted nor cance
 	// Spend all but the last attempt so a miscount would cancel the request.
 	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS - 1; i++) {
 		deliverEligibleNudge(state);
-		await emitAll(pi, "agent_settled", { type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage, sessionManager: { getBranch: () => [] } });
+		await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, { hasUI: false, getContextUsage: eligibleUsage, sessionManager: { getBranch: () => [] } });
 	}
 	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(MAX_HANDOFF_ATTEMPTS - 1);
 
@@ -404,7 +406,7 @@ test("a staged handoff that completes at the settle is neither counted nor cance
 	await stageHandoff(pi, "in-flight");
 	const drafts = await endStagingTurn(pi, "in-flight");
 	const branch = drafts.map((draft, index) => ({ ...draft, id: `entry-${index}`, parentId: null }));
-	await emitAll(pi, "agent_settled", { type: "agent_settled" }, {
+	await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, {
 		hasUI: true,
 		ui: { ...makeReadonlyUICtx().ui, notify: (message: string) => notifications.push(message) },
 		getContextUsage: eligibleUsage,
@@ -419,12 +421,12 @@ test("a staged handoff that completes at the settle is neither counted nor cance
 test("watchdog auto-cancels a required handoff after enough unanswered settled runs", async () => {
 	const { state, agentSettled: handler } = await createPendingHandoffHost();
 
-	const notifications: unknown[] = [];
+	const notifications: string[] = [];
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "handoff pending"]]);
 	const ctx = createExtensionContext({
 		hasUI: true,
 		ui: createUIContext({
-			notify: (message: unknown) => notifications.push(message),
+			notify: (message: string) => notifications.push(message),
 			setStatus: (key: string, value: string | undefined) => { statuses.set(key, value); },
 		}),
 		getContextUsage: eligibleUsage,
@@ -448,8 +450,8 @@ test("watchdog auto-cancels a required handoff after enough unanswered settled r
 	expect(state.pendingRequestedHandoff, "pending handoff should be auto-cancelled").toBeNull();
 	expect(statuses.get(STATUS_KEY_HANDOFF), "cancellation should clear the handoff status").toBeUndefined();
 	expect(notifications, "user should receive a cancellation notification").toHaveLength(1);
-	expect(notifications[0] as string, "notification should mention cancellation without source-specific wording").toMatch(/Required handoff cancelled/i);
-	expect(notifications[0] as string).not.toMatch(/user-requested|temporary bypass/i);
+	expect(notifications[0], "notification should mention cancellation without source-specific wording").toMatch(/Required handoff cancelled/i);
+	expect(notifications[0]).not.toMatch(/user-requested|temporary bypass/i);
 });
 
 test("a nudged run whose staged handoff cut was not persisted counts one attempt", async () => {
@@ -461,14 +463,15 @@ test("a nudged run whose staged handoff cut was not persisted counts one attempt
 	expect(state.pendingRequestedHandoff?.toolCalled, "staging marks the handoff called").toBe(true);
 	await endStagingTurn(pi, "dropped-cut");
 
-	const userMessagesBeforeSettle = pi.sentUserMessages.length;
-	await emitAll(pi, "agent_settled", { type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage, sessionManager: { getBranch: () => [] } });
+	const { sentMessages, sentUserMessages } = getHostRecords(pi);
+	const userMessagesBeforeSettle = sentUserMessages.length;
+	await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, { hasUI: false, getContextUsage: eligibleUsage, sessionManager: { getBranch: () => [] } });
 
 	expect(state.pendingRequestedHandoff?.toolCalled, "the failure resets toolCalled before the watchdog counts").toBe(false);
 	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
-	expect(pi.sentUserMessages, "a dropped cut starts no run").toHaveLength(userMessagesBeforeSettle);
-	expect(getHostRecords(pi).sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
-	expect(pi.sentMessages.at(-1)?.options?.triggerTurn).toBe(false);
+	expect(sentUserMessages, "a dropped cut starts no run").toHaveLength(userMessagesBeforeSettle);
+	expect(sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
+	expect(sentMessages.at(-1)?.options?.triggerTurn).toBe(false);
 });
 
 test("a nudged run whose handoff was aborted counts one attempt and starts no run", async () => {
@@ -483,14 +486,15 @@ test("a nudged run whose handoff was aborted counts one attempt and starts no ru
 		turnEndEvent({ toolResults: [handoffToolResult("aborted-cut")] }),
 		{ hasUI: false, signal: { aborted: true }, getContextUsage: eligibleUsage },
 	);
-	const userMessagesBeforeSettle = pi.sentUserMessages.length;
-	await emitAll(pi, "agent_settled", { type: "agent_settled" }, { hasUI: false, getContextUsage: eligibleUsage, sessionManager: { getBranch: () => [] } });
+	const { sentMessages, sentUserMessages } = getHostRecords(pi);
+	const userMessagesBeforeSettle = sentUserMessages.length;
+	await emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, { hasUI: false, getContextUsage: eligibleUsage, sessionManager: { getBranch: () => [] } });
 
 	expect(state.pendingRequestedHandoff?.toolCalled).toBe(false);
 	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
-	expect(pi.sentUserMessages, "an abort must not start another run").toHaveLength(userMessagesBeforeSettle);
-	expect(getHostRecords(pi).sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
-	expect(pi.sentMessages.at(-1)?.options?.triggerTurn).toBe(false);
+	expect(sentUserMessages, "an abort must not start another run").toHaveLength(userMessagesBeforeSettle);
+	expect(sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
+	expect(sentMessages.at(-1)?.options?.triggerTurn).toBe(false);
 });
 
 test("agent_end events within a run add no attempt", async () => {
@@ -592,7 +596,7 @@ async function createRequestedHandoffSession() {
 		if (typeof nudge?.content !== "string") {throw new Error("The context hook injected no watchdog nudge text.");}
 		return nudge.content;
 	};
-	const settle = (usage: ContextUsage) => emitAll(pi, "agent_settled", { type: "agent_settled" }, ctxAt(usage));
+	const settle = (usage: ContextUsage) => emitAll(pi, "agent_settled", { type: "agent_settled", aborted: false }, ctxAt(usage));
 	return { warnings, runContextHook, settle };
 }
 
