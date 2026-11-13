@@ -1414,44 +1414,20 @@
     }
   },
   "tests/unit/spawn.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 113
-    },
     "@typescript-eslint/no-non-null-assertion": {
-      "count": 4
+      "count": 3
     },
     "@typescript-eslint/no-unnecessary-condition": {
       "count": 1
     },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 46
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 181
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 85
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 219
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 6
-    },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 103
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
+      "count": 13
     },
     "@typescript-eslint/only-throw-error": {
       "count": 1
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 1
-    },
     "vitest/max-expects": {
-      "count": 60
+      "count": 59
     }
   },
   "tests/unit/state-invariants.test.ts": {
