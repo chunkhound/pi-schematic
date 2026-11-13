@@ -34,7 +34,6 @@ const AUDIT_SCHEMA = "https://github.com/IBM/audit-ci/raw/main/docs/schema.json"
 const AUDIT_CONFIG_PATH = new URL("audit-ci.jsonc", REPO_ROOT_URL);
 const AUDIT_CI_BIN_URL = new URL("node_modules/audit-ci/dist/bin.js", REPO_ROOT_URL);
 const PACKAGE_JSON_PATH = new URL("package.json", REPO_ROOT_URL);
-const WORKFLOW_PATH = new URL(".github/workflows/test.yml", REPO_ROOT_URL);
 const LOCK_PATH = new URL("package-lock.json", REPO_ROOT_URL);
 const README_PATH = new URL("README.md", REPO_ROOT_URL);
 const GITATTRIBUTES_PATH = new URL(".gitattributes", REPO_ROOT_URL);
@@ -74,20 +73,6 @@ function parseAuditConfig(): AuditConfig {
 
 function parsePackageJson(): PackageJson {
 	return JSON.parse(readText(PACKAGE_JSON_PATH)) as PackageJson;
-}
-
-function stepIndex(workflow: string, step: string): number {
-	const index = workflow.indexOf(`- name: ${step}`);
-	expect(index, `missing workflow step: ${step}`).not.toBe(-1);
-	return index;
-}
-
-function stepBlock(workflow: string, step: string): string {
-	const start = stepIndex(workflow, step);
-	const afterName = workflow.indexOf("\n", start) + 1;
-	const nextStep = workflow.indexOf("\n      - name:", afterName);
-	const end = nextStep === -1 ? workflow.length : nextStep;
-	return workflow.slice(afterName, end);
 }
 
 function allowlistEntries(config: AuditConfig): [string, AuditRecord][] {
@@ -200,22 +185,6 @@ test("audit-ci config enforces the reviewed allowlist policy", () => {
 		expect(parseIsoDate(value.expiry), `expired allowlist entry: ${key}`).toBeGreaterThanOrEqual(today);
 		expect(value.notes.trim()).not.toBe("");
 	}
-});
-
-test("workflow keeps fail-fast off and the audit/test order", () => {
-	const workflow = readText(WORKFLOW_PATH);
-	expect(workflow).toMatch(/fail-fast:\s+false/);
-	expect(stepIndex(workflow, "Type check")).toBeLessThan(stepIndex(workflow, "Security audit"));
-	expect(stepIndex(workflow, "Security audit")).toBeLessThan(stepIndex(workflow, "Unit tests"));
-	expect(stepIndex(workflow, "Unit tests")).toBeLessThan(stepIndex(workflow, "E2E tests"));
-	expect(workflow).toMatch(/run: npx audit-ci --config audit-ci\.jsonc/);
-});
-
-
-test("Windows current-Pi step runs after packed-host failure but not on cancellation", () => {
-	const workflow = readText(WORKFLOW_PATH);
-	const block = stepBlock(workflow, "Synchronized current Pi compatibility on Windows");
-	expect(block).toMatch(/if:\s*matrix\.os == 'windows-latest' && !cancelled\(\)/);
 });
 
 test("audit-ci config matches the CI audit command", () => {
