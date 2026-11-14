@@ -29,6 +29,7 @@ import {
 	PROBE_PROVIDER_FIELDS,
 	ZERO_COST,
 	cutHandoffId,
+	isJsonObject,
 	parseScriptedStep,
 	type BarrierReport,
 	type ProbeRecord,
@@ -86,8 +87,9 @@ function contextTexts(messages: readonly { content?: unknown }[]): string[] {
 	return messages.flatMap((message) => {
 		const content = message.content;
 		if (Array.isArray(content)) {
-			return content
-				.filter((block): block is { type: "text"; text: string } => block?.type === "text" && typeof block.text === "string")
+			const blocks: unknown[] = content;
+			return blocks
+				.filter((block): block is { type: "text"; text: string } => isJsonObject(block) && block.type === "text" && typeof block.text === "string")
 				.map((block) => block.text);
 		}
 		return typeof content === "string" ? [content] : [];
@@ -250,13 +252,15 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	pi.on("tool_execution_end", (event, ctx) => {
 		// The final bash result, after every tool_result handler; the session entry drops structuredContent.
 		if (event.toolName === "bash") {
-			const structured: unknown = event.result.structuredContent;
+			const result: unknown = event.result;
+			if (!isJsonObject(result)) {throw new Error(`The bash result is not an object: ${JSON.stringify(result)}`);}
+			const structured: unknown = result.structuredContent;
 			const output = typeof structured === "object" && structured !== null && "output" in structured ? structured.output : undefined;
 			log({
 				kind: "bashResult",
 				toolCallId: event.toolCallId,
 				isError: event.isError,
-				text: messageText(event.result.content),
+				text: messageText(result.content),
 				structuredOutput: typeof output === "string" ? output : null,
 			});
 		}

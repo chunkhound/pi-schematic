@@ -102,7 +102,7 @@ function malformed(line: string, reason: string): never {
 	throw new Error(`Probe log line is malformed (${reason}): ${line}`);
 }
 
-function isJsonObject(value: unknown): value is Record<string, unknown> {
+export function isJsonObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -128,7 +128,7 @@ function requireBoolean(record: Record<string, unknown>, field: string, line: st
 
 function requireStringArray(record: Record<string, unknown>, field: string, line: string): string[] {
 	const value = record[field];
-	if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+	if (!Array.isArray(value) || !value.every((item): item is string => typeof item === "string")) {
 		malformed(line, `${field} is not a string array: ${JSON.stringify(value)}`);
 	}
 	return value;

@@ -28,8 +28,40 @@ import { createTestHost } from "../unit/test-host.js";
 const pi = await createTestHost();
 // Capture the maps after registration: `pi.tools` is derived from the loaded
 // Extension's registered tools.
-const commands = pi.commands;
-const tools = pi.tools;
+const commands: Map<string, unknown> = pi.commands;
+const tools: Map<string, unknown> = pi.tools;
+
+// pi's registrations reach this host untyped; each one is checked where it is called. A call may return a
+// promise or a plain value.
+type Callable = (...args: unknown[]) => unknown;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function assertCallable(value: unknown, what: string): asserts value is Callable {
+	if (typeof value !== "function") {throw new Error(`${what} is not a function`);}
+}
+
+function handlersFor(event: string): Callable[] {
+	const handlers: unknown[] = pi.handlers.get(event) ?? [];
+	return handlers.map((handler) => {
+		assertCallable(handler, `the ${event} handler`);
+		return handler;
+	});
+}
+
+// The text blocks of a tool result, one per line, without empty ones.
+function resultText(result: unknown): string {
+	if (!isRecord(result)) {throw new Error("the tool returned no result object");}
+	if (result.content === undefined || result.content === null) {return "";}
+	if (!Array.isArray(result.content)) {throw new Error("the tool result content is not an array");}
+	const blocks: unknown[] = result.content;
+	return blocks.map((block) => {
+		if (!isRecord(block)) {throw new Error("a tool result content block is not an object");}
+		return block.text;
+	}).filter(Boolean).join("\n");
+}
 
 // ── Mock ExtensionContext for tool/command execution ──────────────
 
@@ -80,7 +112,7 @@ const mockCtx = {
 	hasPendingMessages: () => false,
 	shutdown: () => process.exit(0),
 	getSystemPrompt: () => "",
-} as any; // Type assertion needed: mock intentionally omits some interface fields
+};
 
 // ── REPL loop ────────────────────────────────────────────────────
 
@@ -105,7 +137,7 @@ for await (const line of rl) {
 		}
 		const toolName = rest.slice(0, spaceIdx);
 		const jsonArgs = rest.slice(spaceIdx + 1);
-		let input;
+		let input: unknown;
 		try { input = JSON.parse(jsonArgs); }
 		catch (e: unknown) {
 			process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n");
@@ -113,10 +145,10 @@ for await (const line of rl) {
 		}
 		try {
 			// As pi does: every tool_call handler in registration order, the first block wins.
-			let result = null;
-			for (const handler of pi.handlers.get("tool_call") ?? []) {
+			let result: unknown = null;
+			for (const handler of handlersFor("tool_call")) {
 				const outcome = await handler({ toolCallId: "e2e-toolcall", toolName, input }, mockCtx);
-				if (outcome?.block) {
+				if (isRecord(outcome) && Boolean(outcome.block)) {
 					result = outcome;
 					break;
 				}
@@ -127,7 +159,7 @@ for await (const line of rl) {
 			process.stdout.write("ERR:" + msg + "\n");
 		}
 	} else if (trimmed.startsWith("context")) {
-		let payload;
+		let payload: unknown;
 		try {
 			payload = trimmed === "context"
 				? { messages: [{ role: "user", content: "e2e", timestamp: Date.now() }] }
@@ -137,7 +169,9 @@ for await (const line of rl) {
 			continue;
 		}
 		try {
-			const [handler] = pi.handlers.get("context") ?? [];
+			const handlers = handlersFor("context");
+			if (handlers.length === 0) {throw new Error("no context handler is registered");}
+			const [handler] = handlers;
 			const result = await handler(payload, mockCtx);
 			process.stdout.write("OK:" + JSON.stringify(result ?? null) + "\n");
 		} catch (e) {
@@ -154,20 +188,20 @@ for await (const line of rl) {
 		const toolName = rest.slice(0, spaceIdx);
 		const jsonArgs = rest.slice(spaceIdx + 1);
 		const toolDef = tools.get(toolName);
-		if (!toolDef) {
+		if (!isRecord(toolDef)) {
 			process.stdout.write("ERR:unknown tool " + toolName + "\n");
 			continue;
 		}
-		let params;
+		let params: unknown;
 		try { params = JSON.parse(jsonArgs); }
 		catch (e: unknown) {
 			process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n");
 			continue;
 		}
 		try {
+			assertCallable(toolDef.execute, `tool ${toolName} execute`);
 			const result = await toolDef.execute("e2e-" + toolName, params, undefined, undefined, mockCtx);
-			const text = result.content?.map((c: any) => c.text).filter(Boolean).join("\n") || "";
-			process.stdout.write("OK:" + text + "\n");
+			process.stdout.write("OK:" + resultText(result) + "\n");
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
 			process.stdout.write("ERR:" + msg + "\n");
@@ -178,11 +212,12 @@ for await (const line of rl) {
 		const cmdName = spaceIdx === -1 ? rest : rest.slice(0, spaceIdx);
 		const cmdArg = spaceIdx === -1 ? "" : rest.slice(spaceIdx + 1);
 		const cmdDef = commands.get(cmdName);
-		if (!cmdDef) {
+		if (!isRecord(cmdDef)) {
 			process.stdout.write("ERR:unknown command " + cmdName + "\n");
 			continue;
 		}
 		try {
+			assertCallable(cmdDef.handler, `command ${cmdName} handler`);
 			await cmdDef.handler(cmdArg, mockCtx);
 			process.stdout.write("OK\n");
 		} catch (e) {

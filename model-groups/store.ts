@@ -66,7 +66,7 @@ function validateModelEntry(value: unknown, at: string): { ok: true; model: Mode
 	if (typeof value.modelId !== "string" || !value.modelId) {return { ok: false, message: `${at}.modelId must be a non-empty string` };}
 	if (value.thinkingLevel !== undefined && !isThinkingLevel(value.thinkingLevel)) {return { ok: false, message: `${at}.thinkingLevel is invalid` };}
 	const model = { ...value, provider: value.provider, modelId: value.modelId } as ModelGroupModel;
-	if (value.thinkingLevel === undefined) {delete (model as any).thinkingLevel;}
+	if (value.thinkingLevel === undefined) {delete model.thinkingLevel;}
 	return { ok: true, model };
 }
 function normalizeOverrideEnvelope(rawDef: Record<string, unknown>, sourceVersion: number, rawName: string, registry: ConstraintRegistry): { ok: true; constraints?: Record<string, unknown> } | { ok: false; message: string } {
@@ -212,7 +212,7 @@ export function saveModelGroups(scope: ModelGroupScope, access: ModelGroupsAcces
 	let raw: Record<string, unknown> = {};
 	if (fsOps.existsSync(sourcePath)) {
 		try {
-			const parsed = JSON.parse(String(fsOps.readFileSync(sourcePath, "utf8")));
+			const parsed: unknown = JSON.parse(String(fsOps.readFileSync(sourcePath, "utf8")));
 			if (isPlainRecord(parsed)) {
 				if (typeof parsed.version === "number" && Number.isInteger(parsed.version) && parsed.version > CURRENT_VERSION) {
 					throw persistenceError({ operation: "save", scope, sourcePath, phase: "config-validation", message: `unsupported version ${parsed.version}` });

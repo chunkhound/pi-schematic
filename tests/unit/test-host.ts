@@ -51,6 +51,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { Type } from "typebox";
 import registerSchematic from "../../index.js";
 import { piManifestPath } from "../../pi-packages.mjs";
 
@@ -100,8 +101,8 @@ export interface TestAccessors {
 	tools: TestToolMap;
 	commands: Map<string, any>;
 	shortcuts: Map<string, any>;
-	sentUserMessages: { content: any; options?: any }[];
-	sentMessages: { message: any; options?: any }[];
+	sentUserMessages: SentUserMessage[];
+	sentMessages: { message: any; options?: SentMessage["options"] }[];
 	appendedEntries: { customType: string; data: any }[];
 	activeTools: string[];
 	setCommands(commands: any[]): void;
@@ -221,7 +222,7 @@ function buildAllTools(state: HostState): ToolInfo[] {
 		name,
 		description: "",
 		exposure: "direct" as const,
-		parameters: {} as any,
+		parameters: Type.Object({}),
 		sourceInfo: {
 			path: `<${state.toolSources.get(name) ?? defaultToolSource()}:${name}>`,
 			source: state.toolSources.get(name) ?? defaultToolSource(),

@@ -15,7 +15,7 @@
  *   rate, keeping the main thread responsive.
  */
 
-import type { StopReason } from "@earendil-works/pi-ai";
+import type { StopReason, TextContent } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import {
 	AssistantMessageComponent,
@@ -98,10 +98,13 @@ interface SpawnChildMessage {
 
 /** Runtime guard: validate that a value is structurally compatible with ToolResultLike. */
 function asToolResult(value: unknown): ToolResultLike {
-	if (typeof value === "object" && value !== null && Array.isArray((value as any).content)) {
-		return value as ToolResultLike;
-	}
+	if (isToolResultLike(value)) {return value;}
 	return { content: [] };
+}
+
+// An object whose `content` is an array; the content blocks themselves are not checked.
+function isToolResultLike(value: unknown): value is ToolResultLike {
+	return isRecord(value) && Array.isArray(value.content);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1114,8 +1117,8 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 
 		// Cheap per-event: update the live action text preview
 		const textBlock = event.message.content?.find(
-			(c: any) => c.type === "text" && c.text,
-		) as { text: string } | undefined;
+			(c): c is TextContent => c.type === "text" && Boolean(c.text),
+		);
 		if (textBlock?.text) {
 			const firstLine = textBlock.text.trim().split("\n")[0];
 			if (firstLine) {
@@ -1295,7 +1298,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
  * Expanded: shows the full prompt text.
  * Returns a static Text component — live updates come through renderResult.
  */
-function renderSpawnCall(args: any, theme: Theme, context: { expanded: boolean }): Text {
+function renderSpawnCall(args: { prompt?: unknown; group?: unknown; thinking?: unknown }, theme: Theme, context: { expanded: boolean }): Text {
 	const prompt = typeof args.prompt === "string" ? args.prompt : "...";
 	const { shown, remaining } = renderPromptPreview(prompt, context.expanded);
 	let text = theme.fg("toolTitle", theme.bold("spawn ")) + theme.fg("accent", "child");
