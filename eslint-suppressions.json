@@ -672,38 +672,17 @@
     }
   },
   "tests/unit/handoff.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 22
-    },
     "@typescript-eslint/no-non-null-assertion": {
-      "count": 20
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 10
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 56
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 44
+      "count": 4
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 91
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 8
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 10
+      "count": 1
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 1
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 4
-    },
     "@typescript-eslint/strict-boolean-expressions": {
-      "count": 2
+      "count": 1
     },
     "vitest/max-expects": {
       "count": 38
@@ -1228,32 +1207,11 @@
     }
   },
   "tests/unit/watchdog.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 24
-    },
     "@typescript-eslint/no-non-null-assertion": {
-      "count": 24
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 50
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 63
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 69
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 18
+      "count": 1
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 5
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 3
+      "count": 2
     },
     "ban/wall-clock": {
       "count": 1
