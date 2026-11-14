@@ -8,8 +8,8 @@
 import { expect, test, vi } from "vitest";
 import { expectPrefix } from "../assertions.js";
 import { applyReadonlyBashGuard, classifyBashCommand } from "../../readonly-bash.js";
-import { registerReadonlyPI } from "./helpers.js";
-import { createTestHost } from "./test-host.js";
+import { createCommandContext, createUIContext, registerReadonlyPI } from "./helpers.js";
+import { createTestHost, getCommand } from "./test-host.js";
 import {
 	READONLY_BASH_SCOPE,
 	READONLY_NON_TEMP_MUTATION_SCOPE,
@@ -123,19 +123,19 @@ test("bash guard uses centralized readonly block copy", () => {
 
 test("parent readonly tool-call consumer uses centralized block copy", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
-	await pi.commands.get("readonly")!.handler("", {
+	await getCommand(pi, "readonly").handler("", createCommandContext({
+		mode: "tui",
 		hasUI: true,
-		getContextUsage: () => null,
-		ui: {
-			theme: { fg: (_name: string, text: string) => text },
+		getContextUsage: () => undefined,
+		ui: createUIContext({
 			notify: vi.fn(),
 			setStatus: vi.fn(),
 			setWidget: vi.fn(),
-		},
-	} as any);
-	const result = await toolCall({ toolName: "write", input: {} }, {});
+		}),
+	}));
+	const result: unknown = await toolCall({ toolName: "write", input: {} }, {});
 	expect(result).toStrictEqual({ block: true, reason: READONLY_WRITE_EDIT_BLOCK_REASON });
-	const handoffResult = await toolCall({ toolName: "handoff", input: {} }, {});
+	const handoffResult: unknown = await toolCall({ toolName: "handoff", input: {} }, {});
 	expect(handoffResult).toStrictEqual({ block: true, reason: READONLY_HANDOFF_BLOCK_REASON });
 });
 
@@ -174,7 +174,7 @@ test("shared readonly fragments keep copy aligned across contexts", () => {
 
 test("readonly command consumes the centralized description", async () => {
 	const pi = await createTestHost();
-	expect(pi.commands.get("readonly")?.description).toBe(READONLY_COMMAND_DESCRIPTION);
+	expect(getCommand(pi, "readonly").description).toBe(READONLY_COMMAND_DESCRIPTION);
 });
 
 // ── Model group / model / thinking frontmatter builders ───────────
