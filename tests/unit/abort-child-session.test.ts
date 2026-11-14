@@ -1,8 +1,9 @@
 import { expect, test, vi } from "vitest";
 import { createState, abortChildSession } from "../../state.js";
+import { createSession } from "./helpers.js";
 
 function createMockSession(abortImpl: () => Promise<void> | void) {
-	return { abort: abortImpl } as any;
+	return Object.assign(createSession([]), { abort: abortImpl });
 }
 
 test("abortChildSession returns the same promise for the same session", async () => {

@@ -5,20 +5,55 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Value } from "typebox/value";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, type SessionStats } from "@earendil-works/pi-coding-agent";
-import { fauxAssistantMessage, fauxProvider, type Usage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
 import { createState } from "../../state.js";
 import { THINKING_LEVELS } from "../../thinking-levels.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
-import { createTestHost } from "./test-host.js";
-import { assertErrorResult, EMPTY_CHILD_USAGE, runRealChildInvocation } from "./helpers.js";
+import { createTestHost, getTool } from "./test-host.js";
+import { assertErrorResult, createExtensionContext, EMPTY_CHILD_USAGE, runRealChildInvocation } from "./helpers.js";
 import { REPO_ROOT_URL } from "../paths.js";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+// The fields isSpawnToolResult checks; everything else stays unknown.
+interface CheckedSpawnResult {
+	content: { type: "text"; text: string }[];
+	details: { model: string; thinking: string; truncated: boolean; outcome: string; stats?: unknown };
+	usage: Record<string, unknown>;
+	isError?: unknown;
+}
+
+function isSpawnToolResult(value: unknown): value is CheckedSpawnResult {
+	if (!isRecord(value) || !Array.isArray(value.content) || !isRecord(value.details) || !isRecord(value.usage)) {return false;}
+	const { details } = value;
+	return value.content.every((block: unknown) => isRecord(block) && block.type === "text" && typeof block.text === "string")
+		&& typeof details.model === "string"
+		&& typeof details.thinking === "string"
+		&& typeof details.truncated === "boolean"
+		&& typeof details.outcome === "string";
+}
+
+// The real-child fixture reports the spawn tool's result untyped; this checks its shape.
+function spawnResult(value: unknown): CheckedSpawnResult {
+	if (!isSpawnToolResult(value)) {throw new Error(`Expected a spawn tool result with text content, details and usage, got ${JSON.stringify(value)}.`);}
+	return value;
+}
+
+// Narrows a parsed JSON value to an object; throws naming `what` otherwise.
+function plainRecord(value: unknown, what: string): Record<string, unknown> {
+	if (!isRecord(value)) {throw new Error(`Expected ${what} to be an object.`);}
+	return value;
+}
 
 test("real child completes through inherited/default thinking", async () => {
 	const proof = await runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK." });
-	expect(proof.result.content[0].text).toBe(proof.expectedText);
-	expect(proof.result.details.model).toBe(proof.modelId);
+	const result = spawnResult(proof.result);
+	expect(result.content[0].text).toBe(proof.expectedText);
+	expect(result.details.model).toBe(proof.modelId);
 	// Non-reasoning model clamps the inherited (medium) parent thinking to "off".
-	expect(proof.result.details.thinking).toBe("off");
+	expect(result.details.thinking).toBe("off");
 	expect(proof.probeCalls).toBe(1);
 	// Exact stream-call count is implementation-coupled; assert only a meaningful lower bound.
 	expect(proof.streamCalls).toBeGreaterThanOrEqual(1);
@@ -30,9 +65,10 @@ test("real child preserves selected identity and reports effective thinking", as
 		prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK.",
 		thinking: "max",
 	});
-	expect(proof.result.content[0].text).toBe(proof.expectedText);
-	expect(proof.result.details.model).toBe(proof.modelId);
-	expect(proof.result.details.thinking, "non-reasoning model clamps requested max to off").toBe("off");
+	const result = spawnResult(proof.result);
+	expect(result.content[0].text).toBe(proof.expectedText);
+	expect(result.details.model).toBe(proof.modelId);
+	expect(result.details.thinking, "non-reasoning model clamps requested max to off").toBe("off");
 	expect(proof.probeCalls).toBe(1);
 	// Exact stream-call count is implementation-coupled; assert only a meaningful lower bound.
 	expect(proof.streamCalls).toBeGreaterThanOrEqual(1);
@@ -42,9 +78,10 @@ test("real child preserves selected identity and reports effective thinking", as
 test("real child output is truncated at the public line limit", async () => {
 	const output = Array.from({ length: 2_100 }, (_, index) => `line ${index}`).join("\n");
 	const proof = await runRealChildInvocation({ prompt: "return long output", resultText: output });
-	const text = proof.result.content[0].text;
+	const result = spawnResult(proof.result);
+	const text = result.content[0].text;
 
-	expect(proof.result.details.truncated).toBe(true);
+	expect(result.details.truncated).toBe(true);
 	expectPrefix(text, "line 0");
 	// Pins Pi's public limits on purpose, so a change to them in Pi fails here.
 	expect(text).toMatch(/\[Result truncated to 2000 lines \/ 50 KiB \(51200 bytes\)\. Spawn a new child with a narrower request if more is needed\.\]/);
@@ -56,11 +93,12 @@ test("real child abort before prompt returns an aborted result without a running
 		prompt: "Use the agentic_e2e_probe tool.",
 		abortBeforeStart: true,
 	});
+	const result = spawnResult(proof.result);
 
-	expect(proof.result.isError).toBe(true);
-	expect(proof.result.content).toStrictEqual([{ type: "text", text: "Child agent aborted: fixture abort" }]);
-	expect(proof.result.details.outcome).toBe("aborted");
-	expect(proof.result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
+	expect(result.isError).toBe(true);
+	expect(result.content).toStrictEqual([{ type: "text", text: "Child agent aborted: fixture abort" }]);
+	expect(result.details.outcome).toBe("aborted");
+	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
 	expect(proof.updates).toHaveLength(0);
 });
 
@@ -69,7 +107,6 @@ test("real child reset during its running update invalidates the session", async
 		prompt: "Use the agentic_e2e_probe tool.",
 		resetOnRunningUpdate: true,
 	});
-
 	assertErrorResult(proof.result, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
 });
 
@@ -78,8 +115,10 @@ test("concurrent real children both complete", async () => {
 		prompt: "unused",
 		prompts: ["first task", "second task"],
 	});
-	expect(proof.results).toHaveLength(2);
-	for (const result of proof.results) {
+	const results: unknown[] = proof.results;
+	expect(results).toHaveLength(2);
+	for (const value of results) {
+		const result = spawnResult(value);
 		expect(result.content[0].text).toBe(proof.expectedText);
 		expect(result.details.model).toBe(proof.modelId);
 	}
@@ -103,8 +142,9 @@ test("spawn routes through the public registry and keeps source boundaries exact
 test("spawn schema advertises the thinking levels as a plain string enum and rejects other values", async () => {
 	const state = createState();
 	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
-	const tool = pi.tools.get("spawn");
-	const thinkingSchema = JSON.parse(JSON.stringify(tool.parameters)).properties.thinking;
+	const tool = getTool(pi, "spawn");
+	const schema = plainRecord(JSON.parse(JSON.stringify(tool.parameters)), "the spawn schema");
+	const thinkingSchema = plainRecord(plainRecord(schema.properties, "the spawn schema properties").thinking, "the thinking schema");
 	expect(thinkingSchema.type).toBe("string");
 	expect(thinkingSchema.enum).toStrictEqual([...THINKING_LEVELS]);
 	expect(JSON.stringify(thinkingSchema)).not.toMatch(/"(?:anyOf|const)"\s*:/);
@@ -115,7 +155,7 @@ test("spawn schema advertises the thinking levels as a plain string enum and rej
 
 test.for([...THINKING_LEVELS])("spawn schema accepts thinking: %s", async (thinking) => {
 	const pi = await createTestHost((api) => { registerSpawnTool(api, createState()); });
-	expect(Value.Check(pi.tools.get("spawn").parameters, { prompt: "work", thinking })).toBe(true);
+	expect(Value.Check(getTool(pi, "spawn").parameters, { prompt: "work", thinking })).toBe(true);
 });
 
 test("spawn real child completes with max thinking requested", async () => {
@@ -123,8 +163,9 @@ test("spawn real child completes with max thinking requested", async () => {
 		prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK.",
 		thinking: "max",
 	});
-	expect(proof.result.content[0].text).toBe(proof.expectedText);
-	expect(proof.result.details.model).toBe(proof.modelId);
+	const result = spawnResult(proof.result);
+	expect(result.content[0].text).toBe(proof.expectedText);
+	expect(result.details.model).toBe(proof.modelId);
 	expect(proof.probeCalls).toBe(1);
 	// Exact stream-call count is implementation-coupled; assert only a meaningful lower bound.
 	expect(proof.streamCalls).toBeGreaterThanOrEqual(1);
@@ -134,12 +175,12 @@ test("spawn real child completes with max thinking requested", async () => {
 test("executeSpawn rejects immediately when no model is configured", async () => {
 	const pi = await createTestHost();
 	const state = createState();
-	const ctx = { cwd: "/tmp" } as any; // ctx.model is undefined
+	const ctx = createExtensionContext({ cwd: "/tmp" }); // ctx.model is undefined
 
 	await expect(
 		executeSpawn(
 			"spawn-no-model",
-			pi as any,
+			pi,
 			ctx,
 			state,
 			{ prompt: "work" },
@@ -160,11 +201,12 @@ test("a parent-transient selected model fails explicitly in the real child runti
 	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
 	const pi = await createTestHost();
 	const state = createState();
-	const model = {
+	const model: Model<Api> = {
 		id: "transient-model",
 		name: "Transient Parent Model",
 		provider: "transient-parent",
 		api: "transient-parent-api",
+		baseUrl: "http://localhost.invalid",
 		reasoning: false,
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -172,7 +214,7 @@ test("a parent-transient selected model fails explicitly in the real child runti
 		maxTokens: 1024,
 	};
 	const result = await executeSpawn(
-		"spawn-transient", pi, { model, cwd } as any, state,
+		"spawn-transient", pi, createExtensionContext({ model, cwd }), state,
 		{ prompt: "work" }, undefined, undefined, "medium",
 	);
 
@@ -196,8 +238,9 @@ test("real child forwards the requested thinking to the session", async () => {
 		thinking: "max",
 		reasoning: true,
 	});
+	const result = spawnResult(proof.result);
 	// A reasoning model that maps neither xhigh nor max clamps the requested max to high.
-	expect(proof.result.details.thinking, "effective thinking reflects the clamped level").toBe("high");
+	expect(result.details.thinking, "effective thinking reflects the clamped level").toBe("high");
 	// Every stream call carries the effective level. The call count stays a lower bound, as above.
 	expect(proof.streamCalls).toBeGreaterThanOrEqual(1);
 	expect(proof.observedThinking, "provider observed the forwarded thinking level on every stream call")
@@ -235,16 +278,18 @@ test("real child invalidated when state is reset mid-prompt", async () => {
 // real SDK does not reject the in-flight prompt; spawn records outcome "aborted").
 test("real child records an aborted outcome when the parent aborts mid-prompt", async () => {
 	const proof = await runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool.", abortMidPrompt: true });
-	expect(proof.result.details.outcome, "mid-prompt abort yields an aborted outcome").toBe("aborted");
-	expect(proof.result.isError).toBe(true);
-	expect(proof.result.content[0].text).toBe("Child agent aborted: mid-prompt abort");
+	const result = spawnResult(proof.result);
+	expect(result.details.outcome, "mid-prompt abort yields an aborted outcome").toBe("aborted");
+	expect(result.isError).toBe(true);
+	expect(result.content[0].text).toBe("Child agent aborted: mid-prompt abort");
 	expect(proof.state.childSessions.size, "no child session lingers after the abort").toBe(0);
 });
 
 // 7. Stats shape: the deterministic provider emits zero usage; the published stats object carries the contract keys.
 test("real child publishes the session stats contract shape", async () => {
 	const proof = await runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK." });
-	const stats = proof.result.details.stats as Record<string, unknown> | undefined;
+	const result = spawnResult(proof.result);
+	const stats = result.details.stats;
 	assertPresent(stats, "stats object must be published");
 	expect(stats, "stats object must be published").toBeTypeOf("object");
 	for (const key of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "totalTokens", "cost", "turns"]) {
@@ -275,7 +320,7 @@ test("real child usage matches the session stats across assistant, tool result, 
 	const pi = await createTestHost();
 	const state = createState();
 	const result = await executeSpawn(
-		"spawn-usage-parity", pi, { model, cwd: root } as any, state,
+		"spawn-usage-parity", pi, createExtensionContext({ model, cwd: root }), state,
 		{ prompt: "work" }, undefined, undefined, "medium",
 		async (config) => {
 			const created = await createAgentSession({ ...config, agentDir: root, modelRuntime, resourceLoader });
@@ -300,7 +345,7 @@ test("real child usage matches the session stats across assistant, tool result, 
 	);
 
 	const stats = result.details.stats;
-	expect((result as any).isError).toBeUndefined();
+	expect(result.isError).toBeUndefined();
 	// Hand-computed extras on top of the assistant usage: tool result 11/2/0/0 + usage entry 30/3/1/0 + compaction 200/20/0/4 + branch summary 7/1/0/0 = 248/26/1/4, cost 279/1024.
 	// The faux provider always reports zero cost for an assistant message, so cost.total covers the extras' cost only.
 	expect(result.usage).toMatchObject({
