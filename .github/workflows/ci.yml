@@ -40,6 +40,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Format
+        run: npm run format:check
+
       # A knip finding warns without failing the lint job; the pre-commit hook runs knip locally
       # on every commit.
       - name: Knip
