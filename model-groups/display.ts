@@ -7,7 +7,8 @@ function hex(value: number): string {
 export function escapeDisplayLabel(raw: string): string {
 	let encoded = "";
 	for (const char of raw) {
-		const code = char.codePointAt(0)!;
+		const code = char.codePointAt(0);
+		if (code === undefined) {throw new Error("String iteration yielded an empty character.");}
 		if (char === "\\") {encoded += "\\\\";}
 		else if (char === "\n") {encoded += "\\n";}
 		else if (char === "\r") {encoded += "\\r";}

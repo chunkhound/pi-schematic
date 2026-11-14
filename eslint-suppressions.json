@@ -32,9 +32,6 @@
     }
   },
   "index.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 11
-    },
     "@typescript-eslint/no-unnecessary-condition": {
       "count": 8
     },
@@ -79,20 +76,12 @@
       "count": 1
     }
   },
-  "model-groups/display.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 1
-    }
-  },
   "model-groups/modalities.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 2
     }
   },
   "model-groups/router.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 3
-    },
     "@typescript-eslint/no-unnecessary-condition": {
       "count": 1
     },
@@ -104,9 +93,6 @@
     }
   },
   "model-groups/store.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 5
     }
@@ -133,9 +119,6 @@
     }
   },
   "notebook/store.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 2
-    },
     "ban/set-singletons-import": {
       "count": 1
     }
@@ -159,9 +142,6 @@
     }
   },
   "readonly-bash.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 1
-    },
     "n/no-unsupported-features/node-builtins": {
       "count": 1
     }
@@ -208,9 +188,6 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 2
     },
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unnecessary-condition": {
       "count": 5
     },
@@ -241,9 +218,6 @@
     }
   },
   "tests/e2e/real-host.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 7
-    },
     "@typescript-eslint/unbound-method": {
       "count": 2
     },
@@ -276,9 +250,6 @@
     }
   },
   "tests/unit/handoff-boundary-session.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 2
-    },
     "vitest/max-expects": {
       "count": 48
     }
@@ -289,9 +260,6 @@
     }
   },
   "tests/unit/handoff.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 3
-    },
     "vitest/max-expects": {
       "count": 38
     },
@@ -348,9 +316,6 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 1
     },
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 11
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     },
@@ -364,15 +329,7 @@
       "count": 2
     }
   },
-  "tests/unit/model-groups-display.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 1
-    }
-  },
   "tests/unit/model-groups-integration.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 1
-    },
     "no-control-regex": {
       "count": 1
     },
@@ -391,30 +348,19 @@
     }
   },
   "tests/unit/model-groups-tui.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 4
-    },
     "no-control-regex": {
       "count": 3
     },
     "vitest/max-expects": {
-      "count": 157
+      "count": 156
     },
     "vitest/no-conditional-expect": {
       "count": 2
     }
   },
-  "tests/unit/notebook-prompt.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 7
-    }
-  },
   "tests/unit/notebook.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 18
-    },
     "vitest/max-expects": {
-      "count": 55
+      "count": 54
     }
   },
   "tests/unit/notifications.test.ts": {
@@ -501,9 +447,6 @@
     }
   },
   "tests/unit/runtime-singletons.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 1
-    },
     "vitest/max-expects": {
       "count": 7
     }
@@ -519,17 +462,11 @@
     }
   },
   "tests/unit/spawn-runtime-compatibility.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 1
-    },
     "vitest/max-expects": {
       "count": 7
     }
   },
   "tests/unit/spawn.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 3
-    },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 2
     },
@@ -562,9 +499,6 @@
     }
   },
   "tests/unit/time-format.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 2
-    },
     "vitest/max-expects": {
       "count": 3
     }
@@ -575,9 +509,6 @@
     }
   },
   "tests/unit/watchdog.test.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 2
     },
@@ -591,16 +522,6 @@
   "thinking-levels.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
-    }
-  },
-  "time/format.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 1
-    }
-  },
-  "watchdog.ts": {
-    "@typescript-eslint/no-non-null-assertion": {
-      "count": 3
     }
   }
 }

@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import { decodeDisplayLabel, escapeDisplayLabel } from "../../model-groups/display.js";
+import { assertPresent } from "../assertions.js";
 
 const dangerous = [
 	...Array.from({ length: 0x20 }, (_, i) => String.fromCharCode(i)),
@@ -14,7 +15,8 @@ test("model-groups display codec reversibly escapes every controlled code point"
 		const encoded = escapeDisplayLabel(raw);
 		expect(decodeDisplayLabel(encoded)).toStrictEqual({ ok: true, value: raw });
 		for (const codePoint of encoded) {
-			const code = codePoint.codePointAt(0)!;
+			const code = codePoint.codePointAt(0);
+			assertPresent(code, "each escaped character has a code point");
 			expect(code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029, JSON.stringify({ raw, encoded })).toBe(false);
 		}
 	}

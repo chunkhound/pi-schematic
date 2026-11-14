@@ -319,7 +319,9 @@ test("real child usage matches the session stats across assistant, tool result, 
 			// Entries beyond assistant messages that Pi's stats also count, written through the real session manager.
 			session.prompt = async (...args: Parameters<typeof runPrompt>) => {
 				await runPrompt(...args);
-				assistant = session.messages.filter((message) => message.role === "assistant").at(-1)!.usage;
+				const lastAssistant = session.messages.filter((message) => message.role === "assistant").at(-1);
+				assertPresent(lastAssistant, "the prompt produced an assistant message");
+				assistant = lastAssistant.usage;
 				const manager = session.sessionManager;
 				manager.appendMessage({
 					role: "toolResult", toolCallId: "parity-tool", toolName: "parity_probe", content: [{ type: "text", text: "ok" }],

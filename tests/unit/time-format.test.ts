@@ -9,7 +9,7 @@ import {
 	hostZone,
 } from "../../time/format.js";
 import { spawnNode } from "./spawn-node.js";
-import { expectPrefix } from "../assertions.js";
+import { assertPresent, expectPrefix } from "../assertions.js";
 
 // Instants are built with Date.UTC throughout, so a run in any host zone
 // exercises the same instants — the tests never inherit the runner's wall clock.
@@ -35,14 +35,20 @@ function localMidnight(instant: Date, zone: string = hostZone()): number {
 // which is all the day-boundary arithmetic above needs — west of UTC included.
 function localTimeOfDayMillis(instant: Date, zone: string): number {
 	const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(instant);
-	const field = (type: string) => Number(parts.find((candidate) => candidate.type === type)!.value);
+	const field = (type: string) => {
+		const part = parts.find((candidate) => candidate.type === type);
+		assertPresent(part, `Intl renders the ${type} part`);
+		return Number(part.value);
+	};
 	return ((field("hour") * 60 + field("minute")) * 60 + field("second")) * 1000;
 }
 
 /** The Intl `longOffset` for `date` in `zone`, normalised to `UTC±HH:MM`. */
 function intlOffset(date: Date, zone: string): string {
 	const formatter = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "longOffset" });
-	const gmt = formatter.formatToParts(date).find((part) => part.type === "timeZoneName")!.value;
+	const zoneName = formatter.formatToParts(date).find((part) => part.type === "timeZoneName");
+	assertPresent(zoneName, "Intl renders the timeZoneName part");
+	const gmt = zoneName.value;
 	return gmt === "GMT" ? "UTC+00:00" : gmt.replace("GMT", "UTC");
 }
 

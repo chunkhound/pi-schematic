@@ -32,11 +32,12 @@ async function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
 			"Notebook write lock is not reentrant — saveNotebookPage called from within its own critical section.",
 		);
 	}
-	let release: () => void;
+	let release: (() => void) | undefined;
 	const prev = lock.tail;
 	const next = new Promise<void>((resolve) => {
 		release = resolve;
 	});
+	if (release === undefined) {throw new Error("The Promise executor did not hand out the write-lock release.");}
 	lock.pending += 1;
 	lock.tail = next;
 	await prev;
@@ -44,7 +45,7 @@ async function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
 		return await s.writeContext.run(true, fn);
 	} finally {
 		lock.pending -= 1;
-		release!();
+		release();
 	}
 }
 
@@ -63,14 +64,12 @@ export function formatPagePreview(content: string): string {
 }
 
 export function formatPageList(state: SchematicState): string {
-	const names = getPageNames(state);
-	if (names.length === 0) {return "";}
+	// Same code-unit order as the default sort in getPageNames; keys are unique, so no ties.
+	const entries = Array.from(state.notebookPages).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+	if (entries.length === 0) {return "";}
 
-	return names
-		.map((name) => {
-			const content = state.notebookPages.get(name)!;
-			return `  ${name}: ${formatPagePreview(content)}`;
-		})
+	return entries
+		.map(([name, content]) => `  ${name}: ${formatPagePreview(content)}`)
 		.join("\n");
 }
 
