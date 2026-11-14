@@ -196,6 +196,11 @@ function getOutcomeStatusText(outcome: SpawnOutcome): string | undefined {
 	}
 }
 
+function getStopErrorText(outcome: SpawnOutcome, errorMessage: string | undefined): string {
+	if (errorMessage !== undefined && errorMessage !== "") {return errorMessage;}
+	return outcome === "aborted" ? "Operation aborted" : "Error";
+}
+
 function isExpectedToolComponentFailure(error: unknown): boolean {
 	return error instanceof Error && (
 		/missing tool definition/i.test(error.message)
@@ -354,9 +359,7 @@ export class SpawnFrameScheduler {
 	/** Mark a component as dirty — will be flushed on the next frame tick. */
 	markDirty(component: SpawnFrameTarget): void {
 		this.dirtyComponents.add(component);
-		if (!this.frameTimer) {
-			this.frameTimer = setTimeout(() => { this.flush(); }, this.frameMs);
-		}
+		this.frameTimer ??= setTimeout(() => { this.flush(); }, this.frameMs);
 	}
 
 	/** Remove a component from the dirty set (dispose, stale, rebuild). */
@@ -596,8 +599,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 
 	setDetails(details: SpawnResultDetails, theme: Theme): void {
 		const prior = this.details;
-		const changed = !prior
-			|| prior.model !== details.model
+		const changed = prior?.model !== details.model
 			|| prior.thinking !== details.thinking
 			|| prior.truncated !== details.truncated
 			|| prior.outcome !== details.outcome
@@ -909,10 +911,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 					this.addToolComponent(component);
 					if (!component) {continue;}
 					if (stopOutcome) {
-						const fallbackMessage = stopOutcome === "aborted" ? "Operation aborted" : "Error";
-						const errorMessage = message.errorMessage !== undefined && message.errorMessage !== ""
-							? message.errorMessage
-							: fallbackMessage;
+						const errorMessage = getStopErrorText(stopOutcome, message.errorMessage);
 						component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
 					} else {
 						renderedPendingTools.set(content.id ?? "", component);
@@ -1148,10 +1147,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		}
 		const stopOutcome = getStopReasonOutcome(event.message.stopReason);
 		if (stopOutcome) {
-			const fallbackMessage = stopOutcome === "aborted" ? "Operation aborted" : "Error";
-			const errorMessage = event.message.errorMessage !== undefined && event.message.errorMessage !== ""
-				? event.message.errorMessage
-				: fallbackMessage;
+			const errorMessage = getStopErrorText(stopOutcome, event.message.errorMessage);
 			this.liveOutcome = stopOutcome;
 			this.lastAction = getOutcomeStatusText(stopOutcome) ?? this.lastAction;
 			for (const component of this.pendingTools.values()) {

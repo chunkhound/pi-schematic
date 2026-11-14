@@ -86,7 +86,7 @@ export function createModelGroupsComponent(
 	theme: Theme,
 	modelRegistry: ModelRegistry,
 	access: ModelGroupsAccess,
-	done: (result: void) => void,
+	done: (result: undefined) => void,
 	options: ModelGroupsComponentOptions = {},
 ): Component & Focusable {
 	const store = { ...defaultStore, ...options.store };
@@ -409,7 +409,7 @@ export function createModelGroupsComponent(
 				const editor = activeConstraintEditor();
 				const selected = modalityEditorRows().at(state.row);
 				// No toggle rows (text-only / unresolvable) → Enter/Space are inert.
-				if (!editor || !selected || selected.kind !== "toggle") {return;}
+				if (!editor || selected?.kind !== "toggle") {return;}
 				const next = cloneDef(state.editDraft);
 				const base = [...(editor.evaluation.effective as ModelGroupModality[])];
 				const pressed = selected.value as ModelGroupModality;
@@ -497,7 +497,7 @@ export function createModelGroupsComponent(
 	function goBack(): void {
 		if (state.activeTextInput === "group-name") { commitName(); state.activeTextInput = null; return; }
 		switch (state.screen) {
-			case "LIST": state.finished = true; done(); return;
+			case "LIST": state.finished = true; done(undefined); return;
 			case "EDITOR": commitName(); state.screen = "LIST"; state.row = 0; return;
 			case "MODALITIES": state.screen = "EDITOR"; state.row = modalityRow(); return;
 			case "MODEL_EDIT": state.screen = "EDITOR"; state.row = 0; return;
@@ -722,11 +722,13 @@ export function createModelGroupsComponent(
 		const modalities = current?.modalities;
 		const capabilitiesBar = sectionBar("Capabilities");
 		container.addChild(textLine(capabilitiesBar));
-		const commonModalities = (modalities?.common ?? []).filter((modality) => modality !== "reasoning").join(", ") || "none";
+		const commonJoined = (modalities?.common ?? []).filter((modality) => modality !== "reasoning").join(", ");
+		const commonModalities = commonJoined === "" ? "none" : commonJoined;
 		const commonCapabilities = theme.fg("dim", `  Supported by every model: ${commonModalities}`);
 		container.addChild(textLine(commonCapabilities));
 		const modalityState = state.editDraft?.constraints?.modalities === undefined ? "Automatic" : "Override";
-		const effectiveModalities = (modalities?.effective ?? []).filter((modality) => modality !== "reasoning").join(", ") || "none";
+		const effectiveJoined = (modalities?.effective ?? []).filter((modality) => modality !== "reasoning").join(", ");
+		const effectiveModalities = effectiveJoined === "" ? "none" : effectiveJoined;
 		const modalityLine = selectableLine(state.row === modalityRow(), `Modalities: ${modalityState} (${effectiveModalities})`);
 		container.addChild(textLine(modalityLine));
 		const modelsBar = sectionBar("Models");

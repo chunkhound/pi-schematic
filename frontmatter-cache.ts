@@ -80,7 +80,7 @@ function readCacheEntry(
 			: { entry: null, issue: { kind: "unreadable-file", filePath } };
 	}
 
-	if (previous && previous.filePath === filePath && st.mtimeMs === previous.mtimeMs) {
+	if (previous?.filePath === filePath && st.mtimeMs === previous.mtimeMs) {
 		return { entry: previous, issue: previousIssue ?? null };
 	}
 

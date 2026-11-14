@@ -147,7 +147,7 @@ function loadScope(scope: ModelGroupScope, access: ModelGroupsAccess, registry: 
 
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(String(fsOps.readFileSync(sourcePath, "utf8")));
+		parsed = JSON.parse(fsOps.readFileSync(sourcePath, "utf8"));
 	} catch (cause) {
 		return {
 			config: emptyConfig(),
@@ -212,7 +212,7 @@ export function saveModelGroups(scope: ModelGroupScope, access: ModelGroupsAcces
 	let raw: Record<string, unknown> = {};
 	if (fsOps.existsSync(sourcePath)) {
 		try {
-			const parsed: unknown = JSON.parse(String(fsOps.readFileSync(sourcePath, "utf8")));
+			const parsed: unknown = JSON.parse(fsOps.readFileSync(sourcePath, "utf8"));
 			if (isPlainRecord(parsed)) {
 				if (typeof parsed.version === "number" && Number.isInteger(parsed.version) && parsed.version > CURRENT_VERSION) {
 					throw persistenceError({ operation: "save", scope, sourcePath, phase: "config-validation", message: `unsupported version ${parsed.version}` });

@@ -38,7 +38,7 @@ function validateHandoffRequest(nextInstruction: string, ctx: ExtensionContext):
 	if (!nextInstruction) {
 		const pct = normalizeContextPercent(usage?.percent);
 		throw new Error(
-			`Context at ${pct === null ? "?" : Math.round(pct) + "%"}. Empty handoff nextInstruction rejected. Save findings to notebook, then call handoff with the instruction the successor must execute.`,
+			`Context at ${pct === null ? "?" : String(Math.round(pct)) + "%"}. Empty handoff nextInstruction rejected. Save findings to notebook, then call handoff with the instruction the successor must execute.`,
 		);
 	}
 

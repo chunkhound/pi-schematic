@@ -621,10 +621,11 @@ export function executeSpawn(
 				throw new Error("Child agent produced no output.");
 			}
 			const errorMessage = lastAssistant?.errorMessage;
+			const nonEmptyErrorMessage = errorMessage === "" ? undefined : errorMessage;
 			const failureLine = outcome === "error"
-				? `Child agent failed: ${errorMessage !== undefined && errorMessage !== "" ? errorMessage : "no error message"}`
+				? `Child agent failed: ${nonEmptyErrorMessage ?? "no error message"}`
 				: outcome === "aborted"
-					? describeAbort(signal?.aborted === true ? signal.reason : errorMessage === "" ? undefined : errorMessage)
+					? describeAbort(signal?.aborted === true ? signal.reason : nonEmptyErrorMessage)
 					: undefined;
 			const fullText = failureLine === undefined ? resultText : `${failureLine}${resultText ? `\n\n${resultText}` : ""}`;
 			const { text: finalText, truncated } = limitResultText(fullText);
