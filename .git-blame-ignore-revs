@@ -1,0 +1,5 @@
+# Commits that only change formatting. GitHub's blame view skips them.
+# For local `git blame`, run once per clone: git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# chore(lint): add Prettier and format the repository (#199)
+3877779e3028ca2da81b9bf50d54d40f3c54e052
