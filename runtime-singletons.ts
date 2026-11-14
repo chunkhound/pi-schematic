@@ -43,7 +43,9 @@ export function createWriteLock(): RuntimeWriteLock {
 // ── Pre‑init defaults (overwritten by spawn/renderer.ts at import time) ──
 
 function createNoopScheduler(): RuntimeFrameScheduler {
-	const noop = () => { /* No scheduler is registered yet. */ };
+	const noop = () => {
+		/* No scheduler is registered yet. */
+	};
 	return {
 		markDirty: noop,
 		cancelDirty: noop,
@@ -69,10 +71,7 @@ let current: RuntimeSingletons = {
  * tests, through createTestHarness() or directly.  The __ prefix signals
  * that callers should understand the lifecycle implications — see
  * spawn/renderer.ts for the production registration pattern. */
-export function __setSingletons(
-	s: RuntimeSingletons,
-	options?: { forceWriteLock?: boolean },
-): void {
+export function __setSingletons(s: RuntimeSingletons, options?: { forceWriteLock?: boolean }): void {
 	if (options?.forceWriteLock !== true && current.writeLock.pending > 0) {
 		// Preserve both lock and ALS context together. Swapping only the context
 		// breaks reentrancy detection for writers already running inside the old lock.

@@ -12,7 +12,8 @@ export const READONLY_BASH_SCOPE = "bash writes/deletions outside temp blocked";
 /** Scope of non-temporary mutations blocked while readonly is active. */
 export const READONLY_NON_TEMP_MUTATION_SCOPE = "write, edit, powershell, and non-temp bash filesystem mutations remain blocked";
 /** Notice appended to a failed sandboxed command's result whose output shows the sandbox's denial phrase. */
-export const READONLY_SANDBOX_BLOCK_NOTICE = "[readonly mode] If this command failed on a write outside the OS temp dir, the OS sandbox blocked it.\nUse /readonly to disable, or write within the OS temp dir.";
+export const READONLY_SANDBOX_BLOCK_NOTICE =
+	"[readonly mode] If this command failed on a write outside the OS temp dir, the OS sandbox blocked it.\nUse /readonly to disable, or write within the OS temp dir.";
 /** User-visible shorthand for an explicit handoff request. */
 export const READONLY_EXPLICIT_HANDOFF = "explicit /handoff";
 /** All supported ways to activate the temporary readonly handoff exception. */
@@ -57,8 +58,7 @@ export const READONLY_WRITE_EDIT_BLOCK_REASON =
 export const READONLY_POWERSHELL_BLOCK_REASON =
 	"Readonly mode: powershell blocked until the user disables readonly. Do not run PowerShell or other shells through another tool.";
 
-export const READONLY_HANDOFF_BLOCK_REASON =
-	`Readonly mode: handoff blocked until an ${READONLY_HANDOFF_TRIGGER} enables the temporary exception. Use spawn for same-topic delegation.`;
+export const READONLY_HANDOFF_BLOCK_REASON = `Readonly mode: handoff blocked until an ${READONLY_HANDOFF_TRIGGER} enables the temporary exception. Use spawn for same-topic delegation.`;
 
 export const READONLY_WRITE_EDIT_SUMMARY = `[readonly] ${READONLY_WRITE_EDIT_BASH}`;
 
@@ -72,20 +72,18 @@ export const READONLY_HANDOFF_EXCEPTION_SUMMARY = `[readonly] temporary handoff 
 /** TUI notification shown when readonly mode is enabled. */
 export const READONLY_ENABLED_STATUS = `[readonly] enabled — write/edit/powershell blocked; handoff needs ${READONLY_HANDOFF_TRIGGER}; ${READONLY_BASH_SCOPE}`;
 
-export const READONLY_COMMAND_DESCRIPTION =
-	`Toggle readonly mode (${READONLY_WRITE_EDIT_BASH}; handoff needs ${READONLY_HANDOFF_TRIGGER})`;
+export const READONLY_COMMAND_DESCRIPTION = `Toggle readonly mode (${READONLY_WRITE_EDIT_BASH}; handoff needs ${READONLY_HANDOFF_TRIGGER})`;
 
-export const READONLY_DISABLED_SUMMARY = "[readonly] disabled — write, edit, handoff, and bash writes are now fully available, as is powershell where it is active.";
+export const READONLY_DISABLED_SUMMARY =
+	"[readonly] disabled — write, edit, handoff, and bash writes are now fully available, as is powershell where it is active.";
 
-export const READONLY_PENDING_HANDOFF_READONLY_ON_NOTIFICATION =
-	"Pending handoff updated — the fresh context will resume in readonly mode.";
+export const READONLY_PENDING_HANDOFF_READONLY_ON_NOTIFICATION = "Pending handoff updated — the fresh context will resume in readonly mode.";
 
 export const READONLY_PENDING_HANDOFF_READONLY_OFF_NOTIFICATION =
 	"Pending handoff readonly continuation cleared — the fresh context will not resume in readonly mode.";
 
 /** Notification in /handoff command when readonly is active. */
-export const READONLY_HANDOFF_EXCEPTION_NOTIFICATION =
-	`Readonly is active. An ${READONLY_EXPLICIT_HANDOFF} exception is reserved for this request; the handoff will start a fresh context once feasible. Write/edit/powershell remain blocked, and ${READONLY_BASH_SCOPE} stays in effect. After a successful handoff, ${READONLY_NEXT_CONTEXT_RESUMES.toLowerCase()}`;
+export const READONLY_HANDOFF_EXCEPTION_NOTIFICATION = `Readonly is active. An ${READONLY_EXPLICIT_HANDOFF} exception is reserved for this request; the handoff will start a fresh context once feasible. Write/edit/powershell remain blocked, and ${READONLY_BASH_SCOPE} stays in effect. After a successful handoff, ${READONLY_NEXT_CONTEXT_RESUMES.toLowerCase()}`;
 
 /** Add context usage to the one-shot readonly-disabled message. */
 export function buildReadonlyDisabledContextSuffix(percent: number): string {

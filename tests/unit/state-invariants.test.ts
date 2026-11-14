@@ -10,10 +10,7 @@ import * as fc from "fast-check";
 import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
 import { createState, resetState, abortAndClearChildSessions, invalidateHandoffState, newRequestedHandoff } from "../../state.js";
 import type { SchematicState } from "../../state.js";
-import {
-	setActiveNotebookTopic,
-	clearActiveNotebookTopic,
-} from "../../notebook/topic.js";
+import { setActiveNotebookTopic, clearActiveNotebookTopic } from "../../notebook/topic.js";
 import { saveNotebookPage } from "../../notebook/store.js";
 import { useTestHarness } from "../test-utils.js";
 import { createSession } from "./helpers.js";
@@ -24,7 +21,9 @@ import { createTestHost } from "./test-host.js";
 // A host with nothing registered; saveNotebookPage only appends entries to it.
 const mockPi = await createTestHost(vi.fn());
 // No test reads the entries; dropping them keeps the shared host from growing across tests.
-afterEach(() => { mockPi.appendedEntries.length = 0; });
+afterEach(() => {
+	mockPi.appendedEntries.length = 0;
+});
 
 /** First line fits, second line alone exceeds the byte cap: truncates to a clipped head. */
 const CLIPPED_BODY = "head\n" + "x".repeat(DEFAULT_MAX_BYTES + 1);
@@ -50,16 +49,11 @@ const arbTopicName = fc
 const arbPageName = fc.stringMatching(/^[a-z][a-z0-9-]{0,19}$/);
 
 /** Generator for session IDs (simulating toolCallId format). */
-const arbSessionId = fc
-	.stringMatching(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/)
-	.filter((s) => s.length > 0);
+const arbSessionId = fc.stringMatching(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/).filter((s) => s.length > 0);
 
 // ── Apply ─────────────────────────────────────────────────────────────
 
-async function apply(
-	state: SchematicState,
-	action: StateAction,
-): Promise<void> {
+async function apply(state: SchematicState, action: StateAction): Promise<void> {
 	switch (action.type) {
 		case "reset":
 			resetState(state);
@@ -103,19 +97,13 @@ function assertTopicSourceCoupling(state: SchematicState): void {
 
 function assertChildSessionContainment(state: SchematicState): void {
 	for (const key of state.childSessions.keys()) {
-		expect(
-			[...state.liveChildSessions.keys()],
-			`childSessions key "${key}" must be in liveChildSessions`,
-		).toContain(key);
+		expect([...state.liveChildSessions.keys()], `childSessions key "${key}" must be in liveChildSessions`).toContain(key);
 	}
 }
 
 function assertClippedPagesContained(state: SchematicState): void {
 	for (const name of state.clippedPages) {
-		expect(
-			[...state.notebookPages.keys()],
-			`clipped page "${name}" must exist in notebookPages`,
-		).toContain(name);
+		expect([...state.notebookPages.keys()], `clipped page "${name}" must exist in notebookPages`).toContain(name);
 	}
 }
 
@@ -173,26 +161,28 @@ test("Property 1: Topic-source coupling invariant", async () => {
 
 test("Property 2: Child session containment invariant", async () => {
 	useTestHarness();
-	await expect(fc.assert(
-		fc.asyncProperty(
-			fc.array(
-				fc.oneof(
-					fc.constant({ type: "reset" }),
-					fc.record({ type: fc.constant("addChildSession"), id: arbSessionId }),
-					fc.constant({ type: "abortChildren" }),
+	await expect(
+		fc.assert(
+			fc.asyncProperty(
+				fc.array(
+					fc.oneof(
+						fc.constant({ type: "reset" }),
+						fc.record({ type: fc.constant("addChildSession"), id: arbSessionId }),
+						fc.constant({ type: "abortChildren" }),
+					),
+					{ maxLength: 30 },
 				),
-				{ maxLength: 30 },
+				async (actions) => {
+					const state = createState();
+					for (const action of actions) {
+						await apply(state, action);
+						assertChildSessionContainment(state);
+					}
+				},
 			),
-			async (actions) => {
-				const state = createState();
-				for (const action of actions) {
-					await apply(state, action);
-					assertChildSessionContainment(state);
-				}
-			},
+			{ numRuns: 100 },
 		),
-		{ numRuns: 100 },
-	)).resolves.toBeUndefined();
+	).resolves.toBeUndefined();
 });
 
 test("Property 3: childSessionEpoch only changes on reset", async () => {
@@ -224,17 +214,11 @@ test("Property 3: childSessionEpoch only changes on reset", async () => {
 						} else {
 							expectedChildEpoch = state.childSessionEpoch;
 						}
-						expect(
-							state.childSessionEpoch,
-							`childSessionEpoch must be ${expectedChildEpoch} after reset (prev=${prevChildEpoch})`,
-						).toBe(expectedChildEpoch);
+						expect(state.childSessionEpoch, `childSessionEpoch must be ${expectedChildEpoch} after reset (prev=${prevChildEpoch})`).toBe(expectedChildEpoch);
 						expectedChildEpoch = state.childSessionEpoch;
 					} else {
 						// Non-reset: childSessionEpoch must be unchanged
-						expect(
-							state.childSessionEpoch,
-							`childSessionEpoch must not change on ${action.type} action`,
-						).toBe(prevChildEpoch);
+						expect(state.childSessionEpoch, `childSessionEpoch must not change on ${action.type} action`).toBe(prevChildEpoch);
 						expectedChildEpoch = state.childSessionEpoch;
 					}
 				}
@@ -277,20 +261,36 @@ test("Property 4: Reset clears all state fields", async () => {
 				await saveNotebookPage(mockPi, s2, "my-page", "some content");
 				s2.readonlyEnabled = true;
 				s2.readonlyNudgePending = true;
-				s2.frontmatterSkillCache.set("skill-a", { readonly: true, modelGroup: null, explicitModel: null, explicitThinking: null, mtimeMs: 1, filePath: "/tmp/skill-a.md" });
-				s2.frontmatterPromptCache.set("prompt-a", { readonly: false, modelGroup: null, explicitModel: null, explicitThinking: null, mtimeMs: 1, filePath: "/tmp/prompt-a.md" });
+				s2.frontmatterSkillCache.set("skill-a", {
+					readonly: true,
+					modelGroup: null,
+					explicitModel: null,
+					explicitThinking: null,
+					mtimeMs: 1,
+					filePath: "/tmp/skill-a.md",
+				});
+				s2.frontmatterPromptCache.set("prompt-a", {
+					readonly: false,
+					modelGroup: null,
+					explicitModel: null,
+					explicitThinking: null,
+					mtimeMs: 1,
+					filePath: "/tmp/prompt-a.md",
+				});
 				s2.frontmatterSkillIssues.set("skill-b", { kind: "invalid-readonly-value", filePath: "/tmp/skill-b.md" });
 				s2.frontmatterPromptIssues.set("prompt-b", { kind: "unreadable-file", filePath: "/tmp/prompt-b.md" });
 				s2.pendingReadonlyCommands.push({ type: "skill", name: "skill-a" });
 				s2.sandboxedBashCallIds.add("bash-call-1");
-				s2.modelGroups.groups = [{
-					name: "stale",
-					scope: "project",
-					sourcePath: "<project>",
-					models: [],
-					modalities: { common: [], supported: [], effective: [] },
-					validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
-				}];
+				s2.modelGroups.groups = [
+					{
+						name: "stale",
+						scope: "project",
+						sourcePath: "<project>",
+						models: [],
+						modalities: { common: [], supported: [], effective: [] },
+						validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
+					},
+				];
 				s2.modelGroups.validation = { groups: s2.modelGroups.groups, loadIssues: [] };
 				resetState(s2);
 				assertResetClears(s2);
@@ -304,14 +304,9 @@ test("Property 5: Epoch counter — set to 1 on first savePage", async () => {
 	useTestHarness();
 	await fc.assert(
 		fc.asyncProperty(
-			fc.array(
-				fc.oneof(
-					fc.constant({ type: "reset" }),
-					fc.record({ type: fc.constant("savePage"), name: arbPageName }),
-					fc.constant({ type: "clearTopic" }),
-				),
-				{ maxLength: 30 },
-			),
+			fc.array(fc.oneof(fc.constant({ type: "reset" }), fc.record({ type: fc.constant("savePage"), name: arbPageName }), fc.constant({ type: "clearTopic" })), {
+				maxLength: 30,
+			}),
 			async (actions) => {
 				const state = createState();
 
@@ -324,10 +319,7 @@ test("Property 5: Epoch counter — set to 1 on first savePage", async () => {
 					if (action.type === "savePage") {
 						// After first savePage, epoch transitions from 0 to 1
 						// After subsequent saves, epoch is unchanged (set once)
-						expect(
-							state.epoch,
-							`epoch must be > 0 after savePage, got ${state.epoch}`,
-						).toBeGreaterThan(0);
+						expect(state.epoch, `epoch must be > 0 after savePage, got ${state.epoch}`).toBeGreaterThan(0);
 						if (prevEpoch === 0) {
 							// First write: epoch transitions from 0 to 1
 							expect(state.epoch, "epoch must be 1 after first savePage").toBe(1);
@@ -443,10 +435,9 @@ test("Property 6: childSessionEpoch monotonicity (never decreases)", async () =>
 
 				for (const action of actions) {
 					await apply(state, action);
-					expect(
-						state.childSessionEpoch,
-						`childSessionEpoch must never decrease: was ${maxSeenEpoch}, got ${state.childSessionEpoch}`,
-					).toBeGreaterThanOrEqual(maxSeenEpoch);
+					expect(state.childSessionEpoch, `childSessionEpoch must never decrease: was ${maxSeenEpoch}, got ${state.childSessionEpoch}`).toBeGreaterThanOrEqual(
+						maxSeenEpoch,
+					);
 					maxSeenEpoch = Math.max(maxSeenEpoch, state.childSessionEpoch);
 				}
 			},
@@ -473,10 +464,7 @@ test("Property 7: clipped pages are a subset of notebook pages", async () => {
 					await apply(state, action);
 					assertClippedPagesContained(state);
 					if (action.type === "saveClippedPage") {
-						expect(
-							[...state.clippedPages],
-							`clipped write "${action.name}" must set the clipped flag`,
-						).toContain(action.name);
+						expect([...state.clippedPages], `clipped write "${action.name}" must set the clipped flag`).toContain(action.name);
 					}
 				}
 			},

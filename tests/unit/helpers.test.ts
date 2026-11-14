@@ -38,19 +38,28 @@ const KEY = "PI_CODING_AGENT_DIR";
 
 async function withPriorAgentDir(prior: string | undefined, body: () => void | Promise<void>): Promise<void> {
 	const ambient = process.env[KEY];
-	if (prior === undefined) {delete process.env[KEY];}
-	else {process.env[KEY] = prior;}
+	if (prior === undefined) {
+		delete process.env[KEY];
+	} else {
+		process.env[KEY] = prior;
+	}
 	try {
 		await body();
 	} finally {
-		if (ambient === undefined) {delete process.env[KEY];}
-		else {process.env[KEY] = ambient;}
+		if (ambient === undefined) {
+			delete process.env[KEY];
+		} else {
+			process.env[KEY] = ambient;
+		}
 	}
 }
 
 function assertAgentDirRestored(prior: string | undefined): void {
-	if (prior === undefined) {expect(process.env[KEY]).toBeUndefined();}
-	else {expect(process.env[KEY]).toBe(prior);}
+	if (prior === undefined) {
+		expect(process.env[KEY]).toBeUndefined();
+	} else {
+		expect(process.env[KEY]).toBe(prior);
+	}
 }
 
 const priors = [
@@ -81,7 +90,11 @@ for (const { label, prior } of priors) {
 
 	test(`withTempAgentDir restores ${label} PI_CODING_AGENT_DIR when the run throws synchronously`, async () => {
 		await withPriorAgentDir(prior, async () => {
-			await expect(withTempAgentDir(() => { throw new Error("run failed"); })).rejects.toThrow(/run failed/);
+			await expect(
+				withTempAgentDir(() => {
+					throw new Error("run failed");
+				}),
+			).rejects.toThrow(/run failed/);
 			assertAgentDirRestored(prior);
 		});
 	});
@@ -106,7 +119,11 @@ for (const { label, prior } of priors) {
 
 	test(`withTempHome restores ${label} PI_CODING_AGENT_DIR when the run throws synchronously`, async () => {
 		await withPriorAgentDir(prior, async () => {
-			await expect(withTempHome(() => { throw new Error("run failed"); })).rejects.toThrow(/run failed/);
+			await expect(
+				withTempHome(() => {
+					throw new Error("run failed");
+				}),
+			).rejects.toThrow(/run failed/);
 			assertAgentDirRestored(prior);
 		});
 	});
@@ -131,9 +148,9 @@ test("a context member the test did not stub throws naming it", () => {
 test("a UI member the test did not stub throws naming it and where to pass it", () => {
 	const ctx = createExtensionContext();
 
-	expect(() => { ctx.ui.notify("probe"); }).toThrow(
-		"ctx.ui.notify is not stubbed in this test context; pass it to createUIContext and that context as `ui`.",
-	);
+	expect(() => {
+		ctx.ui.notify("probe");
+	}).toThrow("ctx.ui.notify is not stubbed in this test context; pass it to createUIContext and that context as `ui`.");
 });
 
 test("a promise-returning context member the test did not stub rejects naming it", async () => {
@@ -145,13 +162,16 @@ test("a promise-returning context member the test did not stub rejects naming it
 test("a synchronous command member the test did not stub throws naming it", () => {
 	const ctx = createCommandContext();
 
-	expect(() => ctx.getSystemPromptOptions()).toThrow(
-		"ctx.getSystemPromptOptions is not stubbed in this test context; pass it in the overrides.",
-	);
+	expect(() => ctx.getSystemPromptOptions()).toThrow("ctx.getSystemPromptOptions is not stubbed in this test context; pass it in the overrides.");
 });
 
 test("a command context passes its command and context overrides through", async () => {
-	const ctx = createCommandContext({ waitForIdle: async () => { await Promise.resolve(); }, cwd: "/probe/cwd" });
+	const ctx = createCommandContext({
+		waitForIdle: async () => {
+			await Promise.resolve();
+		},
+		cwd: "/probe/cwd",
+	});
 
 	await expect(ctx.waitForIdle()).resolves.toBeUndefined();
 	expect(ctx.cwd).toBe("/probe/cwd");
@@ -235,7 +255,11 @@ test("a session manager passed in the overrides is the context's session manager
 
 test("a UI override is the member the UI context calls", () => {
 	const notifications: string[] = [];
-	const ui = createUIContext({ notify: (message) => { notifications.push(message); } });
+	const ui = createUIContext({
+		notify: (message) => {
+			notifications.push(message);
+		},
+	});
 
 	ui.notify("probe");
 
@@ -266,7 +290,9 @@ test("a model registry override set to undefined builds a context without a regi
 test("a UI override set to undefined keeps the throwing stub", () => {
 	const ui = createUIContext({ notify: undefined });
 
-	expect(() => { ui.notify("probe"); }).toThrow("ctx.ui.notify is not stubbed");
+	expect(() => {
+		ui.notify("probe");
+	}).toThrow("ctx.ui.notify is not stubbed");
 });
 
 function assertFunction(value: unknown, member: string): asserts value is (...args: never[]) => unknown {
@@ -278,9 +304,9 @@ test.for(["keyText", "keyHint"])("an unstubbed render context %s throws naming i
 	const formatter: unknown = Reflect.get(createToolRenderContext(), member);
 	assertFunction(formatter, member);
 
-	expect(() => { Reflect.apply(formatter, undefined, ["app.tools.expand", "to expand"]); }).toThrow(
-		`context.${member} is not stubbed in this test context; assign it to the context createToolRenderContext returned.`,
-	);
+	expect(() => {
+		Reflect.apply(formatter, undefined, ["app.tools.expand", "to expand"]);
+	}).toThrow(`context.${member} is not stubbed in this test context; assign it to the context createToolRenderContext returned.`);
 });
 
 test("a render context override set to undefined keeps the default", () => {
@@ -317,7 +343,9 @@ test("a custom UI resolves to the first done value and disposes the component th
 
 	const result = await custom<string>((_tui, _theme, _keybindings, done) => {
 		finish = done;
-		return probeComponent(() => { events.push("disposed"); });
+		return probeComponent(() => {
+			events.push("disposed");
+		});
 	});
 
 	expect(result).toBe("first");
@@ -333,12 +361,20 @@ test("a makeTUICtx theme member other than fg throws naming it", () => {
 test("a makeTUICtx component widget throws naming its key", () => {
 	const ctx = makeTUICtx();
 
-	expect(() => { ctx.ui.setWidget("probe", () => probeComponent()); }).toThrow('makeTUICtx records only string widgets; "probe" got a component.');
+	expect(() => {
+		ctx.ui.setWidget("probe", () => probeComponent());
+	}).toThrow('makeTUICtx records only string widgets; "probe" got a component.');
 });
 
 test("a makeTUICtx UI override is the member the context calls", () => {
 	const notifications: string[] = [];
-	const ctx = makeTUICtx({ ui: { notify: (message) => { notifications.push(message); } } });
+	const ctx = makeTUICtx({
+		ui: {
+			notify: (message) => {
+				notifications.push(message);
+			},
+		},
+	});
 
 	ctx.ui.notify("probe");
 
@@ -355,7 +391,9 @@ test.for([
 // pi.on's types admit only well-formed results, so the malformed handler is registered reflectively.
 function registerUntypedHandler(pi: object, event: string, handler: () => unknown): void {
 	const on: unknown = Reflect.get(pi, "on");
-	if (typeof on !== "function") {throw new Error("The test host has no pi.on.");}
+	if (typeof on !== "function") {
+		throw new Error("The test host has no pi.on.");
+	}
 	Reflect.apply(on, pi, [event, handler]);
 }
 
@@ -363,5 +401,7 @@ test("a blocking tool_call result with malformed members throws naming the resul
 	const { pi, toolCall } = await registerReadonlyPI();
 	registerUntypedHandler(pi, "tool_call", () => ({ block: true, reason: 5 }));
 
-	await expect(toolCall({ toolName: "probe" }, {})).rejects.toThrow('A tool_call handler returned something other than a tool_call result: {"block":true,"reason":5}.');
+	await expect(toolCall({ toolName: "probe" }, {})).rejects.toThrow(
+		'A tool_call handler returned something other than a tool_call result: {"block":true,"reason":5}.',
+	);
 });

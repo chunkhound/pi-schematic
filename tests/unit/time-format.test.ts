@@ -2,12 +2,7 @@ import { expect, test } from "vitest";
 import fc from "fast-check";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-	formatCurrentDate,
-	formatCurrentDatePrompt,
-	formatZoneOffset,
-	hostZone,
-} from "../../time/format.js";
+import { formatCurrentDate, formatCurrentDatePrompt, formatZoneOffset, hostZone } from "../../time/format.js";
 import { spawnNode } from "./spawn-node.js";
 import { assertPresent, expectPrefix } from "../assertions.js";
 
@@ -34,7 +29,9 @@ function localMidnight(instant: Date, zone: string = hostZone()): number {
 // Milliseconds past local midnight. Equivalent to the zone's offset modulo a day,
 // which is all the day-boundary arithmetic above needs — west of UTC included.
 function localTimeOfDayMillis(instant: Date, zone: string): number {
-	const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(instant);
+	const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(
+		instant,
+	);
 	const field = (type: string) => {
 		const part = parts.find((candidate) => candidate.type === type);
 		assertPresent(part, `Intl renders the ${type} part`);
@@ -69,11 +66,14 @@ test("formatZoneOffset renders Intl offsets for named zones", () => {
 test("formatZoneOffset property: minutes east of UTC match Intl", () => {
 	const pad = (n: number) => String(n).padStart(2, "0");
 	fc.assert(
-		fc.property(fc.integer({ min: -840, max: 840 }).map((m) => m - (m % 15)), (minutesEast) => {
-			const abs = Math.abs(minutesEast);
-			const zone = `${minutesEast < 0 ? "-" : "+"}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
-			expect(formatZoneOffset(utc(2026, 0, 1), zone)).toBe(intlOffset(utc(2026, 0, 1), zone));
-		}),
+		fc.property(
+			fc.integer({ min: -840, max: 840 }).map((m) => m - (m % 15)),
+			(minutesEast) => {
+				const abs = Math.abs(minutesEast);
+				const zone = `${minutesEast < 0 ? "-" : "+"}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+				expect(formatZoneOffset(utc(2026, 0, 1), zone)).toBe(intlOffset(utc(2026, 0, 1), zone));
+			},
+		),
 		{ numRuns: 200 },
 	);
 });
@@ -205,8 +205,7 @@ test("formatCurrentDate offset matches Intl longOffset authority incl. DST", () 
 test.skipIf(process.platform === "win32")("formatCurrentDate defaults to the host zone under a pinned TZ", () => {
 	const instant = Date.UTC(2026, 9, 5, 4, 0);
 	const script =
-		`import { formatCurrentDate, hostZone } from "./time/format.js"; ` +
-		`console.log(hostZone() + "|" + formatCurrentDate(new Date(${instant})));`;
+		`import { formatCurrentDate, hostZone } from "./time/format.js"; ` + `console.log(hostZone() + "|" + formatCurrentDate(new Date(${instant})));`;
 	const result = spawnNode(["--input-type=module", "-e", script], {
 		cwd: ROOT,
 		env: { TZ: "America/New_York" },
@@ -224,8 +223,10 @@ test.skipIf(process.platform === "win32")("formatCurrentDate defaults to the hos
 // the directive, so a rewording of either fails here. Importing the directive
 // constant would pass even after a regression.
 test("formatCurrentDatePrompt anchors the date and instructs resolution", () => {
-	expect(formatCurrentDatePrompt(utc(2026, 9, 5), "UTC")).toBe('## Current date\n2026-10-05 (Monday), UTC (UTC+00:00)\n\n' +
-			'Resolve every relative or ambiguous time reference ("today", "yesterday", "last Friday", "this week", "recently", "latest") to an absolute date from this anchor before you answer or act. The anchor is the date this request started and is not updated during it; never guess a date.');
+	expect(formatCurrentDatePrompt(utc(2026, 9, 5), "UTC")).toBe(
+		"## Current date\n2026-10-05 (Monday), UTC (UTC+00:00)\n\n" +
+			'Resolve every relative or ambiguous time reference ("today", "yesterday", "last Friday", "this week", "recently", "latest") to an absolute date from this anchor before you answer or act. The anchor is the date this request started and is not updated during it; never guess a date.',
+	);
 });
 
 test("formatCurrentDatePrompt renders exactly one ISO date", () => {

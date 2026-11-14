@@ -40,7 +40,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function assertCallable(value: unknown, what: string): asserts value is Callable {
-	if (typeof value !== "function") {throw new Error(`${what} is not a function`);}
+	if (typeof value !== "function") {
+		throw new Error(`${what} is not a function`);
+	}
 }
 
 function handlersFor(event: string): Callable[] {
@@ -53,21 +55,34 @@ function handlersFor(event: string): Callable[] {
 
 // The text blocks of a tool result, one per line, without empty ones.
 function resultText(result: unknown): string {
-	if (!isRecord(result)) {throw new Error("the tool returned no result object");}
-	if (result.content === undefined || result.content === null) {return "";}
-	if (!Array.isArray(result.content)) {throw new Error("the tool result content is not an array");}
+	if (!isRecord(result)) {
+		throw new Error("the tool returned no result object");
+	}
+	if (result.content === undefined || result.content === null) {
+		return "";
+	}
+	if (!Array.isArray(result.content)) {
+		throw new Error("the tool result content is not an array");
+	}
 	const blocks: unknown[] = result.content;
-	return blocks.map((block) => {
-		if (!isRecord(block)) {throw new Error("a tool result content block is not an object");}
-		return block.text;
-	}).filter(Boolean).join("\n");
+	return blocks
+		.map((block) => {
+			if (!isRecord(block)) {
+				throw new Error("a tool result content block is not an object");
+			}
+			return block.text;
+		})
+		.filter(Boolean)
+		.join("\n");
 }
 
 // ── Mock ExtensionContext for tool/command execution ──────────────
 
 // The line host has no session: context usage is unavailable and the branch is empty.
 
-const ignore = () => { /* The line host renders no TUI and has no run to abort. */ };
+const ignore = () => {
+	/* The line host renders no TUI and has no run to abort. */
+};
 
 const mockCtx = {
 	hasUI: true,
@@ -121,7 +136,9 @@ process.stdout.write("READY\n");
 const rl = createInterface({ input: process.stdin });
 for await (const line of rl) {
 	const trimmed = line.trim();
-	if (!trimmed) {continue;}
+	if (!trimmed) {
+		continue;
+	}
 
 	if (trimmed === "exit") {
 		process.exit(0);
@@ -138,8 +155,9 @@ for await (const line of rl) {
 		const toolName = rest.slice(0, spaceIdx);
 		const jsonArgs = rest.slice(spaceIdx + 1);
 		let input: unknown;
-		try { input = JSON.parse(jsonArgs); }
-		catch (e: unknown) {
+		try {
+			input = JSON.parse(jsonArgs);
+		} catch (e: unknown) {
 			process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n");
 			continue;
 		}
@@ -161,16 +179,16 @@ for await (const line of rl) {
 	} else if (trimmed.startsWith("context")) {
 		let payload: unknown;
 		try {
-			payload = trimmed === "context"
-				? { messages: [{ role: "user", content: "e2e", timestamp: Date.UTC(2026, 0, 1) }] }
-				: JSON.parse(trimmed.slice(7).trim());
+			payload = trimmed === "context" ? { messages: [{ role: "user", content: "e2e", timestamp: Date.UTC(2026, 0, 1) }] } : JSON.parse(trimmed.slice(7).trim());
 		} catch (e: unknown) {
 			process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n");
 			continue;
 		}
 		try {
 			const handlers = handlersFor("context");
-			if (handlers.length === 0) {throw new Error("no context handler is registered");}
+			if (handlers.length === 0) {
+				throw new Error("no context handler is registered");
+			}
 			const [handler] = handlers;
 			const result = await handler(payload, mockCtx);
 			process.stdout.write("OK:" + JSON.stringify(result ?? null) + "\n");
@@ -193,8 +211,9 @@ for await (const line of rl) {
 			continue;
 		}
 		let params: unknown;
-		try { params = JSON.parse(jsonArgs); }
-		catch (e: unknown) {
+		try {
+			params = JSON.parse(jsonArgs);
+		} catch (e: unknown) {
 			process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n");
 			continue;
 		}

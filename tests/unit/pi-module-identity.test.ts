@@ -26,17 +26,23 @@ const PROBE_EXTENSION_PATH = fileURLToPath(new URL("fixtures/shared-module-probe
 // pass through the resolver under test. pi-ai only re-exports typebox, so comparing against
 // pi-ai's `Type` would match whichever typebox the resolver picked.
 const piTypeboxManifest = findPackageJSON("typebox", pathToFileURL(piManifestPath));
-if (piTypeboxManifest === undefined) {throw new Error("pi's dependency tree has no typebox");}
+if (piTypeboxManifest === undefined) {
+	throw new Error("pi's dependency tree has no typebox");
+}
 // The value of `key` on `value`; throws unless `value` is an object that has `key` as its own member.
 function ownMember(value: unknown, key: string): unknown {
-	if (typeof value !== "object" || value === null || !Object.hasOwn(value, key)) {throw new Error(`Expected an object with "${key}".`);}
+	if (typeof value !== "object" || value === null || !Object.hasOwn(value, key)) {
+		throw new Error(`Expected an object with "${key}".`);
+	}
 	const member: unknown = Reflect.get(value, key);
 	return member;
 }
 
 const piTypeboxManifestJson: unknown = JSON.parse(readFileSync(piTypeboxManifest, "utf8"));
 const piTypeboxImport = ownMember(ownMember(ownMember(piTypeboxManifestJson, "exports"), "."), "import");
-if (typeof piTypeboxImport !== "string") {throw new Error(`typebox's manifest ${piTypeboxManifest} has no string exports["."].import`);}
+if (typeof piTypeboxImport !== "string") {
+	throw new Error(`typebox's manifest ${piTypeboxManifest} has no string exports["."].import`);
+}
 const PI_TYPEBOX_URL = pathToFileURL(join(dirname(piTypeboxManifest), piTypeboxImport)).href;
 
 test("pi-coding-agent sees the provider and keybindings set through the extension's pi-ai and pi-tui", async () => {

@@ -19,12 +19,21 @@ export interface SpawnResultDetails {
 	statsUnavailable?: boolean;
 }
 
-export interface SpawnToolResult { content: TextContent[]; details: SpawnResultDetails; usage: Usage; isError?: true }
+export interface SpawnToolResult {
+	content: TextContent[];
+	details: SpawnResultDetails;
+	usage: Usage;
+	isError?: true;
+}
 
 /** Maps the failure stop reasons to their outcome; every other stop reason has none. */
 export function getStopReasonOutcome(stopReason: StopReason | undefined): SpawnOutcome | undefined {
-	if (stopReason === "aborted") {return "aborted";}
-	if (stopReason === "error") {return "error";}
+	if (stopReason === "aborted") {
+		return "aborted";
+	}
+	if (stopReason === "error") {
+		return "error";
+	}
 	return undefined;
 }
 
@@ -34,9 +43,13 @@ export function getStopReasonOutcome(stopReason: StopReason | undefined): SpawnO
 export function getLastAssistantText(messages: AgentSession["messages"]): string {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
-		if (msg.role !== "assistant") {continue;}
+		if (msg.role !== "assistant") {
+			continue;
+		}
 		const text = contentText(msg.content).trim();
-		if (text) {return text;}
+		if (text) {
+			return text;
+		}
 	}
 	return "";
 }

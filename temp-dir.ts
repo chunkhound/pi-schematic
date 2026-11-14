@@ -13,5 +13,9 @@ import path from "node:path";
  */
 export const TEMP_DIR = (() => {
 	const resolved = path.resolve(os.tmpdir());
-	try { return fs.realpathSync(resolved); } catch { return resolved; }
+	try {
+		return fs.realpathSync(resolved);
+	} catch {
+		return resolved;
+	}
 })();

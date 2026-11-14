@@ -18,21 +18,23 @@ export function presentConstraintPrompt(evaluations: readonly ErasedConstraintEv
 	});
 }
 
-export function presentConstraintDiagnosticRecords(evaluations: readonly ErasedConstraintEvaluation[], registry: ConstraintRegistry): ConstraintDiagnosticRecord[] {
-	return evaluations.flatMap((evaluation) => evaluation.diagnostics.flatMap((diagnostic) => {
-		const descriptor = registry.get(diagnostic.key);
-		return descriptor ? [{ ...diagnostic, text: descriptor.present.diagnostic(diagnostic) }] : [];
-	}));
+export function presentConstraintDiagnosticRecords(
+	evaluations: readonly ErasedConstraintEvaluation[],
+	registry: ConstraintRegistry,
+): ConstraintDiagnosticRecord[] {
+	return evaluations.flatMap((evaluation) =>
+		evaluation.diagnostics.flatMap((diagnostic) => {
+			const descriptor = registry.get(diagnostic.key);
+			return descriptor ? [{ ...diagnostic, text: descriptor.present.diagnostic(diagnostic) }] : [];
+		}),
+	);
 }
 
-export function constraintEditorRows(
-	descriptor: AnyConstraintDescriptor,
-	evaluation: ErasedConstraintEvaluation,
-): readonly ConstraintEditorRow[] {
+export function constraintEditorRows(descriptor: AnyConstraintDescriptor, evaluation: ErasedConstraintEvaluation): readonly ConstraintEditorRow[] {
 	const editor = descriptor.editor;
 	if (editor.kind === "multi-select") {
 		const choices = editor.choices(evaluation);
-		const effective = (evaluation).effective as readonly string[] | undefined;
+		const effective = evaluation.effective as readonly string[] | undefined;
 		const rows: ConstraintEditorRow[] = [{ kind: "automatic", label: editor.automatic(evaluation) }];
 		for (const choice of choices) {
 			rows.push({ kind: "toggle", label: choice, value: choice, active: effective?.includes(choice) ?? false });

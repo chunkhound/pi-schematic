@@ -32,7 +32,9 @@ export function createPromptSectionRegistry(): PromptSectionRegistry {
 			const rendered: { name: string; body: string }[] = [];
 			for (const section of sections) {
 				const body = section.render();
-				if (body === undefined || body === "") {continue;}
+				if (body === undefined || body === "") {
+					continue;
+				}
 				rendered.push({ name: section.name, body });
 			}
 			return rendered;
@@ -48,15 +50,14 @@ export function createPromptSectionRegistry(): PromptSectionRegistry {
  * renders sections, so the model sees one shape whether or not the prompt is
  * forced.
  */
-export function applyPromptSections(
-	event: BeforeAgentStartEvent,
-	rendered: { name: string; body: string }[],
-): BeforeAgentStartEventResult | undefined {
+export function applyPromptSections(event: BeforeAgentStartEvent, rendered: { name: string; body: string }[]): BeforeAgentStartEventResult | undefined {
 	for (const { name, body } of rendered) {
 		// Written even when forced: pi records sections in the transcript, so they are current once the forcing extension stops.
 		event.systemPromptOptions.sections[name] = body;
 	}
-	if (event.systemPromptOptions.forceSystemPrompt === undefined) {return undefined;}
+	if (event.systemPromptOptions.forceSystemPrompt === undefined) {
+		return undefined;
+	}
 	return {
 		systemPrompt: [event.systemPrompt, ...rendered.map(({ name, body }) => `<${name}>\n${body}\n</${name}>`)].join("\n\n"),
 	};

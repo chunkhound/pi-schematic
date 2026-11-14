@@ -13,16 +13,17 @@
  * @param pi - Used to check the `--readonly` CLI flag as fallback
  * @returns `true` if readonly should be enabled after rehydration
  */
-export function getReadonlyFromBranch(
-	branch: readonly unknown[],
-	pi: { getFlag: (name: string) => unknown },
-): boolean {
+export function getReadonlyFromBranch(branch: readonly unknown[], pi: { getFlag: (name: string) => unknown }): boolean {
 	// Scan branch in reverse for the most recent readonly entry
 	for (let i = branch.length - 1; i >= 0; i--) {
 		const entry = branch[i];
-		if (entry === null || typeof entry !== "object") {continue;}
+		if (entry === null || typeof entry !== "object") {
+			continue;
+		}
 		const e = entry as Record<string, unknown>;
-		if (e.type !== "custom" || e.customType !== "pi-schematic-readonly") {continue;}
+		if (e.type !== "custom" || e.customType !== "pi-schematic-readonly") {
+			continue;
+		}
 		const d = e.data as Record<string, unknown> | undefined;
 		return d?.enabled === true;
 	}

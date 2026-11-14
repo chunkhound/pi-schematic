@@ -18,18 +18,14 @@ describe("spawnNode", () => {
 
 	// Windows has no POSIX signals: a process killing itself with SIGKILL exits with a status, not a signal.
 	test.skipIf(process.platform === "win32")("throws a signal error for a child killed by a signal", () => {
-		expect(() => spawnNode(["--eval", 'process.kill(process.pid, "SIGKILL")'], { cwd: REPO_ROOT })).toThrow(
-			/^Node child process was killed by SIGKILL/,
-		);
+		expect(() => spawnNode(["--eval", 'process.kill(process.pid, "SIGKILL")'], { cwd: REPO_ROOT })).toThrow(/^Node child process was killed by SIGKILL/);
 	});
 
 	// The child would exit on its own after 10 s; the deadline must not wait for it.
 	test.skipIf(process.platform === "win32")("kills a child that catches SIGTERM instead of waiting it out", () => {
 		const startedAt = performance.now();
 		const child = 'process.on("SIGTERM", () => {}); setTimeout(() => {}, 10_000)';
-		expect(() => spawnNode(["--eval", child], { cwd: REPO_ROOT, timeoutMs: 500 })).toThrow(
-			/^Node child process did not exit within 500 ms/,
-		);
+		expect(() => spawnNode(["--eval", child], { cwd: REPO_ROOT, timeoutMs: 500 })).toThrow(/^Node child process did not exit within 500 ms/);
 		expect(performance.now() - startedAt).toBeLessThan(5_000);
 	});
 
@@ -62,25 +58,27 @@ describe("runGit", () => {
 
 describe("compat lane test files", () => {
 	test("every file on the unit list exists and belongs to the unit project", () => {
-		expect(() => { assertCompatTestFiles(COMPAT_UNIT_FILES); }).not.toThrow();
+		expect(() => {
+			assertCompatTestFiles(COMPAT_UNIT_FILES);
+		}).not.toThrow();
 	});
 
 	test("a list naming a missing file fails with that file's path", () => {
-		expect(() => { assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/unit/missing.test.ts"]); }).toThrow(
-			new Error("The compat lane lists test files that do not exist: tests/unit/missing.test.ts"),
-		);
+		expect(() => {
+			assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/unit/missing.test.ts"]);
+		}).toThrow(new Error("The compat lane lists test files that do not exist: tests/unit/missing.test.ts"));
 	});
 
 	test("a list naming an existing file outside the project fails with that file's path", () => {
-		expect(() => { assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/e2e/basic.test.ts"]); }).toThrow(
-			new Error("The compat lane lists test files outside the unit project: tests/e2e/basic.test.ts"),
-		);
+		expect(() => {
+			assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/e2e/basic.test.ts"]);
+		}).toThrow(new Error("The compat lane lists test files outside the unit project: tests/e2e/basic.test.ts"));
 	});
 
 	test("a list naming an existing non-test file inside the project fails with that file's path", () => {
-		expect(() => { assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/unit/helpers.ts"]); }).toThrow(
-			new Error("The compat lane lists test files outside the unit project: tests/unit/helpers.ts"),
-		);
+		expect(() => {
+			assertCompatTestFiles(["tests/unit/spawn.test.ts", "tests/unit/helpers.ts"]);
+		}).toThrow(new Error("The compat lane lists test files outside the unit project: tests/unit/helpers.ts"));
 	});
 });
 

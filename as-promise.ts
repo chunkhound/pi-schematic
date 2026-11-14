@@ -6,5 +6,7 @@
  * failures with `expect(handler()).rejects`.
  */
 export function asPromise<T>(body: () => T | PromiseLike<T>): Promise<T> {
-	return new Promise((resolve) => { resolve(body()); });
+	return new Promise((resolve) => {
+		resolve(body());
+	});
 }

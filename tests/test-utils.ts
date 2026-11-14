@@ -33,12 +33,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import {
-	__setSingletons,
-	createWriteLock,
-	getSingletons,
-	type RuntimeSingletons,
-} from "../runtime-singletons.js";
+import { __setSingletons, createWriteLock, getSingletons, type RuntimeSingletons } from "../runtime-singletons.js";
 import { onTestFinished, vi } from "vitest";
 import { SpawnFrameScheduler } from "../spawn/renderer.js";
 

@@ -49,9 +49,9 @@ test("writeCompatArtifacts rejects a successful artifact without its package loc
 	withTempDir("compat-artifact-missing-lock-", (temp) => {
 		const sourceDir = join(temp, "source");
 		mkdirSync(sourceDir);
-		expect(
-			() => { writeCompatArtifacts(join(temp, "artifacts"), sourceDir, { piVersion: "1.2.3", typeboxVersion: "4.5.6" }); },
-		).toThrow(/Expected compatibility package lock/);
+		expect(() => {
+			writeCompatArtifacts(join(temp, "artifacts"), sourceDir, { piVersion: "1.2.3", typeboxVersion: "4.5.6" });
+		}).toThrow(/Expected compatibility package lock/);
 	});
 });
 
@@ -71,12 +71,14 @@ for (const [shape, stdout, expected] of parseAccepted) {
 
 test("parseNpmViewValue rejects non-JSON output, naming the command and keeping the parse error as cause", () => {
 	const stdout = "{not json";
-	expect(() => parseNpmViewValue(stdout)).toThrow(expect.toSatisfy((error: Error) => {
-		expect(error.message).toMatch(/npm view --json/);
-		expect(error.message).toContain(JSON.stringify(stdout));
-		expect(error.cause).toBeInstanceOf(SyntaxError);
-		return true;
-	}));
+	expect(() => parseNpmViewValue(stdout)).toThrow(
+		expect.toSatisfy((error: Error) => {
+			expect(error.message).toMatch(/npm view --json/);
+			expect(error.message).toContain(JSON.stringify(stdout));
+			expect(error.cause).toBeInstanceOf(SyntaxError);
+			return true;
+		}),
+	);
 });
 
 const packEntryFixture = { filename: "chunkhound-pi-schematic-1.0.0.tgz" };
@@ -108,12 +110,14 @@ for (const [shape, packJson] of packEntryRejected) {
 
 test("packEntry rejects non-JSON output, quoting it and keeping the parse error as cause", () => {
 	const stdout = "npm WARN not json";
-	expect(() => packEntry(stdout)).toThrow(expect.toSatisfy((error: Error) => {
-		expect(error.message).toMatch(/Unexpected npm pack --json output/);
-		expect(error.message).toContain(JSON.stringify(stdout));
-		expect(error.cause).toBeInstanceOf(SyntaxError);
-		return true;
-	}));
+	expect(() => packEntry(stdout)).toThrow(
+		expect.toSatisfy((error: Error) => {
+			expect(error.message).toMatch(/Unexpected npm pack --json output/);
+			expect(error.message).toContain(JSON.stringify(stdout));
+			expect(error.cause).toBeInstanceOf(SyntaxError);
+			return true;
+		}),
+	);
 });
 
 // resolveLatestPi reaches npm through the npm_execpath seam: a stub npm-cli.js answers each lookup.
@@ -125,14 +129,17 @@ async function withStubNpm(
 	const temp = mkdtempSync(join(tmpdir(), "compat-resolve-latest-pi-"));
 	const callLog = join(temp, "calls.jsonl");
 	const stub = join(temp, "npm-cli.js");
-	writeFileSync(stub, `
+	writeFileSync(
+		stub,
+		`
 const { appendFileSync } = require("node:fs");
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(callLog)}, JSON.stringify(args) + "\\n");
 if (args.includes("version")) process.stdout.write(${JSON.stringify(versionStdout)});
 else if (args.includes("dependencies.typebox")) process.stdout.write(${JSON.stringify(typeboxStdout)});
 else process.stdout.write("unexpected npm args: " + args.join(" "));
-`);
+`,
+	);
 	try {
 		await run(temp, () => readFileSync(callLog, "utf8").trim().split("\n").map(parseCallArgs), {
 			env: { ...process.env, npm_execpath: stub },
@@ -172,10 +179,7 @@ test("resolveLatestPi rejects when the resolved Pi version declares no TypeBox d
 			expect(error.message).toContain(JSON.stringify(""));
 			return true;
 		});
-		expect(calls().map((args) => args[1])).toStrictEqual([
-			"@earendil-works/pi-coding-agent@latest",
-			"@earendil-works/pi-coding-agent@1.2.0",
-		]);
+		expect(calls().map((args) => args[1])).toStrictEqual(["@earendil-works/pi-coding-agent@latest", "@earendil-works/pi-coding-agent@1.2.0"]);
 	});
 });
 

@@ -22,18 +22,24 @@ interface CheckedSpawnResult {
 }
 
 function isSpawnToolResult(value: unknown): value is CheckedSpawnResult {
-	if (!isRecord(value) || !Array.isArray(value.content) || !isRecord(value.details) || !isRecord(value.usage)) {return false;}
+	if (!isRecord(value) || !Array.isArray(value.content) || !isRecord(value.details) || !isRecord(value.usage)) {
+		return false;
+	}
 	const { details } = value;
-	return value.content.every((block: unknown) => isRecord(block) && block.type === "text" && typeof block.text === "string")
-		&& typeof details.model === "string"
-		&& typeof details.thinking === "string"
-		&& typeof details.truncated === "boolean"
-		&& typeof details.outcome === "string";
+	return (
+		value.content.every((block: unknown) => isRecord(block) && block.type === "text" && typeof block.text === "string") &&
+		typeof details.model === "string" &&
+		typeof details.thinking === "string" &&
+		typeof details.truncated === "boolean" &&
+		typeof details.outcome === "string"
+	);
 }
 
 // The real-child fixture reports the spawn tool's result untyped; this checks its shape.
 function spawnResult(value: unknown): CheckedSpawnResult {
-	if (!isSpawnToolResult(value)) {throw new Error(`Expected a spawn tool result with text content, details and usage, got ${JSON.stringify(value)}.`);}
+	if (!isSpawnToolResult(value)) {
+		throw new Error(`Expected a spawn tool result with text content, details and usage, got ${JSON.stringify(value)}.`);
+	}
 	return value;
 }
 
@@ -131,7 +137,9 @@ test("spawn routes through the public registry and keeps source boundaries exact
 
 test("spawn schema advertises the thinking levels as a plain string enum and rejects other values", async () => {
 	const state = createState();
-	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
+	const pi = await createTestHost((api) => {
+		registerSpawnTool(api, state);
+	});
 	const tool = getTool(pi, "spawn");
 	const schema = recordOf(JSON.parse(JSON.stringify(tool.parameters)), "the spawn schema");
 	const thinkingSchema = recordOf(recordOf(schema.properties, "the spawn schema properties").thinking, "the thinking schema");
@@ -140,11 +148,15 @@ test("spawn schema advertises the thinking levels as a plain string enum and rej
 	expect(JSON.stringify(thinkingSchema)).not.toMatch(/"(?:anyOf|const)"\s*:/);
 	expect(Value.Check(tool.parameters, { prompt: "work" }), "schema accepts prompt without thinking").toBe(true);
 	expect(Value.Check(tool.parameters, { prompt: "work", thinking: "ultra" }), "schema rejects unknown thinking levels").toBe(false);
-	expect(Value.Check(tool.parameters, { prompt: "work", group: "review", thinking: "max" }), "schema composes Model Group routing with explicit thinking").toBe(true);
+	expect(Value.Check(tool.parameters, { prompt: "work", group: "review", thinking: "max" }), "schema composes Model Group routing with explicit thinking").toBe(
+		true,
+	);
 });
 
 test.for([...THINKING_LEVELS])("spawn schema accepts thinking: %s", async (thinking) => {
-	const pi = await createTestHost((api) => { registerSpawnTool(api, createState()); });
+	const pi = await createTestHost((api) => {
+		registerSpawnTool(api, createState());
+	});
 	expect(Value.Check(getTool(pi, "spawn").parameters, { prompt: "work", thinking })).toBe(true);
 });
 
@@ -167,18 +179,7 @@ test("executeSpawn rejects immediately when no model is configured", async () =>
 	const state = createState();
 	const ctx = createExtensionContext({ cwd: "/tmp" }); // ctx.model is undefined
 
-	await expect(
-		executeSpawn(
-			"spawn-no-model",
-			pi,
-			ctx,
-			state,
-			{ prompt: "work" },
-			undefined,
-			undefined,
-			"medium",
-		),
-	).rejects.toThrow(/No model configured/);
+	await expect(executeSpawn("spawn-no-model", pi, ctx, state, { prompt: "work" }, undefined, undefined, "medium")).rejects.toThrow(/No model configured/);
 });
 
 test("a parent-transient selected model fails explicitly in the real child runtime without fallback", async () => {
@@ -203,10 +204,7 @@ test("a parent-transient selected model fails explicitly in the real child runti
 		contextWindow: 128000,
 		maxTokens: 1024,
 	};
-	const result = await executeSpawn(
-		"spawn-transient", pi, createExtensionContext({ model, cwd }), state,
-		{ prompt: "work" }, undefined, undefined, "medium",
-	);
+	const result = await executeSpawn("spawn-transient", pi, createExtensionContext({ model, cwd }), state, { prompt: "work" }, undefined, undefined, "medium");
 
 	expect(result.isError).toBe(true);
 	expect(result.content[0].text).toMatch(/No API key found for transient-parent/);
@@ -233,8 +231,9 @@ test("real child forwards the requested thinking to the session", async () => {
 	expect(result.details.thinking, "effective thinking reflects the clamped level").toBe("high");
 	// Every stream call carries the effective level. The call count stays a lower bound, as above.
 	expect(proof.streamCalls).toBeGreaterThanOrEqual(1);
-	expect(proof.observedThinking, "provider observed the forwarded thinking level on every stream call")
-		.toStrictEqual(Array.from({ length: proof.streamCalls }, () => "high"));
+	expect(proof.observedThinking, "provider observed the forwarded thinking level on every stream call").toStrictEqual(
+		Array.from({ length: proof.streamCalls }, () => "high"),
+	);
 });
 
 // 3a. Notebook injection: seeded pages appear in the child prompt.
@@ -243,7 +242,9 @@ test("real child prompt includes injected notebook pages", async () => {
 		prompt: "Do the task.",
 		notebookPages: { "entry-a": "preview line\nfull body" },
 	});
-	expect(proof.observedMessages, "child prompt must include the injected notebook page preview").toContainEqual(expect.stringContaining("entry-a: preview line"));
+	expect(proof.observedMessages, "child prompt must include the injected notebook page preview").toContainEqual(
+		expect.stringContaining("entry-a: preview line"),
+	);
 });
 
 // 3b. No notebook pages -> the explicit 'No notebook pages.' branch.
@@ -293,7 +294,11 @@ test("real child usage matches the session stats across assistant, tool result, 
 	onTestFinished(() => rm(root, { recursive: true, force: true }));
 	const faux = fauxProvider();
 	const usageOf = (input: number, output: number, cacheRead: number, cacheWrite: number, total: number) => ({
-		input, output, cacheRead, cacheWrite, totalTokens: total,
+		input,
+		output,
+		cacheRead,
+		cacheWrite,
+		totalTokens: total,
 		cost: { input: total / 1024, output: 0, cacheRead: 0, cacheWrite: 0, total: total / 1024 },
 	});
 	faux.setResponses([fauxAssistantMessage("child done")]);
@@ -303,15 +308,26 @@ test("real child usage matches the session stats across assistant, tool result, 
 	const modelRuntime = await ModelRuntime.create({ authPath: join(root, "auth.json"), modelsPath: null, refreshOnCreate: false });
 	modelRuntime.registerNativeProvider(faux.provider);
 	const resourceLoader = new DefaultResourceLoader({
-		cwd: root, agentDir: root, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+		cwd: root,
+		agentDir: root,
+		noSkills: true,
+		noPromptTemplates: true,
+		noThemes: true,
+		noContextFiles: true,
 	});
 	await resourceLoader.reload();
 	const model = faux.getModel();
 	const pi = await createTestHost();
 	const state = createState();
 	const result = await executeSpawn(
-		"spawn-usage-parity", pi, createExtensionContext({ model, cwd: root }), state,
-		{ prompt: "work" }, undefined, undefined, "medium",
+		"spawn-usage-parity",
+		pi,
+		createExtensionContext({ model, cwd: root }),
+		state,
+		{ prompt: "work" },
+		undefined,
+		undefined,
+		"medium",
 		async (config) => {
 			const created = await createAgentSession({ ...config, agentDir: root, modelRuntime, resourceLoader });
 			const { session } = created;
@@ -324,8 +340,13 @@ test("real child usage matches the session stats across assistant, tool result, 
 				assistant = lastAssistant.usage;
 				const manager = session.sessionManager;
 				manager.appendMessage({
-					role: "toolResult", toolCallId: "parity-tool", toolName: "parity_probe", content: [{ type: "text", text: "ok" }],
-					usage: usageOf(11, 2, 0, 0, 13), isError: false, timestamp: Date.UTC(2026, 0, 1),
+					role: "toolResult",
+					toolCallId: "parity-tool",
+					toolName: "parity_probe",
+					content: [{ type: "text", text: "ok" }],
+					usage: usageOf(11, 2, 0, 0, 13),
+					isError: false,
+					timestamp: Date.UTC(2026, 0, 1),
 				});
 				manager.appendUsage("title", model.provider, model.id, usageOf(30, 3, 1, 0, 34));
 				manager.appendCompaction("summary", null, 500, undefined, false, usageOf(200, 20, 0, 4, 224));

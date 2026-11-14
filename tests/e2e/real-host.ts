@@ -42,7 +42,9 @@ const CHILD_PROBE_ENTRY = resolve(HERE, "real-host-child-probe.ts");
 // The CLI is the file pi's manifest declares as `bin.pi`, the one the `pi` command runs.
 const PI_MANIFEST: unknown = JSON.parse(readFileSync(piManifestPath, "utf8"));
 const PI_BIN = isJsonObject(PI_MANIFEST) && isJsonObject(PI_MANIFEST.bin) ? PI_MANIFEST.bin.pi : undefined;
-if (typeof PI_BIN !== "string") {throw new Error(`No string bin.pi in pi's manifest at ${piManifestPath}.`);}
+if (typeof PI_BIN !== "string") {
+	throw new Error(`No string bin.pi in pi's manifest at ${piManifestPath}.`);
+}
 const CLI_PATH = resolve(dirname(piManifestPath), PI_BIN);
 const REQUIRED_COMMANDS = ["handoff", "notebook", "readonly", PROBE_COMMAND.barrier];
 
@@ -68,7 +70,9 @@ function testTimeoutFor(waitMs: number): number {
 
 function readTimeout(): number {
 	const raw = process.env.E2E_REAL_HOST_TIMEOUT_MS;
-	if (raw === undefined) {return 20_000;}
+	if (raw === undefined) {
+		return 20_000;
+	}
 	const value = Number(raw);
 	if (!Number.isInteger(value) || value <= 0) {
 		throw new Error(`E2E_REAL_HOST_TIMEOUT_MS must be a positive integer, got: ${raw}`);
@@ -77,7 +81,7 @@ function readTimeout(): number {
 		const max = Math.floor((MAX_TEST_TIMEOUT_MS - 60_000) / REAL_HOST_MAX_BARRIERS_PER_TEST) - BARRIER_REPORT_MARGIN_MS;
 		throw new Error(
 			`E2E_REAL_HOST_TIMEOUT_MS=${raw} makes the per-test timeout ${testTimeoutFor(value)} ms, ` +
-			`above Vitest's limit of ${MAX_TEST_TIMEOUT_MS} ms; use at most ${max}`,
+				`above Vitest's limit of ${MAX_TEST_TIMEOUT_MS} ms; use at most ${max}`,
 		);
 	}
 	return value;
@@ -99,10 +103,22 @@ export const REAL_HOST_TEST_TIMEOUT_MS = testTimeoutFor(REAL_HOST_TIMEOUT_MS);
  */
 const STEP_BUDGET_MS = REAL_HOST_TIMEOUT_MS + BARRIER_REPORT_MARGIN_MS;
 
-export interface RpcEvent { type: string; [key: string]: unknown }
-export interface Notification { message: string; notifyType: string | undefined }
-export interface Status { statusKey: string; statusText: string | undefined }
-export interface ToolResult { isError: boolean; text: string }
+export interface RpcEvent {
+	type: string;
+	[key: string]: unknown;
+}
+export interface Notification {
+	message: string;
+	notifyType: string | undefined;
+}
+export interface Status {
+	statusKey: string;
+	statusText: string | undefined;
+}
+export interface ToolResult {
+	isError: boolean;
+	text: string;
+}
 
 /** pi settings a test sets; each section is merged over the harness default for it. */
 interface RealHostSettings {
@@ -116,14 +132,18 @@ export interface RealHostOptions {
 
 function pathEnv(): Record<string, string> {
 	const key = Object.keys(process.env).find((name) => name.toUpperCase() === "PATH");
-	if (key === undefined) {throw new Error("No PATH variable in the test environment");}
+	if (key === undefined) {
+		throw new Error("No PATH variable in the test environment");
+	}
 	const current = process.env[key];
 	return { [key]: current !== undefined && current !== "" ? `${dirname(process.execPath)}${delimiter}${current}` : dirname(process.execPath) };
 }
 
 function requireString(event: RpcEvent, field: string): string {
 	const value = event[field];
-	if (typeof value !== "string") {throw new Error(`${event.type} field ${field} is not a string: ${JSON.stringify(event)}`);}
+	if (typeof value !== "string") {
+		throw new Error(`${event.type} field ${field} is not a string: ${JSON.stringify(event)}`);
+	}
 	return value;
 }
 
@@ -161,10 +181,7 @@ export async function cleanupOnFailure<T>(body: () => T | Promise<T>, cleanup: (
 		try {
 			await cleanup();
 		} catch (cleanupError) {
-			throw new AggregateError(
-				[failure, cleanupError],
-				`${describeError(failure)}; cleanup also failed: ${describeError(cleanupError)}`,
-			);
+			throw new AggregateError([failure, cleanupError], `${describeError(failure)}; cleanup also failed: ${describeError(cleanupError)}`);
 		}
 		throw failure;
 	}
@@ -189,8 +206,12 @@ export function projectStatuses(events: RpcEvent[]): Status[] {
 
 /** Text of a message's content: string content as is, text blocks joined by newlines. */
 export function messageText(content: unknown): string {
-	if (typeof content === "string") {return content;}
-	if (!Array.isArray(content)) {throw new Error(`Unexpected message content: ${JSON.stringify(content)}`);}
+	if (typeof content === "string") {
+		return content;
+	}
+	if (!Array.isArray(content)) {
+		throw new Error(`Unexpected message content: ${JSON.stringify(content)}`);
+	}
 	const blocks: unknown[] = content;
 	return blocks
 		.filter((block): block is { type: "text"; text: string } => isJsonObject(block) && block.type === "text" && typeof block.text === "string")
@@ -201,7 +222,9 @@ export function messageText(content: unknown): string {
 /** Tool results named `name` in an `entries()` snapshot, in session order. */
 export function toolResults(entries: SessionEntry[], name: string): ToolResult[] {
 	return entries.flatMap((entry) => {
-		if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== name) {return [];}
+		if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== name) {
+			return [];
+		}
 		return [{ isError: entry.message.isError, text: messageText(entry.message.content) }];
 	});
 }
@@ -229,54 +252,71 @@ export class RealHost {
 	}
 
 	static async start(options: RealHostOptions = {}): Promise<RealHost> {
-		if (!existsSync(CLI_PATH)) {throw new Error(`pi CLI not found at ${CLI_PATH}`);}
+		if (!existsSync(CLI_PATH)) {
+			throw new Error(`pi CLI not found at ${CLI_PATH}`);
+		}
 		const root = mkdtempSync(join(os.tmpdir(), "pi-schematic-e2e-"));
-		return cleanupOnFailure(async () => {
-			const agentDir = join(root, "agent");
-			const homeDir = join(root, "home");
-			const projectDir = join(root, "project");
-			const sessionsDir = join(root, "sessions");
-			const logPath = join(root, "probe.jsonl");
-			for (const dir of [agentDir, homeDir, projectDir, sessionsDir]) {mkdirSync(dir);}
-			writeFileSync(logPath, "");
-			// Spawned child sessions discover extensions in the agent directory; the parent
-			// runs with --no-extensions and loads only the -e entries below.
-			mkdirSync(join(agentDir, "extensions"));
-			writeFileSync(
-				join(agentDir, "extensions", "child-probe.ts"),
-				`export { default } from ${JSON.stringify(pathToFileURL(CHILD_PROBE_ENTRY).href)};\n`,
-			);
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({
-				compaction: { enabled: false, keepRecentTokens: 1, ...options.settings?.compaction },
-				retry: { enabled: false, ...options.settings?.retry },
-			}));
-			const args = [
-				"--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
-				"--no-context-files", "--no-approve", "--offline",
-				"--session-dir", sessionsDir,
-				"-e", SCHEMATIC_ENTRY,
-				"-e", PROBE_ENTRY,
-			];
-			const clientOptions: RpcClientOptions = {
-				cliPath: CLI_PATH,
-				cwd: projectDir,
-				provider: PROBE_PROVIDER,
-				model: PROBE_MODEL_ID,
-				env: {
-					PI_CODING_AGENT_DIR: agentDir,
-					PI_OFFLINE: "1",
-					HOME: homeDir,
-					USERPROFILE: homeDir,
-					[PROBE_LOG_ENV_VAR]: logPath,
-					FORCE_COLOR: "0",
-					NODE_OPTIONS: "",
-					...pathEnv(),
-				},
-				args,
-			};
-			const { client, events } = await startClient(clientOptions);
-			return new RealHost(root, logPath, client, events);
-		}, () => { removeRoot(root); });
+		return cleanupOnFailure(
+			async () => {
+				const agentDir = join(root, "agent");
+				const homeDir = join(root, "home");
+				const projectDir = join(root, "project");
+				const sessionsDir = join(root, "sessions");
+				const logPath = join(root, "probe.jsonl");
+				for (const dir of [agentDir, homeDir, projectDir, sessionsDir]) {
+					mkdirSync(dir);
+				}
+				writeFileSync(logPath, "");
+				// Spawned child sessions discover extensions in the agent directory; the parent
+				// runs with --no-extensions and loads only the -e entries below.
+				mkdirSync(join(agentDir, "extensions"));
+				writeFileSync(join(agentDir, "extensions", "child-probe.ts"), `export { default } from ${JSON.stringify(pathToFileURL(CHILD_PROBE_ENTRY).href)};\n`);
+				writeFileSync(
+					join(agentDir, "settings.json"),
+					JSON.stringify({
+						compaction: { enabled: false, keepRecentTokens: 1, ...options.settings?.compaction },
+						retry: { enabled: false, ...options.settings?.retry },
+					}),
+				);
+				const args = [
+					"--no-extensions",
+					"--no-skills",
+					"--no-prompt-templates",
+					"--no-themes",
+					"--no-context-files",
+					"--no-approve",
+					"--offline",
+					"--session-dir",
+					sessionsDir,
+					"-e",
+					SCHEMATIC_ENTRY,
+					"-e",
+					PROBE_ENTRY,
+				];
+				const clientOptions: RpcClientOptions = {
+					cliPath: CLI_PATH,
+					cwd: projectDir,
+					provider: PROBE_PROVIDER,
+					model: PROBE_MODEL_ID,
+					env: {
+						PI_CODING_AGENT_DIR: agentDir,
+						PI_OFFLINE: "1",
+						HOME: homeDir,
+						USERPROFILE: homeDir,
+						[PROBE_LOG_ENV_VAR]: logPath,
+						FORCE_COLOR: "0",
+						NODE_OPTIONS: "",
+						...pathEnv(),
+					},
+					args,
+				};
+				const { client, events } = await startClient(clientOptions);
+				return new RealHost(root, logPath, client, events);
+			},
+			() => {
+				removeRoot(root);
+			},
+		);
 	}
 
 	get notifications(): Notification[] {
@@ -294,10 +334,14 @@ export class RealHost {
 
 	/** Run an extension command; it must report "handled" without an extension_error, from the command or from any handler it triggers. */
 	async command(text: string): Promise<void> {
-		if (!text.startsWith("/")) {throw new Error(`command() needs a slash command, got: ${text}`);}
+		if (!text.startsWith("/")) {
+			throw new Error(`command() needs a slash command, got: ${text}`);
+		}
 		const mark = this.events.length;
 		const disposition = await this.client.prompt(text);
-		if (disposition !== "handled") {throw new Error(`${text} reported "${disposition}", expected "handled"`);}
+		if (disposition !== "handled") {
+			throw new Error(`${text} reported "${disposition}", expected "handled"`);
+		}
 		const spaceIndex = text.indexOf(" ");
 		const name = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
 		this.assertNoExtensionErrors(mark, text, `command:${name}`);
@@ -307,7 +351,9 @@ export class RealHost {
 	async say(text: string, runs: number): Promise<void> {
 		const mark = this.events.length;
 		const disposition = await this.client.prompt(text);
-		if (disposition !== "started") {throw new Error(`"${text}" reported "${disposition}", expected "started"`);}
+		if (disposition !== "started") {
+			throw new Error(`"${text}" reported "${disposition}", expected "started"`);
+		}
 		await this.step(mark, `"${text}"`, runs);
 	}
 
@@ -362,8 +408,14 @@ export class RealHost {
 	 */
 	close(): Promise<void> {
 		this.closing ??= withCleanup(
-			() => withCleanup(() => this.assertNoUnexpectedRuns(), () => this.client.stop()),
-			() => { removeRoot(this.root); },
+			() =>
+				withCleanup(
+					() => this.assertNoUnexpectedRuns(),
+					() => this.client.stop(),
+				),
+			() => {
+				removeRoot(this.root);
+			},
 		);
 		return this.closing;
 	}
@@ -372,7 +424,9 @@ export class RealHost {
 		this.startBarrierPhase();
 		await this.barrier(REAL_HOST_TIMEOUT_MS);
 		const unexpected = countRuns(this.events) - this.stepRuns;
-		if (unexpected !== 0) {throw new Error(`${unexpected} run(s) started outside every step; no step expected them`);}
+		if (unexpected !== 0) {
+			throw new Error(`${unexpected} run(s) started outside every step; no step expected them`);
+		}
 	}
 
 	/**
@@ -382,12 +436,16 @@ export class RealHost {
 	private assertNoExtensionErrors(mark: number, action: string, commandPath?: string): void {
 		const failures = this.events.slice(mark).filter((event) => event.type === "extension_error");
 		const own = commandPath === undefined ? undefined : failures.find((event) => event.extensionPath === commandPath);
-		if (own) {throw new Error(`${action} failed: ${requireString(own, "error")}`);}
+		if (own) {
+			throw new Error(`${action} failed: ${requireString(own, "error")}`);
+		}
 		const failure = failures.at(0);
-		if (!failure) {return;}
+		if (!failure) {
+			return;
+		}
 		throw new Error(
 			`${action} raised an extension error in ${requireString(failure, "extensionPath")} ` +
-			`(event ${requireString(failure, "event")}): ${requireString(failure, "error")}`,
+				`(event ${requireString(failure, "event")}): ${requireString(failure, "error")}`,
 		);
 	}
 
@@ -411,22 +469,29 @@ export class RealHost {
 		for (;;) {
 			// Whole milliseconds: the probe takes the barrier deadline as a positive integer.
 			const remaining = Math.floor(deadline - performance.now());
-			if (remaining <= 0) {break;}
+			if (remaining <= 0) {
+				break;
+			}
 			rounds++;
 			await this.barrier(remaining);
 			this.assertNoExtensionErrors(mark, action);
 			started = countRuns(this.events.slice(mark));
-			if (started >= runs) {break;}
+			if (started >= runs) {
+				break;
+			}
 			// Wait for the event the missing run shows up as; the checks at the top of the
 			// loop then decide whether the step has another round left.
 			await this.waitForEvent(this.events.length, deadline);
 		}
 		this.stepRuns += started;
-		if (started === runs) {return;}
-		if (started > runs) {throw new Error(`${action} started ${started} run(s), expected ${runs}`);}
+		if (started === runs) {
+			return;
+		}
+		if (started > runs) {
+			throw new Error(`${action} started ${started} run(s), expected ${runs}`);
+		}
 		throw new Error(
-			`${action} started ${started} run(s), expected ${runs}; ` +
-			`the ${STEP_BUDGET_MS} ms step budget expired after ${rounds} barrier round(s)`,
+			`${action} started ${started} run(s), expected ${runs}; ` + `the ${STEP_BUDGET_MS} ms step budget expired after ${rounds} barrier round(s)`,
 		);
 	}
 
@@ -436,7 +501,7 @@ export class RealHost {
 		if (phase > REAL_HOST_MAX_BARRIERS_PER_TEST) {
 			throw new Error(
 				`Barrier phase ${phase} exceeds REAL_HOST_MAX_BARRIERS_PER_TEST (${REAL_HOST_MAX_BARRIERS_PER_TEST}), ` +
-				"which sizes REAL_HOST_TEST_TIMEOUT_MS; raise it for this test",
+					"which sizes REAL_HOST_TEST_TIMEOUT_MS; raise it for this test",
 			);
 		}
 	}
@@ -448,14 +513,21 @@ export class RealHost {
 	 * found nothing outstanding never spins.
 	 */
 	private async waitForEvent(seen: number, deadline: number): Promise<void> {
-		if (this.events.length > seen) {return;}
+		if (this.events.length > seen) {
+			return;
+		}
 		await new Promise<void>((resolve) => {
-			const timer = setTimeout(() => {
-				unsubscribe();
-				resolve();
-			}, Math.max(deadline - performance.now(), 0));
+			const timer = setTimeout(
+				() => {
+					unsubscribe();
+					resolve();
+				},
+				Math.max(deadline - performance.now(), 0),
+			);
 			const unsubscribe = this.client.onEvent(() => {
-				if (this.events.length <= seen) {return;}
+				if (this.events.length <= seen) {
+					return;
+				}
 				clearTimeout(timer);
 				unsubscribe();
 				resolve();
@@ -469,36 +541,46 @@ export class RealHost {
 		const mark = this.events.length;
 		const findReport = (): BarrierReport | undefined => {
 			for (const event of this.events.slice(mark)) {
-				if (event.type !== "extension_ui_request" || event.method !== "setStatus" || event.statusKey !== PROBE_BARRIER_STATUS_KEY) {continue;}
+				if (event.type !== "extension_ui_request" || event.method !== "setStatus" || event.statusKey !== PROBE_BARRIER_STATUS_KEY) {
+					continue;
+				}
 				const report = parseBarrierReport(requireString(event, "statusText"));
-				if (report.id === id) {return report;}
+				if (report.id === id) {
+					return report;
+				}
 			}
 			return undefined;
 		};
 		await this.command(`/${PROBE_COMMAND.barrier} ${id} ${probeDeadlineMs}`);
 		const waitMs = probeDeadlineMs + BARRIER_REPORT_MARGIN_MS;
-		const report = findReport() ?? await new Promise<BarrierReport>((resolveWait, rejectWait) => {
-			const timer = setTimeout(() => {
-				unsubscribe();
-				rejectWait(new Error(`Timed out after ${waitMs} ms waiting for barrier ${id} to report. Stderr: ${this.client.getStderr()}`));
-			}, waitMs);
-			const unsubscribe = this.client.onEvent(() => {
-				let found: BarrierReport | undefined;
-				try {
-					found = findReport();
-				} catch (error) {
+		const report =
+			findReport() ??
+			(await new Promise<BarrierReport>((resolveWait, rejectWait) => {
+				const timer = setTimeout(() => {
+					unsubscribe();
+					rejectWait(new Error(`Timed out after ${waitMs} ms waiting for barrier ${id} to report. Stderr: ${this.client.getStderr()}`));
+				}, waitMs);
+				const unsubscribe = this.client.onEvent(() => {
+					let found: BarrierReport | undefined;
+					try {
+						found = findReport();
+					} catch (error) {
+						clearTimeout(timer);
+						unsubscribe();
+						rejectWait(error);
+						return;
+					}
+					if (!found) {
+						return;
+					}
 					clearTimeout(timer);
 					unsubscribe();
-					rejectWait(error);
-					return;
-				}
-				if (!found) {return;}
-				clearTimeout(timer);
-				unsubscribe();
-				resolveWait(found);
-			});
-		});
-		if (report.failure !== null) {throw new Error(`Barrier ${id} failed: ${report.failure}`);}
+					resolveWait(found);
+				});
+			}));
+		if (report.failure !== null) {
+			throw new Error(`Barrier ${id} failed: ${report.failure}`);
+		}
 	}
 }
 
@@ -508,15 +590,18 @@ async function startClient(options: RpcClientOptions): Promise<{ client: RpcClie
 	client.onEvent((event) => {
 		events.push(event);
 	});
-	await cleanupOnFailure(async () => {
-		await client.start();
-		const commands = await client.getCommands();
-		const names = new Set(commands.filter((command) => command.source === "extension").map((command) => command.name));
-		const missing = REQUIRED_COMMANDS.filter((name) => !names.has(name));
-		if (missing.length > 0) {
-			throw new Error(`pi started without extension commands ${missing.join(", ")}. Stderr: ${client.getStderr()}`);
-		}
-	}, () => client.stop());
+	await cleanupOnFailure(
+		async () => {
+			await client.start();
+			const commands = await client.getCommands();
+			const names = new Set(commands.filter((command) => command.source === "extension").map((command) => command.name));
+			const missing = REQUIRED_COMMANDS.filter((name) => !names.has(name));
+			if (missing.length > 0) {
+				throw new Error(`pi started without extension commands ${missing.join(", ")}. Stderr: ${client.getStderr()}`);
+			}
+		},
+		() => client.stop(),
+	);
 	return { client, events };
 }
 
@@ -551,14 +636,18 @@ export async function withRealHost(t: HostTestContext, run: (host: RealHost) => 
 			host = await starting;
 		} catch (error) {
 			// A test that timed out cannot report the start error through the body any more.
-			if (t.signal.aborted) {throw error;}
+			if (t.signal.aborted) {
+				throw error;
+			}
 			return; // the start error already reached the test through the body
 		}
 		// No timeout on this wait, on purpose: every wait the harness gives a body has a deadline,
 		// so a timed-out body settles on its own. Closing earlier would run the close's barrier while
 		// the body is still in a step and report that step's runs as unexpected. A body that awaits
 		// something without a deadline must bound that wait itself.
-		await body?.catch(() => { /* The test already failed: through `await body`, or by its timeout while that await was pending. */ });
+		await body?.catch(() => {
+			/* The test already failed: through `await body`, or by its timeout while that await was pending. */
+		});
 		await host.close();
 	}, 0);
 	const host = await starting;

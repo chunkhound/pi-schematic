@@ -37,11 +37,20 @@ export const theme = createTheme({
 	bg: undefined,
 });
 
-export const EMPTY_CHILD_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+export const EMPTY_CHILD_USAGE = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
 
 /** `value` as a record; throws, naming `what`, unless it is an object. */
 export function recordOf(value: unknown, what: string): Record<string, unknown> {
-	if (!isRecord(value)) {throw new Error(`Expected ${what} to be an object.`);}
+	if (!isRecord(value)) {
+		throw new Error(`Expected ${what} to be an object.`);
+	}
 	return value;
 }
 
@@ -53,7 +62,9 @@ export function detailsOf(result: AgentToolResult<unknown>): Record<string, unkn
 /** The text of the result's first content block; throws unless that block is text. */
 export function firstText(result: AgentToolResult<unknown>): string {
 	const block = result.content.at(0);
-	if (block?.type !== "text") {throw new Error("Expected the tool result to start with a text block.");}
+	if (block?.type !== "text") {
+		throw new Error("Expected the tool result to start with a text block.");
+	}
 	return block.text;
 }
 
@@ -64,7 +75,9 @@ export function firstText(result: AgentToolResult<unknown>): string {
  */
 export function stubInstance<T extends object>(prototype: T, members: Partial<T>): T {
 	const target: unknown = Object.create(prototype);
-	if (!hasPrototype(target, prototype)) {throw new Error("Object.create did not produce an object with the given prototype.");}
+	if (!hasPrototype(target, prototype)) {
+		throw new Error("Object.create did not produce an object with the given prototype.");
+	}
 	return Object.assign(target, members);
 }
 
@@ -74,10 +87,14 @@ function hasPrototype<T extends object>(value: unknown, prototype: T): value is 
 
 /** A failure after the child session exists is returned as an error result, not thrown. */
 export function assertErrorResult(result: unknown, text: string, usage: unknown): void {
-	if (!isRecord(result)) {throw new Error(`Expected a tool result object, got ${JSON.stringify(result)}.`);}
+	if (!isRecord(result)) {
+		throw new Error(`Expected a tool result object, got ${JSON.stringify(result)}.`);
+	}
 	expect(result.isError).toBe(true);
 	expect(result.content).toStrictEqual([{ type: "text", text }]);
-	if (!isRecord(result.details)) {throw new Error(`Expected a tool result with a details object, got ${JSON.stringify(result)}.`);}
+	if (!isRecord(result.details)) {
+		throw new Error(`Expected a tool result with a details object, got ${JSON.stringify(result)}.`);
+	}
 	expect(result.details.outcome).toBe("error");
 	expect(result.usage).toStrictEqual(usage);
 }
@@ -91,14 +108,17 @@ export const ansiTheme = createTheme({
 const HOME_ENV_KEYS = ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"] as const;
 
 function restoreEnv(key: string, value: string | undefined): void {
-	if (value === undefined) {delete process.env[key];}
-	else {process.env[key] = value;}
+	if (value === undefined) {
+		delete process.env[key];
+	} else {
+		process.env[key] = value;
+	}
 }
 
 // pi resolves its agent directory from PI_CODING_AGENT_DIR before HOME, so the home helpers clear
 // it; otherwise an exported variable redirects global paths away from the temp home.
 export function setTempHome(home: string): () => void {
-	const snapshot = new Map<typeof HOME_ENV_KEYS[number], string | undefined>(HOME_ENV_KEYS.map((key) => [key, process.env[key]]));
+	const snapshot = new Map<(typeof HOME_ENV_KEYS)[number], string | undefined>(HOME_ENV_KEYS.map((key) => [key, process.env[key]]));
 	const previousAgentDir = process.env[AGENT_DIR_ENV_KEY];
 	process.env.HOME = home;
 	process.env.USERPROFILE = home;
@@ -106,7 +126,9 @@ export function setTempHome(home: string): () => void {
 	delete process.env.HOMEPATH;
 	delete process.env[AGENT_DIR_ENV_KEY];
 	return () => {
-		for (const key of HOME_ENV_KEYS) {restoreEnv(key, snapshot.get(key));}
+		for (const key of HOME_ENV_KEYS) {
+			restoreEnv(key, snapshot.get(key));
+		}
 		restoreEnv(AGENT_DIR_ENV_KEY, previousAgentDir);
 	};
 }
@@ -164,7 +186,9 @@ export function createSubscribableSession(messages: unknown[] = []) {
 			messages,
 			subscribe: (cb: (event: unknown) => void) => {
 				handler = cb;
-				return () => { handler = undefined; };
+				return () => {
+					handler = undefined;
+				};
 			},
 			getToolDefinition: () => undefined,
 			sessionManager: { getCwd: () => process.cwd() },
@@ -176,8 +200,13 @@ export function createSubscribableSession(messages: unknown[] = []) {
 
 /** The entries of the first `turn_end` handler result that is not `undefined`; throws unless they are an array of objects. */
 export function boundaryEntries(results: unknown[]): Record<string, unknown>[] {
-	const { entries } = recordOf(results.find((result) => result !== undefined), "the turn_end boundary result");
-	if (!Array.isArray(entries)) {throw new Error("Expected the turn_end boundary result to carry an entries array.");}
+	const { entries } = recordOf(
+		results.find((result) => result !== undefined),
+		"the turn_end boundary result",
+	);
+	if (!Array.isArray(entries)) {
+		throw new Error("Expected the turn_end boundary result to carry an entries array.");
+	}
 	return entries.map((entry: unknown) => recordOf(entry, "a turn_end boundary entry"));
 }
 
@@ -186,14 +215,14 @@ export function stripAnsi(text: string): string {
 }
 
 export function getRenderedLine(lines: string[], match: (plain: string) => boolean): string {
-	const line = lines.find(candidate => match(stripAnsi(candidate)));
+	const line = lines.find((candidate) => match(stripAnsi(candidate)));
 	assertPresent(line);
 	expect(line).not.toBe("");
 	return line;
 }
 
 export function getLineContaining(lines: string[], text: string): string {
-	const line = lines.find(candidate => candidate.includes(text));
+	const line = lines.find((candidate) => candidate.includes(text));
 	assertPresent(line);
 	expect(line).not.toBe("");
 	return line;
@@ -206,21 +235,27 @@ export function assertShellBackgroundPreserved(line: string): void {
 
 export function createDeferred() {
 	let resolve!: () => void;
-	const promise = new Promise<void>((r) => { resolve = r; });
+	const promise = new Promise<void>((r) => {
+		resolve = r;
+	});
 	return { promise, resolve };
 }
 
 // pi stores every handler as a wrapper that passes its arguments on and returns whatever the handler returns,
 // a promise or a plain value; only that it is a function can be checked at run time.
 function assertRegisteredHandler(value: unknown, event: string): asserts value is (...args: unknown[]) => unknown {
-	if (typeof value !== "function") {throw new Error(`A "${event}" handler on the test host is not a function.`);}
+	if (typeof value !== "function") {
+		throw new Error(`A "${event}" handler on the test host is not a function.`);
+	}
 }
 
 // The live list of handlers registered for `event`, so a handler appended during a dispatch runs in that
 // dispatch. Throws when none is registered.
 function registeredHandlers(pi: TestPI, event: string): unknown[] {
 	const handlers: unknown[] | undefined = pi.handlers.get(event);
-	if (handlers === undefined || handlers.length === 0) {throw new Error(`No handlers registered for "${event}"`);}
+	if (handlers === undefined || handlers.length === 0) {
+		throw new Error(`No handlers registered for "${event}"`);
+	}
 	return handlers;
 }
 
@@ -310,9 +345,13 @@ export function turnEndEvent(overrides: Partial<TurnEndEvent> = {}): TurnEndEven
 
 function unstubbedError(member: string): Error {
 	let where = "pass it in the overrides";
-	if (member.startsWith("ctx.ui.")) {where = "pass it to createUIContext and that context as `ui`";}
+	if (member.startsWith("ctx.ui.")) {
+		where = "pass it to createUIContext and that context as `ui`";
+	}
 	// The pinned pi's render context type has no keybinding formatters, so an override cannot name them.
-	if (member.startsWith("context.")) {where = "assign it to the context createToolRenderContext returned";}
+	if (member.startsWith("context.")) {
+		where = "assign it to the context createToolRenderContext returned";
+	}
 	return new Error(`${member} is not stubbed in this test context; ${where}.`);
 }
 
@@ -331,7 +370,9 @@ function unstubbedAsync(member: string): () => Promise<never> {
 function definedOverrides<T extends object>(overrides: Partial<T>): Partial<T> {
 	const defined: Partial<T> = {};
 	for (const key in overrides) {
-		if (Object.hasOwn(overrides, key) && overrides[key] !== undefined) {defined[key] = overrides[key];}
+		if (Object.hasOwn(overrides, key) && overrides[key] !== undefined) {
+			defined[key] = overrides[key];
+		}
 	}
 	return defined;
 }
@@ -360,7 +401,11 @@ export function createTheme(members: Partial<Theme>): Theme {
 
 /** A `ModelRegistry` whose methods are `members`; reading any other `ModelRegistry` method throws, naming it. */
 export function createModelRegistry(members: Partial<ModelRegistry>): ModelRegistry {
-	return guardedInstance(ModelRegistry.prototype, members, (property) => new Error(`modelRegistry.${property} is not stubbed in this test registry; add it to the members.`));
+	return guardedInstance(
+		ModelRegistry.prototype,
+		members,
+		(property) => new Error(`modelRegistry.${property} is not stubbed in this test registry; add it to the members.`),
+	);
 }
 
 // A model registry on which reading any `ModelRegistry` method throws naming
@@ -372,8 +417,13 @@ function unstubbedModelRegistry(): ModelRegistry {
 /** A model with `fields` over placeholder metadata: the id as name, a test api and base URL, zero cost and limits. */
 export function testModel(fields: Pick<Model<Api>, "provider" | "id" | "input" | "reasoning"> & Partial<Model<Api>>): Model<Api> {
 	return {
-		name: fields.id, api: "test-api", baseUrl: "http://localhost.invalid",
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 0, maxTokens: 0, ...fields,
+		name: fields.id,
+		api: "test-api",
+		baseUrl: "http://localhost.invalid",
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 0,
+		maxTokens: 0,
+		...fields,
 	};
 }
 
@@ -423,7 +473,8 @@ export function createUIContext(overrides: Partial<ExtensionUIContext> = {}): Ex
 export function createExtensionContext(overrides: Partial<ExtensionContext> = {}): ExtensionContext {
 	const defined = definedOverrides(overrides);
 	const cwd = defined.cwd ?? process.cwd();
-	const missingRegistry: Partial<Pick<ExtensionContext, "modelRegistry">> = Object.hasOwn(overrides, "modelRegistry") && overrides.modelRegistry === undefined ? { modelRegistry: undefined } : {};
+	const missingRegistry: Partial<Pick<ExtensionContext, "modelRegistry">> =
+		Object.hasOwn(overrides, "modelRegistry") && overrides.modelRegistry === undefined ? { modelRegistry: undefined } : {};
 	return {
 		ui: createUIContext(),
 		mode: "print",
@@ -479,17 +530,23 @@ export function createToolContext(overrides: Partial<ExtensionToolContext> = {})
  */
 export function createCustomUI(renderTheme: Theme, onOpen: (component: Component) => void | Promise<void>): ExtensionUIContext["custom"] {
 	const tui = stubInstance(TuiMainScreen.prototype, { requestRender: () => undefined });
-	return async <T,>(factory: (tui: TuiMainScreen, theme: Theme, keybindings: KeybindingsManager, done: (result: T) => void) => Component | Promise<Component>): Promise<T> => {
+	return async <T>(
+		factory: (tui: TuiMainScreen, theme: Theme, keybindings: KeybindingsManager, done: (result: T) => void) => Component | Promise<Component>,
+	): Promise<T> => {
 		const keybindings = await loadTestKeybindings();
 		const results: T[] = [];
 		let built: Component | undefined;
 		const component = await factory(tui, renderTheme, keybindings, (result) => {
 			results.push(result);
-			if (results.length === 1 && built !== undefined) {disposeComponent(built);}
+			if (results.length === 1 && built !== undefined) {
+				disposeComponent(built);
+			}
 		});
 		built = component;
 		await onOpen(component);
-		if (results.length === 0) {throw new Error("The custom component did not call done.");}
+		if (results.length === 0) {
+			throw new Error("The custom component did not call done.");
+		}
 		return results[0];
 	};
 }
@@ -497,23 +554,30 @@ export function createCustomUI(renderTheme: Theme, onOpen: (component: Component
 // pi's `Component` type declares no `dispose`; pi calls it when a component has one.
 function disposeComponent(component: Component): void {
 	const dispose: unknown = Reflect.get(component, "dispose");
-	if (typeof dispose === "function") {Reflect.apply(dispose, component, []);}
+	if (typeof dispose === "function") {
+		Reflect.apply(dispose, component, []);
+	}
 }
 
 // ── Readonly test helpers ────────────────────────────────────────────
 
 /** The composed tool_call handlers: the first blocking result, or `undefined` when none blocks. */
-export type ToolCall = (event: { toolName: string; toolCallId?: string; input?: Record<string, unknown> }, ctx: { cwd?: string }) => Promise<ToolCallEventResult | undefined>;
+export type ToolCall = (
+	event: { toolName: string; toolCallId?: string; input?: Record<string, unknown> },
+	ctx: { cwd?: string },
+) => Promise<ToolCallEventResult | undefined>;
 
 // The tests pass a partial event and context, which the typed handlers do not admit, so each
 // handler runs untyped and its result is checked to be a tool_call result or nothing.
 function assertToolCallResult(value: unknown): asserts value is ToolCallEventResult | undefined {
-	if (value === undefined) {return;}
+	if (value === undefined) {
+		return;
+	}
 	if (
-		!isRecord(value)
-		|| typeof value.block !== "boolean"
-		|| (value.reason !== undefined && typeof value.reason !== "string")
-		|| (value.terminate !== undefined && typeof value.terminate !== "boolean")
+		!isRecord(value) ||
+		typeof value.block !== "boolean" ||
+		(value.reason !== undefined && typeof value.reason !== "string") ||
+		(value.terminate !== undefined && typeof value.terminate !== "boolean")
 	) {
 		throw new Error(`A tool_call handler returned something other than a tool_call result: ${JSON.stringify(value)}.`);
 	}
@@ -530,7 +594,9 @@ export async function registerReadonlyPI(): Promise<{ pi: TestPI; toolCall: Tool
 			assertRegisteredHandler(handler, "tool_call");
 			const result = await handler(event, ctx);
 			assertToolCallResult(result);
-			if (result?.block === true) {return result;}
+			if (result?.block === true) {
+				return result;
+			}
 		}
 		return undefined;
 	};
@@ -660,17 +726,23 @@ function probeGlobal(name: ProbeGlobal): unknown {
 
 function probeNumber(name: ProbeGlobal): number {
 	const value = probeGlobal(name);
-	if (typeof value !== "number") {throw new Error(`The probe left ${name} as ${typeof value}, not a number.`);}
+	if (typeof value !== "number") {
+		throw new Error(`The probe left ${name} as ${typeof value}, not a number.`);
+	}
 	return value;
 }
 
 // The probe global `name` as an array of items `isItem` accepts. An unset global throws unless `unsetAsEmpty`
 // is true, which reads it as an empty array.
 function probeArray<T>(name: ProbeGlobal, isItem: (item: unknown) => item is T, unsetAsEmpty = false): T[] {
-	const value = unsetAsEmpty ? probeGlobal(name) ?? [] : probeGlobal(name);
-	if (!Array.isArray(value)) {throw new Error(`The probe left ${name} as ${typeof value}, not an array.`);}
+	const value = unsetAsEmpty ? (probeGlobal(name) ?? []) : probeGlobal(name);
+	if (!Array.isArray(value)) {
+		throw new Error(`The probe left ${name} as ${typeof value}, not an array.`);
+	}
 	const items: unknown[] = value;
-	if (!items.every(isItem)) {throw new Error(`The probe left an unexpected item in ${name}.`);}
+	if (!items.every(isItem)) {
+		throw new Error(`The probe left an unexpected item in ${name}.`);
+	}
 	return items;
 }
 
@@ -730,9 +802,8 @@ export async function runRealChildInvocation(params: {
 	// readonly bash guard (which only permits writes under the session temp root)
 	// actually fires. The child's working dir still lives under the fixture temp
 	// root, so the fixture stays portable under a restricted $HOME.
-	const readonlyWriteTarget = params.cwdOutsideTemp === true
-		? resolve(os.tmpdir(), "..", `readonly-child-escape-${process.pid}-${Date.now()}`)
-		: "readonly-child-escape";
+	const readonlyWriteTarget =
+		params.cwdOutsideTemp === true ? resolve(os.tmpdir(), "..", `readonly-child-escape-${process.pid}-${Date.now()}`) : "readonly-child-escape";
 	const agentDir = join(tempRoot, "agent");
 	const extensionDir = join(cwd, CONFIG_DIR_NAME, "extensions");
 	const sentinel = "AGENTIC_E2E_PROBE_OK";
@@ -830,10 +901,10 @@ export default function(pi) {
 
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		process.env.OPENAI_API_KEY = "test-openai-key";
-		globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
+		globalThis.fetch = (input: Parameters<typeof fetch>[0]) => {
 			outboundFetches.push(input instanceof Request ? input.url : String(input));
 			return Promise.reject(new Error(`offline fixture blocked outbound fetch: ${String(outboundFetches.at(-1))}`));
-		});
+		};
 		setProbeGlobal("__agenticE2eProbeCalls", 0);
 		setProbeGlobal("__agenticE2eStreamCalls", 0);
 		setProbeGlobal("__agenticE2eToolSets", []);
@@ -845,10 +916,16 @@ export default function(pi) {
 		setProbeGlobal("__agenticE2eMessages", []);
 		setProbeGlobal("__agenticE2eThinking", []);
 		const model: Model<Api> = {
-			id: modelId, name: "Agentic E2E Model", api: "agentic-e2e-api", provider, baseUrl: "http://localhost.invalid",
-			reasoning: params.reasoning ?? false, input: ["text"],
+			id: modelId,
+			name: "Agentic E2E Model",
+			api: "agentic-e2e-api",
+			provider,
+			baseUrl: "http://localhost.invalid",
+			reasoning: params.reasoning ?? false,
+			input: ["text"],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 128000, maxTokens: 1024,
+			contextWindow: 128000,
+			maxTokens: 1024,
 		};
 		const activeTools = params.activeTools ?? ["read", "agentic_e2e_probe", "spawn"];
 		const state = createState();
@@ -858,34 +935,48 @@ export default function(pi) {
 				state.notebookPages.set(pageName, pageContent);
 			}
 		}
-		const pi = await createTestHost((api) => { registerSpawnTool(api, state); }, {
-			toolSources: { agentic_e2e_probe: "project" },
-			activeTools,
-			allTools: activeTools,
-		});
+		const pi = await createTestHost(
+			(api) => {
+				registerSpawnTool(api, state);
+			},
+			{
+				toolSources: { agentic_e2e_probe: "project" },
+				activeTools,
+				allTools: activeTools,
+			},
+		);
 		const controller = new AbortController();
-		if (params.abortBeforeStart === true) {controller.abort(new Error("fixture abort"));}
+		if (params.abortBeforeStart === true) {
+			controller.abort(new Error("fixture abort"));
+		}
 		// Expose live references for the provider (separate module scope) to act on.
 		setProbeGlobal("__agenticE2eState", state);
 		setProbeGlobal("__agenticE2eController", controller);
 		const prompts = params.prompts ?? [params.prompt];
 		const updates: unknown[] = [];
-		const onUpdate = params.resetOnRunningUpdate === true
-			? (result: unknown) => {
-				updates.push(result);
-				resetState(state);
-			}
-			: (result: unknown) => { updates.push(result); };
+		const onUpdate =
+			params.resetOnRunningUpdate === true
+				? (result: unknown) => {
+						updates.push(result);
+						resetState(state);
+					}
+				: (result: unknown) => {
+						updates.push(result);
+					};
 		let results;
 		try {
 			const spawn = getTool(pi, "spawn");
-			results = await Promise.all(prompts.map((prompt, index) => spawn.execute(
-				`spawn-${params.thinking ?? "inherited"}-${index}`,
-				{ prompt, thinking: params.thinking },
-				controller.signal,
-				onUpdate,
-				createToolContext({ model, cwd }),
-			)));
+			results = await Promise.all(
+				prompts.map((prompt, index) =>
+					spawn.execute(
+						`spawn-${params.thinking ?? "inherited"}-${index}`,
+						{ prompt, thinking: params.thinking },
+						controller.signal,
+						onUpdate,
+						createToolContext({ model, cwd }),
+					),
+				),
+			);
 		} catch (error) {
 			// Attach the partial proof so rejecting tests can assert bookkeeping
 			// (e.g. that no update was published before an early abort).
@@ -919,12 +1010,20 @@ export default function(pi) {
 			observedThinking: probeArray("__agenticE2eThinking", isOptionalString, true),
 		};
 	} finally {
-		if (previousAgentDir === undefined) {delete process.env.PI_CODING_AGENT_DIR;}
-		else {process.env.PI_CODING_AGENT_DIR = previousAgentDir;}
-		if (previousOpenAiApiKey === undefined) {delete process.env.OPENAI_API_KEY;}
-		else {process.env.OPENAI_API_KEY = previousOpenAiApiKey;}
+		if (previousAgentDir === undefined) {
+			delete process.env.PI_CODING_AGENT_DIR;
+		} else {
+			process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
+		if (previousOpenAiApiKey === undefined) {
+			delete process.env.OPENAI_API_KEY;
+		} else {
+			process.env.OPENAI_API_KEY = previousOpenAiApiKey;
+		}
 		globalThis.fetch = previousFetch;
-		for (const name of PROBE_GLOBALS) {Reflect.deleteProperty(globalThis, name);}
+		for (const name of PROBE_GLOBALS) {
+			Reflect.deleteProperty(globalThis, name);
+		}
 		await rm(tempRoot, { recursive: true, force: true });
 		await rm(readonlyWriteTarget, { force: true });
 	}
@@ -965,9 +1064,13 @@ export function makeTUICtx(
 	const ui = createUIContext({
 		theme: tuiTheme,
 		notify: vi.fn(),
-		setStatus: (key, status) => { record.statuses.set(key, status); },
+		setStatus: (key, status) => {
+			record.statuses.set(key, status);
+		},
 		setWidget: (key: string, content: unknown) => {
-			if (!isOptionalStringArray(content)) {throw new Error(`makeTUICtx records only string widgets; "${key}" got a component.`);}
+			if (!isOptionalStringArray(content)) {
+				throw new Error(`makeTUICtx records only string widgets; "${key}" got a component.`);
+			}
 			record.widgets.set(key, content);
 		},
 		...definedOverrides(overrides.ui ?? {}),

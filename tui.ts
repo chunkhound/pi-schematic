@@ -32,7 +32,9 @@ export const STATUS_KEY_READONLY = "pi-schematic-readonly";
 
 /** Update TUI indicators: context usage, notebook count, topic, warning widget. */
 export function updateIndicators(ctx: ExtensionContext, state: SchematicState): void {
-	if (!ctx.hasUI) {return;}
+	if (!ctx.hasUI) {
+		return;
+	}
 
 	const theme = ctx.ui.theme;
 
@@ -49,23 +51,15 @@ export function updateIndicators(ctx: ExtensionContext, state: SchematicState): 
 
 	// Notebook page count — show 📒 0 in dim tone when empty so the feature is discoverable
 	const count = state.notebookPages.size;
-	ctx.ui.setStatus(STATUS_KEY_NOTEBOOK, count > 0
-		? `\u{1F4D2} ${count}`
-		: theme.fg("dim", "\u{1F4D2} 0"),
-	);
+	ctx.ui.setStatus(STATUS_KEY_NOTEBOOK, count > 0 ? `\u{1F4D2} ${count}` : theme.fg("dim", "\u{1F4D2} 0"));
 
 	// Readonly mode indicator
-	ctx.ui.setStatus(
-		STATUS_KEY_READONLY,
-		state.readonlyEnabled ? theme.fg("warning", "\u{1F512} readonly") : undefined,
-	);
+	ctx.ui.setStatus(STATUS_KEY_READONLY, state.readonlyEnabled ? theme.fg("warning", "\u{1F512} readonly") : undefined);
 
 	// Active notebook topic — show a dim placeholder when unset so the frame is discoverable
 	ctx.ui.setStatus(
 		STATUS_KEY_TOPIC,
-		state.activeNotebookTopic !== null && state.activeNotebookTopic !== ""
-			? `\u{1F9ED} ${state.activeNotebookTopic}`
-			: theme.fg("dim", "\u{1F9ED} -"),
+		state.activeNotebookTopic !== null && state.activeNotebookTopic !== "" ? `\u{1F9ED} ${state.activeNotebookTopic}` : theme.fg("dim", "\u{1F9ED} -"),
 	);
 
 	// High-context warning widget (above editor)
@@ -76,9 +70,7 @@ export function updateIndicators(ctx: ExtensionContext, state: SchematicState): 
 			: state.activeNotebookTopic !== null && state.activeNotebookTopic !== ""
 				? `Context at ${pct}% — use topic fit: same topic → spawn, different topic → handoff`
 				: `Context at ${pct}% — no active topic; handoff soon unless you can assign one cleanly`;
-		ctx.ui.setWidget(WIDGET_KEY_WARNING, [
-			theme.fg("error", "\u26A0 ") + theme.fg("warning", warning),
-		]);
+		ctx.ui.setWidget(WIDGET_KEY_WARNING, [theme.fg("error", "\u26A0 ") + theme.fg("warning", warning)]);
 	} else {
 		ctx.ui.setWidget(WIDGET_KEY_WARNING, undefined);
 	}

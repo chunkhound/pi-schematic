@@ -42,7 +42,9 @@ function pad2(n: number): string {
 // before_agent_start. Aliases (`US/Eastern`) are kept verbatim: Intl renders
 // them, and canonicalising would rewrite a name the user recognises.
 function usableZone(zone: string | undefined): string {
-	if (zone === undefined || zone === "") {return UNKNOWN_ZONE_FALLBACK;}
+	if (zone === undefined || zone === "") {
+		return UNKNOWN_ZONE_FALLBACK;
+	}
 	try {
 		new Intl.DateTimeFormat("en-US", { timeZone: zone });
 		return zone;
@@ -70,7 +72,9 @@ function zoneFields(date: Date, zone: string) {
 	const parts = new Intl.DateTimeFormat("en-US", { ...ZONE_FIELDS, timeZone: rendered }).formatToParts(date);
 	const field = (type: string) => {
 		const part = parts.find((candidate) => candidate.type === type);
-		if (!part) {throw new Error(`Intl.DateTimeFormat returned no ${type} part for ${rendered}.`);}
+		if (!part) {
+			throw new Error(`Intl.DateTimeFormat returned no ${type} part for ${rendered}.`);
+		}
 		return part.value;
 	};
 	return {
@@ -84,7 +88,9 @@ function zoneFields(date: Date, zone: string) {
 /** `GMT` / `GMT+05:30` / `GMT-04:00` → `UTC±HH:MM`. */
 function offsetText(longOffset: string, zone: string): string {
 	const match = /^GMT(?:([+-])(\d{2}):(\d{2}))?$/.exec(longOffset);
-	if (!match) {throw new Error(`Intl returned unparseable longOffset ${longOffset} for zone ${zone}`);}
+	if (!match) {
+		throw new Error(`Intl returned unparseable longOffset ${longOffset} for zone ${zone}`);
+	}
 	const sign = match.at(1);
 	const east = sign === undefined ? 0 : (sign === "-" ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3]));
 	const abs = Math.abs(east);

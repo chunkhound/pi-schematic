@@ -16,9 +16,16 @@ test("derives ordered common, supported, and override-effective modalities from 
 		testModel({ provider: "p", id: "rich", input: ["image", "text"], reasoning: true }),
 		testModel({ provider: "p", id: "text", input: ["text"], reasoning: false }),
 	];
-	const group = { models: [{ provider: "p", modelId: "rich" }, { provider: "p", modelId: "text" }] };
+	const group = {
+		models: [
+			{ provider: "p", modelId: "rich" },
+			{ provider: "p", modelId: "text" },
+		],
+	};
 	expect(deriveModelGroupModalities(group, registry(models))).toStrictEqual({
-		common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image", "reasoning"],
+		common: ["text"],
+		supported: ["text", "image", "reasoning"],
+		effective: ["text", "image", "reasoning"],
 	});
 	const effectiveAfterOverride = deriveModelGroupModalities({ ...group, constraints: { modalities: ["reasoning", "image"] } }, registry(models)).effective;
 	expect(effectiveAfterOverride, "text stays always-present ahead of overridden add-ons").toStrictEqual(["text", "image", "reasoning"]);
@@ -37,7 +44,12 @@ test("compatibility façade and descriptor remain parity-equivalent across modal
 		{ models: [{ provider: "p", modelId: "gone" }] },
 		{ models: [{ provider: "p", modelId: "rich" }], constraints: { modalities: [] } },
 		{ models: [{ provider: "p", modelId: "text" }], constraints: { modalities: ["image"] } },
-		{ models: [{ provider: "p", modelId: "rich" }, { provider: "p", modelId: "text" }] },
+		{
+			models: [
+				{ provider: "p", modelId: "rich" },
+				{ provider: "p", modelId: "text" },
+			],
+		},
 	];
 	for (const group of fixtures) {
 		const resolved = resolveConstraintMembers(group.models, registry(models));
@@ -58,6 +70,8 @@ test("caps stale overrides without mutation and restores them when catalog suppo
 	expect(def.constraints?.modalities).toStrictEqual(["text", "image"]);
 	models[0].input.push("image");
 	expect(deriveModelGroupModalities(def, registry(models)).effective).toStrictEqual(["text", "image"]);
-	expect(() => { assertModalityOverrideSupported(def, registry([testModel({ provider: "p", id: "m", input: ["text"], reasoning: false })])); }).toThrow(/unsupported modalities: image/);
+	expect(() => {
+		assertModalityOverrideSupported(def, registry([testModel({ provider: "p", id: "m", input: ["text"], reasoning: false })]));
+	}).toThrow(/unsupported modalities: image/);
 	expect(getMissingModelModalities(models[0], ["text", "reasoning"])).toStrictEqual(["reasoning"]);
 });
