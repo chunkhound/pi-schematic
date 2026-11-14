@@ -4,10 +4,7 @@ import { asPromise } from "../as-promise.js";
 import type { SchematicState } from "../state.js";
 import { normalizeNotebookTopic, setActiveNotebookTopic } from "./topic.js";
 
-export function registerNotebookTopicTool(
-	pi: ExtensionAPI,
-	state: SchematicState,
-): void {
+export function registerNotebookTopicTool(pi: ExtensionAPI, state: SchematicState): void {
 	pi.registerTool({
 		name: "notebook_topic_set",
 		label: "Notebook Topic Set",

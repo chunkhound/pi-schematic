@@ -19,8 +19,14 @@ import { assertPresent, expectSuffix, isRecord } from "../assertions.js";
 
 // The tool_result handler returns a patch of the result or nothing.
 function assertToolResultEventResult(value: unknown): asserts value is ToolResultEventResult | undefined {
-	if (value === undefined) {return;}
-	if (!isRecord(value) || (value.content !== undefined && !Array.isArray(value.content)) || (value.isError !== undefined && typeof value.isError !== "boolean")) {
+	if (value === undefined) {
+		return;
+	}
+	if (
+		!isRecord(value) ||
+		(value.content !== undefined && !Array.isArray(value.content)) ||
+		(value.isError !== undefined && typeof value.isError !== "boolean")
+	) {
 		throw new Error("The tool_result handler returned something other than a tool_result result.");
 	}
 }
@@ -31,9 +37,13 @@ function assertToolResultEventResult(value: unknown): asserts value is ToolResul
  */
 async function contextMessages(pi: TestPI, event: unknown, ctx: unknown): Promise<Record<string, unknown>[]> {
 	const [result] = await callHandlers(pi, "context", event, ctx);
-	if (!isRecord(result) || !Array.isArray(result.messages)) {throw new Error("The context handler returned no messages.");}
+	if (!isRecord(result) || !Array.isArray(result.messages)) {
+		throw new Error("The context handler returned no messages.");
+	}
 	const messages: unknown[] = result.messages;
-	if (!messages.every(isRecord)) {throw new Error("The context handler returned a message that is not an object.");}
+	if (!messages.every(isRecord)) {
+		throw new Error("The context handler returned a message that is not an object.");
+	}
 	return messages;
 }
 
@@ -100,11 +110,7 @@ test("readonly toggle delivers an activation nudge via context hook", async () =
 
 	await getCommand(pi, "readonly").handler("", uiCommandContext());
 
-	const messages = await contextMessages(
-		pi,
-		{ messages: [] },
-		{ getContextUsage: () => ({ percent: 40 }) },
-	);
+	const messages = await contextMessages(pi, { messages: [] }, { getContextUsage: () => ({ percent: 40 }) });
 	const readonlyNudge = messages.find((message) => typeof message.content === "string" && /readonly/i.test(message.content));
 	assertPresent(readonlyNudge, "context hook should deliver a readonly activation nudge");
 	expect(readonlyNudge.role).toBe("custom");
@@ -117,11 +123,7 @@ test("readonly toggle off delivers a deactivation nudge via context hook", async
 	await getCommand(pi, "readonly").handler("", uiCommandContext());
 	await getCommand(pi, "readonly").handler("", uiCommandContext());
 
-	const messages = await contextMessages(
-		pi,
-		{ messages: [] },
-		{ getContextUsage: () => ({ percent: 40 }) },
-	);
+	const messages = await contextMessages(pi, { messages: [] }, { getContextUsage: () => ({ percent: 40 }) });
 	const readonlyNudge = messages.find((message) => typeof message.content === "string" && /readonly|turned off|disabled/i.test(message.content));
 	assertPresent(readonlyNudge, "context hook should deliver a readonly deactivation nudge");
 	expect(readonlyNudge.content).toMatch(/readonly/i);
@@ -141,8 +143,7 @@ async function registerReadonlyBash() {
 	return {
 		pi,
 		deniedOutput,
-		callBash: (toolCallId: string) =>
-			toolCall({ toolName: "bash", toolCallId, input: { command: "ls" } }, { cwd: "/workspace" }),
+		callBash: (toolCallId: string) => toolCall({ toolName: "bash", toolCallId, input: { command: "ls" } }, { cwd: "/workspace" }),
 		result: async (toolCallId: string, overrides: { toolName?: string; isError?: boolean } = {}) => {
 			const event: ToolResultEvent = {
 				type: "tool_result",
@@ -204,7 +205,12 @@ test.skipIf(skipWithoutSandbox)("a failed non-bash result for a sandboxed id get
 const READONLY_ON_BRANCH = [{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } }];
 
 function resumeSession(pi: Awaited<ReturnType<typeof registerReadonlyBash>>["pi"]) {
-	return emitAll(pi, "session_start", { reason: "resume" }, { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => READONLY_ON_BRANCH } });
+	return emitAll(
+		pi,
+		"session_start",
+		{ reason: "resume" },
+		{ hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => READONLY_ON_BRANCH } },
+	);
 }
 
 test.skipIf(skipWithoutSandbox)("a session start drops sandboxed ids whose result never arrived", async () => {

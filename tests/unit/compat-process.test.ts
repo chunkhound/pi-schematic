@@ -3,14 +3,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test } from "vitest";
-import {
-	isValidNpmExecpath,
-	npmInvocation,
-	repoRootFromScript,
-	runChecked,
-	runNpm,
-	runNpmWithRetry,
-} from "../../scripts/compat-process.mjs";
+import { isValidNpmExecpath, npmInvocation, repoRootFromScript, runChecked, runNpm, runNpmWithRetry } from "../../scripts/compat-process.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -21,14 +14,17 @@ function readScript(name: string): string {
 function writeFlakyNpmCli(tmpDir: string, failures: number): { cliPath: string; attemptsPath: string } {
 	const attemptsPath = join(tmpDir, "attempts");
 	const cliPath = join(tmpDir, "npm-cli.js");
-	writeFileSync(cliPath, `
+	writeFileSync(
+		cliPath,
+		`
 const { existsSync, readFileSync, writeFileSync } = require("node:fs");
 const attemptsPath = ${JSON.stringify(attemptsPath)};
 const attempts = (existsSync(attemptsPath) ? Number(readFileSync(attemptsPath, "utf8")) : 0) + 1;
 writeFileSync(attemptsPath, String(attempts));
 if (attempts <= ${failures}) { process.stderr.write("transient failure"); process.exit(17); }
 process.stdout.write("fixture npm success");
-`);
+`,
+	);
 	return { cliPath, attemptsPath };
 }
 
@@ -43,11 +39,16 @@ async function withFlakyNpm<T>(failures: number, test: (tmpDir: string, cliPath:
 }
 
 function retryFixtureNpm(tmpDir: string, cliPath: string) {
-	return runNpmWithRetry(tmpDir, ["--version"], {
-		capture: true,
-		env: { npm_execpath: cliPath },
-		execPath: process.execPath,
-	}, { retries: 2, baseMs: 0 });
+	return runNpmWithRetry(
+		tmpDir,
+		["--version"],
+		{
+			capture: true,
+			env: { npm_execpath: cliPath },
+			execPath: process.execPath,
+		},
+		{ retries: 2, baseMs: 0 },
+	);
 }
 
 test("repoRootFromScript decodes native paths containing spaces", () => {
@@ -140,42 +141,46 @@ test("runNpmWithRetry rethrows after exhausting its retry budget", async () => {
 });
 
 test("runChecked reports process launch failures", () => {
-	expect(
-		() => runChecked("pi-schematic-command-that-does-not-exist", [], { cwd: REPO_ROOT, capture: true }),
-	).toThrow(expect.toSatisfy((error: unknown) => {
-		expect(String(error)).toMatch(/error\.stack:/);
-		expect(String(error)).toMatch(/status: null/);
-		return true;
-	}));
+	expect(() => runChecked("pi-schematic-command-that-does-not-exist", [], { cwd: REPO_ROOT, capture: true })).toThrow(
+		expect.toSatisfy((error: unknown) => {
+			expect(String(error)).toMatch(/error\.stack:/);
+			expect(String(error)).toMatch(/status: null/);
+			return true;
+		}),
+	);
 });
 
 test("runChecked reports nonzero status and captured output", () => {
-	expect(
-		() => runChecked(process.execPath, [
-			"-e",
-			"process.stdout.write('stdout sentinel'); process.stderr.write('stderr sentinel'); process.exit(7)",
-		], { cwd: REPO_ROOT, capture: true }),
-	).toThrow(expect.toSatisfy((error: unknown) => {
-		expect(String(error)).toMatch(/status: 7/);
-		expect(String(error)).toMatch(/stdout sentinel/);
-		expect(String(error)).toMatch(/stderr sentinel/);
-		return true;
-	}));
+	expect(() =>
+		runChecked(process.execPath, ["-e", "process.stdout.write('stdout sentinel'); process.stderr.write('stderr sentinel'); process.exit(7)"], {
+			cwd: REPO_ROOT,
+			capture: true,
+		}),
+	).toThrow(
+		expect.toSatisfy((error: unknown) => {
+			expect(String(error)).toMatch(/status: 7/);
+			expect(String(error)).toMatch(/stdout sentinel/);
+			expect(String(error)).toMatch(/stderr sentinel/);
+			return true;
+		}),
+	);
 });
 
 test("runChecked truncates oversized diagnostic output", () => {
 	const payload = "x".repeat(9000);
-	expect(
-		() => runChecked(process.execPath, ["-e", "process.stderr.write(process.env.PAYLOAD); process.exit(7)"], {
+	expect(() =>
+		runChecked(process.execPath, ["-e", "process.stderr.write(process.env.PAYLOAD); process.exit(7)"], {
 			cwd: REPO_ROOT,
 			capture: true,
 			env: { ...process.env, PAYLOAD: payload },
 		}),
-	).toThrow(expect.toSatisfy((error: unknown) => {
-		expect(String(error)).toMatch(/\[truncated 808 chars\]/);
-		expect(String(error)).not.toContain(payload);
-		return true;
-	}));
+	).toThrow(
+		expect.toSatisfy((error: unknown) => {
+			expect(String(error)).toMatch(/\[truncated 808 chars\]/);
+			expect(String(error)).not.toContain(payload);
+			return true;
+		}),
+	);
 });
 
 test("compatibility scripts use native roots and the shared npm runner", () => {

@@ -34,9 +34,7 @@ export function setActiveNotebookTopic(
 	state.activeNotebookTopic = normalized;
 	state.activeNotebookTopicSource = source;
 
-	const boundaryHint = changed && previous !== null
-		? { from: previous, to: normalized, source, advisoryDelivered: false }
-		: null;
+	const boundaryHint = changed && previous !== null ? { from: previous, to: normalized, source, advisoryDelivered: false } : null;
 	state.pendingTopicBoundaryHint = boundaryHint;
 
 	return {

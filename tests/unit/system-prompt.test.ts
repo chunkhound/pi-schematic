@@ -47,7 +47,9 @@ test("the context primer states the notebook, topic, and handoff contracts", () 
 	expect(rulesSection, "rules must explicitly list what the prompt carries").toMatch(/current state, blockers, and next steps/i);
 	expect(rulesSection, "replaced with explicit list of what the prompt carries").not.toMatch(/remaining situational context/i);
 	expect(rulesSection).toMatch(/Keep pages compact/i);
-	expect(rulesSection, "rules must require verifying all important findings are persisted before handoff").toMatch(/handoff.*verify all important findings are persisted/i);
+	expect(rulesSection, "rules must require verifying all important findings are persisted before handoff").toMatch(
+		/handoff.*verify all important findings are persisted/i,
+	);
 	expect(rulesSection).toMatch(/chaining handoffs/i);
 	expect(rulesSection, "rules must explain when notebook pages may be deleted during handoff").toMatch(/discard pages holding only recoverable code facts/i);
 	expect(primer).toMatch(/overlong child output is truncated/i);
@@ -152,5 +154,7 @@ test("does not copy the base prompt into schematic's sections", async () => {
 		.filter(([name]) => name.startsWith("schematic"))
 		.map(([, body]) => body);
 	expect(schematicBodies.length).toBeGreaterThan(0);
-	for (const body of schematicBodies) {expect(body).not.toMatch(/Base system prompt\./);}
+	for (const body of schematicBodies) {
+		expect(body).not.toMatch(/Base system prompt\./);
+	}
 });

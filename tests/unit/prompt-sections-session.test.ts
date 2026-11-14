@@ -16,20 +16,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import os from "node:os";
-import {
-	createAgentSession,
-	DefaultResourceLoader,
-	ModelRuntime,
-	SessionManager,
-} from "@earendil-works/pi-coding-agent";
-import {
-	fauxAssistantMessage,
-	fauxProvider,
-	fauxToolCall,
-	type FauxResponseFactory,
-	type Message,
-	type SystemMessage,
-} from "@earendil-works/pi-ai";
+import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFactory, type Message, type SystemMessage } from "@earendil-works/pi-ai";
 import registerSchematic from "../../index.js";
 import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
 import { buildNudge } from "../../watchdog.js";
@@ -49,11 +37,10 @@ beforeAll(async () => {
 describe("prompt sections in a real agent session", () => {
 	it("re-sends only the changed section when the topic changes between prompts", async () => {
 		const systemMessagesPerRequest: SystemMessage[][] = [];
-		const recording = (respond: () => ReturnType<typeof fauxAssistantMessage>): FauxResponseFactory =>
+		const recording =
+			(respond: () => ReturnType<typeof fauxAssistantMessage>): FauxResponseFactory =>
 			(context) => {
-				systemMessagesPerRequest.push(
-					context.messages.filter((message): message is SystemMessage => message.role === "system"),
-				);
+				systemMessagesPerRequest.push(context.messages.filter((message): message is SystemMessage => message.role === "system"));
 				return respond();
 			};
 		const callTopic = recording(() => fauxAssistantMessage(fauxToolCall("notebook_topic_set", { topic: "oauth" })));
@@ -107,7 +94,8 @@ describe("prompt sections in a real agent session", () => {
 
 	it("sends the eligible handoff nudge in the same request as the schematic sections", async () => {
 		const requests: Message[][] = [];
-		const recording = (respond: () => ReturnType<typeof fauxAssistantMessage>): FauxResponseFactory =>
+		const recording =
+			(respond: () => ReturnType<typeof fauxAssistantMessage>): FauxResponseFactory =>
 			(context) => {
 				requests.push(context.messages);
 				return respond();
@@ -154,7 +142,11 @@ describe("prompt sections in a real agent session", () => {
 			await session.prompt("/handoff finish the report");
 			await Promise.race([
 				handoffRunRequested.promise,
-				new Promise<never>((_, reject) => setTimeout(() => { reject(new Error("the /handoff run sent no provider request")); }, 5_000).unref()),
+				new Promise<never>((_, reject) =>
+					setTimeout(() => {
+						reject(new Error("the /handoff run sent no provider request"));
+					}, 5_000).unref(),
+				),
 			]);
 			await session.waitForIdle();
 		} finally {
@@ -163,12 +155,16 @@ describe("prompt sections in a real agent session", () => {
 
 		expect(requests).toHaveLength(3);
 		const handoffRunRequest = requests[2];
-		const nudgeFirstLine = buildNudge({
-			activeNotebookTopic: null,
-			pendingTopicBoundaryHint: null,
-			readonlyEnabled: false,
-			pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: "x" },
-		}, null, true).split("\n")[0];
+		const nudgeFirstLine = buildNudge(
+			{
+				activeNotebookTopic: null,
+				pendingTopicBoundaryHint: null,
+				readonlyEnabled: false,
+				pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: "x" },
+			},
+			null,
+			true,
+		).split("\n")[0];
 		const nonSystemText = handoffRunRequest
 			.filter((message) => message.role !== "system")
 			.map((message) => JSON.stringify(message.content))
@@ -177,8 +173,11 @@ describe("prompt sections in a real agent session", () => {
 		const sections = new Map<string, string>();
 		for (const message of handoffRunRequest.filter((candidate): candidate is SystemMessage => candidate.role === "system")) {
 			for (const [name, body] of Object.entries(message.sections ?? {})) {
-				if (body === null) {sections.delete(name);}
-				else {sections.set(name, body);}
+				if (body === null) {
+					sections.delete(name);
+				} else {
+					sections.set(name, body);
+				}
 			}
 		}
 		expect(sections.get("schematic"), `schematic section missing; sections: ${[...sections.keys()].join(", ")}`).toBeDefined();

@@ -10,19 +10,13 @@
   "customDatasources": {
     "pi-node-floor": {
       "defaultRegistryUrlTemplate": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/latest",
-      "transformTemplates": [
-        "{\"releases\":[{\"version\": $replace(engines.node, /^>=\\s*/, \"\")}]}"
-      ]
+      "transformTemplates": ["{\"releases\":[{\"version\": $replace(engines.node, /^>=\\s*/, \"\")}]}"]
     }
   },
   "customManagers": [
     {
       "customType": "regex",
-      "managerFilePatterns": [
-        "/^\\.github/workflows/ci\\.yml$/",
-        "/^\\.github/renovate\\.json$/",
-        "/^\\.node-version$/"
-      ],
+      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/", "/^\\.github/renovate\\.json$/", "/^\\.node-version$/"],
       "matchStrings": [
         "^(?<currentValue>\\d+\\.\\d+\\.\\d+)\\s*$",
         "track: floor\\s+node-version: \"(?<currentValue>[^\"]+)\"",
@@ -33,10 +27,7 @@
     },
     {
       "customType": "regex",
-      "managerFilePatterns": [
-        "/^\\.github/workflows/ci\\.yml$/",
-        "/^\\.github/workflows/npm-publish\\.yml$/"
-      ],
+      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/", "/^\\.github/workflows/npm-publish\\.yml$/"],
       "matchStrings": [
         "track: newest\\s+node-version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
         "uses: actions/setup-node@[^\\n]+\\n\\s+with:\\n\\s+node-version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""

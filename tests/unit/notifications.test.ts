@@ -121,16 +121,19 @@ test("bash guard uses centralized readonly block copy", () => {
 
 test("parent readonly tool-call consumer uses centralized block copy", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
-	await getCommand(pi, "readonly").handler("", createCommandContext({
-		mode: "tui",
-		hasUI: true,
-		getContextUsage: () => undefined,
-		ui: createUIContext({
-			notify: vi.fn(),
-			setStatus: vi.fn(),
-			setWidget: vi.fn(),
+	await getCommand(pi, "readonly").handler(
+		"",
+		createCommandContext({
+			mode: "tui",
+			hasUI: true,
+			getContextUsage: () => undefined,
+			ui: createUIContext({
+				notify: vi.fn(),
+				setStatus: vi.fn(),
+				setWidget: vi.fn(),
+			}),
 		}),
-	}));
+	);
 	const result = await toolCall({ toolName: "write", input: {} }, {});
 	expect(result).toStrictEqual({ block: true, reason: READONLY_WRITE_EDIT_BLOCK_REASON });
 	const handoffResult = await toolCall({ toolName: "handoff", input: {} }, {});
@@ -152,7 +155,9 @@ test("shared readonly fragments keep copy aligned across contexts", () => {
 	expect(READONLY_HANDOFF_EXCEPTION_NOTIFICATION).toMatch(/fresh context resumes in readonly mode/i);
 	expect(buildReadonlyRequestedHandoffContinuation()).toMatch(/fresh context resumes in readonly mode/i);
 	expect(buildReadonlyHandoffWaitNotice()).toMatch(/readonly remains active/i);
-	expect(buildReadonlyHandoffCommandNotice(), "the /handoff notice must reuse the shared readonly continuation sentence").toContain(READONLY_NEXT_CONTEXT_RESUMES);
+	expect(buildReadonlyHandoffCommandNotice(), "the /handoff notice must reuse the shared readonly continuation sentence").toContain(
+		READONLY_NEXT_CONTEXT_RESUMES,
+	);
 	expect(buildReadonlyTopicBoundaryNotification("oauth", "billing")).toMatch(/handoff exception activates.*once the context is ready/i);
 	expect(buildReadonlyDisabledContextSuffix(42)).toMatch(/42%/);
 	expect(READONLY_NON_TEMP_MUTATION_SCOPE).toMatch(/non-temp bash filesystem mutations/i);
@@ -223,7 +228,9 @@ test("buildModelFrontmatterAuthErrorNotification includes model and command ref"
 });
 
 test("streaming model-selection notification explains the idle-agent requirement", () => {
-	expect(buildStreamingModelSelectionBlockedNotification("/review")).toBe("Cannot execute `/review` during streaming: model-selection frontmatter requires an idle agent.");
+	expect(buildStreamingModelSelectionBlockedNotification("/review")).toBe(
+		"Cannot execute `/review` during streaming: model-selection frontmatter requires an idle agent.",
+	);
 });
 
 test("model-group builders include commandRef in output", () => {

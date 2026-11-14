@@ -12,11 +12,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { RequestedHandoff, SchematicState } from "./state.js";
 import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
 import { normalizeContextPercent } from "./handoff/eligibility.js";
-import {
-	READONLY_HANDOFF_RETRY_ADVICE,
-	buildReadonlyHandoffWaitNotice,
-	buildReadonlyRequestedHandoffContinuation,
-} from "./notifications.js";
+import { READONLY_HANDOFF_RETRY_ADVICE, buildReadonlyHandoffWaitNotice, buildReadonlyRequestedHandoffContinuation } from "./notifications.js";
 import { STATUS_KEY_HANDOFF } from "./tui.js";
 
 /** Max settled runs in which the eligible handoff nudge was sent before a
@@ -38,17 +34,11 @@ type NudgeState = Pick<SchematicState, "activeNotebookTopic" | "pendingTopicBoun
 
 function buildRequestedHandoffNudge(state: NudgeState, requestedHandoff: RequestedHandoff, eligible: boolean): string {
 	if (!eligible) {
-		const readonlyWait = state.readonlyEnabled
-			? buildReadonlyHandoffWaitNotice()
-			: "";
+		const readonlyWait = state.readonlyEnabled ? buildReadonlyHandoffWaitNotice() : "";
 		return "A handoff is requested, but context is not yet ready for compaction. Continue working and retry handoff later." + readonlyWait;
 	}
-	const handoffArguments = requestedHandoff.nextInstruction === null
-		? "the next instruction and the remaining context"
-		: "only the remaining context";
-	const readonlyContinuation = state.readonlyEnabled
-		? buildReadonlyRequestedHandoffContinuation()
-		: "The successor receives the instruction verbatim.";
+	const handoffArguments = requestedHandoff.nextInstruction === null ? "the next instruction and the remaining context" : "only the remaining context";
+	const readonlyContinuation = state.readonlyEnabled ? buildReadonlyRequestedHandoffContinuation() : "The successor receives the instruction verbatim.";
 	return `A real handoff is required in this session now.
 Do not perform the new instruction here — this context is discarded at compaction.
 Save durable findings to the notebook if needed, then call handoff with ${handoffArguments}.
@@ -69,34 +59,34 @@ Treat this as a strong task-boundary signal. ${action}
 Only continue inline if this was merely a rename rather than a real pivot.`;
 }
 
-
 function buildDefaultNudge(pct: number | null, topic: string | null, eligible: boolean): string {
-	const contextLead = pct === null
-		? "Topic-aware context reminder."
-		: pct >= 70
-			? `Context at ${pct}% — topic discipline is urgent.`
-			: pct >= 50
-				? `Context at ${pct}% — topic discipline matters now.`
-				: `Context at ${pct}% — choose your next step by topic fit.`;
-	const pivotAdvice = eligible
-		? "prefer a deliberate handoff"
-		: "continue working until handoff is available";
+	const contextLead =
+		pct === null
+			? "Topic-aware context reminder."
+			: pct >= 70
+				? `Context at ${pct}% — topic discipline is urgent.`
+				: pct >= 50
+					? `Context at ${pct}% — topic discipline matters now.`
+					: `Context at ${pct}% — choose your next step by topic fit.`;
+	const pivotAdvice = eligible ? "prefer a deliberate handoff" : "continue working until handoff is available";
 
 	if (topic !== null && topic !== "") {
-		const urgency = pct !== null && pct >= 70
-			? `If the work no longer fits this topic, ${pivotAdvice}. If it still fits and only a focused noisy branch is needed, spawn it instead of polluting the parent context.`
-			: `If the current work still fits this topic, prefer spawn for isolated noisy subtasks. If it no longer fits, ${pivotAdvice} instead of dragging stale context forward.`;
+		const urgency =
+			pct !== null && pct >= 70
+				? `If the work no longer fits this topic, ${pivotAdvice}. If it still fits and only a focused noisy branch is needed, spawn it instead of polluting the parent context.`
+				: `If the current work still fits this topic, prefer spawn for isolated noisy subtasks. If it no longer fits, ${pivotAdvice} instead of dragging stale context forward.`;
 		return `${contextLead}
 Active notebook topic: ${topic}.
 Use the topic as the current semantic frame. ${urgency}
 Save durable findings to the notebook before handoff.`;
 	}
 
-	const noTopicUrgency = pct !== null && pct >= 70
-		? eligible
-			? "Assign a fresh topic in the next clean context after handoff."
-			: "Assign a fresh topic now; continue working until handoff is available."
-		: `Assign a short stable topic soon. If the work stays within that topic, prefer spawn for noisy subtasks. If the work shifts beyond it, ${pivotAdvice}.`;
+	const noTopicUrgency =
+		pct !== null && pct >= 70
+			? eligible
+				? "Assign a fresh topic in the next clean context after handoff."
+				: "Assign a fresh topic now; continue working until handoff is available."
+			: `Assign a short stable topic soon. If the work stays within that topic, prefer spawn for noisy subtasks. If the work shifts beyond it, ${pivotAdvice}.`;
 	return `${contextLead}
 No active notebook topic is set. ${noTopicUrgency}`;
 }
@@ -108,7 +98,9 @@ function selectNudge(state: NudgeState, percent: number | null, eligible: boolea
 	if (requestedHandoff) {
 		return { text: buildRequestedHandoffNudge(state, requestedHandoff, eligible), nudgedHandoff: eligible ? requestedHandoff : null };
 	}
-	if (state.pendingTopicBoundaryHint) {return { text: buildBoundaryNudge(state.pendingTopicBoundaryHint, eligible), nudgedHandoff: null };}
+	if (state.pendingTopicBoundaryHint) {
+		return { text: buildBoundaryNudge(state.pendingTopicBoundaryHint, eligible), nudgedHandoff: null };
+	}
 	return { text: buildDefaultNudge(pct, state.activeNotebookTopic, eligible), nudgedHandoff: null };
 }
 
@@ -123,7 +115,9 @@ export function buildNudge(state: NudgeState, percent: number | null, eligible: 
  */
 export function buildAndRecordNudge(state: NudgeState, percent: number | null, eligible: boolean): string {
 	const { text, nudgedHandoff } = selectNudge(state, percent, eligible);
-	if (nudgedHandoff) {nudgedHandoff.eligibleNudgeDelivered = true;}
+	if (nudgedHandoff) {
+		nudgedHandoff.eligibleNudgeDelivered = true;
+	}
 	return text;
 }
 
@@ -148,11 +142,15 @@ export function registerWatchdog(pi: ExtensionAPI, state: SchematicState): void 
 		// exhausted enforcement attempts should clear it. A run counts only when
 		// the context hook sent the hand-off-now nudge; the flag is per run.
 		const requestedHandoff = state.pendingRequestedHandoff;
-		if (!requestedHandoff) {return;}
+		if (!requestedHandoff) {
+			return;
+		}
 		const counts = settleCountsAttempt(requestedHandoff);
 		const exhausted = settleExhaustsHandoffBudget(requestedHandoff);
 		requestedHandoff.eligibleNudgeDelivered = false;
-		if (counts) {requestedHandoff.enforcementAttempts += 1;}
+		if (counts) {
+			requestedHandoff.enforcementAttempts += 1;
+		}
 		if (exhausted) {
 			const notice = buildHandoffCancellationNotice(state.readonlyEnabled);
 			state.pendingRequestedHandoff = null;

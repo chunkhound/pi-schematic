@@ -13,12 +13,16 @@ let h: TestHarness;
 
 // Every render here has a child session in state, so the spawn renderer returns its nested session component.
 function nestedComponent(component: Component): NestedAgentSessionComponent {
-	if (!(component instanceof NestedAgentSessionComponent)) {throw new Error("Expected the spawn renderer to return its nested session component.");}
+	if (!(component instanceof NestedAgentSessionComponent)) {
+		throw new Error("Expected the spawn renderer to return its nested session component.");
+	}
 	return component;
 }
 
 async function makeChildSpawnTool(state: SchematicState) {
-	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
+	const pi = await createTestHost((api) => {
+		registerSpawnTool(api, state);
+	});
 	const renderResult = getToolRenderResult(pi, "spawn");
 	return { renderResult: (...args: Parameters<ToolRenderResult>) => nestedComponent(renderResult(...args)) };
 }
@@ -45,7 +49,9 @@ test("harness captures every forbidden console output level", () => {
 
 test("frame scheduler requeues a throwing target without diagnostics and recovers", () => {
 	const scheduler = getSingletons().frameScheduler;
-	const failingFlushes = vi.fn().mockImplementationOnce(() => { throw new Error("throw once"); });
+	const failingFlushes = vi.fn().mockImplementationOnce(() => {
+		throw new Error("throw once");
+	});
 	const failingRenders = vi.fn();
 	const healthyFlushes = vi.fn();
 	const healthyRenders = vi.fn();
@@ -81,7 +87,9 @@ test("frame scheduler requeues a throwing target without diagnostics and recover
 test("frame scheduler contains invalidate callback failures and continues healthy callbacks", () => {
 	const scheduler = getSingletons().frameScheduler;
 	const failingFlushes = vi.fn();
-	const failingInvalidates = vi.fn().mockImplementationOnce(() => { throw new Error("invalidate once"); });
+	const failingInvalidates = vi.fn().mockImplementationOnce(() => {
+		throw new Error("invalidate once");
+	});
 	const healthyInvalidates = vi.fn();
 	const failing = {
 		flushPendingUpdates: failingFlushes,
@@ -103,7 +111,9 @@ test("frame scheduler contains invalidate callback failures and continues health
 
 	scheduler.markDirty(failing);
 	scheduler.markDirty(healthy);
-	expect(() => { flushSpawnFrameScheduler(); }).not.toThrow();
+	expect(() => {
+		flushSpawnFrameScheduler();
+	}).not.toThrow();
 	expect(failingInvalidates).toHaveBeenCalledOnce();
 	expect(healthyInvalidates).toHaveBeenCalledOnce();
 	expect(h.warnings).toStrictEqual([]);
@@ -126,9 +136,13 @@ test("frame scheduler creates only one timer for a failed-target recovery frame"
 		vi.useRealTimers();
 	});
 	const failing = {
-		flushPendingUpdates() { throw new Error("retry later"); },
+		flushPendingUpdates() {
+			throw new Error("retry later");
+		},
 		clearRenderCache: vi.fn(),
-		flushScheduledRender() { return undefined; },
+		flushScheduledRender() {
+			return undefined;
+		},
 	};
 
 	scheduler.markDirty(failing);
@@ -237,7 +251,10 @@ test("nested spawn dispose stops event processing", async () => {
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
 	const after = component.render(120);
 
-	expect(after.filter((line: string) => line.includes("thinking")), `unexpected post-dispose update: ${after.join("\n")}`).toStrictEqual([]);
+	expect(
+		after.filter((line: string) => line.includes("thinking")),
+		`unexpected post-dispose update: ${after.join("\n")}`,
+	).toStrictEqual([]);
 });
 
 test("nested spawn dispose aborts but does not dispose a claimed live child session", async () => {
@@ -364,7 +381,9 @@ test("nested spawn retries a throw-once parent invalidate without a new child ev
 	const { session, emit } = createSubscribableSession([]);
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
-	const invalidate = vi.fn().mockImplementationOnce(() => { throw new Error("invalidate once"); });
+	const invalidate = vi.fn().mockImplementationOnce(() => {
+		throw new Error("invalidate once");
+	});
 
 	childSpawnTool.renderResult(
 		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
@@ -374,7 +393,9 @@ test("nested spawn retries a throw-once parent invalidate without a new child ev
 	);
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	expect(() => { flushSpawnFrameScheduler(); }).not.toThrow();
+	expect(() => {
+		flushSpawnFrameScheduler();
+	}).not.toThrow();
 	expect(invalidate).toHaveBeenCalledOnce();
 
 	flushSpawnFrameScheduler();
@@ -403,7 +424,9 @@ test("nested spawn does not restore a failed invalidate after disposal", async (
 	);
 
 	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	expect(() => { flushSpawnFrameScheduler(); }).not.toThrow();
+	expect(() => {
+		flushSpawnFrameScheduler();
+	}).not.toThrow();
 	expect(invalidate).toHaveBeenCalledOnce();
 	flushSpawnFrameScheduler();
 	expect(invalidate, "dispose prevents stale render restoration").toHaveBeenCalledOnce();
@@ -415,18 +438,19 @@ test("nested spawn ignores child renderer invalidations during parent rebuild", 
 	const childSpawnTool = await makeChildSpawnTool(state);
 	const { session } = createSubscribableSession([]);
 	Object.assign(session, {
-		getToolDefinition: (toolName: string) => toolName === "reentrant"
-			? {
-				name: "reentrant",
-				renderCall(_args: unknown, _theme: unknown, context: { state: Record<string, unknown>; invalidate: () => void }) {
-					if (context.state.didInvalidate !== true) {
-						context.state.didInvalidate = true;
-						context.invalidate();
+		getToolDefinition: (toolName: string) =>
+			toolName === "reentrant"
+				? {
+						name: "reentrant",
+						renderCall(_args: unknown, _theme: unknown, context: { state: Record<string, unknown>; invalidate: () => void }) {
+							if (context.state.didInvalidate !== true) {
+								context.state.didInvalidate = true;
+								context.invalidate();
+							}
+							return { render: () => ["reentrant"] };
+						},
 					}
-					return { render: () => ["reentrant"] };
-				},
-			}
-			: undefined,
+				: undefined,
 	});
 	state.childSessions.set("tool-call-1", session);
 	state.liveChildSessions.set("tool-call-1", session);
@@ -442,10 +466,12 @@ test("nested spawn ignores child renderer invalidations during parent rebuild", 
 	expect(invalidate, "initial empty attach does not invalidate").not.toHaveBeenCalled();
 
 	Object.assign(session, {
-		messages: [{
-			role: "assistant",
-			content: [{ type: "toolCall", id: "tc-1", name: "reentrant", arguments: {} }],
-		}],
+		messages: [
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc-1", name: "reentrant", arguments: {} }],
+			},
+		],
 	});
 	component.invalidate();
 	flushSpawnFrameScheduler();

@@ -57,9 +57,7 @@ const PRODUCTION_SYNTAX = [
 		message: "Writing to process.stdout or process.stderr corrupts pi's TUI.",
 	},
 ];
-const TEST_SYNTAX = [
-	URL_PATHNAME,
-];
+const TEST_SYNTAX = [URL_PATHNAME];
 
 // A ban that had violations when it landed is a core rule registered under its own ID, because
 // eslint-suppressions.json keeps one count per file and rule: bans sharing no-restricted-imports or
@@ -187,10 +185,7 @@ export default defineConfig([
 		files: ["**/*.ts", "**/*.mjs", "**/*.js"],
 		ignores: ["pi-packages.mjs"],
 		rules: {
-			"no-restricted-properties": [
-				"error",
-				{ object: "module", property: "findPackageJSON", message: "Only pi-packages.mjs locates package manifests." },
-			],
+			"no-restricted-properties": ["error", { object: "module", property: "findPackageJSON", message: "Only pi-packages.mjs locates package manifests." }],
 			"ban/find-package-json-import": [
 				"error",
 				...["node:module", "module"].map((name) => ({
@@ -479,7 +474,8 @@ export default defineConfig([
 			"ban/wall-clock": [
 				"error",
 				{
-					selector: "CallExpression[callee.type='MemberExpression'][callee.object.name='Date']:matches([callee.computed=false][callee.property.name='now'], [callee.computed=true][callee.property.value='now'])",
+					selector:
+						"CallExpression[callee.type='MemberExpression'][callee.object.name='Date']:matches([callee.computed=false][callee.property.name='now'], [callee.computed=true][callee.property.value='now'])",
 					message: "Do not read the wall clock in tests.",
 				},
 				{ selector: "NewExpression[callee.name='Date'][arguments.length=0]", message: "Do not read the wall clock in tests." },
@@ -491,7 +487,8 @@ export default defineConfig([
 					message: "Do not replace console methods in tests.",
 				},
 				{
-					selector: "CallExpression[callee.type='MemberExpression'][callee.object.name='Object'][callee.computed=false][callee.property.name=/^(assign|defineProperty|defineProperties)$/][arguments.0.type='Identifier'][arguments.0.name='console']",
+					selector:
+						"CallExpression[callee.type='MemberExpression'][callee.object.name='Object'][callee.computed=false][callee.property.name=/^(assign|defineProperty|defineProperties)$/][arguments.0.type='Identifier'][arguments.0.name='console']",
 					message: "Do not replace console methods in tests.",
 				},
 			],

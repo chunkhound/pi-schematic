@@ -56,17 +56,27 @@ function handlerContext(overrides: Partial<ExtensionContext> = {}): ExtensionCon
  */
 async function runContextHandler(pi: TestPI, event: unknown, ctx: unknown): Promise<{ messages: Record<string, unknown>[] } | undefined> {
 	const [result] = await callHandlers(pi, "context", event, ctx);
-	if (result === undefined) {return undefined;}
-	if (!isRecord(result) || !Array.isArray(result.messages)) {throw new Error("The context handler returned something other than messages.");}
+	if (result === undefined) {
+		return undefined;
+	}
+	if (!isRecord(result) || !Array.isArray(result.messages)) {
+		throw new Error("The context handler returned something other than messages.");
+	}
 	const messages: unknown[] = result.messages;
-	if (!messages.every(isRecord)) {throw new Error("The context handler returned a message that is not an object.");}
+	if (!messages.every(isRecord)) {
+		throw new Error("The context handler returned a message that is not an object.");
+	}
 	return { messages };
 }
 
 /** The `field` member of an appended entry's data; the extension writes every entry's data as an object. */
 function dataField(entry: AppendedEntry | undefined, field: string): unknown {
-	if (entry === undefined) {return undefined;}
-	if (!isRecord(entry.data)) {throw new Error(`The "${entry.customType}" entry's data is not an object.`);}
+	if (entry === undefined) {
+		return undefined;
+	}
+	if (!isRecord(entry.data)) {
+		throw new Error(`The "${entry.customType}" entry's data is not an object.`);
+	}
 	return entry.data[field];
 }
 
@@ -91,7 +101,9 @@ function makeNotifyBeforeStartCtx() {
 		ctx: handlerContext({
 			hasUI: true,
 			ui: createUIContext({
-				notify: (message, level) => { notifications.push({ message, level }); },
+				notify: (message, level) => {
+					notifications.push({ message, level });
+				},
 				setStatus: vi.fn(),
 				setWidget: vi.fn(),
 			}),
@@ -129,11 +141,7 @@ function makeSkill(name: string, filePath: string) {
 	};
 }
 
-async function runPromptToggle(
-	text: string,
-	readonly: boolean,
-	name = text.slice(1),
-): Promise<{ toolCall: ToolCall; pi: TestPI }> {
+async function runPromptToggle(text: string, readonly: boolean, name = text.slice(1)): Promise<{ toolCall: ToolCall; pi: TestPI }> {
 	const dir = await tmpDir();
 	onTestFinished(() => rm(dir, { recursive: true, force: true }));
 	const filePath = await writePrompt(dir, name, readonly);
@@ -191,7 +199,9 @@ testWithDir("embedded-slash prompt and skill tokens do not apply readonly frontm
 		const { pi, toolCall } = await registerReadonlyPI();
 		const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 		const ctx = makeBeforeStartCtx();
-		if (scenario.type === "prompt") {pi.setCommands([makePromptCommand("review", filePath)]);}
+		if (scenario.type === "prompt") {
+			pi.setCommands([makePromptCommand("review", filePath)]);
+		}
 
 		const result = await inputHandler({ text: scenario.text, source: "interactive" }, ctx);
 		expect(result).toStrictEqual({ action: "continue" });
@@ -240,7 +250,6 @@ testWithDir("before_agent_start skips readonly cache population while no slash-c
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 	expect(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-frontmatter-issue")).toBeUndefined();
 });
-
 
 testWithDir("input handler queues a prompt command even when the registry is unavailable until before_agent_start", async ({ dir }) => {
 	const filePath = await writePrompt(dir, "late-review", true);
@@ -337,9 +346,13 @@ testWithDir("unresolved /name uses trusted cwd/.pi/prompts frontmatter via defer
 	await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
-	expect(dataField(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly"), "enabled")).toBe(true);
+	expect(
+		dataField(
+			getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly"),
+			"enabled",
+		),
+	).toBe(true);
 });
-
 
 testWithDir("unresolved /name uses ~/.pi/agent/prompts frontmatter via deferred fallback", async ({ dir: workspace }) => {
 	await withTempHome(async (homeDir) => {
@@ -354,7 +367,12 @@ testWithDir("unresolved /name uses ~/.pi/agent/prompts frontmatter via deferred 
 		await beforeStartHandler(createBeforeAgentStartEvent({ skills: [] }), ctx);
 
 		expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
-		expect(dataField(getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly"), "enabled")).toBe(true);
+		expect(
+			dataField(
+				getHostRecords(pi).appendedEntries.find((entry) => entry.customType === "pi-schematic-readonly"),
+				"enabled",
+			),
+		).toBe(true);
 	});
 });
 
@@ -418,10 +436,7 @@ testWithDir("queued slash commands are consumed FIFO across before_agent_start c
 	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const ctx = makeBeforeStartCtx();
-	pi.setCommands([
-		makePromptCommand("cmd-a", filePathA),
-		makePromptCommand("cmd-b", filePathB),
-	]);
+	pi.setCommands([makePromptCommand("cmd-a", filePathA), makePromptCommand("cmd-b", filePathB)]);
 
 	await inputHandler({ text: "/cmd-a", source: "interactive" }, ctx);
 	await inputHandler({ text: "/cmd-b", source: "interactive" }, ctx);
@@ -571,10 +586,7 @@ testWithDir("invalid queued frontmatter warns and the next valid queued command 
 	const { pi, toolCall } = await registerReadonlyPI();
 	const { inputHandler, beforeStartHandler } = frontmatterHandlers(pi);
 	const { ctx, notifications } = makeNotifyBeforeStartCtx();
-	pi.setCommands([
-		makePromptCommand("broken-then-valid", brokenPath),
-		makePromptCommand("valid-after-broken", validPath),
-	]);
+	pi.setCommands([makePromptCommand("broken-then-valid", brokenPath), makePromptCommand("valid-after-broken", validPath)]);
 
 	await inputHandler({ text: "/broken-then-valid", source: "interactive" }, ctx);
 	await inputHandler({ text: "/valid-after-broken", source: "interactive" }, ctx);
@@ -791,7 +803,9 @@ async function assertHandoffAlignment(name: string, readonly: boolean, direction
 				getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
 			}),
 		);
-		const nudge = result?.messages?.filter((message): message is CustomAgentMessage => "customType" in message && message.customType === "pi-schematic-watchdog").at(-1);
+		const nudge = result?.messages
+			?.filter((message): message is CustomAgentMessage => "customType" in message && message.customType === "pi-schematic-watchdog")
+			.at(-1);
 		assertPresent(nudge, "the context hook must deliver a pending-handoff watchdog nudge");
 		if (readonly) {
 			expect(nudge.content).toMatch(/temporary handoff exception active/);

@@ -68,7 +68,9 @@ export function reconstructNotebook(state: SchematicState, branch: readonly (Ses
 	let committedEpoch: number | null = null;
 	let maxObservedEpoch = 0;
 	for (const entry of branch) {
-		if (entry?.type !== "custom") {continue;}
+		if (entry?.type !== "custom") {
+			continue;
+		}
 		const customEntry = entry;
 		if (customEntry.customType === GENERATION_ENTRY_TYPE) {
 			const data = customEntry.data as NotebookGenerationData | undefined;
@@ -78,7 +80,9 @@ export function reconstructNotebook(state: SchematicState, branch: readonly (Ses
 			}
 			continue;
 		}
-		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) {continue;}
+		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) {
+			continue;
+		}
 		const data = customEntry.data as NotebookEntryData | undefined;
 		if (isKnownNotebookVersion(data?.version) && (data?.name ?? "") && typeof data?.content === "string") {
 			if (isNotebookEpoch(data.epoch)) {
@@ -96,12 +100,24 @@ export function reconstructNotebook(state: SchematicState, branch: readonly (Ses
 	const candidates = new Map<string, NotebookCandidate>();
 	for (let i = branch.length - 1; i >= 0; i--) {
 		const entry = branch[i];
-		if (entry?.type !== "custom") {continue;}
+		if (entry?.type !== "custom") {
+			continue;
+		}
 		const customEntry = entry;
-		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) {continue;}
+		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) {
+			continue;
+		}
 		const data = customEntry.data as NotebookEntryData | undefined;
 		const epoch = isNotebookEpoch(data?.epoch) ? data.epoch : 0;
-		if (!isKnownNotebookVersion(data?.version) || !(data?.name ?? "") || typeof data?.content !== "string" || epoch !== currentEpoch || candidates.has(data.name)) {continue;}
+		if (
+			!isKnownNotebookVersion(data?.version) ||
+			!(data?.name ?? "") ||
+			typeof data?.content !== "string" ||
+			epoch !== currentEpoch ||
+			candidates.has(data.name)
+		) {
+			continue;
+		}
 		candidates.set(data.name, { epoch, content: data.content, clipped: data.clipped === true });
 	}
 
@@ -109,7 +125,9 @@ export function reconstructNotebook(state: SchematicState, branch: readonly (Ses
 	state.clippedPages.clear();
 	for (const [name, candidate] of candidates) {
 		state.notebookPages.set(name, candidate.content);
-		if (candidate.clipped) {state.clippedPages.add(name);}
+		if (candidate.clipped) {
+			state.clippedPages.add(name);
+		}
 	}
 }
 
@@ -125,15 +143,14 @@ export function ensureNotebookToolsActive(pi: ExtensionAPI): void {
 		active.push("notebook_index");
 		changed = true;
 	}
-	if (changed) {pi.setActiveTools(active);}
+	if (changed) {
+		pi.setActiveTools(active);
+	}
 }
 
 // ── Registration ──────────────────────────────────────────────────────
 
-export function registerNotebookRehydration(
-	pi: ExtensionAPI,
-	state: SchematicState,
-): void {
+export function registerNotebookRehydration(pi: ExtensionAPI, state: SchematicState): void {
 	pi.on("session_start", (_event, ctx) => {
 		reconstructNotebook(state, ctx.sessionManager.getBranch());
 		ensureNotebookToolsActive(pi);

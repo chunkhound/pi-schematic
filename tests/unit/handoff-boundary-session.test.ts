@@ -25,14 +25,7 @@ import {
 	type SessionBoundaryDraft,
 	type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import {
-	fauxAssistantMessage,
-	fauxProvider,
-	fauxToolCall,
-	getCurrentSystemPrompt,
-	type FauxResponseFactory,
-	type Message,
-} from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentSystemPrompt, type FauxResponseFactory, type Message } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import registerSchematic from "../../index.js";
 import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
@@ -101,10 +94,7 @@ beforeAll(async () => {
 });
 
 /** Narrows `entry` to the session entry type `type`; the type check is the one counted assertion. */
-function assertEntryType<T extends SessionEntry["type"]>(
-	entry: SessionEntry,
-	type: T,
-): asserts entry is Extract<SessionEntry, { type: T }> {
+function assertEntryType<T extends SessionEntry["type"]>(entry: SessionEntry, type: T): asserts entry is Extract<SessionEntry, { type: T }> {
 	expect(entry.type).toBe(type);
 }
 
@@ -129,7 +119,9 @@ function observer(observed: Observed): ExtensionFactory {
 			observed.usageAtContext.push(ctx.getContextUsage());
 		});
 		pi.on("tool_call", (event, ctx) => {
-			if (event.toolName === "handoff") {observed.usageAtHandoffCall.push(ctx.getContextUsage());}
+			if (event.toolName === "handoff") {
+				observed.usageAtHandoffCall.push(ctx.getContextUsage());
+			}
 		});
 	};
 }
@@ -144,9 +136,13 @@ function recordingUI(log: string[]): ExtensionUIContext {
 		select: () => Promise.resolve(undefined),
 		confirm: () => Promise.resolve(false),
 		input: () => Promise.resolve(undefined),
-		notify: (message: string, type?: string) => { log.push(`notify:${type ?? "info"}:${message}`); },
+		notify: (message: string, type?: string) => {
+			log.push(`notify:${type ?? "info"}:${message}`);
+		},
 		onTerminalInput: () => vi.fn(),
-		setStatus: (key: string, text: string | undefined) => { log.push(`status:${key}:${String(text)}`); },
+		setStatus: (key: string, text: string | undefined) => {
+			log.push(`status:${key}:${String(text)}`);
+		},
 		setWorkingMessage: vi.fn(),
 		setWorkingVisible: vi.fn(),
 		setWorkingIndicator: vi.fn(),
@@ -188,10 +184,12 @@ async function startSession(
 		extensionErrors: [],
 	};
 	const faux = fauxProvider();
-	faux.setResponses(responses.map((respond): FauxResponseFactory => (context, ...rest) => {
-		observed.requests.push(context.messages);
-		return respond(context, ...rest);
-	}));
+	faux.setResponses(
+		responses.map((respond): FauxResponseFactory => (context, ...rest) => {
+			observed.requests.push(context.messages);
+			return respond(context, ...rest);
+		}),
+	);
 	const modelRuntime = await ModelRuntime.create({
 		authPath: join(sandboxDir, "auth.json"),
 		modelsPath: null,
@@ -217,7 +215,9 @@ async function startSession(
 		sessionManager,
 		resourceLoader,
 	});
-	onTestFinished(() => { session.dispose(); });
+	onTestFinished(() => {
+		session.dispose();
+	});
 	await session.bindExtensions({
 		...(extensions.ui === undefined ? {} : { uiContext: extensions.ui }),
 		onError: (error) => observed.extensionErrors.push(`${error.event}: ${error.error}`),
@@ -225,13 +225,21 @@ async function startSession(
 	return { session, sessionManager, observed };
 }
 
-const reply = (text: string): FauxResponseFactory => () => fauxAssistantMessage(text);
-const call = (...calls: ReturnType<typeof fauxToolCall>[]): FauxResponseFactory => () => fauxAssistantMessage(calls);
+const reply =
+	(text: string): FauxResponseFactory =>
+	() =>
+		fauxAssistantMessage(text);
+const call =
+	(...calls: ReturnType<typeof fauxToolCall>[]): FauxResponseFactory =>
+	() =>
+		fauxAssistantMessage(calls);
 const handoffCall = (args: Record<string, unknown> = {}) =>
 	fauxToolCall("handoff", { nextInstruction: NEXT_INSTRUCTION, context: HANDOFF_CONTEXT, ...args }, { id: "call-handoff" });
 
 function messageText(message: Message): string {
-	if (typeof message.content === "string") {return message.content;}
+	if (typeof message.content === "string") {
+		return message.content;
+	}
 	return message.content.map((block) => ("text" in block ? block.text : "")).join("");
 }
 
@@ -240,8 +248,9 @@ function nonSystem(request: Message[]): Message[] {
 }
 
 function entriesOf(sessionManager: SessionManager, type: string, customType?: string): SessionEntry[] {
-	return sessionManager.getBranch().filter((entry) =>
-		entry.type === type && (customType === undefined || ("customType" in entry && entry.customType === customType)));
+	return sessionManager
+		.getBranch()
+		.filter((entry) => entry.type === type && (customType === undefined || ("customType" in entry && entry.customType === customType)));
 }
 
 function toolResultFor(sessionManager: SessionManager, toolCallId: string) {
@@ -254,12 +263,16 @@ function toolResultFor(sessionManager: SessionManager, toolCallId: string) {
 }
 
 /** First line of the eligible required-handoff nudge the context hook appends. */
-const REQUIRED_NUDGE_LINE = buildNudge({
-	activeNotebookTopic: null,
-	pendingTopicBoundaryHint: null,
-	readonlyEnabled: false,
-	pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: "x" },
-}, null, true).split("\n")[0];
+const REQUIRED_NUDGE_LINE = buildNudge(
+	{
+		activeNotebookTopic: null,
+		pendingTopicBoundaryHint: null,
+		readonlyEnabled: false,
+		pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: "x" },
+	},
+	null,
+	true,
+).split("\n")[0];
 
 function carriesRequiredNudge(request: Message[]): boolean {
 	const last = request.at(-1);
@@ -270,25 +283,29 @@ function carriesRequiredNudge(request: Message[]): boolean {
 async function settle(session: AgentSession, done: Promise<void>, what: string): Promise<void> {
 	await Promise.race([
 		done,
-		new Promise<never>((_, reject) => setTimeout(() => { reject(new Error(`timed out waiting for ${what}`)); }, 10_000).unref()),
+		new Promise<never>((_, reject) =>
+			setTimeout(() => {
+				reject(new Error(`timed out waiting for ${what}`));
+			}, 10_000).unref(),
+		),
 	]);
 	await session.waitForIdle();
 }
 
 /** Wait until `runs` runs have settled; a /handoff command's run starts after prompt() returns, so waitForIdle alone can return before it. */
 async function settleRuns(session: AgentSession, observed: Observed, runs: number): Promise<void> {
-	await vi.waitFor(() => {
-		expect(observed.events.filter((name) => name === "agent_settled").length, "settled runs").toBeGreaterThanOrEqual(runs);
-	}, { timeout: 10_000, interval: 5 });
+	await vi.waitFor(
+		() => {
+			expect(observed.events.filter((name) => name === "agent_settled").length, "settled runs").toBeGreaterThanOrEqual(runs);
+		},
+		{ timeout: 10_000, interval: 5 },
+	);
 	await session.waitForIdle();
 }
 
 describe("handoff boundary in a real agent session", () => {
 	it("cuts and runs the successor in the same run when the model calls handoff", async () => {
-		const { session, sessionManager, observed } = await startSession([
-			call(handoffCall()),
-			reply("successor answer"),
-		]);
+		const { session, sessionManager, observed } = await startSession([call(handoffCall()), reply("successor answer")]);
 		await session.prompt(LARGE_PROMPT);
 		await session.waitForIdle();
 
@@ -416,8 +433,12 @@ describe("handoff boundary in a real agent session", () => {
 			expect(entriesOf(sessionManager, "compaction"), "no cut is written").toStrictEqual([]);
 			expect(entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE), "nothing was staged, so nothing fails").toStrictEqual([]);
 			expect(observed.requests, "the batch did not end the run; the model was asked again").toHaveLength(2);
-			expect(nonSystem(observed.requests[1]).filter((message) => message.role === "toolResult").map(messageText),
-				"the next request carries the refusal").toContain(HANDOFF_NOT_ALONE_REFUSAL);
+			expect(
+				nonSystem(observed.requests[1])
+					.filter((message) => message.role === "toolResult")
+					.map(messageText),
+				"the next request carries the refusal",
+			).toContain(HANDOFF_NOT_ALONE_REFUSAL);
 			expect(observed.extensionErrors).toStrictEqual([]);
 		});
 	}
@@ -439,11 +460,7 @@ describe("handoff boundary in a real agent session", () => {
 
 		const labels = sessionManager.getBranch().map(entryLabel);
 		const cutIndex = labels.indexOf("compaction");
-		expect(labels.slice(cutIndex - 3, cutIndex)).toStrictEqual([
-			"custom:notebook-generation",
-			"custom:notebook-entry",
-			"custom:notebook-generation",
-		]);
+		expect(labels.slice(cutIndex - 3, cutIndex)).toStrictEqual(["custom:notebook-generation", "custom:notebook-entry", "custom:notebook-generation"]);
 		const indexResult = toolResultFor(sessionManager, "call-index");
 		assertPresent(indexResult, "the successor ran notebook_index");
 		const indexText = messageText(indexResult);
@@ -459,13 +476,17 @@ describe("handoff boundary in a real agent session", () => {
 		const handoffRequested = createDeferred();
 		const nextRunRequested = createDeferred();
 		const { session, sessionManager, observed } = await startSession(
-			[reply("ready"), () => {
-				handoffRequested.resolve();
-				return fauxAssistantMessage([handoffCall()]);
-			}, () => {
-				nextRunRequested.resolve();
-				return fauxAssistantMessage("next run answer");
-			}],
+			[
+				reply("ready"),
+				() => {
+					handoffRequested.resolve();
+					return fauxAssistantMessage([handoffCall()]);
+				},
+				() => {
+					nextRunRequested.resolve();
+					return fauxAssistantMessage("next run answer");
+				},
+			],
 			{ after: [stopContinuation] },
 		);
 		await session.prompt(LARGE_PROMPT);
@@ -479,8 +500,9 @@ describe("handoff boundary in a real agent session", () => {
 		expect(requestsAfterHandoffRun, "the successor turn did not run").toBe(2);
 		expect(entriesOf(sessionManager, "compaction"), "the cut is persisted").toHaveLength(1);
 		expect(observed.extensionErrors, "the next /handoff was accepted").toStrictEqual([]);
-		expect(nonSystem(observed.requests[2]).map(messageText),
-			"the next run's request carries the persisted successor").toContain(buildNextUserMessage({ nextInstruction: "finish the report", context: HANDOFF_CONTEXT }));
+		expect(nonSystem(observed.requests[2]).map(messageText), "the next run's request carries the persisted successor").toContain(
+			buildNextUserMessage({ nextInstruction: "finish the report", context: HANDOFF_CONTEXT }),
+		);
 	});
 
 	it("completes the handoff and keeps the successor for the next prompt when the run is aborted after the cut", async () => {
@@ -500,10 +522,10 @@ describe("handoff boundary in a real agent session", () => {
 			});
 		};
 		const ui: string[] = [];
-		const { session, sessionManager, observed } = await startSession(
-			[reply("ready"), call(handoffCall()), reply("next prompt answer")],
-			{ after: [abortAfterCut], ui: recordingUI(ui) },
-		);
+		const { session, sessionManager, observed } = await startSession([reply("ready"), call(handoffCall()), reply("next prompt answer")], {
+			after: [abortAfterCut],
+			ui: recordingUI(ui),
+		});
 		await session.prompt(LARGE_PROMPT);
 		await session.prompt("/handoff finish the report");
 		await settleRuns(session, observed, 2);
@@ -527,8 +549,9 @@ describe("handoff boundary in a real agent session", () => {
 		expect(ui, JSON.stringify(ui)).toContain(`notify:info:${formatHandoffComplete(false, 0, 0)}`);
 		expect(ui, JSON.stringify(ui)).not.toContain(`notify:warning:${HANDOFF_SUCCESSOR_NOT_RUN}`);
 		expect(observed.requests[2], "the request was finalized, so the next prompt is not enforced").not.toSatisfy(carriesRequiredNudge);
-		expect(nonSystem(observed.requests[2]).map(messageText),
-			"the next prompt's request carries the successor").toContain(buildNextUserMessage({ nextInstruction: "finish the report", context: HANDOFF_CONTEXT }));
+		expect(nonSystem(observed.requests[2]).map(messageText), "the next prompt's request carries the successor").toContain(
+			buildNextUserMessage({ nextInstruction: "finish the report", context: HANDOFF_CONTEXT }),
+		);
 		expect(observed.extensionErrors).toStrictEqual([]);
 	});
 
@@ -642,9 +665,13 @@ describe("failed handoff cut in a real agent session", () => {
 			assertEntryType(failure, "custom_message");
 			expect(failure.content).toBe(guidance);
 			expect(failure.display).toBe(true);
-			const userTexts = sessionManager.getBranch().flatMap((entry) =>
-				entry.type === "message" && entry.message.role === "user" ? [messageText(entry.message as Message)] : []);
-			expect(userTexts.filter((text) => text.includes("Handoff failed")), "no user message announces the failure").toStrictEqual([]);
+			const userTexts = sessionManager
+				.getBranch()
+				.flatMap((entry) => (entry.type === "message" && entry.message.role === "user" ? [messageText(entry.message as Message)] : []));
+			expect(
+				userTexts.filter((text) => text.includes("Handoff failed")),
+				"no user message announces the failure",
+			).toStrictEqual([]);
 			expect(observed.requests.at(-1) ?? [], "the request stays pending and is enforced on the next prompt").toSatisfy(carriesRequiredNudge);
 			expect(observed.extensionErrors).toStrictEqual([]);
 		});
@@ -666,14 +693,21 @@ describe("failed handoff cut in a real agent session", () => {
 			let tampered = false;
 			const tamperBoundary: ExtensionFactory = (pi) => {
 				pi.on("turn_end", (event) => {
-					if (tampered || event.entries.length === 0) {return undefined;}
+					if (tampered || event.entries.length === 0) {
+						return undefined;
+					}
 					tampered = true;
 					return { entries: variant.tamper(event.entries) };
 				});
 			};
 			const ui: string[] = [];
 			const { session, sessionManager, observed } = await startSession(
-				[reply("ready"), call(handoffCall()), call(fauxToolCall("handoff", { nextInstruction: NEXT_INSTRUCTION }, { id: "call-later" })), reply("successor answer")],
+				[
+					reply("ready"),
+					call(handoffCall()),
+					call(fauxToolCall("handoff", { nextInstruction: NEXT_INSTRUCTION }, { id: "call-later" })),
+					reply("successor answer"),
+				],
 				{ after: [tamperBoundary], ui: recordingUI(ui) },
 			);
 			await session.prompt(LARGE_PROMPT);
@@ -694,8 +728,13 @@ describe("failed handoff cut in a real agent session", () => {
 			expect(failure.content, "the failure carries the instruction").toContain("## Next instruction\n\nfinish the report");
 			expect(failure.content, "the failure carries the context").toContain(HANDOFF_CONTEXT);
 			expect(failure.display).toBe(true);
-			expect(uiAfterHandoffRun, JSON.stringify(uiAfterHandoffRun)).toContain(`notify:error:Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}. The instruction is in the failure message.`);
-			expect(uiAfterHandoffRun.filter((line) => line.startsWith("notify:info:Handoff complete")), "no completion notice").toStrictEqual([]);
+			expect(uiAfterHandoffRun, JSON.stringify(uiAfterHandoffRun)).toContain(
+				`notify:error:Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}. The instruction is in the failure message.`,
+			);
+			expect(
+				uiAfterHandoffRun.filter((line) => line.startsWith("notify:info:Handoff complete")),
+				"no completion notice",
+			).toStrictEqual([]);
 			expect(uiAfterHandoffRun, "no successor-not-run warning").not.toContain(`notify:warning:${HANDOFF_SUCCESSOR_NOT_RUN}`);
 			const nextRequest = nonSystem(observed.requests[2]).map(messageText);
 			expect(nextRequest, "no successor reaches the next run").not.toContain(lostSuccessor);
@@ -715,15 +754,13 @@ describe("failed handoff cut in a real agent session", () => {
 
 	it("fails the handoff at settle without an abort and clears the request when a later extension drops the successor and stops the continuation", async () => {
 		const dropSuccessorAndStop: ExtensionFactory = (pi) => {
-			pi.on("turn_end", (event) => (event.entries.length > 0
-				? { entries: lostSuccessorVariants[0].tamper(event.entries), continue: false }
-				: undefined));
+			pi.on("turn_end", (event) => (event.entries.length > 0 ? { entries: lostSuccessorVariants[0].tamper(event.entries), continue: false } : undefined));
 		};
 		const ui: string[] = [];
-		const { session, sessionManager, observed } = await startSession(
-			[reply("ready"), call(handoffCall()), reply("next prompt answer")],
-			{ after: [dropSuccessorAndStop], ui: recordingUI(ui) },
-		);
+		const { session, sessionManager, observed } = await startSession([reply("ready"), call(handoffCall()), reply("next prompt answer")], {
+			after: [dropSuccessorAndStop],
+			ui: recordingUI(ui),
+		});
 		await session.prompt(LARGE_PROMPT);
 		await session.prompt("/handoff finish the report");
 		await settleRuns(session, observed, 2);
@@ -732,8 +769,9 @@ describe("failed handoff cut in a real agent session", () => {
 		await settleRuns(session, observed, 3);
 
 		expect(requestsAfterHandoffRun, "the stopped continuation made no request").toBe(2);
-		const abortedReplies = sessionManager.getBranch().filter((entry) =>
-			entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason === "aborted");
+		const abortedReplies = sessionManager
+			.getBranch()
+			.filter((entry) => entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason === "aborted");
 		expect(abortedReplies, "nothing was aborted").toStrictEqual([]);
 		const failures = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE);
 		expect(failures).toHaveLength(1);
@@ -743,7 +781,10 @@ describe("failed handoff cut in a real agent session", () => {
 		expect(failure.content, "the failure carries the instruction").toContain("## Next instruction\n\nfinish the report");
 		expect(failure.content, "the failure carries the context").toContain(HANDOFF_CONTEXT);
 		expect(ui, JSON.stringify(ui)).toContain(`notify:error:Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}. The instruction is in the failure message.`);
-		expect(ui.filter((line) => line.startsWith("notify:info:Handoff complete")), "no completion notice").toStrictEqual([]);
+		expect(
+			ui.filter((line) => line.startsWith("notify:info:Handoff complete")),
+			"no completion notice",
+		).toStrictEqual([]);
 		expect(ui, "no successor-not-run warning").not.toContain(`notify:warning:${HANDOFF_SUCCESSOR_NOT_RUN}`);
 		expect(observed.requests[2], "the request was cleared, so the next prompt is not enforced").not.toSatisfy(carriesRequiredNudge);
 		expect(observed.extensionErrors).toStrictEqual([]);
@@ -752,15 +793,21 @@ describe("failed handoff cut in a real agent session", () => {
 	it("writes no cut, persists the abort failure and starts no new run when the run is aborted", async () => {
 		const abortOnHandoffResult: ExtensionFactory = (pi) => {
 			pi.on("turn_end", (event, ctx) => {
-				if (event.toolResults.some((result) => result.toolName === "handoff")) {ctx.abort();}
+				if (event.toolResults.some((result) => result.toolName === "handoff")) {
+					ctx.abort();
+				}
 			});
 		};
 		const handoffRequested = createDeferred();
 		const { session, sessionManager, observed } = await startSession(
-			[reply("ready"), () => {
-				handoffRequested.resolve();
-				return fauxAssistantMessage([handoffCall()]);
-			}, reply("next prompt answer")],
+			[
+				reply("ready"),
+				() => {
+					handoffRequested.resolve();
+					return fauxAssistantMessage([handoffCall()]);
+				},
+				reply("next prompt answer"),
+			],
 			{ before: [abortOnHandoffResult] },
 		);
 		await session.prompt(LARGE_PROMPT);
@@ -864,11 +911,14 @@ describe("failed handoff cut in a real agent session", () => {
 		const ui: string[] = [];
 		const { sessionManager, observed, uiBeforeLastPrompt: uiAtExhaustingSettle } = await exhaustHandoffBudget({ entries: [] }, ui);
 
-		const failures = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE)
-			.map((entry) => (entry.type === "custom_message" ? entry.content : undefined));
+		const failures = entriesOf(sessionManager, "custom_message", HANDOFF_FAILED_CUSTOM_TYPE).map((entry) =>
+			entry.type === "custom_message" ? entry.content : undefined,
+		);
 		expect(failures).toStrictEqual([
-			...Array.from({ length: MAX_HANDOFF_ATTEMPTS - 1 }, () =>
-				`Handoff failed — ${REASON_NOT_PERSISTED}. The required handoff remains pending; retry when context usage is eligible.`),
+			...Array.from(
+				{ length: MAX_HANDOFF_ATTEMPTS - 1 },
+				() => `Handoff failed — ${REASON_NOT_PERSISTED}. The required handoff remains pending; retry when context usage is eligible.`,
+			),
 			`Handoff failed — ${REASON_NOT_PERSISTED}. No required handoff remains pending; retry when ready.`,
 		]);
 		const failureNotify = `notify:error:Handoff failed: ${REASON_NOT_PERSISTED}. The handoff can be retried.`;
@@ -880,7 +930,8 @@ describe("failed handoff cut in a real agent session", () => {
 			`status:${STATUS_KEY_HANDOFF}:undefined`,
 		]);
 		const cancelledAt = ui.flatMap((line, index) =>
-			(line.startsWith(`notify:warning:Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts`) ? [index] : []));
+			line.startsWith(`notify:warning:Required handoff cancelled after ${MAX_HANDOFF_ATTEMPTS} attempts`) ? [index] : [],
+		);
 		expect(cancelledAt, JSON.stringify(ui)).toHaveLength(1);
 		const lastFailureAt = failureAt.at(-1);
 		assertPresent(lastFailureAt, "the last cut failure is in the UI log");

@@ -8,12 +8,7 @@ interface DependencyNode {
 	dependencies: Record<string, DependencyNode>;
 }
 
-const PI_PACKAGES = [
-	"@earendil-works/pi-agent-core",
-	"@earendil-works/pi-ai",
-	"@earendil-works/pi-coding-agent",
-	"@earendil-works/pi-tui",
-];
+const PI_PACKAGES = ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"];
 
 test("latest compatibility lane guards every installed Pi package", () => {
 	const source = readFileSync(new URL("scripts/test-compat-current.mjs", REPO_ROOT_URL), "utf8");

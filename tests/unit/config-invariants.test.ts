@@ -82,9 +82,13 @@ function parsePackageJson(): PackageJson {
 
 function allowlistEntries(config: AuditConfig): [string, Record<string, unknown>][] {
 	return config.allowlist.map((entry) => {
-		const [key, value] = Value.Check(JsonRecord, entry) ? Object.entries(entry)[0] ?? [] : [];
-		if (key === undefined || key === "") {throw new Error("allowlist entry must define exactly one scoped advisory path");}
-		if (!Value.Check(JsonRecord, value)) {throw new Error(`missing metadata for allowlist entry: ${key}`);}
+		const [key, value] = Value.Check(JsonRecord, entry) ? (Object.entries(entry)[0] ?? []) : [];
+		if (key === undefined || key === "") {
+			throw new Error("allowlist entry must define exactly one scoped advisory path");
+		}
+		if (!Value.Check(JsonRecord, value)) {
+			throw new Error(`missing metadata for allowlist entry: ${key}`);
+		}
 		return [key, value];
 	});
 }
@@ -100,18 +104,19 @@ function parseIsoDate(value: string): number {
 function runAuditCi(): { status: number | null; diagnostics: string } {
 	const args = [fileURLToPath(AUDIT_CI_BIN_URL), "--config", "audit-ci.jsonc"];
 	const result = spawnNode(args, { cwd: REPO_ROOT });
-	const diagnostics = [
-		`command: node ${args.join(" ")}`,
-		`status: ${String(result.status)}`,
-		`stdout:\n${result.stdout}`,
-		`stderr:\n${result.stderr}`,
-	].join("\n");
+	const diagnostics = [`command: node ${args.join(" ")}`, `status: ${String(result.status)}`, `stdout:\n${result.stdout}`, `stderr:\n${result.stderr}`].join(
+		"\n",
+	);
 	return { status: result.status, diagnostics };
 }
 
 test("pinned Pi compatibility metadata stays exact", () => {
 	const packageJson = parsePackageJson();
-	const lock: { packages: Partial<Record<string, { version?: string }>> } = parseJson(Type.Object({ packages: LockPackages }), readText(LOCK_PATH), "package-lock.json");
+	const lock: { packages: Partial<Record<string, { version?: string }>> } = parseJson(
+		Type.Object({ packages: LockPackages }),
+		readText(LOCK_PATH),
+		"package-lock.json",
+	);
 	for (const name of PINNED_PI_PACKAGES) {
 		expect(packageJson.peerDependencies[name], `${name} peer must require ${EXPECTED_PI_PEER}`).toBe(EXPECTED_PI_PEER);
 	}
@@ -122,14 +127,23 @@ test("pinned Pi compatibility metadata stays exact", () => {
 	}
 	expect(packageJson.devDependencies.typebox).toBe(EXPECTED_TYPEBOX_VERSION);
 	expect(lock.packages["node_modules/typebox"]?.version).toBe(EXPECTED_TYPEBOX_VERSION);
-	expect(packageJson.devDependencies["@earendil-works/pi-agent-core"], "pi-agent-core must be an exact devDependency on the pinned Pi version").toBe(EXPECTED_PI_VERSION);
+	expect(packageJson.devDependencies["@earendil-works/pi-agent-core"], "pi-agent-core must be an exact devDependency on the pinned Pi version").toBe(
+		EXPECTED_PI_VERSION,
+	);
 	expect(packageJson.peerDependencies, "pi-agent-core must not be a peer").not.toHaveProperty(["@earendil-works/pi-agent-core"]);
-	expect(lock.packages["node_modules/@earendil-works/pi-agent-core"]?.version, "pi-agent-core must stay on the pinned Pi version; its exact devDependency keeps it there").toBe(EXPECTED_PI_VERSION);
+	expect(
+		lock.packages["node_modules/@earendil-works/pi-agent-core"]?.version,
+		"pi-agent-core must stay on the pinned Pi version; its exact devDependency keeps it there",
+	).toBe(EXPECTED_PI_VERSION);
 });
 
 test("package and lockfile versions agree", () => {
 	const packageJson = parsePackageJson();
-	const lock: { version?: string; packages: Partial<Record<string, { version?: string }>> } = parseJson(Type.Object({ version: Type.Optional(Type.String()), packages: LockPackages }), readText(LOCK_PATH), "package-lock.json");
+	const lock: { version?: string; packages: Partial<Record<string, { version?: string }>> } = parseJson(
+		Type.Object({ version: Type.Optional(Type.String()), packages: LockPackages }),
+		readText(LOCK_PATH),
+		"package-lock.json",
+	);
 	expect(lock.version, "package-lock.json version must match package.json").toBe(packageJson.version);
 	expect(lock.packages[""]?.version, "package-lock.json root package version must match package.json").toBe(packageJson.version);
 });
@@ -157,11 +171,17 @@ test("the EOL report check accepts LF text and non-text files", () => {
 });
 
 test("repository text has one LF line-ending contract", () => {
-	const rules = readText(GITATTRIBUTES_PATH).split("\n").map((line) => line.trim()).filter((line) => line !== "" && !line.startsWith("#"));
+	const rules = readText(GITATTRIBUTES_PATH)
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line !== "" && !line.startsWith("#"));
 	expect(rules, "all text must check out with LF; see .gitattributes").toStrictEqual(["* text=auto eol=lf"]);
 	const eolReport = runGit(["ls-files", "--eol"], { cwd: REPO_ROOT });
 	expect(eolReport, "git ls-files --eol must report i/lf and w/lf").toMatch(/i\/lf\s+w\/lf/);
-	expect(eolViolations(eolReport), "tracked text must be LF; stale Windows checkout recovery (discards uncommitted changes, so commit or stash first): git rm --cached -r . && git reset --hard").toStrictEqual([]);
+	expect(
+		eolViolations(eolReport),
+		"tracked text must be LF; stale Windows checkout recovery (discards uncommitted changes, so commit or stash first): git rm --cached -r . && git reset --hard",
+	).toStrictEqual([]);
 });
 
 test("README names the current Pi floor", () => {

@@ -16,7 +16,10 @@ export declare function parseNpmViewValue(stdout: string): unknown;
 export declare function packEntry(stdout: string): { filename: string; [key: string]: unknown };
 
 /** The current Pi release and the exact TypeBox version it requires, looked up through npm. */
-export declare function resolveLatestPi(copy: string, options?: { cwd?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; execPath?: string }): Promise<PiVersions>;
+export declare function resolveLatestPi(
+	copy: string,
+	options?: { cwd?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; execPath?: string },
+): Promise<PiVersions>;
 
 /** Dependency versions for the Pi packages and TypeBox, keyed by package name. */
 export declare function latestPiDependencies(versions: PiVersions): Record<string, string>;

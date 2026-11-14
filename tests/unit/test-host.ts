@@ -87,10 +87,10 @@ interface InternalSystemPrompt {
 	buildSystemPrompt: (input: BuildSystemPromptOptions) => string;
 }
 
-const { normalizeBuildSystemPromptOptions, buildSystemPrompt } = await importInternal<InternalSystemPrompt>(
-	"core/system-prompt.js",
-	["normalizeBuildSystemPromptOptions", "buildSystemPrompt"],
-);
+const { normalizeBuildSystemPromptOptions, buildSystemPrompt } = await importInternal<InternalSystemPrompt>("core/system-prompt.js", [
+	"normalizeBuildSystemPromptOptions",
+	"buildSystemPrompt",
+]);
 
 // pi's package root exports `KeybindingsManager` as a type only.
 interface InternalKeybindings {
@@ -216,7 +216,9 @@ function applyActiveTools(state: HostState, tools: string[]): void {
 	state.activeTools.length = 0;
 	state.activeTools.push(...tools);
 	for (const name of tools) {
-		if (!state.toolSources.has(name)) {state.toolSources.set(name, defaultToolSource());}
+		if (!state.toolSources.has(name)) {
+			state.toolSources.set(name, defaultToolSource());
+		}
 	}
 }
 
@@ -224,7 +226,9 @@ function applyAllTools(state: HostState, tools: string[]): void {
 	state.allToolNames.length = 0;
 	state.allToolNames.push(...tools);
 	for (const name of tools) {
-		if (!state.toolSources.has(name)) {state.toolSources.set(name, defaultToolSource());}
+		if (!state.toolSources.has(name)) {
+			state.toolSources.set(name, defaultToolSource());
+		}
 	}
 }
 
@@ -258,9 +262,15 @@ function createHostState(seed: TestHostSeed): HostState {
 		sentMessages: [],
 		appendedEntries: [],
 	};
-	for (const [name, source] of Object.entries(seed.toolSources ?? {})) {state.toolSources.set(name, source);}
-	if (seed.activeTools) {applyActiveTools(state, seed.activeTools);}
-	if (seed.allTools) {applyAllTools(state, seed.allTools);}
+	for (const [name, source] of Object.entries(seed.toolSources ?? {})) {
+		state.toolSources.set(name, source);
+	}
+	if (seed.activeTools) {
+		applyActiveTools(state, seed.activeTools);
+	}
+	if (seed.allTools) {
+		applyAllTools(state, seed.allTools);
+	}
 	return state;
 }
 
@@ -286,9 +296,13 @@ function bindConversationActions(runtime: ExtensionRuntime, state: HostState): v
 		appendEntry: (customType: string, data?: unknown) => {
 			state.appendedEntries.push({ customType, data });
 		},
-		setSessionName: () => { /* No test reads the session name back. */ },
+		setSessionName: () => {
+			/* No test reads the session name back. */
+		},
 		getSessionName: () => undefined,
-		setLabel: () => { /* No test reads labels back. */ },
+		setLabel: () => {
+			/* No test reads labels back. */
+		},
 	});
 }
 
@@ -343,7 +357,9 @@ function stampAccessors(api: ExtensionAPI, extension: Extension, state: HostStat
 	Object.defineProperty(pi, "tools", { get: () => deriveTools(extension), enumerable: false, configurable: true });
 	Object.defineProperty(pi, "activeTools", {
 		get: () => state.activeTools,
-		set: (tools: string[]) => { applyActiveTools(state, tools); },
+		set: (tools: string[]) => {
+			applyActiveTools(state, tools);
+		},
 		enumerable: false,
 		configurable: true,
 	});
@@ -412,9 +428,7 @@ async function loadExtensions(
 		throw new Error(`pi reported extension load errors:\n${errors.map((e) => `${e.path}: ${e.error}`).join("\n")}`);
 	}
 	if (extensions.length !== factories.length) {
-		throw new Error(
-			`pi loaded ${extensions.length} extensions for ${factories.length} factories: ${extensions.map((e) => e.path).join(", ")}.`,
-		);
+		throw new Error(`pi loaded ${extensions.length} extensions for ${factories.length} factories: ${extensions.map((e) => e.path).join(", ")}.`);
 	}
 	bindHostActions(runtime, state);
 	return { apis, extensions, runtime };
@@ -427,10 +441,7 @@ async function loadExtensions(
  * @param factory Extension factory; pass an arrow to register part of the API.
  * @param seed Host state the actions report once loading finished.
  */
-export async function createTestHost(
-	factory: ExtensionFactory = registerSchematic,
-	seed: TestHostSeed = {},
-): Promise<TestPI> {
+export async function createTestHost(factory: ExtensionFactory = registerSchematic, seed: TestHostSeed = {}): Promise<TestPI> {
 	const cwd = seed.cwd ?? process.cwd();
 	const state = createHostState(seed);
 	const { apis, extensions } = await loadExtensions([factory], state, cwd);
@@ -473,31 +484,25 @@ export async function emitBeforeAgentStart(init: {
 	after?: ExtensionFactory[];
 }): Promise<{ result: Awaited<ReturnType<ExtensionRunner["emitBeforeAgentStart"]>>; prompt: string }> {
 	const cwd = process.cwd();
-	const { extensions, runtime } = await loadExtensions(
-		[...(init.before ?? []), registerSchematic, ...(init.after ?? [])],
-		createHostState({}),
-		cwd,
-	);
+	const { extensions, runtime } = await loadExtensions([...(init.before ?? []), registerSchematic, ...(init.after ?? [])], createHostState({}), cwd);
 	// No registry: refreshModelGroupsState skips loading, so model-group config in the real home directory cannot leak in.
-	const runner = new ExtensionRunner(
-		extensions,
-		runtime,
-		cwd,
-		SessionManager.inMemory(cwd),
-		undefined as unknown as ModelRegistry,
-	);
+	const runner = new ExtensionRunner(extensions, runtime, cwd, SessionManager.inMemory(cwd), undefined as unknown as ModelRegistry);
 	const errors: ExtensionError[] = [];
 	runner.onError((error) => {
 		errors.push(error);
 	});
 	const result = await runner.emitBeforeAgentStart({ messageType: "user", prompt: "" }, { cwd });
-	if (errors.length > 0) {throw new AggregateError(errors, "before_agent_start handler failed");}
+	if (errors.length > 0) {
+		throw new AggregateError(errors, "before_agent_start handler failed");
+	}
 	return { result, prompt: buildSystemPrompt(result.systemPromptOptions) };
 }
 
 function hostOf(pi: TestPI): { extension: Extension; state: HostState } {
 	const host = hosts.get(pi);
-	if (host === undefined) {throw new Error("This api was not returned by createTestHost.");}
+	if (host === undefined) {
+		throw new Error("This api was not returned by createTestHost.");
+	}
 	return host;
 }
 
@@ -506,7 +511,9 @@ function hostOf(pi: TestPI): { extension: Extension; state: HostState } {
 // stored handler therefore has its event's type; only that it is a function can be
 // checked at run time.
 function assertHostHandler<K extends HostEventName>(value: unknown, event: K): asserts value is HostHandler<K> {
-	if (typeof value !== "function") {throw new Error(`The "${event}" handler on the test host is not a function.`);}
+	if (typeof value !== "function") {
+		throw new Error(`The "${event}" handler on the test host is not a function.`);
+	}
 }
 
 /**
@@ -516,7 +523,9 @@ function assertHostHandler<K extends HostEventName>(value: unknown, event: K): a
  */
 export function getHandlers<K extends HostEventName>(pi: TestPI, event: K): HostHandler<K>[] {
 	const registered = hostOf(pi).extension.handlers.get(event) ?? [];
-	if (registered.length === 0) {throw new Error(`No "${event}" handler is registered on the test host.`);}
+	if (registered.length === 0) {
+		throw new Error(`No "${event}" handler is registered on the test host.`);
+	}
 	return registered.map((handler) => {
 		const candidate: unknown = handler;
 		assertHostHandler(candidate, event);
@@ -527,7 +536,9 @@ export function getHandlers<K extends HostEventName>(pi: TestPI, event: K): Host
 /** The one handler registered for `event`; throws, naming the event and the count, unless exactly one is registered. */
 export function getOnlyHandler<K extends HostEventName>(pi: TestPI, event: K): HostHandler<K> {
 	const handlers = getHandlers(pi, event);
-	if (handlers.length !== 1) {throw new Error(`Expected one "${event}" handler on the test host; ${String(handlers.length)} registered.`);}
+	if (handlers.length !== 1) {
+		throw new Error(`Expected one "${event}" handler on the test host; ${String(handlers.length)} registered.`);
+	}
 	return handlers[0];
 }
 
@@ -557,14 +568,18 @@ export async function invokeHandler<K extends HostEventName>(
 	index = 0,
 ): Promise<HostEventResult<K> | undefined> {
 	const result = await getHandler(pi, event, index)(payload, ctx);
-	if (result === undefined) {return undefined;}
+	if (result === undefined) {
+		return undefined;
+	}
 	return result;
 }
 
 /** The definition of the tool registered as `name`. Throws, naming the tool, when none is. */
 export function getTool(pi: TestPI, name: string): ToolDefinition {
 	const registered = hostOf(pi).extension.tools.get(name);
-	if (registered === undefined) {throw new Error(`No tool "${name}" is registered on the test host.`);}
+	if (registered === undefined) {
+		throw new Error(`No tool "${name}" is registered on the test host.`);
+	}
 	return registered.definition;
 }
 
@@ -580,7 +595,9 @@ function getToolRenderer(pi: TestPI, name: string, member: "renderResult"): Tool
 function getToolRenderer(pi: TestPI, name: string, member: "renderCall" | "renderResult"): ToolRenderCall | ToolRenderResult {
 	const definition = getTool(pi, name);
 	const renderer = definition[member];
-	if (renderer === undefined) {throw new Error(`Tool "${name}" on the test host has no ${member}.`);}
+	if (renderer === undefined) {
+		throw new Error(`Tool "${name}" on the test host has no ${member}.`);
+	}
 	return renderer.bind(definition);
 }
 
@@ -603,14 +620,18 @@ export function getToolRenderResult(pi: TestPI, name: string): ToolRenderResult 
 /** The command registered as `name`. Throws, naming the command, when none is. */
 export function getCommand(pi: TestPI, name: string): RegisteredCommand {
 	const command = hostOf(pi).extension.commands.get(name);
-	if (command === undefined) {throw new Error(`No command "${name}" is registered on the test host.`);}
+	if (command === undefined) {
+		throw new Error(`No command "${name}" is registered on the test host.`);
+	}
 	return command;
 }
 
 /** The shortcut registered for `key`. Throws, naming the key, when none is. */
 export function getShortcut(pi: TestPI, key: KeyId): ExtensionShortcut {
 	const shortcut = hostOf(pi).extension.shortcuts.get(key);
-	if (shortcut === undefined) {throw new Error(`No shortcut "${key}" is registered on the test host.`);}
+	if (shortcut === undefined) {
+		throw new Error(`No shortcut "${key}" is registered on the test host.`);
+	}
 	return shortcut;
 }
 

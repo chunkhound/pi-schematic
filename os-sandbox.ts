@@ -21,10 +21,7 @@ import path from "node:path";
 import type { JsonObject } from "@earendil-works/pi-ai";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 
-import {
-	READONLY_SANDBOX_BLOCK_NOTICE,
-	buildReadonlySandboxPathError,
-} from "./notifications.js";
+import { READONLY_SANDBOX_BLOCK_NOTICE, buildReadonlySandboxPathError } from "./notifications.js";
 import { TEMP_DIR } from "./temp-dir.js";
 import { resolveRealPath } from "./resolve-path.js";
 
@@ -90,8 +87,7 @@ function _hasSandboxExec(): boolean {
 		if (hasCommand("sandbox-exec")) {
 			// Quick functional test: can sandbox-exec actually enforce a profile?
 			try {
-				execSync("echo true | sandbox-exec -p '(version 1)(allow default)' /bin/bash 2>/dev/null",
-					{ stdio: "ignore", timeout: 2000 });
+				execSync("echo true | sandbox-exec -p '(version 1)(allow default)' /bin/bash 2>/dev/null", { stdio: "ignore", timeout: 2000 });
 				_sandboxExecResult = true;
 			} catch {
 				_sandboxExecResult = false;
@@ -130,7 +126,9 @@ export function buildMacProfile(tempDir: string): string {
 	// user's own command need this fallback.
 	const writePaths = new Set<string>();
 	writePaths.add(canon);
-	if (original !== canon) {writePaths.add(original);}
+	if (original !== canon) {
+		writePaths.add(original);
+	}
 	writePaths.add("/private/tmp");
 	writePaths.add("/tmp");
 
@@ -143,12 +141,7 @@ export function buildMacProfile(tempDir: string): string {
 		}
 	}
 
-	const parts = [
-		"(version 1)",
-		"(allow default)",
-		"(deny file-write*)",
-		'(allow file-write* (literal "/dev/null"))',
-	];
+	const parts = ["(version 1)", "(allow default)", "(deny file-write*)", '(allow file-write* (literal "/dev/null"))'];
 	for (const p of writePaths) {
 		parts.push(`(allow file-write* (subpath "${p}"))`);
 	}
@@ -253,30 +246,33 @@ export function appendSandboxBlockNoticeToResult(
 	result: Pick<AgentToolResult, "content" | "structuredContent" | "isError">,
 	platform: NodeJS.Platform = process.platform,
 ): Pick<AgentToolResult, "content" | "structuredContent"> | undefined {
-	if (result.isError !== true) {return undefined;}
+	if (result.isError !== true) {
+		return undefined;
+	}
 
 	const structured = result.structuredContent;
-	const structuredObject = typeof structured === "object" && structured !== null && !Array.isArray(structured)
-		? structured as JsonObject
-		: undefined;
+	const structuredObject = typeof structured === "object" && structured !== null && !Array.isArray(structured) ? (structured as JsonObject) : undefined;
 	const output = typeof structuredObject?.output === "string" ? structuredObject.output : undefined;
-	const matched = result.content.some((block) => block.type === "text" && containsSandboxDenial(block.text, platform))
-		|| (output !== undefined && containsSandboxDenial(output, platform));
-	if (!matched) {return undefined;}
+	const matched =
+		result.content.some((block) => block.type === "text" && containsSandboxDenial(block.text, platform)) ||
+		(output !== undefined && containsSandboxDenial(output, platform));
+	if (!matched) {
+		return undefined;
+	}
 
 	let lastTextIndex = -1;
 	result.content.forEach((block, index) => {
-		if (block.type === "text") {lastTextIndex = index;}
+		if (block.type === "text") {
+			lastTextIndex = index;
+		}
 	});
-	const content = lastTextIndex === -1
-		? [...result.content, { type: "text" as const, text: READONLY_SANDBOX_BLOCK_NOTICE }]
-		: result.content.map((block, index) =>
-			index === lastTextIndex && block.type === "text"
-				? { ...block, text: block.text + SANDBOX_BLOCK_NOTICE_SUFFIX }
-				: block);
-	const structuredContent = output === undefined
-		? structured
-		: { ...structuredObject, output: output + SANDBOX_BLOCK_NOTICE_SUFFIX };
+	const content =
+		lastTextIndex === -1
+			? [...result.content, { type: "text" as const, text: READONLY_SANDBOX_BLOCK_NOTICE }]
+			: result.content.map((block, index) =>
+					index === lastTextIndex && block.type === "text" ? { ...block, text: block.text + SANDBOX_BLOCK_NOTICE_SUFFIX } : block,
+				);
+	const structuredContent = output === undefined ? structured : { ...structuredObject, output: output + SANDBOX_BLOCK_NOTICE_SUFFIX };
 	return { content, structuredContent };
 }
 

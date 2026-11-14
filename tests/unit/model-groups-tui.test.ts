@@ -3,7 +3,16 @@ import { Theme, type ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { CURSOR_MARKER, fuzzyFilter, renderFakeCursor, TuiMainScreen, visibleWidth, type TUI } from "@earendil-works/pi-tui";
 import { createModelGroupsComponent, type ModelGroupsComponentOptions, type ModelGroupsStoreOps } from "../../model-groups/tui.js";
-import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModality, type ModelGroupModel, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ResolvedModelGroup } from "../../model-groups/types.js";
+import {
+	ModelGroupsPersistenceError,
+	type ModelGroupDef,
+	type ModelGroupModality,
+	type ModelGroupModel,
+	type ModelGroupScope,
+	type ModelGroupsAccess,
+	type ModelGroupsBootValidation,
+	type ResolvedModelGroup,
+} from "../../model-groups/types.js";
 import { assertPresent } from "../assertions.js";
 import { createModelRegistry, stripAnsi, stubInstance, theme } from "./helpers.js";
 import { group } from "./model-groups-helpers.js";
@@ -11,12 +20,22 @@ import { group } from "./model-groups-helpers.js";
 const GPT5_THINKING_OPTIONS = ["inherit", "off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** A registry model as a test lists it; `configuredAuth: false` marks it unauthenticated. */
-type CatalogEntry = Pick<Model<Api>, "provider" | "id" | "reasoning"> & Partial<Pick<Model<Api>, "name" | "input" | "thinkingLevelMap">> & { configuredAuth?: boolean };
+type CatalogEntry = Pick<Model<Api>, "provider" | "id" | "reasoning"> &
+	Partial<Pick<Model<Api>, "name" | "input" | "thinkingLevelMap">> & { configuredAuth?: boolean };
 
 // The fields a registry model needs beyond the entry are neutral: an empty `name` and
 // `input` read like absent ones, and the component never reads api, cost or token limits.
 function catalogModel(entry: CatalogEntry): Model<Api> & { configuredAuth?: boolean } {
-	return { name: "", api: "test-api", baseUrl: "", input: [], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 0, maxTokens: 0, ...entry };
+	return {
+		name: "",
+		api: "test-api",
+		baseUrl: "",
+		input: [],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 0,
+		maxTokens: 0,
+		...entry,
+	};
 }
 
 function configuredAuthOf(model: Model<Api>): unknown {
@@ -36,12 +55,15 @@ function registryOf(entries: readonly CatalogEntry[], hasConfiguredAuth: (model:
 }
 
 function registry(): ModelRegistry {
-	return registryOf([
-		{ provider: "anthropic", id: "claude", reasoning: false },
-		{ provider: "google", id: "gemini-no-auth", reasoning: true, configuredAuth: false },
-		{ provider: "openai", id: "gpt-5", reasoning: true, thinkingLevelMap: { xhigh: "x", max: "m" } },
-		{ provider: "openai", id: "gpt-no-auth", reasoning: true, configuredAuth: false },
-	], (model) => model.provider !== "missing" && configuredAuthOf(model) !== false);
+	return registryOf(
+		[
+			{ provider: "anthropic", id: "claude", reasoning: false },
+			{ provider: "google", id: "gemini-no-auth", reasoning: true, configuredAuth: false },
+			{ provider: "openai", id: "gpt-5", reasoning: true, thinkingLevelMap: { xhigh: "x", max: "m" } },
+			{ provider: "openai", id: "gpt-no-auth", reasoning: true, configuredAuth: false },
+		],
+		(model) => model.provider !== "missing" && configuredAuthOf(model) !== false,
+	);
 }
 
 // A render theme with `fg` as its colorizer and an identity `bold`.
@@ -68,22 +90,42 @@ function reconciledEffective(def: ModelGroupDef, supported: ModelGroupModality[]
 
 // A copy of `constraints` whose `modalities` array, when present, is a fresh array.
 function cloneConstraints(constraints: ModelGroupDef["constraints"]): ModelGroupDef["constraints"] {
-	return constraints !== undefined ? { ...constraints, ...(isUnknownArray(constraints.modalities) ? { modalities: [...constraints.modalities] } : {}) } : undefined;
+	return constraints !== undefined
+		? { ...constraints, ...(isUnknownArray(constraints.modalities) ? { modalities: [...constraints.modalities] } : {}) }
+		: undefined;
 }
 
-function boot(groups: ResolvedModelGroup[]): ModelGroupsBootValidation { return { groups, loadIssues: [] }; }
+function boot(groups: ResolvedModelGroup[]): ModelGroupsBootValidation {
+	return { groups, loadIssues: [] };
+}
 
-function component(args: { groups?: ResolvedModelGroup[]; store?: Partial<ModelGroupsStoreOps>; notify?: ModelGroupsComponentOptions["notify"]; renderTheme?: Theme; policy?: "global-project" | "global-only"; modelRegistry?: ModelRegistry } = {}) {
+function component(
+	args: {
+		groups?: ResolvedModelGroup[];
+		store?: Partial<ModelGroupsStoreOps>;
+		notify?: ModelGroupsComponentOptions["notify"];
+		renderTheme?: Theme;
+		policy?: "global-project" | "global-only";
+		modelRegistry?: ModelRegistry;
+	} = {},
+) {
 	let renders = 0;
 	const c = createModelGroupsComponent(
-		renderCountingTui(() => { renders++; }),
+		renderCountingTui(() => {
+			renders++;
+		}),
 		args.renderTheme ?? theme,
 		args.modelRegistry ?? registry(),
 		{ cwd: "/tmp/project", policy: args.policy ?? "global-project" },
 		vi.fn(),
 		{ initialValidation: boot(args.groups ?? []), store: args.store, notify: args.notify },
 	);
-	return { c, get renders() { return renders; } };
+	return {
+		c,
+		get renders() {
+			return renders;
+		},
+	};
 }
 
 const ENTER = "\r";
@@ -116,7 +158,9 @@ function rendered(c: { render: (width: number) => string[] }, width = 100): stri
 }
 
 function findSelectedRow(c: { render: (width: number) => string[] }): string | undefined {
-	return stripAnsi(rendered(c)).split("\n").find((line) => line.includes("→"));
+	return stripAnsi(rendered(c))
+		.split("\n")
+		.find((line) => line.includes("→"));
 }
 
 function selectedRow(c: { render: (width: number) => string[] }): string {
@@ -128,22 +172,24 @@ function selectedRow(c: { render: (width: number) => string[] }): string {
 function selectRenderedLabel(c: { handleInput?: (data: string) => void; render: (width: number) => string[] }, label: string): void {
 	for (let i = 0; i < 32; i++) {
 		// A screen without a selected row is not this label yet: keep pressing DOWN.
-		if (findSelectedRow(c)?.includes(label) === true) {return;}
+		if (findSelectedRow(c)?.includes(label) === true) {
+			return;
+		}
 		press(c, DOWN);
 	}
 	expect.unreachable(`did not select rendered label: ${label}`);
 }
 
 function openModelEdit(c: Parameters<typeof selectRenderedLabel>[0], modelLabel: string): void {
-	press(c, ENTER);                       // LIST → open the selected group editor
-	selectRenderedLabel(c, modelLabel);    // EDITOR → put the cursor on the model row
-	press(c, ENTER);                       // EDITOR → MODEL_EDIT
+	press(c, ENTER); // LIST → open the selected group editor
+	selectRenderedLabel(c, modelLabel); // EDITOR → put the cursor on the model row
+	press(c, ENTER); // EDITOR → MODEL_EDIT
 }
 
 function openAddModelWizard(c: Parameters<typeof selectRenderedLabel>[0]): void {
-	press(c, ENTER);                       // LIST → open the selected group editor
+	press(c, ENTER); // LIST → open the selected group editor
 	selectRenderedLabel(c, "+ Add model"); // EDITOR → the add-model row
-	press(c, ENTER);                       // EDITOR → WIZARD_PROVIDER
+	press(c, ENTER); // EDITOR → WIZARD_PROVIDER
 }
 
 function pressAndRender(c: { handleInput?: (data: string) => void; render: (width: number) => string[] }, ...inputs: string[]): void {
@@ -168,13 +214,23 @@ function atSearchableModel(models: readonly CatalogEntry[], store?: Partial<Mode
 test("model groups TUI list renders validation summary, health tags, add row, no Validate row, and confirmed D delete", () => {
 	const override = group("review", { scope: "global" });
 	override.validation.shadowedByProject = true;
-	const degraded = group("mixed", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }, { provider: "missing", modelId: "nope" }] });
+	const degraded = group("mixed", {
+		scope: "project",
+		models: [
+			{ provider: "openai", modelId: "gpt-5" },
+			{ provider: "missing", modelId: "nope" },
+		],
+	});
 	degraded.validation.degraded = true;
 	degraded.validation.unavailableRefs = [{ provider: "missing", modelId: "nope" }];
 	let groups = [override, group("review", { scope: "project" }), degraded];
 	const deleteCalls: string[] = [];
 	const store = {
-		deleteGroup: (scope: ModelGroupScope, _access: ModelGroupsAccess, name: string) => { deleteCalls.push(`${scope}:${name}`); groups = groups.filter((candidate) => !(candidate.scope === scope && candidate.name === name)); return { otherScopeHasOverride: true }; },
+		deleteGroup: (scope: ModelGroupScope, _access: ModelGroupsAccess, name: string) => {
+			deleteCalls.push(`${scope}:${name}`);
+			groups = groups.filter((candidate) => !(candidate.scope === scope && candidate.name === name));
+			return { otherScopeHasOverride: true };
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
@@ -202,7 +258,9 @@ test("model groups TUI renders modality labels, warnings, and stale override cho
 	review.validation.emptyCommonModalities = true;
 	review.validation.unsupportedOverrideModalities = ["reasoning"];
 	const { c } = component({ groups: [review] });
-	const reviewRow = stripAnsi(rendered(c, 200)).split("\n").find((line) => line.includes("review"));
+	const reviewRow = stripAnsi(rendered(c, 200))
+		.split("\n")
+		.find((line) => line.includes("review"));
 	assertPresent(reviewRow, "expected review row");
 	expect(reviewRow).toMatch(/\bT\b/);
 	expect(reviewRow).toMatch(/\bI\b/);
@@ -243,7 +301,13 @@ test("model groups TUI Add-model picker shows capability chips per model", () =>
 });
 
 test("model groups TUI editor rows show per-model capability chips and modalities screen shows dynamic Automatic/Override status", () => {
-	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-text" }, { provider: "openai", modelId: "gpt-vision" }] });
+	const review = group("review", {
+		scope: "project",
+		models: [
+			{ provider: "openai", modelId: "gpt-text" },
+			{ provider: "openai", modelId: "gpt-vision" },
+		],
+	});
 	review.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
 	const models: CatalogEntry[] = [
 		{ provider: "openai", id: "gpt-text", reasoning: false, input: ["text"] },
@@ -299,7 +363,11 @@ test("model groups TUI modality editor commits override and Automatic through up
 		updateGroup: (scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
 			calls.push({ scope, name, def: { ...def, constraints: cloneConstraints(def.constraints) } });
 			groups = [group(name, { scope, models: def.models, constraints: def.constraints })];
-			groups[0].modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: reconciledEffective(def, ["text", "image", "reasoning"]) };
+			groups[0].modalities = {
+				common: ["text"],
+				supported: ["text", "image", "reasoning"],
+				effective: reconciledEffective(def, ["text", "image", "reasoning"]),
+			};
 		},
 		listResolvedModelGroups: () => boot(groups),
 	};
@@ -391,7 +459,13 @@ test("model groups TUI modality editor preserves state and notifies on updateGro
 	const messages: string[] = [];
 	const store = {
 		updateGroup: () => {
-			throw new ModelGroupsPersistenceError({ operation: "save", scope: "project", sourcePath: "/tmp/.pi/pi-schematic/model-groups.json", phase: "rename", message: "modality write denied" });
+			throw new ModelGroupsPersistenceError({
+				operation: "save",
+				scope: "project",
+				sourcePath: "/tmp/.pi/pi-schematic/model-groups.json",
+				phase: "rename",
+				message: "modality write denied",
+			});
 		},
 		listResolvedModelGroups: () => boot([review]),
 	};
@@ -431,7 +505,9 @@ test("model groups TUI text-only modalities screen is inert and states Automatic
 test("model groups TUI empty-group modalities screen claims no capabilities", () => {
 	const empty = group("empty", { scope: "project" }); // models: [] — no member-derived capabilities
 	const store = {
-		updateGroup: () => { throw new Error("empty group must not commit edits"); },
+		updateGroup: () => {
+			throw new Error("empty group must not commit edits");
+		},
 		listResolvedModelGroups: () => boot([empty]),
 	};
 	const { c } = component({ groups: [empty], store });
@@ -562,7 +638,7 @@ test("model groups TUI Esc and left-arrow share wizard back-step behavior", () =
 });
 
 test("model groups TUI selected markers and primary labels use accent token", () => {
-	const accentTheme = renderTheme((name, text) => name === "accent" ? `<accent>${text}</accent>` : text);
+	const accentTheme = renderTheme((name, text) => (name === "accent" ? `<accent>${text}</accent>` : text));
 	const list = component({ groups: [group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] })], renderTheme: accentTheme }).c;
 
 	let text = rendered(list);
@@ -582,7 +658,10 @@ test("model groups TUI selected markers and primary labels use accent token", ()
 	press(editor, ENTER);
 	expect(rendered(editor)).toMatch(/<accent>→ anthropic<\/accent>/);
 
-	const modelEdit = component({ groups: [group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] })], renderTheme: accentTheme }).c;
+	const modelEdit = component({
+		groups: [group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] })],
+		renderTheme: accentTheme,
+	}).c;
 	press(modelEdit, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
 	expect(rendered(modelEdit)).toMatch(/<accent>→<\/accent> <accent>Thinking: inherit<\/accent>/);
 
@@ -602,11 +681,16 @@ test("model groups TUI selected markers and primary labels use accent token", ()
 });
 
 test("model groups TUI model edit renders identity/status and filters thinking options", () => {
-	const groups = [group("review", { scope: "project", models: [
-		{ provider: "anthropic", modelId: "claude" },
-		{ provider: "openai", modelId: "gpt-5" },
-		{ provider: "missing", modelId: "nope" },
-	] })];
+	const groups = [
+		group("review", {
+			scope: "project",
+			models: [
+				{ provider: "anthropic", modelId: "claude" },
+				{ provider: "openai", modelId: "gpt-5" },
+				{ provider: "missing", modelId: "nope" },
+			],
+		}),
+	];
 	const { c } = component({ groups });
 
 	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
@@ -639,7 +723,10 @@ test("model groups TUI MODEL_EDIT opens on the configured thinking level and pre
 	let groups = [group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5", thinkingLevel: "high" }] })];
 	const calls: string[] = [];
 	const store = {
-		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => { calls.push(def.models.map((model) => `${model.provider}/${model.modelId}/${model.thinkingLevel ?? "inherit"}`).join(",")); groups = [group(name, { scope: "project", models: def.models })]; },
+		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
+			calls.push(def.models.map((model) => `${model.provider}/${model.modelId}/${model.thinkingLevel ?? "inherit"}`).join(","));
+			groups = [group(name, { scope: "project", models: def.models })];
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
@@ -657,13 +744,21 @@ test("model groups TUI MODEL_EDIT opens on the configured thinking level and pre
 test("model groups TUI MODEL_EDIT shows an unsupported/unavailable current level as current, unavailable and preserves it", () => {
 	// Available model whose configured level is no longer supported (claude has no
 	// thinking levels at all) and an unavailable model both keep their value.
-	let groups = [group("review", { scope: "project", models: [
-		{ provider: "anthropic", modelId: "claude", thinkingLevel: "high" },
-		{ provider: "missing", modelId: "nope", thinkingLevel: "max" },
-	] })];
+	let groups = [
+		group("review", {
+			scope: "project",
+			models: [
+				{ provider: "anthropic", modelId: "claude", thinkingLevel: "high" },
+				{ provider: "missing", modelId: "nope", thinkingLevel: "max" },
+			],
+		}),
+	];
 	const calls: string[] = [];
 	const store = {
-		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => { calls.push(def.models.map((model) => `${model.provider}/${model.modelId}/${model.thinkingLevel ?? "inherit"}`).join(",")); groups = [group(name, { scope: "project", models: def.models })]; },
+		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
+			calls.push(def.models.map((model) => `${model.provider}/${model.modelId}/${model.thinkingLevel ?? "inherit"}`).join(","));
+			groups = [group(name, { scope: "project", models: def.models })];
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
@@ -692,7 +787,9 @@ test("model groups TUI notifies and preserves location on move collision", () =>
 	const messages: string[] = [];
 	const groups = [group("review", { scope: "project" })];
 	const store = {
-		moveGroup: () => { throw new Error("target scope already contains review"); },
+		moveGroup: () => {
+			throw new Error("target scope already contains review");
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store, notify: (message) => messages.push(message) });
@@ -744,7 +841,10 @@ test("model groups TUI renders name editing inline and preserves edit/commit tra
 	let groups = [group("abc", { scope: "project" })];
 	const calls: string[] = [];
 	const store = {
-		renameGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, oldName: string, newName: string) => { calls.push(`${oldName}->${newName}`); groups = [group(newName, { scope: "project" })]; },
+		renameGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, oldName: string, newName: string) => {
+			calls.push(`${oldName}->${newName}`);
+			groups = [group(newName, { scope: "project" })];
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
@@ -793,8 +893,14 @@ test("model groups TUI move, wizard add, model thinking, and remove persist thro
 	let groups = [group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] })];
 	const calls: string[] = [];
 	const store = {
-		moveGroup: (_access: ModelGroupsAccess, name: string, scope: ModelGroupScope) => { calls.push(`move:${name}:${scope}`); groups = [group(name, { scope: "global", models: groups[0].models })]; },
-		updateGroup: (scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => { calls.push(`update:${scope}:${name}:${def.models.map((m) => `${m.provider}/${m.modelId}/${m.thinkingLevel ?? "inherit"}`).join(",")}`); groups = [group(name, { scope, models: def.models })]; },
+		moveGroup: (_access: ModelGroupsAccess, name: string, scope: ModelGroupScope) => {
+			calls.push(`move:${name}:${scope}`);
+			groups = [group(name, { scope: "global", models: groups[0].models })];
+		},
+		updateGroup: (scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
+			calls.push(`update:${scope}:${name}:${def.models.map((m) => `${m.provider}/${m.modelId}/${m.thinkingLevel ?? "inherit"}`).join(",")}`);
+			groups = [group(name, { scope, models: def.models })];
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
@@ -925,7 +1031,10 @@ test("model groups TUI escapes controlled labels, bounds width, and offers nativ
 	const max = component({
 		groups: maxGroups,
 		store: {
-			updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => { selectedThinking = def.models.at(-1)?.thinkingLevel; maxGroups = [group(name, { scope: "project", models: def.models })]; },
+			updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
+				selectedThinking = def.models.at(-1)?.thinkingLevel;
+				maxGroups = [group(name, { scope: "project", models: def.models })];
+			},
 			listResolvedModelGroups: () => boot(maxGroups),
 		},
 	}).c;
@@ -942,7 +1051,10 @@ test.for(["__proto__", "constructor", "toString"])("model groups TUI decodes the
 	const calls: string[] = [];
 	const notifications: string[] = [];
 	const store = {
-		renameGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, oldName: string, renamed: string) => { calls.push(`${oldName}->${renamed}`); groups = [group(renamed, { scope: "project" })]; },
+		renameGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, oldName: string, renamed: string) => {
+			calls.push(`${oldName}->${renamed}`);
+			groups = [group(renamed, { scope: "project" })];
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const c = component({ groups, store, notify: (message) => notifications.push(message) }).c;
@@ -987,7 +1099,9 @@ test("model groups TUI keeps every screen width-bounded without wrapping logical
 		expect(lines).toHaveLength(inactiveWideCount);
 		expect(lines.filter((line) => !(visibleWidth(line) <= width))).toStrictEqual([]);
 		expect(lines.join("\n")).not.toContain(CURSOR_MARKER);
-		if (width === 12) {expect(stripAnsi(lines.join("\n"))).toMatch(/界e\u0301/);}
+		if (width === 12) {
+			expect(stripAnsi(lines.join("\n"))).toMatch(/界e\u0301/);
+		}
 	}
 	press(c, ENTER, "\u0001"); // active group-name input with cursor at line start
 	const activeWideCount = c.render(200).length;
@@ -996,7 +1110,9 @@ test("model groups TUI keeps every screen width-bounded without wrapping logical
 		expect(lines).toHaveLength(activeWideCount);
 		expect(lines.filter((line) => !(visibleWidth(line) <= width))).toStrictEqual([]);
 		expect(lines.join("\n")).toContain(CURSOR_MARKER);
-		if (width === 12) {expect(stripAnsi(lines.join("\n")).replaceAll(CURSOR_MARKER, "")).toMatch(/界e\u0301/);}
+		if (width === 12) {
+			expect(stripAnsi(lines.join("\n")).replaceAll(CURSOR_MARKER, "")).toMatch(/界e\u0301/);
+		}
 	}
 	press(c, DOWN, ENTER);
 	assertScreen(c); // MODALITIES (from the name row, Down lands on the Modalities row)
@@ -1044,19 +1160,12 @@ test("model groups TUI searchable Model step filters raw fields and handles no m
 test("model groups TUI fuzzy search excludes synthetic provider-space-id matches", () => {
 	const model = { provider: "abc", id: "xyz", name: "", reasoning: true };
 	const query = "azaz";
-	const approvedFields = fuzzyFilter([model], query, (candidate) => [
-		candidate.id,
-		candidate.provider,
-		`${candidate.provider}/${candidate.id}`,
-		candidate.name,
-	].join(" "));
-	const withSyntheticProviderSpaceId = fuzzyFilter([model], query, (candidate) => [
-		candidate.id,
-		candidate.provider,
-		`${candidate.provider}/${candidate.id}`,
-		`${candidate.provider} ${candidate.id}`,
-		candidate.name,
-	].join(" "));
+	const approvedFields = fuzzyFilter([model], query, (candidate) =>
+		[candidate.id, candidate.provider, `${candidate.provider}/${candidate.id}`, candidate.name].join(" "),
+	);
+	const withSyntheticProviderSpaceId = fuzzyFilter([model], query, (candidate) =>
+		[candidate.id, candidate.provider, `${candidate.provider}/${candidate.id}`, `${candidate.provider} ${candidate.id}`, candidate.name].join(" "),
+	);
 	expect(approvedFields).toHaveLength(0);
 	expect(withSyntheticProviderSpaceId).toHaveLength(1);
 
@@ -1081,7 +1190,9 @@ test("model groups TUI handles Model activation immediately after Provider trans
 	pressAndRender(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
 	expect(rendered(c)).toMatch(/Add model — Step 1\/3 Provider/);
 
-	for (const input of [ENTER, ENTER]) {c.handleInput?.(input);}
+	for (const input of [ENTER, ENTER]) {
+		c.handleInput?.(input);
+	}
 	expect(rendered(c)).toMatch(/Add model — Step 3\/3 Thinking/);
 	pressAndRender(c, ENTER);
 	expect(persisted).toStrictEqual([{ provider: "openai", modelId: "model-0" }]);
@@ -1102,7 +1213,9 @@ test("model groups TUI replaces Thinking control with Model control before rende
 	pressAndRender(c, ENTER);
 	expect(rendered(c)).toMatch(/Add model — Step 3\/3 Thinking/);
 
-	for (const input of [LEFT, DOWN, ENTER]) {c.handleInput?.(input);}
+	for (const input of [LEFT, DOWN, ENTER]) {
+		c.handleInput?.(input);
+	}
 	expect(rendered(c)).toMatch(/Add model — Step 3\/3 Thinking/);
 	pressAndRender(c, ENTER);
 	expect(persisted).toStrictEqual([{ provider: "openai", modelId: "model-1" }]);
@@ -1121,7 +1234,9 @@ test("model groups TUI keeps Model selection live across rapid query, navigation
 	const models = Array.from({ length: 3 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: false }));
 	const c = atSearchableModel(models, store);
 
-	for (const input of ["m", "o", "d", "e", "l", DOWN, ENTER]) {c.handleInput?.(input);}
+	for (const input of ["m", "o", "d", "e", "l", DOWN, ENTER]) {
+		c.handleInput?.(input);
+	}
 	expect(rendered(c)).toMatch(/Add model — Step 3\/3 Thinking/);
 	pressAndRender(c, ENTER);
 	expect(persisted).toStrictEqual([{ provider: "openai", modelId: "model-1" }]);
@@ -1186,7 +1301,9 @@ test("model groups TUI directly proves query preservation and every abandonment,
 	let groups = [group("review", { scope: "project" })];
 	const models = [{ provider: "openai", id: "search-target", reasoning: true }];
 	const store = {
-		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => { groups = [group(name, { scope: "project", models: def.models })]; },
+		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
+			groups = [group(name, { scope: "project", models: def.models })];
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 
@@ -1216,7 +1333,10 @@ test("model groups TUI persists exact raw identity from both filtered/reordered 
 	let groups = [group("review", { scope: "project" })];
 	const persisted: (ModelGroupModel | undefined)[] = [];
 	const store = {
-		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => { persisted.push(def.models.at(-1)); groups = [group(name, { scope: "project", models: def.models })]; },
+		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
+			persisted.push(def.models.at(-1));
+			groups = [group(name, { scope: "project", models: def.models })];
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 
@@ -1228,7 +1348,12 @@ test("model groups TUI persists exact raw identity from both filtered/reordered 
 	pressAndRender(filtered, ...Array.from("needle"), ENTER, ENTER);
 	expect(persisted[0]).toStrictEqual({ provider: "raw-provider", modelId: "z-last\u001b" });
 
-	const offscreenModels = Array.from({ length: 12 }, (_, index) => ({ provider: "raw-provider", id: `raw/${String(index).padStart(2, "0")}\u001b`, name: `match ${index}`, reasoning: false }));
+	const offscreenModels = Array.from({ length: 12 }, (_, index) => ({
+		provider: "raw-provider",
+		id: `raw/${String(index).padStart(2, "0")}\u001b`,
+		name: `match ${index}`,
+		reasoning: false,
+	}));
 	const offscreen = atSearchableModel(offscreenModels, store);
 	pressAndRender(offscreen, ...Array.from("match"), ...Array<string>(11).fill(DOWN), ENTER, ENTER);
 	expect(persisted[1]).toStrictEqual({ provider: "raw-provider", modelId: "raw/11\u001b" });
@@ -1237,7 +1362,9 @@ test("model groups TUI persists exact raw identity from both filtered/reordered 
 test("model groups TUI directly proves every non-Model screen remains search-free and uncapped", () => {
 	const models = Array.from({ length: 12 }, (_, index) => ({ provider: `provider-${String(index).padStart(2, "0")}`, id: "only-model", reasoning: true }));
 	const existingModels = models.map((model) => ({ provider: model.provider, modelId: model.id }));
-	const groups = Array.from({ length: 12 }, (_, index) => group(`group-${String(index).padStart(2, "0")}`, { scope: "project", models: index === 0 ? existingModels : [] }));
+	const groups = Array.from({ length: 12 }, (_, index) =>
+		group(`group-${String(index).padStart(2, "0")}`, { scope: "project", models: index === 0 ? existingModels : [] }),
+	);
 	const c = component({ groups, modelRegistry: catalog(models) }).c;
 	c.focused = true;
 	expect(rendered(c)).toMatch(/group-11/); // LIST retains its full native viewport.
@@ -1333,7 +1460,10 @@ test("model groups TUI model picker detail keeps a width-bounded fixed line coun
 	const wideLines = c.render(200);
 	const narrowLines = c.render(12);
 	expect(narrowLines, "detail block must not wrap: same line count at any width").toHaveLength(wideLines.length);
-	expect(narrowLines.filter((line) => !(visibleWidth(line) <= 12)), "every line bounded at 12 cols").toStrictEqual([]);
+	expect(
+		narrowLines.filter((line) => !(visibleWidth(line) <= 12)),
+		"every line bounded at 12 cols",
+	).toStrictEqual([]);
 	expect(stripAnsi(narrowLines.join("\n"))).toMatch(/…/);
 	expect(stripAnsi(wideLines.join("\n"))).toMatch(/openai\/gpt-5\.2-codex-2025-07-01-rc1/);
 	// No matches: the detail block disappears.
@@ -1348,7 +1478,17 @@ test("model groups TUI persistence notifications escape each hostile dynamic fie
 	const c = component({
 		groups: [group("review", { scope: "project" })],
 		store: {
-			renameGroup: () => { throw new ModelGroupsPersistenceError({ operation: "save", scope: "project", sourcePath: `source${raw}`, targetPath: `target${raw}`, phase: "rename", message: `message${raw}`, cause: new Error(`cause${raw}`) }); },
+			renameGroup: () => {
+				throw new ModelGroupsPersistenceError({
+					operation: "save",
+					scope: "project",
+					sourcePath: `source${raw}`,
+					targetPath: `target${raw}`,
+					phase: "rename",
+					message: `message${raw}`,
+					cause: new Error(`cause${raw}`),
+				});
+			},
 			listResolvedModelGroups: () => boot([group("review", { scope: "project" })]),
 		},
 		notify: (message) => notifications.push(message),
@@ -1368,7 +1508,9 @@ test("model groups TUI MODEL_EDIT opens on a mid-list configured level and marks
 	const groups = [group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5", thinkingLevel: "medium" }] })];
 	const calls: ModelGroupDef[] = [];
 	const store = {
-		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, _name: string, def: ModelGroupDef) => { calls.push(def); },
+		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, _name: string, def: ModelGroupDef) => {
+			calls.push(def);
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
@@ -1395,7 +1537,10 @@ function openStaleLevelModelEdit(): { c: ReturnType<typeof component>["c"]; call
 	let groups = [group("review", { scope: "project", models: [{ provider: "anthropic", modelId: "claude", thinkingLevel: "high" }] })];
 	const calls: ModelGroupDef[] = [];
 	const store = {
-		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => { calls.push(def); groups = [group(name, { scope: "project", models: def.models })]; },
+		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
+			calls.push(def);
+			groups = [group(name, { scope: "project", models: def.models })];
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
@@ -1449,7 +1594,10 @@ test("model groups TUI MODEL_EDIT keeps an unsupported level after inherit when 
 	let groups = [group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-partial", thinkingLevel: "medium" }] })];
 	const calls: ModelGroupDef[] = [];
 	const store = {
-		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => { calls.push(def); groups = [group(name, { scope: "project", models: def.models })]; },
+		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
+			calls.push(def);
+			groups = [group(name, { scope: "project", models: def.models })];
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store, modelRegistry: catalog(models) });
@@ -1476,7 +1624,9 @@ test("model groups TUI MODEL_EDIT stale level on an unavailable model keeps Stat
 	const groups = [group("review", { scope: "project", models: [{ provider: "missing", modelId: "nope", thinkingLevel: "max" }] })];
 	const calls: ModelGroupDef[] = [];
 	const store = {
-		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, _name: string, def: ModelGroupDef) => { calls.push(def); },
+		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, _name: string, def: ModelGroupDef) => {
+			calls.push(def);
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
@@ -1501,7 +1651,10 @@ test("model groups TUI WIZARD thinking step still starts on inherit and persists
 	let groups = [group("review", { scope: "project" })];
 	const persisted: (ModelGroupModel | undefined)[] = [];
 	const store = {
-		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => { persisted.push(def.models.at(-1)); groups = [group(name, { scope: "project", models: def.models })]; },
+		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
+			persisted.push(def.models.at(-1));
+			groups = [group(name, { scope: "project", models: def.models })];
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
@@ -1521,7 +1674,10 @@ test("model groups TUI MODEL_EDIT clamps DOWN on Remove model and D removes a st
 	let groups = [group("review", { scope: "project", models: [{ provider: "anthropic", modelId: "claude", thinkingLevel: "high" }] })];
 	const calls: ModelGroupDef[] = [];
 	const store = {
-		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => { calls.push(def); groups = [group(name, { scope: "project", models: def.models })]; },
+		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
+			calls.push(def);
+			groups = [group(name, { scope: "project", models: def.models })];
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
@@ -1540,7 +1696,10 @@ test("model groups TUI MODEL_EDIT dropping a stale level back to inherit deliber
 	let groups = [group("review", { scope: "project", models: [{ provider: "anthropic", modelId: "claude", thinkingLevel: "high" }] })];
 	const calls: ModelGroupDef[] = [];
 	const store = {
-		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => { calls.push(def); groups = [group(name, { scope: "project", models: def.models })]; },
+		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
+			calls.push(def);
+			groups = [group(name, { scope: "project", models: def.models })];
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
@@ -1559,7 +1718,9 @@ test("model groups TUI MODEL_EDIT marks the default inherit row current when no 
 	const groups = [group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] })];
 	const calls: ModelGroupDef[] = [];
 	const store = {
-		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, _name: string, def: ModelGroupDef) => { calls.push(def); },
+		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, _name: string, def: ModelGroupDef) => {
+			calls.push(def);
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
@@ -1581,7 +1742,9 @@ test("model groups TUI MODEL_EDIT opens on a supported level for a registered-bu
 	const groups = [group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-no-auth", thinkingLevel: "high" }] })];
 	const calls: ModelGroupDef[] = [];
 	const store = {
-		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, _name: string, def: ModelGroupDef) => { calls.push(def); },
+		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, _name: string, def: ModelGroupDef) => {
+			calls.push(def);
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
@@ -1603,7 +1766,9 @@ test("model groups TUI MODEL_EDIT treats a stale off level on a non-reasoning mo
 	const groups = [group("review", { scope: "project", models: [{ provider: "anthropic", modelId: "claude", thinkingLevel: "off" }] })];
 	const calls: ModelGroupDef[] = [];
 	const store = {
-		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, _name: string, def: ModelGroupDef) => { calls.push(def); },
+		updateGroup: (_scope: ModelGroupScope, _access: ModelGroupsAccess, _name: string, def: ModelGroupDef) => {
+			calls.push(def);
+		},
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });

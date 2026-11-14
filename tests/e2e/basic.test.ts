@@ -25,39 +25,43 @@ async function withHarness(run: (h: ProcessHarness) => Promise<void>): Promise<v
 }
 
 describe("pi-schematic E2E", () => {
-	it("handoff tool rejects when context usage is unavailable", async () => withHarness(async (h) => {
-		h.write('tool handoff {"nextInstruction":"test handoff task"}');
-		await expect(h.waitForText("ERR:Context usage unavailable")).resolves.toBeUndefined();
-	}));
+	it("handoff tool rejects when context usage is unavailable", async () =>
+		withHarness(async (h) => {
+			h.write('tool handoff {"nextInstruction":"test handoff task"}');
+			await expect(h.waitForText("ERR:Context usage unavailable")).resolves.toBeUndefined();
+		}));
 
-	it("spawn tool refuses when the host has no model", async () => withHarness(async (h) => {
-		h.write('tool spawn {"prompt":"any task"}');
-		await expect(h.waitForText("ERR:No model configured. Cannot spawn child agent.")).resolves.toBeUndefined();
-	}));
+	it("spawn tool refuses when the host has no model", async () =>
+		withHarness(async (h) => {
+			h.write('tool spawn {"prompt":"any task"}');
+			await expect(h.waitForText("ERR:No model configured. Cannot spawn child agent.")).resolves.toBeUndefined();
+		}));
 
-	it("headless mode keeps readonly command a no-op", async () => withHarness(async (h) => {
-		h.write("headless");
-		await expect(h.waitForText("OK")).resolves.toBeUndefined();
-		h.write("cmd readonly");
-		await expect(h.waitForText("OK")).resolves.toBeUndefined();
-		h.write('toolcall write {"path":"/tmp/x","content":"x"}');
-		await expect(h.waitForText("OK:null")).resolves.toBeUndefined();
-	}));
+	it("headless mode keeps readonly command a no-op", async () =>
+		withHarness(async (h) => {
+			h.write("headless");
+			await expect(h.waitForText("OK")).resolves.toBeUndefined();
+			h.write("cmd readonly");
+			await expect(h.waitForText("OK")).resolves.toBeUndefined();
+			h.write('toolcall write {"path":"/tmp/x","content":"x"}');
+			await expect(h.waitForText("OK:null")).resolves.toBeUndefined();
+		}));
 
-	it("handles errors gracefully", async () => withHarness(async (h) => {
-		// Unknown tool
-		h.write("tool nonexistent {}");
-		await expect(h.waitForText("ERR:unknown tool")).resolves.toBeUndefined();
+	it("handles errors gracefully", async () =>
+		withHarness(async (h) => {
+			// Unknown tool
+			h.write("tool nonexistent {}");
+			await expect(h.waitForText("ERR:unknown tool")).resolves.toBeUndefined();
 
-		// Invalid JSON
-		h.write("tool notebook_write {bad json}");
-		await expect(h.waitForText("ERR:invalid json")).resolves.toBeUndefined();
+			// Invalid JSON
+			h.write("tool notebook_write {bad json}");
+			await expect(h.waitForText("ERR:invalid json")).resolves.toBeUndefined();
 
-		h.write("context {bad json}");
-		await expect(h.waitForText("ERR:invalid json")).resolves.toBeUndefined();
+			h.write("context {bad json}");
+			await expect(h.waitForText("ERR:invalid json")).resolves.toBeUndefined();
 
-		// Unknown command
-		h.write("cmd nonexistent");
-		await expect(h.waitForText("ERR:unknown command")).resolves.toBeUndefined();
-	}));
+			// Unknown command
+			h.write("cmd nonexistent");
+			await expect(h.waitForText("ERR:unknown command")).resolves.toBeUndefined();
+		}));
 });

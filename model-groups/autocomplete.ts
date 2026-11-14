@@ -12,7 +12,9 @@ function isUnavailable(group: ResolvedModelGroup, entry: ModelGroupModel): boole
 }
 
 function formatModelGroupRouteDetails(group: ResolvedModelGroup): string {
-	if (group.models.length === 0) {return "No models configured";}
+	if (group.models.length === 0) {
+		return "No models configured";
+	}
 	return group.models
 		.map((entry) => {
 			const thinking = entry.thinkingLevel ?? "inherit";
@@ -51,13 +53,15 @@ function buildCapsLetters(group: ResolvedModelGroup, colorize: DescriptionColori
  * unchanged (rows are inherently aligned to the left edge).
  */
 function buildSuggestionDescription(route: string, letters: string, capsWidth: number, colorize?: DescriptionColorizer): string {
-	if (!colorize) {return route;}
+	if (!colorize) {
+		return route;
+	}
 	const gap = colorize("muted", "  ");
-	if (capsWidth === 0) {return colorize("muted", route);}
+	if (capsWidth === 0) {
+		return colorize("muted", route);
+	}
 	const pad = Math.max(0, capsWidth - visibleWidth(letters));
-	const padded = letters
-		? `${letters}${colorize("muted", " ".repeat(pad))}`
-		: colorize("muted", " ".repeat(capsWidth));
+	const padded = letters ? `${letters}${colorize("muted", " ".repeat(pad))}` : colorize("muted", " ".repeat(capsWidth));
 	return `${padded}${gap}${colorize("muted", route)}`;
 }
 
@@ -101,14 +105,18 @@ export function createModelGroupAutocompleteProvider(state: SchematicState, colo
 }
 
 export function registerModelGroupAutocomplete(ctx: ExtensionContext, state: SchematicState): void {
-	if (!ctx.hasUI) {return;}
+	if (!ctx.hasUI) {
+		return;
+	}
 	const ui = ctx.ui;
-	if (typeof ui.addAutocompleteProvider !== "function") {return;}
-	if (registeredUis.has(ui)) {return;}
+	if (typeof ui.addAutocompleteProvider !== "function") {
+		return;
+	}
+	if (registeredUis.has(ui)) {
+		return;
+	}
 	registeredUis.add(ui);
 	// Lazy adapter so the colorizer reflects the live theme (not a snapshot).
-	const colorize: DescriptionColorizer | undefined = ui.theme
-		? (color, text) => ui.theme.fg(color, text)
-		: undefined;
+	const colorize: DescriptionColorizer | undefined = ui.theme ? (color, text) => ui.theme.fg(color, text) : undefined;
 	ui.addAutocompleteProvider(createModelGroupAutocompleteProvider(state, colorize));
 }

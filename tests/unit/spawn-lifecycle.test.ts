@@ -11,12 +11,16 @@ let h: TestHarness;
 
 // Every render here has a child session in state, so the spawn renderer returns its nested session component.
 function nestedComponent(component: Component): NestedAgentSessionComponent {
-	if (!(component instanceof NestedAgentSessionComponent)) {throw new Error("Expected the spawn renderer to return its nested session component.");}
+	if (!(component instanceof NestedAgentSessionComponent)) {
+		throw new Error("Expected the spawn renderer to return its nested session component.");
+	}
 	return component;
 }
 
 async function makeChildSpawnTool(state: SchematicState) {
-	const pi = await createTestHost((api) => { registerSpawnTool(api, state); });
+	const pi = await createTestHost((api) => {
+		registerSpawnTool(api, state);
+	});
 	const renderResult = getToolRenderResult(pi, "spawn");
 	return { renderResult: (...args: Parameters<ToolRenderResult>) => nestedComponent(renderResult(...args)) };
 }
@@ -248,7 +252,10 @@ test("nested spawn completed-session deletion stays stale even if the toolCallId
 	const afterReuse = component.render(120);
 	expect(invalidate, "toolCallId reuse should not revive a completed stale session").not.toHaveBeenCalled();
 	expect(afterReuse, "toolCallId reuse should keep the old rendered state frozen").toStrictEqual(before);
-	expect(afterReuse.filter((l: string) => l.includes("should be dropped")), "toolCallId reuse should not admit stale text updates").toStrictEqual([]);
+	expect(
+		afterReuse.filter((l: string) => l.includes("should be dropped")),
+		"toolCallId reuse should not admit stale text updates",
+	).toStrictEqual([]);
 });
 
 test("nested spawn drops late events after live registry deletion", async () => {
@@ -331,9 +338,7 @@ test("nested spawn dispose then reattach streams new session events", async () =
 	component.dispose();
 
 	// Attach a second session to the same toolCallId after dispose
-	const second = createSubscribableSession([
-		{ role: "assistant", content: [{ type: "text", text: "second" }] },
-	]);
+	const second = createSubscribableSession([{ role: "assistant", content: [{ type: "text", text: "second" }] }]);
 	state.childSessions.set("tool-call-1", second.session);
 	state.liveChildSessions.set("tool-call-1", second.session);
 	const reattached = childSpawnTool.renderResult(

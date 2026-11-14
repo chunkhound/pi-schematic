@@ -38,7 +38,9 @@ export function spawnNode(args: readonly string[], options: SpawnNodeOptions): S
 	if (result.signal !== null) {
 		throw new Error(`Node child process was killed by ${result.signal}${spawnError ? ` (${spawnError.message})` : ""}`);
 	}
-	if (spawnError) {throw spawnError;}
+	if (spawnError) {
+		throw spawnError;
+	}
 	return result;
 }
 

@@ -67,9 +67,7 @@ test("register-loader resolves typebox exports from pi's dependency tree", () =>
 		const piTypeboxManifest = findPackageJSON("typebox", pathToFileURL(piManifestPath));
 		assertPresent(piTypeboxManifest, "pi's dependency tree should contain typebox");
 		// Node's resolver returns real paths, so compare against the real path of pi's copy.
-		expect(typeboxRoot, "typebox should resolve from pi's dependency tree").toBe(
-			pathToFileURL(realpathSync(dirname(piTypeboxManifest))).href + "/",
-		);
+		expect(typeboxRoot, "typebox should resolve from pi's dependency tree").toBe(pathToFileURL(realpathSync(dirname(piTypeboxManifest))).href + "/");
 		for (const specifier of Object.keys(resolved)) {
 			expectPrefix(resolved[specifier], "file:");
 			expectPrefix(resolved[specifier], typeboxRoot, `${specifier} should resolve from the same typebox package root`);
@@ -83,14 +81,7 @@ test("register-loader resolves typebox exports from pi's dependency tree", () =>
 test("register-loader leaves an unknown typebox subpath to Node's export check", () => {
 	const cwd = mkdtempSync(resolve(tmpdir(), "pi-schematic-loader-typebox-missing-"));
 	try {
-		const result = spawnNode(
-			[
-				"--input-type=module",
-				"-e",
-				'await import("typebox/not-real");',
-			],
-			{ cwd, loader: REGISTER_LOADER },
-		);
+		const result = spawnNode(["--input-type=module", "-e", 'await import("typebox/not-real");'], { cwd, loader: REGISTER_LOADER });
 
 		expect(result.status, "should exit non-zero for missing typebox export").not.toBe(0);
 		expect(result.stderr).toMatch(/ERR_PACKAGE_PATH_NOT_EXPORTED/);

@@ -2,11 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { expect, onTestFinished, test, vi } from "vitest";
 import { assertPresent } from "../assertions.js";
 import { createTestHarness, useTestHarness } from "../test-utils.js";
-import {
-	__setSingletons,
-	createWriteLock,
-	getSingletons,
-} from "../../runtime-singletons.js";
+import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
 import { SpawnFrameScheduler } from "../../spawn/renderer.js";
 
 test("createTestHarness swaps singleton state atomically and restores it on teardown", () => {
@@ -60,7 +56,9 @@ test("write lock serializes concurrent writers and completes all", async () => {
 			const prev = s.writeLock.tail;
 			// Simulate acquiring the lock by chaining onto the tail
 			let release: (() => void) | undefined;
-			const next = new Promise<void>((resolve) => { release = resolve; });
+			const next = new Promise<void>((resolve) => {
+				release = resolve;
+			});
 			assertPresent(release, "the Promise executor hands out the release");
 			s.writeLock.pending += 1;
 			s.writeLock.tail = next;
@@ -92,7 +90,9 @@ test("teardown restores the console and singletons, then fails, when a write is 
 	writeLock.pending = 1;
 	const clear = vi.spyOn(frameScheduler, "clear");
 
-	expect(() => { h.teardown(); }).toThrow(/pending/);
+	expect(() => {
+		h.teardown();
+	}).toThrow(/pending/);
 
 	expect(writeLock.pending, "teardown leaves the pending write alone").toBe(1);
 	expect(clear, "teardown clears the harness scheduler before it throws").toHaveBeenCalledOnce();
@@ -117,7 +117,9 @@ test("teardown restores the console and singletons when clearing the harness sch
 		throw new Error("boom");
 	});
 
-	expect(() => { h.teardown(); }).toThrow(/boom/);
+	expect(() => {
+		h.teardown();
+	}).toThrow(/boom/);
 
 	expect(getSingletons()).toBe(outer);
 	expect(console.debug).toBe(debug);

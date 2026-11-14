@@ -15,7 +15,9 @@ type HostContext = ExtensionCommandContext & ExtensionToolContext;
 // context lacks yields undefined; calling or dereferencing one throws a TypeError. Only that the value
 // is an object can be checked at run time.
 function assertHostContext(value: unknown): asserts value is HostContext {
-	if (typeof value !== "object" || value === null) {throw new Error("Expected a context object.");}
+	if (typeof value !== "object" || value === null) {
+		throw new Error("Expected a context object.");
+	}
 }
 
 function hostContext(value: unknown): HostContext {
@@ -55,7 +57,9 @@ test("omits a section whose body is empty", () => {
 for (const name of ["schematic", "schematic_model_groups"]) {
 	test(`accepts names with the schematic prefix: ${name}`, () => {
 		const registry = createPromptSectionRegistry();
-		expect(() => { registry.register({ name, render: () => "body" }); }).not.toThrow();
+		expect(() => {
+			registry.register({ name, render: () => "body" });
+		}).not.toThrow();
 		expect(registry.render()).toStrictEqual([{ name, body: "body" }]);
 	});
 }
@@ -70,7 +74,9 @@ for (const { name, reason } of [
 ]) {
 	test(`rejects names outside the schematic prefix: ${name} (${reason})`, () => {
 		const registry = createPromptSectionRegistry();
-		expect(() => { registry.register({ name, render: () => "body" }); }).toThrow(/Invalid schematic prompt section name/);
+		expect(() => {
+			registry.register({ name, render: () => "body" });
+		}).toThrow(/Invalid schematic prompt section name/);
 	});
 }
 
@@ -78,9 +84,9 @@ test("rejects a duplicate section name", () => {
 	const registry = createPromptSectionRegistry();
 	registry.register({ name: "schematic_topic", render: () => "first" });
 
-	expect(() => { registry.register({ name: "schematic_topic", render: () => "second" }); }).toThrow(
-		/Duplicate schematic prompt section/,
-	);
+	expect(() => {
+		registry.register({ name: "schematic_topic", render: () => "second" });
+	}).toThrow(/Duplicate schematic prompt section/);
 });
 
 test("propagates a failing section render", () => {
@@ -214,28 +220,33 @@ test("keeps the primer section byte-identical while the topic and notebook secti
 });
 
 for (const sectionName of ["schematic", "schematic_topic", "schematic_model_groups", "schematic_notebook"]) {
-	test(`renders each section body without surrounding whitespace: ${sectionName}`, async () => withTemp(async ({ cwd }) => {
-		fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
-		fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 1, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }), "utf8");
-		const models = [{ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } }];
-		const modelRegistry = {
-			getAll: () => models,
-			getAvailable: () => models,
-			find: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id),
-			hasConfiguredAuth: () => true,
-		};
-		const pi = await createTestHost();
-		await getCommand(pi, "notebook").handler("oauth", createCommandContext());
-		await getTool(pi, "notebook_write").execute("1", { name: "alpha", content: "first line" }, undefined, undefined, makeTUICtx());
-		const handler = getHandler(pi, "before_agent_start");
-		const event = createBeforeAgentStartEvent();
+	test(`renders each section body without surrounding whitespace: ${sectionName}`, async () =>
+		withTemp(async ({ cwd }) => {
+			fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
+			fs.writeFileSync(
+				modelGroupsPath("project", cwd),
+				JSON.stringify({ version: 1, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }),
+				"utf8",
+			);
+			const models = [{ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } }];
+			const modelRegistry = {
+				getAll: () => models,
+				getAvailable: () => models,
+				find: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id),
+				hasConfiguredAuth: () => true,
+			};
+			const pi = await createTestHost();
+			await getCommand(pi, "notebook").handler("oauth", createCommandContext());
+			await getTool(pi, "notebook_write").execute("1", { name: "alpha", content: "first line" }, undefined, undefined, makeTUICtx());
+			const handler = getHandler(pi, "before_agent_start");
+			const event = createBeforeAgentStartEvent();
 
-		await handler(event, hostContext({ hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry, getContextUsage: () => null }));
+			await handler(event, hostContext({ hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry, getContextUsage: () => null }));
 
-		const body = event.systemPromptOptions.sections[sectionName];
-		assertPresent(body, `section ${sectionName} is missing`);
-		expect(body).toBe(body.trim());
-	}));
+			const body = event.systemPromptOptions.sections[sectionName];
+			assertPresent(body, `section ${sectionName} is missing`);
+			expect(body).toBe(body.trim());
+		}));
 }
 
 test("re-renders the topic and notebook sections after a handoff completes", async () => {

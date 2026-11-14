@@ -117,9 +117,14 @@ test("handlers of one event are returned in registration order", async () => {
 	const ctx = createExtensionContext();
 
 	const results = [];
-	for (const handler of getHandlers(pi, "input")) {results.push(await handler(PROBE_INPUT, ctx));}
+	for (const handler of getHandlers(pi, "input")) {
+		results.push(await handler(PROBE_INPUT, ctx));
+	}
 
-	expect(results).toStrictEqual([{ action: "transform", text: "first" }, { action: "transform", text: "second" }]);
+	expect(results).toStrictEqual([
+		{ action: "transform", text: "first" },
+		{ action: "transform", text: "second" },
+	]);
 });
 
 test("an invoked handler at an index is the handler registered at that position", async () => {
@@ -209,14 +214,20 @@ test("a tool lookup for an unregistered name throws naming the tool", async () =
 });
 
 test("a command lookup returns the registered command", async () => {
-	const handler = async (): Promise<void> => { await Promise.resolve(); };
+	const handler = async (): Promise<void> => {
+		await Promise.resolve();
+	};
 	const pi = await createTestHost((api) => {
 		api.registerCommand("probe", { description: "probe command", handler });
 	});
 
 	const command = getCommand(pi, "probe");
 
-	expect({ name: command.name, description: command.description, handler: command.handler }).toStrictEqual({ name: "probe", description: "probe command", handler });
+	expect({ name: command.name, description: command.description, handler: command.handler }).toStrictEqual({
+		name: "probe",
+		description: "probe command",
+		handler,
+	});
 });
 
 test("a command lookup for an unregistered name throws naming the command", async () => {
@@ -263,13 +274,16 @@ test("pi.exec during registration runs in the seeded project directory", async (
 	const dir = mkdtempSync(join(tmpdir(), "test-host-exec-"));
 	try {
 		let result: ExecResult | undefined;
-		await createTestHost(async (pi) => {
-			// The child must come from pi.exec, so it cannot go through spawnNode; pi.exec has no env option to
-			// clear NODE_OPTIONS, and the child only prints its working directory.
-			result = await pi.exec(process.execPath, ["-e", "process.stdout.write(process.cwd())"], {
-				timeout: CHILD_TIMEOUT_MS,
-			});
-		}, { cwd: dir });
+		await createTestHost(
+			async (pi) => {
+				// The child must come from pi.exec, so it cannot go through spawnNode; pi.exec has no env option to
+				// clear NODE_OPTIONS, and the child only prints its working directory.
+				result = await pi.exec(process.execPath, ["-e", "process.stdout.write(process.cwd())"], {
+					timeout: CHILD_TIMEOUT_MS,
+				});
+			},
+			{ cwd: dir },
+		);
 
 		assertPresent(result);
 		expect(result.code).toBe(0);
@@ -335,7 +349,14 @@ test("an action called during registration fails the load", async () => {
 test("a duplicate tool registration is listed as a load error", async () => {
 	await expect(
 		emitBeforeAgentStart({
-			before: [(pi) => { registerNamedTool(pi, "duplicate_tool"); }, (pi) => { registerNamedTool(pi, "duplicate_tool"); }],
+			before: [
+				(pi) => {
+					registerNamedTool(pi, "duplicate_tool");
+				},
+				(pi) => {
+					registerNamedTool(pi, "duplicate_tool");
+				},
+			],
 		}),
 	).rejects.toSatisfy((error: Error) => {
 		assertLoadErrorMessage(error, [/duplicate_tool/]);
@@ -346,14 +367,25 @@ test("a duplicate tool registration is listed as a load error", async () => {
 test("every load error starts a new line", async () => {
 	await expect(
 		emitBeforeAgentStart({
-			before: [(pi) => { registerNamedTool(pi, "first_duplicate"); }, (pi) => { registerNamedTool(pi, "first_duplicate"); }],
-			after: [(pi) => { registerNamedTool(pi, "second_duplicate"); }, (pi) => { registerNamedTool(pi, "second_duplicate"); }],
+			before: [
+				(pi) => {
+					registerNamedTool(pi, "first_duplicate");
+				},
+				(pi) => {
+					registerNamedTool(pi, "first_duplicate");
+				},
+			],
+			after: [
+				(pi) => {
+					registerNamedTool(pi, "second_duplicate");
+				},
+				(pi) => {
+					registerNamedTool(pi, "second_duplicate");
+				},
+			],
 		}),
 	).rejects.toSatisfy((error: Error) => {
-		assertLoadErrorMessage(error, [
-			/first_duplicate/,
-			/second_duplicate/,
-		]);
+		assertLoadErrorMessage(error, [/first_duplicate/, /second_duplicate/]);
 		return true;
 	});
 });

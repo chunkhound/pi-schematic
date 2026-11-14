@@ -10,25 +10,44 @@ import { testModel } from "./helpers.js";
 
 const rich = testModel({ provider: "p", id: "rich", input: ["text", "image"], reasoning: true, contextWindow: 100 });
 const text = testModel({ provider: "p", id: "text", input: ["text"], reasoning: false, contextWindow: 10 });
-const resolution = (members: readonly { provider: string; modelId: string; model?: Model<Api> }[]): ConstraintMemberResolution => ({ members: members.map(({ provider, modelId, model: resolved }) => ({ ref: { provider, modelId }, ...(resolved !== undefined ? { model: resolved } : {}) })) });
+const resolution = (members: readonly { provider: string; modelId: string; model?: Model<Api> }[]): ConstraintMemberResolution => ({
+	members: members.map(({ provider, modelId, model: resolved }) => ({ ref: { provider, modelId }, ...(resolved !== undefined ? { model: resolved } : {}) })),
+});
 
 test("constraint registry orders descriptors and rejects duplicate keys", () => {
 	const registry = createConstraintRegistry([testMinContext, modalitiesConstraint]);
 	expect(registry.descriptors.map((descriptor) => descriptor.key)).toStrictEqual(["modalities", "testMinContext"]);
-	expect(() => createConstraintRegistry([modalitiesConstraint as AnyConstraintDescriptor, modalitiesConstraint as AnyConstraintDescriptor])).toThrow(/Duplicate model-group constraint key: modalities/);
+	expect(() => createConstraintRegistry([modalitiesConstraint as AnyConstraintDescriptor, modalitiesConstraint as AnyConstraintDescriptor])).toThrow(
+		/Duplicate model-group constraint key: modalities/,
+	);
 });
 
-	test("engine preserves unresolved members as unknown facts", () => {
-	const result = evaluateConstraints(resolution([{ provider: "p", modelId: "rich", model: rich }, { provider: "p", modelId: "gone" }]), {}, createConstraintRegistry([modalitiesConstraint]));
+test("engine preserves unresolved members as unknown facts", () => {
+	const result = evaluateConstraints(
+		resolution([
+			{ provider: "p", modelId: "rich", model: rich },
+			{ provider: "p", modelId: "gone" },
+		]),
+		{},
+		createConstraintRegistry([modalitiesConstraint]),
+	);
 	// An unresolved member leaves common empty (hence the warning), but the union
 	// default still carries every capability the resolved members support: text is
 	// the base invariant, so effective carries the full resolved capability set.
-	expect(result[0]).toStrictEqual({ key: "modalities", aggregate: { common: [], supported: ["text", "image", "reasoning"], effective: [] }, effective: ["text", "image", "reasoning"], diagnostics: [{ key: "modalities", code: "empty-common" }] });
+	expect(result[0]).toStrictEqual({
+		key: "modalities",
+		aggregate: { common: [], supported: ["text", "image", "reasoning"], effective: [] },
+		effective: ["text", "image", "reasoning"],
+		diagnostics: [{ key: "modalities", code: "empty-common" }],
+	});
 });
 
 test("descriptor codecs report errors and retain vocabulary ordering", () => {
 	expect(modalitiesConstraint.persistence.override.decode(["reasoning", "text"], "override")).toStrictEqual({ ok: true, value: ["text", "reasoning"] });
-	expect(modalitiesConstraint.persistence.override.decode(["text", "text"], "override")).toStrictEqual({ ok: false, message: "override must be a unique modality vocabulary array" });
+	expect(modalitiesConstraint.persistence.override.decode(["text", "text"], "override")).toStrictEqual({
+		ok: false,
+		message: "override must be a unique modality vocabulary array",
+	});
 });
 
 test("generic multi-select editor enumerates automatic + one toggle per choice", () => {
@@ -62,11 +81,28 @@ test("fully stale non-empty modality overrides fall back to the union while expl
 
 test("injected scalar traverses resolution, aggregation, persistence, reconciliation, and production isolation", () => {
 	const injected = createConstraintRegistry([testMinContext]);
-	const resolved = resolution([{ provider: "p", modelId: "rich", model: rich }, { provider: "p", modelId: "text", model: text }]);
+	const resolved = resolution([
+		{ provider: "p", modelId: "rich", model: rich },
+		{ provider: "p", modelId: "text", model: text },
+	]);
 	const automatic = evaluateConstraints(resolved, {}, injected)[0];
 	expect(automatic.aggregate).toStrictEqual({ automatic: 10, supported: 100 });
 	expect(automatic.effective).toBe(10);
-	expect(evaluateConstraints(resolution([{ provider: "p", modelId: "rich", model: rich }, { provider: "p", modelId: "gone" }]), {}, injected)[0]).toStrictEqual({ key: "testMinContext", aggregate: { automatic: null, supported: 100 }, effective: null, diagnostics: [{ key: "testMinContext", code: "unknown-automatic" }] });
+	expect(
+		evaluateConstraints(
+			resolution([
+				{ provider: "p", modelId: "rich", model: rich },
+				{ provider: "p", modelId: "gone" },
+			]),
+			{},
+			injected,
+		)[0],
+	).toStrictEqual({
+		key: "testMinContext",
+		aggregate: { automatic: null, supported: 100 },
+		effective: null,
+		diagnostics: [{ key: "testMinContext", code: "unknown-automatic" }],
+	});
 	expect(evaluateConstraints(resolution([]), {}, injected)[0].aggregate).toStrictEqual({ automatic: null, supported: null });
 	const envelope: Record<string, unknown> = { testMinContext: testMinContext.persistence.override.encode(12) };
 	const decoded = testMinContext.persistence.override.decode(envelope.testMinContext, "constraints.testMinContext");
@@ -117,9 +153,15 @@ test("generic presentation and number form rows use injected descriptor metadata
 
 test("engine uses only the supplied resolution and never calls host registry APIs", () => {
 	const spyResolution = Object.assign(resolution([{ provider: "p", modelId: "rich", model: rich }]), {
-		find: () => { throw new Error("find must not be called"); },
-		hasConfiguredAuth: () => { throw new Error("auth must not be called"); },
-		refresh: () => { throw new Error("refresh must not be called"); },
+		find: () => {
+			throw new Error("find must not be called");
+		},
+		hasConfiguredAuth: () => {
+			throw new Error("auth must not be called");
+		},
+		refresh: () => {
+			throw new Error("refresh must not be called");
+		},
 	});
 	const result = evaluateConstraints(spyResolution, {}, createConstraintRegistry([modalitiesConstraint]));
 	expect(result[0].effective).toStrictEqual(["text", "image", "reasoning"]);

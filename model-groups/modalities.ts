@@ -13,10 +13,7 @@ export function deriveModelGroupModalities(
 	return { common: evaluation.aggregate.common, supported: evaluation.aggregate.supported, effective: evaluation.effective };
 }
 
-export function assertModalityOverrideSupported(
-	group: Pick<ModelGroupDef, "models" | "constraints">,
-	modelRegistry: Pick<ModelRegistry, "find">,
-): void {
+export function assertModalityOverrideSupported(group: Pick<ModelGroupDef, "models" | "constraints">, modelRegistry: Pick<ModelRegistry, "find">): void {
 	const override = group.constraints?.modalities as ModelGroupModality[] | undefined;
 	const evaluation = deriveModalitiesEvaluation(resolveConstraintMembers(group.models, modelRegistry).members, override);
 	assertModalitiesOverrideSupported(evaluation, override);

@@ -1,0 +1,7 @@
+# Written by tools: npm writes the lockfile, ESLint writes its baseline.
+package-lock.json
+eslint-suppressions.json
+# Golden files that the render snapshot tests compare byte for byte.
+tests/snapshots/
+# Agent worktrees, which ESLint ignores as well.
+.claude/

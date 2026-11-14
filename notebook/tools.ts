@@ -29,8 +29,7 @@ function formatTruncationReport(report: TruncationReport): string {
 
 const notebookWriteParams = Type.Object({
 	name: Type.String({
-		description:
-			"Kebab-case notebook page identifier. Prefer stable subject-oriented names; using an existing name overwrites that page (refinement).",
+		description: "Kebab-case notebook page identifier. Prefer stable subject-oriented names; using an existing name overwrites that page (refinement).",
 	}),
 	content: Type.String({
 		description:
@@ -100,8 +99,7 @@ export function createNotebookToolDefinitions(
 		renderCall(args: WriteArgs, theme, _context) {
 			const preview = formatPagePreview(args.content).trim();
 
-			let text = theme.fg("toolTitle", theme.bold("notebook_write ")) +
-				theme.fg("accent", `"${args.name}"`);
+			let text = theme.fg("toolTitle", theme.bold("notebook_write ")) + theme.fg("accent", `"${args.name}"`);
 			if (preview) {
 				text += ": " + theme.fg("dim", preview);
 			}
@@ -135,17 +133,20 @@ export function createNotebookToolDefinitions(
 			};
 
 			onUpdate?.({
-				content: [{
-					type: "text" as const,
-					text: `Saved "${params.name}"` + (saved.preview ? `: ${saved.preview}` : "") + (report !== null ? `\n\n${report}` : ""),
-				}],
+				content: [
+					{
+						type: "text" as const,
+						text: `Saved "${params.name}"` + (saved.preview ? `: ${saved.preview}` : "") + (report !== null ? `\n\n${report}` : ""),
+					},
+				],
 				details,
 			});
 			return {
 				content: [
 					{
 						type: "text" as const,
-						text: `Saved notebook page "${params.name}".` +
+						text:
+							`Saved notebook page "${params.name}".` +
 							(saved.preview ? `\n${saved.preview}` : "") +
 							(report !== null ? `\n\n${report}` : "") +
 							`\n\nNotebook Pages:\n${formatPageList(state) || "(empty)"}`,
@@ -177,11 +178,7 @@ export function createNotebookToolDefinitions(
 		renderResult(result, { expanded }, theme, context: { args: ReadArgs }) {
 			const details = result.details as { entries: string[]; found: boolean; body?: string };
 			if (!details.found) {
-				return new Text(
-					theme.fg("error", "\u2717 ") + theme.fg("muted", `"${context.args.name}" not found`),
-					0,
-					0,
-				);
+				return new Text(theme.fg("error", "\u2717 ") + theme.fg("muted", `"${context.args.name}" not found`), 0, 0);
 			}
 			let text = theme.fg("success", "\u2713 ") + theme.fg("accent", `"${context.args.name}"`);
 			if (expanded && details.body !== undefined && details.body !== "") {
@@ -201,9 +198,7 @@ export function createNotebookToolDefinitions(
 						content: [
 							{
 								type: "text" as const,
-								text:
-									`Notebook page "${params.name}" not found.` +
-									`\n\nNotebook Pages:\n${formatPageList(state) || "(empty)"}`,
+								text: `Notebook page "${params.name}" not found.` + `\n\nNotebook Pages:\n${formatPageList(state) || "(empty)"}`,
 							},
 						],
 						details: { entries: names, found: false },
@@ -218,9 +213,7 @@ export function createNotebookToolDefinitions(
 							text:
 								`--- ${params.name} ---\n${content}\n` +
 								`---\nNotebook Pages:\n${formatPageList(state) || "(empty)"}` +
-								(clipped
-									? `\n\nNotice: This page was clipped at write time; its stored body is incomplete.`
-									: ""),
+								(clipped ? `\n\nNotice: This page was clipped at write time; its stored body is incomplete.` : ""),
 						},
 					],
 					details: { entries: names, found: true, body: content, clipped },
@@ -233,9 +226,7 @@ export function createNotebookToolDefinitions(
 		name: "notebook_index",
 		label: "Notebook Index",
 		description:
-			"Scan the notebook index as name + first-line preview. " +
-			"Use this like a pocket notebook index. " +
-			"Always returns the current notebook page names.",
+			"Scan the notebook index as name + first-line preview. " + "Use this like a pocket notebook index. " + "Always returns the current notebook page names.",
 		...(withHints
 			? {
 					promptSnippet: "List pages via notebook index",
@@ -280,10 +271,7 @@ export function createNotebookToolDefinitions(
 
 // ── Registration ──────────────────────────────────────────────────────
 
-export function registerNotebookTools(
-	pi: ExtensionAPI,
-	state: SchematicState,
-): void {
+export function registerNotebookTools(pi: ExtensionAPI, state: SchematicState): void {
 	const tools = createNotebookToolDefinitions(pi, state, { withPromptHints: true });
 	for (const tool of tools) {
 		pi.registerTool(tool);

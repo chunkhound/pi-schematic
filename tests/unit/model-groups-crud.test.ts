@@ -16,30 +16,54 @@ import {
 	updateGroup,
 	validateModelGroups,
 } from "../../model-groups/store.js";
-import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModel, type ModelGroupScope, type ModelGroupsAccess, type ResolvedModelGroup } from "../../model-groups/types.js";
+import {
+	ModelGroupsPersistenceError,
+	type ModelGroupDef,
+	type ModelGroupModel,
+	type ModelGroupScope,
+	type ModelGroupsAccess,
+	type ResolvedModelGroup,
+} from "../../model-groups/types.js";
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import { testMinContext } from "./model-groups-constraints-fixture.js";
 import { createModelRegistry, recordOf, testModel, withTempAgentDir } from "./helpers.js";
 import { withTemp } from "./model-groups-helpers.js";
 import { assertPresent } from "../assertions.js";
 
-function access(cwd: string, policy: ModelGroupsAccess["policy"] = "global-project"): ModelGroupsAccess { return { cwd, policy }; }
+function access(cwd: string, policy: ModelGroupsAccess["policy"] = "global-project"): ModelGroupsAccess {
+	return { cwd, policy };
+}
 
 // The persisted file as tests read it back; keys the store does not know stay `unknown`.
-interface PersistedModel { provider: string; modelId: string; [key: string]: unknown }
-interface PersistedGroup { models: PersistedModel[]; constraints?: Record<string, unknown>; [key: string]: unknown }
-interface PersistedConfig { groups: Record<string, PersistedGroup>; [key: string]: unknown }
+interface PersistedModel {
+	provider: string;
+	modelId: string;
+	[key: string]: unknown;
+}
+interface PersistedGroup {
+	models: PersistedModel[];
+	constraints?: Record<string, unknown>;
+	[key: string]: unknown;
+}
+interface PersistedConfig {
+	groups: Record<string, PersistedGroup>;
+	[key: string]: unknown;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isPersistedGroup(value: unknown): value is PersistedGroup {
-	if (!isRecord(value)) {return false;}
+	if (!isRecord(value)) {
+		return false;
+	}
 	const models: unknown = value.models;
-	return Array.isArray(models)
-		&& models.every((entry: unknown) => isRecord(entry) && typeof entry.provider === "string" && typeof entry.modelId === "string")
-		&& (value.constraints === undefined || isRecord(value.constraints));
+	return (
+		Array.isArray(models) &&
+		models.every((entry: unknown) => isRecord(entry) && typeof entry.provider === "string" && typeof entry.modelId === "string") &&
+		(value.constraints === undefined || isRecord(value.constraints))
+	);
 }
 
 function assertPersistedConfig(value: unknown, file: string): asserts value is PersistedConfig {
@@ -78,702 +102,956 @@ function registryFields(): RegistryFields {
 function registryWithContextModel(): ModelRegistry {
 	const ctxModel = testModel({ provider: "openai", id: "gpt-ctx", input: ["text"], reasoning: false, contextWindow: 100 });
 	const fields = registryFields();
-	return createModelRegistry({ ...fields, find: (provider, id) => id === "gpt-ctx" ? ctxModel : fields.find(provider, id) });
+	return createModelRegistry({ ...fields, find: (provider, id) => (id === "gpt-ctx" ? ctxModel : fields.find(provider, id)) });
 }
 
-test("model groups store creates, round-trips, validates, renames, updates, deletes, and moves", () => withTemp(({ cwd }) => {
-	expect(Object.keys(loadModelGroups(access(cwd)).configs.project.groups)).toHaveLength(0);
-	createGroup("project", access(cwd), "review", { models: [] }, createModelRegistry(registryFields()));
-	expect(read("project", cwd).groups.review.models).toStrictEqual([]);
-	expect(() => { createGroup("project", access(cwd), "review", { models: [] }, createModelRegistry(registryFields())); }).toThrow(/already exists/);
+test("model groups store creates, round-trips, validates, renames, updates, deletes, and moves", () =>
+	withTemp(({ cwd }) => {
+		expect(Object.keys(loadModelGroups(access(cwd)).configs.project.groups)).toHaveLength(0);
+		createGroup("project", access(cwd), "review", { models: [] }, createModelRegistry(registryFields()));
+		expect(read("project", cwd).groups.review.models).toStrictEqual([]);
+		expect(() => {
+			createGroup("project", access(cwd), "review", { models: [] }, createModelRegistry(registryFields()));
+		}).toThrow(/already exists/);
 
-	createGroup("project", access(cwd), "inherit-roundtrip", { models: [{ provider: "anthropic", modelId: "claude" }] }, createModelRegistry(registryFields()));
-	const inheritLoaded = loadModelGroups(access(cwd)).configs.project.groups["inherit-roundtrip"].models[0];
-	expect(inheritLoaded.thinkingLevel).toBeUndefined();
-	expect(Object.getOwnPropertyNames(inheritLoaded)).not.toContain("thinkingLevel");
-	const inheritPersisted = read("project", cwd).groups["inherit-roundtrip"].models[0];
-	expect(inheritPersisted.thinkingLevel).toBeUndefined();
-	expect(Object.getOwnPropertyNames(inheritPersisted)).not.toContain("thinkingLevel");
+		createGroup("project", access(cwd), "inherit-roundtrip", { models: [{ provider: "anthropic", modelId: "claude" }] }, createModelRegistry(registryFields()));
+		const inheritLoaded = loadModelGroups(access(cwd)).configs.project.groups["inherit-roundtrip"].models[0];
+		expect(inheritLoaded.thinkingLevel).toBeUndefined();
+		expect(Object.getOwnPropertyNames(inheritLoaded)).not.toContain("thinkingLevel");
+		const inheritPersisted = read("project", cwd).groups["inherit-roundtrip"].models[0];
+		expect(inheritPersisted.thinkingLevel).toBeUndefined();
+		expect(Object.getOwnPropertyNames(inheritPersisted)).not.toContain("thinkingLevel");
 
-	updateGroup("project", access(cwd), "review", { models: [{ provider: "openai", modelId: "gpt-5", thinkingLevel: "high" }] }, createModelRegistry(registryFields()));
-	renameGroup("project", access(cwd), "review", "reviewers");
-	expect(read("project", cwd).groups.review).toBeUndefined();
-	expect(read("project", cwd).groups.reviewers.models[0].thinkingLevel).toBe("high");
+		updateGroup(
+			"project",
+			access(cwd),
+			"review",
+			{ models: [{ provider: "openai", modelId: "gpt-5", thinkingLevel: "high" }] },
+			createModelRegistry(registryFields()),
+		);
+		renameGroup("project", access(cwd), "review", "reviewers");
+		expect(read("project", cwd).groups.review).toBeUndefined();
+		expect(read("project", cwd).groups.reviewers.models[0].thinkingLevel).toBe("high");
 
-	createGroup("project", access(cwd), "collision", { models: [] }, createModelRegistry(registryFields()));
-	expect(() => { renameGroup("project", access(cwd), "reviewers", "collision"); }).toThrow(/already exists/);
-	createGroup("global", access(cwd), "reviewers", { models: [{ provider: "openai", modelId: "gpt-5" }, { provider: "missing", modelId: "nope" }] }, createModelRegistry(registryFields()));
-	const loaded = loadModelGroups(access(cwd));
-	const resolved = validateModelGroups(loaded, createModelRegistry(registryFields()));
-	const globalReviewers = resolved.find((g) => g.name === "reviewers" && g.scope === "global");
-	expect(globalReviewers?.validation.shadowedByProject).toBe(true);
-	expect(globalReviewers?.validation.unavailableRefs).toStrictEqual([{ provider: "missing", modelId: "nope" }]);
-	expect(globalReviewers?.validation.degraded).toBe(true);
-
-	createGroup("global", access(cwd), "move-collision", { models: [] }, createModelRegistry(registryFields()));
-	createGroup("project", access(cwd), "move-collision", { models: [] }, createModelRegistry(registryFields()));
-	expect(() => { moveGroup(access(cwd), "move-collision", "project"); }).toThrow(/already exists in project scope/);
-	expect(read("global", cwd).groups).toHaveProperty(["move-collision"]);
-	expect(read("project", cwd).groups).toHaveProperty(["move-collision"]);
-
-	const deleted = deleteGroup("global", access(cwd), "reviewers");
-	expect(deleted.otherScopeHasOverride).toBe(true);
-	moveGroup(access(cwd), "reviewers", "global");
-	expect(read("global", cwd).groups).toHaveProperty(["reviewers"]);
-	expect(read("project", cwd).groups.reviewers).toBeUndefined();
-}));
-
-test("model groups load recovery handles malformed, schema-invalid, unsupported version, and backup failure", () => withTemp(({ cwd }) => {
-	fs.mkdirSync(path.dirname(modelGroupsPath("global", cwd)), { recursive: true });
-	fs.writeFileSync(modelGroupsPath("global", cwd), "{not json", "utf8");
-	let loaded = loadModelGroups(access(cwd));
-	expect(loaded.issues[0].kind).toBe("corrupt-json");
-	expect(`${modelGroupsPath("global", cwd)}.bak`).toSatisfy(fs.existsSync);
-
-	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
-	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { bad: { models: [{ provider: 1 }] } } }), "utf8");
-	loaded = loadModelGroups(access(cwd));
-	const schemaIssue = loaded.issues.find((i) => i.scope === "project");
-	assertPresent(schemaIssue, "the project config reports a load issue");
-	expect(schemaIssue.kind).toBe("schema-invalid");
-	expect(schemaIssue.scope).toBe("project");
-	expect(schemaIssue.sourcePath).toBe(modelGroupsPath("project", cwd));
-	expect(schemaIssue.backupPath).toBe(`${modelGroupsPath("project", cwd)}.bak`);
-	expect(schemaIssue.message).toMatch(/provider/);
-	expect(schemaIssue.backupPath).toSatisfy(fs.existsSync);
-	expect(Object.keys(loaded.configs.project.groups)).toHaveLength(0);
-
-	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 99, groups: {} }), "utf8");
-	loaded = loadModelGroups(access(cwd));
-	expect(loaded.issues.find((i) => i.scope === "project")?.kind).toBe("unsupported-version");
-	expect(loaded.issues.find((i) => i.scope === "project")?.version).toBe(99);
-
-	fs.writeFileSync(modelGroupsPath("project", cwd), "{bad", "utf8");
-	__setModelGroupsFsForTests({ copyFileSync: () => { throw new Error("denied"); } });
-	loaded = loadModelGroups(access(cwd));
-	const issue = loaded.issues.find((i) => i.scope === "project");
-	assertPresent(issue, "the project config reports a load issue");
-	expect(issue.backupFailed).toBe(true);
-	expect(fs.readFileSync(modelGroupsPath("project", cwd), "utf8")).toBe("{bad");
-	expect(() => { createGroup("project", access(cwd), "must-not-overwrite", { models: [] }, createModelRegistry(registryFields())); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
-		expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
-		expect(error.operation).toBe("save");
-		expect(error.phase).toBe("load-recovery");
-		return true;
-	}));
-	expect(fs.readFileSync(modelGroupsPath("project", cwd), "utf8")).toBe("{bad");
-}));
-
-test("model groups rename failure removes the generated temp file and preserves committed bytes", () => withTemp(({ cwd }) => {
-	const sourcePath = modelGroupsPath("project", cwd);
-	saveModelGroups("project", access(cwd), { version: 2, groups: { keep: { models: [] } } });
-	const committedBytes = fs.readFileSync(sourcePath);
-	const renameCause = new Error("rename denied");
-	let generatedTempPath = "";
-
-	__setModelGroupsFsForTests({
-		renameSync: (from) => {
-			generatedTempPath = String(from);
-			expect(path.basename(generatedTempPath)).toMatch(/^model-groups\.json\.\d+\.\d+\.tmp$/);
-			expect(fs.readFileSync(generatedTempPath, "utf8")).toContain('"drop"');
-			throw renameCause;
-		},
-	});
-	expect(() => { saveModelGroups("project", access(cwd), { version: 2, groups: { drop: { models: [] } } }); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
-		expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
-		expect(error.operation).toBe("save");
-		expect(error.phase).toBe("rename");
-		expect(error.sourcePath).toBe(sourcePath);
-		expect(error.targetPath).toBe(generatedTempPath);
-		expect(error.cause).toBe(renameCause);
-		return true;
-	}));
-
-	expect(generatedTempPath).not.toBe("");
-	expect(fs.readFileSync(sourcePath)).toStrictEqual(committedBytes);
-	expect(generatedTempPath).not.toSatisfy(fs.existsSync);
-	expect(fs.readdirSync(path.dirname(sourcePath)).filter((name) => /^model-groups\.json\.\d+\.\d+\.tmp$/.test(name))).toStrictEqual([]);
-}));
-
-test("model groups rename cleanup failure remains supplemental to the original typed error", () => withTemp(({ cwd }) => {
-	const sourcePath = modelGroupsPath("project", cwd);
-	saveModelGroups("project", access(cwd), { version: 2, groups: { keep: { models: [] } } });
-	const committedBytes = fs.readFileSync(sourcePath);
-	const renameCause = new Error("rename denied");
-	const cleanupCause = new Error("cleanup denied");
-	let generatedTempPath = "";
-
-	__setModelGroupsFsForTests({
-		renameSync: (from) => {
-			generatedTempPath = String(from);
-			expect(generatedTempPath).toSatisfy(fs.existsSync);
-			throw renameCause;
-		},
-		unlinkSync: (target) => {
-			expect(String(target)).toBe(generatedTempPath);
-			throw cleanupCause;
-		},
-	});
-	expect(() => { saveModelGroups("project", access(cwd), { version: 2, groups: { drop: { models: [] } } }); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
-		expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
-		expect(error.operation).toBe("save");
-		expect(error.phase).toBe("rename");
-		expect(error.sourcePath).toBe(sourcePath);
-		expect(error.targetPath).toBe(generatedTempPath);
-		expect(error.cause).toBe(renameCause);
-		expect(error.message).toMatch(/cleanup denied/);
-		return true;
-	}));
-
-	expect(generatedTempPath).not.toBe("");
-	expect(fs.readFileSync(sourcePath)).toStrictEqual(committedBytes);
-	expect(generatedTempPath).toSatisfy(fs.existsSync);
-}));
-
-test("model groups persistence failures throw typed errors and preserve committed state", () => withTemp(({ cwd }) => {
-	saveModelGroups("project", access(cwd), { version: 2, groups: { keep: { models: [] } } });
-	__setModelGroupsFsForTests({ writeFileSync: () => { throw new Error("temp denied"); } });
-	expect(() => { updateGroup("project", access(cwd), "keep", { models: [{ provider: "openai", modelId: "gpt-5" }] }, createModelRegistry(registryFields())); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
-		expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
-		expect(error.operation).toBe("save");
-		expect(error.phase).toBe("temp-write");
-		expect(error.scope).toBe("project");
-		expect(error.sourcePath).toBe(modelGroupsPath("project", cwd));
-		expect(error.targetPath ?? "").toMatch(/model-groups\.json\..+\.tmp$/);
-		return true;
-	}));
-	__setModelGroupsFsForTests(null);
-	expect(read("project", cwd).groups).toHaveProperty(["keep"]);
-	expect(read("project", cwd).groups.keep.models).toHaveLength(0);
-
-	__setModelGroupsFsForTests({ renameSync: () => { throw new Error("rename denied"); } });
-	expect(() => { saveModelGroups("project", access(cwd), { version: 2, groups: { drop: { models: [] } } }); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
-		expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
-		expect(error.phase).toBe("rename");
-		return true;
-	}));
-	__setModelGroupsFsForTests(null);
-	expect(read("project", cwd).groups).toHaveProperty(["keep"]);
-	expect(read("project", cwd).groups.drop).toBeUndefined();
-
-	__setModelGroupsFsForTests({ renameSync: () => { throw new Error("delete denied"); } });
-	expect(() => deleteGroup("project", access(cwd), "keep")).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
-		expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
-		expect(error.operation).toBe("delete");
-		return true;
-	}));
-	__setModelGroupsFsForTests(null);
-
-	createGroup("global", access(cwd), "move-target-fails", { models: [] }, createModelRegistry(registryFields()));
-	__setModelGroupsFsForTests({ renameSync: () => { throw new Error("target denied"); } });
-	expect(() => { moveGroup(access(cwd), "move-target-fails", "project"); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
-		expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
-		expect(error.operation).toBe("move");
-		expect(error.partialMove).toBeUndefined();
-		return true;
-	}));
-	__setModelGroupsFsForTests(null);
-
-	createGroup("global", access(cwd), "move-me", { models: [] }, createModelRegistry(registryFields()));
-	let writes = 0;
-	__setModelGroupsFsForTests({ renameSync: (from, to) => { writes++; if (writes === 2) {throw new Error("source denied");} fs.renameSync(from, to); } });
-	expect(() => { moveGroup(access(cwd), "move-me", "project"); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
-		expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
-		expect(error.partialMove).toBe("target-written-source-retained");
-		expect(error.phase).toBe("source-remove");
-		return true;
-	}));
-}));
-
-test("model groups strictly partitions schema and legacy version domains", () => withTemp(({ cwd }) => {
-	const projectPath = modelGroupsPath("project", cwd);
-	fs.mkdirSync(path.dirname(projectPath), { recursive: true });
-	const invalid: [string, unknown, RegExp][] = [
-		["root", [], /root/], ["version type", { version: "1", groups: {} }, /version/],
-		["negative", { version: -1, groups: {} }, /version/], ["fraction low", { version: 0.5, groups: {} }, /version/],
-		["fraction high", { version: 1.5, groups: {} }, /version/], ["groups", { version: 2, groups: [] }, /groups/],
-		["group", { version: 2, groups: { bad: 1 } }, /group/],
-		["provider missing", { version: 2, groups: { bad: { models: [{ modelId: "m" }] } } }, /provider/],
-		["provider type", { version: 2, groups: { bad: { models: [{ provider: 1, modelId: "m" }] } } }, /provider/],
-		["model missing", { version: 2, groups: { bad: { models: [{ provider: "p" }] } } }, /modelId/],
-		["model type", { version: 2, groups: { bad: { models: [{ provider: "p", modelId: 1 }] } } }, /modelId/],
-		["models", { version: 2, groups: { bad: { models: 1 } } }, /models/],
-		["thinking", { version: 2, groups: { bad: { models: [{ provider: "p", modelId: "m", thinkingLevel: "turbo" }] } } }, /thinkingLevel/],
-	];
-	for (const [label, raw, message] of invalid) {
-		fs.rmSync(`${projectPath}.bak`, { force: true });
-		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
-		const loaded = loadModelGroups(access(cwd));
-		const issue = loaded.issues.find((candidate) => candidate.scope === "project");
-		assertPresent(issue, "the project config reports a load issue");
-		expect(issue.kind, label).toBe("schema-invalid");
-		expect(issue.message, label).toMatch(message);
-		expect(`${projectPath}.bak`, label).toSatisfy(fs.existsSync);
-		expect(Object.keys(loaded.configs.project.groups), label).toHaveLength(0);
-	}
-	for (const raw of [{ groups: { legacy: { models: [] } } }, { version: 0, groups: { legacy: { models: [] } } }]) {
-		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
-		const loaded = loadModelGroups(access(cwd));
-		expect(loaded.issues).toHaveLength(0);
-		expect(loaded.configs.project.version).toBe(2);
-		updateGroup("project", access(cwd), "legacy", { models: [] }, createModelRegistry(registryFields()));
-		expect(read("project", cwd).version).toBe(2);
-	}
-}));
-
-test("legacy constraints recover as schema-invalid instead of crashing load", () => withTemp(({ cwd }) => {
-	const projectPath = modelGroupsPath("project", cwd);
-	fs.mkdirSync(path.dirname(projectPath), { recursive: true });
-	for (const raw of [{ groups: { legacy: { models: [], constraints: {} } } }, { version: 0, groups: { legacy: { models: [], constraints: {} } } }, { version: 1, groups: { legacy: { models: [], constraints: {} } } }]) {
-		fs.rmSync(`${projectPath}.bak`, { force: true });
-		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
-		const loaded = loadModelGroups(access(cwd));
-		const issue = loaded.issues.find((candidate) => candidate.scope === "project");
-		assertPresent(issue, "the project config reports a load issue");
-		expect(issue.kind).toBe("schema-invalid");
-		expect(issue.message).toMatch(/constraints/);
-		expect(`${projectPath}.bak`).toSatisfy(fs.existsSync);
-		expect(Object.keys(loaded.configs.project.groups)).toHaveLength(0);
-	}
-}));
-
-test("store-level validation derives empty-common and stale-override flags and counts them", () => withTemp(({ cwd }) => {
-	const a = access(cwd);
-	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
-	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: {
-		empty: { models: [] },
-		unresolved: { models: [{ provider: "openai", modelId: "gone" }, { provider: "openai", modelId: "gpt-5" }] },
-		stale: { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["text", "image"] } },
-	} }), "utf8");
-	const resolved = validateModelGroups(loadModelGroups(a), createModelRegistry(registryFields()));
-	// claude supports text only, so image is a stale unsupported override entry.
-	const empty = resolved.find((g) => g.name === "empty");
-	expect(empty?.validation.emptyCommonModalities, "empty group has no common modalities").toBe(true);
-	const unresolved = resolved.find((g) => g.name === "unresolved");
-	expect(unresolved?.validation.emptyCommonModalities, "unresolved member fails closed").toBe(true);
-	const stale = resolved.find((g) => g.name === "stale");
-	expect(stale?.validation.unsupportedOverrideModalities).toStrictEqual(["image"]);
-	const summary = summarizeBootValidation(resolved);
-	expect(summary.emptyModalityCount).toBe(2);
-	expect(summary.staleModalityOverrideCount).toBe(1);
-}));
-
-test("low-level save permits shape-valid overrides while CRUD rejects union-cap-invalid overrides", () => withTemp(({ cwd }) => {
-	const a = access(cwd);
-	// The low-level persistence boundary only validates v2 shape. It deliberately
-	// persists this image override even though claude's union has text only.
-	saveModelGroups("project", a, { version: 2, groups: { persistenceOnly: { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["image"] } } } });
-	expect(read("project", cwd).groups.persistenceOnly.constraints?.modalities).toStrictEqual(["image"]);
-	// CRUD owns the union-cap invariant and must reject the same invalid shape
-	// before any write.
-	// claude supports only text, so an override of image must be rejected by the CRUD gate.
-	const writeFileSync = vi.fn(fs.writeFileSync);
-	__setModelGroupsFsForTests({ writeFileSync });
-	expect(() => { createGroup("project", a, "claude-only", { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["image"] } }, createModelRegistry(registryFields())); }).toThrow(/unsupported modalities: image/);
-	expect(writeFileSync).not.toHaveBeenCalled();
-	__setModelGroupsFsForTests(null);
-
-	createGroup("project", a, "rich", { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["text", "image"] } }, createModelRegistry(registryFields()));
-	const before = fs.readFileSync(modelGroupsPath("project", cwd), "utf8");
-	const writeFileSync2 = vi.fn(fs.writeFileSync);
-	__setModelGroupsFsForTests({ writeFileSync: writeFileSync2 });
-	// Combined member change: replacing gpt-5 (text+image+reasoning) with claude (text only)
-	// makes the retained override's image unsupported → the gate must reject before any write.
-	expect(() => { updateGroup("project", a, "rich", { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["text", "image"] } }, createModelRegistry(registryFields())); }).toThrow(/unsupported modalities: image/);
-	expect(writeFileSync2, "rejected update must not write").not.toHaveBeenCalled();
-	expect(fs.readFileSync(modelGroupsPath("project", cwd), "utf8")).toBe(before);
-	__setModelGroupsFsForTests(null);
-}));
-
-test("injected descriptors get persisted validation and CRUD cap enforcement through the registry", () => withTemp(({ cwd }) => {
-	const a = access(cwd);
-	const injected = createConstraintRegistry([testMinContext]);
-	// gpt-ctx has a 100-token contextWindow, so the testMinContext override 5 is supported.
-	const modelRegistry = registryWithContextModel();
-	// Valid override: normalized through CRUD and persisted.
-	createGroup("project", a, "deep", { models: [{ provider: "openai", modelId: "gpt-ctx" }], constraints: { testMinContext: 5 } }, modelRegistry, injected);
-	expect(read("project", cwd).groups.deep.constraints).toStrictEqual({ testMinContext: 5 });
-	// Load with the same registry decodes/validates the persisted value.
-	const loaded = loadModelGroups(a, injected);
-	expect(loaded.issues).toHaveLength(0);
-	expect(loaded.configs.project.groups.deep.constraints?.testMinContext).toBe(5);
-	// Boot validation with the same registry carries the injected descriptor's evaluation.
-	const resolved = validateModelGroups(loaded, modelRegistry, injected);
-	expect(resolved[0].evaluations?.map((evaluation) => evaluation.key), "injected evaluation must be present in boot validation").toContain("testMinContext");
-	// Unknown keys stay opaque even under an injected registry.
-	updateGroup("project", a, "deep", { models: [{ provider: "openai", modelId: "gpt-ctx" }], constraints: { testMinContext: 5, futureKey: { nested: true } } }, modelRegistry, injected);
-	expect(read("project", cwd).groups.deep.constraints).toStrictEqual({ testMinContext: 5, futureKey: { nested: true } });
-}));
-
-test("injected persisted values are validated on save and malformed values trigger schema-invalid load recovery", () => withTemp(({ cwd }) => {
-	const a = access(cwd);
-	const injected = createConstraintRegistry([testMinContext]);
-	const sourcePath = modelGroupsPath("project", cwd);
-	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-	// Save-side rejection: an invalid injected value cannot be persisted.
-	expect(() => { saveModelGroups("project", a, { version: 2, groups: { g: { models: [], constraints: { testMinContext: -3 } } } }, injected); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
-		expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
-		expect(error.message).toMatch(/testMinContext must be a positive safe integer/);
-		return true;
-	}));
-	// Load-side recovery: a hand-edited malformed value is schema-invalid and backed up.
-	fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: { g: { models: [], constraints: { testMinContext: "nope" } } } }), "utf8");
-	const loaded = loadModelGroups(a, injected);
-	expect(loaded.issues).toHaveLength(1);
-	expect(loaded.issues[0].kind).toBe("schema-invalid");
-	expect(loaded.issues[0].message).toMatch(/testMinContext must be a positive safe integer/);
-	expect(`${sourcePath}.bak`, "malformed injected value must back up like any schema-invalid config").toSatisfy(fs.existsSync);
-}));
-
-test("CRUD rejects unsupported injected overrides before any write", () => withTemp(({ cwd }) => {
-	const a = access(cwd);
-	const injected = createConstraintRegistry([testMinContext]);
-	const modelRegistry = registryWithContextModel();
-	const writeFileSync = vi.fn(fs.writeFileSync);
-	__setModelGroupsFsForTests({ writeFileSync });
-	try {
-		expect(() => { createGroup("project", a, "deep", { models: [{ provider: "openai", modelId: "gpt-ctx" }], constraints: { testMinContext: 200 } }, modelRegistry, injected); }).toThrow(/testMinContext override 200 exceeds/);
-		expect(writeFileSync, "rejected injected override must not write").not.toHaveBeenCalled();
-	} finally {
-		__setModelGroupsFsForTests(null);
-	}
-}));
-
-test("opaque constraint values are deep-cloned on load — no aliasing between store and merged views", () => withTemp(({ cwd }) => {
-	const a = access(cwd);
-	// An opaque (unknown to the registry) nested constraint value passes through
-	// persistence untouched; the store and merged views must not share it by reference.
-	const nested = { min: 5, tags: ["a", "b"] };
-	saveModelGroups("project", a, { version: 2, groups: { deep: { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { testMinContext: nested } } } });
-	const loaded = loadModelGroups(a);
-	const merged = loaded.merged.find((g) => g.name === "deep");
-	assertPresent(merged, "the merged view holds the deep group");
-	const mergedConstraints = merged.constraints;
-	const storedConstraints = loaded.configs.project.groups.deep.constraints;
-	assertPresent(mergedConstraints, "the merged group keeps its constraints");
-	assertPresent(storedConstraints, "the stored group keeps its constraints");
-	recordOf(mergedConstraints.testMinContext, "the merged constraint value").min = 99;
-	expect(recordOf(storedConstraints.testMinContext, "the stored constraint value").min, "mutating the merged view must not alias the store copy").toBe(5);
-	expect(mergedConstraints.testMinContext, "nested constraint values must be distinct objects").not.toBe(storedConstraints.testMinContext);
-}));
-
-test("v2 config load rejects non-array, duplicate, and out-of-vocabulary modality constraints", () => withTemp(({ cwd }) => {
-	const projectPath = modelGroupsPath("project", cwd);
-	fs.mkdirSync(path.dirname(projectPath), { recursive: true });
-	const cases: [string, unknown, RegExp][] = [
-		["non-array", { version: 2, groups: { g: { models: [], constraints: { modalities: { text: true } } } } }, /modalities/],
-		["duplicate", { version: 2, groups: { g: { models: [], constraints: { modalities: ["text", "text"] } } } }, /unique/],
-		["out-of-language", { version: 2, groups: { g: { models: [], constraints: { modalities: ["audio"] } } } }, /vocabulary/],
-	];
-	for (const [label, raw, message] of cases) {
-		fs.rmSync(`${projectPath}.bak`, { force: true });
-		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
-		const loaded = loadModelGroups(access(cwd));
-		const issue = loaded.issues.find((candidate) => candidate.scope === "project");
-		assertPresent(issue, "the project config reports a load issue");
-		expect(issue.kind, label).toBe("schema-invalid");
-		expect(issue.message, label).toMatch(message);
-		expect(`${projectPath}.bak`, label).toSatisfy(fs.existsSync);
-	}
-}));
-
-test("v1 migration is in-memory until the first successful mutation writes v2 without an invented override", () => withTemp(({ cwd }) => {
-	const sourcePath = modelGroupsPath("project", cwd);
-	const v1Bytes = JSON.stringify({ version: 1, groups: { legacy: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }, null, 2) + "\n";
-	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-	fs.writeFileSync(sourcePath, v1Bytes, "utf8");
-
-	const loaded = loadModelGroups(access(cwd));
-	expect(loaded.configs.project.version).toBe(2);
-	expect(loaded.configs.project.groups.legacy.constraints).toBeUndefined();
-	expect(fs.readFileSync(sourcePath, "utf8")).toBe(v1Bytes);
-
-	updateGroup("project", access(cwd), "legacy", { models: [{ provider: "anthropic", modelId: "claude" }] }, createModelRegistry(registryFields()));
-	const persisted = read("project", cwd);
-	expect(persisted.version).toBe(2);
-	expect(Object.getOwnPropertyNames(persisted.groups.legacy)).not.toContain("modalityOverride");
-}));
-
-test("legacy modalityOverride is opaque and not interpreted", () => withTemp(({ cwd }) => {
-	const sourcePath = modelGroupsPath("project", cwd);
-	const v1Bytes = JSON.stringify({ version: 1, groups: { legacy: { models: [{ provider: "openai", modelId: "gpt-5" }], modalityOverride: ["image"] } } }, null, 2) + "\n";
-	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-	fs.writeFileSync(sourcePath, v1Bytes, "utf8");
-	const loaded = loadModelGroups(access(cwd));
-	expect(loaded.configs.project.groups.legacy.constraints).toBeUndefined();
-	expect(Object.getOwnPropertyNames(loaded.configs.project.groups.legacy)).toContain("modalityOverride");
-	expect(fs.readFileSync(sourcePath, "utf8")).toBe(v1Bytes);
-	saveModelGroups("project", access(cwd), loaded.configs.project);
-	expect(Object.getOwnPropertyNames(read("project", cwd).groups.legacy)).not.toContain("modalityOverride");
-}));
-
-test("malformed legacy modalityOverride loads opaquely and is dropped on a v2 write", () => withTemp(({ cwd }) => {
-	const sourcePath = modelGroupsPath("project", cwd);
-	const v1Bytes = JSON.stringify({ version: 1, groups: { legacy: { models: [], modalityOverride: "not-an-array" } } }, null, 2) + "\n";
-	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-	fs.writeFileSync(sourcePath, v1Bytes, "utf8");
-	const loaded = loadModelGroups(access(cwd));
-	expect(loaded.issues).toHaveLength(0);
-	expect(loaded.configs.project.groups.legacy).toHaveProperty("modalityOverride", "not-an-array");
-	expect(fs.readFileSync(sourcePath, "utf8")).toBe(v1Bytes);
-	saveModelGroups("project", access(cwd), loaded.configs.project);
-	expect(Object.getOwnPropertyNames(read("project", cwd).groups.legacy)).not.toContain("modalityOverride");
-}));
-
-test("v2 constraint envelope preserves explicit empty and opaque slots canonically", () => withTemp(({ cwd }) => {
-	const sourcePath = modelGroupsPath("project", cwd);
-	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-	const fixtures: [string, { constraints?: { modalities: string[] } }, string[] | undefined][] = [
-		["generic", { constraints: { modalities: ["reasoning", "text"] } }, ["text", "reasoning"]],
-		["empty", { constraints: { modalities: [] } }, []],
-		["automatic", {}, undefined],
-	];
-	fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: Object.fromEntries(fixtures.map(([name, envelope]) => [name, { models: [{ provider: "openai", modelId: "gpt-5" }], ...envelope }])) }), "utf8");
-	const loaded = loadModelGroups(access(cwd));
-	expect(loaded.issues).toHaveLength(0);
-	for (const [name, , expected] of fixtures) {expect(loaded.configs.project.groups[name].constraints?.modalities, name).toStrictEqual(expected);}
-	saveModelGroups("project", access(cwd), loaded.configs.project);
-	const persisted = read("project", cwd);
-	for (const [name, , expected] of fixtures) {
-		const group = persisted.groups[name];
-		if (expected === undefined) {
-			expect(Object.getOwnPropertyNames(group), name).not.toContain("constraints");
-		} else {
-			expect(group.constraints?.modalities, name).toStrictEqual(expected);
-		}
-	}
-
-	fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: { opaque: { models: [{ provider: "openai", modelId: "gpt-5", modelSentinel: true }], groupSentinel: true, constraints: { modalities: ["image"], cost: { future: true } } } } }), "utf8");
-	const opaque = loadModelGroups(access(cwd));
-	const sentinelModel: ModelGroupModel & { modelSentinel: boolean } = { provider: "openai", modelId: "gpt-5", modelSentinel: true, thinkingLevel: "high" };
-	updateGroup("project", access(cwd), "opaque", { ...opaque.configs.project.groups.opaque, models: [sentinelModel] }, createModelRegistry(registryFields()));
-	const opaquePersisted = read("project", cwd).groups.opaque;
-	expect(opaquePersisted.constraints).toStrictEqual({ modalities: ["image"], cost: { future: true } });
-	expect(opaquePersisted.groupSentinel).toBe(true);
-	expect(opaquePersisted.models[0].modelSentinel).toBe(true);
-}));
-
-test("v2 drops stale modalityOverride rather than reinterpreting it", () => withTemp(({ cwd }) => {
-	const sourcePath = modelGroupsPath("project", cwd);
-	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-	fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: { stale: { models: [], modalityOverride: ["image"] } } }), "utf8");
-	const loaded = loadModelGroups(access(cwd));
-	expect(loaded.issues).toHaveLength(0);
-	expect(loaded.configs.project.groups.stale.constraints).toBeUndefined();
-	saveModelGroups("project", access(cwd), loaded.configs.project);
-	expect(Object.getOwnPropertyNames(read("project", cwd).groups.stale)).not.toContain("modalityOverride");
-}));
-
-test("v2 normalization preserves opaque root group and model keys through load save and update", () => withTemp(({ cwd }) => {
-	const sourcePath = modelGroupsPath("project", cwd);
-	const raw = {
-		version: 2,
-		rootSentinel: { keep: true },
-		groups: {
-			review: {
-				groupSentinel: "keep",
-				models: [{ provider: "openai", modelId: "gpt-5", modelSentinel: "keep" }],
+		createGroup("project", access(cwd), "collision", { models: [] }, createModelRegistry(registryFields()));
+		expect(() => {
+			renameGroup("project", access(cwd), "reviewers", "collision");
+		}).toThrow(/already exists/);
+		createGroup(
+			"global",
+			access(cwd),
+			"reviewers",
+			{
+				models: [
+					{ provider: "openai", modelId: "gpt-5" },
+					{ provider: "missing", modelId: "nope" },
+				],
 			},
-		},
-	};
-	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-	fs.writeFileSync(sourcePath, JSON.stringify(raw), "utf8");
+			createModelRegistry(registryFields()),
+		);
+		const loaded = loadModelGroups(access(cwd));
+		const resolved = validateModelGroups(loaded, createModelRegistry(registryFields()));
+		const globalReviewers = resolved.find((g) => g.name === "reviewers" && g.scope === "global");
+		expect(globalReviewers?.validation.shadowedByProject).toBe(true);
+		expect(globalReviewers?.validation.unavailableRefs).toStrictEqual([{ provider: "missing", modelId: "nope" }]);
+		expect(globalReviewers?.validation.degraded).toBe(true);
 
-	const loaded = loadModelGroups(access(cwd));
-	saveModelGroups("project", access(cwd), loaded.configs.project);
-	updateGroup("project", access(cwd), "review", { ...loaded.configs.project.groups.review, models: loaded.configs.project.groups.review.models.map((model) => ({ ...model, thinkingLevel: "high" })) }, createModelRegistry(registryFields()));
+		createGroup("global", access(cwd), "move-collision", { models: [] }, createModelRegistry(registryFields()));
+		createGroup("project", access(cwd), "move-collision", { models: [] }, createModelRegistry(registryFields()));
+		expect(() => {
+			moveGroup(access(cwd), "move-collision", "project");
+		}).toThrow(/already exists in project scope/);
+		expect(read("global", cwd).groups).toHaveProperty(["move-collision"]);
+		expect(read("project", cwd).groups).toHaveProperty(["move-collision"]);
 
-	const persisted = read("project", cwd);
-	expect(persisted.rootSentinel).toStrictEqual({ keep: true });
-	expect(persisted.groups.review.groupSentinel).toBe("keep");
-	expect(persisted.groups.review.models[0].modelSentinel).toBe("keep");
-	expect(persisted.groups.review.models[0].thinkingLevel).toBe("high");
-}));
+		const deleted = deleteGroup("global", access(cwd), "reviewers");
+		expect(deleted.otherScopeHasOverride).toBe(true);
+		moveGroup(access(cwd), "reviewers", "global");
+		expect(read("global", cwd).groups).toHaveProperty(["reviewers"]);
+		expect(read("project", cwd).groups.reviewers).toBeUndefined();
+	}));
 
-test("store normalization strips runtime-derived group keys while preserving opaque keys", () => withTemp(({ cwd }) => {
-	const a = access(cwd);
-	createGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }] }, createModelRegistry(registryFields()));
-	const runtimeView: ResolvedModelGroup & { opaqueSentinel: { keep: boolean } } = {
-		models: [{ provider: "openai", modelId: "gpt-5" }],
-		constraints: { modalities: ["text", "image"] },
-		opaqueSentinel: { keep: true },
-		name: "review", scope: "project", sourcePath: "/runtime/model-groups.json",
-		modalities: { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image"] },
-		validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
-	};
-	updateGroup("project", a, "review", runtimeView, createModelRegistry(registryFields()));
-	const persisted = read("project", cwd).groups.review;
-	expect(Object.keys(persisted).sort()).toStrictEqual(["constraints", "models", "opaqueSentinel"]);
-	expect(persisted.constraints?.modalities).toStrictEqual(["text", "image"]);
-	expect(persisted.opaqueSentinel).toStrictEqual({ keep: true });
-	for (const key of ["name", "scope", "sourcePath", "modalities", "validation"]) {expect(Object.getOwnPropertyNames(persisted)).not.toContain(key);}
-}));
+test("model groups load recovery handles malformed, schema-invalid, unsupported version, and backup failure", () =>
+	withTemp(({ cwd }) => {
+		fs.mkdirSync(path.dirname(modelGroupsPath("global", cwd)), { recursive: true });
+		fs.writeFileSync(modelGroupsPath("global", cwd), "{not json", "utf8");
+		let loaded = loadModelGroups(access(cwd));
+		expect(loaded.issues[0].kind).toBe("corrupt-json");
+		expect(`${modelGroupsPath("global", cwd)}.bak`).toSatisfy(fs.existsSync);
 
-test("version-3 mutations refuse before temp write including loadScopeConfig-backed CRUD", () => withTemp(({ cwd }) => {
-	const sourcePath = modelGroupsPath("project", cwd);
-	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-	fs.writeFileSync(sourcePath, JSON.stringify({ version: 3, groups: {} }), "utf8");
-	const writeFileSync = vi.fn(() => { throw new Error("must not write"); });
-	__setModelGroupsFsForTests({ writeFileSync });
-	for (const mutate of [
-		() => { saveModelGroups("project", access(cwd), { version: 2, groups: {} }); },
-		() => { createGroup("project", access(cwd), "blocked", { models: [] }, createModelRegistry(registryFields())); },
-	]) {
-		expect(mutate).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
-			expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
-			expect(error.phase).toBe("config-validation");
-			return true;
-		}));
-	}
-	expect(writeFileSync).not.toHaveBeenCalled();
-	expect(fs.readFileSync(sourcePath, "utf8")).toBe(JSON.stringify({ version: 3, groups: {} }));
-}));
+		fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
+		fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { bad: { models: [{ provider: 1 }] } } }), "utf8");
+		loaded = loadModelGroups(access(cwd));
+		const schemaIssue = loaded.issues.find((i) => i.scope === "project");
+		assertPresent(schemaIssue, "the project config reports a load issue");
+		expect(schemaIssue.kind).toBe("schema-invalid");
+		expect(schemaIssue.scope).toBe("project");
+		expect(schemaIssue.sourcePath).toBe(modelGroupsPath("project", cwd));
+		expect(schemaIssue.backupPath).toBe(`${modelGroupsPath("project", cwd)}.bak`);
+		expect(schemaIssue.message).toMatch(/provider/);
+		expect(schemaIssue.backupPath).toSatisfy(fs.existsSync);
+		expect(Object.keys(loaded.configs.project.groups)).toHaveLength(0);
 
-test("modality overrides survive CRUD rename and move lifecycle in both scopes", () => withTemp(({ cwd }) => {
-	const a = access(cwd);
-	createGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["image"] } }, createModelRegistry(registryFields()));
-	updateGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["text", "image"] } }, createModelRegistry(registryFields()));
-	renameGroup("project", a, "review", "reviewers");
-	moveGroup(a, "reviewers", "global");
-	saveModelGroups("global", a, loadModelGroups(a).configs.global);
-	expect(read("global", cwd).groups.reviewers.constraints?.modalities).toStrictEqual(["text", "image"]);
+		fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 99, groups: {} }), "utf8");
+		loaded = loadModelGroups(access(cwd));
+		expect(loaded.issues.find((i) => i.scope === "project")?.kind).toBe("unsupported-version");
+		expect(loaded.issues.find((i) => i.scope === "project")?.version).toBe(99);
 
-	renameGroup("global", a, "reviewers", "global-reviewers");
-	moveGroup(a, "global-reviewers", "project");
-	expect(read("global", cwd).groups["global-reviewers"]).toBeUndefined();
-	expect(read("project", cwd).groups["global-reviewers"].constraints?.modalities).toStrictEqual(["text", "image"]);
-}));
+		fs.writeFileSync(modelGroupsPath("project", cwd), "{bad", "utf8");
+		__setModelGroupsFsForTests({
+			copyFileSync: () => {
+				throw new Error("denied");
+			},
+		});
+		loaded = loadModelGroups(access(cwd));
+		const issue = loaded.issues.find((i) => i.scope === "project");
+		assertPresent(issue, "the project config reports a load issue");
+		expect(issue.backupFailed).toBe(true);
+		expect(fs.readFileSync(modelGroupsPath("project", cwd), "utf8")).toBe("{bad");
+		expect(() => {
+			createGroup("project", access(cwd), "must-not-overwrite", { models: [] }, createModelRegistry(registryFields()));
+		}).toThrow(
+			expect.toSatisfy((error: ModelGroupsPersistenceError) => {
+				expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
+				expect(error.operation).toBe("save");
+				expect(error.phase).toBe("load-recovery");
+				return true;
+			}),
+		);
+		expect(fs.readFileSync(modelGroupsPath("project", cwd), "utf8")).toBe("{bad");
+	}));
 
-test("model groups use branded paths, global-only access, canonical own keys, and native max", () => withTemp(({ cwd }) => {
-	expect(modelGroupsPath("project", cwd, "branded-pi")).toBe(path.join(cwd, "branded-pi", "pi-schematic", "model-groups.json"));
-	const raw = '{"version":1,"groups":{" __proto__ ":{"models":[{"provider":"p","modelId":"proto","thinkingLevel":"max"}]},"constructor":{"models":[]},"toString":{"models":[]}}}';
-	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
-	fs.writeFileSync(modelGroupsPath("project", cwd), raw, "utf8");
-	const loaded = loadModelGroups(access(cwd));
-	for (const name of ["__proto__", "constructor", "toString"]) {expect(Object.getOwnPropertyNames(loaded.configs.project.groups)).toContain(name);}
-	expect(loaded.configs.project.groups.__proto__.models[0].thinkingLevel).toBe("max");
-	saveModelGroups("project", access(cwd), loaded.configs.project);
-	const persisted = read("project", cwd);
-	expect(Object.keys(persisted.groups).sort()).toStrictEqual(["__proto__", "constructor", "toString"].sort());
-	expect(Object.getPrototypeOf(loaded.configs.project.groups)).toBeNull();
+test("model groups rename failure removes the generated temp file and preserves committed bytes", () =>
+	withTemp(({ cwd }) => {
+		const sourcePath = modelGroupsPath("project", cwd);
+		saveModelGroups("project", access(cwd), { version: 2, groups: { keep: { models: [] } } });
+		const committedBytes = fs.readFileSync(sourcePath);
+		const renameCause = new Error("rename denied");
+		let generatedTempPath = "";
 
-	for (const name of ["__proto__", "constructor", "toString"]) {
-		deleteGroup("project", access(cwd), name);
-		createGroup("global", access(cwd), ` ${name} `, { models: [] }, createModelRegistry(registryFields()));
-		updateGroup("global", access(cwd), name, { models: [{ provider: "p", modelId: name }] }, createModelRegistry(registryFields()));
-		moveGroup(access(cwd), name, "project");
-		expect(Object.getOwnPropertyNames(read("project", cwd).groups)).toContain(name);
-		deleteGroup("project", access(cwd), name);
-	}
+		__setModelGroupsFsForTests({
+			renameSync: (from) => {
+				generatedTempPath = String(from);
+				expect(path.basename(generatedTempPath)).toMatch(/^model-groups\.json\.\d+\.\d+\.tmp$/);
+				expect(fs.readFileSync(generatedTempPath, "utf8")).toContain('"drop"');
+				throw renameCause;
+			},
+		});
+		expect(() => {
+			saveModelGroups("project", access(cwd), { version: 2, groups: { drop: { models: [] } } });
+		}).toThrow(
+			expect.toSatisfy((error: ModelGroupsPersistenceError) => {
+				expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
+				expect(error.operation).toBe("save");
+				expect(error.phase).toBe("rename");
+				expect(error.sourcePath).toBe(sourcePath);
+				expect(error.targetPath).toBe(generatedTempPath);
+				expect(error.cause).toBe(renameCause);
+				return true;
+			}),
+		);
 
-	const projectProbes: string[] = [];
-	__setModelGroupsFsForTests({ existsSync: (candidate) => {
-		if (String(candidate).startsWith(cwd)) { projectProbes.push(String(candidate)); throw new Error("project probed"); }
-		return fs.existsSync(candidate);
-	} });
-	const untrusted = loadModelGroups(access(cwd, "global-only"));
-	expect(projectProbes).toStrictEqual([]);
-	expect(untrusted.merged.filter((group) => group.scope !== "global")).toStrictEqual([]);
-	expect(() => { createGroup("project", access(cwd, "global-only"), "forbidden", { models: [] }, createModelRegistry(registryFields())); }).toThrow(/global-only/);
-	expect(projectProbes).toStrictEqual([]);
-}));
+		expect(generatedTempPath).not.toBe("");
+		expect(fs.readFileSync(sourcePath)).toStrictEqual(committedBytes);
+		expect(generatedTempPath).not.toSatisfy(fs.existsSync);
+		expect(fs.readdirSync(path.dirname(sourcePath)).filter((name) => /^model-groups\.json\.\d+\.\d+\.tmp$/.test(name))).toStrictEqual([]);
+	}));
 
-test.for(["__proto__", "constructor"])("rename, move and delete of a group named %s leave exactly the expected own group keys", (name) => withTemp(({ cwd }) => {
-	const a = access(cwd);
-	const noModels: Parameters<typeof createGroup>[4] = { find: () => undefined };
-	const groups = (scope: ModelGroupScope) => loadModelGroups(a).configs[scope].groups;
-	const names = (scope: ModelGroupScope) => Object.getOwnPropertyNames(groups(scope)).sort();
-	createGroup("project", a, "keep", { models: [{ provider: "openai", modelId: "gpt-5" }] }, noModels);
-	createGroup("project", a, name, { models: [{ provider: "anthropic", modelId: "claude" }] }, noModels);
-	createGroup("global", a, "other", { models: [{ provider: "anthropic", modelId: "claude" }] }, noModels);
-	createGroup("global", a, "drop", { models: [] }, noModels);
-	const keep = groups("project").keep;
-	const other = groups("global").other;
+test("model groups rename cleanup failure remains supplemental to the original typed error", () =>
+	withTemp(({ cwd }) => {
+		const sourcePath = modelGroupsPath("project", cwd);
+		saveModelGroups("project", access(cwd), { version: 2, groups: { keep: { models: [] } } });
+		const committedBytes = fs.readFileSync(sourcePath);
+		const renameCause = new Error("rename denied");
+		const cleanupCause = new Error("cleanup denied");
+		let generatedTempPath = "";
 
-	renameGroup("project", a, name, "renamed");
-	const renamedAway = names("project");
-	renameGroup("project", a, "renamed", name);
-	const renamedBack = names("project");
+		__setModelGroupsFsForTests({
+			renameSync: (from) => {
+				generatedTempPath = String(from);
+				expect(generatedTempPath).toSatisfy(fs.existsSync);
+				throw renameCause;
+			},
+			unlinkSync: (target) => {
+				expect(String(target)).toBe(generatedTempPath);
+				throw cleanupCause;
+			},
+		});
+		expect(() => {
+			saveModelGroups("project", access(cwd), { version: 2, groups: { drop: { models: [] } } });
+		}).toThrow(
+			expect.toSatisfy((error: ModelGroupsPersistenceError) => {
+				expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
+				expect(error.operation).toBe("save");
+				expect(error.phase).toBe("rename");
+				expect(error.sourcePath).toBe(sourcePath);
+				expect(error.targetPath).toBe(generatedTempPath);
+				expect(error.cause).toBe(renameCause);
+				expect(error.message).toMatch(/cleanup denied/);
+				return true;
+			}),
+		);
 
-	moveGroup(a, name, "global");
-	const moved = { project: names("project"), global: names("global") };
+		expect(generatedTempPath).not.toBe("");
+		expect(fs.readFileSync(sourcePath)).toStrictEqual(committedBytes);
+		expect(generatedTempPath).toSatisfy(fs.existsSync);
+	}));
 
-	renameGroup("global", a, "drop", "dropped");
-	const siblingRenamed = names("global");
-	deleteGroup("global", a, "dropped");
-	const siblingDeleted = names("global");
+test("model groups persistence failures throw typed errors and preserve committed state", () =>
+	withTemp(({ cwd }) => {
+		saveModelGroups("project", access(cwd), { version: 2, groups: { keep: { models: [] } } });
+		__setModelGroupsFsForTests({
+			writeFileSync: () => {
+				throw new Error("temp denied");
+			},
+		});
+		expect(() => {
+			updateGroup("project", access(cwd), "keep", { models: [{ provider: "openai", modelId: "gpt-5" }] }, createModelRegistry(registryFields()));
+		}).toThrow(
+			expect.toSatisfy((error: ModelGroupsPersistenceError) => {
+				expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
+				expect(error.operation).toBe("save");
+				expect(error.phase).toBe("temp-write");
+				expect(error.scope).toBe("project");
+				expect(error.sourcePath).toBe(modelGroupsPath("project", cwd));
+				expect(error.targetPath ?? "").toMatch(/model-groups\.json\..+\.tmp$/);
+				return true;
+			}),
+		);
+		__setModelGroupsFsForTests(null);
+		expect(read("project", cwd).groups).toHaveProperty(["keep"]);
+		expect(read("project", cwd).groups.keep.models).toHaveLength(0);
 
-	deleteGroup("global", a, name);
-	expect({
-		renamedAway,
-		renamedBack,
-		moved,
-		siblingRenamed,
-		siblingDeleted,
-		deleted: names("global"),
-		keep: groups("project").keep,
-		other: groups("global").other,
-	}).toStrictEqual({
-		renamedAway: ["keep", "renamed"],
-		renamedBack: [name, "keep"].sort(),
-		moved: { project: ["keep"], global: [name, "drop", "other"].sort() },
-		siblingRenamed: [name, "dropped", "other"].sort(),
-		siblingDeleted: [name, "other"].sort(),
-		deleted: ["other"],
-		keep,
-		other,
-	});
-}));
+		__setModelGroupsFsForTests({
+			renameSync: () => {
+				throw new Error("rename denied");
+			},
+		});
+		expect(() => {
+			saveModelGroups("project", access(cwd), { version: 2, groups: { drop: { models: [] } } });
+		}).toThrow(
+			expect.toSatisfy((error: ModelGroupsPersistenceError) => {
+				expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
+				expect(error.phase).toBe("rename");
+				return true;
+			}),
+		);
+		__setModelGroupsFsForTests(null);
+		expect(read("project", cwd).groups).toHaveProperty(["keep"]);
+		expect(read("project", cwd).groups.drop).toBeUndefined();
 
-test("model groups direct save canonicalizes unique keys and rejects empty/colliding keys before write", () => withTemp(({ cwd }) => {
-	const a = access(cwd);
-	saveModelGroups("project", a, { version: 2, groups: { committed: { models: [] } } });
-	const unique: Record<string, ModelGroupDef> = {};
-	Object.setPrototypeOf(unique, null);
-	Object.defineProperty(unique, " unique ", { value: { models: [] }, enumerable: true });
-	saveModelGroups("project", a, { version: 2, groups: unique });
-	expect(Object.keys(read("project", cwd).groups)).toStrictEqual(["unique"]);
-	for (const keys of [["   "], ["same", " same "]]) {
-		const groups: Record<string, ModelGroupDef> = {};
-		Object.setPrototypeOf(groups, null);
-		for (const key of keys) {Object.defineProperty(groups, key, { value: { models: [] }, enumerable: true });}
-		const before = fs.readFileSync(modelGroupsPath("project", cwd), "utf8");
-		const writeFileSync = vi.fn(() => { throw new Error("must not write"); });
+		__setModelGroupsFsForTests({
+			renameSync: () => {
+				throw new Error("delete denied");
+			},
+		});
+		expect(() => deleteGroup("project", access(cwd), "keep")).toThrow(
+			expect.toSatisfy((error: ModelGroupsPersistenceError) => {
+				expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
+				expect(error.operation).toBe("delete");
+				return true;
+			}),
+		);
+		__setModelGroupsFsForTests(null);
+
+		createGroup("global", access(cwd), "move-target-fails", { models: [] }, createModelRegistry(registryFields()));
+		__setModelGroupsFsForTests({
+			renameSync: () => {
+				throw new Error("target denied");
+			},
+		});
+		expect(() => {
+			moveGroup(access(cwd), "move-target-fails", "project");
+		}).toThrow(
+			expect.toSatisfy((error: ModelGroupsPersistenceError) => {
+				expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
+				expect(error.operation).toBe("move");
+				expect(error.partialMove).toBeUndefined();
+				return true;
+			}),
+		);
+		__setModelGroupsFsForTests(null);
+
+		createGroup("global", access(cwd), "move-me", { models: [] }, createModelRegistry(registryFields()));
+		let writes = 0;
+		__setModelGroupsFsForTests({
+			renameSync: (from, to) => {
+				writes++;
+				if (writes === 2) {
+					throw new Error("source denied");
+				}
+				fs.renameSync(from, to);
+			},
+		});
+		expect(() => {
+			moveGroup(access(cwd), "move-me", "project");
+		}).toThrow(
+			expect.toSatisfy((error: ModelGroupsPersistenceError) => {
+				expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
+				expect(error.partialMove).toBe("target-written-source-retained");
+				expect(error.phase).toBe("source-remove");
+				return true;
+			}),
+		);
+	}));
+
+test("model groups strictly partitions schema and legacy version domains", () =>
+	withTemp(({ cwd }) => {
+		const projectPath = modelGroupsPath("project", cwd);
+		fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+		const invalid: [string, unknown, RegExp][] = [
+			["root", [], /root/],
+			["version type", { version: "1", groups: {} }, /version/],
+			["negative", { version: -1, groups: {} }, /version/],
+			["fraction low", { version: 0.5, groups: {} }, /version/],
+			["fraction high", { version: 1.5, groups: {} }, /version/],
+			["groups", { version: 2, groups: [] }, /groups/],
+			["group", { version: 2, groups: { bad: 1 } }, /group/],
+			["provider missing", { version: 2, groups: { bad: { models: [{ modelId: "m" }] } } }, /provider/],
+			["provider type", { version: 2, groups: { bad: { models: [{ provider: 1, modelId: "m" }] } } }, /provider/],
+			["model missing", { version: 2, groups: { bad: { models: [{ provider: "p" }] } } }, /modelId/],
+			["model type", { version: 2, groups: { bad: { models: [{ provider: "p", modelId: 1 }] } } }, /modelId/],
+			["models", { version: 2, groups: { bad: { models: 1 } } }, /models/],
+			["thinking", { version: 2, groups: { bad: { models: [{ provider: "p", modelId: "m", thinkingLevel: "turbo" }] } } }, /thinkingLevel/],
+		];
+		for (const [label, raw, message] of invalid) {
+			fs.rmSync(`${projectPath}.bak`, { force: true });
+			fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
+			const loaded = loadModelGroups(access(cwd));
+			const issue = loaded.issues.find((candidate) => candidate.scope === "project");
+			assertPresent(issue, "the project config reports a load issue");
+			expect(issue.kind, label).toBe("schema-invalid");
+			expect(issue.message, label).toMatch(message);
+			expect(`${projectPath}.bak`, label).toSatisfy(fs.existsSync);
+			expect(Object.keys(loaded.configs.project.groups), label).toHaveLength(0);
+		}
+		for (const raw of [{ groups: { legacy: { models: [] } } }, { version: 0, groups: { legacy: { models: [] } } }]) {
+			fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
+			const loaded = loadModelGroups(access(cwd));
+			expect(loaded.issues).toHaveLength(0);
+			expect(loaded.configs.project.version).toBe(2);
+			updateGroup("project", access(cwd), "legacy", { models: [] }, createModelRegistry(registryFields()));
+			expect(read("project", cwd).version).toBe(2);
+		}
+	}));
+
+test("legacy constraints recover as schema-invalid instead of crashing load", () =>
+	withTemp(({ cwd }) => {
+		const projectPath = modelGroupsPath("project", cwd);
+		fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+		for (const raw of [
+			{ groups: { legacy: { models: [], constraints: {} } } },
+			{ version: 0, groups: { legacy: { models: [], constraints: {} } } },
+			{ version: 1, groups: { legacy: { models: [], constraints: {} } } },
+		]) {
+			fs.rmSync(`${projectPath}.bak`, { force: true });
+			fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
+			const loaded = loadModelGroups(access(cwd));
+			const issue = loaded.issues.find((candidate) => candidate.scope === "project");
+			assertPresent(issue, "the project config reports a load issue");
+			expect(issue.kind).toBe("schema-invalid");
+			expect(issue.message).toMatch(/constraints/);
+			expect(`${projectPath}.bak`).toSatisfy(fs.existsSync);
+			expect(Object.keys(loaded.configs.project.groups)).toHaveLength(0);
+		}
+	}));
+
+test("store-level validation derives empty-common and stale-override flags and counts them", () =>
+	withTemp(({ cwd }) => {
+		const a = access(cwd);
+		fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
+		fs.writeFileSync(
+			modelGroupsPath("project", cwd),
+			JSON.stringify({
+				version: 2,
+				groups: {
+					empty: { models: [] },
+					unresolved: {
+						models: [
+							{ provider: "openai", modelId: "gone" },
+							{ provider: "openai", modelId: "gpt-5" },
+						],
+					},
+					stale: { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["text", "image"] } },
+				},
+			}),
+			"utf8",
+		);
+		const resolved = validateModelGroups(loadModelGroups(a), createModelRegistry(registryFields()));
+		// claude supports text only, so image is a stale unsupported override entry.
+		const empty = resolved.find((g) => g.name === "empty");
+		expect(empty?.validation.emptyCommonModalities, "empty group has no common modalities").toBe(true);
+		const unresolved = resolved.find((g) => g.name === "unresolved");
+		expect(unresolved?.validation.emptyCommonModalities, "unresolved member fails closed").toBe(true);
+		const stale = resolved.find((g) => g.name === "stale");
+		expect(stale?.validation.unsupportedOverrideModalities).toStrictEqual(["image"]);
+		const summary = summarizeBootValidation(resolved);
+		expect(summary.emptyModalityCount).toBe(2);
+		expect(summary.staleModalityOverrideCount).toBe(1);
+	}));
+
+test("low-level save permits shape-valid overrides while CRUD rejects union-cap-invalid overrides", () =>
+	withTemp(({ cwd }) => {
+		const a = access(cwd);
+		// The low-level persistence boundary only validates v2 shape. It deliberately
+		// persists this image override even though claude's union has text only.
+		saveModelGroups("project", a, {
+			version: 2,
+			groups: { persistenceOnly: { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["image"] } } },
+		});
+		expect(read("project", cwd).groups.persistenceOnly.constraints?.modalities).toStrictEqual(["image"]);
+		// CRUD owns the union-cap invariant and must reject the same invalid shape
+		// before any write.
+		// claude supports only text, so an override of image must be rejected by the CRUD gate.
+		const writeFileSync = vi.fn(fs.writeFileSync);
 		__setModelGroupsFsForTests({ writeFileSync });
-		expect(() => { saveModelGroups("project", a, { version: 2, groups }); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
-			expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
-			expect(error.operation).toBe("save");
-			expect(error.phase).toBe("config-validation");
-			return true;
-		}));
+		expect(() => {
+			createGroup(
+				"project",
+				a,
+				"claude-only",
+				{ models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["image"] } },
+				createModelRegistry(registryFields()),
+			);
+		}).toThrow(/unsupported modalities: image/);
 		expect(writeFileSync).not.toHaveBeenCalled();
+		__setModelGroupsFsForTests(null);
+
+		createGroup(
+			"project",
+			a,
+			"rich",
+			{ models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["text", "image"] } },
+			createModelRegistry(registryFields()),
+		);
+		const before = fs.readFileSync(modelGroupsPath("project", cwd), "utf8");
+		const writeFileSync2 = vi.fn(fs.writeFileSync);
+		__setModelGroupsFsForTests({ writeFileSync: writeFileSync2 });
+		// Combined member change: replacing gpt-5 (text+image+reasoning) with claude (text only)
+		// makes the retained override's image unsupported → the gate must reject before any write.
+		expect(() => {
+			updateGroup(
+				"project",
+				a,
+				"rich",
+				{ models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["text", "image"] } },
+				createModelRegistry(registryFields()),
+			);
+		}).toThrow(/unsupported modalities: image/);
+		expect(writeFileSync2, "rejected update must not write").not.toHaveBeenCalled();
 		expect(fs.readFileSync(modelGroupsPath("project", cwd), "utf8")).toBe(before);
 		__setModelGroupsFsForTests(null);
-	}
-}));
+	}));
 
-test("global model groups file lives under PI_CODING_AGENT_DIR when it is set", () => withTemp(({ cwd, home }) => withTempAgentDir((agentDir) => {
-	const expectedPath = path.join(agentDir, "pi-schematic", "model-groups.json");
-	expect(modelGroupsPath("global", cwd)).toBe(expectedPath);
+test("injected descriptors get persisted validation and CRUD cap enforcement through the registry", () =>
+	withTemp(({ cwd }) => {
+		const a = access(cwd);
+		const injected = createConstraintRegistry([testMinContext]);
+		// gpt-ctx has a 100-token contextWindow, so the testMinContext override 5 is supported.
+		const modelRegistry = registryWithContextModel();
+		// Valid override: normalized through CRUD and persisted.
+		createGroup("project", a, "deep", { models: [{ provider: "openai", modelId: "gpt-ctx" }], constraints: { testMinContext: 5 } }, modelRegistry, injected);
+		expect(read("project", cwd).groups.deep.constraints).toStrictEqual({ testMinContext: 5 });
+		// Load with the same registry decodes/validates the persisted value.
+		const loaded = loadModelGroups(a, injected);
+		expect(loaded.issues).toHaveLength(0);
+		expect(loaded.configs.project.groups.deep.constraints?.testMinContext).toBe(5);
+		// Boot validation with the same registry carries the injected descriptor's evaluation.
+		const resolved = validateModelGroups(loaded, modelRegistry, injected);
+		expect(
+			resolved[0].evaluations?.map((evaluation) => evaluation.key),
+			"injected evaluation must be present in boot validation",
+		).toContain("testMinContext");
+		// Unknown keys stay opaque even under an injected registry.
+		updateGroup(
+			"project",
+			a,
+			"deep",
+			{ models: [{ provider: "openai", modelId: "gpt-ctx" }], constraints: { testMinContext: 5, futureKey: { nested: true } } },
+			modelRegistry,
+			injected,
+		);
+		expect(read("project", cwd).groups.deep.constraints).toStrictEqual({ testMinContext: 5, futureKey: { nested: true } });
+	}));
 
-	createGroup("global", access(cwd), "relocated", { models: [] }, createModelRegistry(registryFields()));
+test("injected persisted values are validated on save and malformed values trigger schema-invalid load recovery", () =>
+	withTemp(({ cwd }) => {
+		const a = access(cwd);
+		const injected = createConstraintRegistry([testMinContext]);
+		const sourcePath = modelGroupsPath("project", cwd);
+		fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+		// Save-side rejection: an invalid injected value cannot be persisted.
+		expect(() => {
+			saveModelGroups("project", a, { version: 2, groups: { g: { models: [], constraints: { testMinContext: -3 } } } }, injected);
+		}).toThrow(
+			expect.toSatisfy((error: ModelGroupsPersistenceError) => {
+				expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
+				expect(error.message).toMatch(/testMinContext must be a positive safe integer/);
+				return true;
+			}),
+		);
+		// Load-side recovery: a hand-edited malformed value is schema-invalid and backed up.
+		fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: { g: { models: [], constraints: { testMinContext: "nope" } } } }), "utf8");
+		const loaded = loadModelGroups(a, injected);
+		expect(loaded.issues).toHaveLength(1);
+		expect(loaded.issues[0].kind).toBe("schema-invalid");
+		expect(loaded.issues[0].message).toMatch(/testMinContext must be a positive safe integer/);
+		expect(`${sourcePath}.bak`, "malformed injected value must back up like any schema-invalid config").toSatisfy(fs.existsSync);
+	}));
 
-	expect(readFile(expectedPath).groups.relocated.models).toStrictEqual([]);
-	expect(path.join(home, ".pi")).not.toSatisfy(fs.existsSync);
-})));
+test("CRUD rejects unsupported injected overrides before any write", () =>
+	withTemp(({ cwd }) => {
+		const a = access(cwd);
+		const injected = createConstraintRegistry([testMinContext]);
+		const modelRegistry = registryWithContextModel();
+		const writeFileSync = vi.fn(fs.writeFileSync);
+		__setModelGroupsFsForTests({ writeFileSync });
+		try {
+			expect(() => {
+				createGroup(
+					"project",
+					a,
+					"deep",
+					{ models: [{ provider: "openai", modelId: "gpt-ctx" }], constraints: { testMinContext: 200 } },
+					modelRegistry,
+					injected,
+				);
+			}).toThrow(/testMinContext override 200 exceeds/);
+			expect(writeFileSync, "rejected injected override must not write").not.toHaveBeenCalled();
+		} finally {
+			__setModelGroupsFsForTests(null);
+		}
+	}));
 
-test("global model groups file defaults to the home agent dir when PI_CODING_AGENT_DIR is unset", () => withTemp(({ cwd, home }) => {
-	expect(modelGroupsPath("global", cwd)).toBe(path.join(home, ".pi", "agent", "pi-schematic", "model-groups.json"));
-}));
+test("opaque constraint values are deep-cloned on load — no aliasing between store and merged views", () =>
+	withTemp(({ cwd }) => {
+		const a = access(cwd);
+		// An opaque (unknown to the registry) nested constraint value passes through
+		// persistence untouched; the store and merged views must not share it by reference.
+		const nested = { min: 5, tags: ["a", "b"] };
+		saveModelGroups("project", a, {
+			version: 2,
+			groups: { deep: { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { testMinContext: nested } } },
+		});
+		const loaded = loadModelGroups(a);
+		const merged = loaded.merged.find((g) => g.name === "deep");
+		assertPresent(merged, "the merged view holds the deep group");
+		const mergedConstraints = merged.constraints;
+		const storedConstraints = loaded.configs.project.groups.deep.constraints;
+		assertPresent(mergedConstraints, "the merged group keeps its constraints");
+		assertPresent(storedConstraints, "the stored group keeps its constraints");
+		recordOf(mergedConstraints.testMinContext, "the merged constraint value").min = 99;
+		expect(recordOf(storedConstraints.testMinContext, "the stored constraint value").min, "mutating the merged view must not alias the store copy").toBe(5);
+		expect(mergedConstraints.testMinContext, "nested constraint values must be distinct objects").not.toBe(storedConstraints.testMinContext);
+	}));
 
-test("global model groups path follows a PI_CODING_AGENT_DIR change between resolutions", () => withTemp(async ({ cwd }) => {
-	await withTempAgentDir((firstAgentDir) => {
-		expect(modelGroupsPath("global", cwd)).toBe(path.join(firstAgentDir, "pi-schematic", "model-groups.json"));
-	});
-	await withTempAgentDir((secondAgentDir) => {
-		expect(modelGroupsPath("global", cwd)).toBe(path.join(secondAgentDir, "pi-schematic", "model-groups.json"));
-	});
-}));
+test("v2 config load rejects non-array, duplicate, and out-of-vocabulary modality constraints", () =>
+	withTemp(({ cwd }) => {
+		const projectPath = modelGroupsPath("project", cwd);
+		fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+		const cases: [string, unknown, RegExp][] = [
+			["non-array", { version: 2, groups: { g: { models: [], constraints: { modalities: { text: true } } } } }, /modalities/],
+			["duplicate", { version: 2, groups: { g: { models: [], constraints: { modalities: ["text", "text"] } } } }, /unique/],
+			["out-of-language", { version: 2, groups: { g: { models: [], constraints: { modalities: ["audio"] } } } }, /vocabulary/],
+		];
+		for (const [label, raw, message] of cases) {
+			fs.rmSync(`${projectPath}.bak`, { force: true });
+			fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
+			const loaded = loadModelGroups(access(cwd));
+			const issue = loaded.issues.find((candidate) => candidate.scope === "project");
+			assertPresent(issue, "the project config reports a load issue");
+			expect(issue.kind, label).toBe("schema-invalid");
+			expect(issue.message, label).toMatch(message);
+			expect(`${projectPath}.bak`, label).toSatisfy(fs.existsSync);
+		}
+	}));
+
+test("v1 migration is in-memory until the first successful mutation writes v2 without an invented override", () =>
+	withTemp(({ cwd }) => {
+		const sourcePath = modelGroupsPath("project", cwd);
+		const v1Bytes = JSON.stringify({ version: 1, groups: { legacy: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }, null, 2) + "\n";
+		fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+		fs.writeFileSync(sourcePath, v1Bytes, "utf8");
+
+		const loaded = loadModelGroups(access(cwd));
+		expect(loaded.configs.project.version).toBe(2);
+		expect(loaded.configs.project.groups.legacy.constraints).toBeUndefined();
+		expect(fs.readFileSync(sourcePath, "utf8")).toBe(v1Bytes);
+
+		updateGroup("project", access(cwd), "legacy", { models: [{ provider: "anthropic", modelId: "claude" }] }, createModelRegistry(registryFields()));
+		const persisted = read("project", cwd);
+		expect(persisted.version).toBe(2);
+		expect(Object.getOwnPropertyNames(persisted.groups.legacy)).not.toContain("modalityOverride");
+	}));
+
+test("legacy modalityOverride is opaque and not interpreted", () =>
+	withTemp(({ cwd }) => {
+		const sourcePath = modelGroupsPath("project", cwd);
+		const v1Bytes =
+			JSON.stringify({ version: 1, groups: { legacy: { models: [{ provider: "openai", modelId: "gpt-5" }], modalityOverride: ["image"] } } }, null, 2) + "\n";
+		fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+		fs.writeFileSync(sourcePath, v1Bytes, "utf8");
+		const loaded = loadModelGroups(access(cwd));
+		expect(loaded.configs.project.groups.legacy.constraints).toBeUndefined();
+		expect(Object.getOwnPropertyNames(loaded.configs.project.groups.legacy)).toContain("modalityOverride");
+		expect(fs.readFileSync(sourcePath, "utf8")).toBe(v1Bytes);
+		saveModelGroups("project", access(cwd), loaded.configs.project);
+		expect(Object.getOwnPropertyNames(read("project", cwd).groups.legacy)).not.toContain("modalityOverride");
+	}));
+
+test("malformed legacy modalityOverride loads opaquely and is dropped on a v2 write", () =>
+	withTemp(({ cwd }) => {
+		const sourcePath = modelGroupsPath("project", cwd);
+		const v1Bytes = JSON.stringify({ version: 1, groups: { legacy: { models: [], modalityOverride: "not-an-array" } } }, null, 2) + "\n";
+		fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+		fs.writeFileSync(sourcePath, v1Bytes, "utf8");
+		const loaded = loadModelGroups(access(cwd));
+		expect(loaded.issues).toHaveLength(0);
+		expect(loaded.configs.project.groups.legacy).toHaveProperty("modalityOverride", "not-an-array");
+		expect(fs.readFileSync(sourcePath, "utf8")).toBe(v1Bytes);
+		saveModelGroups("project", access(cwd), loaded.configs.project);
+		expect(Object.getOwnPropertyNames(read("project", cwd).groups.legacy)).not.toContain("modalityOverride");
+	}));
+
+test("v2 constraint envelope preserves explicit empty and opaque slots canonically", () =>
+	withTemp(({ cwd }) => {
+		const sourcePath = modelGroupsPath("project", cwd);
+		fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+		const fixtures: [string, { constraints?: { modalities: string[] } }, string[] | undefined][] = [
+			["generic", { constraints: { modalities: ["reasoning", "text"] } }, ["text", "reasoning"]],
+			["empty", { constraints: { modalities: [] } }, []],
+			["automatic", {}, undefined],
+		];
+		fs.writeFileSync(
+			sourcePath,
+			JSON.stringify({
+				version: 2,
+				groups: Object.fromEntries(fixtures.map(([name, envelope]) => [name, { models: [{ provider: "openai", modelId: "gpt-5" }], ...envelope }])),
+			}),
+			"utf8",
+		);
+		const loaded = loadModelGroups(access(cwd));
+		expect(loaded.issues).toHaveLength(0);
+		for (const [name, , expected] of fixtures) {
+			expect(loaded.configs.project.groups[name].constraints?.modalities, name).toStrictEqual(expected);
+		}
+		saveModelGroups("project", access(cwd), loaded.configs.project);
+		const persisted = read("project", cwd);
+		for (const [name, , expected] of fixtures) {
+			const group = persisted.groups[name];
+			if (expected === undefined) {
+				expect(Object.getOwnPropertyNames(group), name).not.toContain("constraints");
+			} else {
+				expect(group.constraints?.modalities, name).toStrictEqual(expected);
+			}
+		}
+
+		fs.writeFileSync(
+			sourcePath,
+			JSON.stringify({
+				version: 2,
+				groups: {
+					opaque: {
+						models: [{ provider: "openai", modelId: "gpt-5", modelSentinel: true }],
+						groupSentinel: true,
+						constraints: { modalities: ["image"], cost: { future: true } },
+					},
+				},
+			}),
+			"utf8",
+		);
+		const opaque = loadModelGroups(access(cwd));
+		const sentinelModel: ModelGroupModel & { modelSentinel: boolean } = { provider: "openai", modelId: "gpt-5", modelSentinel: true, thinkingLevel: "high" };
+		updateGroup("project", access(cwd), "opaque", { ...opaque.configs.project.groups.opaque, models: [sentinelModel] }, createModelRegistry(registryFields()));
+		const opaquePersisted = read("project", cwd).groups.opaque;
+		expect(opaquePersisted.constraints).toStrictEqual({ modalities: ["image"], cost: { future: true } });
+		expect(opaquePersisted.groupSentinel).toBe(true);
+		expect(opaquePersisted.models[0].modelSentinel).toBe(true);
+	}));
+
+test("v2 drops stale modalityOverride rather than reinterpreting it", () =>
+	withTemp(({ cwd }) => {
+		const sourcePath = modelGroupsPath("project", cwd);
+		fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+		fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: { stale: { models: [], modalityOverride: ["image"] } } }), "utf8");
+		const loaded = loadModelGroups(access(cwd));
+		expect(loaded.issues).toHaveLength(0);
+		expect(loaded.configs.project.groups.stale.constraints).toBeUndefined();
+		saveModelGroups("project", access(cwd), loaded.configs.project);
+		expect(Object.getOwnPropertyNames(read("project", cwd).groups.stale)).not.toContain("modalityOverride");
+	}));
+
+test("v2 normalization preserves opaque root group and model keys through load save and update", () =>
+	withTemp(({ cwd }) => {
+		const sourcePath = modelGroupsPath("project", cwd);
+		const raw = {
+			version: 2,
+			rootSentinel: { keep: true },
+			groups: {
+				review: {
+					groupSentinel: "keep",
+					models: [{ provider: "openai", modelId: "gpt-5", modelSentinel: "keep" }],
+				},
+			},
+		};
+		fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+		fs.writeFileSync(sourcePath, JSON.stringify(raw), "utf8");
+
+		const loaded = loadModelGroups(access(cwd));
+		saveModelGroups("project", access(cwd), loaded.configs.project);
+		updateGroup(
+			"project",
+			access(cwd),
+			"review",
+			{ ...loaded.configs.project.groups.review, models: loaded.configs.project.groups.review.models.map((model) => ({ ...model, thinkingLevel: "high" })) },
+			createModelRegistry(registryFields()),
+		);
+
+		const persisted = read("project", cwd);
+		expect(persisted.rootSentinel).toStrictEqual({ keep: true });
+		expect(persisted.groups.review.groupSentinel).toBe("keep");
+		expect(persisted.groups.review.models[0].modelSentinel).toBe("keep");
+		expect(persisted.groups.review.models[0].thinkingLevel).toBe("high");
+	}));
+
+test("store normalization strips runtime-derived group keys while preserving opaque keys", () =>
+	withTemp(({ cwd }) => {
+		const a = access(cwd);
+		createGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }] }, createModelRegistry(registryFields()));
+		const runtimeView: ResolvedModelGroup & { opaqueSentinel: { keep: boolean } } = {
+			models: [{ provider: "openai", modelId: "gpt-5" }],
+			constraints: { modalities: ["text", "image"] },
+			opaqueSentinel: { keep: true },
+			name: "review",
+			scope: "project",
+			sourcePath: "/runtime/model-groups.json",
+			modalities: { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image"] },
+			validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
+		};
+		updateGroup("project", a, "review", runtimeView, createModelRegistry(registryFields()));
+		const persisted = read("project", cwd).groups.review;
+		expect(Object.keys(persisted).sort()).toStrictEqual(["constraints", "models", "opaqueSentinel"]);
+		expect(persisted.constraints?.modalities).toStrictEqual(["text", "image"]);
+		expect(persisted.opaqueSentinel).toStrictEqual({ keep: true });
+		for (const key of ["name", "scope", "sourcePath", "modalities", "validation"]) {
+			expect(Object.getOwnPropertyNames(persisted)).not.toContain(key);
+		}
+	}));
+
+test("version-3 mutations refuse before temp write including loadScopeConfig-backed CRUD", () =>
+	withTemp(({ cwd }) => {
+		const sourcePath = modelGroupsPath("project", cwd);
+		fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+		fs.writeFileSync(sourcePath, JSON.stringify({ version: 3, groups: {} }), "utf8");
+		const writeFileSync = vi.fn(() => {
+			throw new Error("must not write");
+		});
+		__setModelGroupsFsForTests({ writeFileSync });
+		for (const mutate of [
+			() => {
+				saveModelGroups("project", access(cwd), { version: 2, groups: {} });
+			},
+			() => {
+				createGroup("project", access(cwd), "blocked", { models: [] }, createModelRegistry(registryFields()));
+			},
+		]) {
+			expect(mutate).toThrow(
+				expect.toSatisfy((error: ModelGroupsPersistenceError) => {
+					expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
+					expect(error.phase).toBe("config-validation");
+					return true;
+				}),
+			);
+		}
+		expect(writeFileSync).not.toHaveBeenCalled();
+		expect(fs.readFileSync(sourcePath, "utf8")).toBe(JSON.stringify({ version: 3, groups: {} }));
+	}));
+
+test("modality overrides survive CRUD rename and move lifecycle in both scopes", () =>
+	withTemp(({ cwd }) => {
+		const a = access(cwd);
+		createGroup(
+			"project",
+			a,
+			"review",
+			{ models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["image"] } },
+			createModelRegistry(registryFields()),
+		);
+		updateGroup(
+			"project",
+			a,
+			"review",
+			{ models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["text", "image"] } },
+			createModelRegistry(registryFields()),
+		);
+		renameGroup("project", a, "review", "reviewers");
+		moveGroup(a, "reviewers", "global");
+		saveModelGroups("global", a, loadModelGroups(a).configs.global);
+		expect(read("global", cwd).groups.reviewers.constraints?.modalities).toStrictEqual(["text", "image"]);
+
+		renameGroup("global", a, "reviewers", "global-reviewers");
+		moveGroup(a, "global-reviewers", "project");
+		expect(read("global", cwd).groups["global-reviewers"]).toBeUndefined();
+		expect(read("project", cwd).groups["global-reviewers"].constraints?.modalities).toStrictEqual(["text", "image"]);
+	}));
+
+test("model groups use branded paths, global-only access, canonical own keys, and native max", () =>
+	withTemp(({ cwd }) => {
+		expect(modelGroupsPath("project", cwd, "branded-pi")).toBe(path.join(cwd, "branded-pi", "pi-schematic", "model-groups.json"));
+		const raw =
+			'{"version":1,"groups":{" __proto__ ":{"models":[{"provider":"p","modelId":"proto","thinkingLevel":"max"}]},"constructor":{"models":[]},"toString":{"models":[]}}}';
+		fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
+		fs.writeFileSync(modelGroupsPath("project", cwd), raw, "utf8");
+		const loaded = loadModelGroups(access(cwd));
+		for (const name of ["__proto__", "constructor", "toString"]) {
+			expect(Object.getOwnPropertyNames(loaded.configs.project.groups)).toContain(name);
+		}
+		expect(loaded.configs.project.groups.__proto__.models[0].thinkingLevel).toBe("max");
+		saveModelGroups("project", access(cwd), loaded.configs.project);
+		const persisted = read("project", cwd);
+		expect(Object.keys(persisted.groups).sort()).toStrictEqual(["__proto__", "constructor", "toString"].sort());
+		expect(Object.getPrototypeOf(loaded.configs.project.groups)).toBeNull();
+
+		for (const name of ["__proto__", "constructor", "toString"]) {
+			deleteGroup("project", access(cwd), name);
+			createGroup("global", access(cwd), ` ${name} `, { models: [] }, createModelRegistry(registryFields()));
+			updateGroup("global", access(cwd), name, { models: [{ provider: "p", modelId: name }] }, createModelRegistry(registryFields()));
+			moveGroup(access(cwd), name, "project");
+			expect(Object.getOwnPropertyNames(read("project", cwd).groups)).toContain(name);
+			deleteGroup("project", access(cwd), name);
+		}
+
+		const projectProbes: string[] = [];
+		__setModelGroupsFsForTests({
+			existsSync: (candidate) => {
+				if (String(candidate).startsWith(cwd)) {
+					projectProbes.push(String(candidate));
+					throw new Error("project probed");
+				}
+				return fs.existsSync(candidate);
+			},
+		});
+		const untrusted = loadModelGroups(access(cwd, "global-only"));
+		expect(projectProbes).toStrictEqual([]);
+		expect(untrusted.merged.filter((group) => group.scope !== "global")).toStrictEqual([]);
+		expect(() => {
+			createGroup("project", access(cwd, "global-only"), "forbidden", { models: [] }, createModelRegistry(registryFields()));
+		}).toThrow(/global-only/);
+		expect(projectProbes).toStrictEqual([]);
+	}));
+
+test.for(["__proto__", "constructor"])("rename, move and delete of a group named %s leave exactly the expected own group keys", (name) =>
+	withTemp(({ cwd }) => {
+		const a = access(cwd);
+		const noModels: Parameters<typeof createGroup>[4] = { find: () => undefined };
+		const groups = (scope: ModelGroupScope) => loadModelGroups(a).configs[scope].groups;
+		const names = (scope: ModelGroupScope) => Object.getOwnPropertyNames(groups(scope)).sort();
+		createGroup("project", a, "keep", { models: [{ provider: "openai", modelId: "gpt-5" }] }, noModels);
+		createGroup("project", a, name, { models: [{ provider: "anthropic", modelId: "claude" }] }, noModels);
+		createGroup("global", a, "other", { models: [{ provider: "anthropic", modelId: "claude" }] }, noModels);
+		createGroup("global", a, "drop", { models: [] }, noModels);
+		const keep = groups("project").keep;
+		const other = groups("global").other;
+
+		renameGroup("project", a, name, "renamed");
+		const renamedAway = names("project");
+		renameGroup("project", a, "renamed", name);
+		const renamedBack = names("project");
+
+		moveGroup(a, name, "global");
+		const moved = { project: names("project"), global: names("global") };
+
+		renameGroup("global", a, "drop", "dropped");
+		const siblingRenamed = names("global");
+		deleteGroup("global", a, "dropped");
+		const siblingDeleted = names("global");
+
+		deleteGroup("global", a, name);
+		expect({
+			renamedAway,
+			renamedBack,
+			moved,
+			siblingRenamed,
+			siblingDeleted,
+			deleted: names("global"),
+			keep: groups("project").keep,
+			other: groups("global").other,
+		}).toStrictEqual({
+			renamedAway: ["keep", "renamed"],
+			renamedBack: [name, "keep"].sort(),
+			moved: { project: ["keep"], global: [name, "drop", "other"].sort() },
+			siblingRenamed: [name, "dropped", "other"].sort(),
+			siblingDeleted: [name, "other"].sort(),
+			deleted: ["other"],
+			keep,
+			other,
+		});
+	}),
+);
+
+test("model groups direct save canonicalizes unique keys and rejects empty/colliding keys before write", () =>
+	withTemp(({ cwd }) => {
+		const a = access(cwd);
+		saveModelGroups("project", a, { version: 2, groups: { committed: { models: [] } } });
+		const unique: Record<string, ModelGroupDef> = {};
+		Object.setPrototypeOf(unique, null);
+		Object.defineProperty(unique, " unique ", { value: { models: [] }, enumerable: true });
+		saveModelGroups("project", a, { version: 2, groups: unique });
+		expect(Object.keys(read("project", cwd).groups)).toStrictEqual(["unique"]);
+		for (const keys of [["   "], ["same", " same "]]) {
+			const groups: Record<string, ModelGroupDef> = {};
+			Object.setPrototypeOf(groups, null);
+			for (const key of keys) {
+				Object.defineProperty(groups, key, { value: { models: [] }, enumerable: true });
+			}
+			const before = fs.readFileSync(modelGroupsPath("project", cwd), "utf8");
+			const writeFileSync = vi.fn(() => {
+				throw new Error("must not write");
+			});
+			__setModelGroupsFsForTests({ writeFileSync });
+			expect(() => {
+				saveModelGroups("project", a, { version: 2, groups });
+			}).toThrow(
+				expect.toSatisfy((error: ModelGroupsPersistenceError) => {
+					expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
+					expect(error.operation).toBe("save");
+					expect(error.phase).toBe("config-validation");
+					return true;
+				}),
+			);
+			expect(writeFileSync).not.toHaveBeenCalled();
+			expect(fs.readFileSync(modelGroupsPath("project", cwd), "utf8")).toBe(before);
+			__setModelGroupsFsForTests(null);
+		}
+	}));
+
+test("global model groups file lives under PI_CODING_AGENT_DIR when it is set", () =>
+	withTemp(({ cwd, home }) =>
+		withTempAgentDir((agentDir) => {
+			const expectedPath = path.join(agentDir, "pi-schematic", "model-groups.json");
+			expect(modelGroupsPath("global", cwd)).toBe(expectedPath);
+
+			createGroup("global", access(cwd), "relocated", { models: [] }, createModelRegistry(registryFields()));
+
+			expect(readFile(expectedPath).groups.relocated.models).toStrictEqual([]);
+			expect(path.join(home, ".pi")).not.toSatisfy(fs.existsSync);
+		}),
+	));
+
+test("global model groups file defaults to the home agent dir when PI_CODING_AGENT_DIR is unset", () =>
+	withTemp(({ cwd, home }) => {
+		expect(modelGroupsPath("global", cwd)).toBe(path.join(home, ".pi", "agent", "pi-schematic", "model-groups.json"));
+	}));
+
+test("global model groups path follows a PI_CODING_AGENT_DIR change between resolutions", () =>
+	withTemp(async ({ cwd }) => {
+		await withTempAgentDir((firstAgentDir) => {
+			expect(modelGroupsPath("global", cwd)).toBe(path.join(firstAgentDir, "pi-schematic", "model-groups.json"));
+		});
+		await withTempAgentDir((secondAgentDir) => {
+			expect(modelGroupsPath("global", cwd)).toBe(path.join(secondAgentDir, "pi-schematic", "model-groups.json"));
+		});
+	}));
 
 function pointAgentDirAtProjectConfig(cwd: string): string {
 	const agentDir = path.join(cwd, ".pi");
@@ -781,28 +1059,33 @@ function pointAgentDirAtProjectConfig(cwd: string): string {
 	return path.join(agentDir, "pi-schematic", "model-groups.json");
 }
 
-test("a project config dir that is the agent dir loads its groups once, as global", () => withTemp(({ cwd }) => {
-	const sharedPath = pointAgentDirAtProjectConfig(cwd);
-	fs.mkdirSync(path.dirname(sharedPath), { recursive: true });
-	fs.writeFileSync(sharedPath, JSON.stringify({ version: 2, groups: { shared: { models: [] } } }));
+test("a project config dir that is the agent dir loads its groups once, as global", () =>
+	withTemp(({ cwd }) => {
+		const sharedPath = pointAgentDirAtProjectConfig(cwd);
+		fs.mkdirSync(path.dirname(sharedPath), { recursive: true });
+		fs.writeFileSync(sharedPath, JSON.stringify({ version: 2, groups: { shared: { models: [] } } }));
 
-	const loaded = loadModelGroups(access(cwd, "global-project"));
+		const loaded = loadModelGroups(access(cwd, "global-project"));
 
-	expect(loaded.merged.map((g) => [g.name, g.scope])).toStrictEqual([["shared", "global"]]);
-}));
+		expect(loaded.merged.map((g) => [g.name, g.scope])).toStrictEqual([["shared", "global"]]);
+	}));
 
-test("a project config dir that is the agent dir refuses project-scope writes", () => withTemp(({ cwd }) => {
-	const sharedPath = pointAgentDirAtProjectConfig(cwd);
+test("a project config dir that is the agent dir refuses project-scope writes", () =>
+	withTemp(({ cwd }) => {
+		const sharedPath = pointAgentDirAtProjectConfig(cwd);
 
-	expect(() => { createGroup("project", access(cwd, "global-project"), "local", { models: [] }, createModelRegistry(registryFields())); }).toThrow(/unavailable in global-only mode/);
-	expect(sharedPath).not.toSatisfy(fs.existsSync);
-}));
+		expect(() => {
+			createGroup("project", access(cwd, "global-project"), "local", { models: [] }, createModelRegistry(registryFields()));
+		}).toThrow(/unavailable in global-only mode/);
+		expect(sharedPath).not.toSatisfy(fs.existsSync);
+	}));
 
-test("a trusted session whose project config dir is the agent dir gets global-only access", () => withTemp(({ cwd }) => {
-	pointAgentDirAtProjectConfig(cwd);
+test("a trusted session whose project config dir is the agent dir gets global-only access", () =>
+	withTemp(({ cwd }) => {
+		pointAgentDirAtProjectConfig(cwd);
 
-	expect(createModelGroupsAccess(cwd, true).policy).toBe("global-only");
-}));
+		expect(createModelGroupsAccess(cwd, true).policy).toBe("global-only");
+	}));
 
 function pointAgentDirAtProjectConfigThroughSymlink(cwd: string): void {
 	const configDir = path.join(cwd, ".pi");
@@ -817,7 +1100,9 @@ function pointAgentDirAtProjectConfigThroughSymlink(cwd: string): void {
 function pointAgentDirAtProjectConfigInOtherCase(cwd: string): boolean {
 	fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
 	const upperCased = path.join(cwd, ".PI");
-	if (!fs.existsSync(upperCased)) {return false;}
+	if (!fs.existsSync(upperCased)) {
+		return false;
+	}
 	process.env.PI_CODING_AGENT_DIR = upperCased;
 	return true;
 }
@@ -828,53 +1113,65 @@ function writeSharedGroup(cwd: string): void {
 	fs.writeFileSync(sharedPath, JSON.stringify({ version: 2, groups: { shared: { models: [] } } }));
 }
 
-test("distinct config dirs on a filesystem reporting inode 0 keep both scopes", () => withTemp(({ cwd, home }) => {
-	const agentDir = path.join(home, "agent");
-	process.env.PI_CODING_AGENT_DIR = agentDir;
-	fs.mkdirSync(agentDir, { recursive: true });
-	fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
-	saveModelGroups("global", access(cwd), { version: 2, groups: { fromGlobal: { models: [] } } });
-	saveModelGroups("project", access(cwd), { version: 2, groups: { fromProject: { models: [] } } });
-	__setModelGroupsFsForTests({ statSync: (() => ({ dev: 1n, ino: 0n })) as any });
+test("distinct config dirs on a filesystem reporting inode 0 keep both scopes", () =>
+	withTemp(({ cwd, home }) => {
+		const agentDir = path.join(home, "agent");
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		fs.mkdirSync(agentDir, { recursive: true });
+		fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+		saveModelGroups("global", access(cwd), { version: 2, groups: { fromGlobal: { models: [] } } });
+		saveModelGroups("project", access(cwd), { version: 2, groups: { fromProject: { models: [] } } });
+		__setModelGroupsFsForTests({ statSync: (() => ({ dev: 1n, ino: 0n })) as any });
 
-	const trusted = createModelGroupsAccess(cwd, true);
+		const trusted = createModelGroupsAccess(cwd, true);
 
-	expect(trusted.policy).toBe("global-project");
-	expect(loadModelGroups(trusted).merged.map((g) => [g.name, g.scope])).toStrictEqual([["fromGlobal", "global"], ["fromProject", "project"]]);
-}));
+		expect(trusted.policy).toBe("global-project");
+		expect(loadModelGroups(trusted).merged.map((g) => [g.name, g.scope])).toStrictEqual([
+			["fromGlobal", "global"],
+			["fromProject", "project"],
+		]);
+	}));
 
-test("an agent dir symlinked to the project config dir loads its groups once, as global", () => withTemp(({ cwd }) => {
-	pointAgentDirAtProjectConfigThroughSymlink(cwd);
-	writeSharedGroup(cwd);
+test("an agent dir symlinked to the project config dir loads its groups once, as global", () =>
+	withTemp(({ cwd }) => {
+		pointAgentDirAtProjectConfigThroughSymlink(cwd);
+		writeSharedGroup(cwd);
 
-	const loaded = loadModelGroups(access(cwd, "global-project"));
+		const loaded = loadModelGroups(access(cwd, "global-project"));
 
-	expect(loaded.merged.map((g) => [g.name, g.scope])).toStrictEqual([["shared", "global"]]);
-}));
+		expect(loaded.merged.map((g) => [g.name, g.scope])).toStrictEqual([["shared", "global"]]);
+	}));
 
-test("an agent dir symlinked to the project config dir refuses project-scope writes", () => withTemp(({ cwd }) => {
-	pointAgentDirAtProjectConfigThroughSymlink(cwd);
+test("an agent dir symlinked to the project config dir refuses project-scope writes", () =>
+	withTemp(({ cwd }) => {
+		pointAgentDirAtProjectConfigThroughSymlink(cwd);
 
-	expect(() => { createGroup("project", access(cwd, "global-project"), "local", { models: [] }, createModelRegistry(registryFields())); }).toThrow(/unavailable in global-only mode/);
-	expect(path.join(cwd, ".pi", "pi-schematic", "model-groups.json")).not.toSatisfy(fs.existsSync);
-}));
+		expect(() => {
+			createGroup("project", access(cwd, "global-project"), "local", { models: [] }, createModelRegistry(registryFields()));
+		}).toThrow(/unavailable in global-only mode/);
+		expect(path.join(cwd, ".pi", "pi-schematic", "model-groups.json")).not.toSatisfy(fs.existsSync);
+	}));
 
-test("an agent dir naming the project config dir in another case loads its groups once, as global", ({ skip }) => withTemp(({ cwd }) => {
-	if (!pointAgentDirAtProjectConfigInOtherCase(cwd)) {
-		skip("the temp filesystem is case-sensitive, so the two spellings are different directories");
-	}
-	writeSharedGroup(cwd);
+test("an agent dir naming the project config dir in another case loads its groups once, as global", ({ skip }) =>
+	withTemp(({ cwd }) => {
+		if (!pointAgentDirAtProjectConfigInOtherCase(cwd)) {
+			skip("the temp filesystem is case-sensitive, so the two spellings are different directories");
+		}
+		writeSharedGroup(cwd);
 
-	const loaded = loadModelGroups(access(cwd, "global-project"));
+		const loaded = loadModelGroups(access(cwd, "global-project"));
 
-	expect(loaded.merged.map((g) => [g.name, g.scope])).toStrictEqual([["shared", "global"]]);
-}));
+		expect(loaded.merged.map((g) => [g.name, g.scope])).toStrictEqual([["shared", "global"]]);
+	}));
 
-test("an agent dir naming the project config dir in another case refuses project-scope writes", ({ skip }) => withTemp(({ cwd }) => {
-	if (!pointAgentDirAtProjectConfigInOtherCase(cwd)) {
-		skip("the temp filesystem is case-sensitive, so the two spellings are different directories");
-	}
+test("an agent dir naming the project config dir in another case refuses project-scope writes", ({ skip }) =>
+	withTemp(({ cwd }) => {
+		if (!pointAgentDirAtProjectConfigInOtherCase(cwd)) {
+			skip("the temp filesystem is case-sensitive, so the two spellings are different directories");
+		}
 
-	expect(() => { createGroup("project", access(cwd, "global-project"), "local", { models: [] }, createModelRegistry(registryFields())); }).toThrow(/unavailable in global-only mode/);
-	expect(path.join(cwd, ".pi", "pi-schematic", "model-groups.json")).not.toSatisfy(fs.existsSync);
-}));
+		expect(() => {
+			createGroup("project", access(cwd, "global-project"), "local", { models: [] }, createModelRegistry(registryFields()));
+		}).toThrow(/unavailable in global-only mode/);
+		expect(path.join(cwd, ".pi", "pi-schematic", "model-groups.json")).not.toSatisfy(fs.existsSync);
+	}));

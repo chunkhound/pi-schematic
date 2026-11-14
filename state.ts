@@ -219,15 +219,19 @@ export function createState(): SchematicState {
 	// Prevent replacement — spawn lifecycle code and renderer ownership checks
 	// depend on stable map identity. Only .clear() and .delete() are valid —
 	// assigning a new Map would silently break child-session invalidation.
-	Object.defineProperty(state, 'childSessions', {
+	Object.defineProperty(state, "childSessions", {
 		get: () => childSessions,
-		set: () => { throw new Error('childSessions cannot be replaced — use .clear() instead'); },
+		set: () => {
+			throw new Error("childSessions cannot be replaced — use .clear() instead");
+		},
 		enumerable: true,
 		configurable: false,
 	});
-	Object.defineProperty(state, 'liveChildSessions', {
+	Object.defineProperty(state, "liveChildSessions", {
 		get: () => liveChildSessions,
-		set: () => { throw new Error('liveChildSessions cannot be replaced — use .clear() instead'); },
+		set: () => {
+			throw new Error("liveChildSessions cannot be replaced — use .clear() instead");
+		},
 		enumerable: true,
 		configurable: false,
 	});
@@ -278,7 +282,9 @@ export function invalidateHandoffState(state: SchematicState): void {
 /** Return the session's single shared abort operation, starting it if necessary. */
 export function abortChildSession(state: SchematicState, session: AgentSession): Promise<void> {
 	const existing = state.childAbortPromises.get(session);
-	if (existing) {return existing;}
+	if (existing) {
+		return existing;
+	}
 
 	let resolve!: () => void;
 	let reject!: (error: unknown) => void;
@@ -301,6 +307,8 @@ export function abortAndClearChildSessions(state: SchematicState): void {
 	state.childSessions.clear();
 	state.liveChildSessions.clear();
 	for (const session of sessions) {
-		void abortChildSession(state, session).catch(() => { /* Reset proceeds regardless. The spawn running this child reports a failure of this shared abort at its next reset check; while the child's prompt runs, that check waits until session.prompt settles, so an abort that fails and leaves the prompt running stays unreported until then unless the tool signal aborts. */ });
+		void abortChildSession(state, session).catch(() => {
+			/* Reset proceeds regardless. The spawn running this child reports a failure of this shared abort at its next reset check; while the child's prompt runs, that check waits until session.prompt settles, so an abort that fails and leaves the prompt running stays unreported until then unless the tool signal aborts. */
+		});
 	}
 }

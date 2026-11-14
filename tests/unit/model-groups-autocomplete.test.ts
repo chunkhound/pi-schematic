@@ -15,9 +15,16 @@ function completionItem(value: string): AutocompleteItem {
 	return { value, label: value };
 }
 
-function delegateProvider(onGetSuggestions: () => void = () => { /* Most tests ignore the call. */ }): AutocompleteProvider {
+function delegateProvider(
+	onGetSuggestions: () => void = () => {
+		/* Most tests ignore the call. */
+	},
+): AutocompleteProvider {
 	return {
-		getSuggestions: () => { onGetSuggestions(); return Promise.resolve({ prefix: "", items: [completionItem("delegated")] }); },
+		getSuggestions: () => {
+			onGetSuggestions();
+			return Promise.resolve({ prefix: "", items: [completionItem("delegated")] });
+		},
 		applyCompletion: () => ({ lines: ["applied"], cursorLine: 0, cursorCol: 7 }),
 		shouldTriggerFileCompletion: () => false,
 	};
@@ -26,14 +33,20 @@ function delegateProvider(onGetSuggestions: () => void = () => { /* Most tests i
 test("#group autocomplete suggests effective live group names and delegates elsewhere", async () => {
 	const state = createState();
 	state.modelGroups.groups = [
-		group("review", { models: [
-			{ provider: "openai", modelId: "gpt-5", thinkingLevel: "high" },
-			{ provider: "anthropic", modelId: "claude-sonnet-4" },
-		]}),
+		group("review", {
+			models: [
+				{ provider: "openai", modelId: "gpt-5", thinkingLevel: "high" },
+				{ provider: "anthropic", modelId: "claude-sonnet-4" },
+			],
+		}),
 		group("research", { models: [{ provider: "google", modelId: "gemini-2.5-pro", thinkingLevel: "xhigh" }] }),
 	];
 	let delegated = 0;
-	const provider = createModelGroupAutocompleteProvider(state)(delegateProvider(() => { delegated++; }));
+	const provider = createModelGroupAutocompleteProvider(state)(
+		delegateProvider(() => {
+			delegated++;
+		}),
+	);
 
 	const suggestions = await provider.getSuggestions(["spawn #re"], 0, "spawn #re".length, suggestOptions());
 	assertPresent(suggestions);
@@ -45,7 +58,9 @@ test("#group autocomplete suggests effective live group names and delegates else
 	]);
 	expect(delegated).toBe(0);
 
-	state.modelGroups.groups = [group("reviewers", { models: [{ provider: "openai", modelId: "gpt-5" }], unavailableRefs: [{ provider: "openai", modelId: "gpt-5" }] })];
+	state.modelGroups.groups = [
+		group("reviewers", { models: [{ provider: "openai", modelId: "gpt-5" }], unavailableRefs: [{ provider: "openai", modelId: "gpt-5" }] }),
+	];
 	const fresh = await provider.getSuggestions(["#rev"], 0, 4, suggestOptions());
 	assertPresent(fresh);
 	expect(fresh.items.map((item) => item.value)).toStrictEqual(["#reviewers"]);
@@ -64,7 +79,10 @@ test("#group autocomplete hands the delegate the caller's getSuggestions options
 	let receivedOptions: unknown;
 	const current: AutocompleteProvider = {
 		...delegateProvider(),
-		getSuggestions: (_lines, _cursorLine, _cursorCol, options) => { receivedOptions = options; return Promise.resolve(null); },
+		getSuggestions: (_lines, _cursorLine, _cursorCol, options) => {
+			receivedOptions = options;
+			return Promise.resolve(null);
+		},
 	};
 	const provider = createModelGroupAutocompleteProvider(state)(current);
 	const options = { signal: new AbortController().signal, force: true };
@@ -79,7 +97,10 @@ test("#group autocomplete hands the delegate the caller's completion item unchan
 	let receivedItem: unknown;
 	const current: AutocompleteProvider = {
 		...delegateProvider(),
-		applyCompletion: (lines, cursorLine, cursorCol, item) => { receivedItem = item; return { lines, cursorLine, cursorCol }; },
+		applyCompletion: (lines, cursorLine, cursorCol, item) => {
+			receivedItem = item;
+			return { lines, cursorLine, cursorCol };
+		},
 	};
 	const provider = createModelGroupAutocompleteProvider(state)(current);
 	const item = completionItem("src/index.ts");
@@ -104,7 +125,14 @@ test("#group autocomplete prepends colored effective modal letters when a colori
 	// Unordered effective set; must canonicalize, drop reasoning, and consolidate text being implied.
 	state.modelGroups.groups[0].modalities = { common: [], supported: [], effective: ["reasoning", "image", "text"] };
 	let delegated = 0;
-	const provide = createModelGroupAutocompleteProvider(state, (color, text) => `<${color}>${text}</${color}>`)(delegateProvider(() => { delegated++; }));
+	const provide = createModelGroupAutocompleteProvider(
+		state,
+		(color, text) => `<${color}>${text}</${color}>`,
+	)(
+		delegateProvider(() => {
+			delegated++;
+		}),
+	);
 	const suggestions = await provide.getSuggestions(["#res"], 0, 4, suggestOptions());
 	assertPresent(suggestions);
 	const description = suggestions.items[0]?.description;
@@ -121,7 +149,15 @@ test("#group autocomplete prepends colored effective modal letters when a colori
 test("registerModelGroupAutocomplete uses ctx.ui.addAutocompleteProvider once", () => {
 	const state = createState();
 	const providers: AutocompleteProviderFactory[] = [];
-	const ctx = createExtensionContext({ hasUI: true, mode: "tui", ui: createUIContext({ addAutocompleteProvider: (factory) => { providers.push(factory); } }) });
+	const ctx = createExtensionContext({
+		hasUI: true,
+		mode: "tui",
+		ui: createUIContext({
+			addAutocompleteProvider: (factory) => {
+				providers.push(factory);
+			},
+		}),
+	});
 	registerModelGroupAutocomplete(ctx, state);
 	registerModelGroupAutocomplete(ctx, state);
 	expect(providers.length).toBe(1);

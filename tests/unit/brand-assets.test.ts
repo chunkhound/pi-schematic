@@ -41,7 +41,7 @@ function assetText(asset: string): string {
 
 function pathFills(svg: string): string[] {
 	return [...svg.matchAll(/<path\b[^>]*>/g)].map(([path]) => {
-		const fill = (/\bfill="([^"]+)"/.exec(path))?.[1];
+		const fill = /\bfill="([^"]+)"/.exec(path)?.[1];
 		assertPresent(fill, `path missing fill: ${path}`);
 		return fill;
 	});
@@ -55,7 +55,7 @@ function piImage(): { url: string; repoPath: string } {
 	);
 	const url = packageJson.pi?.image;
 	assertPresent(url, "pi.image must be set for the pi.dev gallery");
-	const path = (PI_IMAGE_PATTERN.exec(url))?.groups?.path;
+	const path = PI_IMAGE_PATTERN.exec(url)?.groups?.path;
 	assertPresent(path, `pi.image must be a raw main-branch brand asset URL: ${url}`);
 	return { url, repoPath: path };
 }
@@ -73,7 +73,9 @@ function cellIndex(value: string): number {
 function markCells(svg: string): Set<string> {
 	const cells = new Set<string>();
 	for (const [, fill = "", d = ""] of svg.matchAll(/<path\b[^>]*fill="([^"]+)"[^>]*\bd="([^"]+)"/g)) {
-		if (fill.toLowerCase() !== "currentcolor" && !PALETTE.includes(fill.toUpperCase())) {continue;}
+		if (fill.toLowerCase() !== "currentcolor" && !PALETTE.includes(fill.toUpperCase())) {
+			continue;
+		}
 		for (const [, x = "", y = ""] of d.matchAll(/M([\d.]+) ([\d.]+)h[\d.]+v[\d.]+h-[\d.]+Z/gi)) {
 			cells.add(`${cellIndex(x)},${cellIndex(y)}`);
 		}
