@@ -104,14 +104,14 @@ export async function loadTestKeybindings(): Promise<KeybindingsManager> {
 }
 
 /** The tool definitions the extension registered, by tool name. */
-export type TestToolMap = Map<string, ToolDefinition>;
+type TestToolMap = Map<string, ToolDefinition>;
 
 /**
  * Test-only accessors stamped onto the real api. Registration state is backed by
  * the real `Extension` maps; host actions are backed by `HostState`. The surface
  * exists so tests can observe registration and drive host side effects.
  */
-export interface TestAccessors {
+interface TestAccessors {
 	handlers: Extension["handlers"];
 	tools: TestToolMap;
 	commands: Extension["commands"];

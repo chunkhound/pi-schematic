@@ -77,9 +77,6 @@ export const READONLY_COMMAND_DESCRIPTION =
 
 export const READONLY_DISABLED_SUMMARY = "[readonly] disabled — write, edit, handoff, and bash writes are now fully available, as is powershell where it is active.";
 
-/** Notification on readonly toggle-off for TUI user. */
-export const READONLY_DISABLED_NOTIFICATION = READONLY_DISABLED_SUMMARY;
-
 export const READONLY_PENDING_HANDOFF_READONLY_ON_NOTIFICATION =
 	"Pending handoff updated — the fresh context will resume in readonly mode.";
 

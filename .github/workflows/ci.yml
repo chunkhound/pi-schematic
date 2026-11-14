@@ -40,6 +40,12 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # A knip finding warns without failing the lint job; the pre-commit hook runs knip locally
+      # on every commit.
+      - name: Knip
+        continue-on-error: true
+        run: npm run knip
+
   # ── Cross-platform test matrix ──────────────────────────────────────
   # Every platform runs two tracks: the floor (Pi's minimum Node.js version) and the
   # current Node.js LTS, both as exact versions. Platform-specific code paths
