@@ -1,12 +1,12 @@
-// Tests for the test infrastructure itself: the shared Node child runner, the compat lane check that
-// every file on its unit list exists and belongs to the unit project, the run-wide config that
-// keeps parameterized test titles whole, and the prefix and suffix assertion helpers.
+// Tests for the test infrastructure itself: the shared Node and git child runners, the compat lane
+// check that every file on its unit list exists and belongs to the unit project, the run-wide config
+// that keeps parameterized test titles whole, and the prefix and suffix assertion helpers.
 
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { expectPrefix, expectSuffix } from "../assertions.js";
 import { REPO_ROOT, REPO_ROOT_URL } from "../paths.js";
-import { spawnNode } from "./spawn-node.js";
+import { runGit, spawnNode } from "./spawn-node.js";
 
 interface CompatCurrentModule {
 	assertCompatTestFiles: (files: string[]) => void;
@@ -46,17 +46,38 @@ describe("spawnNode", () => {
 
 	// The child would exit on its own after 10 s; the deadline must not wait for it.
 	test.skipIf(process.platform === "win32")("kills a child that catches SIGTERM instead of waiting it out", () => {
-		const startedAt = Date.now();
+		const startedAt = performance.now();
 		const child = 'process.on("SIGTERM", () => {}); setTimeout(() => {}, 10_000)';
 		expect(() => spawnNode(["--eval", child], { cwd: REPO_ROOT, timeoutMs: 500 })).toThrow(
 			/^Node child process did not exit within 500 ms/,
 		);
-		expect(Date.now() - startedAt).toBeLessThan(5_000);
+		expect(performance.now() - startedAt).toBeLessThan(5_000);
 	});
 
 	test("throws the spawn error for a working directory that does not exist", () => {
 		const missingCwd = join(REPO_ROOT, "missing-directory-for-spawn-node");
 		expect(() => spawnNode(["--version"], { cwd: missingCwd })).toThrow(/ENOENT/);
+	});
+});
+
+describe("runGit", () => {
+	test("throws the exit status and stderr for a git command that fails", () => {
+		expect(() => runGit(["rev-parse", "--verify", "refs/heads/missing-branch-for-run-git"], { cwd: REPO_ROOT })).toThrow(
+			/^git rev-parse --verify refs\/heads\/missing-branch-for-run-git exited with status 128; stderr: \S/,
+		);
+	});
+
+	// Output beyond spawnSync's 1 MiB maxBuffer kills git with SIGKILL and sets ENOBUFS; the shell alias
+	// produces that output. Windows has no POSIX signals, so the kill leaves no signal to report.
+	test.skipIf(process.platform === "win32")("names the spawn error with the signal for output beyond the buffer", () => {
+		expect(() => runGit(["-c", "alias.flood=!yes | head -c 2000000", "flood"], { cwd: REPO_ROOT })).toThrow(
+			/^git -c alias\.flood=!yes \| head -c 2000000 flood was killed by SIGKILL \(spawnSync git ENOBUFS\); stderr: /,
+		);
+	});
+
+	test("throws a spawn error for a working directory that does not exist", () => {
+		const missingCwd = join(REPO_ROOT, "missing-directory-for-run-git");
+		expect(() => runGit(["--version"], { cwd: missingCwd })).toThrow(/^git --version failed to spawn: .*ENOENT/);
 	});
 });
 

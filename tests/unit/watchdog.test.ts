@@ -741,7 +741,7 @@ test("watchdog band-crossing: nudge iff context enters a higher band", async () 
 				const pi = await createTestHost();
 				let lastBand: number | null = null;
 				for (const raw of percentages) {
-					const result = await runContext(pi, percentUsage(raw), String(raw), Date.now());
+					const result = await runContext(pi, percentUsage(raw), String(raw), Date.UTC(2026, 0, 1));
 					const didNudge = result?.messages?.some(
 						(message) => message.role === "custom" && message.customType === "pi-schematic-watchdog",
 					) ?? false;

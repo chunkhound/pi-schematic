@@ -410,11 +410,12 @@ export class RealHost {
 	 */
 	private async step(mark: number, action: string, runs: number): Promise<void> {
 		this.startBarrierPhase();
-		const deadline = Date.now() + STEP_BUDGET_MS;
+		const deadline = performance.now() + STEP_BUDGET_MS;
 		let rounds = 0;
 		let started = 0;
 		for (;;) {
-			const remaining = deadline - Date.now();
+			// Whole milliseconds: the probe takes the barrier deadline as a positive integer.
+			const remaining = Math.floor(deadline - performance.now());
 			if (remaining <= 0) {break;}
 			rounds++;
 			await this.barrier(remaining);
@@ -457,7 +458,7 @@ export class RealHost {
 			const timer = setTimeout(() => {
 				unsubscribe();
 				resolve();
-			}, Math.max(deadline - Date.now(), 0));
+			}, Math.max(deadline - performance.now(), 0));
 			const unsubscribe = this.client.onEvent(() => {
 				if (this.events.length <= seen) {return;}
 				clearTimeout(timer);

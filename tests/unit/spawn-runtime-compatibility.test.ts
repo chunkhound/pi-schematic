@@ -333,7 +333,7 @@ test("real child usage matches the session stats across assistant, tool result, 
 				const manager = session.sessionManager;
 				manager.appendMessage({
 					role: "toolResult", toolCallId: "parity-tool", toolName: "parity_probe", content: [{ type: "text", text: "ok" }],
-					usage: usageOf(11, 2, 0, 0, 13), isError: false, timestamp: Date.now(),
+					usage: usageOf(11, 2, 0, 0, 13), isError: false, timestamp: Date.UTC(2026, 0, 1),
 				});
 				manager.appendUsage("title", model.provider, model.id, usageOf(30, 3, 1, 0, 34));
 				manager.appendCompaction("summary", null, 500, undefined, false, usageOf(200, 20, 0, 4, 224));

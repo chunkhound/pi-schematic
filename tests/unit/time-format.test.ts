@@ -91,7 +91,7 @@ test("formatCurrentDate degrades an unusable zone to the fallback", () => {
 test("hostZone drives a renderable default anchor", () => {
 	const zone = hostZone();
 	expect(zone, "host zone must not be empty").not.toBe("");
-	expect(() => formatCurrentDatePrompt(new Date(), zone)).not.toThrow();
+	expect(() => formatCurrentDatePrompt(utc(2025, 0, 1, 12), zone)).not.toThrow();
 	expect(formatCurrentDate(utc(2025, 0, 1, 12), zone)).not.toMatch(/undefined/);
 });
 

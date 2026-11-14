@@ -685,8 +685,10 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 
 	it.skipIf(!canUseOsSandbox())("readonly sandboxed bash write outside temp fails with the readonly block notice", async (t) => {
 		// The harness HOME and project live under the OS temp dir, which the sandbox lets writes into,
-		// so the target sits under the real home directory of the test process instead.
-		const target = join(os.homedir(), `pi-schematic-e2e-readonly-${process.pid}-${Date.now()}`);
+		// so the target sits under the real home directory of the test process instead. The name is
+		// fixed: the write never lands while the sandbox works, so concurrent runs cannot collide on it.
+		const target = join(os.homedir(), ".pi-schematic-e2e-readonly-write-probe");
+		rmSync(target, { force: true });
 		t.onTestFinished(() => { rmSync(target, { force: true }); });
 		return withRealHost(t, async (host) => {
 			const script = `require("fs").writeFileSync(${JSON.stringify(target)}, "x")`;

@@ -74,14 +74,14 @@ export class ProcessHarness {
 
 	/** Wait for a fresh substring to appear after the prior match. */
 	async waitForText(text: string): Promise<void> {
-		const deadline = Date.now() + this.timeoutMs;
-		while (Date.now() < deadline) {
+		const deadline = performance.now() + this.timeoutMs;
+		while (performance.now() < deadline) {
 			const index = this.output.indexOf(text, this.readOffset);
 			if (index !== -1) {
 				this.readOffset = index + text.length;
 				return;
 			}
-			await this.waitForOutput(deadline - Date.now());
+			await this.waitForOutput(deadline - performance.now());
 		}
 		throw new Error(
 			`waitForText timeout after ${this.timeoutMs}ms looking for fresh "${text}".\n` +

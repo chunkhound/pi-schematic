@@ -5,12 +5,11 @@
  * CI step order.
  */
 
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { REPO_ROOT, REPO_ROOT_URL } from "../paths.js";
-import { CHILD_TIMEOUT_MS, spawnNode } from "./spawn-node.js";
+import { runGit, spawnNode } from "./spawn-node.js";
 
 interface AuditRecord {
 	active: boolean;
@@ -154,12 +153,9 @@ test("the EOL report check accepts LF text and non-text files", () => {
 test("repository text has one LF line-ending contract", () => {
 	const rules = readText(GITATTRIBUTES_PATH).split("\n").map((line) => line.trim()).filter((line) => line !== "" && !line.startsWith("#"));
 	expect(rules, "all text must check out with LF; see .gitattributes").toStrictEqual(["* text=auto eol=lf"]);
-	// spawnNode runs only node; the same deadline keeps a stalled git child from hanging the worker.
-	const result = spawnSync("git", ["ls-files", "--eol"], { cwd: REPO_ROOT, encoding: "utf8", timeout: CHILD_TIMEOUT_MS, killSignal: "SIGKILL" });
-	expect(result.error, `git ls-files --eol did not run: ${result.error?.message}`).toBeUndefined();
-	expect(result.status, `git ls-files --eol failed: ${result.stderr}`).toBe(0);
-	expect(result.stdout, "git ls-files --eol must report i/lf and w/lf").toMatch(/i\/lf\s+w\/lf/);
-	expect(eolViolations(result.stdout), "tracked text must be LF; stale Windows checkout recovery (discards uncommitted changes, so commit or stash first): git rm --cached -r . && git reset --hard").toStrictEqual([]);
+	const eolReport = runGit(["ls-files", "--eol"], { cwd: REPO_ROOT });
+	expect(eolReport, "git ls-files --eol must report i/lf and w/lf").toMatch(/i\/lf\s+w\/lf/);
+	expect(eolViolations(eolReport), "tracked text must be LF; stale Windows checkout recovery (discards uncommitted changes, so commit or stash first): git rm --cached -r . && git reset --hard").toStrictEqual([]);
 });
 
 test("README names the current Pi floor", () => {
