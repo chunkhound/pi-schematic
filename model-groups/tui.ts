@@ -422,8 +422,11 @@ export function createModelGroupsComponent(
 				if (orderedModalities(toggled).join(",") === supported.join(",")) {
 					// Re-enabling back to the full union returns the group to Automatic:
 					// no override is stored, so no spawn ceiling attaches to a non-limit.
-					if (next.constraints) {delete next.constraints[editor.descriptor.key];}
-					if (next.constraints && Object.keys(next.constraints).length === 0) {delete next.constraints;}
+					if (next.constraints) {
+						const { [editor.descriptor.key]: _removed, ...remaining } = next.constraints;
+						if (Object.keys(remaining).length === 0) {delete next.constraints;}
+						else {next.constraints = remaining;}
+					}
 				} else {
 					(next.constraints ??= {})[editor.descriptor.key] = toggled;
 				}

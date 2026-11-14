@@ -325,6 +325,36 @@ test("model groups TUI modality editor commits override and Automatic through up
 	expect(rendered(c)).toMatch(/Modalities: Automatic \(text, image\)/);
 });
 
+test("model groups TUI re-enabling a modality to Automatic keeps the group's other constraint keys", () => {
+	const review = group("review", {
+		scope: "project",
+		models: [{ provider: "openai", modelId: "gpt-5" }],
+		constraints: { modalities: ["text", "reasoning"], futureLimit: { tokens: 4096 } },
+	});
+	review.modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "reasoning"] };
+	const persisted: ModelGroupDef[] = [];
+	let groups = [review];
+	const store = {
+		updateGroup: (scope: ModelGroupScope, _access: ModelGroupsAccess, name: string, def: ModelGroupDef) => {
+			persisted.push(structuredClone(def));
+			const updated = group(name, { scope, models: def.models, constraints: def.constraints });
+			updated.modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image", "reasoning"] };
+			groups = [updated];
+		},
+		listResolvedModelGroups: () => boot(groups),
+	};
+	const { c } = component({ groups, store });
+	press(c, ENTER);
+	selectRenderedLabel(c, "Modalities:");
+	press(c, ENTER);
+	selectRenderedLabel(c, "I image");
+	press(c, ENTER);
+	expect(persisted).toHaveLength(1);
+	const [def] = persisted;
+	assertPresent(def);
+	expect(def.constraints).toStrictEqual({ futureLimit: { tokens: 4096 } });
+});
+
 test("model groups TUI Space also toggles a modality and stays on screen", () => {
 	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] });
 	review.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };

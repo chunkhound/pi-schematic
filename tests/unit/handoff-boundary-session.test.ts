@@ -589,7 +589,7 @@ describe("handoff boundary in a real agent session", () => {
 		const handoffTool = session.getToolDefinition("handoff");
 		assertPresent(handoffTool, "schematic registers the handoff tool");
 		let handoffExecutions = 0;
-		const execute = handoffTool.execute;
+		const execute = handoffTool.execute.bind(handoffTool);
 		handoffTool.execute = (...args) => {
 			handoffExecutions += 1;
 			return execute(...args);

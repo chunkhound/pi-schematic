@@ -79,8 +79,8 @@ async function importInternal<T>(relativePath: string, exportNames: readonly str
 }
 
 interface InternalSystemPrompt {
-	normalizeBuildSystemPromptOptions(input: BuildSystemPromptOptions): NormalizedBuildSystemPromptOptions;
-	buildSystemPrompt(input: BuildSystemPromptOptions): string;
+	normalizeBuildSystemPromptOptions: (input: BuildSystemPromptOptions) => NormalizedBuildSystemPromptOptions;
+	buildSystemPrompt: (input: BuildSystemPromptOptions) => string;
 }
 
 const { normalizeBuildSystemPromptOptions, buildSystemPrompt } = await importInternal<InternalSystemPrompt>(

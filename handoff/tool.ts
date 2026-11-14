@@ -143,7 +143,7 @@ export function registerHandoffTool(
 					validateHandoffRequest(nextInstruction, ctx);
 				} catch (error) {
 					if (!state.pendingRequestedHandoff || !(error instanceof Error)) {throw error;}
-					throw new Error(formatHandoffFailure(error.message, true));
+					throw new Error(formatHandoffFailure(error.message, true), { cause: error });
 				}
 				// Status first: a throwing UI call must leave no staged handoff behind.
 				if (ctx.hasUI && ctx.ui.theme) {
