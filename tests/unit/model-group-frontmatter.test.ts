@@ -10,10 +10,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ModelRegistry, type ExtensionContext, type SlashCommandInfo } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, ModelRegistry, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { modelGroupsPath } from "../../model-groups/store.js";
-import { createExtensionContext, createUIContext, testWithDir, tmpDir } from "./helpers.js";
+import { createExtensionContext, createModelRegistry, createUIContext, recordOf, testWithDir, tmpDir } from "./helpers.js";
 import { createBeforeAgentStartEvent, createTestHost, getHandler, getHandlers, getHostRecords, type AppendedEntry, type HostHandler, type TestPI } from "./test-host.js";
 import { withTemp } from "./model-groups-helpers.js";
 
@@ -31,33 +31,21 @@ function mockModel(provider: string, id: string): Model<Api> {
 }
 
 // A `ModelRegistry` whose `find` and `hasConfiguredAuth` answer from `models` and
-// `authenticated`; every other method is the class's own and fails without a runtime.
+// `authenticated`; reading any other method throws.
 function mockRegistry(
 	models: Model<Api>[] = [mockModel("openai", "gpt-4o")],
 	authenticated = new Set(models.map((m) => `${m.provider}:${m.id}`)),
 ): ModelRegistry {
-	const registry: unknown = Object.create(ModelRegistry.prototype);
-	if (!(registry instanceof ModelRegistry)) {throw new Error("Object.create did not produce a ModelRegistry instance.");}
-	return Object.assign(registry, {
+	return createModelRegistry({
 		find: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id),
 		hasConfiguredAuth: (m: Model<Api>) => authenticated.has(`${m.provider}:${m.id}`),
 	});
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
-/** `value` as a record; throws, naming `label`, when it is not an object. */
-function asRecord(value: unknown, label: string): Record<string, unknown> {
-	if (!isRecord(value)) {throw new Error(`${label} is not an object.`);}
-	return value;
-}
-
 /** The data of an appended entry; throws when the entry is missing or its data is not an object. */
 function entryData(entry: AppendedEntry | undefined): Record<string, unknown> {
 	if (entry === undefined) {throw new Error("No appended entry.");}
-	return asRecord(entry.data, `Data of the ${entry.customType} entry`);
+	return recordOf(entry.data, `the data of the ${entry.customType} entry`);
 }
 
 // The extension registers several `session_start` handlers; its model-group refresh is the last one.
@@ -511,7 +499,7 @@ testWithDir("explicit model applies while invalid thinking is reported", async (
 	expect(issues, "invalid thinking should produce one issue entry").toHaveLength(1);
 	const issueData = entryData(issues[0]);
 	expect(issueData.type).toBe("command");
-	expect(asRecord(issueData.issue, "data.issue of the pi-schematic-frontmatter-issue entry").kind).toBe("invalid-thinking-value");
+	expect(recordOf(issueData.issue, "data.issue of the pi-schematic-frontmatter-issue entry").kind).toBe("invalid-thinking-value");
 }));
 
 testWithDir("valid model applies when model-group frontmatter is invalid", async ({ dir: skillDir }) => withTemp(async ({ cwd }) => {

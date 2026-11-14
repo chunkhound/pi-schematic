@@ -1,24 +1,9 @@
 import { expect, test } from "vitest";
-import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
 import { setActiveNotebookTopic, clearActiveNotebookTopic } from "../../notebook/topic.js";
 import { registerNotebookTopicTool } from "../../notebook/topic-tool.js";
-import { createToolContext } from "./helpers.js";
+import { createToolContext, detailsOf, firstText } from "./helpers.js";
 import { createTestHost, getTool } from "./test-host.js";
-import { isRecord } from "../assertions.js";
-
-/** The result's details; throws unless they are an object. */
-function detailsOf(result: AgentToolResult<unknown>): Record<string, unknown> {
-	if (!isRecord(result.details)) {throw new Error("Expected the tool result details to be an object.");}
-	return result.details;
-}
-
-/** The text of the result's first content block; throws unless that block is text. */
-function firstText(result: AgentToolResult<unknown>): string {
-	const block = result.content.at(0);
-	if (block?.type !== "text") {throw new Error("Expected the tool result to start with a text block.");}
-	return block.text;
-}
 
 test("topic helpers manage the active notebook topic lifecycle", () => {
 	const state = createState();

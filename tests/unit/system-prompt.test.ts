@@ -1,28 +1,9 @@
 import { expect, test } from "vitest";
-import type { ExtensionCommandContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { contextPrimerSection } from "../../system-prompt.js";
 import { formatCurrentDatePrompt } from "../../time/format.js";
 import { createBeforeAgentStartEvent, createTestHost, getCommand, getHandler, getTool } from "./test-host.js";
 import { createCommandContext, makeTUICtx } from "./helpers.js";
 import { assertPresent } from "../assertions.js";
-
-type HostContext = ExtensionCommandContext & ExtensionToolContext;
-
-// makeTUICtx builds a partial context with the members the code under test uses. Reading a member it
-// lacks yields undefined; calling or dereferencing one throws a TypeError. Only that the value is an
-// object can be checked at run time.
-function assertHostContext(value: unknown): asserts value is HostContext {
-	if (typeof value !== "object" || value === null) {throw new Error("Expected a context object.");}
-}
-
-function hostContext(value: unknown): HostContext {
-	assertHostContext(value);
-	return value;
-}
-
-function tuiContext(options?: Parameters<typeof makeTUICtx>[0]): HostContext {
-	return hostContext(makeTUICtx(options));
-}
 
 test("the context primer states the notebook, topic, and handoff contracts", () => {
 	const primer = contextPrimerSection().render();
@@ -76,10 +57,10 @@ test("before_agent_start writes notebook contracts plus live topic and page data
 	const pi = await createTestHost();
 	await getCommand(pi, "notebook").handler("oauth", createCommandContext());
 	const notebookWrite = getTool(pi, "notebook_write");
-	await notebookWrite.execute("1", { name: "alpha", content: "first line\nsecond line" }, undefined, undefined, tuiContext());
+	await notebookWrite.execute("1", { name: "alpha", content: "first line\nsecond line" }, undefined, undefined, makeTUICtx());
 
 	const handler = getHandler(pi, "before_agent_start");
-	const ctx = { ...tuiContext({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
+	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
 	const event = createBeforeAgentStartEvent();
 	await handler(event, ctx);
 
@@ -103,10 +84,10 @@ test("before_agent_start places date anchor after primer and before dynamic sect
 	const pi = await createTestHost();
 	await getCommand(pi, "notebook").handler("oauth", createCommandContext());
 	const notebookWrite = getTool(pi, "notebook_write");
-	await notebookWrite.execute("1", { name: "decoy", content: "## Current date decoy" }, undefined, undefined, tuiContext());
+	await notebookWrite.execute("1", { name: "decoy", content: "## Current date decoy" }, undefined, undefined, makeTUICtx());
 
 	const handler = getHandler(pi, "before_agent_start");
-	const ctx = { ...tuiContext({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
+	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
 	const event = createBeforeAgentStartEvent();
 	await handler(event, ctx);
 
@@ -140,7 +121,7 @@ test("date anchor changes across midnight", () => {
 test("before_agent_start writes a parseable date anchor section", async () => {
 	const pi = await createTestHost();
 	const handler = getHandler(pi, "before_agent_start");
-	const ctx = { ...tuiContext({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
+	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
 	const event = createBeforeAgentStartEvent();
 	await handler(event, ctx);
 
@@ -150,7 +131,7 @@ test("before_agent_start writes a parseable date anchor section", async () => {
 test("before_agent_start writes no-topic guidance when the topic is unset", async () => {
 	const pi = await createTestHost();
 	const handler = getHandler(pi, "before_agent_start");
-	const ctx = { ...tuiContext({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
+	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
 	const event = createBeforeAgentStartEvent();
 	await handler(event, ctx);
 
@@ -163,7 +144,7 @@ test("before_agent_start writes no-topic guidance when the topic is unset", asyn
 test("does not copy the base prompt into schematic's sections", async () => {
 	const pi = await createTestHost();
 	const handler = getHandler(pi, "before_agent_start");
-	const ctx = { ...tuiContext({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
+	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
 	const event = createBeforeAgentStartEvent({ systemPrompt: "Base system prompt." });
 	await handler(event, ctx);
 

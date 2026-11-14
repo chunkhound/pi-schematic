@@ -1,43 +1,19 @@
 import { expect, test, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
-import { ModelRegistry, type AutocompleteProviderFactory, type ExtensionContext, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import type { ModelRegistry, AutocompleteProviderFactory, ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { escapeDisplayLabel } from "../../model-groups/display.js";
 import { __setModelGroupsFsForTests, modelGroupsPath } from "../../model-groups/store.js";
 import { assertPresent } from "../assertions.js";
-import { createCommandContext, createExtensionContext, createUIContext, theme } from "./helpers.js";
+import { createCommandContext, createCustomUI, createExtensionContext, createModelRegistry, createUIContext, testModel, theme } from "./helpers.js";
 import { createBeforeAgentStartEvent, createTestHost, getCommand, getHandler, getHandlers, type HostEvent, type HostHandler, type TestPI } from "./test-host.js";
 import { withTemp } from "./model-groups-helpers.js";
 
 type RegistryFields = Pick<ModelRegistry, "getAll" | "getAvailable" | "find" | "hasConfiguredAuth">;
 
-function model(fields: Pick<Model<Api>, "provider" | "id" | "input" | "reasoning"> & Partial<Model<Api>>): Model<Api> {
-	return {
-		name: fields.id, api: "test-api", baseUrl: "http://localhost.invalid",
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 0, maxTokens: 0, ...fields,
-	};
-}
-
-const MODEL_REGISTRY_MEMBERS = new Set(Object.getOwnPropertyNames(ModelRegistry.prototype).filter((name) => name !== "constructor"));
-
-// A ModelRegistry whose listed members are `fields`; reading any other ModelRegistry member throws.
-function modelRegistry(fields: RegistryFields): ModelRegistry {
-	const target: unknown = Object.create(ModelRegistry.prototype);
-	if (!(target instanceof ModelRegistry)) {throw new Error("Object.create did not produce a ModelRegistry instance.");}
-	return new Proxy(Object.assign(target, fields), {
-		get(registry, property, receiver) {
-			if (typeof property === "string" && MODEL_REGISTRY_MEMBERS.has(property) && !Object.hasOwn(fields, property)) {
-				throw new Error(`modelRegistry.${property} is not stubbed in this test registry; add it to the fields.`);
-			}
-			const value: unknown = Reflect.get(registry, property, receiver);
-			return value;
-		},
-	});
-}
-
-function registryFields(available = new Set(["openai:gpt-5"])): RegistryFields {
-	const models = [model({ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } })];
+function registryFields(): RegistryFields {
+	const available = new Set(["openai:gpt-5"]);
+	const models = [testModel({ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } })];
 	return {
 		getAll: () => models,
 		getAvailable: () => models.filter((m) => available.has(`${m.provider}:${m.id}`)),
@@ -46,9 +22,8 @@ function registryFields(available = new Set(["openai:gpt-5"])): RegistryFields {
 	};
 }
 
-function registry(available?: Set<string>): ModelRegistry {
-	return modelRegistry(registryFields(available));
-}
+// Escape on the Model Groups list closes the component, which resolves ctx.ui.custom.
+const ESCAPE = "\u001b";
 
 const SESSION_START: HostEvent<"session_start"> = { type: "session_start", reason: "startup" };
 
@@ -65,7 +40,7 @@ function sessionStartContext(cwd: string, ui: Partial<ExtensionUIContext>, overr
 		mode: "tui",
 		isProjectTrusted: () => true,
 		cwd,
-		modelRegistry: registry(),
+		modelRegistry: createModelRegistry(registryFields()),
 		getContextUsage: () => ({ tokens: null, contextWindow: 0, percent: 10 }),
 		ui: createUIContext({ setStatus: vi.fn(), setWidget: vi.fn(), addAutocompleteProvider: vi.fn(), ...ui }),
 		...overrides,
@@ -77,11 +52,11 @@ test("/model-groups command registers and opens ctx.ui.custom with live registry
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 1, groups: { "cwd-sentinel-group": { models: [{ provider: "openai", modelId: "gpt-5" }] } } }), "utf8");
 	const pi = await createTestHost();
 	const findCalls: string[] = [];
-	const registrySentinel = modelRegistry({
+	const registrySentinel = createModelRegistry({
 		...registryFields(),
 		find: (provider, id) => {
 			findCalls.push(`${provider}:${id}`);
-			return model({ provider, id, input: [], reasoning: true, thinkingLevelMap: { xhigh: "x" } });
+			return testModel({ provider, id, input: [], reasoning: true, thinkingLevelMap: { xhigh: "x" } });
 		},
 		hasConfiguredAuth: () => true,
 	});
@@ -89,22 +64,21 @@ test("/model-groups command registers and opens ctx.ui.custom with live registry
 	expect([...pi.commands.keys()]).toContain("model-groups");
 	let customCalled = 0;
 	let rendered = "";
-	await pi.commands.get("model-groups")!.handler("", {
+	await getCommand(pi, "model-groups").handler("", createCommandContext({
 		hasUI: true,
 		mode: "tui",
 		isProjectTrusted: () => true,
 		cwd,
 		modelRegistry: registrySentinel,
-		ui: {
+		ui: createUIContext({
 			notify: vi.fn(),
-			custom: (factory: any) => {
+			custom: createCustomUI(theme, (component) => {
 				customCalled++;
-				const component = factory({ requestRender: vi.fn() }, theme, {}, vi.fn());
 				rendered = component.render(80).join("\n");
-				return Promise.resolve();
-			},
-		},
-	});
+				component.handleInput?.(ESCAPE);
+			}),
+		}),
+	}));
 	expect(customCalled).toBe(1);
 	expect(rendered).toMatch(/Model Groups/);
 	expect(rendered).toMatch(/cwd-sentinel-group/);
@@ -182,7 +156,7 @@ test("before_agent_start writes fresh names-and-effective-modalities guidance", 
 	const pi = await createTestHost();
 	const handler = getHandler(pi, "before_agent_start");
 	const event = createBeforeAgentStartEvent();
-	await handler(event, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: registry() }));
+	await handler(event, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: createModelRegistry(registryFields()) }));
 	const section = event.systemPromptOptions.sections.schematic_model_groups;
 	expect(section).toMatch(/## Model Groups for spawn/);
 	expect(section).toMatch(/Available Model Groups: review \(text, image, reasoning\)/);
@@ -200,10 +174,10 @@ test("before_agent_start exposes union-effective modalities for automatic mixed 
 	const pi = await createTestHost();
 	const handler = getHandler(pi, "before_agent_start");
 	const models = [
-		model({ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } }),
-		model({ provider: "google", id: "gemini-text", input: ["text"], reasoning: false }),
+		testModel({ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } }),
+		testModel({ provider: "google", id: "gemini-text", input: ["text"], reasoning: false }),
 	];
-	const reg = modelRegistry({ getAll: () => models, getAvailable: () => models, find: (provider, id) => models.find((m) => m.provider === provider && m.id === id), hasConfiguredAuth: () => true });
+	const reg = createModelRegistry({ getAll: () => models, getAvailable: () => models, find: (provider, id) => models.find((m) => m.provider === provider && m.id === id), hasConfiguredAuth: () => true });
 	// Automatic mixed group: guidance lists the union — image/reasoning present via the capable member.
 	const event = createBeforeAgentStartEvent();
 	await handler(event, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: reg }));
@@ -216,7 +190,7 @@ test("before_agent_start labels empty effective modalities unambiguously", async
 	const pi = await createTestHost();
 	const handler = getHandler(pi, "before_agent_start");
 	const event = createBeforeAgentStartEvent();
-	await handler(event, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: registry() }));
+	await handler(event, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: createModelRegistry(registryFields()) }));
 	const section = event.systemPromptOptions.sections.schematic_model_groups;
 	expect(section).toMatch(/foo \(no common modalities\)/);
 	expect(section).toMatch(/foo \(none\) \(no common modalities\)/);
@@ -226,8 +200,8 @@ test("before_agent_start labels empty effective modalities unambiguously", async
 test("before_agent_start rewrites updated effective modalities after registry changes", async () => withTemp(async ({ cwd }) => {
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }), "utf8");
-	let current = model({ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: false, thinkingLevelMap: { xhigh: "x" } });
-	const changingRegistry = modelRegistry({
+	let current = testModel({ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: false, thinkingLevelMap: { xhigh: "x" } });
+	const changingRegistry = createModelRegistry({
 		getAll: () => [current],
 		getAvailable: () => [current],
 		find: () => current,
@@ -252,13 +226,13 @@ test("before_agent_start clears stale Model Groups guidance when registry become
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 1, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }), "utf8");
 	const pi = await createTestHost();
-	const handler = pi.handlers.get("before_agent_start")![0];
+	const handler = getHandler(pi, "before_agent_start");
 	const loaded = createBeforeAgentStartEvent();
-	await handler(loaded, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
+	await handler(loaded, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: createModelRegistry(registryFields()) }));
 	expect(loaded.systemPromptOptions.sections.schematic_model_groups).toMatch(/Available Model Groups: review/);
 
 	const unavailable = createBeforeAgentStartEvent();
-	await handler(unavailable, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: undefined, getContextUsage: () => null });
+	await handler(unavailable, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: undefined }));
 	expect(unavailable.systemPromptOptions.sections.schematic_model_groups).toBeUndefined();
 }));
 
@@ -285,7 +259,7 @@ test.for(["rpc", "json", "print"] as const)("root-recorded /model-groups rejects
 		mode,
 		hasUI: mode === "rpc",
 		cwd: "/must-not-load",
-		modelRegistry: registry(),
+		modelRegistry: createModelRegistry(registryFields()),
 		isProjectTrusted: () => true,
 		ui: createUIContext({ notify: (message) => { notifications.push(message); }, custom: () => { customCalls++; return Promise.reject(new Error("/model-groups must not open custom UI outside TUI mode")); } }),
 	}));
@@ -306,12 +280,17 @@ test("model groups untrusted root flow never probes project data and publishes g
 	const pi = await createTestHost();
 	await sessionStartHandler(pi)(SESSION_START, sessionStartContext(cwd, { notify: vi.fn() }, { isProjectTrusted: () => false }));
 	expect(projectProbe).toBe(false);
-	const baseUi = { theme, notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn(), addAutocompleteProvider: vi.fn() };
 	let rendered = "";
-	await pi.commands.get("model-groups")!.handler("", {
-		mode: "tui", hasUI: true, isProjectTrusted: () => false, cwd, modelRegistry: registry(),
-		ui: { ...baseUi, custom: (factory: any) => { rendered = factory({ requestRender: vi.fn() }, theme, {}, vi.fn()).render(80).join("\n"); return Promise.resolve(); } },
-	});
+	await getCommand(pi, "model-groups").handler("", createCommandContext({
+		mode: "tui", hasUI: true, isProjectTrusted: () => false, cwd, modelRegistry: createModelRegistry(registryFields()),
+		ui: createUIContext({
+			notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn(), addAutocompleteProvider: vi.fn(),
+			custom: createCustomUI(theme, (component) => {
+				rendered = component.render(80).join("\n");
+				component.handleInput?.(ESCAPE);
+			}),
+		}),
+	}));
 	expect(rendered).toMatch(/globalOnly/);
 	expect(rendered).not.toMatch(/projectSecret|\[project\]/);
 	expect(projectProbe).toBe(false);
