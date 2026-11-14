@@ -384,11 +384,6 @@
       "count": 1
     }
   },
-  "tests/e2e/pty-harness.ts": {
-    "ban/wall-clock": {
-      "count": 3
-    }
-  },
   "tests/e2e/real-host-child-probe.ts": {
     "ban/wall-clock": {
       "count": 1
@@ -426,9 +421,6 @@
     "@typescript-eslint/unbound-method": {
       "count": 2
     },
-    "ban/wall-clock": {
-      "count": 1
-    },
     "ban/zero-delay-timeout": {
       "count": 1
     },
@@ -446,21 +438,8 @@
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 3
     },
-    "ban/wall-clock": {
-      "count": 3
-    },
     "preserve-caught-error": {
       "count": 1
-    }
-  },
-  "tests/e2e/test-host.ts": {
-    "ban/wall-clock": {
-      "count": 1
-    }
-  },
-  "tests/test-utils.ts": {
-    "ban/console-assignment": {
-      "count": 8
     }
   },
   "tests/typecheck/model-groups-producer.ts": {
@@ -480,12 +459,6 @@
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 4
     },
-    "@typescript-eslint/restrict-template-expressions": {
-      "count": 1
-    },
-    "ban/spawn-sync-import": {
-      "count": 1
-    },
     "ban/wall-clock": {
       "count": 1
     },
@@ -502,9 +475,6 @@
     }
   },
   "tests/unit/frontmatter-cache.test.ts": {
-    "ban/wall-clock": {
-      "count": 11
-    },
     "vitest/max-expects": {
       "count": 112
     }
@@ -774,7 +744,7 @@
       "count": 1
     },
     "ban/wall-clock": {
-      "count": 3
+      "count": 1
     },
     "vitest/max-expects": {
       "count": 7
@@ -838,9 +808,6 @@
     "@typescript-eslint/no-non-null-assertion": {
       "count": 1
     },
-    "ban/wall-clock": {
-      "count": 1
-    },
     "vitest/max-expects": {
       "count": 7
     }
@@ -892,17 +859,9 @@
       "count": 2
     }
   },
-  "tests/unit/test-infra.test.ts": {
-    "ban/wall-clock": {
-      "count": 2
-    }
-  },
   "tests/unit/time-format.test.ts": {
     "@typescript-eslint/no-non-null-assertion": {
       "count": 2
-    },
-    "ban/wall-clock": {
-      "count": 1
     },
     "vitest/max-expects": {
       "count": 3
@@ -919,9 +878,6 @@
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 2
-    },
-    "ban/wall-clock": {
-      "count": 1
     },
     "vitest/max-expects": {
       "count": 15

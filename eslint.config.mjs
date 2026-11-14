@@ -490,6 +490,10 @@ export default defineConfig([
 					selector: "AssignmentExpression[left.type='MemberExpression'][left.object.name='console']",
 					message: "Do not replace console methods in tests.",
 				},
+				{
+					selector: "CallExpression[callee.type='MemberExpression'][callee.object.name='Object'][callee.computed=false][callee.property.name=/^(assign|defineProperty|defineProperties)$/][arguments.0.type='Identifier'][arguments.0.name='console']",
+					message: "Do not replace console methods in tests.",
+				},
 			],
 		},
 	},

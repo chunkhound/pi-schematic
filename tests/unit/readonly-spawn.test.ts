@@ -98,8 +98,9 @@ test.each([undefined, null, 42, { command: "ls" }])("readonly bash guard rejects
 });
 
 test("readonly bash guard blocks non-temp writes and allows temp writes", () => {
-	const outsideTemp = path.join(os.homedir(), `readonly-child-test-${process.pid}-${Date.now()}`);
-	const insideTemp = path.join(os.tmpdir(), `readonly-child-test-${Date.now()}`);
+	// The guard only inspects the command text and nothing runs it, so the paths need no unique names.
+	const outsideTemp = path.join(os.homedir(), "readonly-child-test");
+	const insideTemp = path.join(os.tmpdir(), "readonly-child-test");
 	const cwd = process.cwd();
 
 	const blockResult = applyReadonlyBashGuard(`touch ${outsideTemp}`, cwd);

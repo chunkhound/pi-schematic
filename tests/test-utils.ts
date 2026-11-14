@@ -39,7 +39,7 @@ import {
 	getSingletons,
 	type RuntimeSingletons,
 } from "../runtime-singletons.js";
-import { onTestFinished } from "vitest";
+import { onTestFinished, vi } from "vitest";
 import { SpawnFrameScheduler } from "../spawn/renderer.js";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -68,6 +68,18 @@ export interface TestHarness {
  * second restores stale singletons. Tear each harness down from a cleanup
  * returned by beforeEach (or from afterEach) or from an onTestFinished
  * callback to guarantee a single active harness per test.
+ *
+ * The console capture uses `vi.spyOn`, which brings three limits:
+ * - `restoreMocks` restores every spy before each test, so a harness created
+ *   outside a test body or `beforeEach` (at module level or in `beforeAll`)
+ *   stops capturing from the first test on, and one created in `aroundEach`
+ *   stops capturing before the test body.
+ * - Nesting harnesses is unsupported: the inner harness gets the outer's
+ *   spies, so the inner teardown restores the real console and the outer
+ *   harness captures nothing after it.
+ * - `vi.spyOn` on a console method the harness already spies on returns the
+ *   harness's spy, so a test's own `mockImplementation` on it replaces the
+ *   capture and its `mockRestore` ends the capture for that level.
  */
 export function createTestHarness(): TestHarness {
 	const previousSingletons = getSingletons();
@@ -84,37 +96,25 @@ export function createTestHarness(): TestHarness {
 		frameScheduler: new SpawnFrameScheduler(),
 	};
 	const warnings: { level: string; args: unknown[] }[] = [];
-	const originalDebug = console.debug;
-	const originalLog = console.log;
-	const originalWarn = console.warn;
-	const originalError = console.error;
 
 	// Install the fresh container in one call; no write is pending (checked
 	// above), so the harness always runs on its own lock and context.
 	__setSingletons(singletons);
 
 	// Capture every forbidden TUI-corrupting console level for assertions.
-	console.debug = (...args: unknown[]) => {
-		warnings.push({ level: "debug", args });
-	};
-	console.log = (...args: unknown[]) => {
-		warnings.push({ level: "log", args });
-	};
-	console.warn = (...args: unknown[]) => {
-		warnings.push({ level: "warn", args });
-	};
-	console.error = (...args: unknown[]) => {
-		warnings.push({ level: "error", args });
-	};
+	const consoleSpies = (["debug", "log", "warn", "error"] as const).map((level) =>
+		vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+			warnings.push({ level, args });
+		}),
+	);
 
 	return {
 		warnings,
 		teardown: () => {
 			const pendingWrites = singletons.writeLock.pending;
-			console.debug = originalDebug;
-			console.log = originalLog;
-			console.warn = originalWarn;
-			console.error = originalError;
+			for (const spy of consoleSpies) {
+				spy.mockRestore();
+			}
 			// A write still running keeps the lock and context it captured; forcing
 			// the swap only stops the harness lock from leaking into the next test.
 			__setSingletons(previousSingletons, { forceWriteLock: true });
