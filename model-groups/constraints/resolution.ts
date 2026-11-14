@@ -1,5 +1,4 @@
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ModelGroupModel } from "../types.js";
 import type { ConstraintMemberResolution } from "./types.js";
 

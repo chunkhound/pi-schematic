@@ -77,14 +77,6 @@
   "model-groups/constraints/presentation.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 3
-    }
-  },
-  "model-groups/constraints/resolution.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
     }
   },
   "model-groups/display.ts": {
@@ -125,9 +117,6 @@
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 6
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
     }
   },
   "notebook/pager.ts": {
@@ -141,9 +130,6 @@
   "notebook/rehydration.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 3
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
     }
   },
   "notebook/store.ts": {
@@ -157,17 +143,11 @@
   "notebook/tools.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 3
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
     }
   },
   "os-sandbox.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
     },
     "ban/exec-sync-import": {
       "count": 1
@@ -239,9 +219,6 @@
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 9
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 3
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
@@ -339,11 +316,6 @@
       "count": 2
     }
   },
-  "tests/unit/fixtures/shared-module-probe-extension.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "tests/unit/frontmatter-cache.test.ts": {
     "ban/wall-clock": {
       "count": 11
@@ -370,10 +342,7 @@
   },
   "tests/unit/handoff.test.ts": {
     "@typescript-eslint/no-non-null-assertion": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
+      "count": 3
     },
     "vitest/max-expects": {
       "count": 38
@@ -443,9 +412,6 @@
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 3
     },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 3
-    },
     "vitest/max-expects": {
       "count": 48
     },
@@ -487,9 +453,6 @@
     }
   },
   "tests/unit/model-groups-router.test.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
-    },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 1
     }
@@ -636,9 +599,6 @@
   },
   "tests/unit/spawn-render.test.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
       "count": 1
     },
     "vitest/max-expects": {

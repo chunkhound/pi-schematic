@@ -1,5 +1,5 @@
 import type { ConstraintRegistry } from "./registry.js";
-import type { AnyConstraintDescriptor, ConstraintDiagnostic, ConstraintEditorSpec, ConstraintEvaluation, ConstraintViolation, ErasedConstraintEvaluation } from "./types.js";
+import type { AnyConstraintDescriptor, ConstraintDiagnostic, ConstraintViolation, ErasedConstraintEvaluation } from "./types.js";
 
 export interface ConstraintDiagnosticRecord extends ConstraintDiagnostic {
 	text: string;
@@ -42,7 +42,6 @@ export function presentConstraintDiagnostics(diagnostics: readonly ConstraintDia
 export function constraintEditorRows(
 	descriptor: AnyConstraintDescriptor,
 	evaluation: ErasedConstraintEvaluation,
-	override?: unknown,
 ): readonly ConstraintEditorRow[] {
 	const editor = descriptor.editor;
 	if (editor.kind === "multi-select") {

@@ -14,7 +14,6 @@ import { assertPresent, expectPrefix } from "../assertions.js";
 import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { createState, type SchematicState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
-import { renderSpawnResult } from "../../spawn/renderer.js";
 import {
 	theme,
 	ansiTheme,
