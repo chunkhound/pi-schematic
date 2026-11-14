@@ -64,7 +64,7 @@ function buildBoundaryNudge(boundary: NotebookTopicBoundaryHint, eligible: boole
 	const action = eligible
 		? "Prefer a deliberate handoff before continuing under the new topic: save durable findings to the notebook, then call handoff with the next instruction and the remaining context."
 		: "Continue working until context is ready for handoff; this boundary remains advisory for now.";
-	return `Notebook topic changed from ${boundary.from ?? "(unset)"} to ${boundary.to}.
+	return `Notebook topic changed from ${boundary.from} to ${boundary.to}.
 Treat this as a strong task-boundary signal. ${action}
 Only continue inline if this was merely a rename rather than a real pivot.`;
 }

@@ -752,7 +752,7 @@ test("watchdog band-crossing: nudge iff context enters a higher band", async () 
 					} else {
 						const currentBand: number = raw < 50 ? 0 : raw < 70 ? 1 : 2;
 						const shouldNudge: boolean = lastBand === null || currentBand > lastBand;
-						expect(didNudge, `${raw}% band ${lastBand}→${currentBand}: nudge=${didNudge}`).toBe(shouldNudge);
+						expect(didNudge, `${raw}% band ${String(lastBand)}→${currentBand}: nudge=${String(didNudge)}`).toBe(shouldNudge);
 						if (didNudge) {lastBand = currentBand;}
 					}
 				}

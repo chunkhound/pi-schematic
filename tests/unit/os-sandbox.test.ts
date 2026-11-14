@@ -321,7 +321,7 @@ for (const { name, write } of [
 		try {
 			const run = await runLikePi(wrapCommandWithOsSandbox(write(outsidePath)));
 
-			const noticed = appendSandboxBlockNoticeToResult(bashResult(`${run.stdout}${run.stderr}`));
+			const noticed = appendSandboxBlockNoticeToResult(bashResult(`${run.stdout.toString()}${run.stderr.toString()}`));
 
 			const firstBlock = noticed?.content[0];
 			expect(firstBlock?.type, JSON.stringify(noticed)).toBe("text");

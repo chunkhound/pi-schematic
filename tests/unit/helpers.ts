@@ -779,7 +779,7 @@ export default function(pi) {
 	pi.registerProvider("${provider}", {
 		api: "agentic-e2e-api", apiKey: "test-key", baseUrl: "http://localhost.invalid",
 		models: [{
-			id: "${modelId}", name: "Agentic E2E Model", reasoning: ${params.reasoning ?? false},
+			id: "${modelId}", name: "Agentic E2E Model", reasoning: ${String(params.reasoning ?? false)},
 			input: ["text"], cost: usage.cost, contextWindow: 128000, maxTokens: 1024,
 		}],
 		streamSimple(model, context, options) {
@@ -850,7 +850,7 @@ export default function(pi) {
 		process.env.OPENAI_API_KEY = "test-openai-key";
 		globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
 			outboundFetches.push(input instanceof Request ? input.url : String(input));
-			return Promise.reject(new Error(`offline fixture blocked outbound fetch: ${outboundFetches.at(-1)}`));
+			return Promise.reject(new Error(`offline fixture blocked outbound fetch: ${String(outboundFetches.at(-1))}`));
 		});
 		setProbeGlobal("__agenticE2eProbeCalls", 0);
 		setProbeGlobal("__agenticE2eStreamCalls", 0);
