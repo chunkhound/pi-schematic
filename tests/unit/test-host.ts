@@ -89,14 +89,14 @@ const { normalizeBuildSystemPromptOptions, buildSystemPrompt } = await importInt
 );
 
 /** Raw tool definitions as tests consume them (unwrapped; loose to keep call sites ergonomic). */
-export type TestToolMap = Map<string, any>;
+type TestToolMap = Map<string, any>;
 
 /**
  * Test-only accessors stamped onto the real api. Registration state is backed by
  * the real `Extension` maps; host actions are backed by `HostState`. The surface
  * exists so tests can observe registration and drive host side effects.
  */
-export interface TestAccessors {
+interface TestAccessors {
 	handlers: Map<string, any[]>;
 	tools: TestToolMap;
 	commands: Map<string, any>;

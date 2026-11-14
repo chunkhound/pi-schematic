@@ -74,24 +74,6 @@ export function setTempHome(home: string): () => void {
 	};
 }
 
-/**
- * An untyped render context for a collapsed call `tool-call-1` with images shown
- * (`showImages: true`), no previous component and a no-op `invalidate`; the
- * overrides replace these members, and unlike `createToolRenderContext` an
- * override set to `undefined` replaces the default too. New tests use
- * `createToolRenderContext`.
- */
-export function createRenderContext(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-	return {
-		expanded: false,
-		showImages: true,
-		toolCallId: "tool-call-1",
-		lastComponent: undefined,
-		invalidate: vi.fn(),
-		...overrides,
-	};
-}
-
 /** The render context pi passes a tool's `renderCall` and `renderResult` (not exported from pi's package root). */
 export type RenderContext = Parameters<NonNullable<ToolDefinition["renderResult"]>>[3];
 

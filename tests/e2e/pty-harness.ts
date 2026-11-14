@@ -14,7 +14,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..", "..");
 const LOADER = pathToFileURL(resolve(ROOT, "register-loader.mjs")).href;
 
-export const DEFAULT_SCRIPT = resolve(HERE, "test-host.ts");
+const DEFAULT_SCRIPT = resolve(HERE, "test-host.ts");
 const DEFAULT_TIMEOUT_MS = 5000;
 const TIMEOUT_MS = parseInt(process.env.E2E_TIMEOUT_MS ?? "", 10) || DEFAULT_TIMEOUT_MS;
 

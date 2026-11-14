@@ -21,7 +21,7 @@ import { constraintEditorRows, presentConstraintDiagnosticRecords, type Constrai
 import { productionConstraintRegistry } from "./constraints/registry.js";
 import type { AnyConstraintDescriptor, ErasedConstraintEvaluation } from "./constraints/types.js";
 
-export type ModelGroupsScreen = "LIST" | "EDITOR" | "MODALITIES" | "MODEL_EDIT" | "WIZARD_PROVIDER" | "WIZARD_MODEL" | "WIZARD_THINKING" | "DELETE_CONFIRM";
+type ModelGroupsScreen = "LIST" | "EDITOR" | "MODALITIES" | "MODEL_EDIT" | "WIZARD_PROVIDER" | "WIZARD_MODEL" | "WIZARD_THINKING" | "DELETE_CONFIRM";
 
 export interface ModelGroupsStoreOps {
 	listResolvedModelGroups: typeof listResolvedModelGroups;

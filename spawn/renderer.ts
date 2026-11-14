@@ -1379,7 +1379,7 @@ function renderSpawnResult(
 	return new Text(text, SPAWN_SHELL_PADDING_X, SPAWN_SHELL_PADDING_Y, getShellBackground(theme, outcome));
 }
 
-export { NestedAgentSessionComponent, formatSpawnIdentity, renderSpawnCall, renderSpawnResult };
+export { NestedAgentSessionComponent, renderSpawnCall, renderSpawnResult };
 
 // ── Test support ──────────────────────────────────────────────────────
 
@@ -1392,15 +1392,4 @@ export { NestedAgentSessionComponent, formatSpawnIdentity, renderSpawnCall, rend
  */
 export function flushSpawnFrameScheduler(): void {
 	getSingletons().frameScheduler.flushNow();
-}
-
-/**
- * Reset the frame scheduler, discarding any pending dirty markers.
- * Exported for tests.  In production the scheduler lifecycle is tied to
- * component dispose(), so this is never needed.
- *
- * Delegate through getSingletons() so that test harness swaps are respected.
- */
-export function resetSpawnFrameScheduler(): void {
-	getSingletons().frameScheduler.clear();
 }

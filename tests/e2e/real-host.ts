@@ -85,7 +85,7 @@ function readTimeout(): number {
 }
 
 /** How long one barrier waits for outstanding work before it fails. */
-export const REAL_HOST_TIMEOUT_MS = readTimeout();
+const REAL_HOST_TIMEOUT_MS = readTimeout();
 
 export const REAL_HOST_TEST_TIMEOUT_MS = testTimeoutFor(REAL_HOST_TIMEOUT_MS);
 
@@ -100,17 +100,13 @@ export const REAL_HOST_TEST_TIMEOUT_MS = testTimeoutFor(REAL_HOST_TIMEOUT_MS);
  */
 const STEP_BUDGET_MS = REAL_HOST_TIMEOUT_MS + BARRIER_REPORT_MARGIN_MS;
 
-export function stripAnsi(text: string): string {
-	return stripTerminalSequences(text);
-}
-
 export interface RpcEvent { type: string; [key: string]: unknown }
 export interface Notification { message: string; notifyType: string | undefined }
 export interface Status { statusKey: string; statusText: string | undefined }
 export interface ToolResult { isError: boolean; text: string }
 
 /** pi settings a test sets; each section is merged over the harness default for it. */
-export interface RealHostSettings {
+interface RealHostSettings {
 	compaction?: Record<string, unknown>;
 	retry?: Record<string, unknown>;
 }
@@ -188,7 +184,7 @@ export function projectStatuses(events: RpcEvent[]): Status[] {
 		.filter((event) => event.type === "extension_ui_request" && event.method === "setStatus")
 		.map((event) => ({
 			statusKey: requireString(event, "statusKey"),
-			statusText: event.statusText === undefined ? undefined : stripAnsi(requireString(event, "statusText")),
+			statusText: event.statusText === undefined ? undefined : stripTerminalSequences(requireString(event, "statusText")),
 		}));
 }
 

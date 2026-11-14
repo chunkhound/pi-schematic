@@ -346,7 +346,7 @@ function spawnPromptGuidelines(constraintRegistry: ConstraintRegistry): string[]
 	];
 }
 
-export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
+function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
 	return Type.Object({
 		prompt: Type.String({
 			description:
