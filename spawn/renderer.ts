@@ -196,13 +196,6 @@ function getOutcomeStatusText(outcome: SpawnOutcome): string | undefined {
 	}
 }
 
-function isExpectedToolComponentFailure(error: unknown): boolean {
-	return error instanceof Error && (
-		/missing tool definition/i.test(error.message)
-		|| /theme not initialized/i.test(error.message)
-	);
-}
-
 function renderPromptPreview(prompt: string, expanded: boolean): { shown: string; remaining: number } {
 	const lines = prompt.split("\n");
 	const maxLines = expanded ? lines.length : PROMPT_PREVIEW_COLLAPSED_LINES;
@@ -493,7 +486,6 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 	// States: "⏳ initializing…" → "💭 thinking…" → "[tool] …/preview" or live text → terminal outcome
 	private lastAction = "";
 	private readonly toolNames = new Map<string, string>();
-	private readonly toolComponentFailures = new Set<string>();
 	private cachedWidth?: number;
 	private cachedExpanded?: boolean;
 	private cachedLines?: string[];
@@ -645,7 +637,6 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		this.resetRenderBatching();
 		this.liveOutcome = this.details?.outcome ?? "running";
 		this.toolNames.clear();
-		this.toolComponentFailures.clear();
 		this.clearRenderCache();
 		this.rebuildFromSession();
 		try {
@@ -654,7 +645,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 					this.handleEvent(event);
 				})
 				: undefined;
-		} catch (error) {
+		} catch {
 			this.unsubscribe = undefined;
 		}
 	}
@@ -719,7 +710,6 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		this.nestTheme = undefined;
 		this.liveOutcome = "running";
 		this.toolNames.clear();
-		this.toolComponentFailures.clear();
 		this.session = undefined;
 		this.ownedToolCallId = undefined;
 		this.state = undefined;
@@ -758,8 +748,10 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		if (this.pendingAssistantMessage && this.streamingComponent) {
 			try {
 				this.streamingComponent.updateContent(this.pendingAssistantMessage as unknown as import("@earendil-works/pi-ai").AssistantMessage);
-			} catch (error) {
-				this.resetStreamingComponent(error, "message_update");
+			} catch {
+				// updateContent reads the theme for error, abort and truncation notices, which throws before
+				// the theme is initialized; any other error is swallowed so one bad component cannot break the nested view.
+				this.resetStreamingComponent();
 			}
 			this.pendingAssistantMessage = undefined;
 		}
@@ -816,10 +808,10 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 				this.fakeUi as unknown as TUI,
 				this.session?.sessionManager.getCwd() ?? process.cwd(),
 			);
-		} catch (error) {
-			if (isExpectedToolComponentFailure(error)) {
-				return undefined;
-			}
+		} catch {
+			// The ToolExecutionComponent constructor reads the theme, which throws before the theme is
+			// initialized; a session whose getToolDefinition throws lands here too. Any other error is
+			// swallowed so one bad component cannot break the nested view.
 			return undefined;
 		}
 	}
@@ -1043,11 +1035,8 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		return lines;
 	}
 
-	private resetStreamingComponent(error: unknown, eventType: string): void {
+	private resetStreamingComponent(): void {
 		this.streamingComponent = undefined;
-		if (isExpectedToolComponentFailure(error)) {
-			return;
-		}
 	}
 
 	// ── Event handlers ───────────────────────────────────────────────
@@ -1080,8 +1069,10 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 				this.streamingComponent = new AssistantMessageComponent(undefined, false, this.markdownTheme, "Thinking...");
 				this.addChild(this.streamingComponent);
 				this.streamingComponent.updateContent(event.message);
-			} catch (error) {
-				this.resetStreamingComponent(error, "message_start");
+			} catch {
+				// updateContent reads the theme for error, abort and truncation notices, which throws before
+				// the theme is initialized; any other error is swallowed so one bad component cannot break the nested view.
+				this.resetStreamingComponent();
 			}
 		}
 	}
@@ -1140,8 +1131,10 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		if (this.streamingComponent) {
 			try {
 				this.streamingComponent.updateContent(event.message);
-			} catch (error) {
-				this.resetStreamingComponent(error, "message_end");
+			} catch {
+				// updateContent reads the theme for error, abort and truncation notices, which throws before
+				// the theme is initialized; any other error is swallowed so one bad component cannot break the nested view.
+				this.resetStreamingComponent();
 			}
 		}
 		const stopOutcome = getStopReasonOutcome(event.message.stopReason);
@@ -1279,7 +1272,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			// correct for synchronous access (tests, in-between paints).
 			this.clearRenderCache();
 			this.scheduleRender();
-		} catch (error) {
+		} catch {
 			this.clearRenderCache();
 			this.resetRenderBatching();
 			// Prevent a single bad event from killing the subscription.

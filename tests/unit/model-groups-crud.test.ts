@@ -1,6 +1,5 @@
 import { expect, test, vi } from "vitest";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
@@ -549,10 +548,10 @@ test("v2 constraint envelope preserves explicit empty and opaque slots canonical
 	fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: Object.fromEntries(fixtures.map(([name, envelope]) => [name, { models: [{ provider: "openai", modelId: "gpt-5" }], ...envelope }])) }), "utf8");
 	const loaded = loadModelGroups(access(cwd));
 	expect(loaded.issues).toHaveLength(0);
-	for (const [name, _envelope, expected] of fixtures) {expect(loaded.configs.project.groups[name].constraints?.modalities, name).toStrictEqual(expected);}
+	for (const [name, , expected] of fixtures) {expect(loaded.configs.project.groups[name].constraints?.modalities, name).toStrictEqual(expected);}
 	saveModelGroups("project", access(cwd), loaded.configs.project);
 	const persisted = read("project", cwd);
-	for (const [name, _envelope, expected] of fixtures) {
+	for (const [name, , expected] of fixtures) {
 		const group = persisted.groups[name];
 		if (expected === undefined) {
 			expect(Object.getOwnPropertyNames(group), name).not.toContain("constraints");

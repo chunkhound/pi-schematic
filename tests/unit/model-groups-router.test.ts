@@ -3,7 +3,6 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { getEffectiveModelGroupNames, resolveSpawnModelRoute, SpawnRouteError } from "../../model-groups/router.js";
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
-import type { ResolvedModelGroup } from "../../model-groups/types.js";
 import { group } from "./model-groups-helpers.js";
 import { testMaxBudget, testMinContext } from "./model-groups-constraints-fixture.js";
 
@@ -84,7 +83,6 @@ test("capability pre-selection excludes unauthenticated capable models and picks
 	const parent = model("p", "parent");
 	const capA = model("p", "cap-a", { input: ["text", "image"] });
 	const capB = model("p", "cap-b", { input: ["text", "image"] });
-	const unavailable = model("p", "cap-unavailable", { input: ["text", "image"] });
 	const text = model("p", "text");
 	const routed = group("mixed", { models: [
 		{ provider: "p", modelId: "text" },
@@ -94,10 +92,10 @@ test("capability pre-selection excludes unauthenticated capable models and picks
 	], constraints: { modalities: ["text", "image"] } });
 	routed.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
 	// cap-unavailable is not auth-configured, so it must be excluded from the capable pool.
-	const reg = registry([parent, capA, capB, text], new Set(["p:cap-a", "p:cap-b", "p:text"]));
+	const reg = registry([parent, capA, capB, model("p", "cap-unavailable", { input: ["text", "image"] }), text], new Set(["p:cap-a", "p:cap-b", "p:text"]));
 	let draws = 0;
-	// Random selection over the filtered pool: alternating draws land on each capable member.
-	const pick = () => resolveSpawnModelRoute({ requestedGroup: "mixed", constraints: { modalities: { required: ["image"] } }, groups: [routed], parentModel: parent, parentThinking: "low", modelRegistry: reg, rng: () => (draws++ % 2 === 0 ? 0.05 : 0.95) }).modelId;
+	// Cycling draws reach every index of a three-member pool, so an unfiltered pool would yield cap-unavailable.
+	const pick = () => resolveSpawnModelRoute({ requestedGroup: "mixed", constraints: { modalities: { required: ["image"] } }, groups: [routed], parentModel: parent, parentThinking: "low", modelRegistry: reg, rng: () => [0.05, 0.5, 0.95][draws++ % 3] }).modelId;
 	const seen = new Set<string>();
 	for (let i = 0; i < 6; i++) {
 		const id = pick();

@@ -51,7 +51,6 @@ const notebookIndexParams = Type.Object({});
 
 type WriteArgs = Static<typeof notebookWriteParams>;
 type ReadArgs = Static<typeof notebookReadParams>;
-type IndexArgs = Static<typeof notebookIndexParams>;
 
 // ── Factory ───────────────────────────────────────────────────────────
 

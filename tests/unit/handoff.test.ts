@@ -551,7 +551,7 @@ test("a discard naming no page reports the kept pages without a discarded count"
 	});
 	const { ctx, notifications, session } = makeCtx();
 	await executeHandoff(pi, ctx, { nextInstruction: "go", discardPages: ["ghost"] });
-	const handoffId = state.stagedHandoff!.handoffId;
+	assertPresent(state.stagedHandoff);
 	const result = await endTurn(pi, ctx);
 	session.branch = persist([
 		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },

@@ -136,7 +136,7 @@ function selectMember(usable: RoutedMember[], declared: readonly DeclaredRequire
 	return pool[randomIndex];
 }
 
-function buildRoutedRoute(group: ResolvedModelGroup, requestedGroup: string, _usable: RoutedMember[], selected: RoutedMember, options: Pick<SpawnRouteOptions, "parentThinking">): SpawnModelRoute {
+function buildRoutedRoute(group: ResolvedModelGroup, requestedGroup: string, selected: RoutedMember, options: Pick<SpawnRouteOptions, "parentThinking">): SpawnModelRoute {
 	return {
 		status: "routed",
 		requestedGroup,
@@ -158,7 +158,7 @@ function attachCeilings(route: SpawnModelRoute, group: ResolvedModelGroup | unde
 	return groupCapabilityCeilings.length ? { ...route, groupCapabilityCeilings } : route;
 }
 
-function collectViolations(getDeclared: () => readonly DeclaredRequirement[], group: ResolvedModelGroup | undefined, resolution: ReturnType<typeof resolveConstraintMembers> | { members: never[] }, route: SpawnModelRoute, _registry: ConstraintRegistry): ConstraintViolation[] {
+function collectViolations(getDeclared: () => readonly DeclaredRequirement[], group: ResolvedModelGroup | undefined, resolution: ReturnType<typeof resolveConstraintMembers> | { members: never[] }, route: SpawnModelRoute): ConstraintViolation[] {
 	const violations: ConstraintViolation[] = [];
 	for (const { descriptor, requirement } of getDeclared()) {
 		if (group) {
@@ -215,11 +215,11 @@ export function resolveSpawnModelRoute(options: SpawnRouteOptions): SpawnModelRo
 		const usable = usableMembers(group, options.modelRegistry);
 		if (!usable.length) {throw new SpawnRouteError(group.name, "no-usable-models");}
 		const selected = selectMember(usable, getDeclaredRequirements(), options.rng);
-		route = buildRoutedRoute(group, requestedGroup!, usable, selected, options);
+		route = buildRoutedRoute(group, requestedGroup!, selected, options);
 	}
 	const resolution = group ? resolveConstraintMembers(group.models, options.modelRegistry) : { members: [] };
 	route = attachCeilings(route!, group, resolution, registry);
 	if (!Object.keys(requirements).length) {return route;}
-	const violations = collectViolations(getDeclaredRequirements, group, resolution, route, registry);
+	const violations = collectViolations(getDeclaredRequirements, group, resolution, route);
 	return violations.length ? raiseRouteFailure(violations, group, requestedGroup, route, registry) : route;
 }
