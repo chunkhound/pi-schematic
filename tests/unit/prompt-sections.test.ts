@@ -23,10 +23,6 @@ function hostContext(value: unknown): HostContext {
 	return value;
 }
 
-function tuiContext(options?: Parameters<typeof makeTUICtx>[0]): HostContext {
-	return hostContext(makeTUICtx(options));
-}
-
 // ── Registry ────────────────────────────────────────────────────────
 
 test("renders sections in registration order", () => {
@@ -199,13 +195,13 @@ test("hands a later extension a prompt that already holds schematic's content", 
 test("keeps the primer section byte-identical while the topic and notebook sections change", async () => {
 	const pi = await createTestHost();
 	const handler = getHandler(pi, "before_agent_start");
-	const ctx = { ...tuiContext({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
+	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
 	const beforeEvent = createBeforeAgentStartEvent();
 	await handler(beforeEvent, ctx);
 	const before = beforeEvent.systemPromptOptions.sections;
 	expect(before.schematic).toBeDefined();
 
-	await getTool(pi, "notebook_write").execute("1", { name: "alpha", content: "first line" }, undefined, undefined, tuiContext());
+	await getTool(pi, "notebook_write").execute("1", { name: "alpha", content: "first line" }, undefined, undefined, makeTUICtx());
 	await getCommand(pi, "notebook").handler("oauth", createCommandContext());
 	const afterEvent = createBeforeAgentStartEvent();
 	await handler(afterEvent, ctx);
@@ -230,7 +226,7 @@ for (const sectionName of ["schematic", "schematic_topic", "schematic_model_grou
 		};
 		const pi = await createTestHost();
 		await getCommand(pi, "notebook").handler("oauth", createCommandContext());
-		await getTool(pi, "notebook_write").execute("1", { name: "alpha", content: "first line" }, undefined, undefined, tuiContext());
+		await getTool(pi, "notebook_write").execute("1", { name: "alpha", content: "first line" }, undefined, undefined, makeTUICtx());
 		const handler = getHandler(pi, "before_agent_start");
 		const event = createBeforeAgentStartEvent();
 
@@ -245,10 +241,10 @@ for (const sectionName of ["schematic", "schematic_topic", "schematic_model_grou
 test("re-renders the topic and notebook sections after a handoff completes", async () => {
 	const pi = await createTestHost();
 	const handler = getHandler(pi, "before_agent_start");
-	const ctx = { ...tuiContext({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
+	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
 	await getCommand(pi, "notebook").handler("oauth", createCommandContext());
-	await getTool(pi, "notebook_write").execute("1", { name: "stale", content: "obsolete finding" }, undefined, undefined, tuiContext());
-	await getTool(pi, "notebook_write").execute("2", { name: "keep", content: "durable decision" }, undefined, undefined, tuiContext());
+	await getTool(pi, "notebook_write").execute("1", { name: "stale", content: "obsolete finding" }, undefined, undefined, makeTUICtx());
+	await getTool(pi, "notebook_write").execute("2", { name: "keep", content: "durable decision" }, undefined, undefined, makeTUICtx());
 	const beforeHandoff = createBeforeAgentStartEvent();
 	await handler(beforeHandoff, ctx);
 	expect(beforeHandoff.systemPromptOptions.sections.schematic_topic).toContain("Current topic: `oauth`");

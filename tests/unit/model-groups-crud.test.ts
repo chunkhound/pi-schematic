@@ -2,8 +2,7 @@ import { expect, test, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
-import { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
 	__setModelGroupsFsForTests,
 	createGroup,
@@ -21,7 +20,7 @@ import {
 import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModel, type ModelGroupScope, type ModelGroupsAccess, type ResolvedModelGroup } from "../../model-groups/types.js";
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import { testMinContext } from "./model-groups-constraints-fixture.js";
-import { withTempAgentDir } from "./helpers.js";
+import { createModelRegistry, testModel, withTempAgentDir } from "./helpers.js";
 import { withTemp } from "./model-groups-helpers.js";
 
 function access(cwd: string, policy: ModelGroupsAccess["policy"] = "global-project"): ModelGroupsAccess { return { cwd, policy }; }
@@ -61,34 +60,11 @@ function read(scope: ModelGroupScope, cwd: string): PersistedConfig {
 
 type RegistryFields = Pick<ModelRegistry, "getAll" | "getAvailable" | "find" | "hasConfiguredAuth">;
 
-function model(fields: Pick<Model<Api>, "provider" | "id" | "input" | "reasoning"> & Partial<Model<Api>>): Model<Api> {
-	return {
-		name: fields.id, api: "test-api", baseUrl: "http://localhost.invalid",
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 0, maxTokens: 0, ...fields,
-	};
-}
-
-const MODEL_REGISTRY_MEMBERS = new Set(Object.getOwnPropertyNames(ModelRegistry.prototype).filter((name) => name !== "constructor"));
-
-// A ModelRegistry whose listed members are `fields`; reading any other ModelRegistry member throws.
-function modelRegistry(fields: RegistryFields): ModelRegistry {
-	const target: unknown = Object.create(ModelRegistry.prototype);
-	if (!(target instanceof ModelRegistry)) {throw new Error("Object.create did not produce a ModelRegistry instance.");}
-	return new Proxy(Object.assign(target, fields), {
-		get(registry, property, receiver) {
-			if (typeof property === "string" && MODEL_REGISTRY_MEMBERS.has(property) && !Object.hasOwn(fields, property)) {
-				throw new Error(`modelRegistry.${property} is not stubbed in this test registry; add it to the fields.`);
-			}
-			const value: unknown = Reflect.get(registry, property, receiver);
-			return value;
-		},
-	});
-}
-
-function registryFields(available = new Set(["openai:gpt-5", "anthropic:claude"])): RegistryFields {
+function registryFields(): RegistryFields {
+	const available = new Set(["openai:gpt-5", "anthropic:claude"]);
 	const models = [
-		model({ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } }),
-		model({ provider: "anthropic", id: "claude", input: ["text"], reasoning: false }),
+		testModel({ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } }),
+		testModel({ provider: "anthropic", id: "claude", input: ["text"], reasoning: false }),
 	];
 	return {
 		getAll: () => models,
@@ -98,24 +74,20 @@ function registryFields(available = new Set(["openai:gpt-5", "anthropic:claude"]
 	};
 }
 
-function registry(available?: Set<string>): ModelRegistry {
-	return modelRegistry(registryFields(available));
-}
-
-// The registry above plus `ctxModel`, whose 100-token contextWindow supports injected testMinContext overrides up to 100; the other models have a contextWindow of 0.
+// The registry of `registryFields` plus `ctxModel`, whose 100-token contextWindow supports injected testMinContext overrides up to 100; the other models have a contextWindow of 0.
 function registryWithContextModel(): ModelRegistry {
-	const ctxModel = model({ provider: "openai", id: "gpt-ctx", input: ["text"], reasoning: false, contextWindow: 100 });
+	const ctxModel = testModel({ provider: "openai", id: "gpt-ctx", input: ["text"], reasoning: false, contextWindow: 100 });
 	const fields = registryFields();
-	return modelRegistry({ ...fields, find: (provider, id) => id === "gpt-ctx" ? ctxModel : fields.find(provider, id) });
+	return createModelRegistry({ ...fields, find: (provider, id) => id === "gpt-ctx" ? ctxModel : fields.find(provider, id) });
 }
 
 test("model groups store creates, round-trips, validates, renames, updates, deletes, and moves", () => withTemp(({ cwd }) => {
 	expect(Object.keys(loadModelGroups(access(cwd)).configs.project.groups)).toHaveLength(0);
-	createGroup("project", access(cwd), "review", { models: [] }, registry());
+	createGroup("project", access(cwd), "review", { models: [] }, createModelRegistry(registryFields()));
 	expect(read("project", cwd).groups.review.models).toStrictEqual([]);
-	expect(() => { createGroup("project", access(cwd), "review", { models: [] }, registry()); }).toThrow(/already exists/);
+	expect(() => { createGroup("project", access(cwd), "review", { models: [] }, createModelRegistry(registryFields())); }).toThrow(/already exists/);
 
-	createGroup("project", access(cwd), "inherit-roundtrip", { models: [{ provider: "anthropic", modelId: "claude" }] }, registry());
+	createGroup("project", access(cwd), "inherit-roundtrip", { models: [{ provider: "anthropic", modelId: "claude" }] }, createModelRegistry(registryFields()));
 	const inheritLoaded = loadModelGroups(access(cwd)).configs.project.groups["inherit-roundtrip"].models[0];
 	expect(inheritLoaded.thinkingLevel).toBeUndefined();
 	expect(Object.getOwnPropertyNames(inheritLoaded)).not.toContain("thinkingLevel");
@@ -123,23 +95,23 @@ test("model groups store creates, round-trips, validates, renames, updates, dele
 	expect(inheritPersisted.thinkingLevel).toBeUndefined();
 	expect(Object.getOwnPropertyNames(inheritPersisted)).not.toContain("thinkingLevel");
 
-	updateGroup("project", access(cwd), "review", { models: [{ provider: "openai", modelId: "gpt-5", thinkingLevel: "high" }] }, registry());
+	updateGroup("project", access(cwd), "review", { models: [{ provider: "openai", modelId: "gpt-5", thinkingLevel: "high" }] }, createModelRegistry(registryFields()));
 	renameGroup("project", access(cwd), "review", "reviewers");
 	expect(read("project", cwd).groups.review).toBeUndefined();
 	expect(read("project", cwd).groups.reviewers.models[0].thinkingLevel).toBe("high");
 
-	createGroup("project", access(cwd), "collision", { models: [] }, registry());
+	createGroup("project", access(cwd), "collision", { models: [] }, createModelRegistry(registryFields()));
 	expect(() => { renameGroup("project", access(cwd), "reviewers", "collision"); }).toThrow(/already exists/);
-	createGroup("global", access(cwd), "reviewers", { models: [{ provider: "openai", modelId: "gpt-5" }, { provider: "missing", modelId: "nope" }] }, registry());
+	createGroup("global", access(cwd), "reviewers", { models: [{ provider: "openai", modelId: "gpt-5" }, { provider: "missing", modelId: "nope" }] }, createModelRegistry(registryFields()));
 	const loaded = loadModelGroups(access(cwd));
-	const resolved = validateModelGroups(loaded, registry());
+	const resolved = validateModelGroups(loaded, createModelRegistry(registryFields()));
 	const globalReviewers = resolved.find((g) => g.name === "reviewers" && g.scope === "global");
 	expect(globalReviewers?.validation.shadowedByProject).toBe(true);
 	expect(globalReviewers?.validation.unavailableRefs).toStrictEqual([{ provider: "missing", modelId: "nope" }]);
 	expect(globalReviewers?.validation.degraded).toBe(true);
 
-	createGroup("global", access(cwd), "move-collision", { models: [] }, registry());
-	createGroup("project", access(cwd), "move-collision", { models: [] }, registry());
+	createGroup("global", access(cwd), "move-collision", { models: [] }, createModelRegistry(registryFields()));
+	createGroup("project", access(cwd), "move-collision", { models: [] }, createModelRegistry(registryFields()));
 	expect(() => { moveGroup(access(cwd), "move-collision", "project"); }).toThrow(/already exists in project scope/);
 	expect(read("global", cwd).groups).toHaveProperty(["move-collision"]);
 	expect(read("project", cwd).groups).toHaveProperty(["move-collision"]);
@@ -181,7 +153,7 @@ test("model groups load recovery handles malformed, schema-invalid, unsupported 
 	const issue = loaded.issues.find((i) => i.scope === "project")!;
 	expect(issue.backupFailed).toBe(true);
 	expect(fs.readFileSync(modelGroupsPath("project", cwd), "utf8")).toBe("{bad");
-	expect(() => { createGroup("project", access(cwd), "must-not-overwrite", { models: [] }, registry()); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
+	expect(() => { createGroup("project", access(cwd), "must-not-overwrite", { models: [] }, createModelRegistry(registryFields())); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
 		expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
 		expect(error.operation).toBe("save");
 		expect(error.phase).toBe("load-recovery");
@@ -259,7 +231,7 @@ test("model groups rename cleanup failure remains supplemental to the original t
 test("model groups persistence failures throw typed errors and preserve committed state", () => withTemp(({ cwd }) => {
 	saveModelGroups("project", access(cwd), { version: 2, groups: { keep: { models: [] } } });
 	__setModelGroupsFsForTests({ writeFileSync: () => { throw new Error("temp denied"); } });
-	expect(() => { updateGroup("project", access(cwd), "keep", { models: [{ provider: "openai", modelId: "gpt-5" }] }, registry()); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
+	expect(() => { updateGroup("project", access(cwd), "keep", { models: [{ provider: "openai", modelId: "gpt-5" }] }, createModelRegistry(registryFields())); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
 		expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
 		expect(error.operation).toBe("save");
 		expect(error.phase).toBe("temp-write");
@@ -290,7 +262,7 @@ test("model groups persistence failures throw typed errors and preserve committe
 	}));
 	__setModelGroupsFsForTests(null);
 
-	createGroup("global", access(cwd), "move-target-fails", { models: [] }, registry());
+	createGroup("global", access(cwd), "move-target-fails", { models: [] }, createModelRegistry(registryFields()));
 	__setModelGroupsFsForTests({ renameSync: () => { throw new Error("target denied"); } });
 	expect(() => { moveGroup(access(cwd), "move-target-fails", "project"); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
 		expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
@@ -300,7 +272,7 @@ test("model groups persistence failures throw typed errors and preserve committe
 	}));
 	__setModelGroupsFsForTests(null);
 
-	createGroup("global", access(cwd), "move-me", { models: [] }, registry());
+	createGroup("global", access(cwd), "move-me", { models: [] }, createModelRegistry(registryFields()));
 	let writes = 0;
 	__setModelGroupsFsForTests({ renameSync: (from, to) => { writes++; if (writes === 2) {throw new Error("source denied");} fs.renameSync(from, to); } });
 	expect(() => { moveGroup(access(cwd), "move-me", "project"); }).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
@@ -341,7 +313,7 @@ test("model groups strictly partitions schema and legacy version domains", () =>
 		const loaded = loadModelGroups(access(cwd));
 		expect(loaded.issues).toHaveLength(0);
 		expect(loaded.configs.project.version).toBe(2);
-		updateGroup("project", access(cwd), "legacy", { models: [] }, registry());
+		updateGroup("project", access(cwd), "legacy", { models: [] }, createModelRegistry(registryFields()));
 		expect(read("project", cwd).version).toBe(2);
 	}
 }));
@@ -369,7 +341,7 @@ test("store-level validation derives empty-common and stale-override flags and c
 		unresolved: { models: [{ provider: "openai", modelId: "gone" }, { provider: "openai", modelId: "gpt-5" }] },
 		stale: { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["text", "image"] } },
 	} }), "utf8");
-	const resolved = validateModelGroups(loadModelGroups(a), registry());
+	const resolved = validateModelGroups(loadModelGroups(a), createModelRegistry(registryFields()));
 	// claude supports text only, so image is a stale unsupported override entry.
 	const empty = resolved.find((g) => g.name === "empty");
 	expect(empty?.validation.emptyCommonModalities, "empty group has no common modalities").toBe(true);
@@ -393,17 +365,17 @@ test("low-level save permits shape-valid overrides while CRUD rejects union-cap-
 	// claude supports only text, so an override of image must be rejected by the CRUD gate.
 	const writeFileSync = vi.fn(fs.writeFileSync);
 	__setModelGroupsFsForTests({ writeFileSync });
-	expect(() => { createGroup("project", a, "claude-only", { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["image"] } }, registry()); }).toThrow(/unsupported modalities: image/);
+	expect(() => { createGroup("project", a, "claude-only", { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["image"] } }, createModelRegistry(registryFields())); }).toThrow(/unsupported modalities: image/);
 	expect(writeFileSync).not.toHaveBeenCalled();
 	__setModelGroupsFsForTests(null);
 
-	createGroup("project", a, "rich", { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["text", "image"] } }, registry());
+	createGroup("project", a, "rich", { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["text", "image"] } }, createModelRegistry(registryFields()));
 	const before = fs.readFileSync(modelGroupsPath("project", cwd), "utf8");
 	const writeFileSync2 = vi.fn(fs.writeFileSync);
 	__setModelGroupsFsForTests({ writeFileSync: writeFileSync2 });
 	// Combined member change: replacing gpt-5 (text+image+reasoning) with claude (text only)
 	// makes the retained override's image unsupported → the gate must reject before any write.
-	expect(() => { updateGroup("project", a, "rich", { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["text", "image"] } }, registry()); }).toThrow(/unsupported modalities: image/);
+	expect(() => { updateGroup("project", a, "rich", { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["text", "image"] } }, createModelRegistry(registryFields())); }).toThrow(/unsupported modalities: image/);
 	expect(writeFileSync2, "rejected update must not write").not.toHaveBeenCalled();
 	expect(fs.readFileSync(modelGroupsPath("project", cwd), "utf8")).toBe(before);
 	__setModelGroupsFsForTests(null);
@@ -506,7 +478,7 @@ test("v1 migration is in-memory until the first successful mutation writes v2 wi
 	expect(loaded.configs.project.groups.legacy.constraints).toBeUndefined();
 	expect(fs.readFileSync(sourcePath, "utf8")).toBe(v1Bytes);
 
-	updateGroup("project", access(cwd), "legacy", { models: [{ provider: "anthropic", modelId: "claude" }] }, registry());
+	updateGroup("project", access(cwd), "legacy", { models: [{ provider: "anthropic", modelId: "claude" }] }, createModelRegistry(registryFields()));
 	const persisted = read("project", cwd);
 	expect(persisted.version).toBe(2);
 	expect(Object.getOwnPropertyNames(persisted.groups.legacy)).not.toContain("modalityOverride");
@@ -564,7 +536,7 @@ test("v2 constraint envelope preserves explicit empty and opaque slots canonical
 	fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: { opaque: { models: [{ provider: "openai", modelId: "gpt-5", modelSentinel: true }], groupSentinel: true, constraints: { modalities: ["image"], cost: { future: true } } } } }), "utf8");
 	const opaque = loadModelGroups(access(cwd));
 	const sentinelModel: ModelGroupModel & { modelSentinel: boolean } = { provider: "openai", modelId: "gpt-5", modelSentinel: true, thinkingLevel: "high" };
-	updateGroup("project", access(cwd), "opaque", { ...opaque.configs.project.groups.opaque, models: [sentinelModel] }, registry());
+	updateGroup("project", access(cwd), "opaque", { ...opaque.configs.project.groups.opaque, models: [sentinelModel] }, createModelRegistry(registryFields()));
 	const opaquePersisted = read("project", cwd).groups.opaque;
 	expect(opaquePersisted.constraints).toStrictEqual({ modalities: ["image"], cost: { future: true } });
 	expect(opaquePersisted.groupSentinel).toBe(true);
@@ -599,7 +571,7 @@ test("v2 normalization preserves opaque root group and model keys through load s
 
 	const loaded = loadModelGroups(access(cwd));
 	saveModelGroups("project", access(cwd), loaded.configs.project);
-	updateGroup("project", access(cwd), "review", { ...loaded.configs.project.groups.review, models: loaded.configs.project.groups.review.models.map((model) => ({ ...model, thinkingLevel: "high" })) }, registry());
+	updateGroup("project", access(cwd), "review", { ...loaded.configs.project.groups.review, models: loaded.configs.project.groups.review.models.map((model) => ({ ...model, thinkingLevel: "high" })) }, createModelRegistry(registryFields()));
 
 	const persisted = read("project", cwd);
 	expect(persisted.rootSentinel).toStrictEqual({ keep: true });
@@ -610,7 +582,7 @@ test("v2 normalization preserves opaque root group and model keys through load s
 
 test("store normalization strips runtime-derived group keys while preserving opaque keys", () => withTemp(({ cwd }) => {
 	const a = access(cwd);
-	createGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }] }, registry());
+	createGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }] }, createModelRegistry(registryFields()));
 	const runtimeView: ResolvedModelGroup & { opaqueSentinel: { keep: boolean } } = {
 		models: [{ provider: "openai", modelId: "gpt-5" }],
 		constraints: { modalities: ["text", "image"] },
@@ -619,7 +591,7 @@ test("store normalization strips runtime-derived group keys while preserving opa
 		modalities: { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image"] },
 		validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
 	};
-	updateGroup("project", a, "review", runtimeView, registry());
+	updateGroup("project", a, "review", runtimeView, createModelRegistry(registryFields()));
 	const persisted = read("project", cwd).groups.review;
 	expect(Object.keys(persisted).sort()).toStrictEqual(["constraints", "models", "opaqueSentinel"]);
 	expect(persisted.constraints?.modalities).toStrictEqual(["text", "image"]);
@@ -635,7 +607,7 @@ test("version-3 mutations refuse before temp write including loadScopeConfig-bac
 	__setModelGroupsFsForTests({ writeFileSync });
 	for (const mutate of [
 		() => { saveModelGroups("project", access(cwd), { version: 2, groups: {} }); },
-		() => { createGroup("project", access(cwd), "blocked", { models: [] }, registry()); },
+		() => { createGroup("project", access(cwd), "blocked", { models: [] }, createModelRegistry(registryFields())); },
 	]) {
 		expect(mutate).toThrow(expect.toSatisfy((error: ModelGroupsPersistenceError) => {
 			expect(error).toBeInstanceOf(ModelGroupsPersistenceError);
@@ -649,8 +621,8 @@ test("version-3 mutations refuse before temp write including loadScopeConfig-bac
 
 test("modality overrides survive CRUD rename and move lifecycle in both scopes", () => withTemp(({ cwd }) => {
 	const a = access(cwd);
-	createGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["image"] } }, registry());
-	updateGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["text", "image"] } }, registry());
+	createGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["image"] } }, createModelRegistry(registryFields()));
+	updateGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["text", "image"] } }, createModelRegistry(registryFields()));
 	renameGroup("project", a, "review", "reviewers");
 	moveGroup(a, "reviewers", "global");
 	saveModelGroups("global", a, loadModelGroups(a).configs.global);
@@ -677,8 +649,8 @@ test("model groups use branded paths, global-only access, canonical own keys, an
 
 	for (const name of ["__proto__", "constructor", "toString"]) {
 		deleteGroup("project", access(cwd), name);
-		createGroup("global", access(cwd), ` ${name} `, { models: [] }, registry());
-		updateGroup("global", access(cwd), name, { models: [{ provider: "p", modelId: name }] }, registry());
+		createGroup("global", access(cwd), ` ${name} `, { models: [] }, createModelRegistry(registryFields()));
+		updateGroup("global", access(cwd), name, { models: [{ provider: "p", modelId: name }] }, createModelRegistry(registryFields()));
 		moveGroup(access(cwd), name, "project");
 		expect(Object.getOwnPropertyNames(read("project", cwd).groups)).toContain(name);
 		deleteGroup("project", access(cwd), name);
@@ -692,7 +664,7 @@ test("model groups use branded paths, global-only access, canonical own keys, an
 	const untrusted = loadModelGroups(access(cwd, "global-only"));
 	expect(projectProbes).toStrictEqual([]);
 	expect(untrusted.merged.filter((group) => group.scope !== "global")).toStrictEqual([]);
-	expect(() => { createGroup("project", access(cwd, "global-only"), "forbidden", { models: [] }, registry()); }).toThrow(/global-only/);
+	expect(() => { createGroup("project", access(cwd, "global-only"), "forbidden", { models: [] }, createModelRegistry(registryFields())); }).toThrow(/global-only/);
 	expect(projectProbes).toStrictEqual([]);
 }));
 
@@ -727,7 +699,7 @@ test("global model groups file lives under PI_CODING_AGENT_DIR when it is set", 
 	const expectedPath = path.join(agentDir, "pi-schematic", "model-groups.json");
 	expect(modelGroupsPath("global", cwd)).toBe(expectedPath);
 
-	createGroup("global", access(cwd), "relocated", { models: [] }, registry());
+	createGroup("global", access(cwd), "relocated", { models: [] }, createModelRegistry(registryFields()));
 
 	expect(readFile(expectedPath).groups.relocated.models).toStrictEqual([]);
 	expect(path.join(home, ".pi")).not.toSatisfy(fs.existsSync);
@@ -765,7 +737,7 @@ test("a project config dir that is the agent dir loads its groups once, as globa
 test("a project config dir that is the agent dir refuses project-scope writes", () => withTemp(({ cwd }) => {
 	const sharedPath = pointAgentDirAtProjectConfig(cwd);
 
-	expect(() => { createGroup("project", access(cwd, "global-project"), "local", { models: [] }, registry()); }).toThrow(/unavailable in global-only mode/);
+	expect(() => { createGroup("project", access(cwd, "global-project"), "local", { models: [] }, createModelRegistry(registryFields())); }).toThrow(/unavailable in global-only mode/);
 	expect(sharedPath).not.toSatisfy(fs.existsSync);
 }));
 
@@ -826,7 +798,7 @@ test("an agent dir symlinked to the project config dir loads its groups once, as
 test("an agent dir symlinked to the project config dir refuses project-scope writes", () => withTemp(({ cwd }) => {
 	pointAgentDirAtProjectConfigThroughSymlink(cwd);
 
-	expect(() => { createGroup("project", access(cwd, "global-project"), "local", { models: [] }, registry()); }).toThrow(/unavailable in global-only mode/);
+	expect(() => { createGroup("project", access(cwd, "global-project"), "local", { models: [] }, createModelRegistry(registryFields())); }).toThrow(/unavailable in global-only mode/);
 	expect(path.join(cwd, ".pi", "pi-schematic", "model-groups.json")).not.toSatisfy(fs.existsSync);
 }));
 
@@ -846,6 +818,6 @@ test("an agent dir naming the project config dir in another case refuses project
 		skip("the temp filesystem is case-sensitive, so the two spellings are different directories");
 	}
 
-	expect(() => { createGroup("project", access(cwd, "global-project"), "local", { models: [] }, registry()); }).toThrow(/unavailable in global-only mode/);
+	expect(() => { createGroup("project", access(cwd, "global-project"), "local", { models: [] }, createModelRegistry(registryFields())); }).toThrow(/unavailable in global-only mode/);
 	expect(path.join(cwd, ".pi", "pi-schematic", "model-groups.json")).not.toSatisfy(fs.existsSync);
 }));

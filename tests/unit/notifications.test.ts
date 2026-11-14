@@ -133,9 +133,9 @@ test("parent readonly tool-call consumer uses centralized block copy", async () 
 			setWidget: vi.fn(),
 		}),
 	}));
-	const result: unknown = await toolCall({ toolName: "write", input: {} }, {});
+	const result = await toolCall({ toolName: "write", input: {} }, {});
 	expect(result).toStrictEqual({ block: true, reason: READONLY_WRITE_EDIT_BLOCK_REASON });
-	const handoffResult: unknown = await toolCall({ toolName: "handoff", input: {} }, {});
+	const handoffResult = await toolCall({ toolName: "handoff", input: {} }, {});
 	expect(handoffResult).toStrictEqual({ block: true, reason: READONLY_HANDOFF_BLOCK_REASON });
 });
 

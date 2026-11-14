@@ -9,18 +9,27 @@
  *   did not stub, and pass overrides through.
  * - A tool render context keeps a default whose override is undefined, and its
  *   keybinding formatters throw naming themselves until a test assigns them.
+ * - A test model registry, the makeTUICtx theme and its widget recorder fail naming
+ *   what a test did not stub; a custom UI settles as pi's does when `done` is called
+ *   or never called; a malformed blocking tool_call result throws.
  */
 
 import path from "node:path";
 import { expect, test } from "vitest";
 import { SessionManager, type ExtensionContext, type ExtensionToolContext, type ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
 import {
 	createCommandContext,
+	createCustomUI,
 	createExtensionContext,
+	createModelRegistry,
 	createToolRenderContext,
 	createToolContext,
 	createUIContext,
+	makeTUICtx,
+	registerReadonlyPI,
 	setTempHome,
+	theme,
 	withTempAgentDir,
 	withTempHome,
 } from "./helpers.js";
@@ -246,6 +255,14 @@ test("an override set to undefined keeps the default cwd and its session manager
 	expect(ctx.sessionManager.getCwd()).toBe(process.cwd());
 });
 
+// The model registry is the exception to the rule above: production code checks for a
+// missing registry, so a test needs a way to build a context without one.
+test("a model registry override set to undefined builds a context without a registry", () => {
+	const ctx = createExtensionContext({ modelRegistry: undefined });
+
+	expect(ctx.modelRegistry).toBeUndefined();
+});
+
 test("a UI override set to undefined keeps the throwing stub", () => {
 	const ui = createUIContext({ notify: undefined });
 
@@ -271,4 +288,80 @@ test("a render context override set to undefined keeps the default", () => {
 
 	expect(context.toolCallId).toBe("tool-call-1");
 	expect(context.expanded).toBe(true);
+});
+
+test("a test model registry method left out of the members throws naming it", () => {
+	const registry = createModelRegistry({ find: () => undefined });
+
+	expect(() => registry.getAll()).toThrow("modelRegistry.getAll is not stubbed in this test registry; add it to the members.");
+});
+
+function probeComponent(onDispose: () => void = () => undefined): Component & { dispose(): void } {
+	return { render: () => [], invalidate: () => undefined, dispose: onDispose };
+}
+
+test("a custom UI whose component never calls done rejects", async () => {
+	const custom = createCustomUI(theme, () => undefined);
+
+	await expect(custom(() => probeComponent())).rejects.toThrow("The custom component did not call done.");
+});
+
+test("a custom UI resolves to the first done value and disposes the component then", async () => {
+	const events: string[] = [];
+	let finish: ((result: string) => void) | undefined;
+	const custom = createCustomUI(theme, () => {
+		finish?.("first");
+		events.push("after done");
+		finish?.("second");
+	});
+
+	const result = await custom<string>((_tui, _theme, _keybindings, done) => {
+		finish = done;
+		return probeComponent(() => { events.push("disposed"); });
+	});
+
+	expect(result).toBe("first");
+	expect(events).toStrictEqual(["disposed", "after done"]);
+});
+
+test("a makeTUICtx theme member other than fg throws naming it", () => {
+	const ctx = makeTUICtx();
+
+	expect(() => ctx.ui.theme.bold("probe")).toThrow("theme.bold is not stubbed in the makeTUICtx theme; it stubs only fg.");
+});
+
+test("a makeTUICtx component widget throws naming its key", () => {
+	const ctx = makeTUICtx();
+
+	expect(() => { ctx.ui.setWidget("probe", () => probeComponent()); }).toThrow('makeTUICtx records only string widgets; "probe" got a component.');
+});
+
+test("a makeTUICtx UI override is the member the context calls", () => {
+	const notifications: string[] = [];
+	const ctx = makeTUICtx({ ui: { notify: (message) => { notifications.push(message); } } });
+
+	ctx.ui.notify("probe");
+
+	expect(notifications).toStrictEqual(["probe"]);
+});
+
+test.for([
+	{ hasUI: true, mode: "tui" },
+	{ hasUI: false, mode: "print" },
+])("a makeTUICtx with hasUI $hasUI runs in mode $mode", ({ hasUI, mode }) => {
+	expect(makeTUICtx({ hasUI }).mode).toBe(mode);
+});
+
+// pi.on's types admit only well-formed results, so the malformed handler is registered reflectively.
+function registerUntypedHandler(pi: object, event: string, handler: () => unknown): void {
+	const on: unknown = Reflect.get(pi, "on");
+	if (typeof on !== "function") {throw new Error("The test host has no pi.on.");}
+	Reflect.apply(on, pi, [event, handler]);
+}
+
+test("a blocking tool_call result with malformed members throws naming the result", async () => {
+	const { pi, toolCall } = await registerReadonlyPI();
+	registerUntypedHandler(pi, "tool_call", () => ({ block: true, reason: 5 }));
+
+	await expect(toolCall({ toolName: "probe" }, {})).rejects.toThrow('A tool_call handler returned something other than a tool_call result: {"block":true,"reason":5}.');
 });

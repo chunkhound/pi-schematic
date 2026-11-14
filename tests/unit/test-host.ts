@@ -27,6 +27,7 @@ import type {
 	ExtensionRuntime,
 	ExtensionShortcut,
 	InputEventResult,
+	KeybindingsManager,
 	MessageEndEventResult,
 	ModelRegistry,
 	NormalizedBuildSystemPromptOptions,
@@ -88,8 +89,19 @@ const { normalizeBuildSystemPromptOptions, buildSystemPrompt } = await importInt
 	["normalizeBuildSystemPromptOptions", "buildSystemPrompt"],
 );
 
-/** Raw tool definitions as tests consume them (unwrapped; loose to keep call sites ergonomic). */
-export type TestToolMap = Map<string, any>;
+// pi's package root exports `KeybindingsManager` as a type only.
+interface InternalKeybindings {
+	KeybindingsManager: typeof KeybindingsManager;
+}
+
+/** pi's keybindings with the default bindings, for the `keybindings` argument of a `ctx.ui.custom` factory. */
+export async function loadTestKeybindings(): Promise<KeybindingsManager> {
+	const internalKeybindings = await importInternal<InternalKeybindings>("core/keybindings.js", ["KeybindingsManager"]);
+	return new internalKeybindings.KeybindingsManager();
+}
+
+/** The tool definitions the extension registered, by tool name. */
+export type TestToolMap = Map<string, ToolDefinition>;
 
 /**
  * Test-only accessors stamped onto the real api. Registration state is backed by
@@ -97,15 +109,15 @@ export type TestToolMap = Map<string, any>;
  * exists so tests can observe registration and drive host side effects.
  */
 export interface TestAccessors {
-	handlers: Map<string, any[]>;
+	handlers: Extension["handlers"];
 	tools: TestToolMap;
-	commands: Map<string, any>;
-	shortcuts: Map<string, any>;
+	commands: Extension["commands"];
+	shortcuts: Extension["shortcuts"];
 	sentUserMessages: SentUserMessage[];
-	sentMessages: { message: any; options?: SentMessage["options"] }[];
-	appendedEntries: { customType: string; data: any }[];
+	sentMessages: SentMessage[];
+	appendedEntries: AppendedEntry[];
 	activeTools: string[];
-	setCommands(commands: any[]): void;
+	setCommands(commands: SlashCommandInfo[]): void;
 }
 
 export type TestPI = ExtensionAPI & TestAccessors;
@@ -501,6 +513,13 @@ export function getHandlers<K extends HostEventName>(pi: TestPI, event: K): Host
 		assertHostHandler(candidate, event);
 		return candidate;
 	});
+}
+
+/** The one handler registered for `event`; throws, naming the event and the count, unless exactly one is registered. */
+export function getOnlyHandler<K extends HostEventName>(pi: TestPI, event: K): HostHandler<K> {
+	const handlers = getHandlers(pi, event);
+	if (handlers.length !== 1) {throw new Error(`Expected one "${event}" handler on the test host; ${String(handlers.length)} registered.`);}
+	return handlers[0];
 }
 
 /**

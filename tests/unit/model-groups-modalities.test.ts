@@ -5,13 +5,7 @@ import { assertModalityOverrideSupported, deriveModelGroupModalities, getMissing
 import { deriveModalitiesEvaluation } from "../../model-groups/constraints/modalities.js";
 import { resolveConstraintMembers } from "../../model-groups/constraints/resolution.js";
 import type { ModelGroupDef, ModelGroupModality, ModelGroupModel } from "../../model-groups/types.js";
-
-function model(fields: Pick<Model<Api>, "provider" | "id" | "input" | "reasoning">): Model<Api> {
-	return {
-		name: fields.id, api: "test-api", baseUrl: "http://localhost.invalid",
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 0, maxTokens: 0, ...fields,
-	};
-}
+import { testModel } from "./helpers.js";
 
 function registry(models: Model<Api>[]): Pick<ModelRegistry, "find"> {
 	return { find: (provider, id) => models.find((entry) => entry.provider === provider && entry.id === id) };
@@ -19,8 +13,8 @@ function registry(models: Model<Api>[]): Pick<ModelRegistry, "find"> {
 
 test("derives ordered common, supported, and override-effective modalities from the live registry", () => {
 	const models = [
-		model({ provider: "p", id: "rich", input: ["image", "text"], reasoning: true }),
-		model({ provider: "p", id: "text", input: ["text"], reasoning: false }),
+		testModel({ provider: "p", id: "rich", input: ["image", "text"], reasoning: true }),
+		testModel({ provider: "p", id: "text", input: ["text"], reasoning: false }),
 	];
 	const group = { models: [{ provider: "p", modelId: "rich" }, { provider: "p", modelId: "text" }] };
 	expect(deriveModelGroupModalities(group, registry(models))).toStrictEqual({
@@ -35,8 +29,8 @@ test("derives ordered common, supported, and override-effective modalities from 
 
 test("compatibility façade and descriptor remain parity-equivalent across modality fixtures", () => {
 	const models = [
-		model({ provider: "p", id: "rich", input: ["image", "text"], reasoning: true }),
-		model({ provider: "p", id: "text", input: ["text"], reasoning: false }),
+		testModel({ provider: "p", id: "rich", input: ["image", "text"], reasoning: true }),
+		testModel({ provider: "p", id: "text", input: ["text"], reasoning: false }),
 	];
 	const fixtures: { models: ModelGroupModel[]; constraints?: { modalities: ModelGroupModality[] } }[] = [
 		{ models: [] },
@@ -58,12 +52,12 @@ test("compatibility façade and descriptor remain parity-equivalent across modal
 
 test("caps stale overrides without mutation and restores them when catalog support returns", () => {
 	const def: ModelGroupDef = { models: [{ provider: "p", modelId: "m" }], constraints: { modalities: ["text", "image"] } };
-	const models = [model({ provider: "p", id: "m", input: ["text"], reasoning: false })];
+	const models = [testModel({ provider: "p", id: "m", input: ["text"], reasoning: false })];
 	const first = deriveModelGroupModalities(def, registry(models));
 	expect(first.effective).toStrictEqual(["text"]);
 	expect(def.constraints?.modalities).toStrictEqual(["text", "image"]);
 	models[0].input.push("image");
 	expect(deriveModelGroupModalities(def, registry(models)).effective).toStrictEqual(["text", "image"]);
-	expect(() => { assertModalityOverrideSupported(def, registry([model({ provider: "p", id: "m", input: ["text"], reasoning: false })])); }).toThrow(/unsupported modalities: image/);
+	expect(() => { assertModalityOverrideSupported(def, registry([testModel({ provider: "p", id: "m", input: ["text"], reasoning: false })])); }).toThrow(/unsupported modalities: image/);
 	expect(getMissingModelModalities(models[0], ["text", "reasoning"])).toStrictEqual(["reasoning"]);
 });
