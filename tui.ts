@@ -63,7 +63,7 @@ export function updateIndicators(ctx: ExtensionContext, state: SchematicState): 
 	// Active notebook topic — show a dim placeholder when unset so the frame is discoverable
 	ctx.ui.setStatus(
 		STATUS_KEY_TOPIC,
-		state.activeNotebookTopic
+		state.activeNotebookTopic !== null && state.activeNotebookTopic !== ""
 			? `\u{1F9ED} ${state.activeNotebookTopic}`
 			: theme.fg("dim", "\u{1F9ED} -"),
 	);
@@ -73,7 +73,7 @@ export function updateIndicators(ctx: ExtensionContext, state: SchematicState): 
 		const pct = Math.round(percent);
 		const warning = state.readonlyEnabled
 			? `Context at ${pct}% — readonly: same topic → spawn; different topic → ${READONLY_HANDOFF_TRIGGER}`
-			: state.activeNotebookTopic
+			: state.activeNotebookTopic !== null && state.activeNotebookTopic !== ""
 				? `Context at ${pct}% — use topic fit: same topic → spawn, different topic → handoff`
 				: `Context at ${pct}% — no active topic; handoff soon unless you can assign one cleanly`;
 		ctx.ui.setWidget(WIDGET_KEY_WARNING, [

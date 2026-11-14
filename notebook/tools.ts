@@ -69,7 +69,7 @@ export function createNotebookToolDefinitions(
 ): ToolDefinition[] {
 	const withHints = options?.withPromptHints ?? false;
 	const assertFresh = () => {
-		if (options?.isStale?.()) {
+		if (options?.isStale?.() === true) {
 			throw new Error("Spawn invalidated by reset.");
 		}
 	};
@@ -138,7 +138,7 @@ export function createNotebookToolDefinitions(
 			onUpdate?.({
 				content: [{
 					type: "text" as const,
-					text: `Saved "${params.name}"` + (saved.preview ? `: ${saved.preview}` : "") + (report ? `\n\n${report}` : ""),
+					text: `Saved "${params.name}"` + (saved.preview ? `: ${saved.preview}` : "") + (report !== null ? `\n\n${report}` : ""),
 				}],
 				details,
 			});
@@ -148,7 +148,7 @@ export function createNotebookToolDefinitions(
 						type: "text" as const,
 						text: `Saved notebook page "${params.name}".` +
 							(saved.preview ? `\n${saved.preview}` : "") +
-							(report ? `\n\n${report}` : "") +
+							(report !== null ? `\n\n${report}` : "") +
 							`\n\nNotebook Pages:\n${formatPageList(state) || "(empty)"}`,
 					},
 				],
@@ -185,7 +185,7 @@ export function createNotebookToolDefinitions(
 				);
 			}
 			let text = theme.fg("success", "\u2713 ") + theme.fg("accent", `"${context.args.name}"`);
-			if (expanded && details.body) {
+			if (expanded && details.body !== undefined && details.body !== "") {
 				text += "\n" + theme.fg("toolOutput", details.body.trim());
 			}
 			return new Text(text, 0, 0);

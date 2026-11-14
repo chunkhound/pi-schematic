@@ -297,7 +297,8 @@ function truncateAndColor(text: string, width: number, color: (name: ThemeColor,
 
 function formatCollapsedStats(details: SpawnResultDetails): { text: string; color: ThemeColor } | undefined {
 	if (details.stats) {
-		const s = details.stats;
+		// Persisted details keep only the finite numeric stats they carried, so any key may be absent.
+		const s: Partial<Record<string, number>> = details.stats;
 		const cost = s.cost ?? 0;
 		const costStr = cost >= COST_THRESHOLD_COMPACT ? cost.toFixed(0) : cost >= COST_THRESHOLD_DECIMAL ? cost.toFixed(2) : cost.toFixed(4);
 		return {
@@ -306,7 +307,7 @@ function formatCollapsedStats(details: SpawnResultDetails): { text: string; colo
 			color: "dim",
 		};
 	}
-	if (details.statsUnavailable) {
+	if (details.statsUnavailable === true) {
 		return { text: "stats unavailable", color: "muted" };
 	}
 	return undefined;
@@ -683,14 +684,14 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 	 *      session, meaning a newer child claimed the slot.
 	 */
 	private getStaleSessionReason(): "epoch" | "completion" | "replacement" | undefined {
-		if (!this.session || !this.ownedToolCallId) {
+		if (!this.session || this.ownedToolCallId === undefined || this.ownedToolCallId === "") {
 			return undefined;
 		}
 		if (this.state && this.attachedChildSessionEpoch !== this.state.childSessionEpoch) {
 			return "epoch";
 		}
 		const liveChildSessions = this.state?.liveChildSessions;
-		if (!liveChildSessions?.has(this.ownedToolCallId)) {
+		if (liveChildSessions?.has(this.ownedToolCallId) !== true) {
 			return "completion";
 		}
 		return liveChildSessions.get(this.ownedToolCallId) !== this.session
@@ -724,7 +725,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		this.ownedToolCallId = undefined;
 		this.state = undefined;
 		this.attachedChildSessionEpoch = undefined;
-		if (session && ownedToolCallId && state?.liveChildSessions.get(ownedToolCallId) === session) {
+		if (session && ownedToolCallId !== undefined && ownedToolCallId !== "" && state?.liveChildSessions.get(ownedToolCallId) === session) {
 			// Share the deduplicated abort promise with the other abort paths (spawn
 			// invalidation, /reset) so one session never receives a second abort.
 			try {
@@ -828,15 +829,15 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		switch (message.role) {
 			case "bashExecution": {
 				const component = new BashExecutionComponent(message.command ?? "", this.fakeUi as unknown as TUI, message.excludeFromContext);
-				if (message.output) {
+				if (message.output !== undefined && message.output !== "") {
 					component.appendOutput(message.output);
 				}
-				component.setComplete(message.exitCode, message.cancelled ?? false, message.truncated ? { truncated: true } as any : undefined, message.fullOutputPath);
+				component.setComplete(message.exitCode, message.cancelled ?? false, message.truncated === true ? { truncated: true } as any : undefined, message.fullOutputPath);
 				this.addChild(component);
 				break;
 			}
 			case "custom": {
-				if (message.display) {
+				if (message.display === true) {
 					// CustomMessage type is internal to the SDK; SpawnChildMessage is structurally compatible.
 					const component = new CustomMessageComponent(message as any, undefined, this.markdownTheme);
 					component.setExpanded(this.expanded);
@@ -860,7 +861,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 					const component = new SkillInvocationMessageComponent(skillBlock, this.markdownTheme);
 					component.setExpanded(this.expanded);
 					this.addChild(component);
-					if (skillBlock.userMessage) {
+					if (skillBlock.userMessage !== undefined && skillBlock.userMessage !== "") {
 						this.addChild(new UserMessageComponent(skillBlock.userMessage, this.markdownTheme));
 					}
 				} else {
@@ -908,9 +909,10 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 					this.addToolComponent(component);
 					if (!component) {continue;}
 					if (stopOutcome) {
-						const errorMessage = stopOutcome === "aborted"
-							? message.errorMessage || "Operation aborted"
-							: message.errorMessage || "Error";
+						const fallbackMessage = stopOutcome === "aborted" ? "Operation aborted" : "Error";
+						const errorMessage = message.errorMessage !== undefined && message.errorMessage !== ""
+							? message.errorMessage
+							: fallbackMessage;
 						component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
 					} else {
 						renderedPendingTools.set(content.id ?? "", component);
@@ -957,8 +959,8 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 	}
 
 	private extractPreview(result: ToolResultLike): string {
-		const text = result.content?.find(c => c.type === "text" && c.text)?.text;
-		if (!text) {return "";}
+		const text = result.content.find(c => c.type === "text" && c.text !== undefined && c.text !== "")?.text;
+		if (text === undefined) {return "";}
 		return text.trim().split("\n")[0].slice(0, TOOL_RESULT_PREVIEW_CHARS);
 	}
 
@@ -985,7 +987,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			lines.push(truncateAndColor(liveSummary, width, color, "dim"));
 		} else if (outcome !== "success") {
 			const outcomeText = getOutcomeStatusText(outcome);
-			if (outcomeText) {
+			if (outcomeText !== undefined) {
 				lines.push(truncateAndColor(outcomeText, width, color, outcome === "error" ? "warning" : "dim"));
 			}
 		}
@@ -1119,7 +1121,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		const textBlock = event.message.content?.find(
 			(c): c is TextContent => c.type === "text" && Boolean(c.text),
 		);
-		if (textBlock?.text) {
+		if (textBlock !== undefined) {
 			const firstLine = textBlock.text.trim().split("\n")[0];
 			if (firstLine) {
 				this.lastAction = firstLine.slice(0, LIVE_TEXT_PREVIEW_CHARS);
@@ -1146,9 +1148,10 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		}
 		const stopOutcome = getStopReasonOutcome(event.message.stopReason);
 		if (stopOutcome) {
-			const errorMessage = stopOutcome === "aborted"
-				? event.message.errorMessage || "Operation aborted"
-				: event.message.errorMessage || "Error";
+			const fallbackMessage = stopOutcome === "aborted" ? "Operation aborted" : "Error";
+			const errorMessage = event.message.errorMessage !== undefined && event.message.errorMessage !== ""
+				? event.message.errorMessage
+				: fallbackMessage;
 			this.liveOutcome = stopOutcome;
 			this.lastAction = getOutcomeStatusText(stopOutcome) ?? this.lastAction;
 			for (const component of this.pendingTools.values()) {
@@ -1303,10 +1306,10 @@ function renderSpawnCall(args: { prompt?: unknown; group?: unknown; thinking?: u
 	const { shown, remaining } = renderPromptPreview(prompt, context.expanded);
 	let text = theme.fg("toolTitle", theme.bold("spawn ")) + theme.fg("accent", "child");
 	const group = typeof args.group === "string" ? args.group.trim() : "";
-	if (group) {
+	if (group !== "") {
 		text += theme.fg("dim", ` [${escapeDisplayLabel(group)}]`);
 	}
-	if (!group && typeof args.thinking === "string") {
+	if (group === "" && typeof args.thinking === "string") {
 		text += theme.fg("dim", ` [${args.thinking}]`);
 	}
 	text += `\n${theme.fg("dim", shown)}`;
@@ -1335,7 +1338,7 @@ function renderSpawnResult(
 	state: SchematicState,
 ): NestedAgentSessionComponent | Text {
 	const details = normalizeSpawnResultDetails(result.details);
-	const forcedError = context.isError && details?.outcome !== "aborted";
+	const forcedError = context.isError === true && details?.outcome !== "aborted";
 	const component = context.lastComponent instanceof NestedAgentSessionComponent
 		? context.lastComponent
 		: new NestedAgentSessionComponent();
@@ -1370,7 +1373,7 @@ function renderSpawnResult(
 	const status = getOutcomeStatusText(outcome);
 	const text = [
 		meta ? theme.fg("dim", meta) : "",
-		status ? theme.fg(outcome === "error" ? "warning" : "dim", status) : "",
+		status !== undefined ? theme.fg(outcome === "error" ? "warning" : "dim", status) : "",
 		theme.fg("toolOutput", summary),
 	].filter(Boolean).join("\n");
 	return new Text(text, SPAWN_SHELL_PADDING_X, SPAWN_SHELL_PADDING_Y, getShellBackground(theme, outcome));

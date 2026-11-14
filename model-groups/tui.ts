@@ -72,7 +72,7 @@ function modelDisplay(model: Model<Api>): string {
 function toPersistenceMessage(error: unknown): string {
 	if (error instanceof ModelGroupsPersistenceError) {
 		const scope = error.scope ? ` for ${error.scope} scope` : "";
-		const paths = [error.sourcePath ? `source: ${escapeDisplayLabel(error.sourcePath)}` : "", error.targetPath ? `target: ${escapeDisplayLabel(error.targetPath)}` : ""].filter(Boolean).join("; ");
+		const paths = [error.sourcePath !== undefined && error.sourcePath !== "" ? `source: ${escapeDisplayLabel(error.sourcePath)}` : "", error.targetPath !== undefined && error.targetPath !== "" ? `target: ${escapeDisplayLabel(error.targetPath)}` : ""].filter(Boolean).join("; ");
 		const pathDetails = paths ? ` (${paths})` : "";
 		const cause = error.cause === undefined ? "" : `; cause: ${escapeDisplayLabel(error.cause instanceof Error ? error.cause.message : String(error.cause))}`;
 		const partial = error.partialMove ? `; ${error.partialMove}` : "";
@@ -135,8 +135,8 @@ export function createModelGroupsComponent(
 		state.loadIssues = boot.loadIssues;
 		options.onRefresh?.(boot);
 		for (const issue of boot.loadIssues) {
-			const backupPath = issue.backupPath ? escapeDisplayLabel(issue.backupPath) : "";
-			const backup = issue.backupFailed ? `; backup failed${backupPath ? ` (${backupPath})` : ""}, original file left untouched` : "";
+			const backupPath = issue.backupPath !== undefined && issue.backupPath !== "" ? escapeDisplayLabel(issue.backupPath) : "";
+			const backup = issue.backupFailed === true ? `; backup failed${backupPath ? ` (${backupPath})` : ""}, original file left untouched` : "";
 			notify(`Model Groups config ${issue.kind} in ${issue.scope} scope (${escapeDisplayLabel(issue.sourcePath)}); using empty config for that scope${backup}; ${escapeDisplayLabel(issue.message)}`, "warning");
 		}
 	}
@@ -279,7 +279,7 @@ export function createModelGroupsComponent(
 			model.id,
 			model.provider,
 			`${model.provider}/${model.id}`,
-			model.name ?? "",
+			model.name,
 		].join(" "));
 	}
 
@@ -324,7 +324,7 @@ export function createModelGroupsComponent(
 		const group = currentEditGroup();
 		const evaluation = group?.evaluations?.find((candidate) => productionConstraintRegistry.get(candidate.key)?.editor.kind === "multi-select");
 		const descriptor = evaluation && productionConstraintRegistry.get(evaluation.key);
-		if (descriptor && evaluation) {return { descriptor, evaluation };}
+		if (descriptor) {return { descriptor, evaluation };}
 		// Test/store adapters that predate generic evaluations retain the production descriptor's compatibility projection.
 		const compatibilityDescriptor = productionConstraintRegistry.descriptors.find((candidate) => candidate.editor.kind === "multi-select");
 		if (!group || !compatibilityDescriptor) {return undefined;}
@@ -407,7 +407,7 @@ export function createModelGroupsComponent(
 			case "MODALITIES": {
 				if (!state.editDraft) {return;}
 				const editor = activeConstraintEditor();
-				const selected = modalityEditorRows()[state.row];
+				const selected = modalityEditorRows().at(state.row);
 				// No toggle rows (text-only / unresolvable) → Enter/Space are inert.
 				if (!editor || !selected || selected.kind !== "toggle") {return;}
 				const next = cloneDef(state.editDraft);
@@ -665,7 +665,6 @@ export function createModelGroupsComponent(
 		select.onSelectionChange = (item) => { state.row = Number(item.value); syncInputFocus(); };
 		select.onSelect = (item) => {
 			const model = models[Number(item.value)];
-			if (!model) {return;}
 			state.row = Number(item.value);
 			state.wizardModelId = model.id;
 			state.screen = "WIZARD_THINKING";
@@ -695,7 +694,7 @@ export function createModelGroupsComponent(
 				if (group.validation.emptyCommonModalities) {tags.push("⚠ no common modalities");}
 				if (group.validation.unsupportedOverrideModalities.length > 0) {tags.push(`⚠ stale modality override: ${group.validation.unsupportedOverrideModalities.join(", ")}`);}
 			}
-			const description = modalityDescription(group.scope, group.models.length, models, tags.join(" · "), group.modalities?.effective);
+			const description = modalityDescription(group.scope, group.models.length, models, tags.join(" · "), group.modalities.effective);
 			return { value: String(index), label: escapeDisplayLabel(group.name), description };
 		});
 		items.push({ value: String(state.groups.length), label: "+ Add group" });
@@ -723,11 +722,11 @@ export function createModelGroupsComponent(
 		const modalities = current?.modalities;
 		const capabilitiesBar = sectionBar("Capabilities");
 		container.addChild(textLine(capabilitiesBar));
-		const commonModalities = modalities?.common.filter((modality) => modality !== "reasoning").join(", ") || "none";
+		const commonModalities = (modalities?.common ?? []).filter((modality) => modality !== "reasoning").join(", ") || "none";
 		const commonCapabilities = theme.fg("dim", `  Supported by every model: ${commonModalities}`);
 		container.addChild(textLine(commonCapabilities));
 		const modalityState = state.editDraft?.constraints?.modalities === undefined ? "Automatic" : "Override";
-		const effectiveModalities = modalities?.effective.filter((modality) => modality !== "reasoning").join(", ") || "none";
+		const effectiveModalities = (modalities?.effective ?? []).filter((modality) => modality !== "reasoning").join(", ") || "none";
 		const modalityLine = selectableLine(state.row === modalityRow(), `Modalities: ${modalityState} (${effectiveModalities})`);
 		container.addChild(textLine(modalityLine));
 		const modelsBar = sectionBar("Models");
@@ -766,7 +765,7 @@ export function createModelGroupsComponent(
 		// group's members actually support it: empty groups derive no supported
 		// modalities, so they must not claim text (the empty state below speaks).
 		const supportedModalities = (editor?.evaluation.aggregate as { supported?: readonly string[] } | undefined)?.supported;
-		if (supportedModalities?.includes("text")) {
+		if (supportedModalities?.includes("text") === true) {
 			container.addChild(textLine(`  ${theme.fg(MODALITY_FG.text, MODALITY_LETTER.text)}${dim(" text  [required]")}`));
 		}
 		for (const [index, row] of rows.entries()) {

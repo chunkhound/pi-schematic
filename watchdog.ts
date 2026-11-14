@@ -83,7 +83,7 @@ function buildDefaultNudge(pct: number | null, topic: string | null, eligible: b
 		? "prefer a deliberate handoff"
 		: "continue working until handoff is available";
 
-	if (topic) {
+	if (topic !== null && topic !== "") {
 		const urgency = pct !== null && pct >= 70
 			? `If the work no longer fits this topic, ${pivotAdvice}. If it still fits and only a focused noisy branch is needed, spawn it instead of polluting the parent context.`
 			: `If the current work still fits this topic, prefer spawn for isolated noisy subtasks. If it no longer fits, ${pivotAdvice} instead of dragging stale context forward.`;

@@ -42,7 +42,7 @@ function pad2(n: number): string {
 // before_agent_start. Aliases (`US/Eastern`) are kept verbatim: Intl renders
 // them, and canonicalising would rewrite a name the user recognises.
 function usableZone(zone: string | undefined): string {
-	if (!zone) {return UNKNOWN_ZONE_FALLBACK;}
+	if (zone === undefined || zone === "") {return UNKNOWN_ZONE_FALLBACK;}
 	try {
 		new Intl.DateTimeFormat("en-US", { timeZone: zone });
 		return zone;
@@ -81,7 +81,8 @@ function zoneFields(date: Date, zone: string) {
 function offsetText(longOffset: string, zone: string): string {
 	const match = /^GMT(?:([+-])(\d{2}):(\d{2}))?$/.exec(longOffset);
 	if (!match) {throw new Error(`Intl returned unparseable longOffset ${longOffset} for zone ${zone}`);}
-	const east = match[1] === undefined ? 0 : (match[1] === "-" ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3]));
+	const sign = match.at(1);
+	const east = sign === undefined ? 0 : (sign === "-" ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3]));
 	const abs = Math.abs(east);
 	return `UTC${east < 0 ? "-" : "+"}${pad2(Math.floor(abs / 60))}:${pad2(abs % 60)}`;
 }

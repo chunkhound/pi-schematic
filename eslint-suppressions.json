@@ -20,18 +20,13 @@
       "count": 1
     },
     "@typescript-eslint/strict-boolean-expressions": {
-      "count": 2
+      "count": 1
     }
   },
   "handoff/command.ts": {
     "@typescript-eslint/no-unnecessary-condition": {
       "count": 1
     },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
-    }
-  },
-  "handoff/format.ts": {
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
     }
@@ -55,12 +50,9 @@
       "count": 11
     },
     "@typescript-eslint/no-unnecessary-condition": {
-      "count": 10
+      "count": 8
     },
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 2
-    },
-    "@typescript-eslint/prefer-nullish-coalescing": {
       "count": 2
     },
     "@typescript-eslint/restrict-template-expressions": {
@@ -70,12 +62,12 @@
       "count": 1
     },
     "@typescript-eslint/strict-boolean-expressions": {
-      "count": 15
+      "count": 2
     }
   },
   "model-groups/autocomplete.ts": {
     "@typescript-eslint/no-unnecessary-condition": {
-      "count": 4
+      "count": 1
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
@@ -100,9 +92,6 @@
   "model-groups/constraints/modalities.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 4
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 2
     }
   },
   "model-groups/constraints/presentation.ts": {
@@ -121,9 +110,6 @@
   "model-groups/display.ts": {
     "@typescript-eslint/no-non-null-assertion": {
       "count": 1
-    },
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
     }
   },
   "model-groups/modalities.ts": {
@@ -136,29 +122,18 @@
       "count": 1
     }
   },
-  "model-groups/prompt.ts": {
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
-    }
-  },
   "model-groups/router.ts": {
     "@typescript-eslint/no-non-null-assertion": {
       "count": 3
     },
     "@typescript-eslint/no-unnecessary-condition": {
-      "count": 3
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 3
     },
-    "@typescript-eslint/prefer-nullish-coalescing": {
-      "count": 2
-    },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 4
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 7
     }
   },
   "model-groups/store.ts": {
@@ -168,17 +143,11 @@
     "@typescript-eslint/no-non-null-assertion": {
       "count": 1
     },
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
-    },
     "@typescript-eslint/no-unnecessary-type-conversion": {
       "count": 2
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 5
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
     }
   },
   "model-groups/tui.ts": {
@@ -191,32 +160,17 @@
     "@typescript-eslint/no-invalid-void-type": {
       "count": 1
     },
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 5
-    },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 6
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 1
     },
-    "@typescript-eslint/prefer-nullish-coalescing": {
-      "count": 2
-    },
     "@typescript-eslint/prefer-optional-chain": {
       "count": 1
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 10
     }
   },
   "notebook/pager.ts": {
-    "@typescript-eslint/prefer-nullish-coalescing": {
-      "count": 1
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 2
-    },
     "ban/exec-sync-import": {
       "count": 1
     },
@@ -224,15 +178,7 @@
       "count": 1
     }
   },
-  "notebook/prompt.ts": {
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
-    }
-  },
   "notebook/rehydration.ts": {
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 9
-    },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 3
     },
@@ -253,14 +199,6 @@
       "count": 3
     },
     "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 4
-    }
-  },
-  "notebook/topic-tool.ts": {
-    "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
     }
   },
@@ -287,12 +225,6 @@
     "@typescript-eslint/no-non-null-assertion": {
       "count": 1
     },
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 9
-    },
     "n/no-unsupported-features/node-builtins": {
       "count": 1
     }
@@ -305,15 +237,12 @@
       "count": 1
     },
     "@typescript-eslint/strict-boolean-expressions": {
-      "count": 2
+      "count": 1
     }
   },
   "readonly-rehydration.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 2
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
     }
   },
   "register-loader.mjs": {
@@ -321,14 +250,9 @@
       "count": 1
     }
   },
-  "runtime-singletons.ts": {
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
-    }
-  },
   "spawn/index.ts": {
     "@typescript-eslint/no-unnecessary-condition": {
-      "count": 5
+      "count": 3
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
@@ -336,11 +260,8 @@
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
     },
-    "@typescript-eslint/prefer-nullish-coalescing": {
-      "count": 2
-    },
     "@typescript-eslint/strict-boolean-expressions": {
-      "count": 10
+      "count": 2
     },
     "@typescript-eslint/use-unknown-in-catch-callback-variable": {
       "count": 1
@@ -360,7 +281,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-condition": {
-      "count": 10
+      "count": 5
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 3
@@ -372,13 +293,13 @@
       "count": 3
     },
     "@typescript-eslint/prefer-nullish-coalescing": {
-      "count": 5
+      "count": 1
     },
     "@typescript-eslint/prefer-optional-chain": {
       "count": 1
     },
     "@typescript-eslint/strict-boolean-expressions": {
-      "count": 22
+      "count": 1
     },
     "ban/module-level-set-singletons": {
       "count": 1
@@ -396,9 +317,6 @@
   },
   "tests/e2e/real-host-probe.ts": {
     "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
     },
     "ban/wall-clock": {
@@ -420,9 +338,6 @@
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 6
     },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
-    },
     "@typescript-eslint/unbound-method": {
       "count": 2
     },
@@ -437,14 +352,8 @@
     }
   },
   "tests/e2e/real-host.ts": {
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
-    },
     "@typescript-eslint/prefer-promise-reject-errors": {
       "count": 1
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 3
     },
     "ban/wall-clock": {
       "count": 3
@@ -474,9 +383,6 @@
     }
   },
   "tests/unit/config-invariants.test.ts": {
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 4
-    },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 4
     },
@@ -535,9 +441,6 @@
     "@typescript-eslint/no-unused-vars": {
       "count": 1
     },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
-    },
     "vitest/max-expects": {
       "count": 38
     },
@@ -565,9 +468,6 @@
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 2
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 4
     },
     "ban/wall-clock": {
       "count": 1
@@ -667,12 +567,6 @@
     "@typescript-eslint/no-non-null-assertion": {
       "count": 4
     },
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
-    },
     "no-control-regex": {
       "count": 3
     },
@@ -694,9 +588,6 @@
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 8
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
     },
     "vitest/max-expects": {
       "count": 55
@@ -816,9 +707,6 @@
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
     },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
-    },
     "vitest/max-expects": {
       "count": 6
     }
@@ -848,9 +736,6 @@
   "tests/unit/spawn.test.ts": {
     "@typescript-eslint/no-non-null-assertion": {
       "count": 3
-    },
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 13
@@ -938,25 +823,11 @@
   "time/format.ts": {
     "@typescript-eslint/no-non-null-assertion": {
       "count": 1
-    },
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
-    }
-  },
-  "tui.ts": {
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 2
     }
   },
   "watchdog.ts": {
     "@typescript-eslint/no-non-null-assertion": {
       "count": 3
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
     }
   }
 }

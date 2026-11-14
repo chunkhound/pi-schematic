@@ -305,7 +305,7 @@ export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState)
 	pi.on("tool_call", (event) => {
 		const reason = state.handoffRefusals.get(event.toolCallId) ??
 			(event.toolName === HANDOFF_TOOL_NAME && state.handoffFailedInRun ? HANDOFF_FAILED_IN_RUN_REFUSAL : undefined);
-		if (reason) {return { block: true, reason, terminate: true };}
+		if (reason !== undefined) {return { block: true, reason, terminate: true };}
 		return undefined;
 	});
 

@@ -51,8 +51,9 @@ export function resolvePager(
 	platform: NodeJS.Platform = process.platform,
 	hasLess: () => boolean = defaultHasLess,
 ): ResolvedPager | undefined {
-	const raw = env.PI_PAGER?.trim() || env.PAGER?.trim();
-	if (raw) {
+	const piPager = env.PI_PAGER?.trim();
+	const raw = piPager !== undefined && piPager !== "" ? piPager : env.PAGER?.trim();
+	if (raw !== undefined && raw !== "") {
 		const [cmd, ...args] = raw.split(/\s+/);
 		if (cmd) {
 			const executable = platform === "win32" ? win32.basename(cmd).toLowerCase().replace(/\.(exe|com)$/, "") : posix.basename(cmd);

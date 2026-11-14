@@ -20,7 +20,7 @@ export function getReadonlyFromBranch(
 	// Scan branch in reverse for the most recent readonly entry
 	for (let i = branch.length - 1; i >= 0; i--) {
 		const entry = branch[i];
-		if (!entry || typeof entry !== "object") {continue;}
+		if (entry === null || typeof entry !== "object") {continue;}
 		const e = entry as Record<string, unknown>;
 		if (e.type !== "custom" || e.customType !== "pi-schematic-readonly") {continue;}
 		const d = e.data as Record<string, unknown> | undefined;

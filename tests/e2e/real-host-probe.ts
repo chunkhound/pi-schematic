@@ -98,7 +98,7 @@ function contextTexts(messages: readonly { content?: unknown }[]): string[] {
 
 export default function realHostProbe(pi: ExtensionAPI): void {
 	const logPath = process.env[PROBE_LOG_ENV_VAR];
-	if (!logPath) {throw new Error(`${PROBE_LOG_ENV_VAR} is not set`);}
+	if (logPath === undefined || logPath === "") {throw new Error(`${PROBE_LOG_ENV_VAR} is not set`);}
 	const log = (record: ProbeRecord) => { appendFileSync(logPath, JSON.stringify(record) + "\n"); };
 
 	let armedScript: ScriptedStep[] | null = null;

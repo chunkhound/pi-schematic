@@ -174,7 +174,9 @@ function resolveModelSelection(state: SchematicState, pending: PendingCommand): 
 }
 
 function hasModelSelection(selection: ModelSelection): boolean {
-	return Boolean(selection.model || selection.group || selection.thinking);
+	return selection.model !== null ||
+		selection.group !== null ||
+		selection.thinking !== null;
 }
 
 function resolveReadonlySelection(state: SchematicState, pending: PendingCommand): boolean | null {
@@ -248,10 +250,8 @@ function consumePendingReadonlyCommands(
 		state.readonlyNudgePending = true;
 		pi.appendEntry("pi-schematic-readonly", { enabled: readonly });
 
-		if (ctx.hasUI) {
-			const commandRef = formatCommandRef(pendingCommand);
-			ctx.ui.notify(buildReadonlyFrontmatterNotification(readonly, commandRef), "info");
-		}
+		const commandRef = formatCommandRef(pendingCommand);
+		ctx.ui.notify(buildReadonlyFrontmatterNotification(readonly, commandRef), "info");
 		return;
 	}
 }
@@ -278,9 +278,9 @@ async function preflightModelSelection(
 		recordFrontmatterIssue(ctx, pi, pending, selection.issue);
 	}
 	const commandRef = formatCommandRef(pending);
-	if (selection.model) {return handleExplicitModelFrontmatter(ctx, pi, selection, commandRef);}
-	if (selection.group) {return handleModelGroupFrontmatter(state, ctx, pi, selection, commandRef, ctx.model);}
-	if (selection.thinking) {return handleThinkingOnlyFrontmatter(ctx, pi, selection.thinking, commandRef, ctx.model);}
+	if (selection.model !== null) {return handleExplicitModelFrontmatter(ctx, pi, selection, commandRef);}
+	if (selection.group !== null) {return handleModelGroupFrontmatter(state, ctx, pi, selection, commandRef, ctx.model);}
+	if (selection.thinking !== null) {return handleThinkingOnlyFrontmatter(ctx, pi, selection.thinking, commandRef, ctx.model);}
 	return false;
 }
 
@@ -320,7 +320,7 @@ async function handleExplicitModelFrontmatter(
 	selection: ModelSelection,
 	commandRef: string,
 ): Promise<boolean> {
-	if (selection.group) {ctx.ui.notify(buildModelGroupOverrideWarningNotification(selection.group, commandRef), "warning");}
+	if (selection.group !== null) {ctx.ui.notify(buildModelGroupOverrideWarningNotification(selection.group, commandRef), "warning");}
 	const model = findExplicitModel(ctx, selection.model!, commandRef);
 	if (!model) {return true;}
 	const notifyError = () => {
@@ -560,7 +560,7 @@ function openNotebookList(
 					done(previewName === undefined ? undefined : { action: "reopen", name: previewName });
 					return;
 				}
-				selectList.handleInput?.(data);
+				selectList.handleInput(data);
 				// Conservative: always repaint after key input.
 				// SelectList.handleInput returns void in the current API,
 				// so we can't conditionally skip — the cost is negligible.
@@ -722,14 +722,16 @@ export default function (pi: ExtensionAPI): void {
 
 		const skillName = (/^\/skill:([^\s]+)/.exec(event.text))?.[1];
 		const commandName = (/^\/([^\s]+)/.exec(event.text))?.[1];
-		if (!skillName && !commandName) {return { action: "continue" };}
+		if (skillName === undefined && commandName === undefined) {
+			return { action: "continue" };
+		}
 
 		const commands = pi.getCommands();
-		const pending = skillName
+		const pending = skillName !== undefined
 			? { type: "skill" as const, name: skillName }
 			: { type: "command" as const, name: commandName! };
-		if (!skillName && isBuiltinReadonlyBypassCommand(pending.name)) {return { action: "continue" };}
-		if (!skillName && commands.some((command) => command.name === pending.name && command.source !== "prompt")) {
+		if (pending.type === "command" && isBuiltinReadonlyBypassCommand(pending.name)) {return { action: "continue" };}
+		if (pending.type === "command" && commands.some((command) => command.name === pending.name && command.source !== "prompt")) {
 			return { action: "continue" };
 		}
 
@@ -939,9 +941,9 @@ export default function (pi: ExtensionAPI): void {
 		if (validation && ctx.hasUI) {
 			for (const issue of validation.loadIssues) {
 				const sourcePath = escapeDisplayLabel(issue.sourcePath);
-				const backupPath = issue.backupPath ? escapeDisplayLabel(issue.backupPath) : undefined;
+				const backupPath = issue.backupPath !== undefined && issue.backupPath !== "" ? escapeDisplayLabel(issue.backupPath) : undefined;
 				const detail = escapeDisplayLabel(issue.message);
-				const backupNote = issue.backupFailed ? `; backup failed${backupPath ? ` (${backupPath})` : ""}, original file left untouched` : "";
+				const backupNote = issue.backupFailed === true ? `; backup failed${backupPath !== undefined && backupPath !== "" ? ` (${backupPath})` : ""}, original file left untouched` : "";
 				ctx.ui.notify(`Model Groups config ${issue.kind} in ${issue.scope} scope (${sourcePath}); using empty config for that scope${backupNote}; ${detail}`, "warning");
 			}
 			const { unavailableCount, overrideCount, emptyModalityCount, staleModalityOverrideCount } = summarizeBootValidation(validation.groups);
