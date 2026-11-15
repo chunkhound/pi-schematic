@@ -28,9 +28,9 @@ import {
 import { getKeybindings, TuiMainScreen, type Component, type TUI } from "@earendil-works/pi-tui";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { Type } from "typebox";
-import { onTestFinished, vi } from "vitest";
+import { onTestFinished } from "vitest";
 import registerSchematic from "../../index.js";
 import { AGENT_DIR_ENV_KEY } from "../paths.js";
 import { loadExtensions } from "../unit/test-host.js";
@@ -106,6 +106,12 @@ export interface RunnerOptions {
 	actions?: Partial<ActionBindings>;
 	/** The names `pi.getActiveTools()` reports until the extension sets them. */
 	activeTools?: string[];
+	/**
+	 * An absolute path the fixture points pi's agent directory variable at for the rest of the test,
+	 * for a test that put files there. Without it the fixture creates a temp directory of its own
+	 * and removes it when the test finishes.
+	 */
+	agentDir?: string;
 }
 
 /** What the extension sent and appended through the recording host actions. */
@@ -159,11 +165,17 @@ function isComponent(value: unknown): value is Component {
 	);
 }
 
-// pi's `Component` type declares no `dispose`; pi calls it when a component has one.
+// pi's `Component` type declares no `dispose`; pi calls it when a component has one. An error it
+// throws is ignored, as pi's own host ignores it, so the custom call ends with the result, the
+// driver's error or the "did not call done" error.
 function disposeComponent(component: Component): void {
-	const dispose: unknown = Reflect.get(component, "dispose");
-	if (typeof dispose === "function") {
-		Reflect.apply(dispose, component, []);
+	try {
+		const dispose: unknown = Reflect.get(component, "dispose");
+		if (typeof dispose === "function") {
+			Reflect.apply(dispose, component, []);
+		}
+	} catch {
+		// pi's host ignores dispose errors.
 	}
 }
 
@@ -242,18 +254,43 @@ function createRecordingUI(bindings: UIBindings, state: UIState): ExtensionUICon
 					disposeComponent(component);
 				}
 			};
-			// A `done` the factory calls before it returns finds no component yet, and the component is
-			// then never disposed: pi's own host does not dispose it in that case either.
+			let closeInFactory: () => void = () => undefined;
+			const closedInFactory = new Promise<undefined>((resolve) => {
+				closeInFactory = () => {
+					resolve(undefined);
+				};
+			});
 			const done = (result: T): void => {
 				results.push(result);
-				if (results.length === 1 && built !== undefined) {
-					disposeOnce(built);
+				if (results.length === 1) {
+					if (built === undefined) {
+						closeInFactory();
+					} else {
+						disposeOnce(built);
+					}
 				}
 			};
 			// The factory's type names pi-coding-agent's KeybindingsManager, a subclass the package root
 			// exports only as a type. The fixture passes pi-tui's global manager, which components read
 			// their keys from, so the call goes through Reflect.apply and the result is checked.
-			const component: unknown = await Reflect.apply(factory, undefined, [tui, theme, getKeybindings(), done]);
+			// A synchronous throw rejects factoryRun, as it rejects pi's host promise.
+			const factoryRun = new Promise<unknown>((resolve) => {
+				resolve(Reflect.apply(factory, undefined, [tui, theme, getKeybindings(), done]));
+			});
+			// Like pi's host: once `done` fired inside the factory, the call resolves with its value at
+			// once, and what the factory still returns or throws is neither driven, disposed nor reported.
+			factoryRun.catch(() => undefined);
+			let component: unknown;
+			try {
+				component = await Promise.race([factoryRun, closedInFactory]);
+			} catch (error) {
+				if (results.length === 0) {
+					throw error;
+				}
+			}
+			if (results.length > 0) {
+				return results[0];
+			}
 			if (!isComponent(component)) {
 				throw new Error("The custom factory did not build a component with render and invalidate methods.");
 			}
@@ -264,11 +301,7 @@ function createRecordingUI(bindings: UIBindings, state: UIState): ExtensionUICon
 				// A driver that fails (a failed assertion) before the component called done still
 				// disposes it, and the test sees the driver's error.
 				if (results.length === 0) {
-					try {
-						disposeOnce(component);
-					} catch {
-						// The test already fails with the driver's error; a dispose error must not replace it.
-					}
+					disposeOnce(component);
 				}
 				throw error;
 			}
@@ -294,26 +327,56 @@ function createRecordingUI(bindings: UIBindings, state: UIState): ExtensionUICon
 	};
 }
 
-// pi's agent directory variable as this test file's process started with it. The extension reads
-// files under pi's agent directory, which pi places under HOME when the variable is unset or empty.
-// A fixture built while the variable is unset, empty or still holds this value gets a temp
-// directory of its own for the test; any other value is one the test set itself
-// (`withTempAgentDir` or `vi.stubEnv`), and the fixture keeps it.
-const STARTING_AGENT_DIR = process.env[AGENT_DIR_ENV_KEY];
-
 /**
  * Load the extension (the shipped `index.ts` default export, or `options.factories`) and build one
  * pi `ExtensionRunner` over it with the bindings in `options`. `cwd`, `sessionManager` and
  * `modelRegistry` are fixed here; a test that needs another builds another fixture. Call it inside a
- * test: the agent directory it may set up lasts until that test finishes.
+ * test: the agent directory it sets up lasts until that test finishes.
  */
 export async function createRunner(options: RunnerOptions): Promise<RunnerFixture> {
-	const currentAgentDir = process.env[AGENT_DIR_ENV_KEY];
-	if (currentAgentDir === undefined || currentAgentDir === "" || currentAgentDir === STARTING_AGENT_DIR) {
-		const agentDir = await mkdtemp(join(tmpdir(), "pi-schematic-runner-agent-"));
-		onTestFinished(() => rm(agentDir, { recursive: true, force: true }));
-		vi.stubEnv(AGENT_DIR_ENV_KEY, agentDir);
+	if (options.agentDir !== undefined && !isAbsolute(options.agentDir)) {
+		throw new Error(`The runner fixture's agentDir must be an absolute path, got ${JSON.stringify(options.agentDir)}.`);
 	}
+	// Registered before the variable or any directory changes, so a fixture built outside a test
+	// fails here and leaves nothing behind. Vitest runs test-finished callbacks in reverse order of
+	// registration, so with two fixtures in one test the one built last restores first and the
+	// variable ends at the value it had before the first. The variable is put back before the
+	// directory is removed, and only while it still holds this fixture's value: a test that
+	// restored it itself, or an earlier cleanup, keeps what it set.
+	let createdAgentDir: string | undefined;
+	let assignedAgentDir: string | undefined;
+	let previousAgentDir: string | undefined;
+	try {
+		onTestFinished(async () => {
+			if (assignedAgentDir !== undefined && process.env[AGENT_DIR_ENV_KEY] === assignedAgentDir) {
+				if (previousAgentDir === undefined) {
+					Reflect.deleteProperty(process.env, AGENT_DIR_ENV_KEY);
+				} else {
+					process.env[AGENT_DIR_ENV_KEY] = previousAgentDir;
+				}
+			}
+			if (createdAgentDir !== undefined) {
+				await rm(createdAgentDir, { recursive: true, force: true });
+			}
+		});
+	} catch (error) {
+		throw new Error("A runner fixture must be built inside a test, not in beforeAll or at module scope: its agent directory lasts until the test finishes.", {
+			cause: error,
+		});
+	}
+	// The extension reads files under pi's agent directory, which pi places under HOME when the
+	// variable is unset or empty, so every fixture sets it. The extension reads the variable when it
+	// resolves its files: with two fixtures in one test it holds the directory of the one built last,
+	// so tests that need two live fixtures with different directories pass each its `agentDir` and
+	// build them in the order they emit. The variable is assigned directly, not through
+	// `vi.stubEnv`, which would reinstate a value a test restored itself when the next test starts.
+	// Read before the first await, so fixtures built concurrently all remember the value from before any.
+	previousAgentDir = process.env[AGENT_DIR_ENV_KEY];
+	if (options.agentDir === undefined) {
+		createdAgentDir = await mkdtemp(join(tmpdir(), "pi-schematic-runner-agent-"));
+	}
+	assignedAgentDir = options.agentDir ?? createdAgentDir;
+	process.env[AGENT_DIR_ENV_KEY] = assignedAgentDir;
 	let observedPrompt: string | undefined;
 	// Loaded last, so it sees the prompt every earlier handler shaped.
 	const observer: ExtensionFactory = (api) => {
