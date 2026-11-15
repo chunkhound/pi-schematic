@@ -34,6 +34,8 @@ const NOTE_CUSTOM_TYPE = "pi-schematic-handoff-note";
 const HANDOFF_STATUS_KEY = "pi-schematic-handoff";
 const STAGED_RESULT = "Handoff staged. This context is cut when the turn ends, and the successor continues in the same run.";
 const REQUIRED_STATUS = "🤝 Handoff required — ready to compact";
+/** Status key of the readonly indicator. */
+const READONLY_STATUS_KEY = "pi-schematic-readonly";
 const READONLY_SUMMARY =
 	"[readonly] enabled — write/edit/powershell blocked; bash writes/deletions outside temp blocked; handoff needs explicit /handoff or an eligible human topic boundary.";
 const SANDBOX_BLOCK_NOTICE =
@@ -293,6 +295,24 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			expect(leafId, "editing the successor moves the leaf to the cut").toBe(cut.id);
 			expect(customMessages(entries, SUCCESSOR_CUSTOM_TYPE), "one successor entry").toHaveLength(1);
 			expect(userEntriesWithText(entries, RESUMED_WORK_SUCCESSOR), "no successor resent as a user message").toHaveLength(0);
+		}));
+
+	it("navigating to an entry before /readonly turns readonly off from the branch at the new leaf", async (t) =>
+		withRealHost(t, async (host) => {
+			await host.say("start", 1);
+			const started = await host.entries();
+			const start = onlyResult(userEntriesWithText(started.entries, "start"), "start user message");
+			const reply = firstAssistantAfter(started.entries, start.id);
+			await host.command("/readonly");
+			const readonlyStatuses = (): (string | undefined)[] =>
+				host.statuses.filter((status) => status.statusKey === READONLY_STATUS_KEY).map((status) => status.statusText);
+			expect(readonlyStatuses().at(-1), "/readonly shows the readonly status").toBe("🔒 readonly");
+			const shown = readonlyStatuses().length;
+			await host.navigate(reply.id, 0);
+
+			const { leafId } = await host.entries();
+			expect(leafId, "the reply before the readonly entry is the new leaf").toBe(reply.id);
+			expect(readonlyStatuses().slice(shown), "navigation clears the readonly status").toStrictEqual([undefined]);
 		}));
 
 	it("readonly is re-announced in the run after a handoff whose successor was dropped", async (t) =>
