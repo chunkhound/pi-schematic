@@ -560,16 +560,8 @@ export function validateModelGroups(
 		// when present; injected registries without it project an empty capability set.
 		const modalityEvaluation = evaluations.find((evaluation) => evaluation.key === modalitiesConstraint.key);
 		const modalities = (modalityEvaluation?.aggregate as ModelGroupModalities | undefined) ?? { common: [], supported: [], effective: [] };
-		const diagnostics = presentConstraintDiagnosticRecords(evaluations, constraintRegistry);
-		const unsupportedOverrideModalities = modalityEvaluation
-			? ((diagnostics.find((diagnostic) => diagnostic.key === "modalities" && diagnostic.code === "unsupported-override")?.details as
-					ModelGroupModality[] | undefined) ?? [])
-			: [];
 		const shadowedByProject = group.scope === "global" && projectNames.has(group.name);
 		const degraded = unavailableRefs.length > 0 && unavailableRefs.length < group.models.length;
-		const emptyCommonModalities = modalityEvaluation
-			? diagnostics.some((diagnostic) => diagnostic.key === "modalities" && diagnostic.code === "empty-common")
-			: false;
 		return {
 			...group,
 			modalities: { ...modalities, effective: (modalityEvaluation?.effective as ModelGroupModality[] | undefined) ?? [] },
@@ -578,8 +570,6 @@ export function validateModelGroups(
 				unavailableRefs,
 				shadowedByProject,
 				degraded,
-				emptyCommonModalities,
-				unsupportedOverrideModalities,
 			},
 		};
 	});

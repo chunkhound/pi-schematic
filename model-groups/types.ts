@@ -33,8 +33,6 @@ interface ModelGroupValidation {
 	unavailableRefs: { provider: string; modelId: string }[];
 	shadowedByProject: boolean;
 	degraded: boolean;
-	emptyCommonModalities: boolean;
-	unsupportedOverrideModalities: ModelGroupModality[];
 }
 export interface ModelGroupsLoadedGroup extends ModelGroupDef {
 	name: string;
