@@ -827,13 +827,14 @@ test("store normalization strips runtime-derived group keys while preserving opa
 			sourcePath: "/runtime/model-groups.json",
 			modalities: { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image"] },
 			validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
+			evaluations: [],
 		};
 		updateGroup("project", a, "review", runtimeView, createModelRegistry(registryFields()));
 		const persisted = read("project", cwd).groups.review;
 		expect(Object.keys(persisted).sort()).toStrictEqual(["constraints", "models", "opaqueSentinel"]);
 		expect(persisted.constraints?.modalities).toStrictEqual(["text", "image"]);
 		expect(persisted.opaqueSentinel).toStrictEqual({ keep: true });
-		for (const key of ["name", "scope", "sourcePath", "modalities", "validation"]) {
+		for (const key of ["name", "scope", "sourcePath", "modalities", "validation", "evaluations"]) {
 			expect(Object.getOwnPropertyNames(persisted)).not.toContain(key);
 		}
 	}));

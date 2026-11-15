@@ -206,6 +206,7 @@ function normalizeGroups(
 			sourcePath: _sourcePath,
 			modalities: _modalities,
 			validation: _validation,
+			evaluations: _evaluations,
 			models: _rawModels,
 			constraints: _constraints,
 			modalityOverride: _modalityOverride,
