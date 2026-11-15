@@ -411,6 +411,13 @@ async function endStagingTurn(runner: WatchdogRunner, toolCallId: string): Promi
 	return entries;
 }
 
+/** End the staging turn and require the boundary entries the staging handler returns. */
+async function endSubmittedStagingTurn(runner: WatchdogRunner, toolCallId: string): Promise<SessionBoundaryDraft[]> {
+	const drafts = await endStagingTurn(runner, toolCallId);
+	expect(drafts, "the staging turn_end must return boundary entries").not.toStrictEqual([]);
+	return drafts;
+}
+
 test("a staged handoff that completes at the settle is neither counted nor cancelled", async () => {
 	const { state, runner } = await createStagingHost();
 	await runCommand(runner, "handoff", "continue work");
@@ -471,7 +478,8 @@ test("a nudged run whose staged handoff cut was not persisted counts one attempt
 	deliverEligibleNudge(state);
 	await stageHandoff(runner, "dropped-cut");
 	expect(state.pendingRequestedHandoff?.toolCalled, "staging marks the handoff called").toBe(true);
-	await endStagingTurn(runner, "dropped-cut");
+	// The cut is submitted and then never appended to the session, so the settle finds it missing.
+	await endSubmittedStagingTurn(runner, "dropped-cut");
 
 	const { sentMessages, sentUserMessages } = runner.fixture.host;
 	const userMessagesBeforeSettle = sentUserMessages.length;
