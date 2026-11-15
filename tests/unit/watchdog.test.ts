@@ -3,7 +3,6 @@ import { SessionManager, type ContextUsage, type ExtensionFactory, type Extensio
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { createState } from "../../state.js";
 import { registerWatchdog, MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
-import { buildNudge } from "../../watchdog.js";
 import { registerHandoffCommand } from "../../handoff/command.js";
 import { registerHandoffTool } from "../../handoff/tool.js";
 import { registerHandoffBoundary } from "../../handoff/boundary.js";
@@ -295,92 +294,103 @@ test("context consumes a boundary hint after the first injected nudge", async ()
 	expect(second).toStrictEqual(userMessages("hi", 2));
 });
 
-test("buildNudge emits topic and spawn guidance", () => {
-	const nudge = buildNudge({ activeNotebookTopic: "oauth", pendingTopicBoundaryHint: null, readonlyEnabled: false, pendingRequestedHandoff: null }, 46, false);
+/** The watchdog message the context hook injected into one user message with `usage`; throws when it injected none. */
+async function contextNudge(runner: WatchdogRunner, usage: ContextUsage): Promise<string> {
+	const nudge = findCustomMessage(await runContext(runner, usage), "pi-schematic-watchdog");
+	if (typeof nudge?.content !== "string") {
+		throw new Error("The context hook injected no watchdog nudge text.");
+	}
+	return nudge.content;
+}
+
+/** Usage at `percent` of a 200 000-token window: from 15% on, enough tokens for a handoff. */
+function windowUsage(percent: number): ContextUsage {
+	return { tokens: percent * 2_000, contextWindow: 200_000, percent };
+}
+
+/** Usage pi reports while it cannot count the context: no tokens and no percent. */
+const UNKNOWN_USAGE: ContextUsage = { tokens: null, contextWindow: 200_000, percent: null };
+
+test("the context nudge emits topic and spawn guidance", async () => {
+	const runner = await createWatchdogRunner({ headless: true });
+	await runCommand(runner, "notebook", "oauth");
+
+	const nudge = await contextNudge(runner, percentUsage(46));
+
 	expect(nudge).toMatch(/Active notebook topic: oauth/);
 	expect(nudge).toMatch(/prefer spawn/i);
 });
 
-test("buildNudge does not require an ineligible pending handoff by default", () => {
-	const nudge = buildNudge(
-		{
-			activeNotebookTopic: null,
-			pendingTopicBoundaryHint: null,
-			readonlyEnabled: false,
-			pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: null },
-		},
-		null,
-		false,
-	);
+test("the context nudge does not require an ineligible pending handoff by default", async () => {
+	const runner = await createWatchdogRunner({ headless: true });
+	await runCommand(runner, "handoff", "continue work");
+
+	const nudge = await contextNudge(runner, UNKNOWN_USAGE);
+
 	expect(nudge).toMatch(/not yet ready for compaction/i);
 });
 
-test("buildNudge asks an eligible requested handoff for the next instruction and the remaining context", () => {
-	const requested = buildNudge(
-		{
-			activeNotebookTopic: null,
-			pendingTopicBoundaryHint: null,
-			readonlyEnabled: false,
-			pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: null },
-		},
-		30,
-		true,
-	);
+test("the context nudge asks an eligible requested handoff for the next instruction and the remaining context", async () => {
+	const runner = await createWatchdogRunner();
+	// Only an eligible topic boundary in readonly mode requests a handoff without an instruction;
+	// readonly is switched off again before the nudge is read.
+	await runCommand(runner, "readonly", "");
+	await drainReadonlyNudge(runner);
+	await runCommand(runner, "notebook", "oauth");
+	await runCommand(runner, "notebook", "billing");
+	await runContext(runner, windowUsage(30));
+	await runCommand(runner, "readonly", "");
+
+	const requested = await contextNudge(runner, windowUsage(30));
+
 	expect(requested).toMatch(/real handoff is required/i);
 	expect(requested).toMatch(/do not perform the new instruction here/i);
 	expect(requested).toMatch(/call handoff with the next instruction and the remaining context/i);
 });
 
-test("buildNudge asks a requested handoff with a set instruction for only the remaining context", () => {
-	const directed = buildNudge(
-		{
-			activeNotebookTopic: null,
-			pendingTopicBoundaryHint: null,
-			readonlyEnabled: false,
-			pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: "continue work" },
-		},
-		30,
-		true,
-	);
+test("the context nudge asks a requested handoff with a set instruction for only the remaining context", async () => {
+	const runner = await createWatchdogRunner({ headless: true });
+	await runCommand(runner, "handoff", "continue work");
+
+	const directed = await contextNudge(runner, windowUsage(30));
+
 	expect(directed).toMatch(/call handoff with only the remaining context/i);
 	expect(directed).toMatch(/successor receives the instruction verbatim/i);
 	expect(directed).not.toMatch(/next instruction and the remaining context/i);
 });
 
-test("buildNudge asks an eligible topic boundary for a handoff with the next instruction", () => {
-	const boundary = buildNudge(
-		{
-			activeNotebookTopic: "billing",
-			pendingTopicBoundaryHint: { from: "oauth", to: "billing", source: "human" },
-			readonlyEnabled: false,
-			pendingRequestedHandoff: null,
-		},
-		30,
-		true,
-	);
+test("the context nudge asks an eligible topic boundary for a handoff with the next instruction", async () => {
+	const runner = await createWatchdogRunner({ headless: true });
+	await runCommand(runner, "notebook", "oauth");
+	await runCommand(runner, "notebook", "billing");
+
+	const boundary = await contextNudge(runner, windowUsage(30));
+
 	expect(boundary).toMatch(/task-boundary signal/i);
 	expect(boundary).toMatch(/next instruction/i);
 	expect(boundary).toMatch(/remaining context/i);
 	expect(boundary).toMatch(/call handoff/i);
 });
 
-test("buildNudge handles null percent and boundary hints before topic guidance", () => {
-	const boundary = buildNudge(
-		{
-			activeNotebookTopic: "oauth",
-			pendingTopicBoundaryHint: { from: "oauth", to: "billing", source: "human" },
-			readonlyEnabled: false,
-			pendingRequestedHandoff: null,
-		},
-		null,
-		false,
-	);
+test("the context nudge handles null percent and boundary hints before topic guidance", async () => {
+	const runner = await createWatchdogRunner({ headless: true });
+	await runCommand(runner, "notebook", "oauth");
+	await runCommand(runner, "notebook", "billing");
+
+	const boundary = await contextNudge(runner, UNKNOWN_USAGE);
+
 	expect(boundary).toMatch(/Notebook topic changed from oauth to billing/);
 	expect(boundary).not.toMatch(/Active notebook topic: oauth/);
+	// The topic change made billing the active topic, so its topic guidance is what the boundary nudge replaces.
+	expect(boundary).not.toMatch(/Active notebook topic: billing/);
+});
 
-	const noTopic = buildNudge({ activeNotebookTopic: null, pendingTopicBoundaryHint: null, readonlyEnabled: false, pendingRequestedHandoff: null }, null, false);
-	expect(noTopic).toMatch(/Topic-aware context reminder/);
-	expect(noTopic).toMatch(/No active notebook topic is set/);
+test("the context hook injects no watchdog message when the percent is unknown and nothing is pending", async () => {
+	const runner = await createWatchdogRunner({ headless: true });
+
+	const result = await runContext(runner, UNKNOWN_USAGE);
+
+	expect(result).toStrictEqual(userMessages("hi", 1));
 });
 
 /** Stand in for the context hook injecting the eligible required-handoff nudge during the current run. */
@@ -441,7 +451,7 @@ function handoffToolResult(toolCallId: string): ToolResultMessage {
 }
 
 /** End the staging turn through pi's boundary chain and return the entries the handlers asked pi to commit. */
-async function endStagingTurn(runner: WatchdogRunner, toolCallId: string): Promise<SessionBoundaryDraft[]> {
+async function finishStagingTurn(runner: WatchdogRunner, toolCallId: string): Promise<SessionBoundaryDraft[]> {
 	runner.setUsage(eligibleUsage());
 	const { entries } = await runner.fixture.runner.emitBoundary(
 		{
@@ -476,7 +486,7 @@ async function endStagingTurn(runner: WatchdogRunner, toolCallId: string): Promi
 
 /** End the staging turn and require the boundary entries the staging handler returns. */
 async function endSubmittedStagingTurn(runner: WatchdogRunner, toolCallId: string): Promise<SessionBoundaryDraft[]> {
-	const drafts = await endStagingTurn(runner, toolCallId);
+	const drafts = await finishStagingTurn(runner, toolCallId);
 	expect(drafts, "the staging turn_end must return boundary entries").not.toStrictEqual([]);
 	return drafts;
 }
@@ -495,7 +505,7 @@ test("a staged handoff that completes at the settle is neither counted nor cance
 	const userMessagesBeforeRun = runner.fixture.host.sentUserMessages.length;
 	deliverEligibleNudge(state);
 	await stageHandoff(runner, "in-flight");
-	const drafts = await endStagingTurn(runner, "in-flight");
+	const drafts = await finishStagingTurn(runner, "in-flight");
 	expect(drafts, "the staging turn_end must return boundary entries").not.toStrictEqual([]);
 	appendDrafts(runner.session, drafts);
 	await emitAgentSettled(runner);
@@ -566,7 +576,7 @@ test("a nudged run whose handoff was aborted counts one attempt and starts no ru
 	deliverEligibleNudge(state);
 	await stageHandoff(runner, "aborted-cut");
 	runner.setSignal(AbortSignal.abort());
-	await endStagingTurn(runner, "aborted-cut");
+	await finishStagingTurn(runner, "aborted-cut");
 	runner.setSignal(undefined);
 	const { sentMessages, sentUserMessages } = runner.fixture.host;
 	const userMessagesBeforeSettle = sentUserMessages.length;

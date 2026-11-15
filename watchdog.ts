@@ -107,11 +107,6 @@ function selectNudge(state: NudgeState, pct: number | null, eligible: boolean): 
 	return { text: buildDefaultNudge(pct, state.activeNotebookTopic, eligible), nudgedHandoff: null };
 }
 
-/** Build a watchdog message for the rounded context percent `pct` and the caller's current handoff eligibility. */
-export function buildNudge(state: NudgeState, pct: number | null, eligible: boolean): string {
-	return selectNudge(state, pct, eligible).text;
-}
-
 /**
  * Build the watchdog message the context hook sends. When it is the eligible
  * required-handoff nudge, mark it sent so `agent_settled` counts this run.
