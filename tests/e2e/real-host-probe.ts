@@ -199,7 +199,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		models: [{ ...PROBE_MODEL_FIELDS, name: "Schematic E2E Model" }],
 		streamSimple(model, context) {
 			const i = step++;
-			log({ kind: "request", step: i, calls: runScript, texts: contextTexts(context.messages) });
+			log({ kind: "request", step: i, texts: contextTexts(context.messages) });
 			const id = `e2e-${runEntryCount}-${i}`;
 			const scripted: ScriptedStep | null = runScript ? (i < runScript.length ? runScript[i] : null) : i === 0 ? { name: "e2e_noop", arguments: {} } : null;
 			const origin = { api: model.api, provider: model.provider, model: model.id, timestamp: Date.now() };
@@ -297,13 +297,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 			}
 			const structured: unknown = result.structuredContent;
 			const output = typeof structured === "object" && structured !== null && "output" in structured ? structured.output : undefined;
-			log({
-				kind: "bashResult",
-				toolCallId: event.toolCallId,
-				isError: event.isError,
-				text: messageText(result.content),
-				structuredOutput: typeof output === "string" ? output : null,
-			});
+			log({ kind: "bashResult", structuredOutput: typeof output === "string" ? output : null });
 		}
 		// A handoff call that returned without error has staged a cut for its turn_end.
 		if (event.toolName !== "handoff" || event.isError) {
@@ -347,9 +341,8 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		return { action: "continue" };
 	});
 
-	pi.on("session_compact", (event) => {
+	pi.on("session_compact", () => {
 		// A handoff cut is a boundary entry and fires no session_compact; this is pi's own compaction.
-		log({ kind: "compact", entryId: event.compactionEntry.id });
 		wake();
 	});
 

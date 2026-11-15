@@ -109,7 +109,6 @@ export interface RpcEvent {
 }
 export interface Notification {
 	message: string;
-	notifyType: string | undefined;
 }
 export interface Status {
 	statusKey: string;
@@ -320,10 +319,7 @@ export class RealHost {
 	get notifications(): Notification[] {
 		return this.events
 			.filter((event) => event.type === "extension_ui_request" && event.method === "notify")
-			.map((event) => ({
-				message: requireString(event, "message"),
-				notifyType: event.notifyType === undefined ? undefined : requireString(event, "notifyType"),
-			}));
+			.map((event) => ({ message: requireString(event, "message") }));
 	}
 
 	get statuses(): Status[] {

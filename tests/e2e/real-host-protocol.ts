@@ -85,16 +85,15 @@ interface ScriptedReply {
 	inputTokens: number;
 }
 
-/** One scripted model response: what `/e2e-script` arms, one per model call of the run, and what the log carries. */
+/** One scripted model response: what `/e2e-script` arms, one per model call of the run. */
 export type ScriptedStep = ScriptedCall | ScriptedError | ScriptedReply;
 
 /** One line of the probe log. */
 export type ProbeRecord =
-	| { kind: "request"; step: number; calls: ScriptedStep[] | null; texts: string[] }
-	| { kind: "compact"; entryId: string }
+	| { kind: "request"; step: number; texts: string[] }
 	| { kind: "cut"; handoffId: string }
 	| { kind: "tools"; names: string[] }
-	| { kind: "bashResult"; toolCallId: string; isError: boolean; text: string; structuredOutput: string | null };
+	| { kind: "bashResult"; structuredOutput: string | null };
 
 /**
  * Outcome of `/e2e-barrier <id> <deadlineMs>`: `failure` is null once nothing is outstanding,
@@ -141,14 +140,6 @@ function requireString(record: Record<string, unknown>, field: string, line: str
 	const value = record[field];
 	if (typeof value !== "string") {
 		malformed(line, `${field} is not a string: ${JSON.stringify(value)}`);
-	}
-	return value;
-}
-
-function requireBoolean(record: Record<string, unknown>, field: string, line: string): boolean {
-	const value = record[field];
-	if (typeof value !== "boolean") {
-		malformed(line, `${field} is not a boolean: ${JSON.stringify(value)}`);
 	}
 	return value;
 }
@@ -212,17 +203,6 @@ export function parseScriptedStep(value: unknown, fail: (reason: string) => neve
 	return parseScriptedCall(value, fail);
 }
 
-/** A request record's `calls`: the armed script, or null when no script was armed. */
-function requireScriptedCalls(value: unknown, line: string): ScriptedStep[] | null {
-	if (value === null) {
-		return null;
-	}
-	if (!Array.isArray(value)) {
-		malformed(line, `calls is neither an array nor null: ${JSON.stringify(value)}`);
-	}
-	return value.map((step: unknown, index) => parseScriptedStep(step, (reason) => malformed(line, `calls[${index}]: ${reason}`)));
-}
-
 /** Parse one probe-log line; throws on an unknown kind or a record missing a required field. */
 export function parseProbeRecord(line: string): ProbeRecord {
 	let parsed: unknown;
@@ -240,11 +220,8 @@ export function parseProbeRecord(line: string): ProbeRecord {
 			return {
 				kind: "request",
 				step: requireStep(parsed, "step", line),
-				calls: requireScriptedCalls(parsed.calls, line),
 				texts: requireStringArray(parsed, "texts", line),
 			};
-		case "compact":
-			return { kind: "compact", entryId: requireString(parsed, "entryId", line) };
 		case "cut":
 			return { kind: "cut", handoffId: requireString(parsed, "handoffId", line) };
 		case "tools":
@@ -254,13 +231,7 @@ export function parseProbeRecord(line: string): ProbeRecord {
 			if (structuredOutput !== null && typeof structuredOutput !== "string") {
 				malformed(line, `structuredOutput is neither a string nor null: ${JSON.stringify(structuredOutput)}`);
 			}
-			return {
-				kind: "bashResult",
-				toolCallId: requireString(parsed, "toolCallId", line),
-				isError: requireBoolean(parsed, "isError", line),
-				text: requireString(parsed, "text", line),
-				structuredOutput,
-			};
+			return { kind: "bashResult", structuredOutput };
 		}
 		default:
 			throw new Error(`Probe log line has an unknown kind ${JSON.stringify(parsed.kind)}: ${line}`);
