@@ -1,3 +1,4 @@
+import path from "node:path";
 import { expect, test } from "vitest";
 import { appendSandboxBlockNotice, appendSandboxBlockNoticeToResult, buildMacProfile, wrapWithBwrap, wrapWithSandboxExec } from "../../os-sandbox.js";
 import { resolveRealPath } from "../../resolve-path.js";
@@ -211,10 +212,11 @@ test("buildMacProfile rejects paths containing quotes", () => {
 });
 
 test("quotes dynamic Linux sandbox paths for the outer shell", () => {
-	// Only the canonical form of /tmp depends on the host (/private/tmp on macOS).
-	const canonicalTmp = resolveRealPath("/tmp");
+	// Only the canonical form of /tmp (/private/tmp on macOS, a drive path on
+	// Windows) and the path separator depend on the host.
+	const tmpPrefix = `${resolveRealPath("/tmp")}${path.sep}`;
 	const wrapped = wrapWithBwrap("true", "/tmp/readonly' ; echo injected; #");
 
-	expect(wrapped).toContain(`--bind '${canonicalTmp}/readonly'"'"' ; echo injected; #' '${canonicalTmp}/readonly'"'"' ; echo injected; #'`);
-	expect(wrapped).not.toContain(`--bind "${canonicalTmp}/readonly' ; echo injected; #" "${canonicalTmp}/readonly' ; echo injected; #"`);
+	expect(wrapped).toContain(`--bind '${tmpPrefix}readonly'"'"' ; echo injected; #' '${tmpPrefix}readonly'"'"' ; echo injected; #'`);
+	expect(wrapped).not.toContain(`--bind "${tmpPrefix}readonly' ; echo injected; #" "${tmpPrefix}readonly' ; echo injected; #"`);
 });

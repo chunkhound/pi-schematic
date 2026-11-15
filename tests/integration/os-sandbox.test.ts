@@ -6,7 +6,7 @@ import fs from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { appendSandboxBlockNoticeToResult, canUseOsSandbox, quoteShellArgument, wrapCommandWithOsSandbox, wrapWithBwrap } from "../../os-sandbox.js";
 import { bashResult } from "../unit/helpers.js";
-import { expectSuffix } from "../assertions.js";
+import { expectPrefix, expectSuffix } from "../assertions.js";
 
 const NOTICE_SUFFIX =
 	"\n\n[readonly mode] If this command failed on a write outside the OS temp dir, the OS sandbox blocked it.\nUse /readonly to disable, or write within the OS temp dir.";
@@ -77,10 +77,12 @@ test.skipIf(process.platform !== "linux" || !canUseOsSandbox())("bwrap executes 
 });
 
 test.skipIf(!hasPosixShell())("quoteShellArgument round-trips through a POSIX shell", () => {
-	for (const raw of ["normal", "spaces", "dollar$ign", "backtick`", "line1\nline2", "'mixed' quotes", "'"]) {
+	for (const raw of ["normal", "spaces", "dollar$ign", "backtick`", "line1\nline2", "'mixed' quotes", "'", ""]) {
 		const quoted = quoteShellArgument(raw);
-		const result = execFileSync("/bin/sh", ["-c", `printf '%s' ${quoted}`], { encoding: "utf8", timeout: 2000 });
-		expect(result, `quoteShellArgument(${JSON.stringify(raw)}) should round-trip`).toBe(raw);
+		// The argument count shows that each value arrives as exactly one argument,
+		// so an empty value that vanished from the command line would print 0.
+		const result = execFileSync("/bin/sh", ["-c", `set -- ${quoted}; printf '%s:%s' "$#" "$1"`], { encoding: "utf8", timeout: 2000 });
+		expect(result, `quoteShellArgument(${JSON.stringify(raw)}) should round-trip`).toBe(`1:${raw}`);
 	}
 });
 
@@ -239,12 +241,15 @@ test.skipIf(!canUseOsSandbox())(
 test.skipIf(!canUseOsSandbox())(
 	"sandboxed trailing backslash prints as unsandboxed",
 	async () => {
-		// The output differs between bash versions, so it is compared with the
-		// unsandboxed run rather than with a literal.
+		// What follows "hi" differs between bash versions (3.2 drops the trailing
+		// backslash, 5 prints it), so only the prefix is a literal and the rest is
+		// compared with the unsandboxed run.
 		const { sandboxed, plain } = await runSandboxedAndPlain("echo hi \\");
 
 		expect(sandboxed).toStrictEqual(plain);
-		expect(sandboxed.code).toBe(0);
+		expect(plain.code).toBe(0);
+		expect(plain.stderr.toString()).toBe("");
+		expectPrefix(plain.stdout.toString(), "hi");
 	},
 	SANDBOX_TIMEOUT_MS,
 );
@@ -289,8 +294,10 @@ test.skipIf(!canUseOsSandbox())(
 	async () => {
 		const { sandboxed, plain } = await runSandboxedAndPlain("echo one; } ; echo two");
 
-		expect(plain.code).not.toBe(0);
 		expect(sandboxed).toStrictEqual(plain);
+		expect(plain.code).toBe(2);
+		expect(plain.stdout.toString()).toBe("");
+		expect(plain.stderr.toString()).toContain("syntax error near unexpected token `}'");
 	},
 	SANDBOX_TIMEOUT_MS,
 );

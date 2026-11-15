@@ -399,7 +399,12 @@ test.each(["npm list", "npm ls", "npm view lodash", "pip show requests", "brew l
 
 test.each([
 	[nestedInEcho("ls", 10), ALLOW],
-	[nestedInEcho("ls", 11), block(`${"command substitution blocked: ".repeat(11)}recursion depth exceeded in command classification`)],
+	[
+		nestedInEcho("ls", 11),
+		block(
+			"command substitution blocked: command substitution blocked: command substitution blocked: command substitution blocked: command substitution blocked: command substitution blocked: command substitution blocked: command substitution blocked: command substitution blocked: command substitution blocked: command substitution blocked: recursion depth exceeded in command classification",
+		),
+	],
 ])("blocks command substitution nested past the recursion limit: %s", (command, expected) => {
 	expect(classifyBashCommand(command, "/workspace")).toStrictEqual(expected);
 });

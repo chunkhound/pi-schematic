@@ -6,7 +6,7 @@
  */
 
 import { expect, onTestFinished, test } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	createSyntheticSourceInfo,
@@ -194,8 +194,7 @@ test.each([
 ])("embedded-slash prompt and skill tokens do not apply readonly frontmatter: $text", async (scenario) => {
 	const dir = await tmpDir();
 	onTestFinished(() => rm(dir, { recursive: true, force: true }));
-	const caseDir = await mkdtemp(join(dir, "case-"));
-	const filePath = await writePrompt(caseDir, "review", true);
+	const filePath = await writePrompt(dir, "review", true);
 	const frontmatter = await createFrontmatterRunner();
 	frontmatter.setCommands(scenario.commands(filePath));
 
@@ -383,13 +382,13 @@ test.each([
 
 	const result = await frontmatter.input(scenario.text, "interactive", scenario.streamingBehavior);
 	expect(result).toStrictEqual({ action: "handled" });
-	expect(Boolean((await frontmatter.writeCall())?.block)).toBe(false);
+	expect(await frontmatter.writeCall()).toBeUndefined();
 	expect(frontmatter.readonlyEntries()).toHaveLength(0);
 	expect(frontmatter.fixture.ui.notifications.at(-1)?.message ?? "").toMatch(/readonly frontmatter requires an idle agent/i);
 
 	await frontmatter.input("unrelated prompt");
 	await frontmatter.beforeAgentStart();
-	expect(Boolean((await frontmatter.writeCall())?.block)).toBe(false);
+	expect(await frontmatter.writeCall()).toBeUndefined();
 	expect(frontmatter.readonlyEntries()).toHaveLength(0);
 });
 
@@ -408,13 +407,13 @@ test.each([
 
 	const result = await frontmatter.input(scenario.text, "interactive", scenario.streamingBehavior);
 	expect(result).toStrictEqual({ action: "handled" });
-	expect(Boolean((await frontmatter.writeCall())?.block)).toBe(true);
+	expect((await frontmatter.writeCall())?.block).toBe(true);
 	expect(frontmatter.readonlyEntries()).toHaveLength(1);
 	expect(frontmatter.fixture.ui.notifications.at(-1)?.message ?? "").toMatch(/readonly frontmatter requires an idle agent/i);
 
 	await frontmatter.input("unrelated prompt");
 	await frontmatter.beforeAgentStart();
-	expect(Boolean((await frontmatter.writeCall())?.block)).toBe(true);
+	expect((await frontmatter.writeCall())?.block).toBe(true);
 	expect(frontmatter.readonlyEntries()).toHaveLength(1);
 });
 
