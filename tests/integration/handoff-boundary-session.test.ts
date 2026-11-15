@@ -34,6 +34,7 @@ import { createDeferred } from "../support/deferred.js";
 import { setTempHome } from "../support/temp.js";
 import { realTheme } from "../support/theme.js";
 import { recordOf } from "../support/tool-result.js";
+import { guardedUIContext } from "../support/ui-context.js";
 import { assertPresent, assertString } from "../assertions.js";
 
 type ExtensionFactory = (pi: ExtensionAPI) => void;
@@ -129,43 +130,26 @@ function observer(observed: Observed): ExtensionFactory {
 /**
  * A UI context that records each notify as `notify:<level>:<message>` and each
  * setStatus as `status:<key>:<text>` in `log`, in call order. Attaching it makes
- * `ctx.hasUI` true. The theme is the real Theme fixture, and `custom` rejects.
+ * `ctx.hasUI` true. The theme is the real Theme fixture, and every other member
+ * these tests do not expect the extension to call throws, naming the member.
  */
 function recordingUI(log: string[]): ExtensionUIContext {
-	return {
-		select: () => Promise.resolve(undefined),
-		confirm: () => Promise.resolve(false),
-		input: () => Promise.resolve(undefined),
-		notify: (message: string, type?: string) => {
-			log.push(`notify:${type ?? "info"}:${message}`);
+	return guardedUIContext(
+		{
+			notify: (message: string, type?: string) => {
+				log.push(`notify:${type ?? "info"}:${message}`);
+			},
+			setStatus: (key: string, text: string | undefined) => {
+				log.push(`status:${key}:${String(text)}`);
+			},
+			// The extension sets or clears its warning widget whenever it updates its indicators.
+			setWidget: () => undefined,
+			// The extension registers the /model-groups autocomplete provider at session start.
+			addAutocompleteProvider: () => undefined,
+			theme: realTheme,
 		},
-		onTerminalInput: () => vi.fn(),
-		setStatus: (key: string, text: string | undefined) => {
-			log.push(`status:${key}:${String(text)}`);
-		},
-		setWorkingMessage: vi.fn(),
-		setWorkingVisible: vi.fn(),
-		setWorkingIndicator: vi.fn(),
-		setHiddenThinkingLabel: vi.fn(),
-		setWidget: vi.fn(),
-		setFooter: vi.fn(),
-		setHeader: vi.fn(),
-		setTitle: vi.fn(),
-		pasteToEditor: vi.fn(),
-		setEditorText: vi.fn(),
-		getEditorText: () => "",
-		editor: () => Promise.resolve(undefined),
-		addAutocompleteProvider: vi.fn(),
-		setEditorComponent: vi.fn(),
-		getEditorComponent: () => undefined,
-		getAllThemes: () => [],
-		getTheme: () => undefined,
-		setTheme: () => ({ success: false, error: "UI not available" }),
-		getToolsExpanded: () => false,
-		setToolsExpanded: vi.fn(),
-		custom: () => Promise.reject(new Error("ctx.ui.custom is not available in this test UI.")),
-		theme: realTheme,
-	};
+		(member) => new Error(`ctx.ui.${member} is not available in this test UI.`),
+	);
 }
 
 /**

@@ -56,6 +56,7 @@ The project is decided per test. A file whose tests fall on both sides is split 
 - `model.ts`: `testModel`, a model with placeholder metadata.
 - `session.ts`: `appendDrafts`, which appends the entries a boundary handler drafted to a `SessionManager.inMemory` session through pi's append methods, message and event builders, and stand-in child sessions (`createSubscribableSession`, `createChildSession`, `createSession`).
 - `guarded.ts`: `guardedInstance`, a class instance that throws on every member the test did not provide, and `stubInstance`.
+- `ui-context.ts`: `guardedUIContext`, a pi `ExtensionUIContext` whose members the test did not provide throw when called, naming the member. The test always provides `theme`.
 - `temp.ts`: temp directories (`tmpDir`, `testWithDir`) and HOME or agent-directory isolation (`setTempHome`, `withTempHome`, `withTempAgentDir`).
 - `tool-result.ts`: readers and checks for tool results (`recordOf`, `detailsOf`, `firstText`, `textOf`, `assertErrorResult`).
 - `render-context.ts`: `createToolRenderContext`, the render context pi passes a tool's renderers.
