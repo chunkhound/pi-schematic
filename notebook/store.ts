@@ -46,7 +46,9 @@ const ELLIPSIS_LENGTH = 3;
 
 export function formatPagePreview(content: string): string {
 	const firstLine = content.split("\n")[0] ?? "";
-	return firstLine.length > PREVIEW_MAX_CHARS ? firstLine.slice(0, PREVIEW_MAX_CHARS - ELLIPSIS_LENGTH) + "..." : firstLine;
+	// Counted and cut by code point, so a character outside the Basic Multilingual Plane never leaves a lone surrogate.
+	const codePoints = Array.from(firstLine);
+	return codePoints.length > PREVIEW_MAX_CHARS ? codePoints.slice(0, PREVIEW_MAX_CHARS - ELLIPSIS_LENGTH).join("") + "..." : firstLine;
 }
 
 export function formatPageList(state: SchematicState): string {

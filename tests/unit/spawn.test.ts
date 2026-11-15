@@ -845,21 +845,23 @@ test("aborted spawn returns the partial child usage", async () => {
 	const state = createState();
 	const controller = new AbortController();
 	let promptStarted!: () => void;
-	let rejectPrompt!: (err: Error) => void;
+	let resolvePrompt!: () => void;
 	const started = new Promise<void>((resolve) => {
 		promptStarted = resolve;
 	});
+	// Pi's prompt resolves once an abort stops the run, leaving an aborted assistant message.
 	const factory = childFactory({
 		prompt: async () => {
 			promptStarted();
-			await new Promise<void>((_, reject) => {
-				rejectPrompt = reject;
+			await new Promise<void>((resolve) => {
+				resolvePrompt = resolve;
 			});
 		},
 		abort: () => {
-			rejectPrompt(Object.assign(new Error("aborted"), { name: "AbortError" }));
+			resolvePrompt();
 			return Promise.resolve();
 		},
+		result: [assistantMessage([], { stopReason: "aborted" })],
 		entries: (manager) => {
 			manager.appendMessage(
 				assistantMessage([{ type: "toolCall", id: "c1", name: "read", arguments: {} }], {
