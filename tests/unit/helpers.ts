@@ -497,16 +497,6 @@ export async function registerReadonlyPI(): Promise<{ pi: TestPI; toolCall: Tool
 	return { pi, toolCall };
 }
 
-/** A UI command context whose notifications, statuses and widgets go nowhere, with no context usage. */
-export function uiCommandContext(overrides: Partial<ExtensionCommandContext> = {}): ExtensionCommandContext {
-	return createCommandContext({
-		hasUI: true,
-		ui: createUIContext({ notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn() }),
-		getContextUsage: () => undefined,
-		...overrides,
-	});
-}
-
 /** The denial phrase each platform's OS sandbox puts in a blocked write's error. */
 export const SANDBOX_DENIAL_PHRASES: Partial<Record<NodeJS.Platform, string>> = {
 	darwin: "Operation not permitted",

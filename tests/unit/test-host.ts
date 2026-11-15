@@ -19,7 +19,6 @@ import type {
 	ContextEventResult,
 	Extension,
 	ExtensionAPI,
-	ExtensionContext,
 	ExtensionError,
 	ExtensionEvent,
 	ExtensionFactory,
@@ -159,7 +158,7 @@ interface HostEventResults {
 	input: InputEventResult;
 }
 
-export type HostEventResult<K extends HostEventName> = K extends keyof HostEventResults ? HostEventResults[K] : undefined;
+type HostEventResult<K extends HostEventName> = K extends keyof HostEventResults ? HostEventResults[K] : undefined;
 
 /** A handler as `pi.on(event, handler)` types it. */
 export type HostHandler<K extends HostEventName> = ExtensionHandler<HostEvent<K>, HostEventResult<K>>;
@@ -509,15 +508,6 @@ export function getHandlers<K extends HostEventName>(pi: TestPI, event: K): Host
 	});
 }
 
-/** The one handler registered for `event`; throws, naming the event and the count, unless exactly one is registered. */
-export function getOnlyHandler<K extends HostEventName>(pi: TestPI, event: K): HostHandler<K> {
-	const handlers = getHandlers(pi, event);
-	if (handlers.length !== 1) {
-		throw new Error(`Expected one "${event}" handler on the test host; ${String(handlers.length)} registered.`);
-	}
-	return handlers[0];
-}
-
 /**
  * The handler registered for `event` at `index` in registration order (default the
  * first). Throws, naming the event and index, unless `index` is a non-negative
@@ -529,25 +519,6 @@ export function getHandler<K extends HostEventName>(pi: TestPI, event: K, index 
 		throw new Error(`No "${event}" handler at index ${String(index)}; ${String(handlers.length)} registered on the test host.`);
 	}
 	return handlers[index];
-}
-
-/**
- * Calls the handler `getHandler(pi, event, index)` returns and resolves to its
- * result, with a handler that returned nothing resolved to `undefined`, so
- * `assertPresent` can narrow the result.
- */
-export async function invokeHandler<K extends HostEventName>(
-	pi: TestPI,
-	event: K,
-	payload: HostEvent<K>,
-	ctx: ExtensionContext,
-	index = 0,
-): Promise<HostEventResult<K> | undefined> {
-	const result = await getHandler(pi, event, index)(payload, ctx);
-	if (result === undefined) {
-		return undefined;
-	}
-	return result;
 }
 
 /** The definition of the tool registered as `name`. Throws, naming the tool, when none is. */
