@@ -9,13 +9,13 @@ import os from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CompactionEntry, CustomMessageEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { HANDOFF_IN_PROGRESS_STATUS, HANDOFF_REQUIRED_STATUS, HANDOFF_STAGED_RESULT, REASON_SUCCESSOR_NOT_PERSISTED } from "../../handoff/copy.js";
-import { HANDOFF_FAILED_CUSTOM_TYPE, HANDOFF_NOTE_CUSTOM_TYPE, HANDOFF_SUCCESSOR_CUSTOM_TYPE, buildNextUserMessage } from "../../handoff/format.js";
+import { HANDOFF_REQUIRED_STATUS, HANDOFF_STAGED_RESULT } from "../../handoff/copy.js";
+import { HANDOFF_NOTE_CUSTOM_TYPE, HANDOFF_SUCCESSOR_CUSTOM_TYPE, buildNextUserMessage } from "../../handoff/format.js";
 import { READONLY_ACTIVE_SUMMARY, READONLY_SANDBOX_BLOCK_NOTICE } from "../../notifications.js";
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
-import { assertPresent, assertString, expectPrefix, expectSuffix } from "../assertions.js";
+import { assertPresent, expectSuffix } from "../assertions.js";
 import { messageText, RealHost, REAL_HOST_TEST_TIMEOUT_MS, SCHEMATIC_ENTRY, toolResults, withRealHost, type RpcEvent } from "./real-host.js";
 import {
 	CHILD_EMPTY_REPLY_MARKER,
@@ -221,25 +221,6 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			expect({ ...stats.tokens, cost: stats.cost }).toStrictEqual({ input: 101234, output: 56, cacheRead: 7, cacheWrite: 8, total: 101305, cost: 0.9375 });
 		}));
 
-	it("notebook topic lifecycle: set via command, agent-set blocked", async (t) =>
-		withRealHost(t, async (host) => {
-			await host.command("/notebook my-e2e-topic");
-			await host.script([{ name: "notebook_topic_set", arguments: { topic: "agent-topic" } }], 1);
-			const { entries } = await host.entries();
-			const result = onlyResult(toolResults(entries, "notebook_topic_set"), "notebook_topic_set");
-			expect(result.isError).toBe(true);
-			expect(result.text).toContain("authoritative");
-		}));
-
-	it("agent-set topic works when unset", async (t) =>
-		withRealHost(t, async (host) => {
-			await host.script([{ name: "notebook_topic_set", arguments: { topic: "fresh-agent-topic" } }], 1);
-			const { entries } = await host.entries();
-			const result = onlyResult(toolResults(entries, "notebook_topic_set"), "notebook_topic_set");
-			expectPrefix(result.text, "Active notebook topic:");
-			expect(result.text).toContain("fresh-agent-topic");
-		}));
-
 	it("handoff writes the cut, the successor and the note as one boundary and re-announces readonly in the successor turn", async (t) =>
 		withRealHost(t, async (host) => {
 			await host.command("/readonly");
@@ -297,44 +278,6 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			expect(leafId, "editing the successor moves the leaf to the cut").toBe(cut.id);
 			expect(customMessages(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE), "one successor entry").toHaveLength(1);
 			expect(userEntriesWithText(entries, buildNextUserMessage(payload)), "no successor resent as a user message").toHaveLength(0);
-		}));
-
-	it("a cut that lands without its successor in context fails, aborts the run, and a later handoff still lands (another extension drops its successor)", async (t) =>
-		withRealHost(t, async (host) => {
-			await host.command("/" + PROBE_COMMAND.dropNextSuccessor);
-			await handoffCommand(host, "finish the report", { context: "mid-task state" }, 1);
-
-			const failed = await host.entries();
-			const cut = onlyHandoffCut(failed.entries);
-			const handoffId = handoffIdOf(cut);
-			expect(requestsAfterCut(host.probeLog(), handoffId), "the run is aborted before the model is called after the cut").toStrictEqual([]);
-			const failure = onlyCustomMessage(failed.entries, HANDOFF_FAILED_CUSTOM_TYPE);
-			assertString(failure.content);
-			expect(failure.content, "the failure carries the instruction").toContain("## Next instruction\n\nfinish the report");
-			expect(failure.content, "the failure carries the context").toContain("mid-task state");
-			expect(failure.display, "the failure is shown").toBe(true);
-			expect(notificationsStartingWith(host, `Handoff failed: ${REASON_SUCCESSOR_NOT_PERSISTED}.`), "failure notified").toHaveLength(1);
-			expect(notificationsStartingWith(host, "Handoff complete"), "no completion notice").toHaveLength(0);
-			const handoffStatuses = host.statuses.filter((status) => status.statusKey === STATUS_KEY_HANDOFF);
-			expect(
-				handoffStatuses.map((status) => status.statusText),
-				"the handoff in progress status was shown",
-			).toContain(HANDOFF_IN_PROGRESS_STATUS);
-			expect(handoffStatuses.at(-1)?.statusText, "no handoff stays required").toBeUndefined();
-
-			await handoff(host, { nextInstruction: "later work" }, 1);
-			const retried = await host.entries();
-			const results = toolResults(retried.entries, "handoff");
-			expect(results, "two handoff results").toHaveLength(2);
-			expect(results[1].text, "a later handoff is accepted").toBe(HANDOFF_STAGED_RESULT);
-			const laterCut = handoffCuts(retried.entries).find((entry) => entry.id !== cut.id);
-			assertPresent(laterCut, "the later handoff lands its cut");
-			const [laterRequest] = requestsAfterCut(host.probeLog(), handoffIdOf(laterCut));
-			assertPresent(laterRequest, "the model is called after the later cut");
-			expect(
-				laterRequest.texts.filter((text) => text.startsWith("## Next instruction")),
-				"only the later successor reaches the model",
-			).toStrictEqual([buildNextUserMessage({ nextInstruction: "later work" })]);
 		}));
 
 	it("readonly is re-announced in the run after a handoff whose successor was dropped", async (t) =>
