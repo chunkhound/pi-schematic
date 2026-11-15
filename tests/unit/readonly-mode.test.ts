@@ -1,235 +1,174 @@
 import { expect, test } from "vitest";
-import os from "node:os";
-import { READONLY_POWERSHELL_BLOCK_REASON, READONLY_SANDBOX_BLOCK_NOTICE } from "../../notifications.js";
-import type { ToolResultEvent, ToolResultEventResult } from "@earendil-works/pi-coding-agent";
-import { canUseOsSandbox } from "../../os-sandbox.js";
-import {
-	bashResult,
-	callHandlers,
-	createCommandContext,
-	createExtensionContext,
-	emitAll,
-	registerReadonlyPI,
-	SANDBOX_DENIAL_PHRASES,
-	textOf,
-	uiCommandContext,
-} from "./helpers.js";
-import { createBeforeAgentStartEvent, getCommand, getOnlyHandler, getShortcut, type TestPI } from "./test-host.js";
-import { assertPresent, expectSuffix, isRecord } from "../assertions.js";
+import { SessionManager, type ContextUsage, type ExtensionRunner, type ToolResultEvent } from "@earendil-works/pi-coding-agent";
+import { getKeybindings } from "@earendil-works/pi-tui";
+import { assertPresent } from "../assertions.js";
+import { createRunner } from "../support/runner.js";
+import { realTheme } from "../support/theme.js";
 
-// The tool_result handler returns a patch of the result or nothing.
-function assertToolResultEventResult(value: unknown): asserts value is ToolResultEventResult | undefined {
-	if (value === undefined) {
-		return;
-	}
-	if (
-		!isRecord(value) ||
-		(value.content !== undefined && !Array.isArray(value.content)) ||
-		(value.isError !== undefined && typeof value.isError !== "boolean")
-	) {
-		throw new Error("The tool_result handler returned something other than a tool_result result.");
-	}
-}
+type ContextMessage = Awaited<ReturnType<ExtensionRunner["emitContext"]>>[number];
 
-/**
- * The messages the one context handler returned. The contexts here report usage with a percent only,
- * which `ContextUsage` does not admit, so the handler runs untyped through callHandlers.
- */
-async function contextMessages(pi: TestPI, event: unknown, ctx: unknown): Promise<Record<string, unknown>[]> {
-	const [result] = await callHandlers(pi, "context", event, ctx);
-	if (!isRecord(result) || !Array.isArray(result.messages)) {
-		throw new Error("The context handler returned no messages.");
-	}
-	const messages: unknown[] = result.messages;
-	if (!messages.every(isRecord)) {
-		throw new Error("The context handler returned a message that is not an object.");
-	}
-	return messages;
-}
+const USAGE_AT_40_PERCENT: ContextUsage = { tokens: 80000, percent: 40, contextWindow: 200000 };
 
-test("readonly toggle on blocks write, edit, powershell, handoff, and bash mutations", async () => {
-	const { pi, toolCall } = await registerReadonlyPI();
-	const ctx = uiCommandContext();
-
-	await getCommand(pi, "readonly").handler("", ctx);
-
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
-	expect((await toolCall({ toolName: "edit", input: { path: "/tmp/x", edits: [] } }, {}))?.block).toBe(true);
-	const powershell = await toolCall({ toolName: "powershell", input: { command: "Get-ChildItem" } }, {});
-	expect(powershell?.block).toBe(true);
-	expect(powershell?.reason).toBe(READONLY_POWERSHELL_BLOCK_REASON);
-	expect((await toolCall({ toolName: "handoff", input: { task: "pivot" } }, {}))?.block).toBe(true);
-	expect((await toolCall({ toolName: "bash", input: { command: "rm -rf /" } }, { cwd: "/workspace" }))?.block).toBe(true);
-	expect(await toolCall({ toolName: "bash", input: { command: `rm ${os.tmpdir()}/x` } }, { cwd: "/workspace" })).toBeUndefined();
-	expect(await toolCall({ toolName: "read", input: { path: "/tmp/x" } }, {})).toBeUndefined();
-});
-
-test("readonly toggle off restores write, powershell, handoff, and bash access", async () => {
-	const { pi, toolCall } = await registerReadonlyPI();
-	const ctx = uiCommandContext();
-
-	await getCommand(pi, "readonly").handler("", ctx);
-	await getCommand(pi, "readonly").handler("", ctx);
-
-	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-	expect(await toolCall({ toolName: "powershell", input: { command: "Get-ChildItem" } }, {})).toBeUndefined();
-	expect(await toolCall({ toolName: "handoff", input: { task: "pivot" } }, {})).toBeUndefined();
-	expect(await toolCall({ toolName: "bash", input: { command: "rm -rf /" } }, { cwd: "/workspace" })).toBeUndefined();
-});
-
-test("readonly toggle is a no-op in headless mode", async () => {
-	const { pi, toolCall } = await registerReadonlyPI();
-
-	// Toggle readonly via the command handler with hasUI: false.
-	// The handler guards on ctx.hasUI — in headless mode the toggle
-	// is a no-op, preserving the contract: readonly is a TUI-only feature.
-	await getCommand(pi, "readonly").handler("", createCommandContext({ getContextUsage: () => undefined }));
-
-	// Without a model registry the handlers load no model groups.
-	const headless = createExtensionContext({ isProjectTrusted: () => false, getContextUsage: () => undefined, modelRegistry: undefined });
-	await getOnlyHandler(pi, "input")({ type: "input", text: "/review", source: "interactive" }, headless);
-	await getOnlyHandler(pi, "before_agent_start")(createBeforeAgentStartEvent({ skills: [] }), headless);
-
-	// Write should remain unblocked for both manual and deferred readonly paths.
-	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-});
-
-test("readonly shortcut only toggles while idle", async () => {
-	const { pi, toolCall } = await registerReadonlyPI();
-	const shortcut = getShortcut(pi, "ctrl+shift+r");
-
-	await shortcut.handler(uiCommandContext({ isIdle: () => false }));
-	expect(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).toBeUndefined();
-
-	await shortcut.handler(uiCommandContext({ isIdle: () => true }));
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
-});
-
-test("readonly toggle delivers an activation nudge via context hook", async () => {
-	const { pi } = await registerReadonlyPI();
-
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-
-	const messages = await contextMessages(pi, { messages: [] }, { getContextUsage: () => ({ percent: 40 }) });
-	const readonlyNudge = messages.find((message) => typeof message.content === "string" && /readonly/i.test(message.content));
-	assertPresent(readonlyNudge, "context hook should deliver a readonly activation nudge");
-	expect(readonlyNudge.role).toBe("custom");
-	expect(readonlyNudge.display).toBe(false);
-});
-
-test("readonly toggle off delivers a deactivation nudge via context hook", async () => {
-	const { pi } = await registerReadonlyPI();
-
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-
-	const messages = await contextMessages(pi, { messages: [] }, { getContextUsage: () => ({ percent: 40 }) });
-	const readonlyNudge = messages.find((message) => typeof message.content === "string" && /readonly|turned off|disabled/i.test(message.content));
-	assertPresent(readonlyNudge, "context hook should deliver a readonly deactivation nudge");
-	expect(readonlyNudge.content).toMatch(/readonly/i);
-	expect(readonlyNudge.content).toMatch(/off|disabled|turned off/i);
-});
-
-// ── Sandbox block notice on failed sandboxed bash results ────────────
-
-const SANDBOX_DENIAL_PHRASE = SANDBOX_DENIAL_PHRASES[process.platform];
-const skipWithoutSandbox = !canUseOsSandbox();
-
-async function registerReadonlyBash() {
-	assertPresent(SANDBOX_DENIAL_PHRASE, `no sandbox denial phrase for ${process.platform}`);
-	const deniedOutput = `touch: x: ${SANDBOX_DENIAL_PHRASE}`;
-	const { pi, toolCall } = await registerReadonlyPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
+/** The shipped extension on a runner with the recording UI (none when `headless`), an idle session at `usage`. */
+async function createReadonlyRunner(options: { headless?: boolean; usage?: ContextUsage } = {}) {
+	let idle = true;
+	const cwd = process.cwd();
+	const fixture = await createRunner({
+		cwd,
+		mode: options.headless === true ? "print" : "tui",
+		sessionManager: SessionManager.inMemory(cwd),
+		ui: options.headless === true ? undefined : { theme: realTheme },
+		context: { getContextUsage: () => options.usage, isIdle: () => idle },
+		activeTools: [],
+	});
+	const { runner } = fixture;
 	return {
-		pi,
-		deniedOutput,
-		callBash: (toolCallId: string) => toolCall({ toolName: "bash", toolCallId, input: { command: "ls" } }, { cwd: "/workspace" }),
-		result: async (toolCallId: string, overrides: { toolName?: string; isError?: boolean } = {}) => {
-			const event: ToolResultEvent = {
-				type: "tool_result",
-				toolName: "bash",
-				toolCallId,
-				input: { command: "ls" },
-				details: undefined,
-				...bashResult(deniedOutput),
-				...overrides,
-			};
-			const [result] = await callHandlers(pi, "tool_result", event, {});
-			assertToolResultEventResult(result);
-			return result;
+		fixture,
+		setIdle: (next: boolean) => {
+			idle = next;
 		},
+		runCommand: async (name: string, args = "") => {
+			await fixture.command(name).handler(args, runner.createCommandContext());
+		},
+		toolCall: (toolName: string, input: Record<string, unknown>) => runner.emitToolCall({ type: "tool_call", toolCallId: toolName, toolName, input }),
+		context: () => runner.emitContext([]),
 	};
 }
 
-test.skipIf(skipWithoutSandbox)("a failed sandboxed bash result gets the sandbox block notice once", async () => {
-	const bash = await registerReadonlyBash();
-
-	await bash.callBash("call-1");
-	const first = await bash.result("call-1");
-
-	assertPresent(first?.content);
-	expect(textOf({ content: first.content })).toBe(`${bash.deniedOutput}\n\nCommand exited with code 1\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`);
-	expect(first.structuredContent).toStrictEqual({
-		output: `${bash.deniedOutput}\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`,
-		truncated: false,
-		exit_code: 1,
-		wall_time_seconds: 0.1,
-	});
-	expect(first).not.toHaveProperty("isError");
-	expect(await bash.result("call-1")).toBeUndefined();
-});
-
-test.skipIf(skipWithoutSandbox)("a successful sandboxed bash result gets no notice", async () => {
-	const bash = await registerReadonlyBash();
-
-	await bash.callBash("call-1");
-
-	expect(await bash.result("call-1", { isError: false })).toBeUndefined();
-});
-
-test.skipIf(SANDBOX_DENIAL_PHRASE === undefined)("a failed bash result for an id that was never sandboxed gets no notice", async () => {
-	const bash = await registerReadonlyBash();
-
-	expect(await bash.result("never-called")).toBeUndefined();
-});
-
-test.skipIf(skipWithoutSandbox)("a failed non-bash result for a sandboxed id gets no notice", async () => {
-	const bash = await registerReadonlyBash();
-
-	await bash.callBash("call-1");
-
-	expect(await bash.result("call-1", { toolName: "read" })).toBeUndefined();
-});
-
-// The resumed branch keeps readonly on, so only a dropped id can explain a missing notice.
-const READONLY_ON_BRANCH = [{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } }];
-
-function resumeSession(pi: Awaited<ReturnType<typeof registerReadonlyBash>>["pi"]) {
-	return emitAll(
-		pi,
-		"session_start",
-		{ reason: "resume" },
-		{ hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => READONLY_ON_BRANCH } },
-	);
+/** The messages in `messages` whose text content matches `pattern`. */
+function textMessagesMatching(messages: ContextMessage[], pattern: RegExp): ContextMessage[] {
+	return messages.filter((message) => message.role === "custom" && typeof message.content === "string" && pattern.test(message.content));
 }
 
-test.skipIf(skipWithoutSandbox)("a session start drops sandboxed ids whose result never arrived", async () => {
-	const bash = await registerReadonlyBash();
-	await bash.callBash("before-start");
-	await resumeSession(bash.pi);
+/** The content of every readonly nudge in `messages`. */
+function readonlyNudgeContents(messages: ContextMessage[]): unknown[] {
+	return messages.flatMap((message) => (message.role === "custom" && message.customType === "pi-schematic-readonly-nudge" ? [message.content] : []));
+}
 
-	const result = await bash.result("before-start");
+test("readonly toggle on blocks write, edit, powershell and handoff and leaves read alone", async () => {
+	const readonly = await createReadonlyRunner();
 
-	expect(result).toBeUndefined();
+	await readonly.runCommand("readonly");
+
+	expect((await readonly.toolCall("write", { path: "/tmp/x", content: "x" }))?.block).toBe(true);
+	expect((await readonly.toolCall("edit", { path: "/tmp/x", edits: [] }))?.block).toBe(true);
+	expect(await readonly.toolCall("powershell", { command: "Get-ChildItem" })).toStrictEqual({
+		block: true,
+		reason: "Readonly mode: powershell blocked until the user disables readonly. Do not run PowerShell or other shells through another tool.",
+	});
+	expect((await readonly.toolCall("handoff", { task: "pivot" }))?.block).toBe(true);
+	expect(await readonly.toolCall("read", { path: "/tmp/x" })).toBeUndefined();
 });
 
-test.skipIf(skipWithoutSandbox)("a call sandboxed after a session start gets the notice", async () => {
-	const bash = await registerReadonlyBash();
-	await resumeSession(bash.pi);
-	await bash.callBash("after-start");
+test("readonly toggle off restores write, powershell and handoff access", async () => {
+	const readonly = await createReadonlyRunner();
 
-	const result = await bash.result("after-start");
+	await readonly.runCommand("readonly");
+	await readonly.runCommand("readonly");
 
-	assertPresent(result?.content);
-	expectSuffix(textOf({ content: result.content }), READONLY_SANDBOX_BLOCK_NOTICE);
+	expect(await readonly.toolCall("write", { path: "/tmp/x", content: "x" })).toBeUndefined();
+	expect(await readonly.toolCall("powershell", { command: "Get-ChildItem" })).toBeUndefined();
+	expect(await readonly.toolCall("handoff", { task: "pivot" })).toBeUndefined();
+});
+
+test("readonly toggle is a no-op in headless mode", async () => {
+	const readonly = await createReadonlyRunner({ headless: true });
+
+	await readonly.runCommand("readonly");
+
+	expect(await readonly.toolCall("write", { path: "/tmp/x", content: "x" })).toBeUndefined();
+	expect(readonly.fixture.host.appendedEntries.filter((entry) => entry.customType === "pi-schematic-readonly")).toStrictEqual([]);
+});
+
+test("readonly shortcut only toggles while idle", async () => {
+	const readonly = await createReadonlyRunner();
+	const { runner } = readonly.fixture;
+	const shortcut = runner.getShortcuts(getKeybindings().getResolvedBindings()).get("ctrl+shift+r");
+	assertPresent(shortcut, "the extension registers the readonly shortcut");
+
+	readonly.setIdle(false);
+	await shortcut.handler(runner.createContext());
+	expect(await readonly.toolCall("write", { path: "/tmp/x", content: "x" })).toBeUndefined();
+
+	readonly.setIdle(true);
+	await shortcut.handler(runner.createContext());
+	expect((await readonly.toolCall("write", { path: "/tmp/x", content: "x" }))?.block).toBe(true);
+});
+
+test("readonly toggle delivers an activation nudge via context hook", async () => {
+	const readonly = await createReadonlyRunner({ usage: USAGE_AT_40_PERCENT });
+
+	await readonly.runCommand("readonly");
+
+	const [readonlyNudge] = textMessagesMatching(await readonly.context(), /readonly/i);
+	assertPresent(readonlyNudge, "context hook should deliver a readonly activation nudge");
+	expect(readonlyNudge.role).toBe("custom");
+	expect(readonlyNudge).toHaveProperty("display", false);
+});
+
+test("readonly toggle off delivers a deactivation nudge via context hook", async () => {
+	const readonly = await createReadonlyRunner({ usage: USAGE_AT_40_PERCENT });
+
+	await readonly.runCommand("readonly");
+	await readonly.runCommand("readonly");
+
+	expect(readonlyNudgeContents(await readonly.context())).toStrictEqual([
+		"[readonly] disabled — write, edit, handoff, and bash writes are now fully available, as is powershell where it is active. Context at 40% — if the work changed topics, you can handoff now.",
+	]);
+});
+
+test("toggling readonly on with a pending handoff notifies that the successor resumes in readonly", async () => {
+	const readonly = await createReadonlyRunner();
+	await readonly.runCommand("handoff", "continue the review");
+
+	await readonly.runCommand("readonly");
+
+	expect(readonly.fixture.ui.notifications.slice(-2)).toStrictEqual([
+		{ message: "Pending handoff updated — the fresh context will resume in readonly mode.", type: "info" },
+		{
+			message:
+				"[readonly] enabled — write/edit/powershell blocked; handoff needs explicit /handoff or an eligible human topic boundary; bash writes/deletions outside temp blocked",
+			type: "info",
+		},
+	]);
+});
+
+test("toggling readonly off with a pending handoff notifies that the successor resumes writable", async () => {
+	const readonly = await createReadonlyRunner();
+	await readonly.runCommand("handoff", "continue the review");
+	await readonly.runCommand("readonly");
+
+	await readonly.runCommand("readonly");
+
+	expect(readonly.fixture.ui.notifications.slice(-2)).toStrictEqual([
+		{ message: "Pending handoff readonly continuation cleared — the fresh context will not resume in readonly mode.", type: "info" },
+		{
+			message: "[readonly] disabled — write, edit, handoff, and bash writes are now fully available, as is powershell where it is active.",
+			type: "info",
+		},
+	]);
+});
+
+// ── Sandbox block notice on failed bash results ────────────
+
+const SANDBOX_DENIAL_PHRASES: Partial<Record<NodeJS.Platform, string>> = { darwin: "Operation not permitted", linux: "Read-only file system" };
+const SANDBOX_DENIAL_PHRASE = SANDBOX_DENIAL_PHRASES[process.platform];
+
+test.skipIf(SANDBOX_DENIAL_PHRASE === undefined)("a failed bash result for an id that was never sandboxed gets no notice", async () => {
+	assertPresent(SANDBOX_DENIAL_PHRASE, `no sandbox denial phrase for ${process.platform}`);
+	const output = `touch: x: ${SANDBOX_DENIAL_PHRASE}`;
+	const readonly = await createReadonlyRunner();
+	await readonly.runCommand("readonly");
+	const event: ToolResultEvent = {
+		type: "tool_result",
+		toolName: "bash",
+		toolCallId: "never-called",
+		input: { command: "ls" },
+		details: undefined,
+		content: [{ type: "text", text: `${output}\n\nCommand exited with code 1` }],
+		structuredContent: { output, truncated: false, exit_code: 1, wall_time_seconds: 0.1 },
+		isError: true,
+	};
+
+	expect(await readonly.fixture.runner.emitToolResult(event)).toBeUndefined();
 });

@@ -25,7 +25,6 @@ import type {
 	ExtensionFactory,
 	ExtensionHandler,
 	ExtensionRuntime,
-	ExtensionShortcut,
 	InputEventResult,
 	MessageEndEventResult,
 	ModelRegistry,
@@ -45,7 +44,6 @@ import type {
 	TurnEndEventResult,
 	UserBashEventResult,
 } from "@earendil-works/pi-coding-agent";
-import type { KeyId } from "@earendil-works/pi-tui";
 import { DefaultResourceLoader, ExtensionRunner, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -568,15 +566,6 @@ export function getCommand(pi: TestPI, name: string): RegisteredCommand {
 		throw new Error(`No command "${name}" is registered on the test host.`);
 	}
 	return command;
-}
-
-/** The shortcut registered for `key`. Throws, naming the key, when none is. */
-export function getShortcut(pi: TestPI, key: KeyId): ExtensionShortcut {
-	const shortcut = hostOf(pi).extension.shortcuts.get(key);
-	if (shortcut === undefined) {
-		throw new Error(`No shortcut "${key}" is registered on the test host.`);
-	}
-	return shortcut;
 }
 
 /**
