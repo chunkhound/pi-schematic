@@ -866,7 +866,7 @@ export default function (pi: ExtensionAPI): void {
 		}
 
 		const mustEnforceRequestedHandoff = state.pendingRequestedHandoff !== null;
-		if (state.pendingRequestedHandoff && !state.pendingRequestedHandoff.toolCalled && isHandoffEligible(usage) && ctx.hasUI && ctx.ui.theme) {
+		if (state.pendingRequestedHandoff && !state.pendingRequestedHandoff.toolCalled && isHandoffEligible(usage) && ctx.hasUI) {
 			ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_REQUIRED_STATUS));
 		}
 

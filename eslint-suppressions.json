@@ -5,41 +5,19 @@
     }
   },
   "handoff/boundary.ts": {
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 2
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
-    }
-  },
-  "handoff/command.ts": {
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
-    }
-  },
-  "handoff/tool.ts": {
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
     }
   },
   "index.ts": {
     "@typescript-eslint/no-unnecessary-condition": {
-      "count": 2
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
     },
     "@typescript-eslint/strict-boolean-expressions": {
-      "count": 2
+      "count": 1
     }
   },
   "model-groups/autocomplete.ts": {
@@ -137,14 +115,6 @@
   },
   "readonly-bash.ts": {
     "n/no-unsupported-features/node-builtins": {
-      "count": 1
-    }
-  },
-  "readonly-boundary.ts": {
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
     }
   },

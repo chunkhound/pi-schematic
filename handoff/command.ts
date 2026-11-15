@@ -40,7 +40,7 @@ export function registerHandoffCommand(pi: ExtensionAPI, state: SchematicState):
 				}
 
 				// Show live progress indicator in footer
-				if (ctx.hasUI && ctx.ui.theme) {
+				if (ctx.hasUI) {
 					const status = isHandoffEligible(ctx.getContextUsage()) ? HANDOFF_REQUIRED_STATUS : HANDOFF_REQUESTED_STATUS;
 					ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", status));
 				}

@@ -167,7 +167,7 @@ function notifyHandoffFailure(ctx: ExtensionContext, reason: string, pendingRequ
 	if (!ctx.hasUI) {
 		return;
 	}
-	if (pendingRequest && ctx.ui.theme) {
+	if (pendingRequest) {
 		const status = isHandoffEligible(ctx.getContextUsage()) ? HANDOFF_REQUIRED_STATUS : HANDOFF_REQUESTED_STATUS;
 		ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", status));
 	} else {
@@ -180,11 +180,11 @@ function failStagedHandoff(pi: ExtensionAPI, state: SchematicState, ctx: Extensi
 	state.stagedHandoff = null;
 	state.handoffFailedInRun = true;
 	const request = state.pendingRequestedHandoff;
-	// On the attempt that exhausts the enforcement budget the watchdog cancels the
-	// request in this run's settle, so the failure must not call it pending.
 	if (request) {
 		request.toolCalled = false;
 	}
+	// When this run's settle counts the attempt that exhausts the enforcement budget,
+	// the watchdog cancels the request there, so the failure must not call it pending.
 	const exhausted = request !== null && settleExhaustsHandoffBudget(request);
 	const pendingRequest = exhausted ? null : request;
 	// Never start a run from here: a cause that drops every cut (another

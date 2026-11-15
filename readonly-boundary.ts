@@ -29,9 +29,7 @@ export function promoteBoundary(state: SchematicState, ctx: ExtensionContext): v
 	// A topic boundary carries no human direction, so the model must supply the instruction.
 	state.pendingRequestedHandoff = newRequestedHandoff(null);
 	if (ctx.hasUI) {
-		if (ctx.ui.theme) {
-			ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_REQUIRED_STATUS));
-		}
+		ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_REQUIRED_STATUS));
 		ctx.ui.notify(buildReadonlyBoundaryPromotionNotification(), "warning");
 	}
 }
