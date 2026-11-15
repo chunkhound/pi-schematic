@@ -44,7 +44,7 @@ Tests run on Vitest, in three projects of `vitest.config.ts`: `unit` runs `tests
 
 Each test goes into the project that matches what it needs:
 
-- `unit` holds deterministic in-process tests: pure modules, and extension handlers, tools and commands driven through pi's own extension runner, with in-memory sessions and model registries and files under a temp directory.
+- `unit` holds deterministic in-process tests: pure modules, and extension handlers, tools and commands driven through pi's own extension runner. Their sessions and model registries are in memory, and their files live under a temp directory.
 - `integration` holds tests that leave the process or are not deterministic: a real pi agent session, child processes, shells, the OS sandbox, git.
 - `e2e` holds the tests that run the real pi CLI.
 
