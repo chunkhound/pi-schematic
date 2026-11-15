@@ -2,7 +2,8 @@
 // pi `ExtensionRunner`. Tests emit events with the runner's own methods, run tools through
 // `wrapRegisteredTool` or `runner.createToolContext`, and run commands through `runner.getCommand`
 // with `runner.createCommandContext`. Every context member a test did not bind throws when used,
-// naming the member, and an error a handler throws rejects the emit that ran it.
+// naming the member, and an error a handler throws rejects the emit that ran it. The extension
+// never reads pi's real agent directory through a fixture.
 
 import {
 	createSyntheticSourceInfo,
@@ -25,9 +26,15 @@ import {
 	type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, TuiMainScreen, type Component, type TUI } from "@earendil-works/pi-tui";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Type } from "typebox";
+import { onTestFinished, vi } from "vitest";
 import registerSchematic from "../../index.js";
+import { AGENT_DIR_ENV_KEY } from "../paths.js";
 import { loadExtensions } from "../unit/test-host.js";
+import { guardedInstance } from "./guarded.js";
 
 /** The mode `ctx.mode` reports; pi's root entry does not export its name. */
 export type ExtensionMode = ExtensionContext["mode"];
@@ -78,6 +85,8 @@ export type CustomComponentDriver = (component: Component, tui: TUI) => void | P
 export interface UIBindings {
 	theme?: Theme;
 	custom?: CustomComponentDriver;
+	/** The TUI members a `ctx.ui.custom` component may call besides `requestRender`, which the fixture provides. */
+	tui?: Partial<Pick<TUI, "stop" | "start">>;
 	addAutocompleteProvider?: ExtensionUIContext["addAutocompleteProvider"];
 }
 
@@ -144,31 +153,6 @@ function throwing(member: string, where: string): () => never {
 	};
 }
 
-// An object whose prototype is `prototype` and whose own members are `members`; reading any other
-// member `prototype` declares, or one of the instance `fields` the class's type declares, throws
-// `failure(member)`. Copying, comparing or awaiting it does not throw.
-function guardedInstance<T extends object>(prototype: T, members: Partial<T>, fields: readonly string[], failure: (member: string) => Error): T {
-	const target: unknown = Object.create(prototype);
-	if (!hasPrototype(target, prototype)) {
-		throw new Error("Object.create did not produce an object with the given prototype.");
-	}
-	const instance = Object.assign(target, members);
-	const declared = new Set([...Object.getOwnPropertyNames(prototype).filter((name) => name !== "constructor"), ...fields]);
-	return new Proxy(instance, {
-		get(object, property, receiver) {
-			if (typeof property === "string" && declared.has(property) && !Object.hasOwn(members, property)) {
-				throw failure(property);
-			}
-			const value: unknown = Reflect.get(object, property, receiver);
-			return value;
-		},
-	});
-}
-
-function hasPrototype<T extends object>(value: unknown, prototype: T): value is T {
-	return typeof value === "object" && value !== null && Object.getPrototypeOf(value) === prototype;
-}
-
 function isComponent(value: unknown): value is Component {
 	return (
 		typeof value === "object" && value !== null && typeof Reflect.get(value, "render") === "function" && typeof Reflect.get(value, "invalidate") === "function"
@@ -210,12 +194,16 @@ function createRecordingUI(bindings: UIBindings, state: UIState): ExtensionUICon
 	const tui = guardedInstance<TUI>(
 		TuiMainScreen.prototype,
 		{
+			...bindings.tui,
 			requestRender: () => {
 				state.renderRequests++;
 			},
 		},
 		["mode", "terminal", "onDebug", "children", "fullRedraws"],
-		(member) => new Error(`tui.${member} is not available to a custom component in this runner fixture; only requestRender is.`),
+		(member) =>
+			member === "stop" || member === "start"
+				? unbound(`tui.${member}`, "ui.tui")
+				: new Error(`tui.${member} is not available to a custom component in this runner fixture; only requestRender, stop and start are.`),
 	);
 	const driver = bindings.custom;
 	return {
@@ -247,10 +235,19 @@ function createRecordingUI(bindings: UIBindings, state: UIState): ExtensionUICon
 			}
 			const results: T[] = [];
 			let built: Component | undefined;
+			let disposed = false;
+			const disposeOnce = (component: Component): void => {
+				if (!disposed) {
+					disposed = true;
+					disposeComponent(component);
+				}
+			};
+			// A `done` the factory calls before it returns finds no component yet, and the component is
+			// then never disposed: pi's own host does not dispose it in that case either.
 			const done = (result: T): void => {
 				results.push(result);
 				if (results.length === 1 && built !== undefined) {
-					disposeComponent(built);
+					disposeOnce(built);
 				}
 			};
 			// The factory's type names pi-coding-agent's KeybindingsManager, a subclass the package root
@@ -261,8 +258,22 @@ function createRecordingUI(bindings: UIBindings, state: UIState): ExtensionUICon
 				throw new Error("The custom factory did not build a component with render and invalidate methods.");
 			}
 			built = component;
-			await driver(component, tui);
+			try {
+				await driver(component, tui);
+			} catch (error) {
+				// A driver that fails (a failed assertion) before the component called done still
+				// disposes it, and the test sees the driver's error.
+				if (results.length === 0) {
+					try {
+						disposeOnce(component);
+					} catch {
+						// The test already fails with the driver's error; a dispose error must not replace it.
+					}
+				}
+				throw error;
+			}
 			if (results.length === 0) {
+				disposeOnce(component);
 				throw new Error("The custom component did not call done.");
 			}
 			return results[0];
@@ -283,12 +294,26 @@ function createRecordingUI(bindings: UIBindings, state: UIState): ExtensionUICon
 	};
 }
 
+// pi's agent directory variable as this test file's process started with it. The extension reads
+// files under pi's agent directory, which pi places under HOME when the variable is unset or empty.
+// A fixture built while the variable is unset, empty or still holds this value gets a temp
+// directory of its own for the test; any other value is one the test set itself
+// (`withTempAgentDir` or `vi.stubEnv`), and the fixture keeps it.
+const STARTING_AGENT_DIR = process.env[AGENT_DIR_ENV_KEY];
+
 /**
  * Load the extension (the shipped `index.ts` default export, or `options.factories`) and build one
  * pi `ExtensionRunner` over it with the bindings in `options`. `cwd`, `sessionManager` and
- * `modelRegistry` are fixed here; a test that needs another builds another fixture.
+ * `modelRegistry` are fixed here; a test that needs another builds another fixture. Call it inside a
+ * test: the agent directory it may set up lasts until that test finishes.
  */
 export async function createRunner(options: RunnerOptions): Promise<RunnerFixture> {
+	const currentAgentDir = process.env[AGENT_DIR_ENV_KEY];
+	if (currentAgentDir === undefined || currentAgentDir === "" || currentAgentDir === STARTING_AGENT_DIR) {
+		const agentDir = await mkdtemp(join(tmpdir(), "pi-schematic-runner-agent-"));
+		onTestFinished(() => rm(agentDir, { recursive: true, force: true }));
+		vi.stubEnv(AGENT_DIR_ENV_KEY, agentDir);
+	}
 	let observedPrompt: string | undefined;
 	// Loaded last, so it sees the prompt every earlier handler shaped.
 	const observer: ExtensionFactory = (api) => {

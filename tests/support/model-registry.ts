@@ -6,14 +6,19 @@ import { ModelRegistry, ModelRuntime, type ProviderConfig } from "@earendil-work
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { vi } from "vitest";
 
-// The variables pi-ai reads to configure a built-in provider: API keys and tokens, plus the ambient
-// AWS and Google Cloud settings it treats as configured credentials.
+// The variables pi-ai reads to configure a built-in provider: API keys and tokens, the ambient AWS
+// and Google Cloud settings it treats as configured credentials, and the three Anthropic workload
+// identity federation settings that authenticate together. pi-ai's main entry exports no table of
+// them, so the list is written out.
 const PROVIDER_CREDENTIAL_ENV = [
 	"AI_GATEWAY_API_KEY",
 	"ANT_LING_API_KEY",
 	"ANTHROPIC_API_KEY",
 	"ANTHROPIC_AUTH_TOKEN",
+	"ANTHROPIC_FEDERATION_RULE_ID",
+	"ANTHROPIC_IDENTITY_TOKEN_FILE",
 	"ANTHROPIC_OAUTH_TOKEN",
+	"ANTHROPIC_ORGANIZATION_ID",
 	"AWS_ACCESS_KEY_ID",
 	"AWS_BEARER_TOKEN_BEDROCK",
 	"AWS_CONTAINER_CREDENTIALS_FULL_URI",

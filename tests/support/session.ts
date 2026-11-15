@@ -4,6 +4,7 @@
 import { AgentSession, SessionManager, type AgentSessionEvent, type SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
 import type { Usage } from "@earendil-works/pi-ai";
 import { vi, type Mock } from "vitest";
+import { guardedInstance } from "./guarded.js";
 
 /**
  * Append the entries a boundary handler drafted, in order, with pi's append method for each kind,
@@ -48,24 +49,15 @@ export interface SubscribableSession {
 
 type SessionMembers = Pick<AgentSession, "messages" | "subscribe" | "sessionManager" | "getToolDefinition" | "abort">;
 
-// An object whose prototype is AgentSession's and whose own members are `members`; reading any other
-// member AgentSession declares on its prototype or as an instance field throws, naming it.
+// An AgentSession whose own members are `members`; reading any other member AgentSession declares,
+// or its instance fields `agent` and `settingsManager`, throws, naming it.
 function guardedSession(members: SessionMembers): AgentSession {
-	const descriptors = Object.fromEntries(Object.entries(members).map(([name, value]): [string, PropertyDescriptor] => [name, { value }]));
-	const target: unknown = Object.create(AgentSession.prototype, descriptors);
-	if (!(target instanceof AgentSession)) {
-		throw new Error("Object.create did not produce an AgentSession instance.");
-	}
-	const declared = new Set([...Object.getOwnPropertyNames(AgentSession.prototype).filter((name) => name !== "constructor"), "agent", "settingsManager"]);
-	return new Proxy(target, {
-		get(object, property, receiver) {
-			if (typeof property === "string" && declared.has(property) && !Object.hasOwn(members, property)) {
-				throw new Error(`session.${property} is not available on the subscribable test session.`);
-			}
-			const value: unknown = Reflect.get(object, property, receiver);
-			return value;
-		},
-	});
+	return guardedInstance<AgentSession>(
+		AgentSession.prototype,
+		members,
+		["agent", "settingsManager"],
+		(member) => new Error(`session.${member} is not available on the subscribable test session.`),
+	);
 }
 
 /**
