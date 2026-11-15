@@ -16,7 +16,6 @@ pi-schematic is a Pi extension. It registers tools and hooks into the agent life
 | `message_end`        | Records which `handoff` calls of an assistant message to refuse (every one when other tool calls share the message, all but the first otherwise), for `tool_call`                                                                                                                                                                                                                                                                                                                                                    |
 | `turn_end`           | Returns a staged handoff as one boundary of drafts and asks Pi to continue the run (see **Handoff**); also updates TUI indicators (context %, notebook count, topic, readonly)                                                                                                                                                                                                                                                                                                                                       |
 | `turn_start`         | Confirms the staged handoff's cut on the branch and finalizes it (request, topic, notebook, readonly nudge), or fails it; a cut without its successor also aborts the run                                                                                                                                                                                                                                                                                                                                            |
-| `agent_end`          | Records last context usage percent                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `agent_settled`      | Resolves a staged handoff first (confirms the cut, or fails it: a missing cut keeps the request pending, a cut without its successor clears it), re-arms a readonly nudge that a lost-successor abort spent, then counts one handoff enforcement attempt per settled run in which the eligible handoff nudge was sent and cancels a required handoff after `MAX_HANDOFF_ATTEMPTS`; clears the failed-cut refusal                                                                                                     |
 
 ## State
@@ -34,7 +33,6 @@ interface SchematicState {
   };
   epoch: number;
   discardEpochWatermark: number;
-  lastContextPercent: number | null;
   stagedHandoff: StagedHandoff | null;
   handoffFailedInRun: boolean;
   handoffRefusals: Map<string, string>;
