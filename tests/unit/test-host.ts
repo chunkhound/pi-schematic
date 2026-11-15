@@ -26,7 +26,6 @@ import type {
 	InputEventResult,
 	MessageEndEventResult,
 	NormalizedBuildSystemPromptOptions,
-	RegisteredCommand,
 	ResourcesDiscoverResult,
 	SessionBeforeCompactResult,
 	SessionBeforeForkResult,
@@ -109,19 +108,19 @@ interface TestAccessors {
 export type TestPI = ExtensionAPI & TestAccessors;
 
 /** A `pi.sendUserMessage` call the host recorded. */
-export interface SentUserMessage {
+interface SentUserMessage {
 	content: Parameters<ExtensionAPI["sendUserMessage"]>[0];
 	options?: Parameters<ExtensionAPI["sendUserMessage"]>[1];
 }
 
 /** A `pi.sendMessage` call the host recorded. */
-export interface SentMessage {
+interface SentMessage {
 	message: Parameters<ExtensionAPI["sendMessage"]>[0];
 	options?: Parameters<ExtensionAPI["sendMessage"]>[1];
 }
 
 /** A `pi.appendEntry` call the host recorded. */
-export interface AppendedEntry {
+interface AppendedEntry {
 	customType: string;
 	data: unknown;
 }
@@ -466,7 +465,7 @@ function assertHostHandler<K extends HostEventName>(value: unknown, event: K): a
  * types it. Throws when none is registered, so an unregistered event cannot pass
  * vacuously.
  */
-export function getHandlers<K extends HostEventName>(pi: TestPI, event: K): HostHandler<K>[] {
+function getHandlers<K extends HostEventName>(pi: TestPI, event: K): HostHandler<K>[] {
 	const registered = hostOf(pi).extension.handlers.get(event) ?? [];
 	if (registered.length === 0) {
 		throw new Error(`No "${event}" handler is registered on the test host.`);
@@ -498,27 +497,4 @@ export function getTool(pi: TestPI, name: string): ToolDefinition {
 		throw new Error(`No tool "${name}" is registered on the test host.`);
 	}
 	return registered.definition;
-}
-
-/** The command registered as `name`. Throws, naming the command, when none is. */
-export function getCommand(pi: TestPI, name: string): RegisteredCommand {
-	const command = hostOf(pi).extension.commands.get(name);
-	if (command === undefined) {
-		throw new Error(`No command "${name}" is registered on the test host.`);
-	}
-	return command;
-}
-
-/**
- * The host's live records of `sendMessage`, `sendUserMessage` and `appendEntry`
- * calls: the same arrays as `pi.sentMessages`, `pi.sentUserMessages` and
- * `pi.appendedEntries`, typed.
- */
-export function getHostRecords(pi: TestPI): {
-	sentMessages: readonly SentMessage[];
-	sentUserMessages: readonly SentUserMessage[];
-	appendedEntries: readonly AppendedEntry[];
-} {
-	const { state } = hostOf(pi);
-	return { sentMessages: state.sentMessages, sentUserMessages: state.sentUserMessages, appendedEntries: state.appendedEntries };
 }

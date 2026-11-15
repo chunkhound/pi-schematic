@@ -7,24 +7,20 @@ import {
 	SessionManager,
 	Theme,
 	type AgentToolResult,
-	type ExtensionCommandContext,
 	type ExtensionContext,
 	type ExtensionToolContext,
 	type ExtensionUIContext,
-	type ToolCallEventResult,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import os from "node:os";
 import { test as base, expect, vi } from "vitest";
 import { isRecord } from "../assertions.js";
 import { AGENT_DIR_ENV_KEY } from "../paths.js";
-import { createTestHost, type TestPI } from "./test-host.js";
 
-export const theme = createTheme({
+const theme = createTheme({
 	fg: (_name: string, text: string) => text,
 	bold: (text: string) => text,
 	// No `bg`: renderers that find none skip the shell background.
@@ -158,51 +154,12 @@ export function createSession(messages: unknown[]) {
 	} as unknown as import("@earendil-works/pi-coding-agent").AgentSession;
 }
 
-export function stripAnsi(text: string): string {
-	return stripTerminalSequences(text);
-}
-
 export function createDeferred() {
 	let resolve!: () => void;
 	const promise = new Promise<void>((r) => {
 		resolve = r;
 	});
 	return { promise, resolve };
-}
-
-// pi stores every handler as a wrapper that passes its arguments on and returns whatever the handler returns,
-// a promise or a plain value; only that it is a function can be checked at run time.
-function assertRegisteredHandler(value: unknown, event: string): asserts value is (...args: unknown[]) => unknown {
-	if (typeof value !== "function") {
-		throw new Error(`A "${event}" handler on the test host is not a function.`);
-	}
-}
-
-// The live list of handlers registered for `event`, so a handler appended during a dispatch runs in that
-// dispatch. Throws when none is registered.
-function registeredHandlers(pi: TestPI, event: string): unknown[] {
-	const handlers: unknown[] | undefined = pi.handlers.get(event);
-	if (handlers === undefined || handlers.length === 0) {
-		throw new Error(`No handlers registered for "${event}"`);
-	}
-	return handlers;
-}
-
-/**
- * Run every handler registered for `event` in registration order and return each
- * handler's result in that order. Unlike pi, which catches each handler's error and
- * runs the rest, a throwing handler stops the run and fails the test. Throws when no
- * handler is registered, so an unregistered event cannot pass vacuously. Each
- * handler sees the same payload: pi's chaining of boundary results between
- * handlers is not emulated.
- */
-export async function callHandlers(pi: TestPI, event: string, payload: unknown, ctx: unknown): Promise<unknown[]> {
-	const results: unknown[] = [];
-	for (const handler of registeredHandlers(pi, event)) {
-		assertRegisteredHandler(handler, event);
-		results.push(await handler(payload, ctx));
-	}
-	return results;
 }
 
 // ── Typed extension contexts ─────────────────────────────────────────
@@ -372,20 +329,6 @@ export function createExtensionContext(overrides: Partial<ExtensionContext> = {}
 	};
 }
 
-/** `createExtensionContext` plus the command members, each failing on call unless overridden. */
-export function createCommandContext(overrides: Partial<ExtensionCommandContext> = {}): ExtensionCommandContext {
-	const { getSystemPromptOptions, waitForIdle, newSession, fork, navigateTree, switchSession, reload, ...base } = overrides;
-	return Object.assign(createExtensionContext(base), {
-		getSystemPromptOptions: getSystemPromptOptions ?? unstubbed("ctx.getSystemPromptOptions"),
-		waitForIdle: waitForIdle ?? unstubbedAsync("ctx.waitForIdle"),
-		newSession: newSession ?? unstubbedAsync("ctx.newSession"),
-		fork: fork ?? unstubbedAsync("ctx.fork"),
-		navigateTree: navigateTree ?? unstubbedAsync("ctx.navigateTree"),
-		switchSession: switchSession ?? unstubbedAsync("ctx.switchSession"),
-		reload: reload ?? unstubbedAsync("ctx.reload"),
-	});
-}
-
 /** `createExtensionContext` plus no callable tools and an `executeTool` that rejects unless overridden. */
 export function createToolContext(overrides: Partial<ExtensionToolContext> = {}): ExtensionToolContext {
 	const { tools, executeTool, ...base } = overrides;
@@ -396,48 +339,6 @@ export function createToolContext(overrides: Partial<ExtensionToolContext> = {})
 }
 
 // ── Readonly test helpers ────────────────────────────────────────────
-
-/** The composed tool_call handlers: the first blocking result, or `undefined` when none blocks. */
-export type ToolCall = (
-	event: { toolName: string; toolCallId?: string; input?: Record<string, unknown> },
-	ctx: { cwd?: string },
-) => Promise<ToolCallEventResult | undefined>;
-
-// The tests pass a partial event and context, which the typed handlers do not admit, so each
-// handler runs untyped and its result is checked to be a tool_call result or nothing.
-function assertToolCallResult(value: unknown): asserts value is ToolCallEventResult | undefined {
-	if (value === undefined) {
-		return;
-	}
-	if (
-		!isRecord(value) ||
-		typeof value.block !== "boolean" ||
-		(value.reason !== undefined && typeof value.reason !== "string") ||
-		(value.terminate !== undefined && typeof value.terminate !== "boolean")
-	) {
-		throw new Error(`A tool_call handler returned something other than a tool_call result: ${JSON.stringify(value)}.`);
-	}
-}
-
-/**
- * Create a test PI instance with pi-schematic registered and its tool_call handlers composed as pi runs them.
- */
-export async function registerReadonlyPI(): Promise<{ pi: TestPI; toolCall: ToolCall }> {
-	const pi = await createTestHost();
-	// Pi runs tool_call handlers in registration order and the first block wins.
-	const toolCall: ToolCall = async (event, ctx) => {
-		for (const handler of registeredHandlers(pi, "tool_call")) {
-			assertRegisteredHandler(handler, "tool_call");
-			const result = await handler(event, ctx);
-			assertToolCallResult(result);
-			if (result?.block === true) {
-				return result;
-			}
-		}
-		return undefined;
-	};
-	return { pi, toolCall };
-}
 
 /** The denial phrase each platform's OS sandbox puts in a blocked write's error. */
 export const SANDBOX_DENIAL_PHRASES: Partial<Record<NodeJS.Platform, string>> = {
@@ -499,70 +400,4 @@ export async function withTempAgentDir<T>(run: (agentDir: string) => T | Promise
 		restoreEnv(AGENT_DIR_ENV_KEY, previousAgentDir);
 		await rm(agentDir, { recursive: true, force: true });
 	}
-}
-
-// ── TUI context factory ───────────────────────────────────────────────
-
-// The theme of `makeTUICtx`: `fg` marks the color as `[name:text]`; reading any other `Theme` member throws, naming it.
-const tuiTheme = guardedInstance(
-	Theme.prototype,
-	{ fg: (name: string, text: string) => `[${name}:${text}]` },
-	(property) => new Error(`theme.${property} is not stubbed in the makeTUICtx theme; it stubs only fg.`),
-);
-
-function isString(value: unknown): value is string {
-	return typeof value === "string";
-}
-
-function isStringArray(value: unknown): value is string[] {
-	return Array.isArray(value) && value.every(isString);
-}
-
-function isOptionalStringArray(value: unknown): value is string[] | undefined {
-	return value === undefined || isStringArray(value);
-}
-
-/**
- * A TUI command and tool context: UI on (mode `tui`) unless `hasUI` is false (mode
- * `print`), `tuiTheme` as the theme, `setStatus` and `setWidget` recorded into
- * `record`, `notify` a no-op, every other UI member as `createUIContext` builds it,
- * `ui` over those, and context usage at `percent` (none when `percent` is null, the
- * default). It has no model registry, so code that refreshes model groups skips
- * them. `setWidget` throws for a component widget, which `record` cannot hold.
- */
-export function makeTUICtx(
-	overrides: Partial<{
-		percent: number | null;
-		hasUI: boolean;
-		record: { statuses: Map<string, string | undefined>; widgets: Map<string, string[] | undefined> };
-		ui: Partial<ExtensionUIContext>;
-	}> = {},
-): ExtensionCommandContext & ExtensionToolContext {
-	const record = overrides.record ?? { statuses: new Map(), widgets: new Map() };
-	const hasUI = overrides.hasUI ?? true;
-	const percent = overrides.percent !== undefined ? overrides.percent : null;
-	const ui = createUIContext({
-		theme: tuiTheme,
-		notify: vi.fn(),
-		setStatus: (key, status) => {
-			record.statuses.set(key, status);
-		},
-		setWidget: (key: string, content: unknown) => {
-			if (!isOptionalStringArray(content)) {
-				throw new Error(`makeTUICtx records only string widgets; "${key}" got a component.`);
-			}
-			record.widgets.set(key, content);
-		},
-		...definedOverrides(overrides.ui ?? {}),
-	});
-	return Object.assign(
-		createCommandContext({
-			hasUI,
-			mode: hasUI ? "tui" : "print",
-			ui,
-			modelRegistry: undefined,
-			getContextUsage: () => (percent !== null ? { tokens: null, contextWindow: 0, percent } : undefined),
-		}),
-		{ tools: [], executeTool: unstubbedAsync("ctx.executeTool") },
-	);
 }

@@ -8,7 +8,7 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 
 /** Scope of bash filesystem mutations blocked by readonly mode. */
-export const READONLY_BASH_SCOPE = "bash writes/deletions outside temp blocked";
+const READONLY_BASH_SCOPE = "bash writes/deletions outside temp blocked";
 /** Scope of non-temporary mutations blocked while readonly is active. */
 export const READONLY_NON_TEMP_MUTATION_SCOPE = "write, edit, powershell, and non-temp bash filesystem mutations remain blocked";
 /** Notice appended to a failed sandboxed command's result whose output shows the sandbox's denial phrase. */
