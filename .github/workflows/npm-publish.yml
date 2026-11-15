@@ -68,7 +68,7 @@ jobs:
       - name: Security audit
         run: npx audit-ci --config audit-ci.jsonc
 
-      - name: Unit tests
+      - name: Tests
         run: npm test
 
       - name: Packed host contract
