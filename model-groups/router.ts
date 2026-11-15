@@ -7,11 +7,7 @@ import type { AnyConstraintDescriptor, ConstraintViolation } from "./constraints
 import type { ModelGroupModality, ResolvedModelGroup } from "./types.js";
 import { isUsableModel } from "./availability.js";
 
-type SpawnRouteStatus = "inherited" | "routed" | "unknown-fallback";
-export interface SpawnModelRoute {
-	status: SpawnRouteStatus;
-	requestedGroup?: string;
-	groupName?: string;
+interface SpawnRouteBase {
 	model: Model<Api>;
 	provider: string;
 	modelId: string;
@@ -19,6 +15,10 @@ export interface SpawnModelRoute {
 	/** Child-facing notes produced by constraint descriptors for explicit group ceilings. */
 	groupCapabilityCeilings?: readonly string[];
 }
+type InheritedSpawnRoute = SpawnRouteBase & { status: "inherited"; requestedGroup?: never; groupName?: never };
+type UnknownFallbackSpawnRoute = SpawnRouteBase & { status: "unknown-fallback"; requestedGroup: string; groupName?: never };
+type RoutedSpawnRoute = SpawnRouteBase & { status: "routed"; requestedGroup: string; groupName: string };
+export type SpawnModelRoute = InheritedSpawnRoute | UnknownFallbackSpawnRoute | RoutedSpawnRoute;
 export type SpawnRouteErrorReason = "empty" | "no-usable-models" | "missing-modality" | "constraint-unsatisfied";
 export interface SpawnRouteErrorDetails {
 	missingModalities?: ModelGroupModality[];
@@ -149,20 +149,18 @@ function decodeDeclared(registry: ConstraintRegistry, requirements: Readonly<Rec
 		}));
 }
 
-function inheritedRoute(
-	status: "inherited" | "unknown-fallback",
-	requestedGroup: string | undefined,
-	parentModel: Model<Api>,
-	parentThinking: ModelThinkingLevel,
-): SpawnModelRoute {
+function inheritedRoute(parentModel: Model<Api>, parentThinking: ModelThinkingLevel): InheritedSpawnRoute {
 	return {
-		status,
-		...(status === "unknown-fallback" && requestedGroup !== undefined && requestedGroup !== "" ? { requestedGroup } : {}),
+		status: "inherited",
 		model: parentModel,
 		provider: parentProvider(parentModel),
 		modelId: parentModel.id,
 		thinking: parentThinking,
 	};
+}
+
+function unknownFallbackRoute(requestedGroup: string, parentModel: Model<Api>, parentThinking: ModelThinkingLevel): UnknownFallbackSpawnRoute {
+	return { ...inheritedRoute(parentModel, parentThinking), status: "unknown-fallback", requestedGroup };
 }
 
 function usableMembers(group: ResolvedModelGroup, modelRegistry: SpawnRouteOptions["modelRegistry"]): RoutedMember[] {
@@ -190,7 +188,7 @@ function buildRoutedRoute(
 	requestedGroup: string,
 	selected: RoutedMember,
 	options: Pick<SpawnRouteOptions, "parentThinking">,
-): SpawnModelRoute {
+): RoutedSpawnRoute {
 	return {
 		status: "routed",
 		requestedGroup,
@@ -296,9 +294,9 @@ export function resolveSpawnModelRoute(options: SpawnRouteOptions): SpawnModelRo
 	const group = requestedGroup !== undefined && requestedGroup !== "" ? effectiveGroupMap(options.groups).get(requestedGroup) : undefined;
 	let route: SpawnModelRoute;
 	if (requestedGroup === undefined || requestedGroup === "") {
-		route = inheritedRoute("inherited", requestedGroup, options.parentModel, options.parentThinking);
+		route = inheritedRoute(options.parentModel, options.parentThinking);
 	} else if (!group) {
-		route = inheritedRoute("unknown-fallback", requestedGroup, options.parentModel, options.parentThinking);
+		route = unknownFallbackRoute(requestedGroup, options.parentModel, options.parentThinking);
 	} else {
 		if (group.models.length === 0) {
 			throw new SpawnRouteError(group.name, "empty");
