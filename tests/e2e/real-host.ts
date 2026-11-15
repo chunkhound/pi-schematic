@@ -195,7 +195,7 @@ async function withCleanup<T>(body: () => Promise<T>, cleanup: () => unknown): P
 }
 
 /** Project `extension_ui_request` setStatus events; a cleared status has `statusText` undefined. */
-export function projectStatuses(events: RpcEvent[]): Status[] {
+function projectStatuses(events: RpcEvent[]): Status[] {
 	return events
 		.filter((event) => event.type === "extension_ui_request" && event.method === "setStatus")
 		.map((event) => ({
@@ -232,7 +232,6 @@ export function toolResults(entries: SessionEntry[], name: string): ToolResult[]
 export class RealHost {
 	readonly client: RpcClient;
 	readonly events: RpcEvent[];
-	readonly projectDir: string;
 	private readonly root: string;
 	private readonly logPath: string;
 	private closing: Promise<void> | null = null;
@@ -246,7 +245,6 @@ export class RealHost {
 	private constructor(root: string, logPath: string, client: RpcClient, events: RpcEvent[]) {
 		this.root = root;
 		this.logPath = logPath;
-		this.projectDir = join(root, "project");
 		this.client = client;
 		this.events = events;
 	}
@@ -388,11 +386,6 @@ export class RealHost {
 			.split("\n")
 			.filter((line) => line !== "")
 			.map((line) => parseProbeRecord(line));
-	}
-
-	/** Handoff cuts the probe saw in turn_end boundaries, in order, with whether it dropped each one. */
-	cuts(): Extract<ProbeRecord, { kind: "cut" }>[] {
-		return this.probeLog().filter((record): record is Extract<ProbeRecord, { kind: "cut" }> => record.kind === "cut");
 	}
 
 	/** Navigate the tree to `entryId`; a step that starts `runs` runs. */

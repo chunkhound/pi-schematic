@@ -159,7 +159,7 @@
   },
   "tests/e2e/real-host.test.ts": {
     "vitest/max-expects": {
-      "count": 31
+      "count": 13
     }
   },
   "tests/e2e/real-host.ts": {

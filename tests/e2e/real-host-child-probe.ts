@@ -18,6 +18,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CHILD_EMPTY_REPLY_MARKER, CHILD_REPLY_TEXT, CHILD_USAGE, PROBE_MODEL_FIELDS, PROBE_PROVIDER, PROBE_PROVIDER_FIELDS } from "./real-host-protocol.js";
 
 export default function (pi: ExtensionAPI): void {
+	// Hand-built, not pi-ai's faux provider: faux replaces every scripted reply's usage with its own
+	// estimate (input from prompt length, zero cost), and the parent's session stats tests assert
+	// that CHILD_USAGE reaches them exactly.
 	pi.registerProvider(PROBE_PROVIDER, {
 		...PROBE_PROVIDER_FIELDS,
 		models: [{ ...PROBE_MODEL_FIELDS, name: "Schematic E2E Child Model" }],
