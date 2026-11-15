@@ -242,6 +242,7 @@ function padVisibleWidth(text: string, width: number): string {
 }
 
 function getShellBackground(theme: Theme, outcome: SpawnOutcome): ((text: string) => string) | undefined {
+	// pi's Theme always has `bg`; the check stays so a theme object without one, as a test renders with, draws no shell background.
 	if (typeof theme.bg !== "function") {
 		return undefined;
 	}
