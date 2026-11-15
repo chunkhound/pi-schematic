@@ -7,7 +7,7 @@ import { createAgentSession, DefaultResourceLoader, ModelRuntime, type Extension
 import { fauxAssistantMessage, fauxProvider, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
 import { createState } from "../../state.js";
 import { executeSpawn } from "../../spawn/index.js";
-import { assertErrorResult } from "../unit/helpers.js";
+import { assertErrorResult } from "../support/tool-result.js";
 import { runRealChildInvocation } from "../support/real-child.js";
 import { createRunner, type RunnerFixture } from "../support/runner.js";
 

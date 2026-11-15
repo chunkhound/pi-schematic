@@ -9,7 +9,9 @@ import { createNotebookToolDefinitions, registerNotebookTools } from "../../note
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
 import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
 import { assertPresent, expectSuffix } from "../assertions.js";
-import { createDeferred, createToolRenderContext, detailsOf, firstText, recordOf } from "./helpers.js";
+import { createDeferred } from "../support/deferred.js";
+import { createToolRenderContext } from "../support/render-context.js";
+import { detailsOf, firstText, recordOf } from "../support/tool-result.js";
 import { createModelRegistry } from "../support/model-registry.js";
 import { ESCAPE, listDriver, plain, press, writePage } from "../support/notebook.js";
 import { createRunner, type CustomComponentDriver, type RunnerFixture } from "../support/runner.js";

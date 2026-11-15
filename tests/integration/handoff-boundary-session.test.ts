@@ -30,7 +30,10 @@ import { Type } from "typebox";
 import registerSchematic from "../../index.js";
 import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
-import { createDeferred, createUIContext, recordOf, setTempHome } from "../unit/helpers.js";
+import { createDeferred } from "../support/deferred.js";
+import { setTempHome } from "../support/temp.js";
+import { realTheme } from "../support/theme.js";
+import { recordOf } from "../support/tool-result.js";
 import { assertPresent, assertString } from "../assertions.js";
 
 type ExtensionFactory = (pi: ExtensionAPI) => void;
@@ -126,10 +129,10 @@ function observer(observed: Observed): ExtensionFactory {
 /**
  * A UI context that records each notify as `notify:<level>:<message>` and each
  * setStatus as `status:<key>:<text>` in `log`, in call order. Attaching it makes
- * `ctx.hasUI` true. The theme returns text unstyled, and `custom` rejects.
+ * `ctx.hasUI` true. The theme is the real Theme fixture, and `custom` rejects.
  */
 function recordingUI(log: string[]): ExtensionUIContext {
-	return createUIContext({
+	return {
 		select: () => Promise.resolve(undefined),
 		confirm: () => Promise.resolve(false),
 		input: () => Promise.resolve(undefined),
@@ -160,7 +163,9 @@ function recordingUI(log: string[]): ExtensionUIContext {
 		setTheme: () => ({ success: false, error: "UI not available" }),
 		getToolsExpanded: () => false,
 		setToolsExpanded: vi.fn(),
-	});
+		custom: () => Promise.reject(new Error("ctx.ui.custom is not available in this test UI.")),
+		theme: realTheme,
+	};
 }
 
 /**
@@ -903,7 +908,7 @@ describe("failed handoff cut in a real agent session", () => {
 		expect(failureAt, JSON.stringify(ui)).toHaveLength(5);
 		// The failure sets the handoff status right before its notify.
 		expect(failureAt.map((index) => ui[index - 1])).toStrictEqual([
-			...Array.from({ length: 4 }, () => `status:${STATUS_KEY}:${REQUIRED_STATUS}`),
+			...Array.from({ length: 4 }, () => `status:${STATUS_KEY}:${realTheme.fg("accent", REQUIRED_STATUS)}`),
 			`status:${STATUS_KEY}:undefined`,
 		]);
 		const cancelledAt = ui.flatMap((line, index) => (line.startsWith("notify:warning:Required handoff cancelled after 5 attempts") ? [index] : []));

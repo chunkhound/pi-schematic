@@ -5,7 +5,7 @@ import os from "node:os";
 import fs from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { appendSandboxBlockNoticeToResult, canUseOsSandbox, quoteShellArgument, wrapCommandWithOsSandbox, wrapWithBwrap } from "../../os-sandbox.js";
-import { bashResult } from "../unit/helpers.js";
+import { bashResult } from "../support/sandbox.js";
 import { expectPrefix, expectSuffix } from "../assertions.js";
 
 const NOTICE_SUFFIX =

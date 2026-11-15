@@ -1,7 +1,7 @@
 // Runs a real child session through the spawn tool for integration tests: pi's real
 // createAgentSession, offline, under temp directories, against a deterministic probe provider.
 
-import { CONFIG_DIR_NAME, type AgentToolResult } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, SessionManager, type AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -9,8 +9,7 @@ import { join, resolve } from "node:path";
 import os from "node:os";
 import { createState, resetState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
-import { createToolContext } from "../unit/helpers.js";
-import { createTestHost, getTool } from "../unit/test-host.js";
+import { createRunner, toolInfo } from "./runner.js";
 
 export interface RealChildInvocationResult {
 	result: AgentToolResult<unknown>;
@@ -270,16 +269,25 @@ export default function(pi) {
 				state.notebookPages.set(pageName, pageContent);
 			}
 		}
-		const pi = await createTestHost(
-			(api) => {
-				registerSpawnTool(api, state);
+		// The probe tool comes from the project; every other active tool is a built-in.
+		const toolSources: Record<string, string> = { agentic_e2e_probe: "project" };
+		const fixture = await createRunner({
+			cwd,
+			mode: "print",
+			factories: [
+				(api) => {
+					registerSpawnTool(api, state);
+				},
+			],
+			agentDir,
+			sessionManager: SessionManager.inMemory(cwd),
+			context: { getModel: () => model },
+			activeTools,
+			actions: {
+				getAllTools: () => activeTools.map((name) => toolInfo(name, toolSources[name] ?? "builtin")),
+				getThinkingLevel: () => "medium",
 			},
-			{
-				toolSources: { agentic_e2e_probe: "project" },
-				activeTools,
-				allTools: activeTools,
-			},
-		);
+		});
 		const controller = new AbortController();
 		if (params.abortBeforeStart === true) {
 			controller.abort(new Error("fixture abort"));
@@ -300,16 +308,10 @@ export default function(pi) {
 					};
 		let results;
 		try {
-			const spawn = getTool(pi, "spawn");
+			const spawn = fixture.tool("spawn");
 			results = await Promise.all(
 				prompts.map((prompt, index) =>
-					spawn.execute(
-						`spawn-${params.thinking ?? "inherited"}-${index}`,
-						{ prompt, thinking: params.thinking },
-						controller.signal,
-						onUpdate,
-						createToolContext({ model, cwd }),
-					),
+					spawn.execute(`spawn-${params.thinking ?? "inherited"}-${index}`, { prompt, thinking: params.thinking }, controller.signal, onUpdate),
 				),
 			);
 		} catch (error) {

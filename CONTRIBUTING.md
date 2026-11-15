@@ -48,7 +48,21 @@ Each test goes into the project that matches what it needs:
 - `integration` holds tests that leave the process or are not deterministic: a real pi agent session, child processes, shells, the OS sandbox, git.
 - `e2e` holds the tests that run the real pi CLI.
 
-The project is decided per test. A file whose tests fall on both sides is split into two files with the same name, one in `tests/unit/` and one in `tests/integration/`. The shared test fixtures live in `tests/support/`.
+The project is decided per test. A file whose tests fall on both sides is split into two files with the same name, one in `tests/unit/` and one in `tests/integration/`. The shared test fixtures live in `tests/support/`, which holds no tests:
+
+- `runner.ts`: `createRunner` loads the extension through pi's `DefaultResourceLoader` and drives it through one pi `ExtensionRunner`. It records what the extension sent, appended and showed, and a context member the test did not bind throws when used. `toolInfo` builds a `pi.getAllTools()` entry.
+- `theme.ts`: `realTheme`, a pi `Theme` with a distinct truecolor value per token, and `createRealTheme`, which builds it with some foreground colours replaced.
+- `model-registry.ts`: `createModelRegistry`, a pi `ModelRegistry` in memory whose available models come only from the providers the test passes.
+- `model.ts`: `testModel`, a model with placeholder metadata.
+- `session.ts`: helpers that fill a `SessionManager.inMemory` session through pi's append methods, message builders, and stand-in child sessions (`createSubscribableSession`, `createChildSession`, `createSession`).
+- `guarded.ts`: `guardedInstance`, a class instance that throws on every member the test did not provide, and `stubInstance`.
+- `temp.ts`: temp directories (`tmpDir`, `testWithDir`) and HOME or agent-directory isolation (`setTempHome`, `withTempHome`, `withTempAgentDir`).
+- `tool-result.ts`: readers and checks for tool results (`recordOf`, `detailsOf`, `firstText`, `textOf`, `assertErrorResult`).
+- `render-context.ts`: `createToolRenderContext`, the render context pi passes a tool's renderers.
+- `sandbox.ts`: `SANDBOX_DENIAL_PHRASES`, the OS sandbox's denial text per platform, and `bashResult`.
+- `deferred.ts`: `createDeferred`, a promise the test resolves.
+- `spawn-node.ts`: `spawnNode`, which runs a Node child process to completion under a deadline.
+- `real-child.ts`: `runRealChildInvocation`, which runs the spawn tool with a real child session against an offline probe provider, for integration tests.
 
 - `npm test` runs the unit and integration projects (`vitest run --project unit --project integration`). Arguments after `--` go to Vitest, so a file filter works there too. A render snapshot whose golden file is missing is written locally and fails under CI.
 - `npm run test:unit` runs the unit project (`vitest run --project unit`), and `npm run test:integration` runs the integration project (`vitest run --project integration`).
@@ -64,7 +78,7 @@ The suites leave these behaviours unpinned:
 - A handoff that shares its message with other calls whose results all set `terminate`. The refusal then ends the run, and the model sees it only on the next prompt. Deliberate: the handoff tool is the only tool in this repo whose result sets `terminate`, so a test would pin a case that only a test tool can produce.
 - `findHandoffCut` matching only a compaction whose details carry `handoff: true`. Deliberate: every boundary cut writes that flag, and the unit tests pin the drafts that write it.
 - A spawn can fail after its child's agent run started, for a reason other than an empty reply. Examples are a failed prompt, a reset, or a dispose failure. Its child usage reaching the parent's totals in a real host is unpinned. Deliberate: the unit tests pin each cause (the error result from the `catch` block, an `error` or `aborted` completion, a dispose failure), and the e2e suite pins the empty-reply path.
-- The trusted project prompt directory and the unit-test spawn probe's extension directory (`runRealChildInvocation`) are built from pi's `CONFIG_DIR_NAME`, not a literal `.pi`. Deliberate: the installed pi declares `.pi` as that name, so no test can tell the two apart. The typechecked import of `CONFIG_DIR_NAME` only catches pi removing or renaming that export; reverting either path to a literal `.pi` passes every gate.
+- The trusted project prompt directory and the extension directory of the integration tests' spawn probe (`runRealChildInvocation` in `tests/support/real-child.ts`) are built from pi's `CONFIG_DIR_NAME`, not a literal `.pi`. Deliberate: the installed pi declares `.pi` as that name, so no test can tell the two apart. The typechecked import of `CONFIG_DIR_NAME` only catches pi removing or renaming that export; reverting either path to a literal `.pi` passes every gate.
 
 ## CI
 

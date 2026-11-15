@@ -65,11 +65,6 @@ export function messageUpdateEvent(message: AssistantMessage): AgentSessionEvent
 	return { type: "message_update", message, assistantMessageEvent: { type: "start", partial: message } };
 }
 
-/** Append an assistant text message with `usage`, from a fixed test provider and time. Returns its entry id. */
-export function appendAssistantMessage(session: SessionManager, text: string, usage: Usage): string {
-	return session.appendMessage(assistantMessage([{ type: "text", text }], { usage }));
-}
-
 // The fake child sessions below stay custom because a real AgentSession runs its own agent loop: it
 // emits only the events and produces only the transcripts its run produces, at its own timing
 // (`_emit` is private), so it cannot replay a scripted sequence or make a prompt, an abort or a
@@ -129,6 +124,23 @@ export function createSubscribableSession(cwd: string, messages: AgentSession["m
 		},
 		abort,
 	};
+}
+
+/**
+ * A child session that only sits in the state's session registries: `messages`, a `subscribe`
+ * that registers nothing, an in-memory `sessionManager` for the process directory, a resolving
+ * `abort` mock and no tool definitions; reading any other AgentSession member throws. It stays
+ * custom because a real AgentSession runs its own agent loop (see above); these tests only store
+ * it in the state's registries and let a reset abort it.
+ */
+export function createSession(messages: AgentSession["messages"]): AgentSession {
+	return guardedSession({
+		messages,
+		subscribe: () => () => undefined,
+		sessionManager: SessionManager.inMemory(process.cwd()),
+		getToolDefinition: () => undefined,
+		abort: vi.fn(() => Promise.resolve()),
+	});
 }
 
 export interface ChildSessionOptions {

@@ -7,7 +7,7 @@ import type { ModelGroupDef, ModelGroupsLoadedGroup, ModelGroupScope, ResolvedMo
 import { __setModelGroupsFsForTests, validateModelGroups } from "../../model-groups/store.js";
 import { evaluateConstraints } from "../../model-groups/constraints/engine.js";
 import { productionConstraintRegistry } from "../../model-groups/constraints/registry.js";
-import { setTempHome } from "./helpers.js";
+import { setTempHome } from "../support/temp.js";
 
 export async function withTemp(fn: (ctx: { cwd: string; home: string }) => Promise<void> | void): Promise<void> {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "model-groups-"));

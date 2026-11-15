@@ -2,7 +2,7 @@ import path from "node:path";
 import { expect, test } from "vitest";
 import { appendSandboxBlockNotice, appendSandboxBlockNoticeToResult, buildMacProfile, wrapWithBwrap, wrapWithSandboxExec } from "../../os-sandbox.js";
 import { resolveRealPath } from "../../resolve-path.js";
-import { bashResult, SANDBOX_DENIAL_PHRASES } from "./helpers.js";
+import { bashResult, SANDBOX_DENIAL_PHRASES } from "../support/sandbox.js";
 import { expectSuffix } from "../assertions.js";
 
 const BLOCK_NOTICE =

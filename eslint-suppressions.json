@@ -10,14 +10,8 @@
     }
   },
   "index.ts": {
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
     }
   },
   "model-groups/autocomplete.ts": {
@@ -218,14 +212,6 @@
       "count": 25
     }
   },
-  "tests/unit/helpers.ts": {
-    "@typescript-eslint/no-dynamic-delete": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    }
-  },
   "tests/unit/model-groups-autocomplete.test.ts": {
     "vitest/max-expects": {
       "count": 5
@@ -308,11 +294,6 @@
     },
     "vitest/no-conditional-expect": {
       "count": 6
-    }
-  },
-  "tests/unit/test-host.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
     }
   },
   "tests/unit/topic.test.ts": {

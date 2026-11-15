@@ -6,7 +6,7 @@ import { modalitiesConstraint } from "../../model-groups/constraints/modalities.
 import { createConstraintRegistry, productionConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import type { AnyConstraintDescriptor, ConstraintMemberResolution } from "../../model-groups/constraints/types.js";
 import { testMinContext } from "./model-groups-constraints-fixture.js";
-import { testModel } from "./helpers.js";
+import { testModel } from "../support/model.js";
 import { createModelRegistry } from "../support/model-registry.js";
 import { resolveConstraintMembers } from "../../model-groups/constraints/resolution.js";
 import { testProvider } from "./model-groups-helpers.js";

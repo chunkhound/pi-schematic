@@ -20,7 +20,8 @@ import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFactory, type Message, type SystemMessage } from "@earendil-works/pi-ai";
 import registerSchematic from "../../index.js";
 import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
-import { createDeferred, setTempHome } from "../unit/helpers.js";
+import { createDeferred } from "../support/deferred.js";
+import { setTempHome } from "../support/temp.js";
 
 let sandboxDir: string;
 

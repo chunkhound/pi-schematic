@@ -25,7 +25,8 @@ import {
 } from "../../model-groups/types.js";
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import { testMinContext } from "./model-groups-constraints-fixture.js";
-import { recordOf, withTempAgentDir } from "./helpers.js";
+import { withTempAgentDir } from "../support/temp.js";
+import { recordOf } from "../support/tool-result.js";
 import { testProvider, withTemp } from "./model-groups-helpers.js";
 import { createModelRegistry } from "../support/model-registry.js";
 import { assertPresent } from "../assertions.js";
