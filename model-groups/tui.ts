@@ -114,9 +114,9 @@ function toPersistenceMessage(error: unknown): string {
 			.filter(Boolean)
 			.join("; ");
 		const pathDetails = paths ? ` (${paths})` : "";
-		const cause = error.cause === undefined ? "" : `; cause: ${escapeDisplayLabel(error.cause instanceof Error ? error.cause.message : String(error.cause))}`;
+		// The cause is not printed: the store writes the cause's text into the message, so printing it would repeat it.
 		const partial = error.partialMove ? `; ${error.partialMove}` : "";
-		return `${error.operation} failed at ${error.phase}${scope}${pathDetails}: ${escapeDisplayLabel(error.message)}${cause}${partial}`;
+		return `${error.operation} failed at ${error.phase}${scope}${pathDetails}: ${escapeDisplayLabel(error.message)}${partial}`;
 	}
 	return escapeDisplayLabel(error instanceof Error ? error.message : String(error));
 }

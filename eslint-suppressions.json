@@ -51,9 +51,6 @@
     }
   },
   "model-groups/tui.ts": {
-    "@typescript-eslint/no-base-to-string": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 6
     }
@@ -233,7 +230,7 @@
       "count": 2
     },
     "vitest/max-expects": {
-      "count": 140
+      "count": 139
     },
     "vitest/no-conditional-expect": {
       "count": 2

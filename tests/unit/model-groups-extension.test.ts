@@ -5,7 +5,7 @@ import path from "node:path";
 import { SessionManager, type AutocompleteProviderFactory, type ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { __setModelGroupsFsForTests } from "../../model-groups/store.js";
-import { assertPresent, expectSuffix } from "../assertions.js";
+import { assertPresent, expectPrefix, expectSuffix } from "../assertions.js";
 import { createModelRegistry } from "../support/model-registry.js";
 import { createRunner, type RunnerFixture, type RunnerOptions } from "../support/runner.js";
 import { realTheme } from "../support/theme.js";
@@ -13,6 +13,8 @@ import { testProvider } from "./model-groups-helpers.js";
 
 // Escape on the Model Groups list closes the component, which resolves ctx.ui.custom.
 const ESCAPE = "\u001b";
+const ENTER = "\r";
+const DOWN = "\u001b[B";
 
 interface Dirs {
 	/** The project directory, the fixture's cwd. */
@@ -328,6 +330,110 @@ test("model groups untrusted root flow never probes project data and publishes g
 	expect(rendered()).toMatch(/globalOnly/);
 	expect(rendered()).not.toMatch(/projectSecret|\[project\]/);
 	expect(projectProbe).toBe(false);
+});
+
+/** Runs /model-groups, presses `keys` and then Escape, and returns the error notifications the change produced. */
+async function modelGroupsErrors(dirs: Dirs, keys: readonly string[]): Promise<string[]> {
+	const fixture = await extensionRunner(dirs, {
+		ui: {
+			theme: realTheme,
+			addAutocompleteProvider: () => undefined,
+			custom: (component) => {
+				for (const key of [...keys, ESCAPE]) {
+					component.handleInput?.(key);
+				}
+			},
+		},
+	});
+	await fixture.command("model-groups").handler("", fixture.runner.createCommandContext());
+	return fixture.ui.notifications.filter(({ type }) => type === "error").map(({ message }) => message);
+}
+
+// Enter on an empty list creates a group. D, Down, Enter deletes the selected group; a refused delete stays on the
+// confirmation, which Escape leaves for the list.
+const CREATE = [ENTER];
+const DELETE = ["D", DOWN, ENTER, ESCAPE];
+
+test.for<{
+	label: string;
+	content: unknown;
+	faults: Parameters<typeof __setModelGroupsFsForTests>[0];
+	keys: readonly string[];
+	prefix: string;
+	suffix: string;
+}>([
+	{
+		label: "a file from a newer version",
+		content: { version: 3, groups: {} },
+		faults: null,
+		keys: CREATE,
+		prefix: "save failed at config-validation for project scope (source: ",
+		suffix:
+			"model-groups.json): Refusing to overwrite project model-groups config because unsupported version 3; no backup was written and the original file is left untouched",
+	},
+	{
+		label: "an unreadable file whose backup failed",
+		content: "{}",
+		faults: {
+			readFileSync: () => {
+				throw new Error("invalid JSON");
+			},
+			copyFileSync: () => {
+				throw new Error("disk full");
+			},
+		},
+		keys: CREATE,
+		prefix: "save failed at load-recovery for project scope (source: ",
+		suffix:
+			"model-groups.json.bak): Refusing to overwrite project model-groups config after corrupt-json recovery because invalid JSON; backup failed: disk full",
+	},
+	{
+		label: "an invalid file whose backup failed",
+		content: { version: 2, groups: { broken: { models: [{ provider: 1 }] } } },
+		faults: {
+			copyFileSync: () => {
+				throw new Error("disk full");
+			},
+		},
+		keys: CREATE,
+		prefix: "save failed at load-recovery for project scope (source: ",
+		suffix:
+			"model-groups.json.bak): Refusing to overwrite project model-groups config after schema-invalid recovery because group broken.models[0].provider must be a non-empty string; backup failed: disk full",
+	},
+	{
+		label: "a failed rename",
+		content: { version: 2, groups: {} },
+		faults: {
+			renameSync: () => {
+				throw new Error("rename refused");
+			},
+		},
+		keys: CREATE,
+		prefix: "save failed at rename for project scope (source: ",
+		suffix: ".tmp): Failed to commit model-groups file for project: rename refused",
+	},
+	{
+		label: "a failed rename during a delete",
+		content: { version: 2, groups: { review: { models: [] } } },
+		faults: {
+			renameSync: () => {
+				throw new Error("rename refused");
+			},
+		},
+		keys: DELETE,
+		prefix: "delete failed at rename for project scope (source: ",
+		suffix: ".tmp): Failed to commit model-groups file for project: rename refused",
+	},
+])("/model-groups reports a refused change after $label without repeating its cause", async ({ content, faults, keys, prefix, suffix }) => {
+	const dirs = tempDirs();
+	writeConfig(projectConfigPath(dirs), content);
+	__setModelGroupsFsForTests(faults);
+
+	const errors = await modelGroupsErrors(dirs, keys);
+
+	expect(errors).toHaveLength(1);
+	expectPrefix(errors[0], prefix);
+	expectSuffix(errors[0], suffix);
 });
 
 test("model groups boot load-issue notifications escape hostile source, backup, and error detail fields", async () => {

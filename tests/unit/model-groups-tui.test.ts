@@ -1372,7 +1372,6 @@ test("model groups TUI persistence notifications escape each hostile dynamic fie
 					targetPath: `target${hostile}`,
 					phase: "rename",
 					message: `message${hostile}`,
-					cause: new Error(`cause${hostile}`),
 				});
 			},
 		}),
@@ -1383,7 +1382,6 @@ test("model groups TUI persistence notifications escape each hostile dynamic fie
 	expect(notifications[0]).toMatch(/source\\n\\x1B/);
 	expect(notifications[0]).toMatch(/target\\n\\x1B/);
 	expect(notifications[0]).toMatch(/message\\n\\x1B/);
-	expect(notifications[0]).toMatch(/cause\\n\\x1B/);
 	expect(notifications[0]).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/);
 });
 
