@@ -270,6 +270,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			await handoff(host, payload, 1);
 			const before = await host.entries();
 			const successor = onlyCustomMessage(before.entries, SUCCESSOR_CUSTOM_TYPE);
+			expect(successor.content, "the successor carries the text the resend check looks for").toBe(RESUMED_WORK_SUCCESSOR);
 			await host.navigate(firstAssistantAfter(before.entries, successor.id).id, 0);
 			await host.turn("/" + PROBE_COMMAND.turn, 1);
 
@@ -285,6 +286,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			const before = await host.entries();
 			const cut = onlyHandoffCut(before.entries);
 			const successor = onlyCustomMessage(before.entries, SUCCESSOR_CUSTOM_TYPE);
+			expect(successor.content, "the successor carries the text the resend check looks for").toBe(RESUMED_WORK_SUCCESSOR);
 			await host.navigate(successor.id, 0);
 
 			const { entries, leafId } = await host.entries();
