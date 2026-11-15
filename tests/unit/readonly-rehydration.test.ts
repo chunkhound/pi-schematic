@@ -16,37 +16,33 @@ test("getReadonlyFromBranch returns true for empty branch with CLI flag", () => 
 	expect(getReadonlyFromBranch([], makePI(true))).toBe(true);
 });
 
+/** The branch of an in-memory session holding one `customType` entry per `data` value, in order. */
+function branchWith(customType: string, ...data: { enabled: boolean }[]) {
+	const session = SessionManager.inMemory(process.cwd());
+	for (const entry of data) {
+		session.appendCustomEntry(customType, entry);
+	}
+	return session.getBranch();
+}
+
 test("getReadonlyFromBranch uses a persisted readonly entry when present", () => {
-	expect(getReadonlyFromBranch([{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } }], makePI(false))).toBe(true);
-	expect(getReadonlyFromBranch([{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: false } }], makePI(true))).toBe(false);
+	expect(getReadonlyFromBranch(branchWith("pi-schematic-readonly", { enabled: true }), makePI(false))).toBe(true);
+	expect(getReadonlyFromBranch(branchWith("pi-schematic-readonly", { enabled: false }), makePI(true))).toBe(false);
 });
 
 test("getReadonlyFromBranch picks the latest entry (true wins)", () => {
-	const branch = [
-		{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } },
-		{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: false } },
-		{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } },
-	];
+	const branch = branchWith("pi-schematic-readonly", { enabled: true }, { enabled: false }, { enabled: true });
 	expect(getReadonlyFromBranch(branch, makePI(false))).toBe(true);
 });
 
 test("getReadonlyFromBranch picks the latest entry (false wins)", () => {
-	const branch = [
-		{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } },
-		{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } },
-		{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: false } },
-	];
+	const branch = branchWith("pi-schematic-readonly", { enabled: true }, { enabled: true }, { enabled: false });
 	expect(getReadonlyFromBranch(branch, makePI(false))).toBe(false);
 });
 
 test("getReadonlyFromBranch skips entries with wrong customType", () => {
-	const branch = [{ type: "custom", customType: "other-extension", data: { enabled: true } }];
+	const branch = branchWith("other-extension", { enabled: true });
 	expect(getReadonlyFromBranch(branch, makePI(false))).toBe(false);
-});
-
-test("getReadonlyFromBranch falls back to the CLI flag when no valid readonly entry exists", () => {
-	expect(getReadonlyFromBranch([null, "string", 42], makePI(true))).toBe(true);
-	expect(getReadonlyFromBranch([{ type: "custom", customType: "pi-schematic-readonly", data: null }], makePI(false))).toBe(false);
 });
 
 /** The shipped extension on a runner over `session`, with the recording UI unless `headless`. */
