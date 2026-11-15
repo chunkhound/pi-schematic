@@ -699,7 +699,22 @@ test("expanded nested spawn shows the text blocks of a user message", () => {
 		},
 	]);
 
-	expect(lines).toStrictEqual(["m • low", "first part", "second part"]);
+	expect(lines).toStrictEqual(["m • low", "first partsecond part"]);
+});
+
+test("expanded nested spawn joins the text blocks of a user message without a separator", () => {
+	const lines = renderExpandedTranscript([
+		{
+			role: "user",
+			content: [
+				{ type: "text", text: "hello " },
+				{ type: "text", text: "world" },
+			],
+			timestamp: 1_767_225_600_000,
+		},
+	]);
+
+	expect(lines).toStrictEqual(["m • low", "hello world"]);
 });
 
 test("expanded nested spawn shows a skill invocation and the user message after it", () => {

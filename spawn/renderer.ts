@@ -803,7 +803,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 				: content
 						.filter((block): block is TextContent => block.type === "text")
 						.map((block) => block.text)
-						.join("\n")
+						.join("")
 		).trim();
 		if (!text) {
 			return;
