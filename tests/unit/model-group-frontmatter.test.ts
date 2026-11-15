@@ -226,7 +226,7 @@ test("empty model-group (SpawnRouteError) blocks execution with error", async ()
 
 	expect(result).toStrictEqual({ action: "handled" });
 	expect(harness.modelCalls).toHaveLength(0);
-	expect(firstError(harness)).toBe("Cannot execute `/review`: Model Group `empty` error — Model Group 'empty' has no model entries..");
+	expect(firstError(harness)).toBe("Cannot execute `/review`: Model Group `empty` error — Model Group 'empty' has no model entries.");
 });
 
 test("headless session does not inherit model-group changes", async () => {
@@ -507,16 +507,16 @@ test("thinking only frontmatter records and announces the level clamped to the c
 });
 
 test.each([
-	{ defined: 0, names: [], error: "Cannot execute `/review`: Model Group `missing` error — Model Group 'missing' is not defined.." },
+	{ defined: 0, names: [], error: "Cannot execute `/review`: Model Group `missing` error — Model Group 'missing' is not defined." },
 	{
 		defined: 5,
 		names: ["a", "b", "c", "d", "e"],
-		error: "Cannot execute `/review`: Model Group `missing` error — Model Group 'missing' is not defined. Available groups: a, b, c, d, e..",
+		error: "Cannot execute `/review`: Model Group `missing` error — Model Group 'missing' is not defined. Available groups: a, b, c, d, e.",
 	},
 	{
 		defined: 6,
 		names: ["a", "b", "c", "d", "e", "f"],
-		error: "Cannot execute `/review`: Model Group `missing` error — Model Group 'missing' is not defined. Run /model-groups to see all available groups..",
+		error: "Cannot execute `/review`: Model Group `missing` error — Model Group 'missing' is not defined. Run /model-groups to see all available groups.",
 	},
 ])("unknown model-group hint for $defined defined groups", async ({ names, error }) => {
 	const harness = await frontmatterHarness({

@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Context percent rounded once**: the status bar tone, the high-context warning widget, the watchdog reminders and their thresholds, and the context note of the readonly-off message all use pi's context percent rounded to a whole number. Before, the warning widget, the watchdog thresholds and the readonly-off note compared the unrounded percent, so at 69.6% the status showed an error-tone 70% with no warning widget, and the same mismatch held just below 30% and 50%.
 - **Model group edits no longer store derived evaluations**: changing a group in `/model-groups` wrote the group's computed constraint evaluations into `model-groups.json` as an `evaluations` key. The store now drops that key like the other derived fields, and the next change in that file's scope removes it.
 - **Spawn modality errors name each missing modality once**: when a spawn asked a Model Group for a modality that both the group and its routed model lacked, the error listed it twice, as in `cannot satisfy required modalities: image, image`. Each missing modality is now listed once.
+- **Model Group frontmatter errors end in one period**: a `/command` whose `model-group` frontmatter named an unknown, empty or unusable group showed an error ending in two periods, as in `Model Group 'empty' has no model entries..`. The error now ends in one.
 
 ## [0.7.1] - 2026-11-08
 
