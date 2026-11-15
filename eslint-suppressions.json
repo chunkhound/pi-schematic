@@ -236,11 +236,6 @@
       "count": 5
     }
   },
-  "tests/unit/model-groups-constraints.test.ts": {
-    "vitest/max-expects": {
-      "count": 4
-    }
-  },
   "tests/unit/model-groups-crud.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
