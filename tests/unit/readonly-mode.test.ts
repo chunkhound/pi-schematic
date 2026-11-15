@@ -168,10 +168,11 @@ function replacingBashCommand(command: unknown): ExtensionFactory {
 
 const OUTSIDE_TEMP_WRITE = `touch ${homedir()}/pi-schematic-readonly-probe`;
 
-test.for([
+test.for<{ label: string; command: unknown }>([
 	{ label: "an array of two strings", command: [OUTSIDE_TEMP_WRITE, "x"] },
 	{ label: "a one-element array", command: [OUTSIDE_TEMP_WRITE] },
 	{ label: "an object with a toString method", command: { toString: () => OUTSIDE_TEMP_WRITE } },
+	{ label: "an object holding the command", command: { command: OUTSIDE_TEMP_WRITE } },
 	{ label: "a number", command: 42 },
 	{ label: "undefined", command: undefined },
 	{ label: "null", command: null },
