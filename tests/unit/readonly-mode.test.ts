@@ -1,6 +1,8 @@
 import { expect, test } from "vitest";
-import { SessionManager, type ContextUsage, type ExtensionRunner, type ToolResultEvent } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type ContextUsage, type ExtensionFactory, type ExtensionRunner, type ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { getKeybindings } from "@earendil-works/pi-tui";
+import { homedir } from "node:os";
+import registerSchematic from "../../index.js";
 import { assertPresent } from "../assertions.js";
 import { createRunner } from "../support/runner.js";
 import { SANDBOX_DENIAL_PHRASES } from "../support/sandbox.js";
@@ -10,8 +12,11 @@ type ContextMessage = Awaited<ReturnType<ExtensionRunner["emitContext"]>>[number
 
 const USAGE_AT_40_PERCENT: ContextUsage = { tokens: 80000, percent: 40, contextWindow: 200000 };
 
-/** The shipped extension on a runner with the recording UI (none when `headless`), an idle session at `usage`. */
-async function createReadonlyRunner(options: { headless?: boolean; usage?: ContextUsage } = {}) {
+/**
+ * The shipped extension on a runner with the recording UI (none when `headless`), an idle session at `usage`,
+ * loaded after the `before` extension when one is given.
+ */
+async function createReadonlyRunner(options: { headless?: boolean; usage?: ContextUsage; before?: ExtensionFactory } = {}) {
 	let idle = true;
 	const cwd = process.cwd();
 	const fixture = await createRunner({
@@ -21,6 +26,7 @@ async function createReadonlyRunner(options: { headless?: boolean; usage?: Conte
 		ui: options.headless === true ? undefined : { theme: realTheme },
 		context: { getContextUsage: () => options.usage, isIdle: () => idle },
 		activeTools: [],
+		factories: options.before === undefined ? undefined : [options.before, registerSchematic],
 	});
 	const { runner } = fixture;
 	return {
@@ -148,6 +154,35 @@ test("toggling readonly off with a pending handoff notifies that the successor r
 			type: "info",
 		},
 	]);
+});
+
+// ── Bash commands another extension replaced ────────────
+
+/** An extension whose `tool_call` handler replaces the bash command, after pi validated it, with `command`. */
+function replacingBashCommand(command: unknown): ExtensionFactory {
+	return (pi) => {
+		pi.on("tool_call", (event) => {
+			Reflect.set(event.input, "command", command);
+		});
+	};
+}
+
+const OUTSIDE_TEMP_WRITE = `touch ${homedir()}/pi-schematic-readonly-probe`;
+
+test.for([
+	{ label: "an array of two strings", command: [OUTSIDE_TEMP_WRITE, "x"] },
+	{ label: "a one-element array", command: [OUTSIDE_TEMP_WRITE] },
+	{ label: "an object with a toString method", command: { toString: () => OUTSIDE_TEMP_WRITE } },
+	{ label: "a number", command: 42 },
+	{ label: "undefined", command: undefined },
+])("readonly blocks a bash call whose command an earlier extension replaced with $label", async ({ command }) => {
+	const readonly = await createReadonlyRunner({ before: replacingBashCommand(command) });
+	await readonly.runCommand("readonly");
+
+	expect(await readonly.toolCall("bash", { command: "ls" })).toStrictEqual({
+		block: true,
+		reason: "Readonly mode: command blocked.\nReason: bash command input must be a string\nCommand: <invalid input>",
+	});
 });
 
 // ── Sandbox block notice on failed bash results ────────────

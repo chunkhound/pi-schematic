@@ -2,7 +2,7 @@ import path from "node:path";
 import os from "node:os";
 import { globSync } from "node:fs";
 import { canUseOsSandbox, wrapCommandWithOsSandbox } from "./os-sandbox.js";
-import { buildReadonlyBashBlockReason, buildReadonlyPackageManagerBlockReason } from "./notifications.js";
+import { buildReadonlyBashBlockReason, buildReadonlyPackageManagerBlockReason, READONLY_INVALID_BASH_COMMAND_REASON } from "./notifications.js";
 import { resolveRealPath } from "./resolve-path.js";
 import { TEMP_DIR } from "./temp-dir.js";
 
@@ -1442,11 +1442,21 @@ export type ReadonlyBashGuardResult = { action: "allow" } | { action: "block"; r
  * L1: OS-level sandboxing — wraps command if available (sandbox-exec / bwrap).
  * L2: Command-pattern inspection — blocks if OS sandbox unavailable.
  *
- * @param cmd - Raw bash command string
+ * @param cmd - Raw bash command; anything but a string is blocked
  * @param cwd - Working directory for path resolution
  * @returns Structured result: allow, block (with reason), or sandbox (with wrapped command)
  */
-export function applyReadonlyBashGuard(cmd: string, cwd: string): ReadonlyBashGuardResult {
+export function applyReadonlyBashGuard(cmd: unknown, cwd: string): ReadonlyBashGuardResult {
+	// pi types the command as a string and validates it once, but then hands the same mutable input
+	// to every extension's `tool_call` handler, so one loaded earlier can replace it with an array or
+	// an object whose text would pass the classifier. The readonly write guard must not trust that.
+	if (typeof cmd !== "string") {
+		return {
+			action: "block",
+			reason: buildReadonlyBashBlockReason(READONLY_INVALID_BASH_COMMAND_REASON, "<invalid input>"),
+		};
+	}
+
 	// L1: OS sandbox (primary enforcement when available)
 	if (canUseOsSandbox()) {
 		const verdict = classifyBashCommand(cmd, cwd);
