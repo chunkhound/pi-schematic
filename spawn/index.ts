@@ -128,6 +128,11 @@ function statsOf(usage: Usage, turns: number): Record<string, number> {
 	};
 }
 
+/**
+ * Neither this walk nor its callers catch: a throw here rejects the spawn, and the child's result is lost with it.
+ * Pi's types make `usage` required on assistant messages, and the child's in-memory session manager reads its entries
+ * without a failure path, so a throw marks a broken contract, which the spawn surfaces instead of hiding.
+ */
 function collectChildAccounting(session: Pick<AgentSession, "sessionManager">): ChildAccounting {
 	let usage = emptyChildUsage();
 	let assistantTurns = 0;
