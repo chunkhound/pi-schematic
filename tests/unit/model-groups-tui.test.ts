@@ -102,6 +102,8 @@ function component(args: {
 	store?: (memory: ModelGroupsStoreOps) => Partial<ModelGroupsStoreOps>;
 	notify?: ModelGroupsComponentOptions["notify"];
 	policy?: ModelGroupsAccess["policy"];
+	/** Groups the component opens with, resolved from these defs whatever the access policy; by default the store's listing under that policy. */
+	initialDefs?: ScopedGroupDefs;
 }) {
 	let renders = 0;
 	const memory = memoryStore(args.defs ?? {});
@@ -114,7 +116,14 @@ function component(args: {
 		args.registry,
 		access,
 		vi.fn(),
-		{ initialValidation: memory.listResolvedModelGroups(access, args.registry), store: { ...memory, ...args.store?.(memory) }, notify: args.notify },
+		{
+			initialValidation:
+				args.initialDefs === undefined
+					? memory.listResolvedModelGroups(access, args.registry)
+					: { groups: resolveGroups(args.registry, args.initialDefs), loadIssues: [] },
+			store: { ...memory, ...args.store?.(memory) },
+			notify: args.notify,
+		},
 	);
 	return {
 		c,
@@ -919,11 +928,9 @@ test("model groups TUI clamps the cursor to the final add row", async () => {
 });
 
 test("model groups TUI under global-only access lists only global groups", async () => {
-	const c = component({
-		registry: await tuiRegistry(),
-		defs: { global: { "global-name": { models: [] } }, project: { "project-secret": { models: [] } } },
-		policy: "global-only",
-	}).c;
+	// The session's groups were resolved while the project was trusted, so the component opens with project groups it must not list.
+	const defs: ScopedGroupDefs = { global: { "global-name": { models: [] } }, project: { "project-secret": { models: [] } } };
+	const c = component({ registry: await tuiRegistry(), defs, initialDefs: defs, policy: "global-only" }).c;
 	expect(rendered(c)).toMatch(/global-name/);
 	expect(rendered(c)).not.toMatch(/project-secret/);
 });

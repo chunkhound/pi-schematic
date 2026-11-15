@@ -107,11 +107,9 @@ test("injected scalar traverses resolution, aggregation and persistence and stay
 		diagnostics: [{ key: "testMinContext", code: "unknown-automatic" }],
 	});
 	expect(evaluateConstraints(resolution([]), {}, injected)[0].aggregate).toStrictEqual({ automatic: null, supported: null });
-	const envelope: Record<string, unknown> = { testMinContext: testMinContext.persistence.override.encode(12) };
-	const decoded = testMinContext.persistence.override.decode(envelope.testMinContext, "constraints.testMinContext");
-	expect(decoded).toStrictEqual({ ok: true, value: 12 });
-	expect({ testMinContext: testMinContext.persistence.override.encode(decoded.ok ? decoded.value : 0) }).toStrictEqual(envelope);
-	expect(evaluateConstraints(resolved, envelope, injected)[0].effective).toBe(12);
+	expect(testMinContext.persistence.override.encode(12)).toBe(12);
+	expect(testMinContext.persistence.override.decode(12, "constraints.testMinContext")).toStrictEqual({ ok: true, value: 12 });
+	expect(evaluateConstraints(resolved, { testMinContext: 12 }, injected)[0].effective).toBe(12);
 	expect(productionConstraintRegistry.get("testMinContext")).toBeUndefined();
 	expect(productionConstraintRegistry.get("testMaxBudget")).toBeUndefined();
 });
