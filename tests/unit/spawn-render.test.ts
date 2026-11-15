@@ -634,6 +634,45 @@ test("nested spawn attachSession rebuilds after replacing session transcript str
 	expect(secondRender).not.toContainEqual(expect.stringContaining("before"));
 });
 
+/** The non-blank lines, plain and trimmed, of an expanded nested spawn over the static transcript `messages`. */
+function renderExpandedTranscript(messages: AgentSession["messages"]): string[] {
+	const state = createState();
+	storeChild(state, messages);
+	return plain(
+		renderSpawnResult({ content: [], details: { model: "m", thinking: "low", truncated: false } }, true, realTheme, resultContext(), state).render(120),
+	)
+		.map((line) => line.trim())
+		.filter((line) => line !== "");
+}
+
+test("expanded nested spawn shows a user message whose content is plain text", () => {
+	expect(renderExpandedTranscript([userMessage("plain task")])).toStrictEqual(["m • low", "plain task"]);
+});
+
+test("expanded nested spawn shows the text blocks of a user message", () => {
+	const lines = renderExpandedTranscript([
+		{
+			role: "user",
+			content: [
+				{ type: "text", text: "first part" },
+				{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+				{ type: "text", text: "second part" },
+			],
+			timestamp: 1_767_225_600_000,
+		},
+	]);
+
+	expect(lines).toStrictEqual(["m • low", "first part", "second part"]);
+});
+
+test("expanded nested spawn shows a skill invocation and the user message after it", () => {
+	const lines = renderExpandedTranscript([
+		userMessage('<skill name="review" location="/skills/review/SKILL.md">\nCheck the diff.\n</skill>\n\nreview my change'),
+	]);
+
+	expect(lines).toStrictEqual(["m • low", "[skill]", "review", "Check the diff.", "review my change"]);
+});
+
 test("nested spawn rebuildFromSession quietly tolerates missing tool definitions", () => {
 	const state = createState();
 	// The subscribable session has no tool definitions, so the bash call renders without one.

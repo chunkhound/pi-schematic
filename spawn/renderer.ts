@@ -15,7 +15,7 @@
  *   rate, keeping the main thread responsive.
  */
 
-import type { StopReason, TextContent } from "@earendil-works/pi-ai";
+import type { StopReason, TextContent, UserMessage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import {
 	AssistantMessageComponent,
@@ -795,6 +795,34 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		);
 	}
 
+	private addUserMessage(content: UserMessage["content"]): void {
+		const text = (
+			typeof content === "string"
+				? content
+				: content
+						.filter((block): block is TextContent => block.type === "text")
+						.map((block) => block.text)
+						.join("\n")
+		).trim();
+		if (!text) {
+			return;
+		}
+		if (this.children.length > 0) {
+			this.addChild(new Spacer(1));
+		}
+		const skillBlock = parseSkillBlock(text);
+		if (skillBlock) {
+			const component = new SkillInvocationMessageComponent(skillBlock, this.markdownTheme);
+			component.setExpanded(this.expanded);
+			this.addChild(component);
+			if (skillBlock.userMessage !== undefined && skillBlock.userMessage !== "") {
+				this.addChild(new UserMessageComponent(skillBlock.userMessage, this.markdownTheme));
+			}
+		} else {
+			this.addChild(new UserMessageComponent(text, this.markdownTheme));
+		}
+	}
+
 	private addMessageToChat(message: SpawnChildMessage): void {
 		switch (message.role) {
 			case "bashExecution": {
@@ -817,32 +845,6 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 					const component = new CustomMessageComponent(message as any, undefined, this.markdownTheme);
 					component.setExpanded(this.expanded);
 					this.addChild(component);
-				}
-				break;
-			}
-			case "user": {
-				const blocks = Array.isArray(message.content) ? message.content : [];
-				const text = blocks
-					.filter((block: { type: string; text?: string }) => block.type === "text" && typeof block.text === "string")
-					.map((block: { type: string; text?: string }) => block.text ?? "")
-					.join("\n")
-					.trim();
-				if (!text) {
-					break;
-				}
-				if (this.children.length > 0) {
-					this.addChild(new Spacer(1));
-				}
-				const skillBlock = parseSkillBlock(text);
-				if (skillBlock) {
-					const component = new SkillInvocationMessageComponent(skillBlock, this.markdownTheme);
-					component.setExpanded(this.expanded);
-					this.addChild(component);
-					if (skillBlock.userMessage !== undefined && skillBlock.userMessage !== "") {
-						this.addChild(new UserMessageComponent(skillBlock.userMessage, this.markdownTheme));
-					}
-				} else {
-					this.addChild(new UserMessageComponent(text, this.markdownTheme));
 				}
 				break;
 			}
@@ -876,7 +878,12 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		const finalOutcome = this.details?.outcome !== undefined && this.details.outcome !== "running";
 		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
 
-		for (const message of this.session.messages as SpawnChildMessage[]) {
+		for (const sessionMessage of this.session.messages) {
+			if (sessionMessage.role === "user") {
+				this.addUserMessage(sessionMessage.content);
+				continue;
+			}
+			const message = sessionMessage as SpawnChildMessage;
 			if (message.role === "assistant") {
 				const stopOutcome = getStopReasonOutcome(message.stopReason);
 				if (stopOutcome && !finalOutcome) {
@@ -1030,7 +1037,11 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 	 */
 
 	private handleMessageStart(event: Extract<AgentSessionEvent, { type: "message_start" }>): void {
-		if (event.message.role === "custom" || event.message.role === "user") {
+		if (event.message.role === "user") {
+			this.addUserMessage(event.message.content);
+			return;
+		}
+		if (event.message.role === "custom") {
 			this.addMessageToChat(event.message as unknown as SpawnChildMessage);
 			return;
 		}
