@@ -169,7 +169,12 @@ test("index session_start notifies schema-invalid load issues", async () => {
 
 	expect(notifications).toContainEqual(expect.stringMatching(/schema-invalid/));
 	expect(notifications).toContainEqual(expect.stringMatching(/project scope/));
-	expect(notifications).toContainEqual(expect.stringContaining(`${dirs.cwd}/.pi/pi-schematic/model-groups.json`));
+	// The path separator comes from the platform, so the pattern accepts either one.
+	expect(notifications).toContainEqual(
+		expect.stringMatching(
+			/^Model Groups config schema-invalid in project scope \(.*model-groups-extension-[^)]*project[\\/]+\.pi[\\/]+pi-schematic[\\/]+model-groups\.json\); using empty config for that scope; group broken\.models\[0\]\.provider must be a non-empty string$/,
+		),
+	);
 });
 
 test("before_agent_start writes fresh names-and-effective-modalities guidance", async () => {
@@ -345,7 +350,7 @@ test("model groups untrusted root flow never probes project data and publishes g
 
 test("model groups boot load-issue notifications escape hostile source, backup, and error detail fields", async () => {
 	const dirs = tempDirs();
-	const hostile = { ...dirs, cwd: `${dirs.cwd}\n\u001b]8;;https://example.test\u0007path` };
+	const hostile = { ...dirs, cwd: `${dirs.cwd}\n\u001b]8;;example.test\u0007path` };
 	const projectPath = projectConfigPath(hostile);
 	__setModelGroupsFsForTests({
 		existsSync: (candidate) => String(candidate) === projectPath,
@@ -361,10 +366,13 @@ test("model groups boot load-issue notifications escape hostile source, backup, 
 
 	const notification = notifications.find((message) => message.includes("corrupt-json"));
 	assertPresent(notification, "a corrupt-json notification is shown");
-	// The path is joined, which collapses the double slash after "https:".
-	const escapedPath = `${dirs.cwd}\\n\\x1B]8;;https:/example.test\\x07path/.pi/pi-schematic/model-groups.json`;
-	expect(notification).toContain(`project scope (${escapedPath})`);
-	expect(notification).toContain(`backup failed (${escapedPath}.bak), original file left untouched`);
+	// The hostile directory name holds no slash, so joining it keeps it intact; the separators around it are the platform's.
+	expect(notification).toMatch(
+		/project scope \(.*project\\n\\x1B\]8;;example\.test\\x07path[\\/]+\.pi[\\/]+pi-schematic[\\/]+model-groups\.json\); using empty config/,
+	);
+	expect(notification).toMatch(
+		/backup failed \(.*project\\n\\x1B\]8;;example\.test\\x07path[\\/]+\.pi[\\/]+pi-schematic[\\/]+model-groups\.json\.bak\), original file left untouched/,
+	);
 	expect(notification).toMatch(/backup\\n\\x1B\[31mfailed\\x07/);
 	expect(Array.from(notification).filter((char) => /\p{Cc}|\u2028|\u2029/u.test(char))).toStrictEqual([]);
 });
