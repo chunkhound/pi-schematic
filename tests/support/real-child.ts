@@ -144,7 +144,6 @@ export async function runRealChildInvocation(params: {
 	const provider = "agentic-e2e";
 	const modelId = "agentic-e2e-model";
 	const resultText = params.resultText ?? `${provider}/${modelId}:${sentinel}`;
-	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 	const previousOpenAiApiKey = process.env.OPENAI_API_KEY;
 	const previousFetch = globalThis.fetch;
 	const outboundFetches: string[] = [];
@@ -233,7 +232,6 @@ export default function(pi) {
 `,
 		);
 
-		process.env.PI_CODING_AGENT_DIR = agentDir;
 		process.env.OPENAI_API_KEY = "test-openai-key";
 		globalThis.fetch = (input: Parameters<typeof fetch>[0]) => {
 			outboundFetches.push(input instanceof Request ? input.url : String(input));
@@ -279,6 +277,7 @@ export default function(pi) {
 					registerSpawnTool(api, state);
 				},
 			],
+			// The fixture points pi's agent directory at `agentDir` until the test finishes, which covers the child invocation.
 			agentDir,
 			sessionManager: SessionManager.inMemory(cwd),
 			context: { getModel: () => model },
@@ -347,11 +346,6 @@ export default function(pi) {
 			observedThinking: probeArray("__agenticE2eThinking", isOptionalString, true),
 		};
 	} finally {
-		if (previousAgentDir === undefined) {
-			delete process.env.PI_CODING_AGENT_DIR;
-		} else {
-			process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-		}
 		if (previousOpenAiApiKey === undefined) {
 			delete process.env.OPENAI_API_KEY;
 		} else {

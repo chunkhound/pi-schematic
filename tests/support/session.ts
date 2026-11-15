@@ -77,16 +77,14 @@ export interface SubscribableSession {
 	abort: Mock<() => Promise<void>>;
 }
 
-type SessionMembers = Pick<AgentSession, "messages" | "subscribe" | "sessionManager" | "getToolDefinition" | "abort">;
-
 // An AgentSession whose own members are `members`; reading any other member AgentSession declares,
-// or its instance fields `agent` and `settingsManager`, throws, naming it.
-function guardedSession(members: SessionMembers): AgentSession {
+// or its instance fields `agent` and `settingsManager`, throws, naming it and the `fixture` it was read on.
+function guardedSession(members: Partial<AgentSession>, fixture: string): AgentSession {
 	return guardedInstance<AgentSession>(
 		AgentSession.prototype,
 		members,
 		["agent", "settingsManager"],
-		(member) => new Error(`session.${member} is not available on the subscribable test session.`),
+		(member) => new Error(`session.${member} is not available on the ${fixture}.`),
 	);
 }
 
@@ -100,18 +98,21 @@ function guardedSession(members: SessionMembers): AgentSession {
 export function createSubscribableSession(cwd: string, messages: AgentSession["messages"] = []): SubscribableSession {
 	const listeners = new Set<(event: AgentSessionEvent) => void>();
 	const abort = vi.fn(() => Promise.resolve());
-	const session = guardedSession({
-		messages,
-		subscribe: (listener) => {
-			listeners.add(listener);
-			return () => {
-				listeners.delete(listener);
-			};
+	const session = guardedSession(
+		{
+			messages,
+			subscribe: (listener) => {
+				listeners.add(listener);
+				return () => {
+					listeners.delete(listener);
+				};
+			},
+			sessionManager: SessionManager.inMemory(cwd),
+			getToolDefinition: () => undefined,
+			abort,
 		},
-		sessionManager: SessionManager.inMemory(cwd),
-		getToolDefinition: () => undefined,
-		abort,
-	});
+		"subscribable test session",
+	);
 	return {
 		session,
 		emit: (event) => {
@@ -127,20 +128,13 @@ export function createSubscribableSession(cwd: string, messages: AgentSession["m
 }
 
 /**
- * A child session that only sits in the state's session registries: `messages`, a `subscribe`
- * that registers nothing, an in-memory `sessionManager` for the process directory, a resolving
- * `abort` mock and no tool definitions; reading any other AgentSession member throws. It stays
- * custom because a real AgentSession runs its own agent loop (see above); these tests only store
- * it in the state's registries and let a reset abort it.
+ * A child session that only sits in the state's session registries: it has a resolving `abort`
+ * mock, and reading any other AgentSession member throws. It stays custom because a real
+ * AgentSession runs its own agent loop (see above); these tests only store it in the state's
+ * registries and let a reset abort it.
  */
-export function createSession(messages: AgentSession["messages"]): AgentSession {
-	return guardedSession({
-		messages,
-		subscribe: () => () => undefined,
-		sessionManager: SessionManager.inMemory(process.cwd()),
-		getToolDefinition: () => undefined,
-		abort: vi.fn(() => Promise.resolve()),
-	});
+export function createSession(): AgentSession {
+	return guardedSession({ abort: vi.fn(() => Promise.resolve()) }, "registry-only test session");
 }
 
 export interface ChildSessionOptions {

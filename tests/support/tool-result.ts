@@ -31,7 +31,11 @@ export function textOf(result: { content: readonly { type: string; text?: string
 	return result.content.map((block) => block.text ?? "").join("");
 }
 
-/** A failure after the child session exists is returned as an error result, not thrown. */
+/**
+ * Asserts that `result` is an error tool result whose only content is the text block `text`, whose
+ * `details.outcome` is `"error"` and whose `usage` equals `usage`; throws unless `result` and its
+ * details are objects.
+ */
 export function assertErrorResult(result: unknown, text: string, usage: unknown): void {
 	if (!isRecord(result)) {
 		throw new Error(`Expected a tool result object, got ${JSON.stringify(result)}.`);

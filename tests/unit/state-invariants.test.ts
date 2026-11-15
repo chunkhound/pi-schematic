@@ -82,8 +82,8 @@ async function apply(pi: ExtensionAPI, state: SchematicState, action: StateActio
 			await saveNotebookPage(pi, state, action.name, CLIPPED_BODY);
 			break;
 		case "addChildSession":
-			state.childSessions.set(action.id, createSession([]));
-			state.liveChildSessions.set(action.id, createSession([]));
+			state.childSessions.set(action.id, createSession());
+			state.liveChildSessions.set(action.id, createSession());
 			break;
 		case "abortChildren":
 			abortAndClearChildSessions(state);
@@ -366,8 +366,8 @@ test("resetState clears every field it owns", async () => {
 	state.readonlyNudgeRearmAtSettle = true;
 	state.pendingRequestedHandoff = newRequestedHandoff("continue");
 	state.lastWatchdogBand = 1;
-	state.childSessions.set("child-1", createSession([]));
-	state.liveChildSessions.set("child-1", createSession([]));
+	state.childSessions.set("child-1", createSession());
+	state.liveChildSessions.set("child-1", createSession());
 	state.readonlyEnabled = true;
 	state.readonlyNudgePending = true;
 	state.frontmatterSkillCache.set("skill-a", {
