@@ -36,7 +36,15 @@ test("the context primer states the notebook, topic, and handoff contracts", () 
 	expect(primer).toContain("nextInstruction");
 });
 
-test("before_agent_start writes notebook contracts plus live topic and page data", async () => {
+test("before_agent_start writes the notebook contract into the primer section", async () => {
+	const fixture = await shippedRunner();
+
+	const sections = await sectionsAfterBeforeAgentStart(fixture);
+
+	expect(sections.schematic).toContain("### Notebook — two-tier cache for this work stream\nPages are a cache for this stream, not an archive");
+});
+
+test("before_agent_start writes the live topic and notebook page listing", async () => {
 	const fixture = await shippedRunner();
 	await fixture.command("notebook").handler("oauth", fixture.runner.createCommandContext());
 	await fixture.tool("notebook_write").execute("1", { name: "alpha", content: "first line\nsecond line" });

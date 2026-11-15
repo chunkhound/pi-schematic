@@ -903,6 +903,14 @@ test("model groups TUI Esc in MODEL_EDIT returns to the group editor", async () 
 });
 
 test("model groups TUI clamps the cursor to the final add row", async () => {
+	const c = component({ registry: await tuiRegistry(), defs: { global: { "global-name": { models: [] } } }, policy: "global-only" }).c;
+	press(c, DOWN, DOWN);
+	expect(rendered(c)).toMatch(/→ \+ Add group/);
+	press(c, ENTER);
+	expect(rendered(c)).toMatch(/Model Group: new-group/);
+});
+
+test("model groups TUI under global-only access creates a global group from the add row", async () => {
 	const calls: { scope: ModelGroupScope; access: ModelGroupsAccess; name: string; def: ModelGroupDef }[] = [];
 	const c = component({
 		registry: await tuiRegistry(),
@@ -915,9 +923,7 @@ test("model groups TUI clamps the cursor to the final add row", async () => {
 		}),
 		policy: "global-only",
 	}).c;
-	press(c, DOWN, DOWN);
-	expect(rendered(c)).toMatch(/→ \+ Add group/);
-	press(c, ENTER);
+	press(c, DOWN, ENTER);
 	expect(calls).toHaveLength(1);
 	expect(calls[0].scope).toBe("global");
 	expect(calls[0].access).toStrictEqual({ cwd: "/tmp/project", policy: "global-only" });

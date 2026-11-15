@@ -40,6 +40,7 @@ beforeAll(async () => {
 	return () => rm(isolatedAgentDir, { recursive: true, force: true });
 });
 beforeEach(() => {
+	// A hook cannot wrap a test body in withTempAgentDir; the config's unstubEnvs restores this stub after each test.
 	vi.stubEnv("PI_CODING_AGENT_DIR", isolatedAgentDir);
 });
 
@@ -399,23 +400,23 @@ test("global prompts under the home agent dir are ignored when PI_CODING_AGENT_D
 });
 
 test("global prompt scan follows a PI_CODING_AGENT_DIR change between rebuilds", async () => {
-	const firstAgentDir = await tmpDir();
-	onTestFinished(() => rm(firstAgentDir, { recursive: true, force: true }));
-	const secondAgentDir = await tmpDir();
-	onTestFinished(() => rm(secondAgentDir, { recursive: true, force: true }));
-	await mkdir(join(firstAgentDir, "prompts"));
-	await writeMd(join(firstAgentDir, "prompts"), "first-dir-prompt", { readonly: true });
-	await mkdir(join(secondAgentDir, "prompts"));
-	await writeMd(join(secondAgentDir, "prompts"), "second-dir-prompt", { readonly: true });
-	const state = createState();
-	vi.stubEnv("PI_CODING_AGENT_DIR", firstAgentDir);
-	populatePromptCacheFromResolvedCommandsAndDirs(state, [], "/nonexistent/workspace", false);
+	await withTempHome(async () => {
+		await withTempAgentDir(async (firstAgentDir) => {
+			await mkdir(join(firstAgentDir, "prompts"));
+			await writeMd(join(firstAgentDir, "prompts"), "first-dir-prompt", { readonly: true });
+			const state = createState();
+			populatePromptCacheFromResolvedCommandsAndDirs(state, [], "/nonexistent/workspace", false);
 
-	vi.stubEnv("PI_CODING_AGENT_DIR", secondAgentDir);
-	populatePromptCacheFromResolvedCommandsAndDirs(state, [], "/nonexistent/workspace", false);
+			await withTempAgentDir(async (secondAgentDir) => {
+				await mkdir(join(secondAgentDir, "prompts"));
+				await writeMd(join(secondAgentDir, "prompts"), "second-dir-prompt", { readonly: true });
+				populatePromptCacheFromResolvedCommandsAndDirs(state, [], "/nonexistent/workspace", false);
 
-	expect(cacheLookupCommand(state, "first-dir-prompt")).toBeNull();
-	expect(cacheLookupCommand(state, "second-dir-prompt")).toBe(true);
+				expect(cacheLookupCommand(state, "first-dir-prompt")).toBeNull();
+				expect(cacheLookupCommand(state, "second-dir-prompt")).toBe(true);
+			});
+		});
+	});
 });
 
 testWithDir("populateFromSkills reuses the cached entry while mtime is unchanged", async ({ dir }) => {
@@ -983,22 +984,24 @@ testWithDir("populateFromSkills records an invalid explicit model issue for a no
 });
 
 test("invalid project prompt frontmatter shadows a valid global prompt of the same name", async () => {
-	const agentDir = await tempDir();
-	const workspace = await tempDir();
-	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
-	await mkdir(join(agentDir, "prompts"), { recursive: true });
-	await writeMd(join(agentDir, "prompts"), "shadowed", { readonly: true });
-	const projectDir = join(workspace, ".pi", "prompts");
-	await mkdir(projectDir, { recursive: true });
-	// Malformed frontmatter yields no entry at all, only the issue.
-	const projectPath = join(projectDir, "shadowed.md");
-	await writeFile(projectPath, `---\nreadonly: [\n---\n\nBody content.\n`);
-	const state = createState();
+	await withTempHome(async () => {
+		await withTempAgentDir(async (agentDir) => {
+			const workspace = await tempDir();
+			await mkdir(join(agentDir, "prompts"), { recursive: true });
+			await writeMd(join(agentDir, "prompts"), "shadowed", { readonly: true });
+			const projectDir = join(workspace, ".pi", "prompts");
+			await mkdir(projectDir, { recursive: true });
+			// Malformed frontmatter yields no entry at all, only the issue.
+			const projectPath = join(projectDir, "shadowed.md");
+			await writeFile(projectPath, `---\nreadonly: [\n---\n\nBody content.\n`);
+			const state = createState();
 
-	populatePromptCacheFromResolvedCommandsAndDirs(state, [], workspace, true);
+			populatePromptCacheFromResolvedCommandsAndDirs(state, [], workspace, true);
 
-	expect(cacheLookupCommand(state, "shadowed")).toBeNull();
-	expect(cacheLookupCommandIssue(state, "shadowed")).toStrictEqual({ kind: "malformed-frontmatter", filePath: projectPath });
+			expect(cacheLookupCommand(state, "shadowed")).toBeNull();
+			expect(cacheLookupCommandIssue(state, "shadowed")).toStrictEqual({ kind: "malformed-frontmatter", filePath: projectPath });
+		});
+	});
 });
 
 test.each([

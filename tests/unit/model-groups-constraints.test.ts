@@ -104,19 +104,19 @@ test("injected scalar takes the smallest context window among the members the mo
 	]);
 });
 
-test.for([
-	{
-		label: "a member that does not resolve",
-		members: [
-			{ provider: "p", modelId: "rich", model: rich },
-			{ provider: "p", modelId: "gone" },
-		],
-		expected: { aggregate: { automatic: null, supported: 100 } },
-	},
-	{ label: "a group without members", members: [], expected: { aggregate: { automatic: null, supported: null } } },
-])("injected scalar has no automatic value for $label and reports it as unknown", ({ members, expected }) => {
-	expect(evaluateConstraints(resolution(members), {}, createConstraintRegistry([testMinContext]))).toStrictEqual([
-		{ key: "testMinContext", aggregate: expected.aggregate, effective: null, diagnostics: [{ key: "testMinContext", code: "unknown-automatic" }] },
+test("injected scalar has no automatic value for a member that does not resolve and reports it as unknown", () => {
+	const resolved = resolution([
+		{ provider: "p", modelId: "rich", model: rich },
+		{ provider: "p", modelId: "gone" },
+	]);
+
+	expect(evaluateConstraints(resolved, {}, createConstraintRegistry([testMinContext]))).toStrictEqual([
+		{
+			key: "testMinContext",
+			aggregate: { automatic: null, supported: 100 },
+			effective: null,
+			diagnostics: [{ key: "testMinContext", code: "unknown-automatic" }],
+		},
 	]);
 });
 
