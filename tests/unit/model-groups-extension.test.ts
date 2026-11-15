@@ -366,13 +366,10 @@ test("model groups boot load-issue notifications escape hostile source, backup, 
 
 	const notification = notifications.find((message) => message.includes("corrupt-json"));
 	assertPresent(notification, "a corrupt-json notification is shown");
-	// The hostile directory name holds no slash, so joining it keeps it intact; the separators around it are the platform's.
+	// The hostile directory name holds no slash, so joining it keeps it intact; the separators around it are the platform's,
+	// and the temporary directory in front of it differs per run.
 	expect(notification).toMatch(
-		/project scope \(.*project\\n\\x1B\]8;;example\.test\\x07path[\\/]+\.pi[\\/]+pi-schematic[\\/]+model-groups\.json\); using empty config/,
+		/^Model Groups config corrupt-json in project scope \(.*model-groups-extension-[^)]*project\\n\\x1B\]8;;example\.test\\x07path[\\/]+\.pi[\\/]+pi-schematic[\\/]+model-groups\.json\); using empty config for that scope; backup failed \(.*model-groups-extension-[^)]*project\\n\\x1B\]8;;example\.test\\x07path[\\/]+\.pi[\\/]+pi-schematic[\\/]+model-groups\.json\.bak\), original file left untouched; invalid JSON; backup failed: backup\\n\\x1B\[31mfailed\\x07$/,
 	);
-	expect(notification).toMatch(
-		/backup failed \(.*project\\n\\x1B\]8;;example\.test\\x07path[\\/]+\.pi[\\/]+pi-schematic[\\/]+model-groups\.json\.bak\), original file left untouched/,
-	);
-	expect(notification).toMatch(/backup\\n\\x1B\[31mfailed\\x07/);
 	expect(Array.from(notification).filter((char) => /\p{Cc}|\u2028|\u2029/u.test(char))).toStrictEqual([]);
 });
