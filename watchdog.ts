@@ -92,9 +92,11 @@ Save durable findings to the notebook before handoff.`;
 No active notebook topic is set. ${noTopicUrgency}`;
 }
 
-/** Pick the watchdog message; `nudgedHandoff` is the request an eligible required-handoff nudge is for. */
-function selectNudge(state: NudgeState, percent: number | null, eligible: boolean): { text: string; nudgedHandoff: RequestedHandoff | null } {
-	const pct = percent === null ? null : Math.round(percent);
+/**
+ * Pick the watchdog message for the rounded context percent `pct`; `nudgedHandoff` is
+ * the request an eligible required-handoff nudge is for.
+ */
+function selectNudge(state: NudgeState, pct: number | null, eligible: boolean): { text: string; nudgedHandoff: RequestedHandoff | null } {
 	const requestedHandoff = state.pendingRequestedHandoff;
 	if (requestedHandoff) {
 		return { text: buildRequestedHandoffNudge(state, requestedHandoff, eligible), nudgedHandoff: eligible ? requestedHandoff : null };
@@ -105,17 +107,17 @@ function selectNudge(state: NudgeState, percent: number | null, eligible: boolea
 	return { text: buildDefaultNudge(pct, state.activeNotebookTopic, eligible), nudgedHandoff: null };
 }
 
-/** Build a watchdog message using the caller's current handoff eligibility. */
-export function buildNudge(state: NudgeState, percent: number | null, eligible: boolean): string {
-	return selectNudge(state, percent, eligible).text;
+/** Build a watchdog message for the rounded context percent `pct` and the caller's current handoff eligibility. */
+export function buildNudge(state: NudgeState, pct: number | null, eligible: boolean): string {
+	return selectNudge(state, pct, eligible).text;
 }
 
 /**
  * Build the watchdog message the context hook sends. When it is the eligible
  * required-handoff nudge, mark it sent so `agent_settled` counts this run.
  */
-export function buildAndRecordNudge(state: NudgeState, percent: number | null, eligible: boolean): string {
-	const { text, nudgedHandoff } = selectNudge(state, percent, eligible);
+export function buildAndRecordNudge(state: NudgeState, pct: number | null, eligible: boolean): string {
+	const { text, nudgedHandoff } = selectNudge(state, pct, eligible);
 	if (nudgedHandoff) {
 		nudgedHandoff.eligibleNudgeDelivered = true;
 	}

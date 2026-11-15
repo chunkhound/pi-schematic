@@ -182,6 +182,63 @@ test("context nudges at band crossings and after a below-30% reset", async () =>
 	}
 });
 
+test.for([
+	{ percent: 29.4, nudge: undefined },
+	{
+		percent: 29.5,
+		nudge:
+			"Context at 30% — choose your next step by topic fit.\nNo active notebook topic is set. Assign a short stable topic soon. If the work stays within that topic, prefer spawn for noisy subtasks. If the work shifts beyond it, continue working until handoff is available.",
+	},
+])("context sends the first watchdog nudge only from a rounded 30%: $percent%", async ({ percent, nudge }) => {
+	const runner = await createWatchdogRunner({ headless: true });
+
+	const result = await runContext(runner, percentUsage(percent));
+
+	expect(findCustomMessage(result, "pi-schematic-watchdog")?.content).toBe(nudge);
+});
+
+test.for([
+	{ from: 30, to: 49.4, nudge: undefined },
+	{
+		from: 30,
+		to: 49.5,
+		nudge:
+			"Context at 50% — topic discipline matters now.\nNo active notebook topic is set. Assign a short stable topic soon. If the work stays within that topic, prefer spawn for noisy subtasks. If the work shifts beyond it, continue working until handoff is available.",
+	},
+	{ from: 50, to: 69.4, nudge: undefined },
+	{
+		from: 50,
+		to: 69.5,
+		nudge:
+			"Context at 70% — topic discipline is urgent.\nNo active notebook topic is set. Assign a fresh topic now; continue working until handoff is available.",
+	},
+])("context nudges again only when the rounded percent enters a higher band: $from% to $to%", async ({ from, to, nudge }) => {
+	const runner = await createWatchdogRunner({ headless: true });
+	await runContext(runner, percentUsage(from));
+
+	const result = await runContext(runner, percentUsage(to), "hi", 2);
+
+	expect(findCustomMessage(result, "pi-schematic-watchdog")?.content).toBe(nudge);
+});
+
+const READONLY_DISABLED_NUDGE = "[readonly] disabled — write, edit, handoff, and bash writes are now fully available, as is powershell where it is active.";
+
+test.for([
+	{ percent: 29, content: READONLY_DISABLED_NUDGE },
+	{ percent: 29.4, content: READONLY_DISABLED_NUDGE },
+	{ percent: 29.5, content: `${READONLY_DISABLED_NUDGE} Context at 30% — if the work changed topics, you can handoff now.` },
+	{ percent: 30, content: `${READONLY_DISABLED_NUDGE} Context at 30% — if the work changed topics, you can handoff now.` },
+])("the readonly-off nudge carries the context suffix only from a rounded 30%: $percent%", async ({ percent, content }) => {
+	const runner = await createWatchdogRunner();
+	await runCommand(runner, "readonly", "");
+	await drainReadonlyNudge(runner);
+	await runCommand(runner, "readonly", "");
+
+	const result = await runContext(runner, percentUsage(percent), "hi", 2);
+
+	expect(findCustomMessage(result, "pi-schematic-readonly-nudge")?.content).toBe(content);
+});
+
 const ELIGIBLE_AT_75: ContextUsage = { tokens: 150_000, contextWindow: 200_000, percent: 75 };
 const INELIGIBLE_AT_75: ContextUsage = { tokens: 20_000, contextWindow: 26_667, percent: 75 };
 

@@ -820,7 +820,9 @@ export default function (pi: ExtensionAPI): void {
 	// remain advisory, so the guardrail never mandates an impossible handoff.
 	pi.on("context", (event, ctx: ExtensionContext) => {
 		const usage = ctx.getContextUsage();
-		const percent = normalizeContextPercent(usage?.percent);
+		// Rounded once: every threshold below and the nudge text use the percent the user sees.
+		const rawPercent = normalizeContextPercent(usage?.percent);
+		const pct = rawPercent === null ? null : Math.round(rawPercent);
 
 		// Build the readonly toggle-nudge (one-shot on mode change)
 		let readonlyNudgeMsg: { role: "custom"; customType: string; content: string; display: boolean; timestamp: number } | null = null;
@@ -833,7 +835,7 @@ export default function (pi: ExtensionAPI): void {
 					? state.pendingRequestedHandoff || (state.pendingTopicBoundaryHint !== null && isHandoffEligible(usage))
 						? READONLY_HANDOFF_EXCEPTION_SUMMARY
 						: READONLY_ACTIVE_SUMMARY
-					: READONLY_DISABLED_SUMMARY + (percent !== null && percent >= 30 ? buildReadonlyDisabledContextSuffix(percent) : ""),
+					: READONLY_DISABLED_SUMMARY + (pct !== null && pct >= 30 ? buildReadonlyDisabledContextSuffix(pct) : ""),
 				display: false,
 				timestamp: Date.now(),
 			};
@@ -872,7 +874,7 @@ export default function (pi: ExtensionAPI): void {
 		// hint or a sticky user-requested handoff is pending — context is still
 		// fresh enough that ordinary nudges add noise.
 		if (!mustEnforceRequestedHandoff && !state.pendingTopicBoundaryHint) {
-			if (percent === null || percent < 30) {
+			if (pct === null || pct < 30) {
 				state.lastWatchdogBand = null;
 				return appendReadonlyNudge();
 			}
@@ -880,14 +882,14 @@ export default function (pi: ExtensionAPI): void {
 			// Throttle: only nudge when crossing into a higher context-percentage band.
 			// Bands: null (<30), 0 (30-49), 1 (50-69), 2 (70+). This prevents nudging
 			// every turn once past 30%.
-			const band = percent < 50 ? 0 : percent < 70 ? 1 : 2;
+			const band = pct < 50 ? 0 : pct < 70 ? 1 : 2;
 			if (state.lastWatchdogBand !== null && band <= state.lastWatchdogBand) {
 				return appendReadonlyNudge();
 			}
 			state.lastWatchdogBand = band;
 		}
 
-		const nudge = buildAndRecordNudge(state, percent, isHandoffEligible(usage));
+		const nudge = buildAndRecordNudge(state, pct, isHandoffEligible(usage));
 		if (!retainIneligibleHumanBoundary) {
 			state.pendingTopicBoundaryHint = null;
 		}

@@ -173,6 +173,14 @@ test("updateIndicators shows the no-topic warning widget at 85% without an activ
 	]);
 });
 
+test("updateIndicators shows the warning widget at 69.5% context", async () => {
+	const ui = await indicatorsAt(69.5);
+
+	expect(ui.widgets.get(WIDGET_KEY_WARNING)).toStrictEqual([
+		realTheme.fg("error", "⚠ ") + realTheme.fg("warning", "Context at 70% — no active topic; handoff soon unless you can assign one cleanly"),
+	]);
+});
+
 test("updateIndicators hides widget below 70% context", async () => {
 	const { fixture, ctx, setPercent } = await createIndicatorRunner();
 	const state = createState();
