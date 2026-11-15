@@ -105,11 +105,6 @@
       "count": 1
     }
   },
-  "readonly-rehydration.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    }
-  },
   "register-loader.mjs": {
     "n/no-unsupported-features/node-builtins": {
       "count": 1
