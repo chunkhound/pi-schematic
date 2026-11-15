@@ -535,12 +535,11 @@ export function executeSpawn(
 			tools: effectiveToolNames,
 			customTools: effectiveChildTools,
 		});
-		// Pi clamps unsupported requested levels during session creation. Report the
-		// public session value so child details describe what actually runs.
-		const effectiveChildThinking = () => session.thinkingLevel;
 		const buildBaseDetails = (truncated: boolean, outcome: SpawnOutcome): SpawnResultDetails => ({
 			model: childModel.id,
-			thinking: effectiveChildThinking(),
+			// Pi clamps unsupported requested levels during session creation. Report the
+			// public session value so child details describe what actually runs.
+			thinking: session.thinkingLevel,
 			truncated,
 			outcome,
 			route: routeDetails,
