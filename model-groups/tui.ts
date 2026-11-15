@@ -177,7 +177,12 @@ export function createModelGroupsComponent(
 		state.groups = boot.groups;
 		options.onRefresh?.(boot);
 		for (const issue of boot.loadIssues) {
-			const backup = issue.backupFailed === true ? `; backup failed (${escapeDisplayLabel(issue.backupPath)}), original file left untouched` : "";
+			const backup =
+				issue.kind === "unsupported-version"
+					? "; no backup written, original file left untouched"
+					: issue.backupFailed === true
+						? `; backup failed (${escapeDisplayLabel(issue.backupPath)}), original file left untouched`
+						: "";
 			notify(
 				`Model Groups config ${issue.kind} in ${issue.scope} scope (${escapeDisplayLabel(issue.sourcePath)}); using empty config for that scope${backup}; ${escapeDisplayLabel(issue.message)}`,
 				"warning",

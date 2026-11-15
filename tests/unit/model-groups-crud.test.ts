@@ -881,6 +881,25 @@ test("version-3 mutations refuse before temp write including loadScopeConfig-bac
 		expect(fs.readFileSync(sourcePath, "utf8")).toBe(JSON.stringify({ version: 3, groups: {} }));
 	}));
 
+test("a change refused for an unsupported-version file names no backup", () =>
+	withTemp(async ({ cwd }) => {
+		const registry = await storeRegistry();
+		fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
+		fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 3, groups: {} }), "utf8");
+		expect(() => {
+			createGroup("project", access(cwd), "blocked", { models: [] }, registry);
+		}).toThrow(
+			expect.toSatisfy((error: ModelGroupsPersistenceError) => {
+				expect({ message: error.message, targetPath: error.targetPath }).toStrictEqual({
+					message:
+						"Refusing to overwrite project model-groups config because unsupported version 3; no backup was written and the original file is left untouched",
+					targetPath: undefined,
+				});
+				return true;
+			}),
+		);
+	}));
+
 test("modality overrides survive CRUD rename and move lifecycle in both scopes", () =>
 	withTemp(async ({ cwd }) => {
 		const registry = await storeRegistry();

@@ -48,12 +48,21 @@ interface ModelGroupsLoadIssueBase {
 	scope: ModelGroupScope;
 	sourcePath: string;
 	message: string;
-	backupPath: string;
 }
 /** A file that is copied to `backupPath` before its scope loads empty; `backupFailed` is set when the copy threw. */
-type ModelGroupsBackedUpLoadIssue = ModelGroupsLoadIssueBase & { kind: "corrupt-json" | "schema-invalid"; backupFailed?: true; version?: never };
-/** A file from a newer version; it is not copied, and `backupPath` is reported as the target of a refused save. */
-type ModelGroupsUnsupportedVersionLoadIssue = ModelGroupsLoadIssueBase & { kind: "unsupported-version"; version: number; backupFailed?: never };
+type ModelGroupsBackedUpLoadIssue = ModelGroupsLoadIssueBase & {
+	kind: "corrupt-json" | "schema-invalid";
+	backupPath: string;
+	backupFailed?: true;
+	version?: never;
+};
+/** A file from a newer version; it is neither copied nor changed. */
+type ModelGroupsUnsupportedVersionLoadIssue = ModelGroupsLoadIssueBase & {
+	kind: "unsupported-version";
+	version: number;
+	backupPath?: never;
+	backupFailed?: never;
+};
 export type ModelGroupsLoadIssue = ModelGroupsBackedUpLoadIssue | ModelGroupsUnsupportedVersionLoadIssue;
 export type ModelGroupsPersistenceOperation = "save" | "delete" | "move";
 export type ModelGroupsPersistencePhase = "config-validation" | "temp-write" | "rename" | "source-remove" | "load-recovery";

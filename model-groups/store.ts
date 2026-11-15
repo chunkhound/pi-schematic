@@ -263,7 +263,6 @@ function loadScope(
 				sourcePath,
 				kind: "unsupported-version",
 				message: `unsupported version ${parsed.version}`,
-				backupPath: `${sourcePath}.bak`,
 				version: parsed.version,
 			},
 		};
@@ -374,13 +373,23 @@ export function saveModelGroups(
 }
 function loadScopeConfig(scope: ModelGroupScope, access: ModelGroupsAccess, registry: ConstraintRegistry = productionConstraintRegistry): ModelGroupsConfig {
 	const loaded = loadScope(scope, access, registry);
-	if (loaded.issue?.backupFailed === true || loaded.issue?.kind === "unsupported-version") {
+	if (loaded.issue?.kind === "unsupported-version") {
+		throw persistenceError({
+			operation: "save",
+			scope,
+			sourcePath: loaded.issue.sourcePath,
+			phase: "config-validation",
+			message: `Refusing to overwrite ${scope} model-groups config because ${loaded.issue.message}; no backup was written and the original file is left untouched`,
+			cause: loaded.issue,
+		});
+	}
+	if (loaded.issue?.backupFailed === true) {
 		throw persistenceError({
 			operation: "save",
 			scope,
 			sourcePath: loaded.issue.sourcePath,
 			targetPath: loaded.issue.backupPath,
-			phase: loaded.issue.kind === "unsupported-version" ? "config-validation" : "load-recovery",
+			phase: "load-recovery",
 			message: `Refusing to overwrite ${scope} model-groups config after ${loaded.issue.kind} recovery because ${loaded.issue.message}`,
 			cause: loaded.issue,
 		});

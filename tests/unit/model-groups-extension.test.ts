@@ -5,7 +5,7 @@ import path from "node:path";
 import { SessionManager, type AutocompleteProviderFactory, type ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { __setModelGroupsFsForTests } from "../../model-groups/store.js";
-import { assertPresent } from "../assertions.js";
+import { assertPresent, expectSuffix } from "../assertions.js";
 import { createModelRegistry } from "../support/model-registry.js";
 import { createRunner, type RunnerFixture, type RunnerOptions } from "../support/runner.js";
 import { realTheme } from "../support/theme.js";
@@ -157,6 +157,17 @@ test("index session_start notifies corrupt/schema/unsupported load issues", asyn
 
 	expect(notifications).toContainEqual(expect.stringMatching(/corrupt-json/));
 	expect(notifications).toContainEqual(expect.stringMatching(/unsupported-version/));
+});
+
+test("index session_start says no backup was written for an unsupported-version file", async () => {
+	const dirs = tempDirs();
+	writeConfig(projectConfigPath(dirs), { version: 99, groups: {} });
+
+	const notifications = await sessionStartNotifications(await extensionRunner(dirs));
+
+	const notification = notifications.find((message) => message.includes("unsupported-version"));
+	assertPresent(notification, "an unsupported-version notification is shown");
+	expectSuffix(notification, "); using empty config for that scope; no backup written, original file left untouched; unsupported version 99");
 });
 
 test("index session_start notifies schema-invalid load issues", async () => {
