@@ -376,16 +376,17 @@ function testAgentDir(): string {
 }
 
 /**
- * Load `factories` through pi's `DefaultResourceLoader` as inline extensions and
- * bind the host actions onto the runtime pi built. `apis[i]` and `extensions[i]`
+ * Load `factories` through pi's `DefaultResourceLoader` as inline extensions, with
+ * `cwd` as the loader's working directory. No host action is bound: the runtime's
+ * actions stay as pi's loader left them, and most throw pi's "Extension runtime not
+ * initialized" error until a caller binds them. `apis[i]` and `extensions[i]`
  * belong to `factories[i]`; the pairing relies on pi loading inline factories one
  * after another, in order, and the count check below guards that pairing: it catches
  * pi loading an extra discovered extension or dropping one. Throws one error listing
  * the load errors, each starting a new line as `path: error`.
  */
-async function loadExtensions(
+export async function loadExtensions(
 	factories: ExtensionFactory[],
-	state: HostState,
 	cwd: string,
 ): Promise<{ apis: ExtensionAPI[]; extensions: Extension[]; runtime: ExtensionRuntime }> {
 	const apis: ExtensionAPI[] = [];
@@ -419,7 +420,6 @@ async function loadExtensions(
 	if (extensions.length !== factories.length) {
 		throw new Error(`pi loaded ${extensions.length} extensions for ${factories.length} factories: ${extensions.map((e) => e.path).join(", ")}.`);
 	}
-	bindHostActions(runtime, state);
 	return { apis, extensions, runtime };
 }
 
@@ -432,7 +432,8 @@ async function loadExtensions(
  */
 export async function createTestHost(factory: ExtensionFactory = registerSchematic, seed: TestHostSeed = {}): Promise<TestPI> {
 	const state = createHostState(seed);
-	const { apis, extensions } = await loadExtensions([factory], state, process.cwd());
+	const { apis, extensions, runtime } = await loadExtensions([factory], process.cwd());
+	bindHostActions(runtime, state);
 	return stampAccessors(apis[0], extensions[0], state);
 }
 
@@ -472,7 +473,8 @@ export async function emitBeforeAgentStart(init: {
 	after?: ExtensionFactory[];
 }): Promise<{ result: Awaited<ReturnType<ExtensionRunner["emitBeforeAgentStart"]>>; prompt: string }> {
 	const cwd = process.cwd();
-	const { extensions, runtime } = await loadExtensions([...(init.before ?? []), registerSchematic, ...(init.after ?? [])], createHostState({}), cwd);
+	const { extensions, runtime } = await loadExtensions([...(init.before ?? []), registerSchematic, ...(init.after ?? [])], cwd);
+	bindHostActions(runtime, createHostState({}));
 	// No registry: refreshModelGroupsState skips loading, so model-group config in the real home directory cannot leak in.
 	const runner = new ExtensionRunner(extensions, runtime, cwd, SessionManager.inMemory(cwd), undefined as unknown as ModelRegistry);
 	const errors: ExtensionError[] = [];
