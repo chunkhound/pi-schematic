@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Model group edits no longer store derived evaluations**: changing a group in `/model-groups` wrote the group's computed constraint evaluations into `model-groups.json` as an `evaluations` key. The store now drops that key like the other derived fields, and the next change in that file's scope removes it.
 - **Spawn modality errors name each missing modality once**: when a spawn asked a Model Group for a modality that both the group and its routed model lacked, the error listed it twice, as in `cannot satisfy required modalities: image, image`. Each missing modality is now listed once.
 - **Model Group frontmatter errors end in one period**: a `/command` whose `model-group` frontmatter named an unknown, empty or unusable group showed an error ending in two periods, as in `Model Group 'empty' has no model entries..`. The error now ends in one.
+- **Blank notebook page names are rejected**: `notebook_write` refuses a page name that is empty or holds only whitespace, in the parent session and in spawned children, and stores nothing. Before, a page written under an empty name was lost when the session was reloaded. A page already saved under a whitespace-only name still loads.
 
 ## [0.7.1] - 2026-11-08
 

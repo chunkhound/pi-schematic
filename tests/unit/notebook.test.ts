@@ -259,6 +259,26 @@ test("page entries without a version field have no effect on rehydrated state", 
 	expect(Array.from(state.notebookPages.entries())).toStrictEqual([["current", "new"]]);
 });
 
+test("rehydration skips a persisted page entry with an empty name", async () => {
+	const session = SessionManager.inMemory(process.cwd());
+	session.appendCustomEntry("notebook-entry", { version: 1, epoch: 1, name: "", content: "lost" });
+	session.appendCustomEntry("notebook-entry", { version: 1, epoch: 1, name: "kept", content: "body", clipped: false });
+
+	const { state } = await rehydrated(session);
+
+	expect(Array.from(state.notebookPages.entries())).toStrictEqual([["kept", "body"]]);
+});
+
+test("rehydration restores a page persisted under a whitespace-only name", async () => {
+	const session = SessionManager.inMemory(process.cwd());
+	session.appendCustomEntry("notebook-entry", { version: 1, epoch: 1, name: " ", content: "body", clipped: false });
+
+	const { fixture } = await rehydrated(session);
+	const read = await fixture.tool("notebook_read").execute("1", { name: " " });
+
+	expect(read.details).toStrictEqual({ entries: [" "], found: true, body: "body", clipped: false });
+});
+
 test("session_start rehydrates the latest persisted notebook state through the full hook chain", async () => {
 	const session = SessionManager.inMemory(process.cwd());
 	session.appendCustomEntry("notebook-entry", { version: 1, epoch: 6, name: "stale", content: "old" });
@@ -300,6 +320,22 @@ test("notebook tools add/get/list return stable contract details", async () => {
 	const listResult = await fixture.tool("notebook_index").execute("3", {});
 	expect(listResult.details).toStrictEqual({ entries: ["entry-a"] });
 	expect(firstText(listResult)).toMatch(/entry-a: first line/);
+});
+
+test.each([
+	{ label: "empty", name: "" },
+	{ label: "one space", name: " " },
+	{ label: "a tab and a newline", name: "\t\n" },
+])("notebook_write rejects a blank page name: $label", async ({ name }) => {
+	const { state, fixture } = await notebookHost({ ui: true });
+
+	await expect(fixture.tool("notebook_write").execute("1", { name, content: "body" })).rejects.toThrow(
+		new Error("Notebook page name must not be empty or whitespace-only."),
+	);
+
+	expect(Array.from(state.notebookPages.entries())).toStrictEqual([]);
+	expect(fixture.host.appendedEntries).toStrictEqual([]);
+	expect(fixture.ui.statuses.size, "no indicator update").toBe(0);
 });
 
 test("notebook tools reject access once their isStale callback reports stale", async () => {

@@ -105,6 +105,11 @@ export async function saveNotebookPage(
 	content: string,
 	assertWritable?: () => void | Promise<void>,
 ): Promise<{ entries: string[]; preview: string; truncation: TruncationReport | null; clipped: boolean }> {
+	// Rehydration skips an entry with an empty name, so the page would be lost on reload;
+	// a whitespace-only name is refused with it.
+	if (name.trim() === "") {
+		throw new Error("Notebook page name must not be empty or whitespace-only.");
+	}
 	return withWriteLock(async () => {
 		await assertWritable?.();
 		const truncated = truncateHead(content, {
