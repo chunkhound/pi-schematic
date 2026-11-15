@@ -224,18 +224,9 @@ function validateConfig(raw: unknown, registry: ConstraintRegistry): { ok: true;
 	const normalized = normalizeGroups(raw.groups, registry);
 	return normalized.ok ? { ok: true, config: { version: CURRENT_VERSION, groups: normalized.groups } } : normalized;
 }
-function backupAndIssue(
-	scope: ModelGroupScope,
-	sourcePath: string,
-	kind: ModelGroupsLoadIssue["kind"],
-	message: string,
-	version?: number,
-): ModelGroupsLoadIssue {
+function backupAndIssue(scope: ModelGroupScope, sourcePath: string, kind: "corrupt-json" | "schema-invalid", message: string): ModelGroupsLoadIssue {
 	const backupPath = `${sourcePath}.bak`;
-	const issue: ModelGroupsLoadIssue = { scope, sourcePath, kind, message, backupPath, version };
-	if (kind === "unsupported-version") {
-		return issue;
-	}
+	const issue: ModelGroupsLoadIssue = { scope, sourcePath, kind, message, backupPath };
 	try {
 		fsOps.copyFileSync(sourcePath, backupPath);
 	} catch (cause) {
@@ -267,7 +258,14 @@ function loadScope(
 	if (isPlainRecord(parsed) && typeof parsed.version === "number" && Number.isInteger(parsed.version) && parsed.version > CURRENT_VERSION) {
 		return {
 			config: emptyConfig(),
-			issue: backupAndIssue(scope, sourcePath, "unsupported-version", `unsupported version ${parsed.version}`, parsed.version),
+			issue: {
+				scope,
+				sourcePath,
+				kind: "unsupported-version",
+				message: `unsupported version ${parsed.version}`,
+				backupPath: `${sourcePath}.bak`,
+				version: parsed.version,
+			},
 		};
 	}
 	const validated = validateConfig(parsed, registry);
