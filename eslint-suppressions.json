@@ -53,7 +53,7 @@
   },
   "model-groups/store.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 5
+      "count": 4
     }
   },
   "model-groups/tui.ts": {

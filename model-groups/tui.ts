@@ -139,7 +139,6 @@ export function createModelGroupsComponent(
 		screen: "LIST" as ModelGroupsScreen,
 		row: 0,
 		groups: [] as ResolvedModelGroup[],
-		loadIssues: [] as ModelGroupsBootValidation["loadIssues"],
 		editKey: null as string | null,
 		editName: "",
 		editScope: access.policy === "global-project" ? "project" : "global",
@@ -176,7 +175,6 @@ export function createModelGroupsComponent(
 	function refresh(): void {
 		const boot = store.listResolvedModelGroups(access, modelRegistry);
 		state.groups = boot.groups;
-		state.loadIssues = boot.loadIssues;
 		options.onRefresh?.(boot);
 		for (const issue of boot.loadIssues) {
 			const backupPath = issue.backupPath !== undefined && issue.backupPath !== "" ? escapeDisplayLabel(issue.backupPath) : "";
@@ -192,7 +190,6 @@ export function createModelGroupsComponent(
 		state.groups = options.initialValidation.groups
 			.filter((group) => access.policy === "global-project" || group.scope === "global")
 			.map((group) => (access.policy === "global-project" ? group : { ...group, validation: { ...group.validation, shadowedByProject: false } }));
-		state.loadIssues = options.initialValidation.loadIssues.filter((issue) => access.policy === "global-project" || issue.scope === "global");
 	} else {
 		refresh();
 	}

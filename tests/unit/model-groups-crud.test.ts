@@ -546,7 +546,9 @@ test("model groups move source-remove failure throws a typed move error and pres
 
 test.each<[string, unknown, string | RegExp]>([
 	["root", [], /root/],
+	["empty object", {}, "version must be 2"],
 	["missing version", { groups: {} }, "version must be 2"],
+	["version 1 without groups", { version: 1 }, "version must be 2"],
 	["version 0", { version: 0, groups: {} }, "version must be 2"],
 	["version 1", { version: 1, groups: {} }, "version must be 2"],
 	["version type", { version: "1", groups: {} }, "version must be 2"],
@@ -574,7 +576,7 @@ test.each<[string, unknown, string | RegExp]>([
 	}),
 );
 
-test("store-level validation derives empty-common and stale-override flags and counts them", () =>
+test("store-level validation counts groups without common modalities and stale modality overrides", () =>
 	withTemp(async ({ cwd }) => {
 		const registry = await storeRegistry();
 		const a = access(cwd);
@@ -597,13 +599,8 @@ test("store-level validation derives empty-common and stale-override flags and c
 			"utf8",
 		);
 		const resolved = validateModelGroups(loadModelGroups(a), registry);
+		// The empty group and the group with an unresolved member have no common modalities;
 		// claude supports text only, so image is a stale unsupported override entry.
-		const empty = resolved.find((g) => g.name === "empty");
-		expect(empty?.validation.emptyCommonModalities, "empty group has no common modalities").toBe(true);
-		const unresolved = resolved.find((g) => g.name === "unresolved");
-		expect(unresolved?.validation.emptyCommonModalities, "unresolved member fails closed").toBe(true);
-		const stale = resolved.find((g) => g.name === "stale");
-		expect(stale?.validation.unsupportedOverrideModalities).toStrictEqual(["image"]);
 		const summary = summarizeBootValidation(resolved);
 		expect(summary.emptyModalityCount).toBe(2);
 		expect(summary.staleModalityOverrideCount).toBe(1);
@@ -840,7 +837,7 @@ test("store normalization strips runtime-derived group keys while preserving opa
 			scope: "project",
 			sourcePath: "/runtime/model-groups.json",
 			modalities: { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image"] },
-			validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
+			validation: { unavailableRefs: [], shadowedByProject: false, degraded: false },
 			evaluations: [],
 		};
 		updateGroup("project", a, "review", runtimeView, registry);

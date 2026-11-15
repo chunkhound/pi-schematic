@@ -50,8 +50,6 @@ export function group(
 			unavailableRefs: opts.unavailableRefs ?? [],
 			shadowedByProject: opts.shadowedByProject ?? false,
 			degraded: (opts.unavailableRefs?.length ?? 0) > 0,
-			emptyCommonModalities: false,
-			unsupportedOverrideModalities: [],
 		},
 		modalities: { common: [], supported: [], effective: [] },
 		evaluations: evaluateConstraints(

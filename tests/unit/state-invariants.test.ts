@@ -288,7 +288,7 @@ test("Property 4: Reset clears all state fields", async () => {
 						sourcePath: "<project>",
 						models: [],
 						modalities: { common: [], supported: [], effective: [] },
-						validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
+						validation: { unavailableRefs: [], shadowedByProject: false, degraded: false },
 						evaluations: [],
 					},
 				];

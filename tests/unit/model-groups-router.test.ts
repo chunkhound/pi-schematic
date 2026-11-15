@@ -297,51 +297,48 @@ test("routed empty modality requirements select by RNG across usable members", a
 });
 
 test("plain inherited route treats empty requiredModalities as satisfied", async () => {
-	const reg = await routerRegistry([
-		{ id: "rich-parent", input: ["text", "image"] },
-		{ id: "text-parent", input: ["text"] },
-	]);
-	const rich = found(reg, "rich-parent");
-	const text = found(reg, "text-parent");
+	const reg = await routerRegistry([{ id: "text-parent", input: ["text"] }]);
 	// The requirement check runs and an empty requirement passes, so the route stays inherited.
 	expect(
 		resolveSpawnModelRoute({
 			constraints: { modalities: { required: [] } },
 			groups: [],
-			parentModel: text,
+			parentModel: found(reg, "text-parent"),
 			parentThinking: "medium",
 			modelRegistry: reg,
 		}).status,
 	).toBe("inherited");
-	// Parent satisfies all requirements → inherited route succeeds.
+});
+
+test("plain inherited route stays inherited when the parent model has every required modality", async () => {
+	const reg = await routerRegistry([{ id: "rich-parent", input: ["text", "image"] }]);
 	expect(
 		resolveSpawnModelRoute({
 			constraints: { modalities: { required: ["text", "image"] } },
 			groups: [],
-			parentModel: rich,
+			parentModel: found(reg, "rich-parent"),
 			parentThinking: "medium",
 			modelRegistry: reg,
 		}).status,
 	).toBe("inherited");
-	// Parent lacks a required modality → missing-modality with the parent model details.
+});
+
+test("plain inherited route rejects a modality the parent model lacks", async () => {
+	const reg = await routerRegistry([{ id: "text-parent", input: ["text"] }]);
 	expect(() =>
 		resolveSpawnModelRoute({
 			constraints: { modalities: { required: ["image"] } },
 			groups: [],
-			parentModel: text,
+			parentModel: found(reg, "text-parent"),
 			parentThinking: "medium",
 			modelRegistry: reg,
 		}),
 	).toThrow(
-		expect.toSatisfy(
-			(error: unknown) =>
-				error instanceof SpawnRouteError &&
-				error.reason === "missing-modality" &&
-				error.group === "<inherited>" &&
-				error.missingFromModel[0] === "image" &&
-				error.missingFromGroup.length === 0 &&
-				error.message.includes("Spawn model"),
-		),
+		expect.objectContaining({
+			name: "SpawnRouteError",
+			group: "<inherited>",
+			message: "Spawn model 'mg-router/text-parent' cannot satisfy required modalities: image.",
+		}),
 	);
 });
 

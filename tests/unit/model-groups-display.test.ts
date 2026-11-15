@@ -9,7 +9,15 @@ const dangerous = [
 	"\u2029",
 ];
 
-const roundTripCases = ["ordinary λ", "\\", ...dangerous, "\u001b]8;;https://example.test\u0007link\u001b]8;;\u0007"].map((raw) => [JSON.stringify(raw), raw]);
+// A controlled code point titles its row as U+XXXX, since the character itself does not print.
+function codePointLabel(char: string): string {
+	return `U+${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`;
+}
+
+const roundTripCases = [
+	...dangerous.map((raw) => [codePointLabel(raw), raw]),
+	...["ordinary λ", "\\", "\u001b]8;;https://example.test\u0007link\u001b]8;;\u0007"].map((raw) => [JSON.stringify(raw), raw]),
+];
 
 // C0 and C1 controls and the two Unicode line separators: none of them may survive escaping.
 function isControlled(char: string): boolean {

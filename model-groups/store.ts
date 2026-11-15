@@ -210,12 +210,16 @@ function normalizeGroups(
 	return { ok: true, groups };
 }
 function validateConfig(raw: unknown, registry: ConstraintRegistry): { ok: true; config: ModelGroupsConfig } | { ok: false; message: string } {
-	if (!isPlainRecord(raw) || !isPlainRecord(raw.groups)) {
-		return { ok: false, message: !isPlainRecord(raw) ? "config root must be an object" : "groups must be an object" };
+	if (!isPlainRecord(raw)) {
+		return { ok: false, message: "config root must be an object" };
 	}
+	// The version is checked before the groups, so a file from before version 2 reports the version whatever else it lacks.
 	// loadScope reports an integer version above the current one as unsupported before validation runs.
 	if (raw.version !== CURRENT_VERSION) {
 		return { ok: false, message: `version must be ${CURRENT_VERSION}` };
+	}
+	if (!isPlainRecord(raw.groups)) {
+		return { ok: false, message: "groups must be an object" };
 	}
 	const normalized = normalizeGroups(raw.groups, registry);
 	return normalized.ok ? { ok: true, config: { version: CURRENT_VERSION, groups: normalized.groups } } : normalized;
@@ -556,16 +560,8 @@ export function validateModelGroups(
 		// when present; injected registries without it project an empty capability set.
 		const modalityEvaluation = evaluations.find((evaluation) => evaluation.key === modalitiesConstraint.key);
 		const modalities = (modalityEvaluation?.aggregate as ModelGroupModalities | undefined) ?? { common: [], supported: [], effective: [] };
-		const diagnostics = presentConstraintDiagnosticRecords(evaluations, constraintRegistry);
-		const unsupportedOverrideModalities = modalityEvaluation
-			? ((diagnostics.find((diagnostic) => diagnostic.key === "modalities" && diagnostic.code === "unsupported-override")?.details as
-					ModelGroupModality[] | undefined) ?? [])
-			: [];
 		const shadowedByProject = group.scope === "global" && projectNames.has(group.name);
 		const degraded = unavailableRefs.length > 0 && unavailableRefs.length < group.models.length;
-		const emptyCommonModalities = modalityEvaluation
-			? diagnostics.some((diagnostic) => diagnostic.key === "modalities" && diagnostic.code === "empty-common")
-			: false;
 		return {
 			...group,
 			modalities: { ...modalities, effective: (modalityEvaluation?.effective as ModelGroupModality[] | undefined) ?? [] },
@@ -574,8 +570,6 @@ export function validateModelGroups(
 				unavailableRefs,
 				shadowedByProject,
 				degraded,
-				emptyCommonModalities,
-				unsupportedOverrideModalities,
 			},
 		};
 	});
