@@ -22,8 +22,8 @@ export function getReadonlyFromBranch(branch: readonly SessionEntry[], pi: { get
 		if (entry.type !== "custom" || entry.customType !== "pi-schematic-readonly") {
 			continue;
 		}
-		const d = entry.data as Record<string, unknown> | undefined;
-		return d?.enabled === true;
+		const d = entry.data;
+		return typeof d === "object" && d !== null && "enabled" in d && d.enabled === true;
 	}
 	// No branch entry found — fall back to CLI flag
 	if (pi.getFlag("readonly") === true) {

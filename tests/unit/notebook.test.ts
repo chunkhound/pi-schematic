@@ -230,6 +230,23 @@ test("rehydration skips a persisted page entry with an empty name", async () => 
 	expect(Array.from(state.notebookPages.entries())).toStrictEqual([["kept", "body"]]);
 });
 
+test.for([
+	{ label: "at the epoch of the kept page", epoch: 1 },
+	{ label: "at a later epoch", epoch: 2 },
+])("rehydration skips a persisted page entry whose name is not a string, $label", async ({ epoch }) => {
+	const session = SessionManager.inMemory(process.cwd());
+	session.appendCustomEntry("notebook-entry", { version: 1, epoch: 1, name: "kept", content: "body", clipped: false });
+	session.appendCustomEntry("notebook-entry", { version: 1, epoch, name: 123, content: "numeric", clipped: false });
+
+	const { state } = await rehydrated(session);
+
+	expect({ epoch: state.epoch, watermark: state.discardEpochWatermark, pages: Array.from(state.notebookPages.entries()) }).toStrictEqual({
+		epoch: 1,
+		watermark: 1,
+		pages: [["kept", "body"]],
+	});
+});
+
 test("rehydration restores a page persisted under a whitespace-only name", async () => {
 	const session = SessionManager.inMemory(process.cwd());
 	session.appendCustomEntry("notebook-entry", { version: 1, epoch: 1, name: " ", content: "body", clipped: false });

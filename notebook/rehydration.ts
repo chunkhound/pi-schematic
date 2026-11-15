@@ -84,7 +84,7 @@ export function reconstructNotebook(state: SchematicState, branch: readonly Sess
 			continue;
 		}
 		const data = customEntry.data as NotebookEntryData | undefined;
-		if (isKnownNotebookVersion(data?.version) && (data?.name ?? "") && typeof data?.content === "string") {
+		if (isKnownNotebookVersion(data?.version) && typeof data?.name === "string" && data.name !== "" && typeof data.content === "string") {
 			if (isNotebookEpoch(data.epoch)) {
 				maxObservedEpoch = Math.max(maxObservedEpoch, data.epoch);
 			}
@@ -111,8 +111,9 @@ export function reconstructNotebook(state: SchematicState, branch: readonly Sess
 		const epoch = isNotebookEpoch(data?.epoch) ? data.epoch : 0;
 		if (
 			!isKnownNotebookVersion(data?.version) ||
-			!(data?.name ?? "") ||
-			typeof data?.content !== "string" ||
+			typeof data?.name !== "string" ||
+			data.name === "" ||
+			typeof data.content !== "string" ||
 			epoch !== currentEpoch ||
 			candidates.has(data.name)
 		) {
