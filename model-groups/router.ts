@@ -17,7 +17,7 @@ interface SpawnRouteBase {
 }
 type InheritedSpawnRoute = SpawnRouteBase & { status: "inherited"; requestedGroup?: never; groupName?: never };
 type UnknownFallbackSpawnRoute = SpawnRouteBase & { status: "unknown-fallback"; requestedGroup: string; groupName?: never };
-type RoutedSpawnRoute = SpawnRouteBase & { status: "routed"; requestedGroup: string; groupName: string };
+type RoutedSpawnRoute = SpawnRouteBase & { status: "routed"; requestedGroup?: never; groupName: string };
 export type SpawnModelRoute = InheritedSpawnRoute | UnknownFallbackSpawnRoute | RoutedSpawnRoute;
 export type SpawnRouteErrorReason = "empty" | "no-usable-models" | "missing-modality" | "constraint-unsatisfied";
 export interface SpawnRouteErrorDetails {
@@ -183,15 +183,9 @@ function selectMember(usable: RoutedMember[], declared: readonly DeclaredRequire
 	return pool[randomIndex];
 }
 
-function buildRoutedRoute(
-	group: ResolvedModelGroup,
-	requestedGroup: string,
-	selected: RoutedMember,
-	options: Pick<SpawnRouteOptions, "parentThinking">,
-): RoutedSpawnRoute {
+function buildRoutedRoute(group: ResolvedModelGroup, selected: RoutedMember, options: Pick<SpawnRouteOptions, "parentThinking">): RoutedSpawnRoute {
 	return {
 		status: "routed",
-		requestedGroup,
 		groupName: group.name,
 		model: selected.model,
 		provider: selected.entry.provider,
@@ -306,7 +300,7 @@ export function resolveSpawnModelRoute(options: SpawnRouteOptions): SpawnModelRo
 			throw new SpawnRouteError(group.name, "no-usable-models");
 		}
 		const selected = selectMember(usable, getDeclaredRequirements(), options.rng);
-		route = buildRoutedRoute(group, requestedGroup, selected, options);
+		route = buildRoutedRoute(group, selected, options);
 	}
 	const resolution = group ? resolveConstraintMembers(group.models, options.modelRegistry) : { members: [] };
 	route = attachCeilings(route, group, resolution, registry);
