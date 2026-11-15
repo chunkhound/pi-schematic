@@ -471,14 +471,14 @@ export function executeSpawn(
 			route.status === "routed"
 				? {
 						status: "routed",
-						group: route.groupName ?? route.requestedGroup ?? params.group?.trim() ?? "",
+						group: route.groupName ?? route.requestedGroup ?? "",
 						provider: route.provider,
 						modelId: route.modelId,
 					}
 				: route.status === "unknown-fallback"
 					? {
 							status: "unknown-fallback",
-							requestedGroup: route.requestedGroup ?? params.group?.trim() ?? "",
+							requestedGroup: route.requestedGroup ?? "",
 							provider: route.provider,
 							modelId: route.modelId,
 						}
