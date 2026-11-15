@@ -197,7 +197,7 @@
   },
   "tests/unit/frontmatter-cache.test.ts": {
     "vitest/max-expects": {
-      "count": 93
+      "count": 87
     }
   },
   "tests/unit/handoff-eligibility.test.ts": {

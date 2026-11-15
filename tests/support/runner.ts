@@ -274,9 +274,23 @@ function createRecordingUI(bindings: UIBindings, state: UIState): ExtensionUICon
 			// exports only as a type. The fixture passes pi-tui's global manager, which components read
 			// their keys from, so the call goes through Reflect.apply and the result is checked.
 			// A synchronous throw rejects factoryRun, as it rejects pi's host promise.
+			let returned: unknown;
 			const factoryRun = new Promise<unknown>((resolve) => {
-				resolve(Reflect.apply(factory, undefined, [tui, theme, getKeybindings(), done]));
+				returned = Reflect.apply(factory, undefined, [tui, theme, getKeybindings(), done]);
+				resolve(returned);
 			});
+			// pi's host takes the component in a `then` on `Promise.resolve` of what the factory returned,
+			// and from that turn on `done` disposes it. The fixture marks the component built in the same
+			// turn, so `done` disposes it for the same timings. A rejection reaches the call through
+			// factoryRun.
+			void Promise.resolve(returned).then(
+				(value) => {
+					if (results.length === 0 && isComponent(value)) {
+						built = value;
+					}
+				},
+				() => undefined,
+			);
 			// Like pi's host: once `done` fired inside the factory, the call resolves with its value at
 			// once, and what the factory still returns or throws is neither driven, disposed nor reported.
 			factoryRun.catch(() => undefined);
