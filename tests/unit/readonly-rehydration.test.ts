@@ -17,7 +17,7 @@ test("getReadonlyFromBranch returns true for empty branch with CLI flag", () => 
 });
 
 /** The branch of an in-memory session holding one `customType` entry per `data` value, in order. */
-function branchWith(customType: string, ...data: { enabled: boolean }[]) {
+function branchWith(customType: string, ...data: unknown[]) {
 	const session = SessionManager.inMemory(process.cwd());
 	for (const entry of data) {
 		session.appendCustomEntry(customType, entry);
@@ -28,6 +28,15 @@ function branchWith(customType: string, ...data: { enabled: boolean }[]) {
 test("getReadonlyFromBranch uses a persisted readonly entry when present", () => {
 	expect(getReadonlyFromBranch(branchWith("pi-schematic-readonly", { enabled: true }), makePI(false))).toBe(true);
 	expect(getReadonlyFromBranch(branchWith("pi-schematic-readonly", { enabled: false }), makePI(true))).toBe(false);
+});
+
+test.for([
+	{ label: "no data", data: undefined },
+	{ label: "null data", data: null },
+	{ label: "data without enabled", data: {} },
+	{ label: "a non-boolean enabled", data: { enabled: "true" } },
+])("getReadonlyFromBranch turns readonly off for a persisted entry with $label, even with the CLI flag", ({ data }) => {
+	expect(getReadonlyFromBranch(branchWith("pi-schematic-readonly", data), makePI(true))).toBe(false);
 });
 
 test("getReadonlyFromBranch picks the latest entry (true wins)", () => {

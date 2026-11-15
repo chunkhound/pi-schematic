@@ -909,27 +909,17 @@ function expandShellVariable(rawPath: string, shellVars: ReadonlyMap<string, str
 /**
  * Extract standalone shell variable assignments from a segment.
  * Handles: VAR=value, export VAR=value, declare -r VAR=value, etc.
- * Declaration keywords (export/declare/typeset/local/readonly) and their
- * flags are skipped before looking for assignments.
- * Returns empty map if any non-keyword, non-flag token is not an assignment.
+ * Tokens that are not NAME=value, such as declaration keywords and their
+ * flags, are skipped.
  * Special-cases $(mktemp) to a synthetic temp-dir path.
  */
 function getStandaloneShellAssignments(segment: string, cwd: string, shellVars: ReadonlyMap<string, string> = new Map()): Map<string, string> {
 	const assignments = new Map<string, string>();
-	let tokens: string[] = segment.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+	const tokens: string[] = segment.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
 	if (tokens.length === 0) {
 		return assignments;
 	}
 
-	// Skip declaration keywords and their flags (export -x, declare -r, etc.)
-	const DECL_KEYWORDS = new Set(["export", "declare", "typeset", "local", "readonly"]);
-	if (tokens.length > 0 && DECL_KEYWORDS.has(tokens[0])) {
-		tokens = tokens.slice(1);
-		// Skip flags after the keyword (e.g., declare -r -x VAR=val)
-		while (tokens.length > 0 && tokens[0].startsWith("-")) {
-			tokens = tokens.slice(1);
-		}
-	}
 	for (let i = 0; i < tokens.length; i++) {
 		const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(tokens[i]);
 		if (!match) {

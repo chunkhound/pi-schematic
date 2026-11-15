@@ -100,11 +100,6 @@
       "count": 1
     }
   },
-  "readonly-rehydration.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    }
-  },
   "register-loader.mjs": {
     "n/no-unsupported-features/node-builtins": {
       "count": 1
@@ -112,9 +107,6 @@
   },
   "spawn/index.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
     },
     "no-unsafe-finally": {
