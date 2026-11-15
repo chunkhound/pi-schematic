@@ -114,9 +114,6 @@
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     },
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    },
     "no-unsafe-finally": {
       "count": 2
     },
