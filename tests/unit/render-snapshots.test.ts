@@ -248,7 +248,7 @@ test("nested expanded matches snapshot", () =>
 	}));
 
 // ═══════════════════════════════════════════════════════════════════════
-// 9–11: Context indicator snapshots
+// 9: Context indicator snapshot
 // ═══════════════════════════════════════════════════════════════════════
 
 test.for([30])("context indicator at %i% matches snapshot", async (percent) => {

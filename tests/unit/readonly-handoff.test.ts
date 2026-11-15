@@ -500,19 +500,17 @@ test("readonly topic boundary creates the same bypass contract as explicit /hand
 	await assertNonTempBashBlocked(handoff);
 });
 
-test("promoted readonly boundary preserves bypass across execute-time eligibility failures", async () => {
+test.for([
+	{ label: "unavailable usage", usage: undefined, message: /Context usage unavailable/ },
+	{ label: "ineligible usage", usage: { tokens: 5000, percent: 2.5, contextWindow: 200000 }, message: /handoff unavailable yet/ },
+])("promoted readonly boundary preserves bypass across execute-time eligibility failures: $label", async ({ usage, message }) => {
 	const handoff = await readonlyTopicBoundary();
 	handoff.setUsage(ELIGIBLE_USAGE);
 	await handoff.context("promote", 2);
 
-	for (const { usage, message } of [
-		{ usage: undefined, message: /Context usage unavailable/ },
-		{ usage: { tokens: 5000, percent: 2.5, contextWindow: 200000 }, message: /handoff unavailable yet/ },
-	]) {
-		handoff.setUsage(usage);
-		await expect(handoff.fixture.tool("handoff").execute("boundary-retry", { nextInstruction: "continue billing" })).rejects.toThrow(message);
-		expect(await handoff.toolCall("handoff", {}), "execute-time rejection must preserve the promoted readonly bypass").toBeUndefined();
-	}
+	handoff.setUsage(usage);
+	await expect(handoff.fixture.tool("handoff").execute("boundary-retry", { nextInstruction: "continue billing" })).rejects.toThrow(message);
+	expect(await handoff.toolCall("handoff", {}), "execute-time rejection must preserve the promoted readonly bypass").toBeUndefined();
 
 	await completeHandoffCut(handoff, "boundary-success", { nextInstruction: "continue billing" });
 	expect((await handoff.toolCall("handoff", {}))?.block).toBe(true);
@@ -538,7 +536,7 @@ test("readonly topic boundary stays advisory until handoff is eligible", async (
 
 	const result = await handoff.context("continue", 2);
 
-	expect(lastMessageContent(result)).toMatch(/topic changed/i);
+	expect(lastMessageContent(result)).toContain("topic changed");
 	expect(lastMessageContent(result)).not.toMatch(/call handoff/i);
 	expect((await handoff.toolCall("handoff", {}))?.block, "ineligible boundary must not unblock handoff").toBe(true);
 });
@@ -548,7 +546,7 @@ test("readonly human topic boundary promotes exactly at the token threshold with
 
 	handoff.setUsage({ tokens: 29_999, percent: 15, contextWindow: 200000 });
 	const first = await handoff.context("still small", 2);
-	expect(lastMessageContent(first)).toMatch(/topic changed/i);
+	expect(lastMessageContent(first)).toContain("topic changed");
 	expect((await handoff.toolCall("handoff", {}))?.block).toBe(true);
 
 	const second = await handoff.context("still ineligible", 3);
@@ -586,6 +584,9 @@ test("session tree drops a staged handoff, releases the overlap guard, and a sta
 	expect((await emitTurnEnd(handoff, "branch-handoff")).entries, "the dropped handoff must not write a cut").toStrictEqual([]);
 
 	const drafts = await completeHandoffCut(handoff, "fresh-branch-handoff", { nextInstruction: "continue fresh branch work" });
-	expect(handoff.fixture.host.sentUserMessages, "the dropped handoff reports no failure and the fresh one completes").toHaveLength(0);
+	expect(
+		handoff.fixture.host.sentMessages.filter(({ message }) => message.customType === "pi-schematic-handoff-failed"),
+		"the dropped handoff reports no failure and the fresh one completes",
+	).toStrictEqual([]);
 	expectPrefix(successorContent(drafts), "## Next instruction\n\ncontinue fresh branch work", "the fresh branch must receive its own instruction");
 });

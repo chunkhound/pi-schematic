@@ -548,10 +548,14 @@ test("a nudged run whose staged handoff cut was not persisted counts one attempt
 	const userMessagesBeforeSettle = sentUserMessages.length;
 	await emitAgentSettled(runner);
 
-	expect(state.pendingRequestedHandoff?.toolCalled, "the failure resets toolCalled before the watchdog counts").toBe(false);
+	expect(state.pendingRequestedHandoff?.toolCalled, "the failure leaves the request retryable as not yet called").toBe(false);
 	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
 	expect(sentUserMessages, "a dropped cut starts no run").toHaveLength(userMessagesBeforeSettle);
-	expect(sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
+	expect(sentMessages.at(-1)?.message, "the failure names the cut pi did not persist").toMatchObject({
+		customType: "pi-schematic-handoff-failed",
+		content:
+			"Handoff failed — pi did not persist the cut (another extension replaced the turn_end entries, or pi rejected them). The required handoff remains pending; retry when context usage is eligible.",
+	});
 	expect(sentMessages.at(-1)?.options?.triggerTurn).toBe(false);
 });
 

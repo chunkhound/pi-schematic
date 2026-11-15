@@ -734,30 +734,37 @@ test("a failed handoff without a pending request clears the status and says noth
 	expect(sentMessages[0].options).toStrictEqual({ triggerTurn: false });
 });
 
-for (const { attemptsBefore, nudged, requestSurvives, suffix, status } of [
+test.for([
 	{
+		run: "a nudged",
 		attemptsBefore: MAX_HANDOFF_ATTEMPTS - 1,
 		nudged: true,
+		outcome: "does not call",
 		requestSurvives: false,
 		suffix: NOT_PENDING_SUFFIX,
 		status: undefined,
 	},
 	{
+		run: "a nudged",
 		attemptsBefore: MAX_HANDOFF_ATTEMPTS - 2,
 		nudged: true,
+		outcome: "keeps",
 		requestSurvives: true,
 		suffix: PENDING_SUFFIX,
 		status: realTheme.fg("accent", "🤝 Handoff required — ready to compact"),
 	},
 	{
+		run: "an un-nudged",
 		attemptsBefore: MAX_HANDOFF_ATTEMPTS - 1,
 		nudged: false,
+		outcome: "keeps",
 		requestSurvives: true,
 		suffix: PENDING_SUFFIX,
 		status: realTheme.fg("accent", "🤝 Handoff required — ready to compact"),
 	},
-]) {
-	test(`a failed cut on ${nudged ? "a nudged" : "an un-nudged"} run after ${attemptsBefore} counted attempts ${requestSurvives ? "keeps" : "does not call"} the request pending`, async () => {
+])(
+	"a failed cut on $run run after $attemptsBefore counted attempts $outcome the request pending",
+	async ({ attemptsBefore, nudged, requestSurvives, suffix, status }) => {
 		const host = await boundaryHost({
 			seed: (s) => {
 				s.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: attemptsBefore, eligibleNudgeDelivered: nudged, nextInstruction: null };
@@ -780,8 +787,8 @@ for (const { attemptsBefore, nudged, requestSurvives, suffix, status } of [
 		expectSuffix(sentMessageText(host, 0), suffix);
 		expect(host.fixture.ui.statuses.get(STATUS_KEY_HANDOFF)).toBe(status);
 		expect(host.fixture.ui.notifications[0]?.message).toBe(`Handoff failed: ${NOT_PERSISTED}. The handoff can be retried.`);
-	});
-}
+	},
+);
 
 test("agent_settled with the cut on the branch completes with the successor-did-not-run warning", async () => {
 	const host = await boundaryHost({ seed: requestHandoff });
@@ -939,6 +946,23 @@ test("a cut followed only by another handoff's successor fails as a lost success
 	]);
 });
 
+test("a lost-successor failure clears the in-progress handoff status", async () => {
+	const host = await boundaryHost();
+	await executeHandoff(host, { nextInstruction: "continue work", context: "state" });
+	const { entries } = await emitTurnEnd(host);
+	appendDrafts(
+		host.session,
+		entries.filter((entry) => entry.type === "compaction"),
+	);
+	host.session.appendCustomMessageEntry("pi-schematic-handoff", "## Next instruction\n\nother work", true, { handoffId: "other-handoff" });
+	const { statuses } = host.fixture.ui;
+	expect(statuses.get(STATUS_KEY_HANDOFF), "the tool set the in-progress status").toBe(realTheme.fg("accent", "🤝 Handoff in progress"));
+
+	await turnStart(host);
+
+	expect(statuses.get(STATUS_KEY_HANDOFF)).toBeUndefined();
+});
+
 test("agent_settled after a handoff completed at turn_start sends and notifies nothing", async () => {
 	const host = await boundaryHost({ seed: requestHandoff });
 	const { notifications } = host.fixture.ui;
@@ -1070,7 +1094,7 @@ test("session_tree clears the failed-in-run refusal", async () => {
 test("a completed handoff clears the requested-handoff nudge", async () => {
 	const host = await boundaryHost({ shipped: true });
 	await runCommand(host, "handoff", "continue work");
-	expect((await watchdogNudge(host)) ?? "").toMatch(/A real handoff is required/);
+	expect((await watchdogNudge(host)) ?? "").toContain("A real handoff is required");
 	await executeHandoff(host, { nextInstruction: "continue work" });
 	const { entries } = await emitTurnEnd(host);
 	appendDrafts(host.session, entries);
