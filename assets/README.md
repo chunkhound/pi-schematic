@@ -12,7 +12,7 @@ Canonical sources for the pi-schematic mark. Edit here, then regenerate derived 
 
 ## Geometry
 
-Every mark shares Pi's 5x5 grid (origin `106.6125`, unit `117.355`) and palette (`#F09082`, `#4D9ABF`, `#F1BE58`). `tests/unit/brand-assets.test.ts` asserts the same cell set across all three SVGs, so geometry edits must be applied to every variant.
+Every mark shares Pi's 5x5 grid (origin `106.6125`, unit `117.355`) and palette (`#F09082`, `#4D9ABF`, `#F1BE58`). All three SVGs use the same cell set, so geometry edits must be applied to every variant.
 
 ## Regenerating the GIF
 

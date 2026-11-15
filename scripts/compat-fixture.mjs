@@ -29,7 +29,7 @@ export function prepareCompatCopy(copy) {
 
 // `npm view --json` prints empty stdout and exits 0 for an undeclared field, and
 // npm 12 wraps a single value in a one-element array.
-export function parseNpmViewValue(stdout) {
+function parseNpmViewValue(stdout) {
 	if (!stdout.trim()) {
 		return undefined;
 	}

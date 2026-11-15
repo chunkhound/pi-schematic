@@ -63,13 +63,8 @@ function resolveNpmExecpath(npmExecpath) {
 	return base === "npm-cli" || base === "npm" ? resolved : undefined;
 }
 
-/** True when npm_execpath points to a real npm CLI JS file (not a binary or another tool). */
-export function isValidNpmExecpath(npmExecpath) {
-	return resolveNpmExecpath(npmExecpath) !== undefined;
-}
-
 /** Build a shell-free npm invocation, including Windows' npm.cmd installations. */
-export function npmInvocation(args, options = {}) {
+function npmInvocation(args, options = {}) {
 	const { env = process.env, platform = process.platform, execPath = process.execPath } = options;
 	const npmExecpath = resolveNpmExecpath(env.npm_execpath);
 	if (npmExecpath) {
@@ -86,7 +81,7 @@ export function npmInvocation(args, options = {}) {
 	throw new Error(`Unable to locate npm CLI beside ${execPath}; invoke this compatibility check through its npm script.`);
 }
 
-export function runNpm(cwd, args, options = {}) {
+function runNpm(cwd, args, options = {}) {
 	const invocation = npmInvocation(args, options);
 	return runChecked(invocation.command, invocation.args, { cwd, ...options });
 }

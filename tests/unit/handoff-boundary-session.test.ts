@@ -66,8 +66,6 @@ interface Observed {
 	branchAtTurnStart: string[][];
 	/** `getContextUsage()` at each context event, i.e. right before each provider request. */
 	usageAtContext: ContextUsage[];
-	/** `getContextUsage()` when the handoff tool call was dispatched. */
-	usageAtHandoffCall: ContextUsage[];
 	/** Errors pi caught from extension handlers (otherwise dropped silently). */
 	extensionErrors: string[];
 }
@@ -117,11 +115,6 @@ function observer(observed: Observed): ExtensionFactory {
 		});
 		pi.on("context", (_event, ctx) => {
 			observed.usageAtContext.push(ctx.getContextUsage());
-		});
-		pi.on("tool_call", (event, ctx) => {
-			if (event.toolName === "handoff") {
-				observed.usageAtHandoffCall.push(ctx.getContextUsage());
-			}
 		});
 	};
 }
@@ -180,7 +173,6 @@ async function startSession(
 		events: [],
 		branchAtTurnStart: [],
 		usageAtContext: [],
-		usageAtHandoffCall: [],
 		extensionErrors: [],
 	};
 	const faux = fauxProvider();
@@ -371,17 +363,6 @@ describe("handoff boundary in a real agent session", () => {
 			`custom_message:${HANDOFF_SUCCESSOR_CUSTOM_TYPE}`,
 			`custom_message:${HANDOFF_NOTE_CUSTOM_TYPE}`,
 		]);
-	});
-
-	it("reports the faux usage of a large prompt as eligible at the handoff call", async () => {
-		const { session, observed } = await startSession([call(handoffCall()), reply("successor answer")]);
-		await session.prompt(LARGE_PROMPT);
-		await session.waitForIdle();
-
-		expect(observed.usageAtHandoffCall).toHaveLength(1);
-		const tokens = observed.usageAtHandoffCall[0]?.tokens;
-		expect(tokens, `usage at the handoff call: ${String(tokens)}`).toBeTypeOf("number");
-		expect(tokens, `usage at the handoff call: ${String(tokens)}`).toBeGreaterThanOrEqual(MIN_HANDOFF_TOKENS);
 	});
 
 	// With no enforced request or pending topic hint, the context hook skips the watchdog

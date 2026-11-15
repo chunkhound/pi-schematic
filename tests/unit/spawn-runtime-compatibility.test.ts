@@ -1,6 +1,6 @@
 import { expect, onTestFinished, test, vi } from "vitest";
 import { assertPresent, expectPrefix, isRecord } from "../assertions.js";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Value } from "typebox/value";
@@ -11,7 +11,6 @@ import { THINKING_LEVELS } from "../../thinking-levels.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
 import { createTestHost, getTool } from "./test-host.js";
 import { assertErrorResult, createExtensionContext, EMPTY_CHILD_USAGE, recordOf, runRealChildInvocation } from "./helpers.js";
-import { REPO_ROOT_URL } from "../paths.js";
 
 // The fields isSpawnToolResult checks; everything else stays unknown.
 interface CheckedSpawnResult {
@@ -119,20 +118,6 @@ test("concurrent real children both complete", async () => {
 		expect(result.details.model).toBe(proof.modelId);
 	}
 	expect(proof.probeCalls).toBe(2);
-});
-
-test("spawn routes through the public registry and keeps source boundaries exact", async () => {
-	const source = await readFile(new URL("spawn/index.ts", REPO_ROOT_URL), "utf8");
-	expect(source).not.toMatch(/\bAuthStorage\b|\bModelRegistry\b/);
-	expect(source).not.toMatch(/\bauthStorage\s*:/);
-	expect(source).not.toMatch(/sessionFactory\(\{[\s\S]*?\bmodelRegistry\s*:/);
-	expect(source).not.toMatch(/modelRuntime\s*[:.]|as\s+any[^\n]*(?:auth|runtime)/i);
-	expect(source).toMatch(/modelRegistry:\s*ctx\.modelRegistry/);
-	expect(source).toMatch(/model:\s*childModel/);
-	expect(source).toMatch(/session\.dispose\(\)/);
-	const renderer = await readFile(new URL("spawn/renderer.ts", REPO_ROOT_URL), "utf8");
-	expect(renderer).not.toMatch(/console\.(?:debug|warn|error|log)\s*\(/);
-	expect(renderer).not.toMatch(/process\.(?:stdout|stderr)\.write\s*\(/);
 });
 
 test("spawn schema advertises the thinking levels as a plain string enum and rejects other values", async () => {

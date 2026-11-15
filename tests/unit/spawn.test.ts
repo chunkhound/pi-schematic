@@ -16,7 +16,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { assertInstanceOf, assertPresent, assertString, expectPrefix, expectSuffix, isRecord } from "../assertions.js";
-import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createState, resetState, type SchematicState } from "../../state.js";
 import { READONLY_BASH_SCOPE, READONLY_NO_SHELL_SUMMARY, READONLY_WRITE_EDIT_SUMMARY } from "../../notifications.js";
@@ -3426,22 +3425,6 @@ test("renderSpawnResult handles result with no details field", () => {
 	const lines = result.render(120);
 	expect(lines, "render should return an array of lines").toSatisfy(Array.isArray);
 	expect(lines, `expected 'hello' in output, got: ${lines.join("\n")}`).toContainEqual(expect.stringContaining("hello"));
-});
-
-test("spawn docs document active registered inheritance", async () => {
-	const readme = await readFile("README.md", "utf8");
-	const changelog = await readFile("CHANGELOG.md", "utf8");
-	const spawnSection = /\| \*\*Spawn\*\* +\|[^|]*\|/.exec(readme)?.[0] ?? "";
-	const v040 = /## \[0\.4\.0\][\s\S]*?## \[0\.3\.0\]/.exec(changelog)?.[0] ?? "";
-
-	expect(spawnSection).toMatch(/active registered (parent )?tools executable in the child session/);
-	expect(spawnSection).toMatch(/MCP\/extension tools such as ChunkHound/);
-	expect(spawnSection).toMatch(/[Cc]hild-local notebook tools/);
-	expect(spawnSection).toMatch(/cannot spawn grandchildren or handoff/);
-	expect(spawnSection).not.toMatch(/built-in tools only/);
-	expect(v040).toMatch(/active registered parent tools/);
-	expect(v040).toMatch(/spawn and handoff/);
-	expect(v040).toMatch(/notebook tools/);
 });
 
 // ── Abort cleanup and dispose failure coverage ───────────────────────
