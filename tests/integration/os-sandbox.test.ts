@@ -76,14 +76,20 @@ test.skipIf(process.platform !== "linux" || !canUseOsSandbox())("bwrap executes 
 	}
 });
 
-test.skipIf(!hasPosixShell())("quoteShellArgument round-trips through a POSIX shell", () => {
-	for (const raw of ["normal", "spaces", "dollar$ign", "backtick`", "line1\nline2", "'mixed' quotes", "'", ""]) {
-		const quoted = quoteShellArgument(raw);
-		// The argument count shows that each value arrives as exactly one argument,
-		// so an empty value that vanished from the command line would print 0.
-		const result = execFileSync("/bin/sh", ["-c", `set -- ${quoted}; printf '%s:%s' "$#" "$1"`], { encoding: "utf8", timeout: 2000 });
-		expect(result, `quoteShellArgument(${JSON.stringify(raw)}) should round-trip`).toBe(`1:${raw}`);
-	}
+test.skipIf(!hasPosixShell()).for([
+	{ label: "plain word", raw: "normal", expected: "1:normal" },
+	{ label: "spaces (no space)", raw: "spaces", expected: "1:spaces" },
+	{ label: "dollar sign", raw: "dollar$ign", expected: "1:dollar$ign" },
+	{ label: "backtick", raw: "backtick`", expected: "1:backtick`" },
+	{ label: "newline", raw: "line1\nline2", expected: "1:line1\nline2" },
+	{ label: "quoted words", raw: "'mixed' quotes", expected: "1:'mixed' quotes" },
+	{ label: "lone single quote", raw: "'", expected: "1:'" },
+	{ label: "empty string", raw: "", expected: "1:" },
+])("quoteShellArgument round-trips through a POSIX shell: $label", ({ raw, expected }) => {
+	// The argument count shows that each value arrives as exactly one argument,
+	// so an empty value that vanished from the command line would print 0.
+	const result = execFileSync("/bin/sh", ["-c", `set -- ${quoteShellArgument(raw)}; printf '%s:%s' "$#" "$1"`], { encoding: "utf8", timeout: 2000 });
+	expect(result).toBe(expected);
 });
 
 // ── Behavioral contract: observable sandbox effects ──────────────
