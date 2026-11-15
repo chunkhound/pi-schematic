@@ -9,11 +9,7 @@ import os from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CompactionEntry, CustomMessageEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { HANDOFF_REQUIRED_STATUS, HANDOFF_STAGED_RESULT } from "../../handoff/copy.js";
-import { HANDOFF_NOTE_CUSTOM_TYPE, HANDOFF_SUCCESSOR_CUSTOM_TYPE, buildNextUserMessage } from "../../handoff/format.js";
-import { READONLY_ACTIVE_SUMMARY, READONLY_SANDBOX_BLOCK_NOTICE } from "../../notifications.js";
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
-import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
 import { assertPresent, expectSuffix } from "../assertions.js";
 import { messageText, RealHost, REAL_HOST_TEST_TIMEOUT_MS, SCHEMATIC_ENTRY, toolResults, withRealHost, type RpcEvent } from "./real-host.js";
@@ -29,6 +25,23 @@ import {
 } from "./real-host-protocol.js";
 
 type RequestRecord = Extract<ProbeRecord, { kind: "request" }>;
+
+/** Custom type of the successor message the handoff boundary writes. */
+const SUCCESSOR_CUSTOM_TYPE = "pi-schematic-handoff";
+/** Custom type of the hidden note the handoff boundary writes after the successor. */
+const NOTE_CUSTOM_TYPE = "pi-schematic-handoff-note";
+/** Status key of the handoff indicator. */
+const HANDOFF_STATUS_KEY = "pi-schematic-handoff";
+const STAGED_RESULT = "Handoff staged. This context is cut when the turn ends, and the successor continues in the same run.";
+const REQUIRED_STATUS = "🤝 Handoff required — ready to compact";
+const READONLY_SUMMARY =
+	"[readonly] enabled — write/edit/powershell blocked; bash writes/deletions outside temp blocked; handoff needs explicit /handoff or an eligible human topic boundary.";
+const SANDBOX_BLOCK_NOTICE =
+	"[readonly mode] If this command failed on a write outside the OS temp dir, the OS sandbox blocked it.\nUse /readonly to disable, or write within the OS temp dir.";
+/** Successor of the handoff with "continue readonly work" and context "mid-task state". */
+const READONLY_WORK_SUCCESSOR = "## Next instruction\n\ncontinue readonly work\n\n## Context\n\nmid-task state";
+/** Successor of the handoff with "do the resumed work" and context "remaining state". */
+const RESUMED_WORK_SUCCESSOR = "## Next instruction\n\ndo the resumed work\n\n## Context\n\nremaining state";
 
 function handoffCall(args: ScriptedCall["arguments"]): ScriptedCall[] {
 	return [{ name: "handoff", arguments: args }];
@@ -145,11 +158,11 @@ async function expectCancellationAtLastAttempt(host: RealHost): Promise<void> {
 	expect(handoffCancellations(host), `the handoff stays required after ${MAX_HANDOFF_ATTEMPTS - 1} settled runs`).toStrictEqual([]);
 	await host.turn("/" + PROBE_COMMAND.turn, 1);
 	expect(handoffCancellations(host), `settled run ${MAX_HANDOFF_ATTEMPTS} cancels the handoff`).toHaveLength(1);
-	const handoffStatuses = host.statuses.filter((status) => status.statusKey === STATUS_KEY_HANDOFF);
+	const handoffStatuses = host.statuses.filter((status) => status.statusKey === HANDOFF_STATUS_KEY);
 	expect(
 		handoffStatuses.map((status) => status.statusText),
 		"the handoff required status was shown",
-	).toContain(HANDOFF_REQUIRED_STATUS);
+	).toContain(REQUIRED_STATUS);
 	expect(handoffStatuses.at(-1)?.statusText, "the handoff status is cleared").toBeUndefined();
 }
 
@@ -230,22 +243,22 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 
 			const { entries } = await host.entries();
 			const result = onlyResult(toolResults(entries, "handoff"), "handoff");
-			expect(result.text).toBe(HANDOFF_STAGED_RESULT);
+			expect(result.text).toBe(STAGED_RESULT);
 			const cut = onlyHandoffCut(entries);
 			expect(cut.firstKeptEntryId, "the cut retains no earlier entry").toBe(cut.id);
-			const successor = onlyCustomMessage(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE);
+			const successor = onlyCustomMessage(entries, SUCCESSOR_CUSTOM_TYPE);
 			expect(successor, "the successor is the cut's shown child").toMatchObject({
 				parentId: cut.id,
-				content: buildNextUserMessage({ nextInstruction: "continue readonly work", context: "mid-task state" }),
+				content: READONLY_WORK_SUCCESSOR,
 				display: true,
 			});
-			const note = onlyCustomMessage(entries, HANDOFF_NOTE_CUSTOM_TYPE);
+			const note = onlyCustomMessage(entries, NOTE_CUSTOM_TYPE);
 			expect(note, "the note follows the successor and is hidden").toMatchObject({ parentId: successor.id, display: false });
 			const handoffRun = host.events.slice(mark);
 			expect(cutAppendedIndexes(handoffRun), "the cut arrives as one entry_appended event").toHaveLength(1);
 			expect(eventsOfType(handoffRun, "compaction_end"), "the cut fires no compaction_end").toHaveLength(0);
 			expect(
-				requestsAfterCut(host.probeLog(), handoffIdOf(cut)).filter((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
+				requestsAfterCut(host.probeLog(), handoffIdOf(cut)).filter((record) => containsText(record, READONLY_SUMMARY)),
 				"readonly is re-announced after the handoff",
 			).toHaveLength(1);
 			expect(await host.client.clearQueue()).toStrictEqual({ steering: [], followUp: [] });
@@ -256,13 +269,13 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			const payload = { nextInstruction: "do the resumed work", context: "remaining state" };
 			await handoff(host, payload, 1);
 			const before = await host.entries();
-			const successor = onlyCustomMessage(before.entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE);
+			const successor = onlyCustomMessage(before.entries, SUCCESSOR_CUSTOM_TYPE);
 			await host.navigate(firstAssistantAfter(before.entries, successor.id).id, 0);
 			await host.turn("/" + PROBE_COMMAND.turn, 1);
 
 			const { entries } = await host.entries();
-			expect(customMessages(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE), "one successor entry").toHaveLength(1);
-			expect(userEntriesWithText(entries, buildNextUserMessage(payload)), "no successor resent as a user message").toHaveLength(0);
+			expect(customMessages(entries, SUCCESSOR_CUSTOM_TYPE), "one successor entry").toHaveLength(1);
+			expect(userEntriesWithText(entries, RESUMED_WORK_SUCCESSOR), "no successor resent as a user message").toHaveLength(0);
 		}));
 
 	it("editing a boundary successor never re-delivers its instruction", async (t) =>
@@ -271,13 +284,13 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			await handoff(host, payload, 1);
 			const before = await host.entries();
 			const cut = onlyHandoffCut(before.entries);
-			const successor = onlyCustomMessage(before.entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE);
+			const successor = onlyCustomMessage(before.entries, SUCCESSOR_CUSTOM_TYPE);
 			await host.navigate(successor.id, 0);
 
 			const { entries, leafId } = await host.entries();
 			expect(leafId, "editing the successor moves the leaf to the cut").toBe(cut.id);
-			expect(customMessages(entries, HANDOFF_SUCCESSOR_CUSTOM_TYPE), "one successor entry").toHaveLength(1);
-			expect(userEntriesWithText(entries, buildNextUserMessage(payload)), "no successor resent as a user message").toHaveLength(0);
+			expect(customMessages(entries, SUCCESSOR_CUSTOM_TYPE), "one successor entry").toHaveLength(1);
+			expect(userEntriesWithText(entries, RESUMED_WORK_SUCCESSOR), "no successor resent as a user message").toHaveLength(0);
 		}));
 
 	it("readonly is re-announced in the run after a handoff whose successor was dropped", async (t) =>
@@ -292,7 +305,7 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			const laterRequests = requestsAfterCut(host.probeLog(), handoffIdOf(cut));
 			expect(laterRequests, "the later run calls the model").toHaveLength(2);
 			expect(
-				laterRequests.filter((record) => containsText(record, READONLY_ACTIVE_SUMMARY)),
+				laterRequests.filter((record) => containsText(record, READONLY_SUMMARY)),
 				"readonly is re-announced after the failed handoff",
 			).toHaveLength(1);
 		}));
@@ -374,13 +387,13 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			const { entries } = await host.entries();
 			const bash = onlyResult(toolResults(entries, "bash"), "bash");
 			expect(bash.isError, "the write fails").toBe(true);
-			expectSuffix(bash.text, READONLY_SANDBOX_BLOCK_NOTICE);
+			expectSuffix(bash.text, SANDBOX_BLOCK_NOTICE);
 			const probed = onlyResult(
 				host.probeLog().filter((record) => record.kind === "bashResult"),
 				"probed bash",
 			);
 			assertPresent(probed.structuredOutput);
-			expectSuffix(probed.structuredOutput, READONLY_SANDBOX_BLOCK_NOTICE);
+			expectSuffix(probed.structuredOutput, SANDBOX_BLOCK_NOTICE);
 			expect(existsSync(target), "the sandbox blocked the write").toBe(false);
 		});
 	});
