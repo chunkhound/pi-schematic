@@ -93,19 +93,6 @@ async function apply(pi: ExtensionAPI, state: SchematicState, action: StateActio
 
 // ── Invariant helpers ─────────────────────────────────────────────────
 
-function assertTopicSourceCoupling(state: SchematicState): void {
-	const msg = `topic=${String(state.activeNotebookTopic)} source=${String(state.activeNotebookTopicSource)}`;
-	if (state.activeNotebookTopic === null) {
-		expect(state.activeNotebookTopicSource, `topic null → source null: ${msg}`).toBeNull();
-	} else {
-		expect(state.activeNotebookTopicSource, `topic set → source set: ${msg}`).not.toBeNull();
-	}
-	// Bidirectional: source null → topic null too
-	if (state.activeNotebookTopicSource === null) {
-		expect(state.activeNotebookTopic, `source null → topic null: ${msg}`).toBeNull();
-	}
-}
-
 function assertChildSessionContainment(state: SchematicState): void {
 	for (const key of state.childSessions.keys()) {
 		expect([...state.liveChildSessions.keys()], `childSessions key "${key}" must be in liveChildSessions`).toContain(key);
@@ -128,7 +115,6 @@ function assertResetClears(state: SchematicState): void {
 			epoch: state.epoch,
 			discardEpochWatermark: state.discardEpochWatermark,
 			activeNotebookTopic: state.activeNotebookTopic,
-			activeNotebookTopicSource: state.activeNotebookTopicSource,
 			stagedHandoff: state.stagedHandoff,
 			handoffRefusals: state.handoffRefusals.size,
 			handoffFailedInRun: state.handoffFailedInRun,
@@ -156,7 +142,6 @@ function assertResetClears(state: SchematicState): void {
 		epoch: 0,
 		discardEpochWatermark: 0,
 		activeNotebookTopic: null,
-		activeNotebookTopicSource: null,
 		stagedHandoff: null,
 		handoffRefusals: 0,
 		handoffFailedInRun: false,
@@ -178,32 +163,6 @@ function assertResetClears(state: SchematicState): void {
 }
 
 // ── Properties ────────────────────────────────────────────────────────
-
-test("Property 1: Topic-source coupling invariant", async () => {
-	useTestHarness();
-	const pi = await notebookApi();
-	await fc.assert(
-		fc.asyncProperty(
-			fc.array(
-				fc.oneof(
-					fc.constant({ type: "reset" }),
-					fc.record({ type: fc.constant("setTopic"), name: arbTopicName }),
-					fc.constant({ type: "clearTopic" }),
-					fc.record({ type: fc.constant("savePage"), name: arbPageName }),
-				),
-				{ maxLength: 30 },
-			),
-			async (actions) => {
-				const state = createState();
-				for (const action of actions) {
-					await apply(pi, state, action);
-					assertTopicSourceCoupling(state);
-				}
-			},
-		),
-		{ numRuns: 100 },
-	);
-});
 
 test("Property 2: Child session containment invariant", async () => {
 	useTestHarness();

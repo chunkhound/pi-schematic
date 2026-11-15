@@ -285,7 +285,7 @@
   },
   "tests/unit/state-invariants.test.ts": {
     "vitest/max-expects": {
-      "count": 5
+      "count": 4
     },
     "vitest/no-conditional-expect": {
       "count": 6
@@ -293,7 +293,7 @@
   },
   "tests/unit/topic.test.ts": {
     "vitest/max-expects": {
-      "count": 2
+      "count": 1
     }
   },
   "tests/unit/watchdog.test.ts": {

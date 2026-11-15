@@ -68,7 +68,6 @@ test("clearActiveNotebookTopic clears the topic, its source and the pending hint
 	clearActiveNotebookTopic(state);
 
 	expect(state.activeNotebookTopic).toBeNull();
-	expect(state.activeNotebookTopicSource).toBeNull();
 	expect(state.pendingTopicBoundaryHint).toBeNull();
 });
 
@@ -87,8 +86,7 @@ test("notebook_topic_set establishes a fresh topic, is idempotent, and refuses o
 
 	const first = await tool.execute("1", { topic: "OAuth" });
 	expect(detailsOf(first).topic).toBe("oauth");
-	expect(state.activeNotebookTopic).toBe("oauth");
-	expect(state.activeNotebookTopicSource).toBe("agent");
+	expect(state.activeNotebookTopic).toStrictEqual({ name: "oauth", source: "agent" });
 
 	const second = await tool.execute("2", { topic: "oauth" });
 	expect(detailsOf(second).changed).toBe(false);

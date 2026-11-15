@@ -25,19 +25,20 @@ export function registerNotebookTopicTool(pi: ExtensionAPI, state: SchematicStat
 		execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			return asPromise(() => {
 				const normalized = normalizeNotebookTopic(params.topic);
-				if (state.activeNotebookTopic !== null && state.activeNotebookTopic !== "") {
-					if (state.activeNotebookTopic !== normalized) {
+				const active = state.activeNotebookTopic;
+				if (active !== null) {
+					if (active.name !== normalized) {
 						throw new Error(
-							state.activeNotebookTopicSource === "human"
+							active.source === "human"
 								? "Human-set notebook topic is authoritative. Use handoff instead of overriding it."
 								: "Active notebook topic already exists. Use handoff instead of changing it mid-session.",
 						);
 					}
 					return {
-						content: [{ type: "text", text: `Notebook topic already set to "${state.activeNotebookTopic}".` }],
+						content: [{ type: "text", text: `Notebook topic already set to "${active.name}".` }],
 						details: {
-							topic: state.activeNotebookTopic,
-							source: state.activeNotebookTopicSource,
+							topic: active.name,
+							source: active.source,
 							changed: false,
 						},
 					};

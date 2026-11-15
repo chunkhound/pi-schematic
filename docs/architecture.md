@@ -24,9 +24,8 @@ pi-schematic is a Pi extension. It registers tools and hooks into the agent life
 interface SchematicState {
   notebookPages: Map<string, string>;
   clippedPages: Set<string>;
-  activeNotebookTopic: string | null;
-  activeNotebookTopicSource: "human" | "agent" | null;
-  pendingTopicBoundaryHint: { from; to; source; advisoryDelivered? } | null;
+  activeNotebookTopic: { name: string; source: "human" | "agent" } | null;
+  pendingTopicBoundaryHint: { from; to; source; advisoryDelivered } | null;
   readonlyEnabled: boolean;
   readonlyNudgePending: boolean;
   readonlyNudgeRearmAtSettle: boolean;

@@ -5,8 +5,7 @@ import { createState } from "../../state.js";
 
 test("frames the active topic with its source", () => {
 	const state = createState();
-	state.activeNotebookTopic = "oauth";
-	state.activeNotebookTopicSource = "human";
+	state.activeNotebookTopic = { name: "oauth", source: "human" };
 
 	expect(notebookTopicSection(state).render()).toContain("Current topic: `oauth` (human-set).");
 });
@@ -15,14 +14,6 @@ test("asks for a topic when none is set", () => {
 	const state = createState();
 
 	expect(notebookTopicSection(state).render()).toContain("No active notebook topic is set.");
-});
-
-test("labels a topic with an unknown source", () => {
-	const state = createState();
-	state.activeNotebookTopic = "oauth";
-	state.activeNotebookTopicSource = null;
-
-	expect(notebookTopicSection(state).render()).toContain("(unknown-set)");
 });
 
 test("lists notebook pages sorted by name", () => {

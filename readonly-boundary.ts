@@ -41,7 +41,7 @@ export function promoteBoundary(state: SchematicState, ctx: ExtensionContext): v
  */
 export function markBoundaryAdvisory(state: SchematicState): boolean {
 	const boundary = state.pendingTopicBoundaryHint;
-	if (boundary === null || boundary.advisoryDelivered === true) {
+	if (boundary === null || boundary.advisoryDelivered) {
 		return false;
 	}
 	boundary.advisoryDelivered = true;

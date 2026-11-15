@@ -7,7 +7,7 @@ export interface NotebookTopicBoundaryHint {
 	to: string;
 	source: NotebookTopicSource;
 	/** Prevent repeated advisory nudges while waiting for handoff eligibility. */
-	advisoryDelivered?: boolean;
+	advisoryDelivered: boolean;
 }
 
 export function normalizeNotebookTopic(input: string): string {
@@ -29,10 +29,9 @@ export function setActiveNotebookTopic(
 		throw new Error("Notebook topic cannot be empty.");
 	}
 
-	const previous = state.activeNotebookTopic;
+	const previous = state.activeNotebookTopic?.name ?? null;
 	const changed = previous !== normalized;
-	state.activeNotebookTopic = normalized;
-	state.activeNotebookTopicSource = source;
+	state.activeNotebookTopic = { name: normalized, source };
 
 	const boundaryHint = changed && previous !== null ? { from: previous, to: normalized, source, advisoryDelivered: false } : null;
 	// A repeated topic is no boundary, so it leaves a boundary still waiting for delivery in place.
@@ -50,6 +49,5 @@ export function setActiveNotebookTopic(
 
 export function clearActiveNotebookTopic(state: SchematicState): void {
 	state.activeNotebookTopic = null;
-	state.activeNotebookTopicSource = null;
 	state.pendingTopicBoundaryHint = null;
 }

@@ -423,7 +423,6 @@ export default defineConfig([
 						"assertChildRegistriesCleared",
 						"assertErrorResult",
 						"assertResetClears",
-						"assertTopicSourceCoupling",
 					],
 				},
 			],
