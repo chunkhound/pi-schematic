@@ -244,7 +244,7 @@ async function preflightModelSelection(
 	pending: PendingCommand,
 	selection = resolveModelSelection(state, pending),
 ): Promise<boolean> {
-	if (!ctx.hasUI || !ctx.model) {
+	if (!ctx.model) {
 		return false;
 	}
 	if (selection.issue && !isReadonlyFrontmatterIssue(selection.issue)) {
