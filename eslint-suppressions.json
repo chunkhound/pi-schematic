@@ -336,11 +336,6 @@
       "count": 2
     }
   },
-  "tests/unit/time-format.test.ts": {
-    "vitest/max-expects": {
-      "count": 3
-    }
-  },
   "tests/unit/topic.test.ts": {
     "vitest/max-expects": {
       "count": 3

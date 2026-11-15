@@ -97,11 +97,6 @@ function offsetText(longOffset: string, zone: string): string {
 	return `UTC${east < 0 ? "-" : "+"}${pad2(Math.floor(abs / 60))}:${pad2(abs % 60)}`;
 }
 
-/** The zone's offset at that instant, rendered as `UTC±HH:MM`. Exported as the offset contract the tests pin against Intl. */
-export function formatZoneOffset(date: Date, zone: string): string {
-	return zoneFields(date, zone).offset;
-}
-
 /** The date line, e.g. `2026-10-05 (Monday), America/New_York (UTC-04:00)`. Defaults to the host zone. */
 export function formatCurrentDate(date: Date, zone: string = hostZone()): string {
 	const { rendered, day, weekday, offset } = zoneFields(date, zone);
