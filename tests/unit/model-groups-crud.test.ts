@@ -546,7 +546,9 @@ test("model groups move source-remove failure throws a typed move error and pres
 
 test.each<[string, unknown, string | RegExp]>([
 	["root", [], /root/],
+	["empty object", {}, "version must be 2"],
 	["missing version", { groups: {} }, "version must be 2"],
+	["version 1 without groups", { version: 1 }, "version must be 2"],
 	["version 0", { version: 0, groups: {} }, "version must be 2"],
 	["version 1", { version: 1, groups: {} }, "version must be 2"],
 	["version type", { version: "1", groups: {} }, "version must be 2"],

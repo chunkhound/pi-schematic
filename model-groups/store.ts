@@ -210,12 +210,16 @@ function normalizeGroups(
 	return { ok: true, groups };
 }
 function validateConfig(raw: unknown, registry: ConstraintRegistry): { ok: true; config: ModelGroupsConfig } | { ok: false; message: string } {
-	if (!isPlainRecord(raw) || !isPlainRecord(raw.groups)) {
-		return { ok: false, message: !isPlainRecord(raw) ? "config root must be an object" : "groups must be an object" };
+	if (!isPlainRecord(raw)) {
+		return { ok: false, message: "config root must be an object" };
 	}
+	// The version is checked before the groups, so a file from before version 2 reports the version whatever else it lacks.
 	// loadScope reports an integer version above the current one as unsupported before validation runs.
 	if (raw.version !== CURRENT_VERSION) {
 		return { ok: false, message: `version must be ${CURRENT_VERSION}` };
+	}
+	if (!isPlainRecord(raw.groups)) {
+		return { ok: false, message: "groups must be an object" };
 	}
 	const normalized = normalizeGroups(raw.groups, registry);
 	return normalized.ok ? { ok: true, config: { version: CURRENT_VERSION, groups: normalized.groups } } : normalized;
