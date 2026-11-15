@@ -176,13 +176,12 @@ test("below the handoff minimum the reminder asks to continue instead of preferr
 	expect(reminder.content).not.toContain("prefer a deliberate handoff");
 });
 
-test("context treats malformed percentages as unavailable", async () => {
+test.for([Number.NaN, Number.POSITIVE_INFINITY, -1])("context treats malformed percentages as unavailable: %s", async (percent) => {
 	const runner = await createWatchdogRunner({ headless: true });
 
-	for (const percent of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
-		const result = await runContext(runner, percentUsage(percent));
-		expect(result).toStrictEqual(userMessages("hi", 1));
-	}
+	const result = await runContext(runner, percentUsage(percent));
+
+	expect(result).toStrictEqual(userMessages("hi", 1));
 });
 
 test("context injects a no-topic nudge when context is high", async () => {
