@@ -62,18 +62,6 @@ function notifyCleanupFailure(ctx: ExtensionContext, error: unknown): void {
 	ctx.ui.notify(`Spawn cleanup failed: ${failureMessage(error)}`, "error");
 }
 
-/** Ignore Pi's AbortError only when the current child was cancelled without a reset. */
-function shouldSwallowPromptError(error: unknown, isStale: () => boolean, wasAborted: boolean): boolean {
-	if (isStale()) {
-		return false;
-	}
-	if (!wasAborted) {
-		return false;
-	}
-	// Pi contracts AbortError via AbortSignal standard
-	return (error as Error | null | undefined)?.name === "AbortError";
-}
-
 interface ChildAccounting {
 	usage: Usage;
 	stats: Record<string, number>;
@@ -591,13 +579,7 @@ export function executeSpawn(
 						await abortAndInvalidate();
 					}
 
-					try {
-						await session.prompt(fullPrompt);
-					} catch (error) {
-						if (!shouldSwallowPromptError(error, isStale, abortContext.wasAborted)) {
-							throw error;
-						}
-					}
+					await session.prompt(fullPrompt);
 				} catch (error) {
 					clearChildSession();
 					if (isStale()) {
