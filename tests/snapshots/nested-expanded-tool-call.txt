@@ -2,7 +2,7 @@
      ✅ gpt-4o • medium                                                         
                                                                                 
                                                                                 
-      read                                                                      
+      lookup_note                                                               
                                                                                 
       {                                                                         
         "path": "src/cache.ts"                                                  

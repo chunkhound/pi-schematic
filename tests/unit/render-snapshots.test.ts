@@ -203,11 +203,11 @@ test("nested expanded matches snapshot", () =>
 test("nested expanded tool call matches snapshot", () =>
 	withHarness(async (state) => {
 		const session = createSubscribableSession("/tmp", [
-			assistantMessage([{ type: "toolCall", id: "tc-read", name: "read", arguments: { path: "src/cache.ts" } }], { stopReason: "toolUse" }),
+			assistantMessage([{ type: "toolCall", id: "tc-lookup", name: "lookup_note", arguments: { path: "src/cache.ts" } }], { stopReason: "toolUse" }),
 			{
 				role: "toolResult",
-				toolCallId: "tc-read",
-				toolName: "read",
+				toolCallId: "tc-lookup",
+				toolName: "lookup_note",
 				content: [{ type: "text", text: "export const TTL_SECONDS = 300;" }],
 				isError: false,
 				timestamp: 1_767_225_600_000,

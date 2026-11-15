@@ -1,6 +1,6 @@
 import { Text, stripTerminalSequences } from "@earendil-works/pi-tui";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { initTheme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage, UserMessage } from "@earendil-works/pi-ai";
+import { initTheme, type AgentSessionEvent, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { beforeAll, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { createState, type SchematicState } from "../../state.js";
@@ -209,13 +209,13 @@ function probedChild(): SubscribableSession {
 }
 
 const failedMessageEndCases = [
-	{ stopReason: "aborted", errorMessage: "killed", label: "aborted", kind: "abort" },
-	{ stopReason: "error", errorMessage: "provider failed", label: "error", kind: "error" },
+	{ stopReason: "aborted", errorMessage: "killed", label: "aborted", kind: "abort", expected: "result isError=true: killed" },
+	{ stopReason: "error", errorMessage: "provider failed", label: "error", kind: "error", expected: "result isError=true: provider failed" },
 ] as const;
 
 test.for(failedMessageEndCases)(
 	"nested spawn message_end with $label stopReason fails pending tool calls with the $kind message",
-	({ stopReason, errorMessage }) => {
+	({ stopReason, errorMessage, expected }) => {
 		const state = createState();
 		const child = probedChild();
 		const component = renderLiveChild(state, child, { expanded: true });
@@ -230,7 +230,7 @@ test.for(failedMessageEndCases)(
 		const results = plain(component.render(120))
 			.map((line) => line.trim())
 			.filter((line) => line.startsWith("result "));
-		expect(results).toStrictEqual([`result isError=true: ${errorMessage}`]);
+		expect(results).toStrictEqual([expected]);
 	},
 );
 
@@ -244,6 +244,47 @@ test("nested spawn message_end without a failure completes the args of pending t
 	child.emit({ type: "message_end", message: assistantText("done") });
 
 	expect(plain(component.render(120))).toContainEqual(expect.stringContaining("args complete: true"));
+});
+
+test("nested spawn live action drops the result preview when a partial result has no text", () => {
+	const state = createState();
+	const child = createSubscribableSession(CWD);
+	const component = renderLiveChild(state, child);
+	child.emit({ type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: {} });
+	const update = { type: "tool_execution_update", toolCallId: "tc-1", toolName: "bash", args: {} } as const;
+	child.emit({ ...update, partialResult: { content: [{ type: "text", text: "line one" }], details: undefined } });
+	expect(component.render(120), "a text partial result shows its preview").toContainEqual(expect.stringContaining(realTheme.fg("dim", "[bash] line one")));
+
+	child.emit({ ...update, partialResult: { content: [], details: undefined } });
+
+	expect(component.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "[bash] …")));
+});
+
+const USER_TASK: UserMessage = { role: "user", content: [{ type: "text", text: "live task" }], timestamp: 1_767_225_600_000 };
+
+test("nested spawn shows a user message when it starts", () => {
+	const state = createState();
+	const child = createSubscribableSession(CWD);
+	const component = renderLiveChild(state, child, { expanded: true });
+
+	child.emit({ type: "message_start", message: USER_TASK });
+
+	expect(plain(component.render(120))).toContainEqual(expect.stringContaining("live task"));
+});
+
+const userMessageEventCases: { label: string; event: AgentSessionEvent }[] = [
+	{ label: "end", event: { type: "message_end", message: USER_TASK } },
+	{ label: "streamed update", event: { type: "message_update", message: USER_TASK, assistantMessageEvent: { type: "start", partial: assistantMessage([]) } } },
+];
+
+test.for(userMessageEventCases)("nested spawn stays running through the $label of a user message", ({ event }) => {
+	const state = createState();
+	const child = createSubscribableSession(CWD);
+	const component = renderLiveChild(state, child);
+
+	child.emit(event);
+
+	expect(plain(component.render(120)).map((line) => line.trim())).toStrictEqual(["m • low", "⏳ initializing…"]);
 });
 
 test("nested spawn dispose stops event processing", () => {
@@ -409,18 +450,17 @@ const reentrantDefinition: ToolDefinition = {
 
 test("nested spawn ignores child renderer invalidations during parent rebuild", () => {
 	const state = createState();
-	const messages: SubscribableSession["session"]["messages"] = [];
-	const child = createSubscribableSession(CWD, messages);
+	const child = createSubscribableSession(CWD, [
+		assistantMessage([{ type: "toolCall", id: "tc-1", name: "reentrant", arguments: {} }], { stopReason: "toolUse" }),
+	]);
 	Object.assign(child.session, { getToolDefinition: (toolName: string) => (toolName === "reentrant" ? reentrantDefinition : undefined) });
 	const invalidate = vi.fn();
-	const component = renderLiveChild(state, child, { invalidate });
-	flushSpawnFrameScheduler();
-	expect(invalidate, "initial empty attach does not invalidate").not.toHaveBeenCalled();
 
-	messages.push(assistantMessage([{ type: "toolCall", id: "tc-1", name: "reentrant", arguments: {} }], { stopReason: "toolUse" }));
-	component.invalidate();
+	const component = renderLiveChild(state, child, { invalidate, expanded: true });
+	const lines = plain(component.render(120));
 	flushSpawnFrameScheduler();
 
+	expect(lines, "the rebuild renders the reentrant tool call").toContainEqual(expect.stringContaining("reentrant"));
 	expect(invalidate, "child renderer invalidate requests stay inside spawn rebuild").not.toHaveBeenCalled();
 });
 

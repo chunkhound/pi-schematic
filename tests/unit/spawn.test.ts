@@ -829,6 +829,18 @@ test("spawn execute counts a compaction or branch summary only when it carries u
 	});
 });
 
+test("a spawn whose child entries cannot be read rejects with the read error", async () => {
+	const execution = executeWithChild({
+		entries: (manager) => {
+			vi.spyOn(manager, "getEntries").mockImplementation(() => {
+				throw new Error("child entries unreadable");
+			});
+		},
+	});
+
+	await expect(execution).rejects.toThrow(new Error("child entries unreadable"));
+});
+
 test("aborted spawn returns the partial child usage", async () => {
 	const state = createState();
 	const controller = new AbortController();

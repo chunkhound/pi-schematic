@@ -18,7 +18,7 @@ import { renderSpawnCall, renderSpawnResult } from "../../spawn/renderer.js";
 import { createToolRenderContext } from "./helpers.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
 import { createRunner } from "../support/runner.js";
-import { realTheme } from "../support/theme.js";
+import { createRealTheme, realTheme } from "../support/theme.js";
 import { assistantMessage, createSubscribableSession, userMessage } from "../support/session.js";
 
 let h: TestHarness;
@@ -388,6 +388,8 @@ test("retained nested spawn preserves identity when malformed terminal details r
 
 test("spawn result ignores malformed route and stats fields", () => {
 	const state = createState();
+	// A retained child's collapsed view is the one that shows stats.
+	storeChild(state, []);
 	const component = renderSpawnResult(
 		{
 			content: [{ type: "text", text: "done" }],
@@ -425,7 +427,7 @@ test("expanded nested spawn header stays within width after indent", () => {
 	);
 
 	const headerLine = plain(component.render(24)).find((line) => line.includes("model-name")) ?? "";
-	expectPrefix(headerLine, " ".repeat(5));
+	expectPrefix(headerLine, "     ");
 	expect(headerLine.length).toBeLessThanOrEqual(24);
 });
 
@@ -545,6 +547,29 @@ test("spawn renderResult falls back to static text when no live session is store
 	expect(lines).toContainEqual(expect.stringContaining(realTheme.fg("toolOutput", "fallback output")));
 });
 
+test("spawn renderResult reuses lastComponent", async () => {
+	const state = createState();
+	const renderResult = (await spawnDefinition(state)).renderResult;
+	expect(renderResult, "the spawn tool registers a result renderer").toBeTypeOf("function");
+	storeChild(state, [assistantText("hello")]);
+	const running = renderResult?.(
+		{ content: [], details: { model: "m", thinking: "low", truncated: false, outcome: "running" } },
+		{ expanded: false, isPartial: true },
+		realTheme,
+		createToolRenderContext(),
+	);
+
+	const failed = renderResult?.(
+		{ content: [{ type: "text", text: "hello" }], details: { model: "m", thinking: "low", truncated: false, outcome: "success" } },
+		{ expanded: false, isPartial: false },
+		realTheme,
+		createToolRenderContext({ lastComponent: running, isError: true }),
+	);
+
+	expect(failed).toBe(running);
+	expect(failed?.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("warning", "💬 error")));
+});
+
 test("spawn renderResult distinguishes aborted and error outcomes", () => {
 	const state = createState();
 
@@ -634,6 +659,18 @@ test("nested spawn attachSession rebuilds after replacing session transcript str
 	expect(secondRender).not.toContainEqual(expect.stringContaining("before"));
 });
 
+test("a retained nested spawn renders with the theme of its latest render", () => {
+	const state = createState();
+	storeChild(state, []);
+	const details = { model: "m", thinking: "low", truncated: false, outcome: "success" };
+	const component = renderSpawnResult({ content: [], details }, false, realTheme, resultContext(), state);
+	component.render(120);
+
+	const retained = renderSpawnResult({ content: [], details }, false, createRealTheme({ dim: "#00ff00" }), resultContext({ lastComponent: component }), state);
+
+	expect(retained.render(120)).toContainEqual(expect.stringContaining("\u001b[38;2;0;255;0m✅ m • low\u001b[39m"));
+});
+
 /** The non-blank lines, plain and trimmed, of an expanded nested spawn over the static transcript `messages`. */
 function renderExpandedTranscript(messages: AgentSession["messages"]): string[] {
 	const state = createState();
@@ -671,6 +708,27 @@ test("expanded nested spawn shows a skill invocation and the user message after 
 	]);
 
 	expect(lines).toStrictEqual(["m • low", "[skill]", "review", "Check the diff.", "review my change"]);
+});
+
+test("expanded nested spawn shows a displayed custom message from the transcript", () => {
+	const lines = renderExpandedTranscript([{ role: "custom", customType: "note", content: "custom note", display: true, timestamp: 1_767_225_600_000 }]);
+
+	expect(lines).toStrictEqual(["m • low", "[note]", "custom note"]);
+});
+
+test("a stored child whose first result is flagged isError renders as an error", () => {
+	const state = createState();
+	storeChild(state, []);
+
+	const component = renderSpawnResult(
+		{ content: [], details: { model: "m", thinking: "low", truncated: false, outcome: "success" } },
+		false,
+		realTheme,
+		resultContext({ isError: true }),
+		state,
+	);
+
+	expect(component.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("warning", "💬 error")));
 });
 
 test("nested spawn rebuildFromSession quietly tolerates missing tool definitions", () => {
