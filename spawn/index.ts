@@ -235,7 +235,6 @@ function createSpawnAbortContext(state: SchematicState, session: AgentSession, c
 		get wasAborted() {
 			return wasAborted;
 		},
-		invalidatedError,
 		abortChild,
 		clearChildSession,
 		abortAndInvalidate,
@@ -260,10 +259,9 @@ function getInheritableParentToolNames(parentToolNames: string[], availableTools
 export function buildChildToolNames(
 	parentToolNames: string[],
 	childTools: ToolDefinition[],
-	availableTools?: Pick<ToolInfo, "name" | "sourceInfo">[],
+	availableTools: Pick<ToolInfo, "name" | "sourceInfo">[],
 ): string[] {
-	const inheritableParentToolNames = availableTools ? getInheritableParentToolNames(parentToolNames, availableTools) : parentToolNames;
-	const inheritedTools = inheritableParentToolNames.filter((name) => name !== "spawn" && name !== HANDOFF_TOOL_NAME);
+	const inheritedTools = getInheritableParentToolNames(parentToolNames, availableTools).filter((name) => name !== "spawn" && name !== HANDOFF_TOOL_NAME);
 	return [...new Set([...inheritedTools, ...childTools.map((tool) => tool.name)])];
 }
 
@@ -538,9 +536,8 @@ export function executeSpawn(
 			customTools: effectiveChildTools,
 		});
 		// Pi clamps unsupported requested levels during session creation. Report the
-		// public session value so child details describe what actually runs. The
-		// fallback keeps intentionally partial session test doubles compatible.
-		const effectiveChildThinking = () => session.thinkingLevel ?? requestedChildThinking;
+		// public session value so child details describe what actually runs.
+		const effectiveChildThinking = () => session.thinkingLevel;
 		const buildBaseDetails = (truncated: boolean, outcome: SpawnOutcome): SpawnResultDetails => ({
 			model: childModel.id,
 			thinking: effectiveChildThinking(),
@@ -559,7 +556,7 @@ export function executeSpawn(
 		}
 
 		const abortContext = createSpawnAbortContext(state, session, ctx, toolCallId);
-		const { invalidatedError, abortChild, clearChildSession, abortAndInvalidate } = abortContext;
+		const { abortChild, clearChildSession, abortAndInvalidate } = abortContext;
 		// Node's EventTarget raises a listener's rejected promise as an uncaught exception;
 		// abortChild already reports the rejection through the UI notice.
 		const onSignalAbort = () => {
@@ -585,10 +582,6 @@ export function executeSpawn(
 				try {
 					if (signal?.aborted === true) {
 						await abortBeforePrompt(signal);
-					}
-
-					if (isStale()) {
-						await abortAndInvalidate();
 					}
 
 					// Register before publishing the running update: onUpdate is component code
@@ -644,17 +637,6 @@ export function executeSpawn(
 				const fullText = failureLine === undefined ? resultText : `${failureLine}${resultText ? `\n\n${resultText}` : ""}`;
 				const { text: finalText, truncated } = limitResultText(fullText);
 
-				// Execution should not retain live children after completion. If the TUI
-				// already rendered the child, it still owns the session object itself.
-				// Clearing here intentionally makes the component's dispose() a no-op for
-				// liveChildSessions — the child already completed so there's nothing to abort.
-				clearChildSession();
-
-				if (isStale()) {
-					// This late reset has no live child to abort; earlier resets report abort failures.
-					throw invalidatedError;
-				}
-
 				return {
 					content: [{ type: "text" as const, text: finalText }] as TextContent[],
 					truncated,
@@ -666,11 +648,7 @@ export function executeSpawn(
 			} finally {
 				clearChildSession();
 				try {
-					// AgentSession always provides dispose(); the guard keeps intentionally
-					// partial test doubles compatible with the public session boundary.
-					if (typeof session.dispose === "function") {
-						session.dispose();
-					}
+					session.dispose();
 				} catch (cleanupError) {
 					if (!primary) {
 						throw cleanupError;
@@ -726,6 +704,8 @@ export function executeSpawn(
  *
  * @param pi - Extension API instance for tool registration
  * @param state - Shared session state (child sessions, epoch, notebook)
+ * @param sessionFactory - Creates the child session; tests inject a fake child here to drive failures and timing
+ * @param constraintRegistry - The constraint descriptors the tool's schema, guidelines and routing use; tests inject their own descriptors here
  */
 export function registerSpawnTool(
 	pi: ExtensionAPI,

@@ -8,7 +8,7 @@ import {
 	READONLY_WRITE_EDIT_SUMMARY,
 	READONLY_INVALID_BASH_COMMAND_REASON,
 } from "../../notifications.js";
-import { buildChildToolNames, createReadonlyChildBashTool, filterReadonlyToolNames } from "../../spawn/index.js";
+import { createReadonlyChildBashTool, filterReadonlyToolNames } from "../../spawn/index.js";
 import { expectSuffix, isRecord } from "../assertions.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
@@ -71,18 +71,6 @@ test("filterReadonlyToolNames removes write, edit, and powershell in readonly mo
 test("filterReadonlyToolNames preserves all tools when readonly is off", () => {
 	const tools = ["read", "bash", "write", "edit", "powershell"];
 	expect(filterReadonlyToolNames(tools, false)).toStrictEqual(tools);
-});
-
-// ── Child tool names ─────────────────────────────────────────────────
-
-test("buildChildToolNames excludes spawn and handoff from inherited tools", () => {
-	const parentTools = ["read", "bash", "write", "edit", "spawn", "handoff"];
-	const result = buildChildToolNames(parentTools, []);
-	expect(result).not.toContain("spawn");
-	expect(result).not.toContain("handoff");
-	expect(result).toContain("read");
-	expect(result).toContain("bash");
-	expect(result).toContain("write");
 });
 
 // ── Readonly prompt constants ────────────────────────────────────────

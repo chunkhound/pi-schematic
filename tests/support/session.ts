@@ -2,7 +2,7 @@
 // keep the ids pi generates. A test addresses an entry by the id its appender returned.
 
 import { AgentSession, SessionManager, type AgentSessionEvent, type SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
-import type { Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ToolResultMessage, Usage, UserMessage } from "@earendil-works/pi-ai";
 import { vi, type Mock } from "vitest";
 import { guardedInstance } from "./guarded.js";
 
@@ -26,19 +26,49 @@ export function appendDrafts(session: SessionManager, drafts: readonly SessionBo
 	});
 }
 
-/** Append an assistant text message with `usage`, from a fixed test provider and time. Returns its entry id. */
-export function appendAssistantMessage(session: SessionManager, text: string, usage: Usage): string {
-	return session.appendMessage({
+// A fixed time for every message these helpers build.
+const MESSAGE_TIME = 1_767_225_600_000;
+
+/**
+ * An assistant message with `content` from a fixed test provider and time, ending with `fields.stopReason`
+ * (`"stop"` when omitted) and carrying `fields.usage` (zero usage when omitted).
+ */
+export function assistantMessage(
+	content: AssistantMessage["content"],
+	fields: Partial<Pick<AssistantMessage, "stopReason" | "errorMessage" | "usage">> = {},
+): AssistantMessage {
+	return {
 		role: "assistant",
-		content: [{ type: "text", text }],
+		content,
 		api: "test-api",
 		provider: "test-provider",
 		model: "test-model",
-		usage,
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
 		stopReason: "stop",
-		timestamp: 1_767_225_600_000,
-	});
+		timestamp: MESSAGE_TIME,
+		...fields,
+	};
 }
+
+/** A user message with `text`, at a fixed time. */
+export function userMessage(text: string): UserMessage {
+	return { role: "user", content: text, timestamp: MESSAGE_TIME };
+}
+
+/** A successful, empty result of the tool call `toolCallId` to `toolName`, at a fixed time, with the tool's own `usage` when given. */
+export function toolResultMessage(toolCallId: string, toolName: string, usage?: Usage): ToolResultMessage {
+	return { role: "toolResult", toolCallId, toolName, content: [], isError: false, timestamp: MESSAGE_TIME, ...(usage === undefined ? {} : { usage }) };
+}
+
+/** Append an assistant text message with `usage`, from a fixed test provider and time. Returns its entry id. */
+export function appendAssistantMessage(session: SessionManager, text: string, usage: Usage): string {
+	return session.appendMessage(assistantMessage([{ type: "text", text }], { usage }));
+}
+
+// The fake child sessions below stay custom because a real AgentSession runs its own agent loop: it
+// emits only the events and produces only the transcripts its run produces, at its own timing
+// (`_emit` is private), so it cannot replay a scripted sequence, fail a prompt on demand or hold a
+// prompt open while a test resets or aborts. Each reads and writes pi's published types only.
 
 export interface SubscribableSession {
 	session: AgentSession;
@@ -94,4 +124,46 @@ export function createSubscribableSession(cwd: string, messages: AgentSession["m
 		},
 		abort,
 	};
+}
+
+export interface ChildSessionOptions {
+	/** What `session.thinkingLevel` reports: the level pi settled on when it created the session. */
+	thinkingLevel: AgentSession["thinkingLevel"];
+	/** What `session.prompt` does; it resolves and leaves the transcript unchanged when omitted. */
+	prompt?: (text: string) => Promise<void>;
+	/** What `session.abort` does; it resolves when omitted. */
+	abort?: () => Promise<void>;
+	/** What `session.dispose` does; nothing when omitted. */
+	dispose?: () => void;
+}
+
+export interface ChildSession {
+	session: AgentSession;
+	/** The transcript `session.messages` returns; a test changes it in place. */
+	messages: AgentSession["messages"];
+	/** The session's in-memory manager, for the entries the child records. */
+	sessionManager: SessionManager;
+	prompt: Mock<(text: string) => Promise<void>>;
+	abort: Mock<() => Promise<void>>;
+	dispose: Mock<() => void>;
+}
+
+/**
+ * A child session for spawn to run: `messages`, `thinkingLevel`, `prompt`, `abort`, `dispose` and an
+ * in-memory `sessionManager` for `cwd`, each call recorded by a mock; reading any other AgentSession
+ * member throws, naming it.
+ */
+export function createChildSession(cwd: string, options: ChildSessionOptions): ChildSession {
+	const messages: AgentSession["messages"] = [];
+	const sessionManager = SessionManager.inMemory(cwd);
+	const prompt = vi.fn(options.prompt ?? (() => Promise.resolve()));
+	const abort = vi.fn(options.abort ?? (() => Promise.resolve()));
+	const dispose = vi.fn(options.dispose ?? (() => undefined));
+	const session = guardedInstance<AgentSession>(
+		AgentSession.prototype,
+		{ messages, thinkingLevel: options.thinkingLevel, prompt, abort, dispose, sessionManager },
+		["agent", "settingsManager"],
+		(member) => new Error(`session.${member} is not available on the test child session.`),
+	);
+	return { session, messages, sessionManager, prompt, abort, dispose };
 }
