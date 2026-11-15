@@ -44,7 +44,7 @@ export interface ModelGroupsLoadedGroup extends ModelGroupDef {
 export interface ResolvedModelGroup extends ModelGroupsLoadedGroup {
 	modalities: ModelGroupModalities;
 	validation: ModelGroupValidation;
-	/** Ordered descriptor evaluations; presentation consumers must iterate these. */ evaluations?: readonly ErasedConstraintEvaluation[];
+	/** Ordered descriptor evaluations; presentation consumers must iterate these. */ evaluations: readonly ErasedConstraintEvaluation[];
 }
 type ModelGroupsLoadIssueKind = "corrupt-json" | "schema-invalid" | "unsupported-version";
 export interface ModelGroupsLoadIssue {

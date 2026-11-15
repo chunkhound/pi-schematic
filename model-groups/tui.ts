@@ -392,21 +392,9 @@ export function createModelGroupsComponent(
 
 	function activeConstraintEditor(): { descriptor: AnyConstraintDescriptor; evaluation: ErasedConstraintEvaluation } | undefined {
 		const group = currentEditGroup();
-		const evaluation = group?.evaluations?.find((candidate) => productionConstraintRegistry.get(candidate.key)?.editor.kind === "multi-select");
+		const evaluation = group?.evaluations.find((candidate) => productionConstraintRegistry.get(candidate.key)?.editor.kind === "multi-select");
 		const descriptor = evaluation && productionConstraintRegistry.get(evaluation.key);
-		if (descriptor) {
-			return { descriptor, evaluation };
-		}
-		// Test/store adapters that predate generic evaluations retain the production descriptor's compatibility projection.
-		const compatibilityDescriptor = productionConstraintRegistry.descriptors.find((candidate) => candidate.editor.kind === "multi-select");
-		if (!group || !compatibilityDescriptor) {
-			return undefined;
-		}
-		const reconciled = compatibilityDescriptor.reconcile({ aggregate: group.modalities, override: state.editDraft?.constraints?.modalities });
-		return {
-			descriptor: compatibilityDescriptor,
-			evaluation: { key: compatibilityDescriptor.key, aggregate: group.modalities, effective: reconciled.effective, diagnostics: reconciled.diagnostics },
-		};
+		return descriptor ? { descriptor, evaluation } : undefined;
 	}
 
 	function modalityEditorRows(): readonly ConstraintEditorRow[] {
@@ -915,16 +903,7 @@ export function createModelGroupsComponent(
 				tags.push("project override");
 			}
 			const models = group.models.map((model) => thinkingLabel(model.thinkingLevel)).join(", ") || "empty";
-			if (group.evaluations) {
-				tags.push(...presentConstraintDiagnosticRecords(group.evaluations, productionConstraintRegistry).map((diagnostic) => diagnostic.text));
-			} else {
-				if (group.validation.emptyCommonModalities) {
-					tags.push("⚠ no common modalities");
-				}
-				if (group.validation.unsupportedOverrideModalities.length > 0) {
-					tags.push(`⚠ stale modality override: ${group.validation.unsupportedOverrideModalities.join(", ")}`);
-				}
-			}
+			tags.push(...presentConstraintDiagnosticRecords(group.evaluations, productionConstraintRegistry).map((diagnostic) => diagnostic.text));
 			const description = modalityDescription(group.scope, group.models.length, models, tags.join(" · "), group.modalities.effective);
 			return { value: String(index), label: escapeDisplayLabel(group.name), description };
 		});

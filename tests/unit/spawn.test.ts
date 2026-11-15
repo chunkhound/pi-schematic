@@ -1340,6 +1340,7 @@ test("executeSpawn propagates missing modalities before creating child work", as
 			models: [{ provider: PROVIDER, modelId: "text" }],
 			modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
 			validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
+			evaluations: [],
 		},
 	];
 	const host = await spawnRunner({
@@ -1396,6 +1397,7 @@ test("registered spawn tool rejects missing modalities before creating child wor
 			models: [{ provider: PROVIDER, modelId: "text" }],
 			modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
 			validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
+			evaluations: [],
 		},
 	];
 	const sessionFactory = vi.fn(
@@ -1441,6 +1443,7 @@ test("registered spawn tool rejects injected scalar group and model requirements
 			models: [{ provider: PROVIDER, modelId: "small" }],
 			modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
 			validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
+			evaluations: [],
 		},
 	];
 	const host = await spawnRunner({

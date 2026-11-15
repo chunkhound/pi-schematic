@@ -109,9 +109,6 @@ export function registerModelGroupAutocomplete(ctx: ExtensionContext, state: Sch
 		return;
 	}
 	const ui = ctx.ui;
-	if (typeof ui.addAutocompleteProvider !== "function") {
-		return;
-	}
 	if (registeredUis.has(ui)) {
 		return;
 	}

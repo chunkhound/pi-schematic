@@ -535,7 +535,7 @@ test("injected descriptors get persisted validation and CRUD cap enforcement thr
 		// Boot validation with the same registry carries the injected descriptor's evaluation.
 		const resolved = validateModelGroups(loaded, modelRegistry, injected);
 		expect(
-			resolved[0].evaluations?.map((evaluation) => evaluation.key),
+			resolved[0].evaluations.map((evaluation) => evaluation.key),
 			"injected evaluation must be present in boot validation",
 		).toContain("testMinContext");
 		// Unknown keys stay opaque even under an injected registry.

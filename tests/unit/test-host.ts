@@ -27,7 +27,6 @@ import type {
 	ExtensionRuntime,
 	ExtensionShortcut,
 	InputEventResult,
-	KeybindingsManager,
 	MessageEndEventResult,
 	ModelRegistry,
 	NormalizedBuildSystemPromptOptions,
@@ -91,17 +90,6 @@ const { normalizeBuildSystemPromptOptions, buildSystemPrompt } = await importInt
 	"normalizeBuildSystemPromptOptions",
 	"buildSystemPrompt",
 ]);
-
-// pi's package root exports `KeybindingsManager` as a type only.
-interface InternalKeybindings {
-	KeybindingsManager: typeof KeybindingsManager;
-}
-
-/** pi's keybindings with the default bindings, for the `keybindings` argument of a `ctx.ui.custom` factory. */
-export async function loadTestKeybindings(): Promise<KeybindingsManager> {
-	const internalKeybindings = await importInternal<InternalKeybindings>("core/keybindings.js", ["KeybindingsManager"]);
-	return new internalKeybindings.KeybindingsManager();
-}
 
 /** The tool definitions the extension registered, by tool name. */
 type TestToolMap = Map<string, ToolDefinition>;

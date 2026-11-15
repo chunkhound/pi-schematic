@@ -29,6 +29,7 @@ import {
 const CURRENT_VERSION = 2;
 type FsOps = Pick<typeof fs, "existsSync" | "mkdirSync" | "readFileSync" | "writeFileSync" | "renameSync" | "copyFileSync" | "unlinkSync" | "statSync">;
 let fsOps: FsOps = fs;
+// Filesystem fault-injection seam for tests: EIO, rename and stat failures that a real filesystem cannot produce portably.
 export function __setModelGroupsFsForTests(next: Partial<FsOps> | null): void {
 	fsOps = next ? { ...fs, ...next } : fs;
 }
@@ -591,7 +592,7 @@ export function summarizeBootValidation(
 	groups: ResolvedModelGroup[],
 	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
 ): { unavailableCount: number; overrideCount: number; emptyModalityCount: number; staleModalityOverrideCount: number } {
-	const diagnostics = groups.flatMap((group) => (group.evaluations ? presentConstraintDiagnosticRecords(group.evaluations, constraintRegistry) : []));
+	const diagnostics = groups.flatMap((group) => presentConstraintDiagnosticRecords(group.evaluations, constraintRegistry));
 	return {
 		unavailableCount: groups.reduce((sum, group) => sum + group.validation.unavailableRefs.length, 0),
 		overrideCount: groups.filter((g) => g.validation.shadowedByProject).length,

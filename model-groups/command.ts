@@ -13,10 +13,6 @@ export function registerModelGroupsCommand(pi: ExtensionAPI, state: SchematicSta
 				}
 				return;
 			}
-			if (!ctx.cwd || !ctx.modelRegistry) {
-				ctx.ui.notify("Cannot manage model groups: missing working directory or model registry", "error");
-				return;
-			}
 			const access = createModelGroupsAccess(ctx.cwd, ctx.isProjectTrusted());
 			await ctx.ui.custom<undefined>((tui, theme, _keybindings, done) =>
 				createModelGroupsComponent(tui, theme, ctx.modelRegistry, access, done, {
