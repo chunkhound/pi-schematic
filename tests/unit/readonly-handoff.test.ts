@@ -365,7 +365,11 @@ test("after the handoff cut, bypass is cleared and readonly persists", async () 
 
 	await completeHandoffCut(handoff, "handoff-1", { nextInstruction: "Continue readonly work" });
 
-	expect((await handoff.toolCall("handoff", { nextInstruction: "direct call" }))?.block, "bypass cleared: direct handoff should be blocked").toBe(true);
+	expect(await handoff.toolCall("handoff", { nextInstruction: "direct call" }), "bypass cleared: direct handoff should be blocked").toStrictEqual({
+		block: true,
+		reason:
+			"Readonly mode: handoff blocked until an explicit /handoff or an eligible human topic boundary enables the temporary exception. Use spawn for same-topic delegation.",
+	});
 	expect((await handoff.toolCall("write", { path: "/tmp/test", content: "x" }))?.block, "readonly persists: write should still be blocked after the cut").toBe(
 		true,
 	);

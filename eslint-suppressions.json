@@ -172,7 +172,7 @@
   },
   "tests/integration/handoff-boundary-session.test.ts": {
     "vitest/max-expects": {
-      "count": 48
+      "count": 47
     }
   },
   "tests/integration/os-sandbox.test.ts": {
