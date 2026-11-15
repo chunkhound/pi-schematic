@@ -2,16 +2,14 @@
  * Watchdog: primacy-zone reminder plus sticky enforcement for required handoff.
  *
  * Exposes nudge text generation and marks when the eligible required-handoff
- * nudge is sent. `agent_end` records the latest context usage; `agent_settled`
- * enforces the required-handoff budget for runs that sent that nudge.
- * Actual reminder injection happens in the `context` hook so it can appear
- * before every LLM call in the same agent run.
+ * nudge is sent. `agent_settled` enforces the required-handoff budget for runs
+ * that sent that nudge. Actual reminder injection happens in the `context` hook
+ * so it can appear before every LLM call in the same agent run.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { RequestedHandoff, SchematicState } from "./state.js";
 import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
-import { normalizeContextPercent } from "./handoff/eligibility.js";
 import { READONLY_HANDOFF_RETRY_ADVICE, buildReadonlyHandoffWaitNotice, buildReadonlyRequestedHandoffContinuation } from "./notifications.js";
 import { STATUS_KEY_HANDOFF } from "./tui.js";
 
@@ -20,9 +18,12 @@ import { STATUS_KEY_HANDOFF } from "./tui.js";
  * cycles to supply the instruction and context. */
 export const MAX_HANDOFF_ATTEMPTS = 5;
 
-/** Whether the settle of the current run counts it against the enforcement budget. */
+/**
+ * Whether the settle of the current run counts it against the enforcement budget. The
+ * handoff boundary's agent_settled handler runs first and resets or clears the request.
+ */
 function settleCountsAttempt(request: RequestedHandoff): boolean {
-	return !request.toolCalled && request.eligibleNudgeDelivered;
+	return request.eligibleNudgeDelivered;
 }
 
 /** Whether the settle of the current run counts the attempt that exhausts the budget. */
@@ -122,18 +123,11 @@ export function buildAndRecordNudge(state: NudgeState, percent: number | null, e
 }
 
 /**
- * Registers the `agent_end` usage recorder and the `agent_settled` handoff enforcer.
+ * Registers the `agent_settled` handoff enforcer.
  *
  * Must be called from the extension factory in index.ts after state creation.
  */
 export function registerWatchdog(pi: ExtensionAPI, state: SchematicState): void {
-	pi.on("agent_end", (_event: unknown, ctx: ExtensionContext) => {
-		// ── Context usage ───────────────────────────────────────────
-		// Null or malformed usage — right after compaction or when the host cannot
-		// provide a real percentage — is recorded as null, never as an invalid value.
-		state.lastContextPercent = normalizeContextPercent(ctx.getContextUsage()?.percent);
-	});
-
 	pi.on("agent_settled", (_event: unknown, ctx: ExtensionContext) => {
 		// ── Enforcement counter: cap nudged runs of an unanswered handoff ──
 		// pendingRequestedHandoff is the sticky "user still expects a real

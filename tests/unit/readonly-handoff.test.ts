@@ -1,232 +1,243 @@
-import { expect, test, vi } from "vitest";
-import type {
-	CompactionEntryDraft,
-	ContextEvent,
-	ContextEventResult,
-	ContextUsage,
-	ExtensionCommandContext,
-	ExtensionContext,
-	ExtensionToolContext,
-	SessionBoundaryDraft,
-	TurnEndEvent,
-	TurnEndEventResult,
-} from "@earendil-works/pi-coding-agent";
+import { expect, test } from "vitest";
+import { SessionManager, type ContextUsage, type ExtensionRunner, type SessionBoundaryDraft, type ToolCallEventResult } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
 import { execFileSync } from "node:child_process";
 import { access, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createState } from "../../state.js";
-import { canPromoteBoundary, discardNonHumanBoundary } from "../../readonly-boundary.js";
-import { setActiveNotebookTopic } from "../../notebook/topic.js";
-import {
-	callHandlers,
-	createCommandContext,
-	createExtensionContext,
-	createToolContext,
-	createUIContext,
-	emitAll,
-	handoffToolResult,
-	registerReadonlyPI,
-	turnEndEvent,
-	uiCommandContext,
-	type ToolCall,
-} from "./helpers.js";
-import { getCommand, getHandlers, getHostRecords, getTool, invokeHandler, type TestPI } from "./test-host.js";
-import { assertPresent, expectPrefix } from "../assertions.js";
+import { assertPresent, expectPrefix, expectSuffix } from "../assertions.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
-import { buildContinuationFrame } from "../../handoff/format.js";
-import { HANDOFF_FAILED_IN_RUN_REFUSAL, HANDOFF_NOT_ALONE_REFUSAL } from "../../handoff/copy.js";
-import { READONLY_POWERSHELL_BLOCK_REASON, READONLY_WRITE_EDIT_BLOCK_REASON } from "../../notifications.js";
+import { createRunner, type RunnerFixture } from "../support/runner.js";
+import { appendDrafts } from "../support/session.js";
+import { realTheme } from "../support/theme.js";
 
-type AgentMessage = ContextEvent["messages"][number];
+type ContextMessage = Awaited<ReturnType<ExtensionRunner["emitContext"]>>[number];
 
-async function createHandoffPI() {
-	const { pi, toolCall } = await registerReadonlyPI();
-	const agentSettled = (ctx: unknown) => emitAll(pi, "agent_settled", { type: "agent_settled" }, ctx);
-	// One context these tests pass stubs `sessionManager` with a branch only, which `ExtensionContext` does not admit,
-	// so the one session_tree handler runs untyped through emitAll.
-	const sessionTree = (event: unknown, ctx: unknown) => emitAll(pi, "session_tree", event, ctx);
-	const sessionStart = (event: unknown, ctx: unknown) => emitAll(pi, "session_start", event, ctx);
-	return { pi, toolCall, agentSettled, sessionTree, sessionStart };
+const ELIGIBLE_USAGE: ContextUsage = { tokens: 50000, percent: 25, contextWindow: 200000 };
+
+const READONLY_ACTIVE_SUMMARY =
+	"[readonly] enabled — write/edit/powershell blocked; bash writes/deletions outside temp blocked; handoff needs explicit /handoff or an eligible human topic boundary.";
+
+const CONTINUATION_FRAME = [
+	"## Handoff — Continue Previous Work",
+	"",
+	"You are continuing a previous agent's work in a clean context. Use the available knowledge correctly:",
+	"- Notebook pages are a cache for this stream: code facts are re-derivable, while user guidance, decisions, and design live in pages — fetch them with `notebook_read`",
+	"- The next message carries your instruction verbatim, plus the previous agent's remaining situational context",
+	"- Use `notebook_index` to scan available pages when needed",
+	"- Use `spawn` to delegate isolated subtasks to child agents",
+	"- Build on notebook memory and the instruction rather than reconstructing old context",
+].join("\n");
+
+/** The shipped extension on a runner with the recording UI and the real Theme, an idle in-memory session, and the usage and signal the test sets. */
+interface HandoffRunner {
+	fixture: RunnerFixture;
+	session: SessionManager;
+	setUsage: (usage: ContextUsage | undefined) => void;
+	setSignal: (signal: AbortSignal | undefined) => void;
+	runCommand: (name: string, args: string) => Promise<void>;
+	/** `/readonly`, with the readonly entry it appends persisted on the branch as pi would persist it. */
+	toggleReadonly: () => Promise<void>;
+	/** Runs the context hook on one user message; resolves to the messages after every handler. */
+	context: (content: string, timestamp: number) => Promise<ContextMessage[]>;
+	toolCall: (toolName: string, input: Record<string, unknown>, toolCallId?: string) => Promise<ToolCallEventResult | undefined>;
+	turnStart: () => Promise<void>;
+	agentSettled: () => Promise<void>;
 }
 
-/** A command context without UI and without context usage. */
-function headlessCommandContext(): ExtensionCommandContext {
-	return createCommandContext({ getContextUsage: () => undefined });
+async function createHandoffRunner(): Promise<HandoffRunner> {
+	let usage: ContextUsage | undefined;
+	let signal: AbortSignal | undefined;
+	const cwd = process.cwd();
+	const session = SessionManager.inMemory(cwd);
+	const fixture = await createRunner({
+		cwd,
+		mode: "tui",
+		sessionManager: session,
+		ui: { theme: realTheme },
+		context: {
+			getContextUsage: () => usage,
+			getSignal: () => signal,
+			isIdle: () => true,
+			abort: () => undefined,
+		},
+		activeTools: [],
+	});
+	const { runner, host } = fixture;
+	const runCommand = async (name: string, args: string): Promise<void> => {
+		await fixture.command(name).handler(args, runner.createCommandContext());
+	};
+	return {
+		fixture,
+		session,
+		setUsage: (next) => {
+			usage = next;
+		},
+		setSignal: (next) => {
+			signal = next;
+		},
+		runCommand,
+		toggleReadonly: async () => {
+			await runCommand("readonly", "");
+			const entry = host.appendedEntries.at(-1);
+			assertPresent(entry, "/readonly appends its entry");
+			session.appendCustomEntry(entry.customType, entry.data);
+		},
+		context: (content, timestamp) => runner.emitContext([{ role: "user", content, timestamp }]),
+		toolCall: (toolName, input, toolCallId = "call") => runner.emitToolCall({ type: "tool_call", toolCallId, toolName, input }),
+		turnStart: async () => {
+			await runner.emit({ type: "turn_start", turnIndex: 1, timestamp: 0 });
+		},
+		agentSettled: async () => {
+			await runner.emit({ type: "agent_settled", aborted: false });
+		},
+	};
 }
 
-/** A context without UI that reports `usage`. */
-function usageContext(usage?: ContextUsage): ExtensionContext {
-	return createExtensionContext({ getContextUsage: () => usage });
-}
-
-/** The one context handler, called with a `context` event carrying `event.messages`. */
-function contextHandlerOf(pi: TestPI) {
-	return (event: Omit<ContextEvent, "type">, ctx: ExtensionContext) => invokeHandler(pi, "context", { type: "context", ...event }, ctx);
-}
-
-/** The content of the last message `result` returns. Throws when there is no result or that message has no text content. */
-function lastMessageContent(result: ContextEventResult | undefined): string {
-	if (result?.messages === undefined) {
-		throw new Error("The context handler returned no messages.");
+/** The content of the last readonly nudge in `messages`, if any. */
+function lastReadonlyNudge(messages: ContextMessage[]): string | undefined {
+	const nudge = messages.filter((message) => message.role === "custom" && message.customType === "pi-schematic-readonly-nudge").at(-1);
+	if (nudge === undefined) {
+		return undefined;
 	}
-	const last = result.messages.at(-1);
+	if (nudge.role !== "custom" || typeof nudge.content !== "string") {
+		throw new Error("The readonly nudge has no text content.");
+	}
+	return nudge.content;
+}
+
+/** `content` of a sent user message as text; throws when it is not text. */
+function userMessageText(content: string | readonly unknown[]): string {
+	if (typeof content !== "string") {
+		throw new Error("The user message has no text content.");
+	}
+	return content;
+}
+
+/** The content of the last message in `messages`; throws when it has no text content. */
+function lastMessageContent(messages: ContextMessage[]): string {
+	const last = messages.at(-1);
 	if (last === undefined || !("content" in last) || typeof last.content !== "string") {
 		throw new Error("The last context message has no text content.");
 	}
 	return last.content;
 }
 
-/** The content of the last readonly nudge in `result`, if any. */
-function lastReadonlyNudge(result: ContextEventResult | undefined): string | undefined {
-	const nudges = (result?.messages ?? []).filter((message: AgentMessage) => "customType" in message && message.customType === "pi-schematic-readonly-nudge");
-	const nudge = nudges.at(-1);
-	if (nudge === undefined) {
-		return undefined;
-	}
-	if (!("content" in nudge) || typeof nudge.content !== "string") {
-		throw new Error("The readonly nudge has no text content.");
-	}
-	return nudge.content;
+const ZERO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+
+function assistantMessage(content: AssistantMessage["content"]): AssistantMessage {
+	return { role: "assistant", content, api: "faux", provider: "faux", model: "faux", usage: ZERO_USAGE, stopReason: "toolUse", timestamp: 0 };
 }
 
-function makeReadonlyResumeCtx(branch: unknown[]) {
-	return {
-		hasUI: false,
-		getContextUsage: () => null,
-		sessionManager: {
-			getBranch: () => branch,
+/** A tool result message for `toolCallId`, as pi passes it in `TurnEndEvent.toolResults`. */
+function handoffToolResult(toolCallId: string): ToolResultMessage {
+	return { role: "toolResult", toolCallId, toolName: "handoff", content: [{ type: "text", text: "Handoff staged." }], isError: false, timestamp: 0 };
+}
+
+/** End a turn whose tool results hold the handoff result for `toolCallId`; resolves to what the handlers asked pi to commit and whether to continue. */
+function emitTurnEnd({ fixture }: HandoffRunner, toolCallId: string): Promise<{ entries: SessionBoundaryDraft[]; continue: boolean }> {
+	return fixture.runner.emitBoundary(
+		{
+			type: "turn_end",
+			turnIndex: 0,
+			message: assistantMessage([]),
+			toolResults: [handoffToolResult(toolCallId)],
+			messageEntryId: "assistant-entry",
+			toolResultEntryIds: [],
+			outcome: "completed",
 		},
-	};
+		() => ({ contextEntries: [], contextMessages: [], llmMessages: [], pendingMessages: [], canContinue: true }),
+	);
 }
-
-/** Dispatch a tool call as pi does: run the composed tool_call handlers and execute the tool only when none blocks. Returns the block or the tool's result. */
-async function dispatchTool(
-	pi: TestPI,
-	toolCall: ToolCall,
-	event: { toolName: string; toolCallId: string; input: Record<string, unknown> },
-	ctx: ExtensionToolContext,
-): Promise<unknown> {
-	const blocked = await toolCall(event, ctx);
-	if (blocked?.block === true) {
-		return blocked;
-	}
-	return getTool(pi, event.toolName).execute(event.toolCallId, event.input, undefined, undefined, ctx);
-}
-
-const ELIGIBLE_USAGE: ContextUsage = { tokens: 50000, percent: 25, contextWindow: 200000 };
 
 /** Execute the handoff tool with an eligible context, leaving the handoff staged. */
-async function stageHandoff(pi: TestPI, toolCallId: string, params: Record<string, unknown>): Promise<void> {
-	await getTool(pi, "handoff").execute(toolCallId, params, undefined, undefined, createToolContext({ getContextUsage: () => ELIGIBLE_USAGE }));
-}
-
-/** Whether a turn_end handler result carries boundary entries. */
-function hasEntries(result: TurnEndEventResult | undefined): boolean {
-	return result?.entries !== undefined;
-}
-
-/** A context without UI whose signal is aborted or not. */
-function turnEndContext(aborted: boolean): ExtensionContext {
-	const controller = new AbortController();
-	if (aborted) {
-		controller.abort();
-	}
-	return createExtensionContext({ signal: controller.signal });
-}
-
-/** Every turn_end handler's result for `event`, in registration order; each handler sees the same event. */
-async function turnEndResults(pi: TestPI, event: TurnEndEvent, ctx: ExtensionContext): Promise<(TurnEndEventResult | undefined)[]> {
-	const results: (TurnEndEventResult | undefined)[] = [];
-	for (let index = 0; index < getHandlers(pi, "turn_end").length; index++) {
-		results.push(await invokeHandler(pi, "turn_end", event, ctx, index));
-	}
-	return results;
+async function stageHandoff(handoff: HandoffRunner, toolCallId: string, params: Record<string, unknown>): Promise<void> {
+	handoff.setUsage(ELIGIBLE_USAGE);
+	await handoff.fixture.tool("handoff").execute(toolCallId, params);
 }
 
 /** End the staging turn and return the entries the boundary handler asked pi to commit. */
-async function endStagingTurn(pi: TestPI, toolCallId: string): Promise<SessionBoundaryDraft[]> {
-	const results = await turnEndResults(pi, turnEndEvent({ toolResults: [handoffToolResult(toolCallId)] }), turnEndContext(false));
-	const boundary = results.find(hasEntries);
-	assertPresent(boundary?.entries, "the staging turn_end must return boundary entries");
-	expect(boundary.continue).toBe(true);
-	return boundary.entries;
+async function submitStagingTurn(handoff: HandoffRunner, toolCallId: string): Promise<SessionBoundaryDraft[]> {
+	const { entries, continue: shouldContinue } = await emitTurnEnd(handoff, toolCallId);
+	expect(entries, "the staging turn_end must return boundary entries").not.toStrictEqual([]);
+	expect(shouldContinue, "the boundary continues the run for the successor turn").toBe(true);
+	return entries;
 }
 
 /** The summary of the compaction draft in `drafts`. */
 function compactionSummary(drafts: SessionBoundaryDraft[]): string {
-	const compaction = drafts.find((draft): draft is CompactionEntryDraft => draft.type === "compaction");
+	const compaction = drafts.find((draft) => draft.type === "compaction");
 	assertPresent(compaction, "the cut must write a compaction");
 	return compaction.summary;
 }
 
 /** The text of the successor turn the cut writes. */
 function successorContent(drafts: SessionBoundaryDraft[]): string {
-	const successor = drafts.find((draft) => "customType" in draft && draft.customType === "pi-schematic-handoff");
-	assertPresent(successor, "the cut must write the successor turn");
-	if (successor.type !== "custom_message" || typeof successor.content !== "string") {
-		throw new Error("The successor turn has no text content.");
+	const successor = drafts.find((draft) => draft.type === "custom_message" && draft.customType === "pi-schematic-handoff");
+	if (successor?.type !== "custom_message" || typeof successor.content !== "string") {
+		throw new Error("The cut wrote no successor turn with text content.");
 	}
 	return successor.content;
 }
 
-/** The branch pi would hold after committing `drafts` as session entries. */
-function committedBranch(drafts: SessionBoundaryDraft[]) {
-	return drafts.map((draft, index) => ({
-		...draft,
-		id: `entry-${index}`,
-		parentId: index === 0 ? null : `entry-${index - 1}`,
-		timestamp: "2026-01-01T00:00:00.000Z",
-	}));
-}
-
-async function turnStartWith(pi: TestPI, branch: unknown[]): Promise<void> {
-	await emitAll(pi, "turn_start", { type: "turn_start" }, { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => branch } });
-}
-
 /** Stage → turn_end → turn_start with the committed cut on the branch. Returns the committed drafts. */
-async function completeHandoffCut(pi: TestPI, toolCallId: string, params: Record<string, unknown>): Promise<SessionBoundaryDraft[]> {
-	await stageHandoff(pi, toolCallId, params);
-	const drafts = await endStagingTurn(pi, toolCallId);
-	await turnStartWith(pi, committedBranch(drafts));
+async function completeHandoffCut(handoff: HandoffRunner, toolCallId: string, params: Record<string, unknown>): Promise<SessionBoundaryDraft[]> {
+	await stageHandoff(handoff, toolCallId, params);
+	const drafts = await submitStagingTurn(handoff, toolCallId);
+	appendDrafts(handoff.session, drafts);
+	await handoff.turnStart();
 	return drafts;
+}
+
+/** Readonly on and drained, a /handoff staged and cut, with the cut but not its successor committed, failed at turn_start. */
+async function loseSuccessorAtTurnStart(): Promise<HandoffRunner> {
+	const handoff = await createHandoffRunner();
+	await handoff.toggleReadonly();
+	await handoff.context("drain", 1);
+	await handoff.runCommand("handoff", "continue readonly work");
+	await stageHandoff(handoff, "handoff-1", {});
+	const drafts = await submitStagingTurn(handoff, "handoff-1");
+	appendDrafts(
+		handoff.session,
+		drafts.filter((draft) => draft.type !== "custom_message" || draft.customType !== "pi-schematic-handoff"),
+	);
+	await handoff.turnStart();
+	return handoff;
 }
 
 /**
  * Drive a real handoff through the boundary cut, optionally flipping readonly
  * between the tool call and the cut, then read the next model turn's readonly nudge.
  */
-async function handoffCutAcrossReadonlyToggle(readonlyAfterCut: boolean) {
-	const { pi } = await createHandoffPI();
-	const contextHandler = contextHandlerOf(pi);
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
+async function handoffCutAcrossReadonlyToggle(readonlyAfterCut: boolean): Promise<string | undefined> {
+	const handoff = await createHandoffRunner();
+	await handoff.toggleReadonly();
 	// Consume the toggle-on nudge so any later nudge can only come from the handoff.
-	await contextHandler({ messages: [{ role: "user", content: "drain", timestamp: 1 }] }, usageContext());
-	await getCommand(pi, "handoff").handler("continue work", uiCommandContext({ isIdle: () => true }));
-	await stageHandoff(pi, "handoff-1", { nextInstruction: "ignored in favor of the direction" });
+	await handoff.context("drain", 1);
+	await handoff.runCommand("handoff", "continue work");
+	await stageHandoff(handoff, "handoff-1", { nextInstruction: "ignored in favor of the direction" });
 	if (!readonlyAfterCut) {
-		await getCommand(pi, "readonly").handler("", uiCommandContext());
+		await handoff.toggleReadonly();
 		// Consume the pre-cut toggle nudge so the probe below sees only the fresh
 		// handoff-side announcement of the final live state.
-		await contextHandler({ messages: [{ role: "user", content: "toggle", timestamp: 2 }] }, usageContext());
+		await handoff.context("toggle", 2);
 	}
-	const drafts = await endStagingTurn(pi, "handoff-1");
-	await turnStartWith(pi, committedBranch(drafts));
-	const next = await contextHandler({ messages: [{ role: "user", content: "post-handoff", timestamp: 3 }] }, usageContext());
-	return { summary: compactionSummary(drafts), nudgeContent: lastReadonlyNudge(next) };
+	appendDrafts(handoff.session, await submitStagingTurn(handoff, "handoff-1"));
+	await handoff.turnStart();
+	handoff.setUsage(undefined);
+	return lastReadonlyNudge(await handoff.context("post-handoff", 3));
 }
 
-async function assertNonTempBashBlocked(toolCall: ToolCall): Promise<void> {
+async function assertNonTempBashBlocked({ toolCall }: HandoffRunner): Promise<void> {
 	const target = path.join(os.homedir(), `readonly-handoff-test-${process.pid}-${Date.now()}`);
 	const command = `touch "${target}"`;
 	await rm(target, { force: true });
 	try {
-		const event = { toolName: "bash", input: { command } };
-		const result = await toolCall(event, { cwd: process.cwd() });
+		const result = await toolCall("bash", { command });
 		if (result?.block !== true) {
 			try {
-				execFileSync("bash", ["-lc", event.input.command], { cwd: process.cwd(), stdio: "ignore" });
+				execFileSync("bash", ["-lc", command], { cwd: process.cwd(), stdio: "ignore" });
 			} catch {
 				// A sandbox may reject the command with a non-zero exit status.
 			}
@@ -238,532 +249,343 @@ async function assertNonTempBashBlocked(toolCall: ToolCall): Promise<void> {
 	}
 }
 
-async function handoffAllowedAtUsage(usage: ContextUsage): Promise<boolean> {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	const contextHandler = contextHandlerOf(pi);
-	await contextHandler({ messages: [{ role: "user", content: "drain", timestamp: 1 }] }, usageContext());
-	await getCommand(pi, "notebook").handler("oauth", headlessCommandContext());
-	await getCommand(pi, "notebook").handler("billing", headlessCommandContext());
-	await contextHandler({ messages: [{ role: "user", content: "continue", timestamp: 2 }] }, usageContext(usage));
-	return (await toolCall({ toolName: "handoff", input: { nextInstruction: "continue billing" } }, {})) === undefined;
+/** Readonly on and drained, then a human topic change from oauth to billing. */
+async function readonlyTopicBoundary(): Promise<HandoffRunner> {
+	const handoff = await createHandoffRunner();
+	await handoff.toggleReadonly();
+	await handoff.context("drain", 1);
+	await handoff.runCommand("notebook", "oauth");
+	await handoff.runCommand("notebook", "billing");
+	return handoff;
 }
 
 test("/handoff command creates temporary bypass for handoff tool only", async () => {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	await getCommand(pi, "handoff").handler("continue readonly work", uiCommandContext({ isIdle: () => true }));
+	const handoff = await createHandoffRunner();
+	await handoff.toggleReadonly();
+	await handoff.runCommand("handoff", "continue readonly work");
 
 	expect(
-		await toolCall({ toolName: "handoff", input: { nextInstruction: "continue readonly work" } }, {}),
+		await handoff.toolCall("handoff", { nextInstruction: "continue readonly work" }),
 		"handoff should be unblocked after explicit /handoff",
 	).toBeUndefined();
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/test", content: "x" } }, {}))?.block, "write should stay blocked").toBe(true);
-	const powershell = await toolCall({ toolName: "powershell", input: { command: "Get-ChildItem" } }, {});
+	expect((await handoff.toolCall("write", { path: "/tmp/test", content: "x" }))?.block, "write should stay blocked").toBe(true);
+	const powershell = await handoff.toolCall("powershell", { command: "Get-ChildItem" });
 	expect(powershell?.block, "powershell should stay blocked").toBe(true);
-	expect(powershell?.reason).toBe(READONLY_POWERSHELL_BLOCK_REASON);
-	await assertNonTempBashBlocked(toolCall);
+	expect(powershell?.reason).toBe(
+		"Readonly mode: powershell blocked until the user disables readonly. Do not run PowerShell or other shells through another tool.",
+	);
+	await assertNonTempBashBlocked(handoff);
+});
+
+test("/handoff in readonly mode notifies the readonly handoff exception", async () => {
+	const handoff = await createHandoffRunner();
+	await handoff.toggleReadonly();
+
+	await handoff.runCommand("handoff", "continue readonly work");
+
+	expect(handoff.fixture.ui.notifications.at(-1)).toStrictEqual({
+		message:
+			"Readonly is active. An explicit /handoff exception is reserved for this request; the handoff will start a fresh context once feasible. Write/edit/powershell remain blocked, and bash writes/deletions outside temp blocked stays in effect. After a successful handoff, fresh context resumes in readonly mode.",
+		type: "info",
+	});
+});
+
+test("/handoff in readonly mode ends its user message with the readonly handoff notice", async () => {
+	const handoff = await createHandoffRunner();
+	await handoff.toggleReadonly();
+
+	await handoff.runCommand("handoff", "continue readonly work");
+
+	const { sentUserMessages } = handoff.fixture.host;
+	expect(sentUserMessages).toHaveLength(1);
+	expectSuffix(
+		userMessageText(sentUserMessages[0].content),
+		"\n\n[readonly] temporary handoff exception active; write/edit/powershell remain blocked; bash writes/deletions outside temp blocked. Fresh context resumes in readonly mode.",
+	);
 });
 
 test("readonly blocks a non-requested handoff", async () => {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	const ctx = createToolContext({
-		hasUI: true,
-		ui: createUIContext({ notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn() }),
-		getContextUsage: () => ({ tokens: 50_000, percent: 80, contextWindow: 64_000 }),
-	});
-	const input = { nextInstruction: "must remain in current context" };
-	const blocked = await dispatchTool(pi, toolCall, { toolName: "handoff", toolCallId: "blocked-1", input }, ctx);
+	const handoff = await createHandoffRunner();
+	await handoff.toggleReadonly();
+	handoff.setUsage({ tokens: 50_000, percent: 80, contextWindow: 64_000 });
+
+	const blocked = await handoff.toolCall("handoff", { nextInstruction: "must remain in current context" }, "blocked-1");
 	expect(blocked).toMatchObject({ block: true });
 
-	const results = await turnEndResults(pi, turnEndEvent({ toolResults: [handoffToolResult("blocked-1")] }), turnEndContext(false));
-	expect(results.filter(hasEntries), "a blocked handoff leaves no boundary to write").toStrictEqual([]);
+	expect((await emitTurnEnd(handoff, "blocked-1")).entries, "a blocked handoff leaves no boundary to write").toStrictEqual([]);
 });
 
 test("a write sharing a message with handoff keeps its readonly block while the handoff is refused", async () => {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	await getCommand(pi, "handoff").handler("continue readonly work", uiCommandContext({ isIdle: () => true }));
-	await callHandlers(
-		pi,
-		"message_end",
-		{
-			type: "message_end",
-			message: {
-				role: "assistant",
-				content: [
-					{ type: "toolCall", id: "call-handoff", name: "handoff", arguments: {} },
-					{ type: "toolCall", id: "call-write", name: "write", arguments: { path: "/tmp/test", content: "x" } },
-				],
-			},
-		},
-		{},
-	);
+	const handoff = await createHandoffRunner();
+	await handoff.toggleReadonly();
+	await handoff.runCommand("handoff", "continue readonly work");
+	await handoff.fixture.runner.emitMessageEnd({
+		type: "message_end",
+		message: assistantMessage([
+			{ type: "toolCall", id: "call-handoff", name: "handoff", arguments: {} },
+			{ type: "toolCall", id: "call-write", name: "write", arguments: { path: "/tmp/test", content: "x" } },
+		]),
+	});
 
-	const sibling = await toolCall({ toolName: "write", toolCallId: "call-write", input: { path: "/tmp/test", content: "x" } }, {});
-	expect(sibling).toStrictEqual({ block: true, reason: READONLY_WRITE_EDIT_BLOCK_REASON });
-	const handoff = await dispatchTool(
-		pi,
-		toolCall,
-		{ toolName: "handoff", toolCallId: "call-handoff", input: { nextInstruction: "continue readonly work" } },
-		createToolContext({ getContextUsage: () => ELIGIBLE_USAGE }),
-	);
-	expect(handoff).toStrictEqual({ block: true, reason: HANDOFF_NOT_ALONE_REFUSAL, terminate: true });
+	const sibling = await handoff.toolCall("write", { path: "/tmp/test", content: "x" }, "call-write");
+	expect(sibling).toStrictEqual({
+		block: true,
+		reason: "Readonly mode: write/edit blocked until the user disables readonly. Do not attempt alternative write strategies.",
+	});
+	const refused = await handoff.toolCall("handoff", { nextInstruction: "continue readonly work" }, "call-handoff");
+	expect(refused).toStrictEqual({
+		block: true,
+		reason:
+			"Not run: handoff must be the only tool call in its message. The other calls in this message were handled on their own; call handoff alone in your next message.",
+		terminate: true,
+	});
 
-	const results = await turnEndResults(pi, turnEndEvent({ toolResults: [handoffToolResult("call-handoff")] }), turnEndContext(false));
-	expect(results.filter(hasEntries), "a refused handoff stages nothing").toStrictEqual([]);
+	expect((await emitTurnEnd(handoff, "call-handoff")).entries, "a refused handoff stages nothing").toStrictEqual([]);
 });
 
 test("watchdog cancellation clears the readonly handoff bypass", async () => {
-	const { pi, toolCall, agentSettled } = await createHandoffPI();
-	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "handoff pending"]]);
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	await getCommand(pi, "handoff").handler("continue readonly work", uiCommandContext({ isIdle: () => true }));
+	const handoff = await createHandoffRunner();
+	await handoff.toggleReadonly();
+	await handoff.runCommand("handoff", "continue readonly work");
 
-	const ctx = createExtensionContext({
-		hasUI: true,
-		ui: createUIContext({
-			setStatus: (key: string, value: string | undefined) => {
-				statuses.set(key, value);
-			},
-			notify: vi.fn(),
-		}),
-		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
-	});
-	const contextHook = contextHandlerOf(pi);
+	handoff.setUsage(ELIGIBLE_USAGE);
 	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS; i++) {
-		await contextHook({ messages: [{ role: "user", content: "work", timestamp: i }] }, ctx);
-		await agentSettled(ctx);
+		await handoff.context("work", i);
+		await handoff.agentSettled();
 	}
 
-	expect(statuses.get(STATUS_KEY_HANDOFF)).toBeUndefined();
-	expect((await toolCall({ toolName: "handoff", input: {} }, {}))?.block, "readonly handoff should be blocked after watchdog cancellation").toBe(true);
+	expect(handoff.fixture.ui.statuses.get(STATUS_KEY_HANDOFF)).toBeUndefined();
+	expect((await handoff.toolCall("handoff", {}))?.block, "readonly handoff should be blocked after watchdog cancellation").toBe(true);
 });
 
 test("after the handoff cut, bypass is cleared and readonly persists", async () => {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	await getCommand(pi, "handoff").handler("continue readonly work", uiCommandContext({ isIdle: () => true }));
+	const handoff = await createHandoffRunner();
+	await handoff.toggleReadonly();
+	await handoff.runCommand("handoff", "continue readonly work");
 
-	await completeHandoffCut(pi, "handoff-1", { nextInstruction: "Continue readonly work" });
+	await completeHandoffCut(handoff, "handoff-1", { nextInstruction: "Continue readonly work" });
 
-	expect(
-		(await toolCall({ toolName: "handoff", input: { nextInstruction: "direct call" } }, {}))?.block,
-		"bypass cleared: direct handoff should be blocked",
-	).toBe(true);
-	expect(
-		(await toolCall({ toolName: "write", input: { path: "/tmp/test", content: "x" } }, {}))?.block,
-		"readonly persists: write should still be blocked after the cut",
-	).toBe(true);
+	expect((await handoff.toolCall("handoff", { nextInstruction: "direct call" }))?.block, "bypass cleared: direct handoff should be blocked").toBe(true);
+	expect((await handoff.toolCall("write", { path: "/tmp/test", content: "x" }))?.block, "readonly persists: write should still be blocked after the cut").toBe(
+		true,
+	);
 });
 
 test("the readonly bypass stays until the cut is confirmed on the branch", async () => {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	await getCommand(pi, "handoff").handler("continue readonly work", uiCommandContext({ isIdle: () => true }));
+	const handoff = await createHandoffRunner();
+	await handoff.toggleReadonly();
+	await handoff.runCommand("handoff", "continue readonly work");
 
-	await stageHandoff(pi, "handoff-1", { nextInstruction: "Continue readonly work" });
-	await endStagingTurn(pi, "handoff-1");
+	await stageHandoff(handoff, "handoff-1", { nextInstruction: "Continue readonly work" });
+	await submitStagingTurn(handoff, "handoff-1");
 
-	expect(await toolCall({ toolName: "handoff", input: {} }, {}), "a submitted boundary is not a confirmed cut: the bypass must stay").toBeUndefined();
-});
-
-test("synchronous handoff rejection preserves the readonly bypass contract", async () => {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	await getCommand(pi, "handoff").handler("continue readonly work", uiCommandContext({ isIdle: () => true }));
-
-	await expect(
-		getTool(pi, "handoff").execute(
-			"handoff-1",
-			{ nextInstruction: "Continue readonly work" },
-			undefined,
-			undefined,
-			createToolContext({
-				hasUI: true,
-				ui: createUIContext({ setStatus: vi.fn() }),
-				getContextUsage: () => undefined,
-			}),
-		),
-	).rejects.toThrow(/Context usage unavailable/);
-
-	expect(
-		await toolCall({ toolName: "handoff", input: { nextInstruction: "retry readonly handoff" } }, {}),
-		"readonly bypass should remain active after synchronous rejection",
-	).toBeUndefined();
-	expect(
-		(await toolCall({ toolName: "write", input: { path: "/tmp/test", content: "x" } }, {}))?.block,
-		"write should stay blocked while the bypass remains active",
-	).toBe(true);
+	expect(await handoff.toolCall("handoff", {}), "a submitted boundary is not a confirmed cut: the bypass must stay").toBeUndefined();
 });
 
 test("retry succeeds after a handoff cut that pi did not persist", async () => {
-	const { pi, toolCall, agentSettled } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	await getCommand(pi, "handoff").handler("continue readonly work", uiCommandContext({ isIdle: () => true }));
+	const handoff = await createHandoffRunner();
+	await handoff.toggleReadonly();
+	await handoff.runCommand("handoff", "continue readonly work");
+	const { sentMessages, sentUserMessages } = handoff.fixture.host;
 
-	await stageHandoff(pi, "handoff-1", { nextInstruction: "Continue readonly work" });
-	await endStagingTurn(pi, "handoff-1");
-	const userMessagesBefore = getHostRecords(pi).sentUserMessages.length;
-	await turnStartWith(pi, []);
+	await stageHandoff(handoff, "handoff-1", { nextInstruction: "Continue readonly work" });
+	await submitStagingTurn(handoff, "handoff-1");
+	const userMessagesBefore = sentUserMessages.length;
+	await handoff.turnStart();
 
-	expect(getHostRecords(pi).sentUserMessages, "the failed cut must send no user message").toHaveLength(userMessagesBefore);
-	expect(getHostRecords(pi).sentMessages.at(-1)?.message.customType, "the failed cut must persist the failure guidance").toBe("pi-schematic-handoff-failed");
-	expect(getHostRecords(pi).sentMessages.at(-1)?.options?.triggerTurn, "the failure guidance must not start a run").toBe(false);
+	expect(sentUserMessages, "the failed cut must send no user message").toHaveLength(userMessagesBefore);
+	expect(sentMessages.at(-1), "the failed cut must persist the failure guidance, which must not start a run").toMatchObject({
+		message: { customType: "pi-schematic-handoff-failed" },
+		options: { triggerTurn: false },
+	});
 
-	const sameRun = await toolCall({ toolName: "handoff", input: { nextInstruction: "retry handoff" } }, {});
+	const sameRun = await handoff.toolCall("handoff", { nextInstruction: "retry handoff" });
 	expect(sameRun?.block, "a handoff in the run that lost its cut must be blocked").toBe(true);
-	expect(sameRun?.reason, "the block must be the boundary's failed-in-run refusal").toBe(HANDOFF_FAILED_IN_RUN_REFUSAL);
+	expect(sameRun?.reason, "the block must be the boundary's failed-in-run refusal").toBe(
+		"Not run: a handoff already failed in this run. Do not call handoff again in this run.",
+	);
 
 	// readonly bypass still active
-	await agentSettled({ hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => [] } });
+	await handoff.agentSettled();
 	expect(
-		await toolCall({ toolName: "handoff", input: { nextInstruction: "retry handoff" } }, {}),
+		await handoff.toolCall("handoff", { nextInstruction: "retry handoff" }),
 		"the readonly bypass must remain for the retry in the next run",
 	).toBeUndefined();
 
 	await expect(
-		stageHandoff(pi, "handoff-retry", { nextInstruction: "retry handoff" }),
+		stageHandoff(handoff, "handoff-retry", { nextInstruction: "retry handoff" }),
 		"retry handoff should stage after the failed cut",
 	).resolves.toBeUndefined();
 
 	expect(
-		(await toolCall({ toolName: "write", input: { path: "/tmp/test", content: "x" } }, {}))?.block,
+		(await handoff.toolCall("write", { path: "/tmp/test", content: "x" }))?.block,
 		"readonly persists: write should still be blocked after the failed cut",
 	).toBe(true);
 });
 
 test("an aborted handoff keeps the bypass and persists the failure without starting a run", async () => {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	await getCommand(pi, "handoff").handler("continue readonly work", uiCommandContext({ isIdle: () => true }));
+	const handoff = await createHandoffRunner();
+	await handoff.toggleReadonly();
+	await handoff.runCommand("handoff", "continue readonly work");
+	const { sentMessages, sentUserMessages } = handoff.fixture.host;
 
-	await stageHandoff(pi, "handoff-1", { nextInstruction: "Continue readonly work" });
-	const results = await turnEndResults(pi, turnEndEvent({ toolResults: [handoffToolResult("handoff-1")] }), turnEndContext(true));
-	expect(results.filter(hasEntries)).toStrictEqual([]);
-	const userMessagesBefore = getHostRecords(pi).sentUserMessages.length;
-	await emitAll(pi, "agent_settled", { type: "agent_settled" }, { hasUI: false, getContextUsage: () => null, sessionManager: { getBranch: () => [] } });
+	await stageHandoff(handoff, "handoff-1", { nextInstruction: "Continue readonly work" });
+	handoff.setSignal(AbortSignal.abort());
+	expect((await emitTurnEnd(handoff, "handoff-1")).entries).toStrictEqual([]);
+	handoff.setSignal(undefined);
+	const userMessagesBefore = sentUserMessages.length;
+	await handoff.agentSettled();
 
-	expect(getHostRecords(pi).sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
-	expect(getHostRecords(pi).sentMessages.at(-1)?.options?.triggerTurn).toBe(false);
-	expect(getHostRecords(pi).sentUserMessages, "an abort must not start another run").toHaveLength(userMessagesBefore);
-	expect(await toolCall({ toolName: "handoff", input: {} }, {}), "the readonly bypass must remain for the retry").toBeUndefined();
+	expect(sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
+	expect(sentMessages.at(-1)?.options?.triggerTurn).toBe(false);
+	expect(sentUserMessages, "an abort must not start another run").toHaveLength(userMessagesBefore);
+	expect(await handoff.toolCall("handoff", {}), "the readonly bypass must remain for the retry").toBeUndefined();
 });
 
 test("/handoff re-enables bypass after the cut", async () => {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
+	const handoff = await createHandoffRunner();
+	await handoff.toggleReadonly();
 
-	await getCommand(pi, "handoff").handler("first handoff", uiCommandContext({ isIdle: () => true }));
-	await completeHandoffCut(pi, "handoff-1", { nextInstruction: "first handoff" });
+	await handoff.runCommand("handoff", "first handoff");
+	await completeHandoffCut(handoff, "handoff-1", { nextInstruction: "first handoff" });
 
-	await getCommand(pi, "handoff").handler("second readonly handoff", uiCommandContext({ isIdle: () => true }));
-	expect(
-		await toolCall({ toolName: "handoff", input: { nextInstruction: "second readonly handoff" } }, {}),
-		"second /handoff should re-enable the bypass",
-	).toBeUndefined();
+	await handoff.runCommand("handoff", "second readonly handoff");
+	expect(await handoff.toolCall("handoff", { nextInstruction: "second readonly handoff" }), "second /handoff should re-enable the bypass").toBeUndefined();
 });
 
-test("the handoff summary stays readonly-free and the fresh context relearns readonly live", async () => {
+test("the fresh context after a handoff relearns readonly from live state", async () => {
 	// Readonly still active at the cut: the fresh context is told again, from live state.
-	const resumed = await handoffCutAcrossReadonlyToggle(true);
-	expect(resumed.summary).toBe(buildContinuationFrame());
-	expect(resumed.summary, "constraints must never be frozen into the summary").not.toMatch(/readonly/i);
-	expect(resumed.summary, "the model-supplied instruction must not leak into the summary").not.toMatch(/ignored in favor of the direction/);
-	expect(resumed.nudgeContent ?? "", "the post-handoff turn must relearn readonly from the context hook").toMatch(
-		/\[readonly\] enabled — write\/edit\/powershell blocked/,
-	);
+	expect(await handoffCutAcrossReadonlyToggle(true), "the post-handoff turn must relearn readonly from the context hook").toBe(READONLY_ACTIVE_SUMMARY);
 
-	// Readonly dropped before the cut: same constant summary, and the fresh context
-	// stays silent — OFF-at-cut needs no announcement, while toggles and tree
-	// navigation re-announce via rehydration.
-	const dropped = await handoffCutAcrossReadonlyToggle(false);
-	expect(dropped.summary).toBe(buildContinuationFrame());
-	expect(dropped.summary).not.toMatch(/readonly/i);
-	expect(dropped.nudgeContent, "an OFF-at-cut handoff stays silent; ON-to-OFF across start/tree is covered by rehydration").toBeUndefined();
+	// Readonly dropped before the cut: the fresh context stays silent; OFF-at-cut needs no
+	// announcement, while toggles and tree navigation re-announce via rehydration.
+	expect(await handoffCutAcrossReadonlyToggle(false), "an OFF-at-cut handoff stays silent").toBeUndefined();
 });
 
-test("readonly topic boundary derives eligibility from percentage when tokens are unavailable", async () => {
-	expect(await handoffAllowedAtUsage({ tokens: null, percent: 15, contextWindow: 200000 }), "15% of a 200K context meets the minimum token threshold").toBe(
-		true,
-	);
-	expect(
-		await handoffAllowedAtUsage({ tokens: null, percent: 14.999, contextWindow: 200000 }),
-		"just below the minimum token threshold must remain blocked",
-	).toBe(false);
+test("readonly is re-announced in the next run after a lost-successor failure at turn_start", async () => {
+	const handoff = await loseSuccessorAtTurnStart();
+	// The continuation request the aborted run still makes takes the pending nudge.
+	await handoff.context("aborted continuation", 2);
+
+	await handoff.agentSettled();
+
+	expect(lastReadonlyNudge(await handoff.context("next run", 3))).toBe(READONLY_ACTIVE_SUMMARY);
+});
+
+test("session_tree between a lost-successor abort and the settle cancels the readonly re-arm", async () => {
+	const handoff = await loseSuccessorAtTurnStart();
+	await handoff.fixture.runner.emit({ type: "session_tree", newLeafId: null, oldLeafId: null });
+	// Drain the announcement the rehydration after the tree navigation queues.
+	await handoff.context("after tree", 2);
+
+	await handoff.agentSettled();
+
+	expect(lastReadonlyNudge(await handoff.context("next run", 3))).toBeUndefined();
 });
 
 test("readonly topic boundary creates the same bypass contract as explicit /handoff", async () => {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-
-	// Drain the initial readonly nudge
-	const contextHandler = contextHandlerOf(pi);
-	await contextHandler({ messages: [{ role: "user", content: "drain", timestamp: 1 }] }, usageContext());
-
-	// Set initial topic, then change it to create a boundary hint
-	await getCommand(pi, "notebook").handler("oauth", headlessCommandContext());
-	await getCommand(pi, "notebook").handler("billing", headlessCommandContext());
+	const handoff = await readonlyTopicBoundary();
 
 	// Context hook should create the bypass from the boundary hint
-	await contextHandler({ messages: [{ role: "user", content: "hi", timestamp: 2 }] }, usageContext({ tokens: 50000, percent: 25, contextWindow: 200000 }));
+	handoff.setUsage(ELIGIBLE_USAGE);
+	await handoff.context("hi", 2);
 
 	// Same observable contract as explicit /handoff: handoff tool is unblocked
 	expect(
-		await toolCall({ toolName: "handoff", input: { nextInstruction: "continue billing work" } }, {}),
+		await handoff.toolCall("handoff", { nextInstruction: "continue billing work" }),
 		"handoff should be unblocked after topic boundary creates bypass",
 	).toBeUndefined();
 	// write and non-temp bash mutations stay blocked
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/test", content: "x" } }, {}))?.block, "write should stay blocked").toBe(true);
-	await assertNonTempBashBlocked(toolCall);
+	expect((await handoff.toolCall("write", { path: "/tmp/test", content: "x" }))?.block, "write should stay blocked").toBe(true);
+	await assertNonTempBashBlocked(handoff);
 });
 
 test("promoted readonly boundary preserves bypass across execute-time eligibility failures", async () => {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	const contextHandler = contextHandlerOf(pi);
-	await contextHandler({ messages: [{ role: "user", content: "drain", timestamp: 1 }] }, usageContext());
-	await getCommand(pi, "notebook").handler("oauth", headlessCommandContext());
-	await getCommand(pi, "notebook").handler("billing", headlessCommandContext());
-	await contextHandler({ messages: [{ role: "user", content: "promote", timestamp: 2 }] }, usageContext({ tokens: 50000, percent: 25, contextWindow: 200000 }));
+	const handoff = await readonlyTopicBoundary();
+	handoff.setUsage(ELIGIBLE_USAGE);
+	await handoff.context("promote", 2);
 
 	for (const { usage, message } of [
 		{ usage: undefined, message: /Context usage unavailable/ },
 		{ usage: { tokens: 5000, percent: 2.5, contextWindow: 200000 }, message: /handoff unavailable yet/ },
 	]) {
-		await expect(
-			getTool(pi, "handoff").execute(
-				"boundary-retry",
-				{ nextInstruction: "continue billing" },
-				undefined,
-				undefined,
-				createToolContext({
-					getContextUsage: () => usage,
-				}),
-			),
-		).rejects.toThrow(message);
-		expect(await toolCall({ toolName: "handoff", input: {} }, {}), "execute-time rejection must preserve the promoted readonly bypass").toBeUndefined();
+		handoff.setUsage(usage);
+		await expect(handoff.fixture.tool("handoff").execute("boundary-retry", { nextInstruction: "continue billing" })).rejects.toThrow(message);
+		expect(await handoff.toolCall("handoff", {}), "execute-time rejection must preserve the promoted readonly bypass").toBeUndefined();
 	}
 
-	await completeHandoffCut(pi, "boundary-success", { nextInstruction: "continue billing" });
-	expect((await toolCall({ toolName: "handoff", input: {} }, {}))?.block).toBe(true);
+	await completeHandoffCut(handoff, "boundary-success", { nextInstruction: "continue billing" });
+	expect((await handoff.toolCall("handoff", {}))?.block).toBe(true);
 });
 
 test("readonly topic boundary promotion exposes the handoff status", async () => {
-	const { pi } = await createHandoffPI();
-	const statuses = new Map<string, string | undefined>();
-	const notifications: string[] = [];
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	const contextHandler = contextHandlerOf(pi);
-	await contextHandler({ messages: [{ role: "user", content: "drain", timestamp: 1 }] }, usageContext());
-	await getCommand(pi, "notebook").handler("oauth", headlessCommandContext());
-	await getCommand(pi, "notebook").handler("billing", headlessCommandContext());
+	const handoff = await readonlyTopicBoundary();
+	handoff.setUsage(ELIGIBLE_USAGE);
 
-	await contextHandler(
-		{ messages: [{ role: "user", content: "continue", timestamp: 2 }] },
-		createExtensionContext({
-			hasUI: true,
-			ui: createUIContext({
-				setStatus: (key: string, value: string | undefined) => {
-					statuses.set(key, value);
-				},
-				notify: (message: string) => {
-					notifications.push(message);
-				},
-			}),
-			getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
-		}),
-	);
+	await handoff.context("continue", 2);
 
-	expect(statuses.get(STATUS_KEY_HANDOFF)).toBe("🤝 Handoff required — ready to compact");
-	expect(notifications[0] ?? "").toMatch(/handoff exception is now active/i);
+	const { statuses, notifications } = handoff.fixture.ui;
+	expect(statuses.get(STATUS_KEY_HANDOFF)).toBe(realTheme.fg("accent", "🤝 Handoff required — ready to compact"));
+	expect(notifications.at(-1)).toStrictEqual({
+		message:
+			"Readonly topic boundary detected. The handoff exception is now active because context usage is eligible; complete the handoff before continuing normal work.",
+		type: "warning",
+	});
 });
 
 test("readonly topic boundary stays advisory until handoff is eligible", async () => {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	const contextHandler = contextHandlerOf(pi);
-	await contextHandler({ messages: [{ role: "user", content: "drain", timestamp: 1 }] }, usageContext());
-	await getCommand(pi, "notebook").handler("oauth", headlessCommandContext());
-	await getCommand(pi, "notebook").handler("billing", headlessCommandContext());
+	const handoff = await readonlyTopicBoundary();
 
-	const result = await contextHandler({ messages: [{ role: "user", content: "continue", timestamp: 2 }] }, usageContext());
+	const result = await handoff.context("continue", 2);
 
 	expect(lastMessageContent(result)).toMatch(/topic changed/i);
 	expect(lastMessageContent(result)).not.toMatch(/call handoff/i);
-	expect((await toolCall({ toolName: "handoff", input: {} }, {}))?.block, "ineligible boundary must not unblock handoff").toBe(true);
+	expect((await handoff.toolCall("handoff", {}))?.block, "ineligible boundary must not unblock handoff").toBe(true);
 });
 
 test("readonly human topic boundary promotes exactly at the token threshold without repeated advisory nudges", async () => {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	const contextHandler = contextHandlerOf(pi);
-	await contextHandler({ messages: [{ role: "user", content: "drain", timestamp: 1 }] }, usageContext());
-	await getCommand(pi, "notebook").handler("oauth", headlessCommandContext());
-	await getCommand(pi, "notebook").handler("billing", headlessCommandContext());
+	const handoff = await readonlyTopicBoundary();
 
-	const first = await contextHandler(
-		{ messages: [{ role: "user", content: "still small", timestamp: 2 }] },
-		usageContext({ tokens: 29_999, percent: 15, contextWindow: 200000 }),
-	);
+	handoff.setUsage({ tokens: 29_999, percent: 15, contextWindow: 200000 });
+	const first = await handoff.context("still small", 2);
 	expect(lastMessageContent(first)).toMatch(/topic changed/i);
-	expect((await toolCall({ toolName: "handoff", input: {} }, {}))?.block).toBe(true);
+	expect((await handoff.toolCall("handoff", {}))?.block).toBe(true);
 
-	const second = await contextHandler(
-		{ messages: [{ role: "user", content: "still ineligible", timestamp: 3 }] },
-		usageContext({ tokens: 29_999, percent: 15, contextWindow: 200000 }),
-	);
-	expect(second, "an ineligible boundary should not repeat its advisory nudge").toBeUndefined();
+	const second = await handoff.context("still ineligible", 3);
+	expect(second, "an ineligible boundary should not repeat its advisory nudge").toStrictEqual([{ role: "user", content: "still ineligible", timestamp: 3 }]);
 
-	await contextHandler(
-		{ messages: [{ role: "user", content: "now eligible", timestamp: 4 }] },
-		usageContext({ tokens: 30_000, percent: 15, contextWindow: 200000 }),
-	);
-	expect(await toolCall({ toolName: "handoff", input: {} }, {})).toBeUndefined();
+	handoff.setUsage({ tokens: 30_000, percent: 15, contextWindow: 200000 });
+	await handoff.context("now eligible", 4);
+	expect(await handoff.toolCall("handoff", {})).toBeUndefined();
 });
 
 test("readonly topic boundary handoff clears its bypass after the cut", async () => {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	const contextHandler = contextHandlerOf(pi);
-	await contextHandler({ messages: [{ role: "user", content: "drain", timestamp: 1 }] }, usageContext());
-	await getCommand(pi, "notebook").handler("oauth", headlessCommandContext());
-	await getCommand(pi, "notebook").handler("billing", headlessCommandContext());
-	await contextHandler({ messages: [{ role: "user", content: "handoff", timestamp: 2 }] }, usageContext({ tokens: 50000, percent: 25, contextWindow: 200000 }));
+	const handoff = await readonlyTopicBoundary();
+	handoff.setUsage(ELIGIBLE_USAGE);
+	await handoff.context("handoff", 2);
 
-	const drafts = await completeHandoffCut(pi, "boundary-handoff", { nextInstruction: "Continue billing work" });
+	const drafts = await completeHandoffCut(handoff, "boundary-handoff", { nextInstruction: "Continue billing work" });
 
-	expect(compactionSummary(drafts), "readonly must not be frozen into the summary").toBe(buildContinuationFrame());
+	expect(compactionSummary(drafts), "readonly must not be frozen into the summary").toBe(CONTINUATION_FRAME);
 	expectPrefix(successorContent(drafts), "## Next instruction\n\nContinue billing work", "the successor turn carries the stored direction verbatim");
-	expect((await toolCall({ toolName: "handoff", input: {} }, {}))?.block).toBe(true);
-	expect((await toolCall({ toolName: "write", input: {} }, {}))?.block).toBe(true);
-});
-
-test("readonly agent topic transitions cannot promote or remain queued", () => {
-	const state = createState();
-	setActiveNotebookTopic(state, "oauth", "agent");
-	setActiveNotebookTopic(state, "billing", "agent");
-
-	expect(canPromoteBoundary(state, { tokens: 50_000, percent: 80, contextWindow: 64_000 })).toBe(false);
-	expect(discardNonHumanBoundary(state)).toBe(true);
-	expect(state.pendingTopicBoundaryHint).toBeNull();
-});
-
-test("readonly agent topic boundary is not promoted to handoff bypass", async () => {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	const contextHandler = contextHandlerOf(pi);
-	// Drain the initial readonly toggle nudge
-	await contextHandler({ messages: [{ role: "user", content: "drain", timestamp: 1 }] }, usageContext());
-
-	// Set the initial topic via notebook_topic_set (agent source). The public
-	// tool intentionally rejects agent overrides, so transition behavior is
-	// covered by the pure state/helper test above.
-	const notebookTopicTool = getTool(pi, "notebook_topic_set");
-	await notebookTopicTool.execute("1", { topic: "oauth" }, undefined, undefined, createToolContext({ getContextUsage: () => undefined }));
-
-	const result = await contextHandler(
-		{ messages: [{ role: "user", content: "continue", timestamp: 2 }] },
-		usageContext({ tokens: 50000, percent: 25, contextWindow: 200000 }),
-	);
-
-	expect(result).toBeUndefined();
-	expect((await toolCall({ toolName: "handoff", input: {} }, {}))?.block, "agent topic without boundary must not unblock handoff in readonly mode").toBe(true);
-});
-
-test("advisoryDelivered flag prevents repeated advisory nudges for ineligible boundary", async () => {
-	const { pi, toolCall } = await createHandoffPI();
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	const contextHandler = contextHandlerOf(pi);
-	// Drain the initial readonly toggle nudge
-	await contextHandler({ messages: [{ role: "user", content: "drain", timestamp: 1 }] }, usageContext());
-	// Set human topic boundary
-	await getCommand(pi, "notebook").handler("oauth", headlessCommandContext());
-	await getCommand(pi, "notebook").handler("billing", headlessCommandContext());
-
-	// First context hook at ineligible usage — should deliver advisory
-	const first = await contextHandler(
-		{ messages: [{ role: "user", content: "small", timestamp: 2 }] },
-		usageContext({ tokens: 5000, percent: 2.5, contextWindow: 200000 }),
-	);
-	assertPresent(first, "first call should return messages");
-	expect(lastMessageContent(first)).toMatch(/topic changed/i);
-
-	// Second context hook at same ineligible usage — should NOT repeat advisory
-	const second = await contextHandler(
-		{ messages: [{ role: "user", content: "still small", timestamp: 3 }] },
-		usageContext({ tokens: 5000, percent: 2.5, contextWindow: 200000 }),
-	);
-	expect(second, "ineligible boundary should not repeat its advisory nudge").toBeUndefined();
-
-	// Handoff should still be blocked
-	expect((await toolCall({ toolName: "handoff", input: {} }, {}))?.block).toBe(true);
+	expect((await handoff.toolCall("handoff", {}))?.block).toBe(true);
+	expect((await handoff.toolCall("write", {}))?.block).toBe(true);
 });
 
 test("session tree drops a staged handoff, releases the overlap guard, and a stale turn_end writes no cut", async () => {
-	const { pi, toolCall, sessionTree } = await createHandoffPI();
-	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "stale"]]);
+	const handoff = await createHandoffRunner();
 
-	await stageHandoff(pi, "branch-handoff", { nextInstruction: "continue branch work" });
-	await sessionTree(
-		{},
-		createExtensionContext({
-			hasUI: true,
-			ui: createUIContext({
-				setStatus: (key, value) => {
-					statuses.set(key, value);
-				},
-				setWidget: vi.fn(),
-			}),
-			getContextUsage: () => undefined,
-		}),
-	);
+	await stageHandoff(handoff, "branch-handoff", { nextInstruction: "continue branch work" });
+	expect(handoff.fixture.ui.statuses.get(STATUS_KEY_HANDOFF), "staging shows the in-progress status").toBeDefined();
+	handoff.setUsage(undefined);
+	await handoff.fixture.runner.emit({ type: "session_tree", newLeafId: null, oldLeafId: null });
 
-	expect(statuses.get(STATUS_KEY_HANDOFF)).toBeUndefined();
-	expect(await toolCall({ toolName: "handoff", input: {} }, {}), "non-readonly branch should not retain a stale readonly handoff block").toBeUndefined();
+	expect(handoff.fixture.ui.statuses.get(STATUS_KEY_HANDOFF)).toBeUndefined();
+	expect(await handoff.toolCall("handoff", {}), "non-readonly branch should not retain a stale readonly handoff block").toBeUndefined();
 
-	const staleResults = await turnEndResults(pi, turnEndEvent({ toolResults: [handoffToolResult("branch-handoff")] }), turnEndContext(false));
-	expect(staleResults.filter(hasEntries), "the dropped handoff must not write a cut").toStrictEqual([]);
+	expect((await emitTurnEnd(handoff, "branch-handoff")).entries, "the dropped handoff must not write a cut").toStrictEqual([]);
 
-	const drafts = await completeHandoffCut(pi, "fresh-branch-handoff", { nextInstruction: "continue fresh branch work" });
-	expect(getHostRecords(pi).sentUserMessages, "the dropped handoff reports no failure and the fresh one completes").toHaveLength(0);
+	const drafts = await completeHandoffCut(handoff, "fresh-branch-handoff", { nextInstruction: "continue fresh branch work" });
+	expect(handoff.fixture.host.sentUserMessages, "the dropped handoff reports no failure and the fresh one completes").toHaveLength(0);
 	expectPrefix(successorContent(drafts), "## Next instruction\n\ncontinue fresh branch work", "the fresh branch must receive its own instruction");
-});
-
-test("session resume restores readonly enforcement from persisted state", async () => {
-	const { toolCall, sessionStart } = await createHandoffPI();
-	const branch = [
-		{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: false } },
-		{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } },
-	];
-
-	await sessionStart({ reason: "resume" }, makeReadonlyResumeCtx(branch));
-
-	expect((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block).toBe(true);
-	expect(await toolCall({ toolName: "read", input: { path: "/tmp/x" } }, {})).toBeUndefined();
-});
-
-test("session tree re-announces readonly even when the rehydrated value is unchanged", async () => {
-	const { pi, sessionTree } = await createHandoffPI();
-	const contextHandler = contextHandlerOf(pi);
-
-	await getCommand(pi, "readonly").handler("", uiCommandContext());
-	// Drain the toggle nudge so any later nudge can only come from the tree navigation.
-	await contextHandler({ messages: [{ role: "user", content: "drain", timestamp: 1 }] }, usageContext());
-
-	// The branch already says readonly: true, so the rehydrated value is unchanged.
-	// The re-announcement must still happen: the handoff summary is readonly-free, so
-	// a rebuilt context would otherwise never relearn the live mode.
-	await sessionTree(
-		{},
-		{
-			hasUI: false,
-			getContextUsage: () => null,
-			sessionManager: { getBranch: () => [{ type: "custom", customType: "pi-schematic-readonly", data: { enabled: true } }] },
-		},
-	);
-
-	const result = await contextHandler({ messages: [{ role: "user", content: "probe", timestamp: 2 }] }, usageContext());
-	expect(lastReadonlyNudge(result) ?? "").toMatch(/\[readonly\] enabled/);
 });

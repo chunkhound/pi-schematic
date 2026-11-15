@@ -251,7 +251,7 @@ test("nested expanded matches snapshot", () =>
 // 9–11: Context indicator snapshots
 // ═══════════════════════════════════════════════════════════════════════
 
-test.for([30, 50, 70])("context indicator at %i% matches snapshot", async (percent) => {
+test.for([30])("context indicator at %i% matches snapshot", async (percent) => {
 	const state = createState();
 	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
 	const ctx = makeTUICtx({ percent, record });

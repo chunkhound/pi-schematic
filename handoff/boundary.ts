@@ -284,9 +284,9 @@ function declineReason(event: TurnEndEvent, ctx: ExtensionContext, staged: Stage
 
 /**
  * Register every handoff lifecycle handler. Call before `registerWatchdog` (its
- * agent_settled handler counts a failed attempt only after this one reset
- * `toolCalled`) and before index.ts's readonly tool_call handler (a handoff
- * refusal wins over a readonly block).
+ * agent_settled handler counts the run only after this one has reset a failed
+ * request or cleared a completed one) and before index.ts's readonly tool_call
+ * handler (a handoff refusal wins over a readonly block).
  */
 export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState): void {
 	pi.on("message_end", (event) => {

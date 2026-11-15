@@ -29,7 +29,7 @@ import { setActiveNotebookTopic } from "./notebook/topic.js";
 import { formatPageTuiPreview } from "./notebook/store.js";
 import { openInPager, pagerRuntime, type ResolvedPager } from "./notebook/pager.js";
 import { HANDOFF_TOOL_NAME, registerHandoffTool } from "./handoff/tool.js";
-import { canPromoteBoundary, discardNonHumanBoundary, markBoundaryAdvisory, promoteBoundary } from "./readonly-boundary.js";
+import { canPromoteBoundary, markBoundaryAdvisory, promoteBoundary } from "./readonly-boundary.js";
 import { isHandoffEligible, normalizeContextPercent } from "./handoff/eligibility.js";
 import { getReadonlyFromBranch } from "./readonly-rehydration.js";
 import { HANDOFF_REQUIRED_STATUS } from "./handoff/copy.js";
@@ -569,10 +569,10 @@ export default function (pi: ExtensionAPI): void {
 	registerSpawnTool(pi, state);
 
 	// ── Register event handlers ─────────────────────────────────────
-	// Handoff boundary first. Its failure path resets toolCalled before the
-	// watchdog's agent_settled handler counts the attempt, and the watchdog counts
-	// only once toolCalled is reset. Its tool_call refusal of a handoff that
-	// shares a message with other calls precedes the readonly block.
+	// Handoff boundary first. Its agent_settled handler resets a failed request or
+	// clears a completed one before the watchdog's agent_settled handler counts the
+	// run. Its tool_call refusal of a handoff that shares a message with other calls
+	// precedes the readonly block.
 	registerHandoffBoundary(pi, state);
 	registerWatchdog(pi, state);
 	registerNotebookRehydration(pi, state);
@@ -638,8 +638,7 @@ export default function (pi: ExtensionAPI): void {
 
 	function rehydrateReadonlyState(ctx: ExtensionContext): void {
 		const wasEnabled = state.readonlyEnabled;
-		const branch = ctx.sessionManager?.getBranch?.() ?? [];
-		state.readonlyEnabled = getReadonlyFromBranch(branch, pi);
+		state.readonlyEnabled = getReadonlyFromBranch(ctx.sessionManager.getBranch(), pi);
 		// Nudge whenever readonly is (or was) active: the handoff summary is
 		// readonly-free by design, so a rebuilt context must relearn the ON posture from
 		// live state, and a toggle to OFF must still be announced.
@@ -822,7 +821,6 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("context", (event, ctx: ExtensionContext) => {
 		const usage = ctx.getContextUsage();
 		const percent = normalizeContextPercent(usage?.percent);
-		state.lastContextPercent = percent;
 
 		// Build the readonly toggle-nudge (one-shot on mode change)
 		let readonlyNudgeMsg: { role: "custom"; customType: string; content: string; display: boolean; timestamp: number } | null = null;
@@ -832,7 +830,7 @@ export default function (pi: ExtensionAPI): void {
 				role: "custom",
 				customType: "pi-schematic-readonly-nudge",
 				content: state.readonlyEnabled
-					? state.pendingRequestedHandoff || (state.pendingTopicBoundaryHint?.source === "human" && isHandoffEligible(usage))
+					? state.pendingRequestedHandoff || (state.pendingTopicBoundaryHint !== null && isHandoffEligible(usage))
 						? READONLY_HANDOFF_EXCEPTION_SUMMARY
 						: READONLY_ACTIVE_SUMMARY
 					: READONLY_DISABLED_SUMMARY + (percent !== null && percent >= 30 ? buildReadonlyDisabledContextSuffix(percent) : ""),
@@ -849,10 +847,6 @@ export default function (pi: ExtensionAPI): void {
 		// errors, not from repeated advisory watchdog text.
 		let retainIneligibleHumanBoundary = false;
 		if (state.readonlyEnabled && !state.pendingRequestedHandoff) {
-			if (discardNonHumanBoundary(state)) {
-				state.lastWatchdogBand = null;
-				return appendReadonlyNudge();
-			}
 			if (state.pendingTopicBoundaryHint) {
 				if (canPromoteBoundary(state, usage)) {
 					promoteBoundary(state, ctx);
@@ -968,7 +962,7 @@ export default function (pi: ExtensionAPI): void {
 		// runs immediately after invalidation, so the watermark derived from the new
 		// branch replaces the in-memory value before any retry could reuse a staged
 		// epoch from the abandoned branch.
-		reconstructNotebook(state, ctx.sessionManager?.getBranch?.() ?? []);
+		reconstructNotebook(state, ctx.sessionManager.getBranch());
 		ensureNotebookToolsActive(pi);
 		rehydrateReadonlyState(ctx);
 		updateIndicators(ctx, state);

@@ -33,7 +33,7 @@
   },
   "index.ts": {
     "@typescript-eslint/no-unnecessary-condition": {
-      "count": 8
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
@@ -254,13 +254,7 @@
   },
   "tests/unit/handoff.test.ts": {
     "vitest/max-expects": {
-      "count": 38
-    },
-    "vitest/no-conditional-expect": {
-      "count": 3
-    },
-    "vitest/no-conditional-in-test": {
-      "count": 1
+      "count": 25
     }
   },
   "tests/unit/helpers.ts": {

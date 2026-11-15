@@ -15,20 +15,13 @@ import { buildReadonlyBoundaryPromotionNotification } from "./notifications.js";
 import { newRequestedHandoff, type SchematicState } from "./state.js";
 import { STATUS_KEY_HANDOFF } from "./tui.js";
 
-/** Can the queued human-set topic boundary be promoted to a handoff bypass right now? */
+/**
+ * Can the queued topic boundary be promoted to a handoff bypass right now? Only a
+ * human `/notebook` topic change queues one: the agent's topic tool sets a topic only
+ * when none is set.
+ */
 export function canPromoteBoundary(state: SchematicState, usage: ReturnType<ExtensionContext["getContextUsage"]>): boolean {
-	const boundary = state.pendingTopicBoundaryHint;
-	return boundary !== null && boundary.source === "human" && isHandoffEligible(usage);
-}
-
-/** Consume a boundary that cannot authorize a readonly handoff. */
-export function discardNonHumanBoundary(state: SchematicState): boolean {
-	const boundary = state.pendingTopicBoundaryHint;
-	if (!boundary || boundary.source === "human") {
-		return false;
-	}
-	state.pendingTopicBoundaryHint = null;
-	return true;
+	return state.pendingTopicBoundaryHint !== null && isHandoffEligible(usage);
 }
 
 /** Create pendingRequestedHandoff from the queued topic boundary and notify the user. */
@@ -44,16 +37,13 @@ export function promoteBoundary(state: SchematicState, ctx: ExtensionContext): v
 }
 
 /**
- * Mark a human-set boundary as having delivered its advisory nudge.
+ * Mark the queued topic boundary as having delivered its advisory nudge.
  * Returns true the first time (so the caller knows to retain the hint for later
  * promotion); returns false on subsequent calls (already-advised, silent skip).
  */
 export function markBoundaryAdvisory(state: SchematicState): boolean {
 	const boundary = state.pendingTopicBoundaryHint;
-	if (boundary?.source !== "human") {
-		return false;
-	}
-	if (boundary.advisoryDelivered === true) {
+	if (boundary === null || boundary.advisoryDelivered === true) {
 		return false;
 	}
 	boundary.advisoryDelivered = true;
