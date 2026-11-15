@@ -75,7 +75,7 @@ function lastSessionStartHandler(pi: TestPI): HostHandler<"session_start"> {
 function writeModelGroupsConfig(dir: string, groups: Record<string, { models: { provider: string; modelId: string; thinkingLevel?: string }[] }>): void {
 	const configDir = path.dirname(modelGroupsPath("project", dir));
 	fs.mkdirSync(configDir, { recursive: true });
-	fs.writeFileSync(modelGroupsPath("project", dir), JSON.stringify({ version: 1, groups }), "utf8");
+	fs.writeFileSync(modelGroupsPath("project", dir), JSON.stringify({ version: 2, groups }), "utf8");
 }
 
 async function writeSkillMd(dir: string, name: string, frontmatter: Record<string, unknown>): Promise<string> {

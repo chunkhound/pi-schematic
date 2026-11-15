@@ -61,7 +61,7 @@ test("/model-groups command registers and opens ctx.ui.custom with live registry
 		fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 		fs.writeFileSync(
 			modelGroupsPath("project", cwd),
-			JSON.stringify({ version: 1, groups: { "cwd-sentinel-group": { models: [{ provider: "openai", modelId: "gpt-5" }] } } }),
+			JSON.stringify({ version: 2, groups: { "cwd-sentinel-group": { models: [{ provider: "openai", modelId: "gpt-5" }] } } }),
 			"utf8",
 		);
 		const pi = await createTestHost();
@@ -107,11 +107,11 @@ test("index session_start stores model group validation and notifies load and va
 		fs.mkdirSync(path.dirname(modelGroupsPath("global", cwd)), { recursive: true });
 		fs.writeFileSync(
 			modelGroupsPath("global", cwd),
-			JSON.stringify({ version: 1, groups: { bad: { models: [{ provider: "missing", modelId: "nope" }] }, shadow: { models: [] } } }),
+			JSON.stringify({ version: 2, groups: { bad: { models: [{ provider: "missing", modelId: "nope" }] }, shadow: { models: [] } } }),
 			"utf8",
 		);
 		fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
-		fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 1, groups: { shadow: { models: [] } } }), "utf8");
+		fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { shadow: { models: [] } } }), "utf8");
 		const pi = await createTestHost();
 		const notifications: string[] = [];
 		const ctx = sessionStartContext(cwd, {
@@ -173,7 +173,7 @@ test("index session_start notifies corrupt/schema/unsupported load issues", asyn
 test("index session_start notifies schema-invalid load issues", async () =>
 	withTemp(async ({ cwd }) => {
 		fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
-		fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 1, groups: { broken: { models: [{ provider: 1 }] } } }), "utf8");
+		fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { broken: { models: [{ provider: 1 }] } } }), "utf8");
 		const pi = await createTestHost();
 		const notifications: string[] = [];
 		const ctx = sessionStartContext(cwd, {
@@ -214,7 +214,7 @@ test("before_agent_start writes fresh names-and-effective-modalities guidance", 
 		fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 		fs.writeFileSync(
 			modelGroupsPath("project", cwd),
-			JSON.stringify({ version: 1, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }),
+			JSON.stringify({ version: 2, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }),
 			"utf8",
 		);
 		const pi = await createTestHost();
@@ -317,7 +317,7 @@ test("before_agent_start clears stale Model Groups guidance when registry become
 		fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 		fs.writeFileSync(
 			modelGroupsPath("project", cwd),
-			JSON.stringify({ version: 1, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }),
+			JSON.stringify({ version: 2, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }),
 			"utf8",
 		);
 		const pi = await createTestHost();
@@ -390,9 +390,9 @@ test.for(["rpc", "json", "print"] as const)("root-recorded /model-groups rejects
 test("model groups untrusted root flow never probes project data and publishes global-only state to TUI", async () =>
 	withTemp(async ({ cwd }) => {
 		fs.mkdirSync(path.dirname(modelGroupsPath("global", cwd)), { recursive: true });
-		fs.writeFileSync(modelGroupsPath("global", cwd), JSON.stringify({ version: 1, groups: { globalOnly: { models: [] } } }), "utf8");
+		fs.writeFileSync(modelGroupsPath("global", cwd), JSON.stringify({ version: 2, groups: { globalOnly: { models: [] } } }), "utf8");
 		fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
-		fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 1, groups: { projectSecret: { models: [] } } }), "utf8");
+		fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { projectSecret: { models: [] } } }), "utf8");
 		let projectProbe = false;
 		__setModelGroupsFsForTests({
 			existsSync: (candidate) => {

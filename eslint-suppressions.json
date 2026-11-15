@@ -260,7 +260,7 @@
       "count": 1
     },
     "vitest/max-expects": {
-      "count": 48
+      "count": 46
     },
     "vitest/no-conditional-expect": {
       "count": 2

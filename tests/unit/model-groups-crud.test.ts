@@ -105,6 +105,13 @@ function registryWithContextModel(): ModelRegistry {
 	return createModelRegistry({ ...fields, find: (provider, id) => (id === "gpt-ctx" ? ctxModel : fields.find(provider, id)) });
 }
 
+function writeProjectFile(cwd: string, content: string): string {
+	const projectPath = modelGroupsPath("project", cwd);
+	fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+	fs.writeFileSync(projectPath, content, "utf8");
+	return projectPath;
+}
+
 test("model groups store creates, round-trips, validates, renames, updates, deletes, and moves", () =>
 	withTemp(({ cwd }) => {
 		expect(Object.keys(loadModelGroups(access(cwd)).configs.project.groups)).toHaveLength(0);
@@ -395,66 +402,35 @@ test("model groups persistence failures throw typed errors and preserve committe
 		);
 	}));
 
-test("model groups strictly partitions schema and legacy version domains", () =>
+test.each<[string, unknown, string | RegExp]>([
+	["root", [], /root/],
+	["missing version", { groups: {} }, "version must be 2"],
+	["version 0", { version: 0, groups: {} }, "version must be 2"],
+	["version 1", { version: 1, groups: {} }, "version must be 2"],
+	["version type", { version: "1", groups: {} }, "version must be 2"],
+	["negative", { version: -1, groups: {} }, "version must be 2"],
+	["fraction low", { version: 0.5, groups: {} }, "version must be 2"],
+	["fraction high", { version: 1.5, groups: {} }, "version must be 2"],
+	["groups", { version: 2, groups: [] }, /groups/],
+	["group", { version: 2, groups: { bad: 1 } }, /group/],
+	["provider missing", { version: 2, groups: { bad: { models: [{ modelId: "m" }] } } }, /provider/],
+	["provider type", { version: 2, groups: { bad: { models: [{ provider: 1, modelId: "m" }] } } }, /provider/],
+	["model missing", { version: 2, groups: { bad: { models: [{ provider: "p" }] } } }, /modelId/],
+	["model type", { version: 2, groups: { bad: { models: [{ provider: "p", modelId: 1 }] } } }, /modelId/],
+	["models", { version: 2, groups: { bad: { models: 1 } } }, /models/],
+	["thinking", { version: 2, groups: { bad: { models: [{ provider: "p", modelId: "m", thinkingLevel: "turbo" }] } } }, /thinkingLevel/],
+])("model groups load reports invalid configs as schema-invalid: %s", (_label, raw, message) =>
 	withTemp(({ cwd }) => {
-		const projectPath = modelGroupsPath("project", cwd);
-		fs.mkdirSync(path.dirname(projectPath), { recursive: true });
-		const invalid: [string, unknown, RegExp][] = [
-			["root", [], /root/],
-			["version type", { version: "1", groups: {} }, /version/],
-			["negative", { version: -1, groups: {} }, /version/],
-			["fraction low", { version: 0.5, groups: {} }, /version/],
-			["fraction high", { version: 1.5, groups: {} }, /version/],
-			["groups", { version: 2, groups: [] }, /groups/],
-			["group", { version: 2, groups: { bad: 1 } }, /group/],
-			["provider missing", { version: 2, groups: { bad: { models: [{ modelId: "m" }] } } }, /provider/],
-			["provider type", { version: 2, groups: { bad: { models: [{ provider: 1, modelId: "m" }] } } }, /provider/],
-			["model missing", { version: 2, groups: { bad: { models: [{ provider: "p" }] } } }, /modelId/],
-			["model type", { version: 2, groups: { bad: { models: [{ provider: "p", modelId: 1 }] } } }, /modelId/],
-			["models", { version: 2, groups: { bad: { models: 1 } } }, /models/],
-			["thinking", { version: 2, groups: { bad: { models: [{ provider: "p", modelId: "m", thinkingLevel: "turbo" }] } } }, /thinkingLevel/],
-		];
-		for (const [label, raw, message] of invalid) {
-			fs.rmSync(`${projectPath}.bak`, { force: true });
-			fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
-			const loaded = loadModelGroups(access(cwd));
-			const issue = loaded.issues.find((candidate) => candidate.scope === "project");
-			assertPresent(issue, "the project config reports a load issue");
-			expect(issue.kind, label).toBe("schema-invalid");
-			expect(issue.message, label).toMatch(message);
-			expect(`${projectPath}.bak`, label).toSatisfy(fs.existsSync);
-			expect(Object.keys(loaded.configs.project.groups), label).toHaveLength(0);
-		}
-		for (const raw of [{ groups: { legacy: { models: [] } } }, { version: 0, groups: { legacy: { models: [] } } }]) {
-			fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
-			const loaded = loadModelGroups(access(cwd));
-			expect(loaded.issues).toHaveLength(0);
-			expect(loaded.configs.project.version).toBe(2);
-			updateGroup("project", access(cwd), "legacy", { models: [] }, createModelRegistry(registryFields()));
-			expect(read("project", cwd).version).toBe(2);
-		}
-	}));
-
-test("legacy constraints recover as schema-invalid instead of crashing load", () =>
-	withTemp(({ cwd }) => {
-		const projectPath = modelGroupsPath("project", cwd);
-		fs.mkdirSync(path.dirname(projectPath), { recursive: true });
-		for (const raw of [
-			{ groups: { legacy: { models: [], constraints: {} } } },
-			{ version: 0, groups: { legacy: { models: [], constraints: {} } } },
-			{ version: 1, groups: { legacy: { models: [], constraints: {} } } },
-		]) {
-			fs.rmSync(`${projectPath}.bak`, { force: true });
-			fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
-			const loaded = loadModelGroups(access(cwd));
-			const issue = loaded.issues.find((candidate) => candidate.scope === "project");
-			assertPresent(issue, "the project config reports a load issue");
-			expect(issue.kind).toBe("schema-invalid");
-			expect(issue.message).toMatch(/constraints/);
-			expect(`${projectPath}.bak`).toSatisfy(fs.existsSync);
-			expect(Object.keys(loaded.configs.project.groups)).toHaveLength(0);
-		}
-	}));
+		const projectPath = writeProjectFile(cwd, JSON.stringify(raw));
+		const loaded = loadModelGroups(access(cwd));
+		const issue = loaded.issues.find((candidate) => candidate.scope === "project");
+		assertPresent(issue, "the project config reports a load issue");
+		expect(issue.kind).toBe("schema-invalid");
+		expect(issue.message).toMatch(message);
+		expect(`${projectPath}.bak`).toSatisfy(fs.existsSync);
+		expect(Object.keys(loaded.configs.project.groups)).toHaveLength(0);
+	}),
+);
 
 test("store-level validation derives empty-common and stale-override flags and counts them", () =>
 	withTemp(({ cwd }) => {
@@ -666,53 +642,6 @@ test("v2 config load rejects non-array, duplicate, and out-of-vocabulary modalit
 		}
 	}));
 
-test("v1 migration is in-memory until the first successful mutation writes v2 without an invented override", () =>
-	withTemp(({ cwd }) => {
-		const sourcePath = modelGroupsPath("project", cwd);
-		const v1Bytes = JSON.stringify({ version: 1, groups: { legacy: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }, null, 2) + "\n";
-		fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-		fs.writeFileSync(sourcePath, v1Bytes, "utf8");
-
-		const loaded = loadModelGroups(access(cwd));
-		expect(loaded.configs.project.version).toBe(2);
-		expect(loaded.configs.project.groups.legacy.constraints).toBeUndefined();
-		expect(fs.readFileSync(sourcePath, "utf8")).toBe(v1Bytes);
-
-		updateGroup("project", access(cwd), "legacy", { models: [{ provider: "anthropic", modelId: "claude" }] }, createModelRegistry(registryFields()));
-		const persisted = read("project", cwd);
-		expect(persisted.version).toBe(2);
-		expect(Object.getOwnPropertyNames(persisted.groups.legacy)).not.toContain("modalityOverride");
-	}));
-
-test("legacy modalityOverride is opaque and not interpreted", () =>
-	withTemp(({ cwd }) => {
-		const sourcePath = modelGroupsPath("project", cwd);
-		const v1Bytes =
-			JSON.stringify({ version: 1, groups: { legacy: { models: [{ provider: "openai", modelId: "gpt-5" }], modalityOverride: ["image"] } } }, null, 2) + "\n";
-		fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-		fs.writeFileSync(sourcePath, v1Bytes, "utf8");
-		const loaded = loadModelGroups(access(cwd));
-		expect(loaded.configs.project.groups.legacy.constraints).toBeUndefined();
-		expect(Object.getOwnPropertyNames(loaded.configs.project.groups.legacy)).toContain("modalityOverride");
-		expect(fs.readFileSync(sourcePath, "utf8")).toBe(v1Bytes);
-		saveModelGroups("project", access(cwd), loaded.configs.project);
-		expect(Object.getOwnPropertyNames(read("project", cwd).groups.legacy)).not.toContain("modalityOverride");
-	}));
-
-test("malformed legacy modalityOverride loads opaquely and is dropped on a v2 write", () =>
-	withTemp(({ cwd }) => {
-		const sourcePath = modelGroupsPath("project", cwd);
-		const v1Bytes = JSON.stringify({ version: 1, groups: { legacy: { models: [], modalityOverride: "not-an-array" } } }, null, 2) + "\n";
-		fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-		fs.writeFileSync(sourcePath, v1Bytes, "utf8");
-		const loaded = loadModelGroups(access(cwd));
-		expect(loaded.issues).toHaveLength(0);
-		expect(loaded.configs.project.groups.legacy).toHaveProperty("modalityOverride", "not-an-array");
-		expect(fs.readFileSync(sourcePath, "utf8")).toBe(v1Bytes);
-		saveModelGroups("project", access(cwd), loaded.configs.project);
-		expect(Object.getOwnPropertyNames(read("project", cwd).groups.legacy)).not.toContain("modalityOverride");
-	}));
-
 test("v2 constraint envelope preserves explicit empty and opaque slots canonically", () =>
 	withTemp(({ cwd }) => {
 		const sourcePath = modelGroupsPath("project", cwd);
@@ -769,18 +698,6 @@ test("v2 constraint envelope preserves explicit empty and opaque slots canonical
 		expect(opaquePersisted.models[0].modelSentinel).toBe(true);
 	}));
 
-test("v2 drops stale modalityOverride rather than reinterpreting it", () =>
-	withTemp(({ cwd }) => {
-		const sourcePath = modelGroupsPath("project", cwd);
-		fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-		fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: { stale: { models: [], modalityOverride: ["image"] } } }), "utf8");
-		const loaded = loadModelGroups(access(cwd));
-		expect(loaded.issues).toHaveLength(0);
-		expect(loaded.configs.project.groups.stale.constraints).toBeUndefined();
-		saveModelGroups("project", access(cwd), loaded.configs.project);
-		expect(Object.getOwnPropertyNames(read("project", cwd).groups.stale)).not.toContain("modalityOverride");
-	}));
-
 test("v2 normalization preserves opaque root group and model keys through load save and update", () =>
 	withTemp(({ cwd }) => {
 		const sourcePath = modelGroupsPath("project", cwd);
@@ -812,6 +729,20 @@ test("v2 normalization preserves opaque root group and model keys through load s
 		expect(persisted.groups.review.groupSentinel).toBe("keep");
 		expect(persisted.groups.review.models[0].modelSentinel).toBe("keep");
 		expect(persisted.groups.review.models[0].thinkingLevel).toBe("high");
+	}));
+
+test("a modalityOverride key in a version-2 file is kept as an opaque key and not read as an override", () =>
+	withTemp(({ cwd }) => {
+		writeProjectFile(
+			cwd,
+			JSON.stringify({ version: 2, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }], modalityOverride: ["text"] } } }),
+		);
+		const loaded = loadModelGroups(access(cwd));
+		const [review] = validateModelGroups(loaded, createModelRegistry(registryFields()));
+		assertPresent(review, "the review group resolves");
+		expect(review.modalities.effective).toStrictEqual(["text", "image", "reasoning"]);
+		saveModelGroups("project", access(cwd), loaded.configs.project);
+		expect(read("project", cwd).groups.review.modalityOverride).toStrictEqual(["text"]);
 	}));
 
 test("store normalization strips runtime-derived group keys while preserving opaque keys", () =>
@@ -900,7 +831,7 @@ test("model groups use branded paths, global-only access, canonical own keys, an
 	withTemp(({ cwd }) => {
 		expect(modelGroupsPath("project", cwd, "branded-pi")).toBe(path.join(cwd, "branded-pi", "pi-schematic", "model-groups.json"));
 		const raw =
-			'{"version":1,"groups":{" __proto__ ":{"models":[{"provider":"p","modelId":"proto","thinkingLevel":"max"}]},"constructor":{"models":[]},"toString":{"models":[]}}}';
+			'{"version":2,"groups":{" __proto__ ":{"models":[{"provider":"p","modelId":"proto","thinkingLevel":"max"}]},"constructor":{"models":[]},"toString":{"models":[]}}}';
 		fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 		fs.writeFileSync(modelGroupsPath("project", cwd), raw, "utf8");
 		const loaded = loadModelGroups(access(cwd));

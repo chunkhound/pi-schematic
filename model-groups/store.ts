@@ -135,16 +135,9 @@ function validateModelEntry(value: unknown, at: string): { ok: true; model: Mode
 }
 function normalizeOverrideEnvelope(
 	rawDef: Record<string, unknown>,
-	sourceVersion: number,
 	rawName: string,
 	registry: ConstraintRegistry,
 ): { ok: true; constraints?: Record<string, unknown> } | { ok: false; message: string } {
-	if (sourceVersion < 2) {
-		if (Object.hasOwn(rawDef, "constraints")) {
-			return { ok: false, message: `group ${rawName}.constraints is unsupported in legacy config` };
-		}
-		return { ok: true };
-	}
 	if (rawDef.constraints !== undefined && !isPlainRecord(rawDef.constraints)) {
 		return { ok: false, message: `group ${rawName}.constraints must be an object` };
 	}
@@ -169,7 +162,6 @@ function normalizeOverrideEnvelope(
 }
 function normalizeGroups(
 	rawGroups: Record<string, unknown>,
-	sourceVersion: number,
 	registry: ConstraintRegistry,
 ): { ok: true; groups: Record<string, ModelGroupDef> } | { ok: false; message: string } {
 	const groups = ownGroups();
@@ -195,7 +187,7 @@ function normalizeGroups(
 			}
 			models.push(result.model);
 		}
-		const envelope = normalizeOverrideEnvelope(rawDef, sourceVersion, rawName, registry);
+		const envelope = normalizeOverrideEnvelope(rawDef, rawName, registry);
 		if (!envelope.ok) {
 			return envelope;
 		}
@@ -209,16 +201,10 @@ function normalizeGroups(
 			evaluations: _evaluations,
 			models: _rawModels,
 			constraints: _constraints,
-			modalityOverride: _modalityOverride,
 			...configDef
 		} = rawDef;
 		const { ok: _ok, ...normalizedEnvelope } = envelope;
-		defineGroup(groups, name, {
-			...configDef,
-			models,
-			...normalizedEnvelope,
-			...(sourceVersion < 2 && Object.hasOwn(rawDef, "modalityOverride") ? { modalityOverride: rawDef.modalityOverride } : {}),
-		});
+		defineGroup(groups, name, { ...configDef, models, ...normalizedEnvelope });
 	}
 	return { ok: true, groups };
 }
@@ -226,14 +212,11 @@ function validateConfig(raw: unknown, registry: ConstraintRegistry): { ok: true;
 	if (!isPlainRecord(raw) || !isPlainRecord(raw.groups)) {
 		return { ok: false, message: !isPlainRecord(raw) ? "config root must be an object" : "groups must be an object" };
 	}
-	const sourceVersion = raw.version === undefined || raw.version === 0 ? 1 : raw.version;
-	if (typeof sourceVersion !== "number" || !Number.isInteger(sourceVersion) || sourceVersion < 1) {
-		return { ok: false, message: "version must be a non-negative supported integer (only missing/0 normalize)" };
+	// loadScope reports an integer version above the current one as unsupported before validation runs.
+	if (raw.version !== CURRENT_VERSION) {
+		return { ok: false, message: `version must be ${CURRENT_VERSION}` };
 	}
-	if (sourceVersion > CURRENT_VERSION) {
-		return { ok: false, message: `unsupported version ${sourceVersion}` };
-	}
-	const normalized = normalizeGroups(raw.groups, sourceVersion, registry);
+	const normalized = normalizeGroups(raw.groups, registry);
 	return normalized.ok ? { ok: true, config: { version: CURRENT_VERSION, groups: normalized.groups } } : normalized;
 }
 function backupAndIssue(
@@ -318,7 +301,7 @@ export function loadModelGroups(access: ModelGroupsAccess, constraintRegistry: C
 	};
 }
 function normalizeSaveConfig(scope: ModelGroupScope, sourcePath: string, config: ModelGroupsConfig, registry: ConstraintRegistry): ModelGroupsConfig {
-	const normalized = normalizeGroups(config.groups, 2, registry);
+	const normalized = normalizeGroups(config.groups, registry);
 	if (!normalized.ok) {
 		throw persistenceError({ operation: "save", scope, sourcePath, phase: "config-validation", message: normalized.message });
 	}
@@ -409,7 +392,7 @@ function canonicalName(raw: string): string {
 	return name;
 }
 function normalizeMutationDef(def: ModelGroupDef, registry: ConstraintRegistry): ModelGroupDef {
-	const normalized = normalizeGroups({ group: def }, CURRENT_VERSION, registry);
+	const normalized = normalizeGroups({ group: def }, registry);
 	if (!normalized.ok) {
 		throw persistenceError({ operation: "save", phase: "config-validation", message: normalized.message });
 	}
