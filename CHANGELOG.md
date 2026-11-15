@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Spawn modality errors name each missing modality once**: when a spawn asked a Model Group for a modality that both the group and its routed model lacked, the error listed it twice, as in `cannot satisfy required modalities: image, image`. Each missing modality is now listed once.
 - **Model Group frontmatter errors end in one period**: a `/command` whose `model-group` frontmatter named an unknown, empty or unusable group showed an error ending in two periods, as in `Model Group 'empty' has no model entries..`. The error now ends in one.
 - **Blank notebook page names are rejected**: `notebook_write` refuses a page name that is empty or holds only whitespace, in the parent session and in spawned children, and stores nothing. Before, a page written under an empty name was lost when the session was reloaded. A page already saved under a whitespace-only name still loads.
+- **Repeating the active topic keeps a topic boundary**: `/notebook <topic>` with the topic that is already active no longer drops a topic change that the next model request has not yet seen. Before, `/notebook oauth`, `/notebook billing`, `/notebook billing` lost the `oauth → billing` boundary, so the model got no boundary reminder and, in readonly mode, the boundary enabled no handoff exception.
 
 ## [0.7.1] - 2026-11-08
 

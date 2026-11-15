@@ -35,7 +35,10 @@ export function setActiveNotebookTopic(
 	state.activeNotebookTopicSource = source;
 
 	const boundaryHint = changed && previous !== null ? { from: previous, to: normalized, source, advisoryDelivered: false } : null;
-	state.pendingTopicBoundaryHint = boundaryHint;
+	// A repeated topic is no boundary, so it leaves a boundary still waiting for delivery in place.
+	if (changed) {
+		state.pendingTopicBoundaryHint = boundaryHint;
+	}
 
 	return {
 		changed,

@@ -66,3 +66,13 @@ test("notebook_topic_set preserves human authority, stays idempotent for equal t
 	const freshTool = getTool(freshPi, "notebook_topic_set");
 	await expect(freshTool.execute("3", { topic: "@@@" }, undefined, undefined, ctx)).rejects.toThrow(/notebook topic cannot be empty/i);
 });
+
+test("repeating the current topic keeps the pending boundary hint", () => {
+	const state = createState();
+	setActiveNotebookTopic(state, "oauth", "human");
+	setActiveNotebookTopic(state, "billing", "human");
+
+	setActiveNotebookTopic(state, "billing", "human");
+
+	expect(state.pendingTopicBoundaryHint).toStrictEqual({ from: "oauth", to: "billing", source: "human", advisoryDelivered: false });
+});
