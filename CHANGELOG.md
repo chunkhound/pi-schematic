@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Text blocks of a user message in the spawn view**: the expanded view of a child session joins the text blocks of a user message without a separator, as pi's own chat does. Before, it put each block on its own line, so the blocks "hello " and "world" showed as two lines.
 - **Context percent rounded once**: the status bar tone, the high-context warning widget, the watchdog reminders and their thresholds, and the context note of the readonly-off message all use pi's context percent rounded to a whole number. Before, the warning widget, the watchdog thresholds and the readonly-off note compared the unrounded percent, so at 69.6% the status showed an error-tone 70% with no warning widget, and the same mismatch held just below 30% and 50%.
 - **Model group edits no longer store derived evaluations**: changing a group in `/model-groups` wrote the group's computed constraint evaluations into `model-groups.json` as an `evaluations` key. The store now drops that key like the other derived fields, and the next change in that file's scope removes it.
+- **Spawn modality errors name each missing modality once**: when a spawn asked a Model Group for a modality that both the group and its routed model lacked, the error listed it twice, as in `cannot satisfy required modalities: image, image`. Each missing modality is now listed once.
 
 ## [0.7.1] - 2026-11-08
 

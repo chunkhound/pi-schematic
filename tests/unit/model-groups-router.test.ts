@@ -422,7 +422,7 @@ test("known group missing a required modality rejects with the full message", as
 		expect.objectContaining({
 			name: "SpawnRouteError",
 			message:
-				"Model Group 'text' cannot satisfy required modalities: image, image. Effective group modalities missing: image. Routed model 'mg-router/text' missing: image.",
+				"Model Group 'text' cannot satisfy required modalities: image. Effective group modalities missing: image. Routed model 'mg-router/text' missing: image.",
 		}),
 	);
 });

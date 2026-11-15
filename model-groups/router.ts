@@ -268,7 +268,8 @@ function raiseRouteFailure(
 			const decoded = codec.decode({ required: values }, "modalities");
 			return decoded.ok ? (decoded.value as ModelGroupModality[]) : [...values];
 		};
-		const missingModalities = ordered([...missingFromGroup, ...missingFromModel]);
+		// A modality both the group and the routed model lack is listed once.
+		const missingModalities = ordered([...new Set([...missingFromGroup, ...missingFromModel])]);
 		throw new SpawnRouteError(groupLabel, "missing-modality", {
 			missingModalities,
 			missingFromGroup: ordered(missingFromGroup),
