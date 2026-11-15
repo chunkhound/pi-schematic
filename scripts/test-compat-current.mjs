@@ -1,14 +1,11 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { createCompatCopy, latestPiDependencies, prepareCompatCopy, resolveLatestPi, writeCompatArtifacts, writeCompatDiagnostics } from "./compat-fixture.mjs";
 import { repoRootFromScript, runChecked, runNpmWithRetry } from "./compat-process.mjs";
 import { assertSynchronizedPackageVersions } from "./dependency-graph-assertions.mjs";
 
 const ROOT = repoRootFromScript(import.meta.url);
 const PI_SYNC_PACKAGES = ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"];
-
-const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
 
 async function main() {
 	const artifactDir = process.env.COMPAT_ARTIFACT_DIR;
@@ -50,6 +47,4 @@ async function main() {
 	}
 }
 
-if (isMain) {
-	await main();
-}
+await main();

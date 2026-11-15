@@ -224,13 +224,16 @@ test("group autocomplete omits the letter column when no group has letters", asy
 	expect(suggestions.items.map((item) => item.description)).toStrictEqual(["No models configured"]);
 });
 
-test("#group autocomplete matches group names case-insensitively", async () => {
+test.for([
+	{ label: "a capitalised group name for a lowercase prefix", group: "Review", typed: "#re", value: "#Review" },
+	{ label: "a lowercase group name for a capitalised prefix", group: "review", typed: "#RE", value: "#review" },
+])("#group autocomplete matches group names case-insensitively and inserts the group's own spelling: $label", async ({ group, typed, value }) => {
 	const state = createState();
-	state.modelGroups.groups = await projectGroups({ review: { models: [{ provider: "mg-openai", modelId: "gpt-5" }] } });
+	state.modelGroups.groups = await projectGroups({ [group]: { models: [{ provider: "mg-openai", modelId: "gpt-5" }] } });
 	const provider = createModelGroupAutocompleteProvider(state)(delegateProvider());
 
-	const suggestions = await provider.getSuggestions(["#RE"], 0, 3, suggestOptions());
+	const suggestions = await provider.getSuggestions([typed], 0, typed.length, suggestOptions());
 
 	assertPresent(suggestions);
-	expect(suggestions.items.map((item) => item.value)).toStrictEqual(["#review"]);
+	expect(suggestions.items.map((item) => item.value)).toStrictEqual([value]);
 });
