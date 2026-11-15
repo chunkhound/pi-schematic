@@ -23,10 +23,18 @@ pi-schematic is a Pi extension. It registers tools and hooks into the agent life
 ```typescript
 interface SchematicState {
   notebookPages: Map<string, string>;
+  clippedPages: Set<string>;
   activeNotebookTopic: string | null;
   activeNotebookTopicSource: "human" | "agent" | null;
-  pendingTopicBoundaryHint: { from; to } | null;
+  pendingTopicBoundaryHint: { from; to; source; advisoryDelivered? } | null;
   readonlyEnabled: boolean;
+  readonlyNudgePending: boolean;
+  readonlyNudgeRearmAtSettle: boolean;
+  pendingReadonlyCommands: { type: "skill" | "command"; name: string }[];
+  frontmatterSkillCache: Map<string, FrontmatterEntry>;
+  frontmatterPromptCache: Map<string, FrontmatterEntry>;
+  frontmatterSkillIssues: Map<string, FrontmatterIssue>;
+  frontmatterPromptIssues: Map<string, FrontmatterIssue>;
   modelGroups: {
     groups: ResolvedModelGroup[];
     validation: ModelGroupsBootValidation | null;
@@ -40,6 +48,9 @@ interface SchematicState {
   childSessions: Map<string, AgentSession>;
   liveChildSessions: Map<string, AgentSession>;
   childSessionEpoch: number;
+  childAbortPromises: WeakMap<AgentSession, Promise<void>>;
+  lastWatchdogBand: number | null;
+  sandboxedBashCallIds: Set<string>;
 }
 ```
 
