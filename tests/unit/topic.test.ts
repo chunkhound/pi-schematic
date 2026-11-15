@@ -129,3 +129,14 @@ test("a topic set through /notebook <topic> refuses an agent override through no
 		new Error("Human-set notebook topic is authoritative. Use handoff instead of overriding it."),
 	);
 });
+
+test("/notebook <topic> repeating the agent's topic gives the user authority over it", async () => {
+	const fixture = await createRunner({ cwd: process.cwd(), mode: "print" });
+	const tool = fixture.tool("notebook_topic_set");
+	await tool.execute("1", { topic: "oauth" });
+	await fixture.command("notebook").handler("oauth", fixture.runner.createCommandContext());
+
+	await expect(tool.execute("2", { topic: "billing" })).rejects.toThrow(
+		new Error("Human-set notebook topic is authoritative. Use handoff instead of overriding it."),
+	);
+});

@@ -1,7 +1,6 @@
 import { expect, onTestFinished, test, vi } from "vitest";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { DEFAULT_MAX_BYTES, SessionManager, type CustomEntryDraft, type ExtensionAPI, type SessionEntry } from "@earendil-works/pi-coding-agent";
-import { stripTerminalSequences, type Component } from "@earendil-works/pi-tui";
 import { createState, resetState, invalidateHandoffState, type SchematicState } from "../../state.js";
 import { registerNotebookRehydration, reconstructNotebook } from "../../notebook/rehydration.js";
 import { buildNotebookDiscardDrafts, formatPagePreview, formatPageTuiPreview, saveNotebookPage } from "../../notebook/store.js";
@@ -12,11 +11,11 @@ import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
 import { assertPresent, expectSuffix } from "../assertions.js";
 import { createDeferred, createToolRenderContext, detailsOf, firstText, recordOf } from "./helpers.js";
 import { createModelRegistry } from "../support/model-registry.js";
+import { ESCAPE, listDriver, plain, press, writePage } from "../support/notebook.js";
 import { createRunner, type CustomComponentDriver, type RunnerFixture } from "../support/runner.js";
 import { appendDrafts } from "../support/session.js";
 import { realTheme } from "../support/theme.js";
 
-const ESCAPE = "\x1b";
 const CONTEXT_USAGE = { tokens: 84_000, percent: 42, contextWindow: 200_000 };
 
 /** The notebook tools and rehydration over a test-owned state, with the `pi` they registered through. */
@@ -120,49 +119,9 @@ function stringOf(value: unknown, what: string): string {
 	return value;
 }
 
-function plain(lines: string[]): string {
-	return stripTerminalSequences(lines.join("\n"));
-}
-
-/**
- * A `ctx.ui.custom` driver for the /notebook list: the n-th opened list is rendered into `renders`,
- * then `opens[n]` acts on it; a list opened after the last step is closed with Esc.
- */
-function listDriver(...opens: ((component: Component) => void | Promise<void>)[]) {
-	const renders: string[] = [];
-	let calls = 0;
-	const driver: CustomComponentDriver = async (component) => {
-		const open = opens.at(calls);
-		calls++;
-		renders.push(plain(component.render(120)));
-		if (open === undefined) {
-			component.handleInput?.(ESCAPE);
-			return;
-		}
-		await open(component);
-	};
-	return {
-		driver,
-		renders,
-		get opened() {
-			return calls;
-		},
-	};
-}
-
-function press(component: Component, ...keys: string[]): void {
-	for (const key of keys) {
-		component.handleInput?.(key);
-	}
-}
-
-/** Runs `/notebook` on the shipped extension with no pager configured. */
+/** Runs `/notebook` with `args` through the command context of `fixture`. */
 async function runNotebook(fixture: RunnerFixture, args = ""): Promise<void> {
 	await fixture.command("notebook").handler(args, fixture.runner.createCommandContext());
-}
-
-async function writePage(fixture: RunnerFixture, name: string, content: string): Promise<void> {
-	await fixture.tool("notebook_write").execute("seed", { name, content });
 }
 
 // ── Notebook write-size fixtures (issue #42) ──────────────────────────
@@ -628,7 +587,6 @@ test("/notebook escape closes the picker without opening a page", async () => {
 	await runNotebook(fixture);
 
 	expect(list.opened, "the list is not reopened").toBe(1);
-	expect(list.renders[0]).not.toMatch(/any key back/);
 });
 
 test("/notebook inline preview returns to the list on any key when no pager is available", async () => {

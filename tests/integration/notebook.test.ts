@@ -5,15 +5,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager, type ContextUsage } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { stripTerminalSequences, type Component, type TUI } from "@earendil-works/pi-tui";
+import type { TUI } from "@earendil-works/pi-tui";
 import { spawnPager } from "../../notebook/pager.js";
 import { createModelRegistry } from "../support/model-registry.js";
 import { runRealChildInvocation } from "../support/real-child.js";
+import { ESCAPE, listDriver, press, writePage } from "../support/notebook.js";
 import { createRunner, type CustomComponentDriver, type RunnerFixture } from "../support/runner.js";
 import { appendDrafts } from "../support/session.js";
 import { realTheme } from "../support/theme.js";
 
-const ESCAPE = "\x1b";
 const ELIGIBLE_USAGE: ContextUsage = { tokens: 50_000, percent: 25, contextWindow: 200_000 };
 // Below the integration project's 60 000 ms test timeout, so a stuck pager ends before the test does.
 const PAGER_DEADLINE_MS = 20_000;
@@ -68,42 +68,6 @@ async function pagerScript(options: { hold?: boolean } = {}): Promise<PagerScrip
 	};
 }
 
-function plain(lines: string[]): string {
-	return stripTerminalSequences(lines.join("\n"));
-}
-
-function press(component: Component, ...keys: string[]): void {
-	for (const key of keys) {
-		component.handleInput?.(key);
-	}
-}
-
-/**
- * A `ctx.ui.custom` driver for the /notebook list: the n-th opened list is rendered into `renders`,
- * then `opens[n]` acts on it; a list opened after the last step is closed with Esc.
- */
-function listDriver(...opens: ((component: Component) => void | Promise<void>)[]) {
-	const renders: string[] = [];
-	let calls = 0;
-	const driver: CustomComponentDriver = async (component) => {
-		const open = opens.at(calls);
-		calls++;
-		renders.push(plain(component.render(120)));
-		if (open === undefined) {
-			component.handleInput?.(ESCAPE);
-			return;
-		}
-		await open(component);
-	};
-	return {
-		driver,
-		renders,
-		get opened() {
-			return calls;
-		},
-	};
-}
-
 /** The shipped extension with the recording UI, `custom` as the /notebook driver and `tui` as the pager's TUI. */
 async function shippedHost(custom: CustomComponentDriver, tui: Partial<Pick<TUI, "stop" | "start">>, session = SessionManager.inMemory(process.cwd())) {
 	return createRunner({
@@ -123,22 +87,27 @@ async function shippedHost(custom: CustomComponentDriver, tui: Partial<Pick<TUI,
 	});
 }
 
-async function writePage(fixture: RunnerFixture, name: string, content: string): Promise<void> {
-	await fixture.tool("notebook_write").execute("seed", { name, content });
-}
-
 async function runNotebook(fixture: RunnerFixture): Promise<void> {
 	await fixture.command("notebook").handler("", fixture.runner.createCommandContext());
+}
+
+/** The child processes this process holds a handle to: Node keeps one from spawn until the child has exited. */
+function childProcessHandles(): number {
+	return process.getActiveResourcesInfo().filter((resource) => resource === "ProcessWrap").length;
 }
 
 // ── spawnPager tests ──────────────────────────────────────────────────
 
 // Skipped on Windows: with shell: true a missing binary shows up only as a cmd.exe exit code.
-test.skipIf(process.platform === "win32")("spawnPager rejects with a readable error when the pager binary is missing", async () => {
-	await expect(spawnPager("body", { cmd: "pi-schematic-definitely-missing-xyz", args: [] })).rejects.toThrow(/pi-schematic-definitely-missing-xyz not found/);
-});
+test.skipIf(process.platform === "win32")(
+	"spawnPager rejects with a readable error when the pager binary is missing",
+	{ timeout: PAGER_DEADLINE_MS },
+	async () => {
+		await expect(spawnPager("body", { cmd: "pi-schematic-definitely-missing-xyz", args: [] })).rejects.toThrow(/pi-schematic-definitely-missing-xyz not found/);
+	},
+);
 
-test("spawnPager pipes the full body to the child's stdin", async () => {
+test("spawnPager pipes the full body to the child's stdin", { timeout: PAGER_DEADLINE_MS }, async () => {
 	const tmpDir = await mkdtemp(join(tmpdir(), "pager-stdin-test-"));
 	const scriptPath = join(tmpDir, "pager.cjs");
 	const outPath = join(tmpDir, "out.txt");
@@ -164,7 +133,7 @@ test("spawnPager pipes the full body to the child's stdin", async () => {
 	}
 });
 
-test("spawnPager resolves when the pager exits without reading stdin (EPIPE/EOF is swallowed)", async () => {
+test("spawnPager resolves when the pager exits without reading stdin (EPIPE/EOF is swallowed)", { timeout: PAGER_DEADLINE_MS }, async () => {
 	// Several MB comfortably exceeds the OS pipe buffer (64KB on Linux), so
 	// the write is still in flight — and hits EPIPE (EOF on Windows) — when
 	// the child's immediate exit closes the read end, instead of completing
@@ -174,7 +143,7 @@ test("spawnPager resolves when the pager exits without reading stdin (EPIPE/EOF 
 	await expect(spawnPager(body, { cmd: process.execPath, args: ["-e", "process.exit(0)"] })).resolves.toBeUndefined();
 });
 
-test("spawnPager resolves when the pager exits nonzero", async () => {
+test("spawnPager resolves when the pager exits nonzero", { timeout: PAGER_DEADLINE_MS }, async () => {
 	await expect(spawnPager("body", { cmd: process.execPath, args: ["-e", "process.exit(1)"] })).resolves.toBeUndefined();
 });
 
@@ -276,8 +245,10 @@ test.skipIf(process.platform === "win32")("openInPager removes the SIGINT guard 
 });
 
 test.skipIf(process.platform === "win32")("openInPager propagates a tui.stop failure without spawning, guarding SIGINT, or restarting", async () => {
-	const pager = await pagerScript();
+	// Held, so a pager spawned by mistake is still running when the command has settled.
+	await pagerScript({ hold: true });
 	const baselineSigint = process.listeners("SIGINT").length;
+	const baselineChildren = childProcessHandles();
 	const start = vi.fn();
 	const list = listDriver((component) => {
 		press(component, "\r");
@@ -291,7 +262,7 @@ test.skipIf(process.platform === "win32")("openInPager propagates a tui.stop fai
 	await writePage(fixture, "alpha", "body");
 
 	await expect(runNotebook(fixture)).rejects.toThrow(/stop boom/);
-	expect(pager.started(), "pager must not spawn when tui.stop throws").toBe(false);
+	expect(childProcessHandles(), "pager must not spawn when tui.stop throws").toBe(baselineChildren);
 	expect(process.listeners("SIGINT"), "SIGINT guard must not leak when tui.stop throws").toHaveLength(baselineSigint);
 	expect(start, "TUI must not restart after a failed stop").not.toHaveBeenCalled();
 });
@@ -370,5 +341,6 @@ test.skipIf(process.platform === "win32")("/notebook reopens the list when the s
 test("a spawned child's prompt carries no notebook clipping decorations", async () => {
 	const proof = await runRealChildInvocation({ prompt: "Do the task.", notebookPages: { page: Array(2001).fill("x").join("\n") } });
 
+	expect(proof.observedMessages.join("\n")).toContain("Available notebook pages:\n  page: x\n");
 	expect(proof.observedMessages.filter((message) => /\[truncated\]|Notice:/.test(message))).toStrictEqual([]);
 });
