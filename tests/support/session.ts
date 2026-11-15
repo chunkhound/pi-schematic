@@ -78,12 +78,13 @@ export interface SubscribableSession {
 }
 
 // An AgentSession whose own members are `members`; reading any other member AgentSession declares,
-// or its instance fields `agent` and `settingsManager`, throws, naming it and the `fixture` it was read on.
+// or its instance fields `agent`, `sessionManager` and `settingsManager`, throws, naming it and the
+// `fixture` it was read on.
 function guardedSession(members: Partial<AgentSession>, fixture: string): AgentSession {
 	return guardedInstance<AgentSession>(
 		AgentSession.prototype,
 		members,
-		["agent", "settingsManager"],
+		["agent", "sessionManager", "settingsManager"],
 		(member) => new Error(`session.${member} is not available on the ${fixture}.`),
 	);
 }

@@ -3,6 +3,7 @@ import { SessionManager, type ContextUsage, type ExtensionRunner, type ToolResul
 import { getKeybindings } from "@earendil-works/pi-tui";
 import { assertPresent } from "../assertions.js";
 import { createRunner } from "../support/runner.js";
+import { SANDBOX_DENIAL_PHRASES } from "../support/sandbox.js";
 import { realTheme } from "../support/theme.js";
 
 type ContextMessage = Awaited<ReturnType<ExtensionRunner["emitContext"]>>[number];
@@ -151,7 +152,6 @@ test("toggling readonly off with a pending handoff notifies that the successor r
 
 // ── Sandbox block notice on failed bash results ────────────
 
-const SANDBOX_DENIAL_PHRASES: Partial<Record<NodeJS.Platform, string>> = { darwin: "Operation not permitted", linux: "Read-only file system" };
 const SANDBOX_DENIAL_PHRASE = SANDBOX_DENIAL_PHRASES[process.platform];
 
 test.skipIf(SANDBOX_DENIAL_PHRASE === undefined)("a failed bash result for an id that was never sandboxed gets no notice", async () => {

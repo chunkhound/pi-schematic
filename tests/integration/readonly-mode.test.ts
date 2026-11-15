@@ -6,12 +6,12 @@ import { join } from "node:path";
 import { canUseOsSandbox } from "../../os-sandbox.js";
 import { assertPresent, expectSuffix } from "../assertions.js";
 import { createRunner, type RunnerFixture } from "../support/runner.js";
+import { SANDBOX_DENIAL_PHRASES } from "../support/sandbox.js";
 import { realTheme } from "../support/theme.js";
 
 const SANDBOX_BLOCK_NOTICE =
 	"[readonly mode] If this command failed on a write outside the OS temp dir, the OS sandbox blocked it.\nUse /readonly to disable, or write within the OS temp dir.";
 
-const SANDBOX_DENIAL_PHRASES: Partial<Record<NodeJS.Platform, string>> = { darwin: "Operation not permitted", linux: "Read-only file system" };
 const SANDBOX_DENIAL_PHRASE = SANDBOX_DENIAL_PHRASES[process.platform];
 const hasOsSandbox = canUseOsSandbox();
 
