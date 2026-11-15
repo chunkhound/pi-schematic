@@ -75,18 +75,6 @@ jobs:
 
       - run: npm ci
 
-      # The readonly OS-sandbox tests skip where bwrap cannot create a namespace. One Linux lane
-      # installs bubblewrap and lifts Ubuntu's AppArmor restriction on unprivileged user namespaces,
-      # which stops bwrap when no AppArmor profile allows it. The last command is the extension's own
-      # probe and fails the step if bwrap still cannot run.
-      - name: Enable the bwrap sandbox
-        if: matrix.os == 'ubuntu-latest' && matrix.track == 'newest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes bubblewrap
-          sudo sysctl --write kernel.apparmor_restrict_unprivileged_userns=0
-          bwrap --ro-bind / / true
-
       # Uniform pre-flight checks: type errors and security issues on every platform.
       # audit-ci fails on moderate-or-higher advisories; reviewed exceptions, if ever
       # needed, must be explicit and expiry-tracked in audit-ci.jsonc.
