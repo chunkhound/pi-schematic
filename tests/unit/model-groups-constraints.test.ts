@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import fs from "node:fs";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { evaluateConstraints } from "../../model-groups/constraints/engine.js";
 import { constraintEditorRows, presentConstraintPrompt } from "../../model-groups/constraints/presentation.js";
@@ -9,7 +10,8 @@ import { testMinContext } from "./model-groups-constraints-fixture.js";
 import { testModel } from "../support/model.js";
 import { createModelRegistry } from "../support/model-registry.js";
 import { resolveConstraintMembers } from "../../model-groups/constraints/resolution.js";
-import { testProvider } from "./model-groups-helpers.js";
+import { testProvider, withTemp } from "./model-groups-helpers.js";
+import { createGroup, loadModelGroups, modelGroupsPath } from "../../model-groups/store.js";
 
 const rich = testModel({ provider: "p", id: "rich", input: ["text", "image"], reasoning: true, contextWindow: 100 });
 const text = testModel({ provider: "p", id: "text", input: ["text"], reasoning: false, contextWindow: 10 });
@@ -82,36 +84,73 @@ test("fully stale non-empty modality overrides fall back to the union while expl
 	expect(evaluateConstraints(resolved, { modalities: [] }, registry)[0].effective).toStrictEqual(["text"]);
 });
 
-test("injected scalar traverses resolution, aggregation and persistence and stays out of the production registry", () => {
-	const injected = createConstraintRegistry([testMinContext]);
+test("injected scalar takes the smallest context window among the members the model registry resolves", async () => {
+	const registry = await createModelRegistry({
+		"mg-scalar": testProvider(
+			[
+				{ id: "wide", contextWindow: 100 },
+				{ id: "narrow", contextWindow: 10 },
+			],
+			{ auth: true },
+		),
+	});
+	const members = [
+		{ provider: "mg-scalar", modelId: "wide" },
+		{ provider: "mg-scalar", modelId: "narrow" },
+	];
+
+	expect(evaluateConstraints(resolveConstraintMembers(members, registry), {}, createConstraintRegistry([testMinContext]))).toStrictEqual([
+		{ key: "testMinContext", aggregate: { automatic: 10, supported: 100 }, effective: 10, diagnostics: [] },
+	]);
+});
+
+test.for([
+	{
+		label: "a member that does not resolve",
+		members: [
+			{ provider: "p", modelId: "rich", model: rich },
+			{ provider: "p", modelId: "gone" },
+		],
+		expected: { aggregate: { automatic: null, supported: 100 } },
+	},
+	{ label: "a group without members", members: [], expected: { aggregate: { automatic: null, supported: null } } },
+])("injected scalar has no automatic value for $label and reports it as unknown", ({ members, expected }) => {
+	expect(evaluateConstraints(resolution(members), {}, createConstraintRegistry([testMinContext]))).toStrictEqual([
+		{ key: "testMinContext", aggregate: expected.aggregate, effective: null, diagnostics: [{ key: "testMinContext", code: "unknown-automatic" }] },
+	]);
+});
+
+test("injected scalar override within the supported context becomes the effective value", () => {
 	const resolved = resolution([
 		{ provider: "p", modelId: "rich", model: rich },
 		{ provider: "p", modelId: "text", model: text },
 	]);
-	const automatic = evaluateConstraints(resolved, {}, injected)[0];
-	expect(automatic.aggregate).toStrictEqual({ automatic: 10, supported: 100 });
-	expect(automatic.effective).toBe(10);
-	expect(
-		evaluateConstraints(
-			resolution([
-				{ provider: "p", modelId: "rich", model: rich },
-				{ provider: "p", modelId: "gone" },
-			]),
-			{},
-			injected,
-		)[0],
-	).toStrictEqual({
-		key: "testMinContext",
-		aggregate: { automatic: null, supported: 100 },
-		effective: null,
-		diagnostics: [{ key: "testMinContext", code: "unknown-automatic" }],
-	});
-	expect(evaluateConstraints(resolution([]), {}, injected)[0].aggregate).toStrictEqual({ automatic: null, supported: null });
-	expect(testMinContext.persistence.override.encode(12)).toBe(12);
-	expect(testMinContext.persistence.override.decode(12, "constraints.testMinContext")).toStrictEqual({ ok: true, value: 12 });
-	expect(evaluateConstraints(resolved, { testMinContext: 12 }, injected)[0].effective).toBe(12);
-	expect(productionConstraintRegistry.get("testMinContext")).toBeUndefined();
-	expect(productionConstraintRegistry.get("testMaxBudget")).toBeUndefined();
+
+	expect(evaluateConstraints(resolved, { testMinContext: 12 }, createConstraintRegistry([testMinContext]))).toStrictEqual([
+		{ key: "testMinContext", aggregate: { automatic: 10, supported: 100 }, effective: 12, diagnostics: [] },
+	]);
+});
+
+test("model groups store writes an injected scalar override to the group file and loads it back", () =>
+	withTemp(async ({ cwd }) => {
+		const access = { cwd, policy: "global-project" as const };
+		const injected = createConstraintRegistry([testMinContext]);
+		const registry = await createModelRegistry({ "mg-scalar": testProvider([{ id: "wide", contextWindow: 100 }], { auth: true }) });
+
+		createGroup("project", access, "deep", { models: [{ provider: "mg-scalar", modelId: "wide" }], constraints: { testMinContext: 12 } }, registry, injected);
+
+		expect(JSON.parse(fs.readFileSync(modelGroupsPath("project", cwd), "utf8"))).toStrictEqual({
+			version: 2,
+			groups: { deep: { models: [{ provider: "mg-scalar", modelId: "wide" }], constraints: { testMinContext: 12 } } },
+		});
+		expect(loadModelGroups(access, injected).configs.project.groups.deep).toStrictEqual({
+			models: [{ provider: "mg-scalar", modelId: "wide" }],
+			constraints: { testMinContext: 12 },
+		});
+	}));
+
+test.for(["testMinContext", "testMaxBudget"])("production constraint registry does not know the test-only key %s", (key) => {
+	expect(productionConstraintRegistry.get(key)).toBeUndefined();
 });
 
 test("generic modality prompt presentation preserves effective labels", () => {
