@@ -459,14 +459,14 @@ export function executeSpawn(
 			route.status === "routed"
 				? {
 						status: "routed",
-						group: route.groupName ?? route.requestedGroup ?? "",
+						group: route.groupName,
 						provider: route.provider,
 						modelId: route.modelId,
 					}
 				: route.status === "unknown-fallback"
 					? {
 							status: "unknown-fallback",
-							requestedGroup: route.requestedGroup ?? "",
+							requestedGroup: route.requestedGroup,
 							provider: route.provider,
 							modelId: route.modelId,
 						}
