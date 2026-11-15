@@ -134,7 +134,7 @@ export interface AppendedEntry {
  */
 export type HostEventName = Exclude<ExtensionEvent["type"], "project_trust">;
 
-export type HostEvent<K extends HostEventName> = Extract<ExtensionEvent, { type: K }>;
+type HostEvent<K extends HostEventName> = Extract<ExtensionEvent, { type: K }>;
 
 // The result type of each `pi.on` overload whose handler returns one. Handlers of the
 // other events return nothing.
