@@ -107,7 +107,7 @@
   },
   "readonly-rehydration.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 2
+      "count": 1
     }
   },
   "register-loader.mjs": {
@@ -178,6 +178,11 @@
   "tests/integration/handoff-boundary-session.test.ts": {
     "vitest/max-expects": {
       "count": 48
+    }
+  },
+  "tests/integration/os-sandbox.test.ts": {
+    "vitest/no-conditional-expect": {
+      "count": 1
     }
   },
   "tests/integration/pi-module-identity.test.ts": {
@@ -282,17 +287,9 @@
       "count": 1
     }
   },
-  "tests/unit/os-sandbox.test.ts": {
-    "ban/wall-clock": {
-      "count": 3
-    },
-    "vitest/no-conditional-expect": {
-      "count": 1
-    }
-  },
   "tests/unit/readonly-frontmatter.test.ts": {
     "vitest/max-expects": {
-      "count": 69
+      "count": 67
     }
   },
   "tests/unit/readonly-handoff.test.ts": {
@@ -301,11 +298,6 @@
     },
     "vitest/max-expects": {
       "count": 2
-    }
-  },
-  "tests/unit/readonly-mode.test.ts": {
-    "vitest/max-expects": {
-      "count": 3
     }
   },
   "tests/unit/readonly-spawn.test.ts": {
