@@ -120,16 +120,16 @@
   },
   "spawn/renderer.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 2
+      "count": 1
     },
     "@typescript-eslint/no-unnecessary-condition": {
-      "count": 5
-    },
-    "@typescript-eslint/no-unsafe-argument": {
       "count": 3
     },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 2
+    },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 8
+      "count": 4
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1

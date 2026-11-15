@@ -15,7 +15,7 @@
  *   rate, keeping the main thread responsive.
  */
 
-import type { StopReason, TextContent, UserMessage } from "@earendil-works/pi-ai";
+import type { TextContent, UserMessage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import {
 	AssistantMessageComponent,
@@ -62,28 +62,8 @@ interface ToolResultLike {
 	isError?: boolean;
 }
 
-/**
- * Message shapes from a spawned child session.
- * Covers both standard LLM messages and extension-injected custom types
- * (bashExecution, custom) without depending on SDK module augmentation types.
- */
-interface SpawnChildMessage {
-	role: string;
-	content?: { type: string; text?: string; id?: string; name?: string; arguments?: Record<string, unknown> }[];
-	stopReason?: StopReason;
-	errorMessage?: string;
-	toolCallId?: string;
-	command?: string;
-	output?: string;
-	exitCode?: number;
-	cancelled?: boolean;
-	truncated?: boolean;
-	fullOutputPath?: string;
-	excludeFromContext?: boolean;
-	customType?: string;
-	display?: boolean;
-	details?: unknown;
-}
+/** A message of a spawned child session, as pi stores and emits it. */
+type SpawnChildMessage = AgentSession["messages"][number];
 
 // ── Render-only helpers ──────────────────────────────────────────────
 
@@ -827,35 +807,31 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 	private addMessageToChat(message: SpawnChildMessage): void {
 		switch (message.role) {
 			case "bashExecution": {
-				const component = new BashExecutionComponent(message.command ?? "", this.fakeUi as unknown as TUI, message.excludeFromContext);
-				if (message.output !== undefined && message.output !== "") {
+				const component = new BashExecutionComponent(message.command, this.fakeUi as unknown as TUI, message.excludeFromContext);
+				if (message.output !== "") {
 					component.appendOutput(message.output);
 				}
-				component.setComplete(
-					message.exitCode,
-					message.cancelled ?? false,
-					message.truncated === true ? ({ truncated: true } as any) : undefined,
-					message.fullOutputPath,
-				);
+				component.setComplete(message.exitCode, message.cancelled, message.truncated ? ({ truncated: true } as any) : undefined, message.fullOutputPath);
 				this.addChild(component);
 				break;
 			}
 			case "custom": {
-				if (message.display === true) {
-					// CustomMessage type is internal to the SDK; SpawnChildMessage is structurally compatible.
-					const component = new CustomMessageComponent(message as any, undefined, this.markdownTheme);
+				if (message.display) {
+					const component = new CustomMessageComponent(message, undefined, this.markdownTheme);
 					component.setExpanded(this.expanded);
 					this.addChild(component);
 				}
 				break;
 			}
 			case "assistant": {
-				this.addChild(
-					new AssistantMessageComponent(message as unknown as import("@earendil-works/pi-ai").AssistantMessage, false, this.markdownTheme, "Thinking..."),
-				);
+				this.addChild(new AssistantMessageComponent(message, false, this.markdownTheme, "Thinking..."));
 				break;
 			}
-			case "toolResult": {
+			case "toolResult":
+			case "user":
+			case "system":
+			case "branchSummary":
+			case "compactionSummary": {
 				break;
 			}
 		}
@@ -884,7 +860,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 				this.addUserMessage(sessionMessage.content);
 				continue;
 			}
-			const message = sessionMessage as SpawnChildMessage;
+			const message = sessionMessage;
 			if (message.role === "assistant") {
 				const stopOutcome = getStopReasonOutcome(message.stopReason);
 				if (stopOutcome && !finalOutcome) {
@@ -892,27 +868,28 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 					this.lastAction = getOutcomeStatusText(stopOutcome) ?? this.lastAction;
 				}
 				this.addMessageToChat(message);
-				for (const content of message.content ?? []) {
+				for (const content of message.content) {
 					if (content.type !== "toolCall") {
 						continue;
 					}
-					const component = this.createToolComponent(content.name ?? "", content.id ?? "", content.arguments ?? {});
+					// pi-ai parses tool arguments with JSON.parse, so a model that sends `null` yields null arguments despite the type.
+					const component = this.createToolComponent(content.name, content.id, content.arguments ?? {});
 					this.addToolComponent(component);
 					if (stopOutcome) {
 						const errorMessage = getStopErrorText(stopOutcome, message.errorMessage);
 						component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
 					} else {
-						renderedPendingTools.set(content.id ?? "", component);
+						renderedPendingTools.set(content.id, component);
 					}
 				}
 				continue;
 			}
 
 			if (message.role === "toolResult") {
-				const component = renderedPendingTools.get(message.toolCallId ?? "");
+				const component = renderedPendingTools.get(message.toolCallId);
 				if (component) {
-					component.updateResult({ ...asToolResult(message), isError: false });
-					renderedPendingTools.delete(message.toolCallId ?? "");
+					component.updateResult({ ...message, isError: false });
+					renderedPendingTools.delete(message.toolCallId);
 				}
 				continue;
 			}
@@ -1043,7 +1020,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			return;
 		}
 		if (event.message.role === "custom") {
-			this.addMessageToChat(event.message as unknown as SpawnChildMessage);
+			this.addMessageToChat(event.message);
 			return;
 		}
 		if (event.message.role === "assistant") {
@@ -1069,14 +1046,16 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		this.pendingAssistantMessage = event.message;
 
 		// Track new tool call IDs so flushPendingUpdates can create components
-		for (const content of event.message.content ?? []) {
+		for (const content of event.message.content) {
 			if (content.type !== "toolCall") {
 				continue;
 			}
+			// pi-ai parses streamed arguments with JSON.parse, so a model that sends `null` yields null arguments despite the type.
+			const args = content.arguments ?? {};
 			const pendingTool = this.pendingTools.get(content.id);
 			if (pendingTool) {
 				// Already tracked — just update args (cheap)
-				pendingTool.updateArgs(content.arguments ?? {});
+				pendingTool.updateArgs(args);
 			} else {
 				// Keep the latest announced args until frame-time creation.
 				// Streamed tool-call arguments often grow over multiple chunks before
@@ -1084,13 +1063,13 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 				this.pendingToolCallCreations.set(content.id, {
 					name: content.name,
 					id: content.id,
-					args: content.arguments ?? {},
+					args,
 				});
 			}
 		}
 
 		// Cheap per-event: update the live action text preview
-		const textBlock = event.message.content?.find((c): c is TextContent => c.type === "text" && Boolean(c.text));
+		const textBlock = event.message.content.find((c): c is TextContent => c.type === "text" && Boolean(c.text));
 		if (textBlock !== undefined) {
 			const firstLine = textBlock.text.trim().split("\n")[0];
 			if (firstLine) {
