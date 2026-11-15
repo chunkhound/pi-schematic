@@ -421,8 +421,6 @@ export default defineConfig([
 						"expectPrefix",
 						"expectSuffix",
 						"expectGoldenFile",
-						"assertAllowed",
-						"assertBlocked",
 						"assertChildRegistriesCleared",
 						"assertErrorResult",
 						"assertHandoffAlignment",
