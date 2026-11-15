@@ -22,10 +22,10 @@ function truncateOutput(value, limit = 8192) {
 
 /** Run a subprocess and fail with launch/status/signal and captured-output context. */
 export function runChecked(command, args, options = {}) {
-	const { cwd, capture = false, env = process.env } = options;
+	const { cwd, capture = false } = options;
 	const result = spawnSync(command, args, {
 		cwd,
-		env,
+		env: process.env,
 		encoding: "utf8",
 		stdio: capture ? "pipe" : "inherit",
 	});
@@ -64,13 +64,13 @@ function resolveNpmExecpath(npmExecpath) {
 }
 
 /** Build a shell-free npm invocation, including Windows' npm.cmd installations. */
-function npmInvocation(args, options = {}) {
-	const { env = process.env, platform = process.platform, execPath = process.execPath } = options;
-	const npmExecpath = resolveNpmExecpath(env.npm_execpath);
+function npmInvocation(args) {
+	const { execPath } = process;
+	const npmExecpath = resolveNpmExecpath(process.env.npm_execpath);
 	if (npmExecpath) {
 		return { command: execPath, args: [npmExecpath, ...args] };
 	}
-	if (platform !== "win32") {
+	if (process.platform !== "win32") {
 		return { command: "npm", args };
 	}
 
@@ -82,9 +82,12 @@ function npmInvocation(args, options = {}) {
 }
 
 function runNpm(cwd, args, options = {}) {
-	const invocation = npmInvocation(args, options);
+	const invocation = npmInvocation(args);
 	return runChecked(invocation.command, invocation.args, { cwd, ...options });
 }
+
+const NPM_RETRIES = 3;
+const NPM_RETRY_BASE_MS = 800;
 
 function sleep(ms) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
@@ -97,18 +100,17 @@ function sleep(ms) {
  * the current compat lane; failure artifacts retain bounded output, so rerun
  * locally when the truncated subprocess tail is needed.
  */
-export async function runNpmWithRetry(cwd, args, options = {}, retryOptions = {}) {
-	const { retries = 3, baseMs = 800 } = retryOptions;
+export async function runNpmWithRetry(cwd, args, options = {}) {
 	let lastError;
-	for (let attempt = 0; attempt <= retries; attempt++) {
+	for (let attempt = 0; attempt <= NPM_RETRIES; attempt++) {
 		try {
 			return runNpm(cwd, args, options);
 		} catch (error) {
 			lastError = error;
-			if (attempt === retries) {
+			if (attempt === NPM_RETRIES) {
 				break;
 			}
-			await sleep(baseMs * 2 ** attempt);
+			await sleep(NPM_RETRY_BASE_MS * 2 ** attempt);
 		}
 	}
 	throw lastError;

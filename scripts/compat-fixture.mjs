@@ -63,14 +63,14 @@ export function packEntry(stdout) {
 }
 
 /** Resolve one current Pi release and the exact TypeBox version it requires. */
-export async function resolveLatestPi(copy, options = {}) {
-	const piStdout = (await runNpmWithRetry(copy, ["view", "@earendil-works/pi-coding-agent@latest", "version", "--json"], { ...options, capture: true })).stdout;
+export async function resolveLatestPi(copy) {
+	const piStdout = (await runNpmWithRetry(copy, ["view", "@earendil-works/pi-coding-agent@latest", "version", "--json"], { capture: true })).stdout;
 	const piVersion = parseNpmViewValue(piStdout);
 	if (typeof piVersion !== "string" || !piVersion) {
 		throw new Error(`Latest Pi coding-agent did not declare a usable version: ${JSON.stringify(piStdout)}`);
 	}
 	const typeboxStdout = (
-		await runNpmWithRetry(copy, ["view", `@earendil-works/pi-coding-agent@${piVersion}`, "dependencies.typebox", "--json"], { ...options, capture: true })
+		await runNpmWithRetry(copy, ["view", `@earendil-works/pi-coding-agent@${piVersion}`, "dependencies.typebox", "--json"], { capture: true })
 	).stdout;
 	const typeboxVersion = parseNpmViewValue(typeboxStdout);
 	if (typeof typeboxVersion !== "string" || !typeboxVersion) {
