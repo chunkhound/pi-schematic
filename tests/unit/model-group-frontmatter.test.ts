@@ -206,17 +206,25 @@ test("model-group frontmatter triggers model switch for /skill:name command", as
 	expect(messages(harness)).toContainEqual(expect.stringMatching(/Model changed.*fast.*\/skill:quick/));
 });
 
-test("unknown model-group in frontmatter blocks execution with error", async () => {
-	const harness = await frontmatterHarness({ groups: reviewerGroup, commands: reviewPrompt({ "model-group": "nonexistent" }) });
+test.each([
+	{
+		text: "/review",
+		command: { name: "review", source: "prompt" },
+		error: "Cannot execute `/review`: Model Group `nonexistent` error — Model Group 'nonexistent' is not defined. Available groups: reviewer.",
+	},
+	{
+		text: "/skill:quick",
+		command: { name: "quick", source: "skill" },
+		error: "Cannot execute `/skill:quick`: Model Group `nonexistent` error — Model Group 'nonexistent' is not defined. Available groups: reviewer.",
+	},
+] as const)("unknown model-group in frontmatter blocks execution with error: $text", async ({ text, command, error }) => {
+	const harness = await frontmatterHarness({ groups: reviewerGroup, commands: [{ ...command, frontmatter: { "model-group": "nonexistent" } }] });
 
-	const result = await harness.input("/review");
+	const result = await harness.input(text);
 
 	expect(result, "selection failure must prevent command expansion and agent start").toStrictEqual({ action: "handled" });
 	expect(harness.modelCalls, "setModel should not be called").toHaveLength(0);
-	const error = firstError(harness);
-	expect(error).toMatch(/nonexistent/);
-	expect(error).toMatch(/not defined/);
-	expect(error).toMatch(/reviewer/);
+	expect(firstError(harness)).toBe(error);
 });
 
 test("empty model-group (SpawnRouteError) blocks execution with error", async () => {
@@ -229,12 +237,41 @@ test("empty model-group (SpawnRouteError) blocks execution with error", async ()
 	expect(firstError(harness)).toBe("Cannot execute `/review`: Model Group `empty` error — Model Group 'empty' has no model entries.");
 });
 
-test("headless session does not inherit model-group changes", async () => {
-	const harness = await frontmatterHarness({ groups: reviewerGroup, commands: reviewPrompt({ "model-group": "reviewer" }), headless: true });
+test.each([
+	{ label: "model-group", frontmatter: { "model-group": "reviewer" } },
+	{ label: "explicit model", frontmatter: { model: "mg-openai/gpt-4o" } },
+])("headless session does not apply model-selection frontmatter: $label", async ({ frontmatter }) => {
+	const harness = await frontmatterHarness({ groups: reviewerGroup, commands: reviewPrompt(frontmatter), headless: true });
 
 	await harness.input("/review");
 
 	expect(harness.modelCalls, "setModel should not be called in headless").toHaveLength(0);
+});
+
+test("model-group frontmatter without readonly leaves readonly mode unchanged", async () => {
+	const harness = await frontmatterHarness({ groups: reviewerGroup, commands: reviewPrompt({ "model-group": "reviewer" }) });
+
+	await harness.input("/review");
+	await harness.fixture.runner.emitBeforeAgentStart({ messageType: "user", prompt: "" }, harness.fixture.systemPromptOptions());
+
+	expect(harness.modelCalls.map((model) => model.id)).toStrictEqual(["gpt-4o"]);
+	expect(harness.entries("pi-schematic-readonly")).toStrictEqual([]);
+});
+
+test("each model-group command selects its own group's model", async () => {
+	const harness = await frontmatterHarness({
+		groups: { ...reviewerGroup, fast: { models: [{ provider: "mg-anthropic", modelId: "claude-sonnet" }] } },
+		providers: { "mg-anthropic": testProvider([{ id: "claude-sonnet", reasoning: true }], { auth: true }) },
+		commands: [
+			{ name: "review", source: "prompt", frontmatter: { "model-group": "reviewer" } },
+			{ name: "quick", source: "prompt", frontmatter: { "model-group": "fast" } },
+		],
+	});
+
+	await harness.input("/review");
+	await harness.input("/quick");
+
+	expect(harness.modelCalls.map((model) => `${model.provider}/${model.id}`)).toStrictEqual(["mg-openai/gpt-4o", "mg-anthropic/claude-sonnet"]);
 });
 
 test("no model-group frontmatter is a silent no-op", async () => {
@@ -334,6 +371,23 @@ test("explicit model + model-group warns and uses explicit model", async () => {
 		"explicit model should win over model-group",
 	).toStrictEqual(["gpt-4o"]);
 	expect(messages(harness), "should warn about override").toContainEqual(expect.stringMatching(/reviewer.*overridden/));
+});
+
+test("explicit model + model-group + thinking applies the frontmatter thinking to the explicit model", async () => {
+	const harness = await frontmatterHarness({
+		groups: { reviewer: { models: [{ provider: "mg-anthropic", modelId: "claude-sonnet" }] } },
+		providers: { "mg-anthropic": testProvider([{ id: "claude-sonnet", reasoning: true }], { auth: true }) },
+		models: [
+			{ id: "gpt-parent", reasoning: true },
+			{ id: "gpt-4o", reasoning: true, thinkingLevelMap: ALL_LEVELS },
+		],
+		commands: reviewPrompt({ model: "mg-openai/gpt-4o", "model-group": "reviewer", thinking: "high" }),
+	});
+
+	await harness.input("/review");
+
+	expect(harness.modelCalls.map((model) => model.id)).toStrictEqual(["gpt-4o"]);
+	expect(harness.thinkingCalls).toStrictEqual(["high"]);
 });
 
 test("model-group + thinking overrides group thinking level", async () => {

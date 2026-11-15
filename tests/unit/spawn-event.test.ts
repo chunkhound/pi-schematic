@@ -260,6 +260,34 @@ test("nested spawn live action drops the result preview when a partial result ha
 	expect(component.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "[bash] …")));
 });
 
+// pi types a tool's partial and final result on these events as `any`: a tool written in plain
+// JavaScript can send one without `content`, and pi passes it through unchanged.
+test("nested spawn live action shows no preview for a partial result without content", () => {
+	const state = createState();
+	const child = createSubscribableSession(CWD);
+	const component = renderLiveChild(state, child);
+	child.emit({ type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: {} });
+
+	child.emit({ type: "tool_execution_update", toolCallId: "tc-1", toolName: "bash", args: {}, partialResult: { details: {} } });
+
+	expect(component.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "[bash] …")));
+});
+
+test("expanded nested spawn renders a final tool result without content as an empty result", () => {
+	const state = createState();
+	const child = probedChild();
+	const component = renderLiveChild(state, child, { expanded: true });
+	streamPendingToolCall(child);
+	child.emit({ type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } });
+
+	child.emit({ type: "tool_execution_end", toolCallId: "tc-1", toolName: "bash", result: { details: {} }, isError: false });
+
+	const results = plain(component.render(120))
+		.map((line) => line.trim())
+		.filter((line) => line.startsWith("result "));
+	expect(results).toStrictEqual(["result isError=false:"]);
+});
+
 const USER_TASK: UserMessage = { role: "user", content: [{ type: "text", text: "live task" }], timestamp: 1_767_225_600_000 };
 
 const startedUserMessageCases: { label: string; message: UserMessage; shown: string }[] = [

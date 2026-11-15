@@ -108,6 +108,21 @@ test("populateFromSkills silently skips missing file", () => {
 	expect(cacheLookupCommand(state, "missing")).toBeNull();
 });
 
+testWithDir("populateFromSkills keeps each skill's own readonly value when caching several skills", async ({ dir }) => {
+	const state = createState();
+	const alpha = await writeMd(dir, "alpha", { readonly: true });
+	const beta = await writeMd(dir, "beta", { readonly: false });
+	const gamma = await writeMd(dir, "gamma", { description: "No readonly" });
+
+	populateFromSkills(state, [makeSkill("alpha", alpha), makeSkill("beta", beta), makeSkill("gamma", gamma)]);
+
+	expect({ alpha: cacheLookupSkill(state, "alpha"), beta: cacheLookupSkill(state, "beta"), gamma: cacheLookupSkill(state, "gamma") }).toStrictEqual({
+		alpha: true,
+		beta: false,
+		gamma: null,
+	});
+});
+
 testWithDir("populateFromSkills returns null for non-boolean readonly frontmatter", async ({ dir }) => {
 	const state = createState();
 	const fp1 = await writeMd(dir, "string-ro", { readonly: "yes" });
@@ -872,20 +887,19 @@ testWithDir("populateFromSkills caches all frontmatter fields together", async (
 	expect(cacheLookupSkillIssue(state, "all-fields")).toBeNull();
 });
 
-testWithDir("populateFromSkills accepts slashes inside model IDs", async ({ dir }) => {
+test.each([
+	{ label: "slashes inside the model ID", model: "openrouter/anthropic/claude-sonnet" },
+	{ label: "several slashes inside the model ID", model: "provider/a/b/c" },
+	{ label: "dots and underscores", model: "my-provider/model-v2.5_beta" },
+	{ label: "a 1000-character model ID", model: `provider/${"a".repeat(1000)}` },
+])("populateFromSkills accepts any model ID after the provider: $label", async ({ model }) => {
+	const dir = await tempDir();
 	const state = createState();
-	const models = ["openrouter/anthropic/claude-sonnet", "provider/a/b/c"];
-	const skills = await Promise.all(
-		models.map(async (model, index) => {
-			const name = `nested-model-${index}`;
-			return makeSkill(name, await writeMd(dir, name, { model }));
-		}),
-	);
-	populateFromSkills(state, skills);
-	models.forEach((model, index) => {
-		expect(cacheLookupSkillExplicitModel(state, `nested-model-${index}`)).toBe(model);
-		expect(cacheLookupSkillIssue(state, `nested-model-${index}`)).toBeNull();
-	});
+	const filePath = await writeMd(dir, "model-id", { model });
+	populateFromSkills(state, [makeSkill("model-id", filePath)]);
+
+	expect(cacheLookupSkillExplicitModel(state, "model-id")).toBe(model);
+	expect(cacheLookupSkillIssue(state, "model-id")).toBeNull();
 });
 
 testWithDir("populateFromSkills treats whitespace-only model-group as empty/invalid", async ({ dir }) => {
