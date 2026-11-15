@@ -5,7 +5,7 @@ import { getEffectiveModelGroupNames, resolveSpawnModelRoute, SpawnRouteError } 
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import { resolveGroups, testProvider, type TestChatModel } from "./model-groups-helpers.js";
 import { testMaxBudget, testMinContext } from "./model-groups-constraints-fixture.js";
-import { assertPresent } from "../assertions.js";
+import { assertInstanceOf, assertPresent } from "../assertions.js";
 import { createModelRegistry } from "../support/model-registry.js";
 
 /** The authenticated provider every router test registers its usable models under. */
@@ -325,21 +325,24 @@ test("plain inherited route stays inherited when the parent model has every requ
 
 test("plain inherited route rejects a modality the parent model lacks", async () => {
 	const reg = await routerRegistry([{ id: "text-parent", input: ["text"] }]);
-	expect(() =>
+	let thrown: unknown;
+	try {
 		resolveSpawnModelRoute({
 			constraints: { modalities: { required: ["image"] } },
 			groups: [],
 			parentModel: found(reg, "text-parent"),
 			parentThinking: "medium",
 			modelRegistry: reg,
-		}),
-	).toThrow(
-		expect.objectContaining({
-			name: "SpawnRouteError",
-			group: "<inherited>",
-			message: "Spawn model 'mg-router/text-parent' cannot satisfy required modalities: image.",
-		}),
-	);
+		});
+	} catch (error) {
+		thrown = error;
+	}
+	assertInstanceOf(thrown, SpawnRouteError, "the route is rejected");
+	expect(thrown.message).toBe("Spawn model 'mg-router/text-parent' cannot satisfy required modalities: image.");
+	expect(thrown.group).toBe("<inherited>");
+	expect(thrown.reason).toBe("missing-modality");
+	expect(thrown.missingFromModel, "the parent model is what lacks the modality").toStrictEqual(["image"]);
+	expect(thrown.missingFromGroup, "no group is involved").toStrictEqual([]);
 });
 
 test("explicit group override carries a modality ceiling even when caller declares no requirement", async () => {
