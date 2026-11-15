@@ -19,14 +19,12 @@ import type {
 	ContextEventResult,
 	Extension,
 	ExtensionAPI,
-	ExtensionError,
 	ExtensionEvent,
 	ExtensionFactory,
 	ExtensionHandler,
 	ExtensionRuntime,
 	InputEventResult,
 	MessageEndEventResult,
-	ModelRegistry,
 	NormalizedBuildSystemPromptOptions,
 	RegisteredCommand,
 	ResourcesDiscoverResult,
@@ -43,7 +41,7 @@ import type {
 	TurnEndEventResult,
 	UserBashEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { DefaultResourceLoader, ExtensionRunner, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -443,34 +441,6 @@ export function createBeforeAgentStartEvent(init?: { systemPrompt?: string; skil
 		},
 		systemPromptOptions,
 	};
-}
-
-/**
- * Dispatch one `before_agent_start` run through pi's real `ExtensionRunner` with
- * the `before` factories, then schematic, then the `after` factories loaded in
- * that order. Throws when any handler threw, because pi reports handler errors
- * and continues. `prompt` is `buildSystemPrompt` over the resulting options: it
- * is faithful for extension sections, while pi finalizes its own tools section
- * later in the run.
- */
-export async function emitBeforeAgentStart(init: {
-	before?: ExtensionFactory[];
-	after?: ExtensionFactory[];
-}): Promise<{ result: Awaited<ReturnType<ExtensionRunner["emitBeforeAgentStart"]>>; prompt: string }> {
-	const cwd = process.cwd();
-	const { extensions, runtime } = await loadExtensions([...(init.before ?? []), registerSchematic, ...(init.after ?? [])], cwd);
-	bindHostActions(runtime, createHostState({}));
-	// No registry: refreshModelGroupsState skips loading, so model-group config in the real home directory cannot leak in.
-	const runner = new ExtensionRunner(extensions, runtime, cwd, SessionManager.inMemory(cwd), undefined as unknown as ModelRegistry);
-	const errors: ExtensionError[] = [];
-	runner.onError((error) => {
-		errors.push(error);
-	});
-	const result = await runner.emitBeforeAgentStart({ messageType: "user", prompt: "" }, { cwd });
-	if (errors.length > 0) {
-		throw new AggregateError(errors, "before_agent_start handler failed");
-	}
-	return { result, prompt: buildSystemPrompt(result.systemPromptOptions) };
 }
 
 function hostOf(pi: TestPI): { extension: Extension; state: HostState } {

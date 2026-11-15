@@ -108,28 +108,62 @@ function assertClippedPagesContained(state: SchematicState): void {
 }
 
 function assertResetClears(state: SchematicState): void {
-	expect(state.notebookPages.size, "notebookPages must be empty after reset").toBe(0);
-	expect(state.clippedPages.size, "clippedPages must be empty after reset").toBe(0);
-	expect(state.childSessions.size, "childSessions must be empty after reset").toBe(0);
-	expect(state.liveChildSessions.size, "liveChildSessions must be empty after reset").toBe(0);
-	expect(state.epoch, "epoch must be 0 after reset").toBe(0);
-	expect(state.activeNotebookTopic, "topic must be null after reset").toBeNull();
-	expect(state.activeNotebookTopicSource, "topic source must be null after reset").toBeNull();
-	expect(state.stagedHandoff, "stagedHandoff must be null after reset").toBeNull();
-	expect(state.handoffRefusals.size, "handoffRefusals must be empty after reset").toBe(0);
-	expect(state.pendingRequestedHandoff, "pendingRequestedHandoff must be null after reset").toBeNull();
-	expect(state.pendingTopicBoundaryHint, "pendingTopicBoundaryHint must be null after reset").toBeNull();
-	expect(state.modelGroups.groups, "modelGroups.groups must be empty after reset").toHaveLength(0);
-	expect(state.modelGroups.validation, "modelGroups.validation must be null after reset").toBeNull();
-	expect(state.readonlyEnabled, "readonlyEnabled must be false after reset").toBe(false);
-	expect(state.readonlyNudgePending, "readonlyNudgePending must be false after reset").toBe(false);
-	expect(state.frontmatterSkillCache.size, "frontmatterSkillCache must be empty after reset").toBe(0);
-	expect(state.frontmatterPromptCache.size, "frontmatterPromptCache must be empty after reset").toBe(0);
-	expect(state.frontmatterSkillIssues.size, "frontmatterSkillIssues must be empty after reset").toBe(0);
-	expect(state.frontmatterPromptIssues.size, "frontmatterPromptIssues must be empty after reset").toBe(0);
-	expect(state.pendingReadonlyCommands, "pendingReadonlyCommands must be empty after reset").toHaveLength(0);
-	expect(state.lastWatchdogBand, "lastWatchdogBand must be null after reset").toBeNull();
-	expect(state.sandboxedBashCallIds.size, "sandboxedBashCallIds must be empty after reset").toBe(0);
+	expect(
+		{
+			notebookPages: state.notebookPages.size,
+			clippedPages: state.clippedPages.size,
+			childSessions: state.childSessions.size,
+			liveChildSessions: state.liveChildSessions.size,
+			epoch: state.epoch,
+			discardEpochWatermark: state.discardEpochWatermark,
+			activeNotebookTopic: state.activeNotebookTopic,
+			activeNotebookTopicSource: state.activeNotebookTopicSource,
+			stagedHandoff: state.stagedHandoff,
+			handoffRefusals: state.handoffRefusals.size,
+			handoffFailedInRun: state.handoffFailedInRun,
+			readonlyNudgeRearmAtSettle: state.readonlyNudgeRearmAtSettle,
+			pendingRequestedHandoff: state.pendingRequestedHandoff,
+			pendingTopicBoundaryHint: state.pendingTopicBoundaryHint,
+			modelGroups: state.modelGroups.groups.length,
+			modelGroupsValidation: state.modelGroups.validation,
+			readonlyEnabled: state.readonlyEnabled,
+			readonlyNudgePending: state.readonlyNudgePending,
+			frontmatterSkillCache: state.frontmatterSkillCache.size,
+			frontmatterPromptCache: state.frontmatterPromptCache.size,
+			frontmatterSkillIssues: state.frontmatterSkillIssues.size,
+			frontmatterPromptIssues: state.frontmatterPromptIssues.size,
+			pendingReadonlyCommands: state.pendingReadonlyCommands.length,
+			lastWatchdogBand: state.lastWatchdogBand,
+			sandboxedBashCallIds: state.sandboxedBashCallIds.size,
+		},
+		"every field reset owns is back at its initial value",
+	).toStrictEqual({
+		notebookPages: 0,
+		clippedPages: 0,
+		childSessions: 0,
+		liveChildSessions: 0,
+		epoch: 0,
+		discardEpochWatermark: 0,
+		activeNotebookTopic: null,
+		activeNotebookTopicSource: null,
+		stagedHandoff: null,
+		handoffRefusals: 0,
+		handoffFailedInRun: false,
+		readonlyNudgeRearmAtSettle: false,
+		pendingRequestedHandoff: null,
+		pendingTopicBoundaryHint: null,
+		modelGroups: 0,
+		modelGroupsValidation: null,
+		readonlyEnabled: false,
+		readonlyNudgePending: false,
+		frontmatterSkillCache: 0,
+		frontmatterPromptCache: 0,
+		frontmatterSkillIssues: 0,
+		frontmatterPromptIssues: 0,
+		pendingReadonlyCommands: 0,
+		lastWatchdogBand: null,
+		sandboxedBashCallIds: 0,
+	});
 }
 
 // ── Properties ────────────────────────────────────────────────────────
@@ -201,26 +235,15 @@ test("Property 3: childSessionEpoch only changes on reset", async () => {
 			),
 			async (actions) => {
 				const state = createState();
-				let expectedChildEpoch: number | null = null;
 
 				for (const action of actions) {
 					const prevChildEpoch = state.childSessionEpoch;
 					await apply(state, action);
 
-					if (action.type === "reset") {
-						// After reset, childSessionEpoch should have incremented
-						if (expectedChildEpoch === null) {
-							expectedChildEpoch = prevChildEpoch + 1;
-						} else {
-							expectedChildEpoch = state.childSessionEpoch;
-						}
-						expect(state.childSessionEpoch, `childSessionEpoch must be ${expectedChildEpoch} after reset (prev=${prevChildEpoch})`).toBe(expectedChildEpoch);
-						expectedChildEpoch = state.childSessionEpoch;
-					} else {
-						// Non-reset: childSessionEpoch must be unchanged
-						expect(state.childSessionEpoch, `childSessionEpoch must not change on ${action.type} action`).toBe(prevChildEpoch);
-						expectedChildEpoch = state.childSessionEpoch;
-					}
+					// A reset increments childSessionEpoch by one; every other action leaves it unchanged.
+					expect(state.childSessionEpoch, `childSessionEpoch after ${action.type} (prev=${prevChildEpoch})`).toBe(
+						action.type === "reset" ? prevChildEpoch + 1 : prevChildEpoch,
+					);
 				}
 			},
 		),
@@ -254,47 +277,6 @@ test("Property 4: Reset clears all state fields", async () => {
 						assertResetClears(state);
 					}
 				}
-
-				// Also test explicitly: create fresh state, perform some work, then reset
-				const s2 = createState();
-				setActiveNotebookTopic(s2, "test-topic", "agent");
-				await saveNotebookPage(mockPi, s2, "my-page", "some content");
-				s2.readonlyEnabled = true;
-				s2.readonlyNudgePending = true;
-				s2.frontmatterSkillCache.set("skill-a", {
-					readonly: true,
-					modelGroup: null,
-					explicitModel: null,
-					explicitThinking: null,
-					mtimeMs: 1,
-					filePath: "/tmp/skill-a.md",
-				});
-				s2.frontmatterPromptCache.set("prompt-a", {
-					readonly: false,
-					modelGroup: null,
-					explicitModel: null,
-					explicitThinking: null,
-					mtimeMs: 1,
-					filePath: "/tmp/prompt-a.md",
-				});
-				s2.frontmatterSkillIssues.set("skill-b", { kind: "invalid-readonly-value", filePath: "/tmp/skill-b.md" });
-				s2.frontmatterPromptIssues.set("prompt-b", { kind: "unreadable-file", filePath: "/tmp/prompt-b.md" });
-				s2.pendingReadonlyCommands.push({ type: "skill", name: "skill-a" });
-				s2.sandboxedBashCallIds.add("bash-call-1");
-				s2.modelGroups.groups = [
-					{
-						name: "stale",
-						scope: "project",
-						sourcePath: "<project>",
-						models: [],
-						modalities: { common: [], supported: [], effective: [] },
-						validation: { unavailableRefs: [], shadowedByProject: false, degraded: false },
-						evaluations: [],
-					},
-				];
-				s2.modelGroups.validation = { groups: s2.modelGroups.groups, loadIssues: [] };
-				resetState(s2);
-				assertResetClears(s2);
 			},
 		),
 		{ numRuns: 100 },
@@ -353,6 +335,62 @@ const STAGED_HANDOFF: NonNullable<SchematicState["stagedHandoff"]> = {
 	declineReason: null,
 };
 
+test("resetState clears every field it owns", async () => {
+	useTestHarness();
+	const state = createState();
+	setActiveNotebookTopic(state, "test-topic", "agent");
+	setActiveNotebookTopic(state, "other-topic", "human");
+	await saveNotebookPage(mockPi, state, "my-page", "some content");
+	await saveNotebookPage(mockPi, state, "clipped-page", CLIPPED_BODY);
+	state.discardEpochWatermark = 3;
+	state.stagedHandoff = { ...STAGED_HANDOFF };
+	state.handoffRefusals.set("call-2", "refused");
+	state.handoffFailedInRun = true;
+	state.readonlyNudgeRearmAtSettle = true;
+	state.pendingRequestedHandoff = newRequestedHandoff("continue");
+	state.lastWatchdogBand = 1;
+	state.childSessions.set("child-1", createSession([]));
+	state.liveChildSessions.set("child-1", createSession([]));
+	state.readonlyEnabled = true;
+	state.readonlyNudgePending = true;
+	state.frontmatterSkillCache.set("skill-a", {
+		readonly: true,
+		modelGroup: null,
+		explicitModel: null,
+		explicitThinking: null,
+		mtimeMs: 1,
+		filePath: "/tmp/skill-a.md",
+	});
+	state.frontmatterPromptCache.set("prompt-a", {
+		readonly: false,
+		modelGroup: null,
+		explicitModel: null,
+		explicitThinking: null,
+		mtimeMs: 1,
+		filePath: "/tmp/prompt-a.md",
+	});
+	state.frontmatterSkillIssues.set("skill-b", { kind: "invalid-readonly-value", filePath: "/tmp/skill-b.md" });
+	state.frontmatterPromptIssues.set("prompt-b", { kind: "unreadable-file", filePath: "/tmp/prompt-b.md" });
+	state.pendingReadonlyCommands.push({ type: "skill", name: "skill-a" });
+	state.sandboxedBashCallIds.add("bash-call-1");
+	state.modelGroups.groups = [
+		{
+			name: "stale",
+			scope: "project",
+			sourcePath: "<project>",
+			models: [],
+			modalities: { common: [], supported: [], effective: [] },
+			validation: { unavailableRefs: [], shadowedByProject: false, degraded: false },
+			evaluations: [],
+		},
+	];
+	state.modelGroups.validation = { groups: state.modelGroups.groups, loadIssues: [] };
+
+	resetState(state);
+
+	assertResetClears(state);
+});
+
 test("a new state has no staged handoff and no refusals", () => {
 	const state = createState();
 	expect(state.stagedHandoff).toBeNull();
@@ -387,23 +425,20 @@ test("invalidateHandoffState clears the staged handoff, the refusals and the pen
 	state.stagedHandoff = { ...STAGED_HANDOFF };
 	refusals.set("call-2", "refused");
 	setActiveNotebookTopic(state, "topic", "agent");
+	setActiveNotebookTopic(state, "other-topic", "agent");
 	state.pendingRequestedHandoff = { toolCalled: false, enforcementAttempts: 1, eligibleNudgeDelivered: false, nextInstruction: null };
 	state.handoffFailedInRun = true;
+	state.readonlyNudgeRearmAtSettle = true;
+	state.lastWatchdogBand = 1;
 	invalidateHandoffState(state);
 	expect(state.stagedHandoff).toBeNull();
 	expect(state.handoffFailedInRun).toBe(false);
+	expect(state.readonlyNudgeRearmAtSettle).toBe(false);
+	expect(state.lastWatchdogBand).toBeNull();
 	expect(state.handoffRefusals.size).toBe(0);
 	expect(state.handoffRefusals).toBe(refusals);
 	expect(state.pendingRequestedHandoff).toBeNull();
 	expect(state.pendingTopicBoundaryHint).toBeNull();
-});
-
-test("reset clears deferred readonly frontmatter commands", () => {
-	const state = createState();
-	state.pendingReadonlyCommands.push({ type: "skill", name: "a" });
-
-	resetState(state);
-	expect(state.pendingReadonlyCommands, "readonly queue cleared").toHaveLength(0);
 });
 
 test("clipped page flags stay contained and reset clears them", async () => {
@@ -415,36 +450,6 @@ test("clipped page flags stay contained and reset clears them", async () => {
 	resetState(state);
 	assertClippedPagesContained(state);
 	assertResetClears(state);
-});
-
-test("Property 6: childSessionEpoch monotonicity (never decreases)", async () => {
-	useTestHarness();
-	await fc.assert(
-		fc.asyncProperty(
-			fc.array(
-				fc.oneof(
-					fc.constant({ type: "reset" }),
-					fc.record({ type: fc.constant("setTopic"), name: arbTopicName }),
-					fc.constant({ type: "clearTopic" }),
-					fc.record({ type: fc.constant("savePage"), name: arbPageName }),
-				),
-				{ maxLength: 30 },
-			),
-			async (actions) => {
-				const state = createState();
-				let maxSeenEpoch = 0;
-
-				for (const action of actions) {
-					await apply(state, action);
-					expect(state.childSessionEpoch, `childSessionEpoch must never decrease: was ${maxSeenEpoch}, got ${state.childSessionEpoch}`).toBeGreaterThanOrEqual(
-						maxSeenEpoch,
-					);
-					maxSeenEpoch = Math.max(maxSeenEpoch, state.childSessionEpoch);
-				}
-			},
-		),
-		{ numRuns: 100 },
-	);
 });
 
 test("Property 7: clipped pages are a subset of notebook pages", async () => {

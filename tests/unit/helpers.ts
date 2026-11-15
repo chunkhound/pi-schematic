@@ -13,9 +13,8 @@ import {
 	type ExtensionUIContext,
 	type ToolCallEventResult,
 	type ToolDefinition,
-	type TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
-import type { Api, Model, ToolResultMessage } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -159,18 +158,6 @@ export function createSession(messages: unknown[]) {
 	} as unknown as import("@earendil-works/pi-coding-agent").AgentSession;
 }
 
-/** The entries of the first `turn_end` handler result that is not `undefined`; throws unless they are an array of objects. */
-export function boundaryEntries(results: unknown[]): Record<string, unknown>[] {
-	const { entries } = recordOf(
-		results.find((result) => result !== undefined),
-		"the turn_end boundary result",
-	);
-	if (!Array.isArray(entries)) {
-		throw new Error("Expected the turn_end boundary result to carry an entries array.");
-	}
-	return entries.map((entry: unknown) => recordOf(entry, "a turn_end boundary entry"));
-}
-
 export function stripAnsi(text: string): string {
 	return stripTerminalSequences(text);
 }
@@ -216,51 +203,6 @@ export async function callHandlers(pi: TestPI, event: string, payload: unknown, 
 		results.push(await handler(payload, ctx));
 	}
 	return results;
-}
-
-/** A tool result message for `toolCallId`, as pi passes it in `TurnEndEvent.toolResults`. */
-export function handoffToolResult(toolCallId: string, isError = false): ToolResultMessage {
-	return {
-		role: "toolResult",
-		toolCallId,
-		toolName: "handoff",
-		content: [{ type: "text", text: isError ? "Handoff rejected." : "Handoff staged." }],
-		isError,
-		timestamp: 0,
-	};
-}
-
-/** A completed `turn_end` event with an empty boundary chain; override any field. */
-export function turnEndEvent(overrides: Partial<TurnEndEvent> = {}): TurnEndEvent {
-	return {
-		type: "turn_end",
-		turnIndex: 0,
-		message: {
-			role: "assistant",
-			content: [],
-			api: "faux",
-			provider: "faux",
-			model: "faux",
-			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-			},
-			stopReason: "toolUse",
-			timestamp: 0,
-		},
-		toolResults: [],
-		messageEntryId: "assistant-entry",
-		toolResultEntryIds: [],
-		entries: [],
-		continue: false,
-		context: { contextEntries: [], contextMessages: [], llmMessages: [], pendingMessages: [], canContinue: true },
-		outcome: "completed",
-		...overrides,
-	};
 }
 
 // ── Typed extension contexts ─────────────────────────────────────────

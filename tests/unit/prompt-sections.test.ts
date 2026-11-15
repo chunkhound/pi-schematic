@@ -1,29 +1,49 @@
-import { expect, test } from "vitest";
+import { expect, onTestFinished, test, vi } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import type { ExtensionCommandContext, ExtensionFactory, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
+import registerSchematic from "../../index.js";
 import { applyPromptSections, createPromptSectionRegistry } from "../../prompt-sections.js";
-import { modelGroupsPath } from "../../model-groups/store.js";
-import { assertPresent } from "../assertions.js";
-import { createBeforeAgentStartEvent, createTestHost, emitBeforeAgentStart, getCommand, getHandler, getTool } from "./test-host.js";
-import { withTemp } from "./model-groups-helpers.js";
-import { boundaryEntries, callHandlers, createCommandContext, handoffToolResult, makeTUICtx, turnEndEvent } from "./helpers.js";
+import { createModelRegistry } from "../support/model-registry.js";
+import { createRunner, type RunnerFixture, type RunnerOptions } from "../support/runner.js";
+import { appendDrafts } from "../support/session.js";
 
-type HostContext = ExtensionCommandContext & ExtensionToolContext;
-
-// The contexts these tests pass carry only the members the code under test uses. Reading a member a
-// context lacks yields undefined; calling or dereferencing one throws a TypeError. Only that the value
-// is an object can be checked at run time.
-function assertHostContext(value: unknown): asserts value is HostContext {
-	if (typeof value !== "object" || value === null) {
-		throw new Error("Expected a context object.");
-	}
+/** Fix the clock the date section reads, for the rest of the test. */
+function fixClock(): void {
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(new Date(Date.UTC(2026, 9, 5, 12)));
+	onTestFinished(() => {
+		vi.useRealTimers();
+	});
 }
 
-function hostContext(value: unknown): HostContext {
-	assertHostContext(value);
-	return value;
+/**
+ * A headless runner over `factories` (the shipped extension when omitted) in an untrusted project
+ * under the current directory, with the clock fixed for the date section.
+ */
+function promptRunner(options: Partial<RunnerOptions> = {}): Promise<RunnerFixture> {
+	fixClock();
+	return createRunner({ cwd: process.cwd(), mode: "print", context: { isProjectTrusted: () => false }, ...options });
 }
+
+/** Run before_agent_start for a user prompt through the fixture's runner. */
+function emitBeforeAgentStart(fixture: RunnerFixture) {
+	return fixture.runner.emitBeforeAgentStart({ messageType: "user", prompt: "" }, fixture.systemPromptOptions());
+}
+
+/** An extension whose before_agent_start handler adds a `probe` section. */
+const probe: ExtensionFactory = (pi) => {
+	pi.on("before_agent_start", (e) => {
+		e.systemPromptOptions.sections.probe = "PROBE-SECTION";
+	});
+};
+
+/** An extension whose before_agent_start handler forces the prompt it sees plus `FORCED-MARKER`. */
+const forcer: ExtensionFactory = (pi) => {
+	pi.on("before_agent_start", (e) => ({ systemPrompt: `${e.systemPrompt}\n\nFORCED-MARKER` }));
+};
 
 // ── Registry ────────────────────────────────────────────────────────
 
@@ -108,110 +128,102 @@ const rendered = [
 	{ name: "schematic_two", body: "body-two" },
 ];
 
-test("writes rendered sections into the prompt options", () => {
-	const event = createBeforeAgentStartEvent();
+/** An extension that writes `rendered` through applyPromptSections. */
+const sectionsWriter: ExtensionFactory = (pi) => {
+	pi.on("before_agent_start", (event) => applyPromptSections(event, rendered));
+};
 
-	applyPromptSections(event, rendered);
+/** An extension whose before_agent_start handler forces the prompt to `FORCED`. */
+const forceFixed: ExtensionFactory = (pi) => {
+	pi.on("before_agent_start", () => ({ systemPrompt: "FORCED" }));
+};
 
-	expect(event.systemPromptOptions.sections.schematic_one).toBe("body-one");
-	expect(event.systemPromptOptions.sections.schematic_two).toBe("body-two");
+test("writes rendered sections into the prompt options", async () => {
+	const fixture = await promptRunner({ factories: [sectionsWriter] });
+
+	const result = await emitBeforeAgentStart(fixture);
+
+	expect(result.systemPromptOptions.sections.schematic_one).toBe("body-one");
+	expect(result.systemPromptOptions.sections.schematic_two).toBe("body-two");
 });
 
-test("leaves the prompt unforced when no earlier handler forced it", () => {
-	const event = createBeforeAgentStartEvent();
+test("leaves the prompt unforced when no earlier handler forced it", async () => {
+	const fixture = await promptRunner({ factories: [sectionsWriter] });
 
-	expect(applyPromptSections(event, rendered)).toBeUndefined();
+	const result = await emitBeforeAgentStart(fixture);
+
+	expect(result.systemPromptOptions.forceSystemPrompt).toBeUndefined();
 });
 
-test("appends section bodies to a prompt an earlier handler forced", () => {
-	const event = createBeforeAgentStartEvent();
-	event.systemPromptOptions.forceSystemPrompt = "FORCED";
+test("appends section bodies to a prompt an earlier handler forced", async () => {
+	const fixture = await promptRunner({ factories: [forceFixed, sectionsWriter] });
 
-	expect(applyPromptSections(event, rendered)).toStrictEqual({
-		systemPrompt: "FORCED\n\n<schematic_one>\nbody-one\n</schematic_one>\n\n<schematic_two>\nbody-two\n</schematic_two>",
-	});
+	await emitBeforeAgentStart(fixture);
+
+	expect(fixture.systemPrompt).toBe("FORCED\n\n<schematic_one>\nbody-one\n</schematic_one>\n\n<schematic_two>\nbody-two\n</schematic_two>");
 });
 
-test("records sections while the prompt is forced", () => {
-	const event = createBeforeAgentStartEvent();
-	event.systemPromptOptions.forceSystemPrompt = "FORCED";
+test("records sections while the prompt is forced", async () => {
+	const fixture = await promptRunner({ factories: [forceFixed, sectionsWriter] });
 
-	applyPromptSections(event, rendered);
+	const result = await emitBeforeAgentStart(fixture);
 
-	expect(event.systemPromptOptions.sections.schematic_one).toBe("body-one");
+	expect(result.systemPromptOptions.sections.schematic_one).toBe("body-one");
 });
 
 // ── Through pi's dispatch ───────────────────────────────────────────
 
 test("keeps a section written by a later extension (regression #45)", async () => {
-	const probe: ExtensionFactory = (pi) => {
-		pi.on("before_agent_start", (e) => {
-			e.systemPromptOptions.sections.probe = "PROBE-SECTION";
-		});
-	};
+	const fixture = await promptRunner({ factories: [registerSchematic, probe] });
 
-	const { result, prompt } = await emitBeforeAgentStart({ after: [probe] });
+	const result = await emitBeforeAgentStart(fixture);
 
 	expect(result.systemPromptOptions.forceSystemPrompt).toBeUndefined();
-	expect(prompt).toContain("<probe>\nPROBE-SECTION\n</probe>");
-	expect(prompt).toContain("<schematic>");
+	expect(fixture.systemPrompt).toContain("<probe>\nPROBE-SECTION\n</probe>");
+	expect(fixture.systemPrompt).toContain("<schematic>");
 });
 
 test("keeps a section written by an earlier extension", async () => {
-	const probe: ExtensionFactory = (pi) => {
-		pi.on("before_agent_start", (e) => {
-			e.systemPromptOptions.sections.probe = "PROBE-SECTION";
-		});
-	};
+	const fixture = await promptRunner({ factories: [probe, registerSchematic] });
 
-	const { prompt } = await emitBeforeAgentStart({ before: [probe] });
+	await emitBeforeAgentStart(fixture);
 
-	expect(prompt).toContain("<probe>\nPROBE-SECTION\n</probe>");
+	expect(fixture.systemPrompt).toContain("<probe>\nPROBE-SECTION\n</probe>");
 });
 
 test("appends schematic's content to a prompt an earlier extension forced", async () => {
-	const forcer: ExtensionFactory = (pi) => {
-		pi.on("before_agent_start", (e) => ({ systemPrompt: `${e.systemPrompt}\n\nFORCED-MARKER` }));
-	};
+	const fixture = await promptRunner({ factories: [forcer, registerSchematic] });
 
-	const { prompt } = await emitBeforeAgentStart({ before: [forcer] });
+	await emitBeforeAgentStart(fixture);
 
-	expect(prompt).toContain("FORCED-MARKER");
-	expect(prompt).toContain("## Context management");
-	expect(prompt).toContain("<schematic>\n## Context management");
+	expect(fixture.systemPrompt).toContain("FORCED-MARKER");
+	expect(fixture.systemPrompt).toContain("## Context management");
+	expect(fixture.systemPrompt).toContain("<schematic>\n## Context management");
 });
 
 test("hands a later extension a prompt that already holds schematic's content", async () => {
-	const forcer: ExtensionFactory = (pi) => {
-		pi.on("before_agent_start", (e) => ({ systemPrompt: `${e.systemPrompt}\n\nFORCED-MARKER` }));
-	};
+	const fixture = await promptRunner({ factories: [registerSchematic, forcer] });
 
-	const { prompt } = await emitBeforeAgentStart({ after: [forcer] });
+	await emitBeforeAgentStart(fixture);
 
+	const prompt = fixture.systemPrompt;
 	const contentIndex = prompt.indexOf("## Context management");
 	const markerIndex = prompt.indexOf("FORCED-MARKER");
 	expect(contentIndex, "schematic's content is missing from the prompt").toBeGreaterThanOrEqual(0);
 	expect(markerIndex, "the later extension's marker is missing from the prompt").toBeGreaterThanOrEqual(0);
 	expect(contentIndex, "schematic's content must precede the later extension's marker").toBeLessThan(markerIndex);
-	expect(prompt).toContain("## Context management");
 });
 
 // ── Handler level ───────────────────────────────────────────────────
 
 test("keeps the primer section byte-identical while the topic and notebook sections change", async () => {
-	const pi = await createTestHost();
-	const handler = getHandler(pi, "before_agent_start");
-	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
-	const beforeEvent = createBeforeAgentStartEvent();
-	await handler(beforeEvent, ctx);
-	const before = beforeEvent.systemPromptOptions.sections;
+	const fixture = await promptRunner();
+	const before = (await emitBeforeAgentStart(fixture)).systemPromptOptions.sections;
 	expect(before.schematic).toBeDefined();
 
-	await getTool(pi, "notebook_write").execute("1", { name: "alpha", content: "first line" }, undefined, undefined, makeTUICtx());
-	await getCommand(pi, "notebook").handler("oauth", createCommandContext());
-	const afterEvent = createBeforeAgentStartEvent();
-	await handler(afterEvent, ctx);
-	const after = afterEvent.systemPromptOptions.sections;
+	await fixture.tool("notebook_write").execute("1", { name: "alpha", content: "first line" });
+	await fixture.command("notebook").handler("oauth", fixture.runner.createCommandContext());
+	const after = (await emitBeforeAgentStart(fixture)).systemPromptOptions.sections;
 
 	expect(after.schematic).toBe(before.schematic);
 	expect(after.schematic_topic).not.toBe(before.schematic_topic);
@@ -219,68 +231,105 @@ test("keeps the primer section byte-identical while the topic and notebook secti
 	expect(before.schematic_notebook).toBeUndefined();
 });
 
-for (const sectionName of ["schematic", "schematic_topic", "schematic_model_groups", "schematic_notebook"]) {
-	test(`renders each section body without surrounding whitespace: ${sectionName}`, async () =>
-		withTemp(async ({ cwd }) => {
-			fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
-			fs.writeFileSync(
-				modelGroupsPath("project", cwd),
-				JSON.stringify({ version: 2, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }),
-				"utf8",
-			);
-			const models = [{ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } }];
-			const modelRegistry = {
-				getAll: () => models,
-				getAvailable: () => models,
-				find: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id),
-				hasConfiguredAuth: () => true,
-			};
-			const pi = await createTestHost();
-			await getCommand(pi, "notebook").handler("oauth", createCommandContext());
-			await getTool(pi, "notebook_write").execute("1", { name: "alpha", content: "first line" }, undefined, undefined, makeTUICtx());
-			const handler = getHandler(pi, "before_agent_start");
-			const event = createBeforeAgentStartEvent();
+test("renders every schematic section body without surrounding whitespace", async () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schematic-prompt-sections-"));
+	onTestFinished(() => {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	});
+	const configPath = path.join(cwd, ".pi", "pi-schematic", "model-groups.json");
+	fs.mkdirSync(path.dirname(configPath), { recursive: true });
+	fs.writeFileSync(
+		configPath,
+		JSON.stringify({ version: 2, groups: { review: { models: [{ provider: "prompt-sections-test", modelId: "vision" }] } } }),
+		"utf8",
+	);
+	const modelRegistry = await createModelRegistry({
+		"prompt-sections-test": {
+			api: "openai-completions",
+			apiKey: "test-key",
+			baseUrl: "http://prompt-sections-test.invalid",
+			models: [
+				{
+					id: "vision",
+					name: "Vision",
+					reasoning: true,
+					input: ["text", "image"],
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: 128_000,
+					maxTokens: 1024,
+				},
+			],
+		},
+	});
+	const fixture = await promptRunner({ cwd, modelRegistry, context: { isProjectTrusted: () => true } });
+	await fixture.command("notebook").handler("oauth", fixture.runner.createCommandContext());
+	await fixture.tool("notebook_write").execute("1", { name: "alpha", content: "first line" });
 
-			await handler(event, hostContext({ hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry, getContextUsage: () => null }));
+	const { sections } = (await emitBeforeAgentStart(fixture)).systemPromptOptions;
 
-			const body = event.systemPromptOptions.sections[sectionName];
-			assertPresent(body, `section ${sectionName} is missing`);
-			expect(body).toBe(body.trim());
-		}));
-}
+	const schematicSections = Object.entries(sections).filter(([name]) => name.startsWith("schematic"));
+	expect(schematicSections.map(([name]) => name).sort()).toStrictEqual([
+		"schematic",
+		"schematic_date",
+		"schematic_model_groups",
+		"schematic_notebook",
+		"schematic_topic",
+	]);
+	expect(schematicSections.filter(([, body]) => body !== body.trim())).toStrictEqual([]);
+});
+
+const ELIGIBLE_USAGE = { tokens: 50_000, percent: 25, contextWindow: 200_000 };
+const ZERO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+const TURN_MESSAGE: AssistantMessage = {
+	role: "assistant",
+	content: [{ type: "toolCall", id: "handoff", name: "handoff", arguments: {} }],
+	api: "faux",
+	provider: "faux",
+	model: "faux",
+	usage: ZERO_USAGE,
+	stopReason: "toolUse",
+	timestamp: 0,
+};
+const HANDOFF_RESULT: ToolResultMessage = {
+	role: "toolResult",
+	toolCallId: "handoff",
+	toolName: "handoff",
+	content: [{ type: "text", text: "Handoff staged." }],
+	isError: false,
+	timestamp: 0,
+};
 
 test("re-renders the topic and notebook sections after a handoff completes", async () => {
-	const pi = await createTestHost();
-	const handler = getHandler(pi, "before_agent_start");
-	const ctx = { ...makeTUICtx({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false };
-	await getCommand(pi, "notebook").handler("oauth", createCommandContext());
-	await getTool(pi, "notebook_write").execute("1", { name: "stale", content: "obsolete finding" }, undefined, undefined, makeTUICtx());
-	await getTool(pi, "notebook_write").execute("2", { name: "keep", content: "durable decision" }, undefined, undefined, makeTUICtx());
-	const beforeHandoff = createBeforeAgentStartEvent();
-	await handler(beforeHandoff, ctx);
-	expect(beforeHandoff.systemPromptOptions.sections.schematic_topic).toContain("Current topic: `oauth`");
-	expect(beforeHandoff.systemPromptOptions.sections.schematic_notebook).toContain("  stale: obsolete finding");
-
-	let branch: unknown[] = [];
-	const handoffCtx = hostContext({
-		getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
-		hasUI: false,
-		sessionManager: { getBranch: () => branch },
+	const session = SessionManager.inMemory(process.cwd());
+	const fixture = await promptRunner({
+		sessionManager: session,
+		context: { isProjectTrusted: () => false, getContextUsage: () => ELIGIBLE_USAGE, isIdle: () => true, getSignal: () => undefined, abort: () => undefined },
+		activeTools: [],
 	});
-	await getTool(pi, "handoff").execute(
-		"handoff",
-		{ nextInstruction: "continue without the stale page", discardPages: ["stale"] },
-		undefined,
-		undefined,
-		handoffCtx,
-	);
-	const results = await callHandlers(pi, "turn_end", turnEndEvent({ toolResults: [handoffToolResult("handoff")] }), handoffCtx);
-	branch = boundaryEntries(results).map((entry, index) => ({ ...entry, id: `entry-${index}` }));
-	await callHandlers(pi, "turn_start", { type: "turn_start", turnIndex: 1, timestamp: 0 }, handoffCtx);
-	const afterHandoff = createBeforeAgentStartEvent();
-	await handler(afterHandoff, ctx);
+	await fixture.command("notebook").handler("oauth", fixture.runner.createCommandContext());
+	await fixture.tool("notebook_write").execute("1", { name: "stale", content: "obsolete finding" });
+	await fixture.tool("notebook_write").execute("2", { name: "keep", content: "durable decision" });
+	const beforeHandoff = (await emitBeforeAgentStart(fixture)).systemPromptOptions.sections;
+	expect(beforeHandoff.schematic_topic).toContain("Current topic: `oauth`");
+	expect(beforeHandoff.schematic_notebook).toContain("  stale: obsolete finding");
 
-	const sections = afterHandoff.systemPromptOptions.sections;
+	await fixture.tool("handoff").execute("handoff", { nextInstruction: "continue without the stale page", discardPages: ["stale"] });
+	const boundary = await fixture.runner.emitBoundary(
+		{
+			type: "turn_end",
+			turnIndex: 0,
+			message: TURN_MESSAGE,
+			toolResults: [HANDOFF_RESULT],
+			messageEntryId: "assistant-entry",
+			toolResultEntryIds: [],
+			outcome: "completed",
+		},
+		() => ({ contextEntries: [], contextMessages: [], llmMessages: [], pendingMessages: [], canContinue: true }),
+	);
+	appendDrafts(session, boundary.entries);
+	await fixture.runner.emit({ type: "turn_start", turnIndex: 1, timestamp: 0 });
+	const sections = (await emitBeforeAgentStart(fixture)).systemPromptOptions.sections;
+
 	expect(sections.schematic_topic).toContain("No active notebook topic is set.");
 	expect(sections.schematic_notebook).toContain("  keep: durable decision");
 	expect(sections.schematic_notebook).not.toContain("stale");

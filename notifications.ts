@@ -15,13 +15,13 @@ export const READONLY_NON_TEMP_MUTATION_SCOPE = "write, edit, powershell, and no
 export const READONLY_SANDBOX_BLOCK_NOTICE =
 	"[readonly mode] If this command failed on a write outside the OS temp dir, the OS sandbox blocked it.\nUse /readonly to disable, or write within the OS temp dir.";
 /** User-visible shorthand for an explicit handoff request. */
-export const READONLY_EXPLICIT_HANDOFF = "explicit /handoff";
+const READONLY_EXPLICIT_HANDOFF = "explicit /handoff";
 /** All supported ways to activate the temporary readonly handoff exception. */
 export const READONLY_HANDOFF_TRIGGER = "explicit /handoff or an eligible human topic boundary";
 /** Post-handoff readonly outcome announced while this context prepares the handoff. */
 export const READONLY_NEXT_CONTEXT_RESUMES = "Fresh context resumes in readonly mode.";
 /** Child-agent summary of the readonly mutation policy. */
-export const READONLY_WRITE_EDIT_BASH = `write/edit/powershell blocked; ${READONLY_BASH_SCOPE}`;
+const READONLY_WRITE_EDIT_BASH = `write/edit/powershell blocked; ${READONLY_BASH_SCOPE}`;
 
 /** Build the detailed reason returned when a bash command is blocked. */
 export function buildReadonlyBashBlockReason(reason: string, command: string): string {
