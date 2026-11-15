@@ -262,14 +262,19 @@ test("nested spawn live action drops the result preview when a partial result ha
 
 const USER_TASK: UserMessage = { role: "user", content: [{ type: "text", text: "live task" }], timestamp: 1_767_225_600_000 };
 
-test("nested spawn shows a user message when it starts", () => {
+const startedUserMessageCases: { label: string; message: UserMessage; shown: string }[] = [
+	{ label: "block content", message: USER_TASK, shown: "live task" },
+	{ label: "plain text content", message: { role: "user", content: "live plain task", timestamp: 1_767_225_600_000 }, shown: "live plain task" },
+];
+
+test.for(startedUserMessageCases)("nested spawn shows a user message when it starts: $label", ({ message, shown }) => {
 	const state = createState();
 	const child = createSubscribableSession(CWD);
 	const component = renderLiveChild(state, child, { expanded: true });
 
-	child.emit({ type: "message_start", message: USER_TASK });
+	child.emit({ type: "message_start", message });
 
-	expect(plain(component.render(120))).toContainEqual(expect.stringContaining("live task"));
+	expect(plain(component.render(120))).toContainEqual(expect.stringContaining(shown));
 });
 
 const userMessageEventCases: { label: string; event: AgentSessionEvent }[] = [
