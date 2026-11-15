@@ -1202,6 +1202,7 @@ async function hostWithFailedUsage(opts: ChildOptions, hostOptions: Pick<SpawnRu
 	return {
 		state,
 		host,
+		factory,
 		/** How often spawn read the entries of its one child. */
 		get entryReads() {
 			return factory.children[0].entryReads.mock.calls.length;
@@ -1476,6 +1477,7 @@ test("UI spawn names both failures when the cleanup notice throws", async () => 
 test("spawn execute fails explicitly without a configured model", async () => {
 	const host = await hostWithFailedUsage({}, { model: undefined });
 	await expect(host.execute("spawn-1")).rejects.toThrow(/No model configured\. Cannot spawn child agent\./);
+	expect(host.factory, "no child session is created before the rejection").toHaveBeenCalledTimes(0);
 });
 
 test("a rejecting child session factory rejects spawn before a session exists", async () => {

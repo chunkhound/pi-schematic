@@ -67,8 +67,8 @@ export function appendAssistantMessage(session: SessionManager, text: string, us
 
 // The fake child sessions below stay custom because a real AgentSession runs its own agent loop: it
 // emits only the events and produces only the transcripts its run produces, at its own timing
-// (`_emit` is private), so it cannot replay a scripted sequence, fail a prompt on demand or hold a
-// prompt open while a test resets or aborts. Each reads and writes pi's published types only.
+// (`_emit` is private), so it cannot replay a scripted sequence or make a prompt, an abort or a
+// dispose fail with a chosen error. Each reads and writes pi's published types only.
 
 export interface SubscribableSession {
 	session: AgentSession;
