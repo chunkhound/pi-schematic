@@ -423,7 +423,6 @@ export default defineConfig([
 						"expectGoldenFile",
 						"assertChildRegistriesCleared",
 						"assertErrorResult",
-						"assertHandoffAlignment",
 						"assertResetClears",
 						"assertTopicSourceCoupling",
 					],

@@ -23,9 +23,6 @@ export const READONLY_NEXT_CONTEXT_RESUMES = "Fresh context resumes in readonly 
 /** Child-agent summary of the readonly mutation policy. */
 export const READONLY_WRITE_EDIT_BASH = `write/edit/powershell blocked; ${READONLY_BASH_SCOPE}`;
 
-/** Reason for malformed bash tool input at the readonly boundary. */
-export const READONLY_INVALID_BASH_COMMAND_REASON = "bash command input must be a string";
-
 /** Build the detailed reason returned when a bash command is blocked. */
 export function buildReadonlyBashBlockReason(reason: string, command: string): string {
 	return `Readonly mode: command blocked.\nReason: ${reason}\nCommand: ${command}`;
