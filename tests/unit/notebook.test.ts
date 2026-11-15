@@ -564,6 +564,23 @@ test("/notebook inline preview hints at $PI_PAGER when it cuts a long page", asy
 	expect(previews[0]).toMatch(/set \$PI_PAGER to a full-screen pager \(e\.g\. less\) to view the full page/);
 });
 
+// Windows does not read quotes in a pager value, so the value is not invalid there.
+test.skipIf(process.platform === "win32")("/notebook reports an invalid pager value as a pager failure and returns to the list", async () => {
+	vi.stubEnv("PI_PAGER", 'less "-R');
+	const list = listDriver((component) => {
+		press(component, "\r");
+	});
+	const fixture = await shippedHost({ custom: list.driver });
+	await writePage(fixture, "alpha", "body");
+
+	await runNotebook(fixture);
+
+	expect({ notifications: fixture.ui.notifications, opened: list.opened }).toStrictEqual({
+		notifications: [{ message: "pager failed: PI_PAGER has an unbalanced double quote", type: "warning" }],
+		opened: 2,
+	});
+});
+
 test("/notebook overlay sorts entries consistently", async () => {
 	const list = listDriver();
 	const fixture = await notebookList(list.driver);
@@ -723,6 +740,55 @@ test.for([
 	{ pager: "bat.cmd --plain", platform: "win32", cmd: "bat.cmd", args: ["--plain"] },
 ] as const)("resolvePager leaves other pagers and wrappers unchanged: $pager on $platform", ({ pager, platform, cmd, args }) => {
 	expect(resolvePager({ PAGER: pager }, platform, lessProbes.unprobed)).toStrictEqual({ cmd, args });
+});
+
+test.for([
+	{ label: "bare program", pager: "less", cmd: "less", args: ["-+F", "-+X"] },
+	{ label: "program and argument", pager: "less -R", cmd: "less", args: ["-R", "-+F", "-+X"] },
+	{ label: "double-quoted path with spaces", pager: '"/path with space/pager.sh" -R', cmd: "/path with space/pager.sh", args: ["-R"] },
+	{ label: "single-quoted path with spaces", pager: "'/path with space/pager.sh'", cmd: "/path with space/pager.sh", args: [] },
+	{ label: "backslash-escaped spaces", pager: "/path\\ with\\ space/pager.sh", cmd: "/path with space/pager.sh", args: [] },
+	{ label: "quotes inside an argument", pager: 'less -P"%f"', cmd: "less", args: ["-P%f", "-+F", "-+X"] },
+	{ label: "single quote inside double quotes", pager: 'less "-Pit\'s"', cmd: "less", args: ["-Pit's", "-+F", "-+X"] },
+	{ label: "adjacent quoted and unquoted parts", pager: "\"/a b\"/c'd e'f", cmd: "/a b/cd ef", args: [] },
+	{ label: "empty quoted words", pager: "pager \"\" ''", cmd: "pager", args: ["", ""] },
+	{ label: "no expansion or shell operators", pager: "pager $HOME ~ * | ; `x`", cmd: "pager", args: ["$HOME", "~", "*", "|", ";", "`x`"] },
+	{ label: "backslash in double quotes", pager: 'pager "a\\"b" "c\\\\d" "e\\$f" "g\\`h" "i\\jk"', cmd: "pager", args: ['a"b', "c\\d", "e$f", "g`h", "i\\jk"] },
+	{ label: "backslash outside quotes", pager: "pager a\\b \\\\ \\\"x\\'", cmd: "pager", args: ["ab", "\\", "\"x'"] },
+	{ label: "backslash in single quotes", pager: "pager 'a\\b\"c'", cmd: "pager", args: ['a\\b"c'] },
+	{ label: "line continuation inside a word", pager: "less\\\n-R", cmd: "less-R", args: [] },
+	{ label: "line continuation between words", pager: "less \\\n-R", cmd: "less", args: ["-R", "-+F", "-+X"] },
+	{ label: "line continuation in double quotes", pager: 'less "a\\\nb"', cmd: "less", args: ["ab", "-+F", "-+X"] },
+	{ label: "backslash and newline kept in single quotes", pager: "less 'a\\\nb'", cmd: "less", args: ["a\\\nb", "-+F", "-+X"] },
+	{ label: "line continuation at the end", pager: "less -R\\\n", cmd: "less", args: ["-R", "-+F", "-+X"] },
+	{ label: "carriage return ending the program", pager: "less\r", cmd: "less\r", args: [] },
+	{ label: "carriage return ending an argument", pager: "less -R\r", cmd: "less", args: ["-R\r", "-+F", "-+X"] },
+	{ label: "escaped space at the end", pager: "pager last\\ ", cmd: "pager", args: ["last "] },
+	{ label: "runs of spaces, tabs and newlines", pager: "less  \t -R\t\t-S\nx", cmd: "less", args: ["-R", "-S", "x", "-+F", "-+X"] },
+] as const)("resolvePager reads a POSIX pager value with shell quoting and no expansion: $label", ({ pager, cmd, args }) => {
+	expect(resolvePager({ PI_PAGER: pager }, "linux", lessProbes.unprobed)).toStrictEqual({ cmd, args });
+});
+
+test.for([
+	{ env: { PI_PAGER: 'less "-R' }, error: "PI_PAGER has an unbalanced double quote" },
+	{ env: { PI_PAGER: 'less "a\\"' }, error: "PI_PAGER has an unbalanced double quote" },
+	{ env: { PI_PAGER: 'less "a\\' }, error: "PI_PAGER has an unbalanced double quote" },
+	{ env: { PI_PAGER: "less 'x" }, error: "PI_PAGER has an unbalanced single quote" },
+	{ env: { PI_PAGER: "less x\\" }, error: "PI_PAGER ends with an unquoted backslash" },
+	{ env: { PI_PAGER: "'' -R" }, error: "PI_PAGER names an empty program" },
+	{ env: { PI_PAGER: "\\\n" }, error: "PI_PAGER names an empty program" },
+	{ env: { PAGER: 'less "-R' }, error: "PAGER has an unbalanced double quote" },
+	{ env: { PI_PAGER: "bad'", PAGER: "less" }, error: "PI_PAGER has an unbalanced single quote" },
+] as const)("resolvePager rejects a POSIX pager value it cannot read, naming the variable: $env", ({ env, error }) => {
+	expect(resolvePager(env, "linux", lessProbes.unprobed)).toStrictEqual({ error });
+});
+
+test.for([
+	{ pager: 'pager.exe "a  b" x\\y', cmd: "pager.exe", args: ['"a', 'b"', "x\\y"] },
+	{ pager: 'less "-R', cmd: "less", args: ['"-R', "-+F", "-+X"] },
+	{ pager: "  pager.exe  x  ", cmd: "pager.exe", args: ["x"] },
+] as const)("resolvePager splits a Windows pager value on whitespace and keeps quotes and backslashes for cmd.exe: $pager", ({ pager, cmd, args }) => {
+	expect(resolvePager({ PAGER: pager }, "win32", lessProbes.unprobed)).toStrictEqual({ cmd, args });
 });
 
 // ── saveNotebookPage tests ────────────────────────────────────────────

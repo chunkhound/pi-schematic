@@ -29,14 +29,19 @@ interface PagerScript {
 	release(): Promise<void>;
 }
 
+/** `path` in double quotes, written as a user puts a path with spaces or quotes into `PI_PAGER`. */
+function quotedForPager(path: string): string {
+	return `"${path.replace(/["\\$`]/g, "\\$&")}"`;
+}
+
 /**
  * An executable pager script in a fresh temp directory, set as `PI_PAGER`. It records the body it
  * reads from stdin, marks that it started, and with `hold` waits for `release()`, the removal of its
  * directory or the pager deadline before it exits.
  */
-async function pagerScript(options: { hold?: boolean } = {}): Promise<PagerScript> {
+async function pagerScript(options: { hold?: boolean; name?: string } = {}): Promise<PagerScript> {
 	const dir = await mkdtemp(join(tmpdir(), "pi-schematic-pager-"));
-	const path = join(dir, "pager.sh");
+	const path = join(dir, options.name ?? "pager.sh");
 	const releaseFile = join(dir, "release");
 	const polls = PAGER_DEADLINE_MS / 50;
 	await writeFile(
@@ -59,7 +64,7 @@ async function pagerScript(options: { hold?: boolean } = {}): Promise<PagerScrip
 		await writeFile(releaseFile, "");
 		await rm(dir, { recursive: true, force: true });
 	});
-	vi.stubEnv("PI_PAGER", path);
+	vi.stubEnv("PI_PAGER", quotedForPager(path));
 	return {
 		path,
 		started: () => existsSync(join(dir, "started")),
@@ -202,6 +207,19 @@ test.skipIf(process.platform === "win32")("/notebook enter suspends the TUI, awa
 	expect(list.renders[1], "the reopened list keeps zeta selected").toMatch(/→ zeta /);
 });
 
+test.skipIf(process.platform === "win32")("/notebook opens a pager whose path contains a space", async () => {
+	const pager = await pagerScript({ name: "my pager.sh" });
+	const list = listDriver((component) => {
+		press(component, "\r");
+	});
+	const fixture = await shippedHost(list.driver, { stop: vi.fn(), start: vi.fn() });
+	await writePage(fixture, "alpha", "page body");
+
+	await runNotebook(fixture);
+
+	expect({ body: await pager.body(), notifications: fixture.ui.notifications }).toStrictEqual({ body: "page body", notifications: [] });
+});
+
 test.skipIf(process.platform === "win32")("/notebook pager interaction installs and removes a SIGINT guard", async () => {
 	const pager = await pagerScript({ hold: true });
 	const baselineSigint = process.listeners("SIGINT").length;
@@ -277,7 +295,7 @@ test.skipIf(process.platform === "win32")("/notebook surfaces pager spawn errors
 		await rm(dir, { recursive: true, force: true });
 	});
 	const missing = join(dir, "missing-pager");
-	vi.stubEnv("PI_PAGER", missing);
+	vi.stubEnv("PI_PAGER", quotedForPager(missing));
 	const list = listDriver((component) => {
 		press(component, "\r");
 	});
