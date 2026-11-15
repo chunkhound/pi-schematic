@@ -573,40 +573,6 @@ export function getTool(pi: TestPI, name: string): ToolDefinition {
 	return registered.definition;
 }
 
-/** A tool's `renderCall` as pi types it. */
-export type ToolRenderCall = NonNullable<ToolDefinition["renderCall"]>;
-
-/** A tool's `renderResult` as pi types it. */
-export type ToolRenderResult = NonNullable<ToolDefinition["renderResult"]>;
-
-// The `member` renderer of the tool registered as `name`, bound to its definition.
-function getToolRenderer(pi: TestPI, name: string, member: "renderCall"): ToolRenderCall;
-function getToolRenderer(pi: TestPI, name: string, member: "renderResult"): ToolRenderResult;
-function getToolRenderer(pi: TestPI, name: string, member: "renderCall" | "renderResult"): ToolRenderCall | ToolRenderResult {
-	const definition = getTool(pi, name);
-	const renderer = definition[member];
-	if (renderer === undefined) {
-		throw new Error(`Tool "${name}" on the test host has no ${member}.`);
-	}
-	return renderer.bind(definition);
-}
-
-/**
- * The `renderCall` of the tool registered as `name`, bound to its definition.
- * Throws, naming the tool, when none is registered or it has no `renderCall`.
- */
-export function getToolRenderCall(pi: TestPI, name: string): ToolRenderCall {
-	return getToolRenderer(pi, name, "renderCall");
-}
-
-/**
- * The `renderResult` of the tool registered as `name`, bound to its definition.
- * Throws, naming the tool, when none is registered or it has no `renderResult`.
- */
-export function getToolRenderResult(pi: TestPI, name: string): ToolRenderResult {
-	return getToolRenderer(pi, name, "renderResult");
-}
-
 /** The command registered as `name`. Throws, naming the command, when none is. */
 export function getCommand(pi: TestPI, name: string): RegisteredCommand {
 	const command = hostOf(pi).extension.commands.get(name);

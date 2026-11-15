@@ -16,7 +16,6 @@ export interface SpawnResultDetails {
 	outcome: SpawnOutcome;
 	route?: SpawnRouteDetails;
 	stats?: Record<string, number>;
-	statsUnavailable?: boolean;
 }
 
 export interface SpawnToolResult {

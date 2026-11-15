@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Pi 1.2.0 minimum**: the `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` peers now require 1.2.0 or later, up from 0.99.2. The `typebox` peer minimum stays 1.3.27.
 - **`buildChildToolNames` requires the available tools**: `buildChildToolNames` in `spawn/index.ts` now takes the available tools as a required third argument, and a call with two arguments fails. A caller passes the list `pi.getAllTools()` returns.
+- **Spawn results always carry stats**: the final result of every spawn carries the child's usage and `details.stats`, and `details.statsUnavailable` no longer exists. A child entry list that cannot be read or summed now makes the spawn reject, where it used to resolve with zero usage and `statsUnavailable: true`. A spawn result stored by an earlier version with `statsUnavailable: true` still renders, without the `stats unavailable` label.
 
 ### Fixed
 

@@ -1,5 +1,0 @@
-                                                                                
- ⚠ gpt-4o • high                                                                
- 💬 error                                                                       
- Failed to connect to API: rate limit exceeded. Retry after 60 seconds.         
-                                                                                

@@ -60,6 +60,11 @@ export function toolResultMessage(toolCallId: string, toolName: string, usage?: 
 	return { role: "toolResult", toolCallId, toolName, content: [], isError: false, timestamp: MESSAGE_TIME, ...(usage === undefined ? {} : { usage }) };
 }
 
+/** The `message_update` event pi emits while the assistant message `message` streams, with `message` as its partial. */
+export function messageUpdateEvent(message: AssistantMessage): AgentSessionEvent {
+	return { type: "message_update", message, assistantMessageEvent: { type: "start", partial: message } };
+}
+
 /** Append an assistant text message with `usage`, from a fixed test provider and time. Returns its entry id. */
 export function appendAssistantMessage(session: SessionManager, text: string, usage: Usage): string {
 	return session.appendMessage(assistantMessage([{ type: "text", text }], { usage }));
