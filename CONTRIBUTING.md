@@ -50,11 +50,11 @@ Each test goes into the project that matches what it needs:
 
 The project is decided per test. A file whose tests fall on both sides is split into two files with the same name, one in `tests/unit/` and one in `tests/integration/`. The shared test fixtures live in `tests/support/`, which holds no tests:
 
-- `runner.ts`: `createRunner` loads the extension through pi's `DefaultResourceLoader` and drives it through one pi `ExtensionRunner`. It records what the extension sent, appended and showed, and a context member the test did not bind throws when used. `toolInfo` builds a `pi.getAllTools()` entry.
+- `runner.ts`: `createRunner` loads the extension through pi's `DefaultResourceLoader` and drives it through one pi `ExtensionRunner`. It records what the extension sent, appended and showed, and a context member the test did not bind throws when used, except on a fixture built without `ui`, whose `ctx.ui` is pi's no-op UI: its methods, such as `notify`, do nothing. `toolInfo` builds a `pi.getAllTools()` entry.
 - `theme.ts`: `realTheme`, a pi `Theme` with a distinct truecolor value per token, and `createRealTheme`, which builds it with some foreground colours replaced.
 - `model-registry.ts`: `createModelRegistry`, a pi `ModelRegistry` in memory whose available models come only from the providers the test passes.
 - `model.ts`: `testModel`, a model with placeholder metadata.
-- `session.ts`: helpers that fill a `SessionManager.inMemory` session through pi's append methods, message builders, and stand-in child sessions (`createSubscribableSession`, `createChildSession`, `createSession`).
+- `session.ts`: `appendDrafts`, which appends the entries a boundary handler drafted to a `SessionManager.inMemory` session through pi's append methods, message and event builders, and stand-in child sessions (`createSubscribableSession`, `createChildSession`, `createSession`).
 - `guarded.ts`: `guardedInstance`, a class instance that throws on every member the test did not provide, and `stubInstance`.
 - `temp.ts`: temp directories (`tmpDir`, `testWithDir`) and HOME or agent-directory isolation (`setTempHome`, `withTempHome`, `withTempAgentDir`).
 - `tool-result.ts`: readers and checks for tool results (`recordOf`, `detailsOf`, `firstText`, `textOf`, `assertErrorResult`).
@@ -63,6 +63,7 @@ The project is decided per test. A file whose tests fall on both sides is split 
 - `deferred.ts`: `createDeferred`, a promise the test resolves.
 - `spawn-node.ts`: `spawnNode`, which runs a Node child process to completion under a deadline.
 - `real-child.ts`: `runRealChildInvocation`, which runs the spawn tool with a real child session against an offline probe provider, for integration tests.
+- `notebook.ts`: notebook helpers for runner fixture tests: `writePage` seeds a page through `notebook_write`, `listDriver` drives the `/notebook` list, and `press`, `plain` and `ESCAPE` send keys to it and read its render.
 
 - `npm test` runs the unit and integration projects (`vitest run --project unit --project integration`). Arguments after `--` go to Vitest, so a file filter works there too. A render snapshot whose golden file is missing is written locally and fails under CI.
 - `npm run test:unit` runs the unit project (`vitest run --project unit`), and `npm run test:integration` runs the integration project (`vitest run --project integration`).
