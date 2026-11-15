@@ -77,11 +77,6 @@
       "count": 3
     }
   },
-  "notebook/store.ts": {
-    "ban/set-singletons-import": {
-      "count": 1
-    }
-  },
   "notebook/tools.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 3
@@ -273,7 +268,7 @@
   },
   "tests/unit/notebook.test.ts": {
     "vitest/max-expects": {
-      "count": 54
+      "count": 46
     }
   },
   "tests/unit/notifications.test.ts": {

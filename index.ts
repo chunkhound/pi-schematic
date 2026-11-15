@@ -27,7 +27,7 @@ import { ensureNotebookToolsActive, registerNotebookRehydration, reconstructNote
 import { registerNotebookTopicTool } from "./notebook/topic-tool.js";
 import { setActiveNotebookTopic } from "./notebook/topic.js";
 import { formatPageTuiPreview } from "./notebook/store.js";
-import { openInPager, pagerRuntime, type ResolvedPager } from "./notebook/pager.js";
+import { openInPager, resolvePager, type ResolvedPager } from "./notebook/pager.js";
 import { HANDOFF_TOOL_NAME, registerHandoffTool } from "./handoff/tool.js";
 import { canPromoteBoundary, markBoundaryAdvisory, promoteBoundary } from "./readonly-boundary.js";
 import { isHandoffEligible, normalizeContextPercent } from "./handoff/eligibility.js";
@@ -778,7 +778,7 @@ export default function (pi: ExtensionAPI): void {
 
 			let lastSelectedName: string | undefined;
 			// Resolve once per /notebook so onSelect doesn't run `command -v less` on every Enter.
-			const pager = pagerRuntime.resolvePager();
+			const pager = resolvePager();
 			for (
 				let result = await openNotebookList(ctx, state, pager, lastSelectedName);
 				result !== undefined;

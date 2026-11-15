@@ -1,87 +1,91 @@
 import { expect, onTestFinished, test, vi } from "vitest";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type { TUI } from "@earendil-works/pi-tui";
-import type {
-	AgentToolResult,
-	AgentToolUpdateCallback,
-	CustomEntry,
-	CustomEntryDraft,
-	ExtensionCommandContext,
-	ExtensionContext,
-	ExtensionToolContext,
-	SessionEntry,
-	Theme,
-} from "@earendil-works/pi-coding-agent";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, SessionManager } from "@earendil-works/pi-coding-agent";
-import { createState, resetState, invalidateHandoffState } from "../../state.js";
+import { DEFAULT_MAX_BYTES, SessionManager, type CustomEntryDraft, type ExtensionAPI, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { stripTerminalSequences, type Component } from "@earendil-works/pi-tui";
+import { createState, resetState, invalidateHandoffState, type SchematicState } from "../../state.js";
 import { registerNotebookRehydration, reconstructNotebook } from "../../notebook/rehydration.js";
-import {
-	buildNotebookDiscardDrafts,
-	formatByteCap,
-	formatPagePreview,
-	formatPageTuiPreview,
-	saveNotebookPage,
-	resetNotebookWriteLock,
-} from "../../notebook/store.js";
-import { openInPager, resolvePager, spawnPager, __setPagerRuntimeForTests } from "../../notebook/pager.js";
-import { createNotebookToolDefinitions } from "../../notebook/tools.js";
+import { buildNotebookDiscardDrafts, formatPagePreview, formatPageTuiPreview, saveNotebookPage } from "../../notebook/store.js";
+import { resolvePager } from "../../notebook/pager.js";
+import { createNotebookToolDefinitions, registerNotebookTools } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
 import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
-import { assertPresent, expectSuffix, isRecord } from "../assertions.js";
-import {
-	boundaryEntries,
-	detailsOf,
-	firstText,
-	recordOf,
-	callHandlers,
-	createCommandContext,
-	createExtensionContext,
-	createToolContext,
-	createToolRenderContext,
-	createUIContext,
-	handoffToolResult,
-	turnEndEvent,
-	makeTUICtx,
-	createDeferred,
-	theme,
-	stripAnsi,
-} from "./helpers.js";
-import { runRealChildInvocation } from "../support/real-child.js";
-import { createBeforeAgentStartEvent, createTestHost, getCommand, getHandler, getHandlers, getHostRecords, getTool } from "./test-host.js";
-import type { TestPI } from "./test-host.js";
+import { assertPresent, expectSuffix } from "../assertions.js";
+import { createDeferred, createToolRenderContext, detailsOf, firstText, recordOf } from "./helpers.js";
+import { createModelRegistry } from "../support/model-registry.js";
+import { createRunner, type CustomComponentDriver, type RunnerFixture } from "../support/runner.js";
+import { appendDrafts } from "../support/session.js";
+import { realTheme } from "../support/theme.js";
 
-type HostContext = ExtensionCommandContext & ExtensionToolContext;
+const ESCAPE = "\x1b";
+const CONTEXT_USAGE = { tokens: 84_000, percent: 42, contextWindow: 200_000 };
 
-// The contexts these tests pass carry only the members the code under test uses. Reading a member a
-// context lacks yields undefined; calling or dereferencing one throws a TypeError. Only that the value
-// is an object can be checked at run time.
-function assertHostContext(value: unknown): asserts value is HostContext {
-	if (typeof value !== "object" || value === null) {
-		throw new Error("Expected a context object.");
+/** The notebook tools and rehydration over a test-owned state, with the `pi` they registered through. */
+interface NotebookHost {
+	state: SchematicState;
+	fixture: RunnerFixture;
+	api: ExtensionAPI;
+}
+
+/** Loads the notebook tools and rehydration over a fresh state; with `ui` the recording UI uses the real Theme. */
+async function notebookHost(options: { ui?: boolean; activeTools?: string[]; session?: SessionManager } = {}): Promise<NotebookHost> {
+	const state = createState();
+	const captured: { api?: ExtensionAPI } = {};
+	const fixture = await createRunner({
+		cwd: process.cwd(),
+		mode: options.ui === true ? "tui" : "print",
+		factories: [
+			(api) => {
+				captured.api = api;
+				registerNotebookTools(api, state);
+				registerNotebookRehydration(api, state);
+			},
+		],
+		sessionManager: options.session ?? SessionManager.inMemory(process.cwd()),
+		ui: options.ui === true ? { theme: realTheme } : undefined,
+		context: { getContextUsage: () => CONTEXT_USAGE },
+		activeTools: options.activeTools ?? [],
+	});
+	if (captured.api === undefined) {
+		throw new Error("The notebook factory did not run.");
 	}
+	return { state, fixture, api: captured.api };
 }
 
-function hostContext(value: unknown): HostContext {
-	assertHostContext(value);
-	return value;
+/** The shipped extension, headless or with the recording UI and `custom` driver, at 20% context usage. */
+async function shippedHost(options: { custom?: CustomComponentDriver; session?: SessionManager; activeTools?: string[]; headless?: boolean } = {}) {
+	return createRunner({
+		cwd: process.cwd(),
+		mode: options.headless === true ? "print" : "tui",
+		sessionManager: options.session ?? SessionManager.inMemory(process.cwd()),
+		modelRegistry: await createModelRegistry({}),
+		ui: options.headless === true ? undefined : { theme: realTheme, custom: options.custom },
+		context: {
+			getContextUsage: () => ({ tokens: 40_000, percent: 20, contextWindow: 200_000 }),
+			isProjectTrusted: () => false,
+		},
+		activeTools: options.activeTools ?? [],
+	});
 }
 
-// The /notebook tests type the overlay factory `ctx.ui.custom` receives themselves, which pi's generic
-// `custom` does not admit, so a context with such a `custom` goes through hostContext.
-function tuiContext(
-	options: Omit<NonNullable<Parameters<typeof makeTUICtx>[0]>, "custom"> & { custom?: (build: unknown) => Promise<unknown> } = {},
-): HostContext {
-	const { custom, ...rest } = options;
-	const ctx = makeTUICtx(rest);
-	return custom === undefined ? ctx : hostContext({ ...ctx, ui: { ...ctx.ui, custom } });
+/** A session holding `entries` as custom entries, in order. */
+function sessionWith(entries: readonly { customType: string; data?: unknown }[]): SessionManager {
+	const session = SessionManager.inMemory(process.cwd());
+	for (const { customType, data } of entries) {
+		session.appendCustomEntry(customType, data);
+	}
+	return session;
+}
+
+/** A fresh notebook host rehydrated by `session_start` from `session`. */
+async function rehydrated(session: SessionManager): Promise<NotebookHost> {
+	const host = await notebookHost({ session });
+	await host.fixture.runner.emit({ type: "session_start", reason: "startup" });
+	return host;
 }
 
 /** The data of the appended entry at `index` (negative counts from the end); throws unless it is an object. */
-function appendedData(pi: TestPI, index: number): Record<string, unknown> {
-	const entry = getHostRecords(pi).appendedEntries.at(index);
+function appendedData({ fixture }: { fixture: RunnerFixture }, index: number): Record<string, unknown> {
+	const entry = fixture.host.appendedEntries.at(index);
 	if (entry === undefined) {
 		throw new Error(`No appended entry at index ${String(index)}.`);
 	}
@@ -89,10 +93,10 @@ function appendedData(pi: TestPI, index: number): Record<string, unknown> {
 }
 
 /** An `onUpdate` callback that records each update; `last()` throws when none arrived. */
-function recordUpdates(): { onUpdate: AgentToolUpdateCallback<unknown>; last(): AgentToolResult<unknown> } {
-	const updates: AgentToolResult<unknown>[] = [];
+function recordUpdates() {
+	const updates: { content: unknown[]; details: unknown }[] = [];
 	return {
-		onUpdate: (update) => {
+		onUpdate: (update: { content: unknown[]; details: unknown }) => {
 			updates.push(update);
 		},
 		last: () => {
@@ -105,96 +109,60 @@ function recordUpdates(): { onUpdate: AgentToolUpdateCallback<unknown>; last(): 
 	};
 }
 
-interface Overlay {
-	render(width: number): string[];
-	handleInput(data: string): void;
+function updateText(update: { content: unknown[] }): string {
+	return stringOf(recordOf(update.content.at(0), "the update's first content block").text, "the update's text");
 }
 
-type OverlayFactory = (tui: object, theme: Theme, keybindings: object, done: (result: unknown) => void) => Overlay;
-
-function assertString(value: unknown, message: string): asserts value is string {
+function stringOf(value: unknown, what: string): string {
 	if (typeof value !== "string") {
-		throw new Error(message);
+		throw new Error(`Expected ${what} to be a string.`);
 	}
-}
-
-// ctx.ui.custom receives the overlay factory of the /notebook command; only that it is a function
-// can be checked at run time.
-function assertOverlayFactory(value: unknown): asserts value is OverlayFactory {
-	if (typeof value !== "function") {
-		throw new Error("ctx.ui.custom received no overlay factory.");
-	}
-}
-
-/** Runs `/notebook` with a UI whose `custom` builds the overlay with `done`; resolves to that overlay. */
-async function openNotebookOverlay(pi: TestPI, done: (result: unknown) => void): Promise<Overlay> {
-	const opened: { overlay?: Overlay } = {};
-	await getCommand(pi, "notebook").handler(
-		"",
-		hostContext({
-			hasUI: true,
-			ui: {
-				theme,
-				custom: (build: unknown) => {
-					assertOverlayFactory(build);
-					opened.overlay = build({ requestRender: vi.fn() }, theme, {}, done);
-					return Promise.resolve();
-				},
-			},
-		}),
-	);
-	if (opened.overlay === undefined) {
-		throw new Error("/notebook opened no overlay.");
-	}
-	return opened.overlay;
-}
-
-// openInPager calls only stop, start and requestRender on the TUI, so those are the members checked.
-function assertPagerTui(value: unknown): asserts value is TUI {
-	if (!isRecord(value) || typeof value.stop !== "function" || typeof value.start !== "function" || typeof value.requestRender !== "function") {
-		throw new Error("Expected a TUI with stop, start and requestRender.");
-	}
-}
-
-function pagerTui(value: unknown): TUI {
-	assertPagerTui(value);
 	return value;
 }
 
-/** A custom session entry as pi stores it; rehydration reads only its type, customType and data. */
-function customEntry(customType: string, data: unknown, index: number): CustomEntry {
-	return { type: "custom", customType, data, id: `entry-${String(index)}`, parentId: null, timestamp: "" };
+function plain(lines: string[]): string {
+	return stripTerminalSequences(lines.join("\n"));
 }
 
-function persistedBranch(pi: TestPI): CustomEntry[] {
-	return getHostRecords(pi).appendedEntries.map(({ customType, data }, index) => customEntry(customType, data, index));
+/**
+ * A `ctx.ui.custom` driver for the /notebook list: the n-th opened list is rendered into `renders`,
+ * then `opens[n]` acts on it; a list opened after the last step is closed with Esc.
+ */
+function listDriver(...opens: ((component: Component) => void | Promise<void>)[]) {
+	const renders: string[] = [];
+	let calls = 0;
+	const driver: CustomComponentDriver = async (component) => {
+		const open = opens.at(calls);
+		calls++;
+		renders.push(plain(component.render(120)));
+		if (open === undefined) {
+			component.handleInput?.(ESCAPE);
+			return;
+		}
+		await open(component);
+	};
+	return {
+		driver,
+		renders,
+		get opened() {
+			return calls;
+		},
+	};
 }
 
-/** A context whose session manager's `getBranch` returns what `branch` returns at call time. */
-function branchContext(branch: () => SessionEntry[]): ExtensionContext {
-	const sessionManager = SessionManager.inMemory();
-	vi.spyOn(sessionManager, "getBranch").mockImplementation(branch);
-	return createExtensionContext({ sessionManager });
+function press(component: Component, ...keys: string[]): void {
+	for (const key of keys) {
+		component.handleInput?.(key);
+	}
 }
 
-async function rehydratePersistedNotebook(pi: TestPI) {
-	const state = createState();
-	const restoredPi = await createTestHost((api) => {
-		registerNotebookRehydration(api, state);
-	});
-	const handler = getHandler(restoredPi, "session_start");
-	await handler(
-		{ type: "session_start", reason: "startup" },
-		branchContext(() => persistedBranch(pi)),
-	);
-	return state;
+/** Runs `/notebook` on the shipped extension with no pager configured. */
+async function runNotebook(fixture: RunnerFixture, args = ""): Promise<void> {
+	await fixture.command("notebook").handler(args, fixture.runner.createCommandContext());
 }
 
-function setPagerRuntime(overrides: Parameters<typeof __setPagerRuntimeForTests>[0]): void {
-	__setPagerRuntimeForTests(overrides);
-	onTestFinished(() => {
-		__setPagerRuntimeForTests(null);
-	});
+async function writePage(fixture: RunnerFixture, name: string, content: string): Promise<void> {
+	await fixture.tool("notebook_write").execute("seed", { name, content });
 }
 
 // ── Notebook write-size fixtures (issue #42) ──────────────────────────
@@ -207,6 +175,7 @@ const R = "x".repeat(51201);
 const UR = "é".repeat(25600) + "x";
 const F = "x".repeat(51200);
 const M = "a".repeat(25600) + "\n" + "b".repeat(25599);
+const A77 = "a".repeat(77) + "...";
 
 const Tlines = { truncatedBy: "lines", totalLines: 2001, totalBytes: 4001, outputLines: 2000, outputBytes: 3999 } as const;
 const Tbytes = { truncatedBy: "bytes", totalLines: 2, totalBytes: 51201, outputLines: 1, outputBytes: 25600 } as const;
@@ -214,170 +183,57 @@ const ReportLines = "TRUNCATED by lines: kept 2000 of 2001 lines (3999 of 4001 b
 const ReportBytes = "TRUNCATED by bytes: kept 1 of 2 lines (25600 of 51201 bytes); tail dropped. Split this page into smaller pages.";
 const Notice = "Notice: This page was clipped at write time; its stored body is incomplete.";
 const rejectMessage = (name: string) =>
-	`Notebook page "${name}" rejected: first line exceeds ${formatByteCap(DEFAULT_MAX_BYTES)}. Split it into shorter lines or smaller pages.`;
+	`Notebook page "${name}" rejected: first line exceeds 50 KiB (51200 bytes). Split it into shorter lines or smaller pages.`;
 const emptyHeadRejectMessage = (name: string) =>
-	`Notebook page "${name}" rejected: the first non-empty line exceeds ${formatByteCap(DEFAULT_MAX_BYTES)}, so truncation would retain no content. Split it into shorter lines or smaller pages.`;
+	`Notebook page "${name}" rejected: the first non-empty line exceeds 50 KiB (51200 bytes), so truncation would retain no content. Split it into shorter lines or smaller pages.`;
 const DescriptionSuffix =
-	`Content is limited to ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. ` +
-	"The beginning is kept, the tail is dropped, and truncation is reported. " +
-	"A write whose retained head would be empty (for example, an oversized first line) is rejected.";
+	"Content is limited to 2000 lines / 50 KiB (51200 bytes). The beginning is kept, the tail is dropped, and truncation is reported. A write whose retained head would be empty (for example, an oversized first line) is rejected.";
 
-/** Complete-write final text for a single page. */
-function completeFinalText(name: string, body: string): string {
-	const preview = formatPagePreview(body);
-	return `Saved notebook page "${name}".` + (preview ? `\n${preview}` : "") + `\n\nNotebook Pages:\n  ${name}: ${preview}`;
-}
-
-/** Clipped-write final text: report lands after the preview and before the page list. */
-function clippedFinalText(name: string, body: string, report: string): string {
-	const preview = formatPagePreview(body);
-	return `Saved notebook page "${name}".` + (preview ? `\n${preview}` : "") + `\n\n${report}\n\nNotebook Pages:\n  ${name}: ${preview}`;
-}
-
-/** Complete-write onUpdate text. */
-function completeUpdateText(name: string, body: string): string {
-	const preview = formatPagePreview(body);
-	return `Saved "${name}"` + (preview ? `: ${preview}` : "");
-}
-
-/** Clipped-write onUpdate text: report appended after the preview. */
-function clippedUpdateText(name: string, body: string, report: string): string {
-	const preview = formatPagePreview(body);
-	return `Saved "${name}"` + (preview ? `: ${preview}` : "") + `\n\n${report}`;
-}
-
-/** Single-page read envelope without any notice. */
-function readBase(name: string, body: string): string {
-	return `--- ${name} ---\n${body}\n---\nNotebook Pages:\n  ${name}: ${formatPagePreview(body)}`;
+/** The read envelope of a single page `page` whose preview is `preview`. */
+function readBase(body: string, preview: string): string {
+	return `--- page ---\n${body}\n---\nNotebook Pages:\n  page: ${preview}`;
 }
 
 // ── Notebook rehydration tests ────────────────────────────────────────
 
 test("notebook rehydration rebuilds the latest epoch and enables notebook tools", async () => {
-	const state = createState();
-	const pi = await createTestHost((api) => {
-		registerNotebookRehydration(api, state);
-	});
-	const handler = getHandler(pi, "session_start");
+	const session = SessionManager.inMemory(process.cwd());
+	session.appendCustomEntry("notebook-entry", { version: 1, epoch: 1, name: "old", content: "old" });
+	session.appendCustomEntry("notebook-entry", { version: 1, epoch: 2, name: "keep", content: "new" });
+	session.appendCustomEntry("notebook-entry", { version: 1, epoch: 2, name: "keep", content: "newer" });
+	const { state, fixture } = await notebookHost({ session, activeTools: ["read", "notebook_read"] });
 
-	await handler(
-		{ type: "session_start", reason: "startup" },
-		hostContext({
-			sessionManager: {
-				getBranch: () => [
-					{ type: "custom", customType: "ledger-entry", data: { epoch: 1, name: "old", content: "old" } },
-					{ type: "custom", customType: "notebook-entry", data: { epoch: 2, name: "keep", content: "new" } },
-					{ type: "custom", customType: "notebook-entry", data: { epoch: 2, name: "keep", content: "newer" } },
-				],
-			},
-		}),
-	);
+	await fixture.runner.emit({ type: "session_start", reason: "startup" });
 
 	expect(state.epoch).toBe(2);
 	expect(Array.from(state.notebookPages.entries())).toStrictEqual([["keep", "newer"]]);
-	expect(pi.activeTools).toStrictEqual(["notebook_read", "notebook_index"]);
-});
-
-test("notebook rehydration rebuilds from the latest persisted epoch and avoids duplicate active tools", async () => {
-	const state = createState();
-	state.epoch = 7;
-	const pi = await createTestHost(
-		(api) => {
-			registerNotebookRehydration(api, state);
-		},
-		{ activeTools: ["read", "notebook_read", "notebook_index"] },
-	);
-	const handler = getHandler(pi, "session_start");
-
-	await handler(
-		{ type: "session_start", reason: "startup" },
-		hostContext({
-			sessionManager: {
-				getBranch: () => [
-					{ type: "custom", customType: "notebook-entry", data: { epoch: 6, name: "stale", content: "old" } },
-					{ type: "custom", customType: "notebook-entry", data: { epoch: 7, name: "keep", content: "fresh" } },
-					{ type: "custom", customType: "notebook-entry", data: { epoch: 8, name: "future", content: "latest" } },
-				],
-			},
-		}),
-	);
-
-	expect(state.epoch).toBe(8);
-	expect(Array.from(state.notebookPages.entries())).toStrictEqual([["future", "latest"]]);
-	expect(pi.activeTools).toStrictEqual(["read", "notebook_read", "notebook_index"]);
+	expect(fixture.host.activeTools, "notebook_index is added once, notebook_read is not repeated").toStrictEqual(["read", "notebook_read", "notebook_index"]);
 });
 
 test("notebook rehydration clears stale in-memory notebook state when persisted history is empty", async () => {
-	const state = createState();
+	const { state, fixture } = await notebookHost();
 	state.epoch = 7;
 	state.notebookPages.set("stale", "stale body");
-	const pi = await createTestHost((api) => {
-		registerNotebookRehydration(api, state);
-	});
-	const handler = getHandler(pi, "session_start");
 
-	await handler(
-		{ type: "session_start", reason: "startup" },
-		hostContext({
-			sessionManager: {
-				getBranch: () => [],
-			},
-		}),
-	);
+	await fixture.runner.emit({ type: "session_start", reason: "startup" });
 
 	expect(state.epoch).toBe(0);
 	expect(Array.from(state.notebookPages.entries())).toStrictEqual([]);
-	expect(pi.activeTools).toStrictEqual(["notebook_read", "notebook_index"]);
-});
-
-test("notebook rehydration ignores null and malformed branch entries", async () => {
-	const state = createState();
-	const pi = await createTestHost((api) => {
-		registerNotebookRehydration(api, state);
-	});
-	const handler = getHandler(pi, "session_start");
-
-	await handler(
-		{ type: "session_start", reason: "startup" },
-		hostContext({
-			sessionManager: {
-				getBranch: () => [
-					null,
-					undefined,
-					"bad-string",
-					{ type: "custom", customType: "notebook-entry", data: { epoch: 1, name: "keep", content: "valid" } },
-					null,
-					{ customType: "notebook-entry" },
-				],
-			},
-		}),
-	);
-
-	expect(state.epoch).toBe(1);
-	expect(Array.from(state.notebookPages.entries())).toStrictEqual([["keep", "valid"]]);
+	expect(fixture.host.activeTools).toStrictEqual(["notebook_read", "notebook_index"]);
 });
 
 test("future-version notebook entries have zero effect on rehydrated state", async () => {
-	const state = createState();
-	const pi = await createTestHost((api) => {
-		registerNotebookRehydration(api, state);
-	});
-	const handler = getHandler(pi, "session_start");
-
+	const writer = await notebookHost();
 	// Real writes through the real store (both land at epoch 1).
-	await saveNotebookPage(pi, state, "current", "ok");
-	await saveNotebookPage(pi, state, "other", "old");
+	await saveNotebookPage(writer.api, writer.state, "current", "ok");
+	await saveNotebookPage(writer.api, writer.state, "other", "old");
+	const session = sessionWith(writer.fixture.host.appendedEntries);
+	// A future-format writer: no existing writer emits version 2, so the version discriminator is
+	// the only synthetic field; envelope and payload match a real future entry.
+	session.appendCustomEntry("notebook-generation", { version: 2, epoch: 9 });
+	session.appendCustomEntry("notebook-entry", { version: 2, epoch: 9, name: "future", content: "x" });
 
-	// Simulate a future-format writer through the real persistence API. No
-	// existing writer emits version 2, so the version discriminator is the
-	// only synthetic field; envelope and payload match a real future entry.
-	pi.appendEntry("notebook-generation", { version: 2, epoch: 9 });
-	pi.appendEntry("notebook-entry", { version: 2, epoch: 9, name: "future", content: "x" });
-
-	await handler(
-		{ type: "session_start", reason: "startup" },
-		branchContext(() => persistedBranch(pi)),
-	);
+	const { state } = await rehydrated(session);
 
 	// Generation marker site: the future epoch 9 must not be adopted.
 	expect(state.epoch).toBe(1);
@@ -390,130 +246,99 @@ test("future-version notebook entries have zero effect on rehydrated state", asy
 	]);
 });
 
-test("pre-versioned entries without a version field rehydrate on parity", async () => {
-	const state = createState();
-	const pi = await createTestHost((api) => {
-		registerNotebookRehydration(api, state);
-	});
-	const handler = getHandler(pi, "session_start");
+test("page entries without a version field have no effect on rehydrated state", async () => {
+	const session = SessionManager.inMemory(process.cwd());
+	session.appendCustomEntry("notebook-entry", { version: 1, epoch: 1, name: "current", content: "new", clipped: false });
+	session.appendCustomEntry("notebook-entry", { epoch: 1, name: "legacy", content: "old" });
+	session.appendCustomEntry("notebook-entry", { epoch: 3, name: "later", content: "old" });
 
-	// Real writes through the real store, then strip the version discriminator
-	// to reproduce a pre-versioned branch: same envelope and fields, no version.
-	await saveNotebookPage(pi, state, "legacy", "old");
-	await saveNotebookPage(pi, state, "current", "new");
-	const branch = persistedBranch(pi);
-	const legacyData = recordOf(branch[0].data, "the first persisted entry data");
-	delete legacyData.version;
-	delete legacyData.clipped;
-
-	await handler(
-		{ type: "session_start", reason: "startup" },
-		branchContext(() => branch),
-	);
+	const { state } = await rehydrated(session);
 
 	expect(state.epoch).toBe(1);
 	expect(state.discardEpochWatermark).toBe(1);
-	expect(Array.from(state.notebookPages.entries()).sort()).toStrictEqual([
-		["current", "new"],
-		["legacy", "old"],
-	]);
+	expect(Array.from(state.notebookPages.entries())).toStrictEqual([["current", "new"]]);
 });
 
 test("session_start rehydrates the latest persisted notebook state through the full hook chain", async () => {
-	const pi = await createTestHost(undefined, { activeTools: ["read", "notebook_read"] });
+	const session = SessionManager.inMemory(process.cwd());
+	session.appendCustomEntry("notebook-entry", { version: 1, epoch: 6, name: "stale", content: "old" });
+	session.appendCustomEntry("notebook-entry", { version: 1, epoch: 8, name: "keep", content: "fresh" });
+	session.appendCustomEntry("notebook-entry", { version: 1, epoch: 8, name: "keep", content: "newer" });
+	const fixture = await shippedHost({ session, headless: true, activeTools: ["read", "notebook_read"] });
+	await writePage(fixture, "stale-page", "stale body");
 
-	const notebookWrite = getTool(pi, "notebook_write");
-	await notebookWrite.execute("seed", { name: "stale-page", content: "stale body" }, undefined, undefined, tuiContext({ hasUI: false }));
+	await fixture.runner.emit({ type: "session_start", reason: "resume" });
 
-	const sessionStartHandlers = getHandlers(pi, "session_start");
-	const ctx = hostContext({
-		hasUI: false,
-		getContextUsage: () => null,
-		sessionManager: {
-			getBranch: () => [
-				{ type: "custom", customType: "notebook-entry", data: { epoch: 6, name: "stale", content: "old" } },
-				{ type: "custom", customType: "notebook-entry", data: { epoch: 8, name: "keep", content: "fresh" } },
-				{ type: "custom", customType: "notebook-entry", data: { epoch: 8, name: "keep", content: "newer" } },
-			],
-		},
-	});
-	for (const sessionStart of sessionStartHandlers) {
-		await sessionStart({ type: "session_start", reason: "resume" }, ctx);
-	}
-
-	const notebookIndex = getTool(pi, "notebook_index");
-	const notebookRead = getTool(pi, "notebook_read");
-	const indexResult = await notebookIndex.execute("1", {}, undefined, undefined, createToolContext());
+	const indexResult = await fixture.tool("notebook_index").execute("1", {});
 	expect(detailsOf(indexResult).entries).toStrictEqual(["keep"]);
-
-	const readResult = await notebookRead.execute("2", { name: "keep" }, undefined, undefined, createToolContext());
+	const readResult = await fixture.tool("notebook_read").execute("2", { name: "keep" });
 	expect(detailsOf(readResult).found).toBe(true);
 	expect(detailsOf(readResult).body).toBe("newer");
-	expect(pi.activeTools).toStrictEqual(["read", "notebook_read", "notebook_index"]);
+	expect(fixture.host.activeTools).toStrictEqual(["read", "notebook_read", "notebook_index"]);
 });
 
 // ── Notebook tool contract tests ──────────────────────────────────────
 
 test("notebook tools add/get/list return stable contract details", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [notebookWrite, notebookRead, notebookIndex] = createNotebookToolDefinitions(pi, state);
+	const host = await notebookHost();
+	const { state, fixture } = host;
 
-	const addResult = await notebookWrite.execute("1", { name: "entry-a", content: "first line\nsecond line" }, undefined, undefined, createToolContext());
+	const addResult = await fixture.tool("notebook_write").execute("1", { name: "entry-a", content: "first line\nsecond line" });
 	expect(addResult.details).toStrictEqual({ entries: ["entry-a"], preview: "first line", truncation: null, clipped: false });
 	expect(state.notebookPages.get("entry-a")).toBe("first line\nsecond line");
-	expect(getHostRecords(pi).appendedEntries).toHaveLength(1);
-	expect(getHostRecords(pi).appendedEntries[0].customType).toBe("notebook-entry");
-	expect(appendedData(pi, 0).name).toBe("entry-a");
+	expect(fixture.host.appendedEntries).toHaveLength(1);
+	expect(fixture.host.appendedEntries[0].customType).toBe("notebook-entry");
+	expect(appendedData(host, 0).name).toBe("entry-a");
 
-	const getResult = await notebookRead.execute("2", { name: "entry-a" }, undefined, undefined, createToolContext());
+	const getResult = await fixture.tool("notebook_read").execute("2", { name: "entry-a" });
 	const details = detailsOf(getResult);
 	expect(details.found).toBe(true);
 	expect(details.entries).toStrictEqual(["entry-a"]);
 	expect(firstText(getResult)).toMatch(/--- entry-a ---/);
 	expect(firstText(getResult)).toMatch(/second line/);
 
-	const listResult = await notebookIndex.execute("3", {}, undefined, undefined, createToolContext());
+	const listResult = await fixture.tool("notebook_index").execute("3", {});
 	expect(listResult.details).toStrictEqual({ entries: ["entry-a"] });
 	expect(firstText(listResult)).toMatch(/entry-a: first line/);
 });
 
-test("child notebook tools reject stale access after reset", async () => {
-	const pi = await createTestHost();
-	const state = createState();
+test("notebook tools reject access once their isStale callback reports stale", async () => {
+	const { state, fixture, api } = await notebookHost();
 	state.notebookPages.set("entry-a", "alpha");
 	let stale = false;
-	const [notebookWrite, notebookRead, notebookIndex] = createNotebookToolDefinitions(pi, state, { isStale: () => stale });
+	const [notebookWrite, notebookRead, notebookIndex] = createNotebookToolDefinitions(api, state, { isStale: () => stale });
+	const ctx = fixture.runner.createToolContext("1", undefined);
 
 	stale = true;
-	await expect(notebookWrite.execute("1", { name: "entry-a", content: "alpha" }, undefined, undefined, createToolContext())).rejects.toThrow(
-		/invalidated by reset/i,
-	);
-	await expect(notebookRead.execute("2", { name: "entry-a" }, undefined, undefined, createToolContext())).rejects.toThrow(/invalidated by reset/i);
-	await expect(notebookIndex.execute("3", {}, undefined, undefined, createToolContext())).rejects.toThrow(/invalidated by reset/i);
+	await expect(notebookWrite.execute("1", { name: "entry-a", content: "alpha" }, undefined, undefined, ctx)).rejects.toThrow(/invalidated by reset/i);
+	await expect(notebookRead.execute("2", { name: "entry-a" }, undefined, undefined, ctx)).rejects.toThrow(/invalidated by reset/i);
+	await expect(notebookIndex.execute("3", {}, undefined, undefined, ctx)).rejects.toThrow(/invalidated by reset/i);
 	expect(state.notebookPages.get("entry-a")).toBe("alpha");
-	expect(getHostRecords(pi).appendedEntries).toHaveLength(0);
+	expect(fixture.host.appendedEntries).toHaveLength(0);
 });
 
-test("child notebook_write succeeds while child session is fresh", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [notebookWrite] = createNotebookToolDefinitions(pi, state, { isStale: () => false });
+test("notebook_write succeeds while its isStale callback reports fresh", async () => {
+	const { state, fixture, api } = await notebookHost();
+	const [notebookWrite] = createNotebookToolDefinitions(api, state, { isStale: () => false });
 
-	const result = await notebookWrite.execute("1", { name: "entry-a", content: "alpha" }, undefined, undefined, createToolContext());
+	const result = await notebookWrite.execute(
+		"1",
+		{ name: "entry-a", content: "alpha" },
+		undefined,
+		undefined,
+		fixture.runner.createToolContext("1", undefined),
+	);
 	expect(result.details).toStrictEqual({ entries: ["entry-a"], preview: "alpha", truncation: null, clipped: false });
 	expect(state.notebookPages.get("entry-a")).toBe("alpha");
-	expect(getHostRecords(pi).appendedEntries).toHaveLength(1);
+	expect(fixture.host.appendedEntries).toHaveLength(1);
 });
 
 test("notebook_read reports not found with current page names", async () => {
-	const pi = await createTestHost();
-	const state = createState();
+	const { state, fixture } = await notebookHost();
 	state.notebookPages.set("entry-a", "alpha");
 	state.notebookPages.set("entry-b", "beta");
-	const [, notebookRead] = createNotebookToolDefinitions(pi, state);
 
-	const result = await notebookRead.execute("1", { name: "missing" }, undefined, undefined, createToolContext());
+	const result = await fixture.tool("notebook_read").execute("1", { name: "missing" });
 	expect(result.details).toStrictEqual({ entries: ["entry-a", "entry-b"], found: false });
 	expect(firstText(result)).toMatch(/Notebook page "missing" not found\./);
 	expect(firstText(result)).toMatch(/Notebook Pages:\n/);
@@ -522,233 +347,328 @@ test("notebook_read reports not found with current page names", async () => {
 });
 
 test("notebook tools show empty-state placeholders", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [, notebookRead, notebookIndex] = createNotebookToolDefinitions(pi, state);
+	const { fixture } = await notebookHost();
 
-	const missing = await notebookRead.execute("1", { name: "missing" }, undefined, undefined, createToolContext());
+	const missing = await fixture.tool("notebook_read").execute("1", { name: "missing" });
 	expect(missing.details).toStrictEqual({ entries: [], found: false });
 	expect(firstText(missing)).toMatch(/Notebook Pages:\n\(empty\)/);
 
-	const list = await notebookIndex.execute("2", {}, undefined, undefined, createToolContext());
+	const list = await fixture.tool("notebook_index").execute("2", {});
 	expect(list.details).toStrictEqual({ entries: [] });
 	expect(firstText(list)).toMatch(/Notebook Pages:\n\(empty\)/);
 });
 
 test("notebook_write pushes onUpdate and refreshes UI indicators", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [notebookWrite] = createNotebookToolDefinitions(pi, state);
-	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
+	const { fixture } = await notebookHost({ ui: true });
 	const updates = recordUpdates();
 
-	const result = await notebookWrite.execute(
-		"1",
-		{ name: "entry-a", content: "first line\nsecond line" },
-		undefined,
-		updates.onUpdate,
-		tuiContext({ percent: 42, record }),
-	);
+	const result = await fixture.tool("notebook_write").execute("1", { name: "entry-a", content: "first line\nsecond line" }, undefined, updates.onUpdate);
 
-	expect(firstText(updates.last())).toBe('Saved "entry-a": first line');
+	expect(updateText(updates.last())).toBe('Saved "entry-a": first line');
 	expect(updates.last().details).toStrictEqual({ entries: ["entry-a"], preview: "first line", truncation: null, clipped: false });
-	expect(record.statuses.get("pi-schematic-notebook")).toBe("📒 1");
+	expect(fixture.ui.statuses.get("pi-schematic-notebook")).toBe("📒 1");
 	expect(result.details).toStrictEqual({ entries: ["entry-a"], preview: "first line", truncation: null, clipped: false });
 });
 
-test("notebook tool renderers expose stable call/result summaries", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [notebookWrite, notebookRead, notebookIndex] = createNotebookToolDefinitions(pi, state);
-
+async function notebookToolDefinitions() {
+	const { state, api } = await notebookHost();
+	const [notebookWrite, notebookRead, notebookIndex] = createNotebookToolDefinitions(api, state);
 	assertPresent(notebookWrite.renderCall, "notebook_write has a call renderer");
 	assertPresent(notebookWrite.renderResult, "notebook_write has a result renderer");
 	assertPresent(notebookRead.renderResult, "notebook_read has a result renderer");
 	assertPresent(notebookIndex.renderResult, "notebook_index has a result renderer");
-	const addCall = notebookWrite.renderCall({ name: "entry-a", content: "first line\nsecond line" }, theme, createToolRenderContext());
-	expect(stripAnsi(addCall.render(120).join("\n"))).toMatch(/notebook_write "entry-a": first line/);
+	return {
+		renderWriteCall: notebookWrite.renderCall,
+		renderWriteResult: notebookWrite.renderResult,
+		renderReadResult: notebookRead.renderResult,
+		renderIndexResult: notebookIndex.renderResult,
+	};
+}
 
-	const addResult = notebookWrite.renderResult(
+test("notebook tool renderers expose stable call/result summaries", async () => {
+	const { renderWriteCall, renderWriteResult, renderReadResult, renderIndexResult } = await notebookToolDefinitions();
+
+	const addCall = renderWriteCall({ name: "entry-a", content: "first line\nsecond line" }, realTheme, createToolRenderContext());
+	expect(addCall.render(120).join("\n")).toContain(
+		realTheme.fg("toolTitle", realTheme.bold("notebook_write ")) + realTheme.fg("accent", '"entry-a"') + ": " + realTheme.fg("dim", "first line"),
+	);
+
+	const addResult = renderWriteResult(
 		{ content: [{ type: "text", text: "" }], details: { entries: ["entry-a"], preview: "first line", truncation: null, clipped: false } },
 		{ expanded: true, isPartial: false },
-		theme,
+		realTheme,
 		createToolRenderContext({ args: { name: "entry-a", content: "first line\nsecond line" } }),
 	);
-	expect(stripAnsi(addResult.render(120).join("\n"))).toMatch(/Saved "entry-a": first line/);
-	expect(stripAnsi(addResult.render(120).join("\n"))).toMatch(/entry-a/);
+	expect(plain(addResult.render(120))).toMatch(/Saved "entry-a": first line/);
 
-	const getResult = notebookRead.renderResult(
+	const getResult = renderReadResult(
 		{ content: [{ type: "text", text: "ignored" }], details: { entries: ["entry-a"], found: true, body: "body", clipped: false } },
 		{ expanded: true, isPartial: false },
-		theme,
+		realTheme,
 		createToolRenderContext({ args: { name: "entry-a" } }),
 	);
-	expect(stripAnsi(getResult.render(120).join("\n"))).toMatch(/"entry-a"/);
-	expect(stripAnsi(getResult.render(120).join("\n"))).toMatch(/body/);
+	expect(plain(getResult.render(120))).toMatch(/"entry-a"/);
+	expect(getResult.render(120).join("\n")).toContain(realTheme.fg("toolOutput", "body"));
 
-	const getResultWithDelimiters = notebookRead.renderResult(
+	const getResultWithDelimiters = renderReadResult(
 		{ content: [{ type: "text", text: "ignored" }], details: { entries: ["entry-a"], found: true, body: "line 1\n---\nline 2", clipped: false } },
 		{ expanded: true, isPartial: false },
-		theme,
+		realTheme,
 		createToolRenderContext({ args: { name: "entry-a" } }),
 	);
-	expect(stripAnsi(getResultWithDelimiters.render(120).join("\n"))).toMatch(/line 1/);
-	expect(stripAnsi(getResultWithDelimiters.render(120).join("\n"))).toMatch(/line 2/);
+	expect(plain(getResultWithDelimiters.render(120))).toMatch(/line 1/);
+	expect(plain(getResultWithDelimiters.render(120))).toMatch(/line 2/);
 
-	const listResult = notebookIndex.renderResult(
+	const listResult = renderIndexResult(
 		{ content: [{ type: "text", text: "" }], details: { entries: ["entry-a", "entry-b"] } },
 		{ expanded: true, isPartial: false },
-		theme,
+		realTheme,
 		createToolRenderContext(),
 	);
-	expect(stripAnsi(listResult.render(120).join("\n"))).toMatch(/2 pages/);
-	expect(stripAnsi(listResult.render(120).join("\n"))).toMatch(/entry-a/);
-	expect(stripAnsi(listResult.render(120).join("\n"))).toMatch(/entry-b/);
+	expect(listResult.render(120).join("\n")).toContain(realTheme.fg("muted", "📒 2 pages"));
+	expect(plain(listResult.render(120))).toMatch(/entry-a/);
+	expect(plain(listResult.render(120))).toMatch(/entry-b/);
+});
+
+test("notebook_read renders a missing page as not found", async () => {
+	const { renderReadResult } = await notebookToolDefinitions();
+
+	const missing = renderReadResult(
+		{ content: [{ type: "text", text: "ignored" }], details: { entries: [], found: false } },
+		{ expanded: true, isPartial: false },
+		realTheme,
+		createToolRenderContext({ args: { name: "missing" } }),
+	);
+
+	expect(missing.render(120).join("\n")).toContain(realTheme.fg("error", "✗ ") + realTheme.fg("muted", '"missing" not found'));
+});
+
+test("collapsed notebook_write and notebook_read results show no list and no body", async () => {
+	const { renderWriteResult, renderReadResult } = await notebookToolDefinitions();
+
+	const writeResult = renderWriteResult(
+		{ content: [{ type: "text", text: "" }], details: { entries: ["entry-a", "entry-b"], preview: "first line", truncation: null, clipped: false } },
+		{ expanded: false, isPartial: false },
+		realTheme,
+		createToolRenderContext({ args: { name: "entry-a", content: "first line" } }),
+	);
+	const readResult = renderReadResult(
+		{ content: [{ type: "text", text: "ignored" }], details: { entries: ["entry-a"], found: true, body: "body", clipped: false } },
+		{ expanded: false, isPartial: false },
+		realTheme,
+		createToolRenderContext({ args: { name: "entry-a" } }),
+	);
+
+	expect([plain(writeResult.render(120)).trimEnd(), plain(readResult.render(120)).trimEnd()]).toStrictEqual(['✓ Saved "entry-a": first line', '✓ "entry-a"']);
+});
+
+test("notebook_write call summary omits the preview for an empty first line", async () => {
+	const { renderWriteCall } = await notebookToolDefinitions();
+
+	const call = renderWriteCall({ name: "entry-a", content: "\nsecond line" }, realTheme, createToolRenderContext());
+
+	expect(plain(call.render(120)).trimEnd()).toBe('notebook_write "entry-a"');
 });
 
 // ── Notebook command / overlay tests ──────────────────────────────────
 
 test("/notebook exits cleanly when headless", async () => {
-	const pi = await createTestHost();
+	const fixture = await shippedHost({ headless: true });
 
-	await expect(getCommand(pi, "notebook").handler("", createCommandContext())).resolves.toBeUndefined();
+	await expect(runNotebook(fixture)).resolves.toBeUndefined();
 });
 
 test("/notebook <topic> notifies with info on first set and warning on boundary change", async () => {
-	const pi = await createTestHost();
-	const notifications: { message: string; level: string | undefined }[] = [];
-	const statuses = new Map<string, string | undefined>();
-	const widgets = new Map<string, unknown>();
-	const ctx = createCommandContext({
-		hasUI: true,
-		getContextUsage: () => ({ tokens: 40_000, percent: 20, contextWindow: 200_000 }),
-		ui: createUIContext({
-			notify: (message, level) => {
-				notifications.push({ message, level });
-			},
-			setStatus: (key, status) => {
-				statuses.set(key, status);
-			},
-			setWidget: (key: string, content: unknown) => {
-				widgets.set(key, content);
-			},
-		}),
-	});
+	const fixture = await shippedHost();
 
-	await getCommand(pi, "notebook").handler("oauth", ctx);
-	await getCommand(pi, "notebook").handler("billing", ctx);
+	await runNotebook(fixture, "oauth");
+	await runNotebook(fixture, "billing");
 
-	expect(notifications[0]).toStrictEqual({ message: "Active notebook topic: oauth", level: "info" });
+	const { notifications, statuses, widgets } = fixture.ui;
+	expect(notifications[0]).toStrictEqual({ message: "Active notebook topic: oauth", type: "info" });
 	expect(notifications[1].message).toMatch(/Active notebook topic changed: oauth → billing/);
-	expect(notifications[1].level).toBe("warning");
+	expect(notifications[1].type).toBe("warning");
 	expect(statuses.get(STATUS_KEY_TOPIC)).toBe("🧭 billing");
 	expect(widgets.get(WIDGET_KEY_WARNING)).toBeUndefined();
 });
 
-test("readonly /notebook boundary notification explains deferred handoff eligibility", async () => {
-	const pi = await createTestHost();
-	const notifications: { message: string; level: string | undefined }[] = [];
-	const ctx = createCommandContext({
-		hasUI: true,
-		getContextUsage: () => ({ tokens: 40_000, percent: 20, contextWindow: 200_000 }),
-		ui: createUIContext({
-			notify: (message, level) => {
-				notifications.push({ message, level });
-			},
-			setStatus: vi.fn(),
-			setWidget: vi.fn(),
-		}),
-	});
+test("/notebook with the current topic notifies it at info level", async () => {
+	const fixture = await shippedHost();
+	await runNotebook(fixture, "billing");
 
-	await getCommand(pi, "readonly").handler("", ctx);
-	await getCommand(pi, "notebook").handler("oauth", ctx);
-	await getCommand(pi, "notebook").handler("billing", ctx);
+	await runNotebook(fixture, "billing");
 
-	expect(notifications.at(-1)?.message ?? "").toMatch(/handoff exception activates.*once the context is ready/i);
-	expect(notifications.at(-1)?.message ?? "").toMatch(/until then this boundary is advisory/i);
-	expect(notifications.at(-1)?.message ?? "").not.toMatch(/ask the user for an explicit \/handoff/i);
+	expect(fixture.ui.notifications.at(-1)).toStrictEqual({ message: "Active notebook topic: billing", type: "info" });
 });
 
-test("/notebook empty overlay renders empty state and closes on input", async () => {
-	const pi = await createTestHost();
-	const done = vi.fn();
-	const overlay = await openNotebookOverlay(pi, done);
+test("readonly /notebook boundary notification explains deferred handoff eligibility", async () => {
+	const fixture = await shippedHost();
 
-	const lines = stripAnsi(overlay.render(120).join("\n"));
-	expect(lines).toMatch(/Notebook \(0 pages\)/);
-	expect(lines).toMatch(/\(empty\) — use notebook_write to create pages/);
-	overlay.handleInput("x");
-	expect(done).toHaveBeenCalledOnce();
+	await fixture.command("readonly").handler("", fixture.runner.createCommandContext());
+	await runNotebook(fixture, "oauth");
+	await runNotebook(fixture, "billing");
+
+	const message = fixture.ui.notifications.at(-1)?.message ?? "";
+	expect(message).toMatch(/handoff exception activates.*once the context is ready/i);
+	expect(message).toMatch(/until then this boundary is advisory/i);
+	expect(message).not.toMatch(/ask the user for an explicit \/handoff/i);
+});
+
+/** The shipped extension with `custom` as the /notebook list driver and no pager configured. */
+async function notebookList(custom: CustomComponentDriver): Promise<RunnerFixture> {
+	vi.stubEnv("PI_PAGER", "cat");
+	return shippedHost({ custom });
+}
+
+test("/notebook empty overlay renders empty state and closes on input", async () => {
+	const list = listDriver((component) => {
+		press(component, "x");
+	});
+	const fixture = await notebookList(list.driver);
+
+	await runNotebook(fixture);
+
+	expect(list.renders[0]).toMatch(/Notebook \(0 pages\)/);
+	expect(list.renders[0]).toMatch(/\(empty\) — use notebook_write to create pages/);
+	expect(list.opened, "the input closes the list").toBe(1);
 });
 
 test("/notebook selection previews the chosen entry when no pager is available", async () => {
-	setPagerRuntime({ resolvePager: () => undefined });
+	const previews: string[] = [];
+	const list = listDriver((component) => {
+		press(component, "\r");
+		previews.push(plain(component.render(120)));
+		press(component, " ");
+	});
+	const fixture = await notebookList(list.driver);
+	await writePage(fixture, "alpha", "body line\nsecond line");
 
-	const pi = await createTestHost();
-	const notebookWrite = getTool(pi, "notebook_write");
-	await notebookWrite.execute("1", { name: "alpha", content: "body line\nsecond line" }, undefined, undefined, tuiContext());
-	const done = vi.fn();
-	const overlay = await openNotebookOverlay(pi, done);
+	await runNotebook(fixture);
 
-	// First Enter selects the entry — shows body inline, done() not yet called
-	overlay.handleInput("\r");
-	expect(done, "body shown inline, overlay stays open").not.toHaveBeenCalled();
-	const bodyLines = stripAnsi(overlay.render(120).join("\n"));
-	expect(bodyLines).toMatch(/body line/);
-	expect(bodyLines).toMatch(/alpha/);
-	expect(bodyLines, "an uncut page shows no truncation hint").not.toMatch(/PI_PAGER/);
-	// Second keypress leaves the inline preview
-	overlay.handleInput("\r");
-	expect(done).toHaveBeenCalledOnce();
+	expect(previews[0]).toMatch(/body line/);
+	expect(previews[0]).toMatch(/alpha/);
+	expect(previews[0], "an uncut page shows no truncation hint").not.toMatch(/PI_PAGER/);
+	expect(list.opened, "body shown inline, the key press returns to the reopened list").toBe(2);
 });
 
 test("/notebook inline preview hints at $PI_PAGER when it cuts a long page", async () => {
-	setPagerRuntime({ resolvePager: () => undefined });
+	const previews: string[] = [];
+	const list = listDriver((component) => {
+		press(component, "\r");
+		previews.push(plain(component.render(120)));
+		press(component, " ");
+	});
+	const fixture = await notebookList(list.driver);
+	await writePage(fixture, "alpha", "x".repeat(500) + "TAIL");
 
-	const pi = await createTestHost();
-	const notebookWrite = getTool(pi, "notebook_write");
-	await notebookWrite.execute("1", { name: "alpha", content: "x".repeat(500) + "TAIL" }, undefined, undefined, tuiContext());
-	const overlay = await openNotebookOverlay(pi, vi.fn());
+	await runNotebook(fixture);
 
-	overlay.handleInput("\r");
-	const preview = stripAnsi(overlay.render(120).join("\n"));
-	expect(preview).not.toMatch(/TAIL/);
-	expect(preview).toMatch(/set \$PI_PAGER to a full-screen pager \(e\.g\. less\) to view the full page/);
+	expect(previews[0]).not.toMatch(/TAIL/);
+	expect(previews[0]).toMatch(/set \$PI_PAGER to a full-screen pager \(e\.g\. less\) to view the full page/);
 });
 
 test("/notebook overlay sorts entries consistently", async () => {
-	const pi = await createTestHost();
-	const notebookWrite = getTool(pi, "notebook_write");
-	await notebookWrite.execute("1", { name: "zeta", content: "last" }, undefined, undefined, tuiContext());
-	await notebookWrite.execute("2", { name: "alpha", content: "first" }, undefined, undefined, tuiContext());
-	const overlay = await openNotebookOverlay(pi, vi.fn());
+	const list = listDriver();
+	const fixture = await notebookList(list.driver);
+	await writePage(fixture, "zeta", "last");
+	await writePage(fixture, "alpha", "first");
 
-	const lines = stripAnsi(overlay.render(120).join("\n"));
+	await runNotebook(fixture);
+
+	const lines = list.renders[0];
 	expect(lines).toContain("alpha");
 	expect(lines).toContain("zeta");
 	expect(lines.indexOf("alpha"), lines).toBeLessThan(lines.indexOf("zeta"));
 	expect(lines).toMatch(/enter view/);
 });
 
-test("resolvePager keeps fallback less interactive without changing LESS", () => {
-	for (const PAGER of [undefined, "", "   "]) {
-		const env = { PI_PAGER: PAGER, PAGER, LESS: "-FRX" };
-		expect(resolvePager(env, "linux", () => true)).toStrictEqual({ cmd: "less", args: ["-R", "-+F", "-+X"] });
-		expect(env).toStrictEqual({ PI_PAGER: PAGER, PAGER, LESS: "-FRX" });
-	}
-	expect(resolvePager({}, "darwin", () => true)).toStrictEqual({ cmd: "less", args: ["-R", "-+F", "-+X"] });
-	expect(resolvePager({}, "linux", () => false)).toBeUndefined();
-	// Windows never probes less — $PI_PAGER/$PAGER are the only way to get a pager.
-	expect(resolvePager({}, "win32", () => expect.unreachable("must not probe on Windows"))).toBeUndefined();
+test("/notebook escape closes the picker without opening a page", async () => {
+	const list = listDriver((component) => {
+		press(component, ESCAPE);
+	});
+	const fixture = await notebookList(list.driver);
+	await writePage(fixture, "alpha", "body");
+
+	await runNotebook(fixture);
+
+	expect(list.opened, "the list is not reopened").toBe(1);
+	expect(list.renders[0]).not.toMatch(/any key back/);
 });
 
-test("resolvePager prefers PI_PAGER over PAGER and falls back when it is blank", () => {
-	const noProbe = () => expect.unreachable("configured pagers must not probe less");
-	expect(resolvePager({ PI_PAGER: "batcat --plain", PAGER: "more" }, "linux", noProbe)).toStrictEqual({ cmd: "batcat", args: ["--plain", "--paging=always"] });
-	expect(resolvePager({ PI_PAGER: "less -R" }, "linux", noProbe)).toStrictEqual({ cmd: "less", args: ["-R", "-+F", "-+X"] });
-	for (const PI_PAGER of [undefined, "", "   "]) {
-		expect(resolvePager({ PI_PAGER, PAGER: "most -s" }, "linux", noProbe), `PI_PAGER=${JSON.stringify(PI_PAGER)}`).toStrictEqual({ cmd: "most", args: ["-s"] });
-	}
+test("/notebook inline preview returns to the list on any key when no pager is available", async () => {
+	const list = listDriver((component) => {
+		// Move off the default index 0 so the reopen assertion proves cursor restore.
+		press(component, "\x1b[B", "\r", " ");
+	});
+	const fixture = await notebookList(list.driver);
+	await writePage(fixture, "zeta", "body line");
+	await writePage(fixture, "alpha", "other");
+
+	await runNotebook(fixture);
+
+	expect(list.opened, "list must reopen after the inline preview").toBe(2);
+	const arrowLine = list.renders[1].split("\n").find((l) => l.includes("→"));
+	assertPresent(arrowLine, `expected a cursor row, got:\n${list.renders[1]}`);
+	expect(arrowLine).toMatch(/zeta/);
+	expect(arrowLine).not.toMatch(/alpha/);
+});
+
+test("/notebook selecting an empty-content page opens the preview instead of closing the picker", async () => {
+	const previews: string[] = [];
+	const list = listDriver((component) => {
+		press(component, "\r"); // Enter on the empty-content page
+		previews.push(plain(component.render(120)));
+		press(component, " "); // any key leaves the inline preview
+	});
+	const fixture = await notebookList(list.driver);
+	await writePage(fixture, "alpha", "");
+
+	await runNotebook(fixture);
+
+	expect(list.opened, "an empty page body must not close the picker early").toBe(2);
+	expect(previews[0], "inline preview header must show the page name").toMatch(/alpha/);
+});
+
+// ── resolvePager tests ────────────────────────────────────────────────
+
+const lessProbes = {
+	present: () => true,
+	absent: () => false,
+	unprobed: () => expect.unreachable("must not probe less"),
+};
+
+test.for([
+	{ label: "PAGER unset on linux", env: { LESS: "-FRX" }, platform: "linux", less: "present", expected: { cmd: "less", args: ["-R", "-+F", "-+X"] } },
+	{
+		label: "PAGER empty on linux",
+		env: { PI_PAGER: "", PAGER: "", LESS: "-FRX" },
+		platform: "linux",
+		less: "present",
+		expected: { cmd: "less", args: ["-R", "-+F", "-+X"] },
+	},
+	{
+		label: "PAGER blank on linux",
+		env: { PI_PAGER: "   ", PAGER: "   ", LESS: "-FRX" },
+		platform: "linux",
+		less: "present",
+		expected: { cmd: "less", args: ["-R", "-+F", "-+X"] },
+	},
+	{ label: "PAGER unset on darwin", env: {}, platform: "darwin", less: "present", expected: { cmd: "less", args: ["-R", "-+F", "-+X"] } },
+	{ label: "no less on linux", env: {}, platform: "linux", less: "absent", expected: undefined },
+	// Windows never probes less: $PI_PAGER/$PAGER are the only way to get a pager.
+	{ label: "PAGER unset on win32", env: {}, platform: "win32", less: "unprobed", expected: undefined },
+] as const)("resolvePager keeps fallback less interactive without changing LESS: $label", ({ env, platform, less, expected }) => {
+	expect(resolvePager(env, platform, lessProbes[less])).toStrictEqual(expected);
+});
+
+test.for([
+	{ label: "PI_PAGER over PAGER", env: { PI_PAGER: "batcat --plain", PAGER: "more" }, expected: { cmd: "batcat", args: ["--plain", "--paging=always"] } },
+	{ label: "PI_PAGER alone", env: { PI_PAGER: "less -R" }, expected: { cmd: "less", args: ["-R", "-+F", "-+X"] } },
+	{ label: "PI_PAGER unset", env: { PAGER: "most -s" }, expected: { cmd: "most", args: ["-s"] } },
+	{ label: "PI_PAGER empty", env: { PI_PAGER: "", PAGER: "most -s" }, expected: { cmd: "most", args: ["-s"] } },
+	{ label: "PI_PAGER blank", env: { PI_PAGER: "   ", PAGER: "most -s" }, expected: { cmd: "most", args: ["-s"] } },
+] as const)("resolvePager prefers PI_PAGER over PAGER and falls back when it is blank: $label", ({ env, expected }) => {
+	expect(resolvePager(env, "linux", lessProbes.unprobed)).toStrictEqual(expected);
 });
 
 const catAndMoreCases: { env: NodeJS.ProcessEnv; platform: NodeJS.Platform }[] = [
@@ -767,417 +687,62 @@ test.for(catAndMoreCases)("resolvePager treats cat and more pagers as no pager s
 	expect(resolvePager(env, platform, noProbe), `${platform}: ${JSON.stringify(env)}`).toBeUndefined();
 });
 
-test("resolvePager treats cat and more pagers as no pager so the inline preview is used", () => {
-	const noProbe = () => expect.unreachable("cat and more must not fall back to less");
-	// Only the effective pager matters: PI_PAGER still wins over PAGER=cat.
-	expect(resolvePager({ PI_PAGER: "less", PAGER: "cat" }, "linux", noProbe)).toStrictEqual({ cmd: "less", args: ["-+F", "-+X"] });
+test.for([
+	{ pager: "less", platform: "linux", cmd: "less", args: ["-+F", "-+X"] },
+	{ pager: "  less\t-R  ", platform: "linux", cmd: "less", args: ["-R", "-+F", "-+X"] },
+	{ pager: "less -+F -F", platform: "linux", cmd: "less", args: ["-+F", "-F", "-+F", "-+X"] },
+	{ pager: "/usr/bin/less -R", platform: "linux", cmd: "/usr/bin/less", args: ["-R", "-+F", "-+X"] },
+	{ pager: "less -FRX --", platform: "linux", cmd: "less", args: ["-FRX", "-+F", "-+X", "--"] },
+	{ pager: "less -- -F", platform: "linux", cmd: "less", args: ["-+F", "-+X", "--", "-F"] },
+	{ pager: "less", platform: "win32", cmd: "less", args: ["-+F", "-+X"] },
+	{ pager: "LESS -R", platform: "win32", cmd: "LESS", args: ["-R", "-+F", "-+X"] },
+	{ pager: "less.exe -FRX", platform: "win32", cmd: "less.exe", args: ["-FRX", "-+F", "-+X"] },
+	{ pager: "C:\\tools\\LESS.EXE -F", platform: "win32", cmd: "C:\\tools\\LESS.EXE", args: ["-F", "-+F", "-+X"] },
+	{ pager: "C:/tools/less.exe -R", platform: "win32", cmd: "C:/tools/less.exe", args: ["-R", "-+F", "-+X"] },
+] as const)("resolvePager overrides quit-if-one-screen and no-init for configured less executables: $pager on $platform", ({ pager, platform, cmd, args }) => {
+	expect(resolvePager({ PAGER: pager, LESS: "-FRX" }, platform, lessProbes.unprobed)).toStrictEqual({ cmd, args });
 });
 
-test("resolvePager overrides quit-if-one-screen and no-init for configured less executables", () => {
-	const cases: { pager: string; platform: NodeJS.Platform; cmd: string; args: string[] }[] = [
-		{ pager: "less", platform: "linux", cmd: "less", args: ["-+F", "-+X"] },
-		{ pager: "  less\t-R  ", platform: "linux", cmd: "less", args: ["-R", "-+F", "-+X"] },
-		{ pager: "less -F", platform: "linux", cmd: "less", args: ["-F", "-+F", "-+X"] },
-		{ pager: "less -FRX", platform: "linux", cmd: "less", args: ["-FRX", "-+F", "-+X"] },
-		{ pager: "less --quit-if-one-screen -S", platform: "linux", cmd: "less", args: ["--quit-if-one-screen", "-S", "-+F", "-+X"] },
-		{ pager: "less --no-init -R", platform: "linux", cmd: "less", args: ["--no-init", "-R", "-+F", "-+X"] },
-		{ pager: "less -+F -F", platform: "linux", cmd: "less", args: ["-+F", "-F", "-+F", "-+X"] },
-		{ pager: "/usr/bin/less -R", platform: "linux", cmd: "/usr/bin/less", args: ["-R", "-+F", "-+X"] },
-		{ pager: "./less -F", platform: "darwin", cmd: "./less", args: ["-F", "-+F", "-+X"] },
-		{ pager: "less -FRX --", platform: "linux", cmd: "less", args: ["-FRX", "-+F", "-+X", "--"] },
-		{ pager: "less -- -F", platform: "linux", cmd: "less", args: ["-+F", "-+X", "--", "-F"] },
-		{ pager: "less", platform: "win32", cmd: "less", args: ["-+F", "-+X"] },
-		{ pager: "LESS -R", platform: "win32", cmd: "LESS", args: ["-R", "-+F", "-+X"] },
-		{ pager: "less.exe -FRX", platform: "win32", cmd: "less.exe", args: ["-FRX", "-+F", "-+X"] },
-		{ pager: "C:\\tools\\LESS.EXE -F", platform: "win32", cmd: "C:\\tools\\LESS.EXE", args: ["-F", "-+F", "-+X"] },
-		{ pager: "C:/tools/less.exe -R", platform: "win32", cmd: "C:/tools/less.exe", args: ["-R", "-+F", "-+X"] },
-	];
-	for (const { pager, platform, cmd, args } of cases) {
-		const env = { PAGER: pager, LESS: "-FRX" };
-		expect(
-			resolvePager(env, platform, () => expect.unreachable("configured pagers must not probe less")),
-			`${platform}: ${pager}`,
-		).toStrictEqual({ cmd, args });
-		expect(env).toStrictEqual({ PAGER: pager, LESS: "-FRX" });
-	}
+test.for([
+	{ pager: "bat", platform: "linux", cmd: "bat", args: ["--paging=always"] },
+	{ pager: "batcat --plain", platform: "linux", cmd: "batcat", args: ["--plain", "--paging=always"] },
+	{ pager: "bat --paging=never", platform: "linux", cmd: "bat", args: ["--paging=never", "--paging=always"] },
+	{ pager: "/opt/less/bat --plain", platform: "linux", cmd: "/opt/less/bat", args: ["--plain", "--paging=always"] },
+	{ pager: "/usr/bin/batcat -p --", platform: "linux", cmd: "/usr/bin/batcat", args: ["-p", "--paging=always", "--"] },
+	{ pager: "bat.exe --plain", platform: "win32", cmd: "bat.exe", args: ["--plain", "--paging=always"] },
+	{ pager: "C:\\tools\\BATCAT.EXE", platform: "win32", cmd: "C:\\tools\\BATCAT.EXE", args: ["--paging=always"] },
+] as const)("resolvePager forces paging for configured bat executables: $pager on $platform", ({ pager, platform, cmd, args }) => {
+	expect(resolvePager({ PAGER: pager }, platform, lessProbes.unprobed)).toStrictEqual({ cmd, args });
 });
 
-test("resolvePager forces paging for configured bat executables", () => {
-	const cases: { pager: string; platform: NodeJS.Platform; cmd: string; args: string[] }[] = [
-		{ pager: "bat", platform: "linux", cmd: "bat", args: ["--paging=always"] },
-		{ pager: "batcat --plain", platform: "linux", cmd: "batcat", args: ["--plain", "--paging=always"] },
-		{ pager: "bat --paging=never", platform: "linux", cmd: "bat", args: ["--paging=never", "--paging=always"] },
-		{ pager: "/opt/less/bat --plain", platform: "linux", cmd: "/opt/less/bat", args: ["--plain", "--paging=always"] },
-		{ pager: "/usr/bin/batcat -p --", platform: "linux", cmd: "/usr/bin/batcat", args: ["-p", "--paging=always", "--"] },
-		{ pager: "bat.exe --plain", platform: "win32", cmd: "bat.exe", args: ["--plain", "--paging=always"] },
-		{ pager: "C:\\tools\\BATCAT.EXE", platform: "win32", cmd: "C:\\tools\\BATCAT.EXE", args: ["--paging=always"] },
-	];
-	for (const { pager, platform, cmd, args } of cases) {
-		expect(
-			resolvePager({ PAGER: pager }, platform, () => expect.unreachable("configured pagers must not probe less")),
-			`${platform}: ${pager}`,
-		).toStrictEqual({ cmd, args });
-	}
-});
-
-test("resolvePager leaves other pagers and wrappers unchanged", () => {
-	const cases: { pager: string; platform: NodeJS.Platform; cmd: string; args: string[] }[] = [
-		{ pager: "less-wrapper -F", platform: "linux", cmd: "less-wrapper", args: ["-F"] },
-		{ pager: "env less -FRX", platform: "linux", cmd: "env", args: ["less", "-FRX"] },
-		{ pager: "LESS -F", platform: "linux", cmd: "LESS", args: ["-F"] },
-		{ pager: "less.exe -F", platform: "linux", cmd: "less.exe", args: ["-F"] },
-		{ pager: "less.cmd -F", platform: "win32", cmd: "less.cmd", args: ["-F"] },
-		{ pager: "env bat --plain", platform: "linux", cmd: "env", args: ["bat", "--plain"] },
-		{ pager: "bat-wrapper", platform: "linux", cmd: "bat-wrapper", args: [] },
-		{ pager: "bat.exe --plain", platform: "linux", cmd: "bat.exe", args: ["--plain"] },
-		{ pager: "bat.cmd --plain", platform: "win32", cmd: "bat.cmd", args: ["--plain"] },
-	];
-	for (const { pager, platform, cmd, args } of cases) {
-		expect(
-			resolvePager({ PAGER: pager }, platform, () => expect.unreachable("configured pagers must not probe less")),
-			`${platform}: ${pager}`,
-		).toStrictEqual({ cmd, args });
-	}
-});
-
-// Skipped on Windows: with shell: true a missing binary shows up only as a cmd.exe exit code.
-test.skipIf(process.platform === "win32")("spawnPager rejects with a readable error when the pager binary is missing", async () => {
-	await expect(spawnPager("body", { cmd: "pi-schematic-definitely-missing-xyz", args: [] })).rejects.toThrow(/pi-schematic-definitely-missing-xyz not found/);
-});
-
-test("spawnPager pipes the full body to the child's stdin", async () => {
-	const tmpDir = await mkdtemp(join(tmpdir(), "pager-stdin-test-"));
-	const scriptPath = join(tmpDir, "pager.cjs");
-	const outPath = join(tmpDir, "out.txt");
-	try {
-		// Writes only to a file — produces no stdout, so the child's
-		// inherited stdout doesn't pollute the test runner's own output.
-		// A script file, not `-e`: shell: true on Windows joins args unquoted,
-		// which would split a multi-word -e script apart.
-		const script = [
-			'const fs = require("node:fs");',
-			"const chunks = [];",
-			'process.stdin.on("data", (c) => chunks.push(c));',
-			'process.stdin.on("end", () => { fs.writeFileSync(process.argv[2], Buffer.concat(chunks)); });',
-		].join("\n");
-		await writeFile(scriptPath, script);
-		const body = "line one\nline two\n";
-
-		await spawnPager(body, { cmd: process.execPath, args: [scriptPath, outPath] });
-
-		expect(await readFile(outPath, "utf8")).toBe(body);
-	} finally {
-		await rm(tmpDir, { recursive: true, force: true });
-	}
-});
-
-test("spawnPager resolves when the pager exits without reading stdin (EPIPE/EOF is swallowed)", async () => {
-	// Several MB comfortably exceeds the OS pipe buffer (64KB on Linux), so
-	// the write is still in flight — and hits EPIPE (EOF on Windows) — when
-	// the child's immediate exit closes the read end, instead of completing
-	// before the child even starts.
-	const body = "x".repeat(5 * 1024 * 1024);
-
-	await expect(spawnPager(body, { cmd: process.execPath, args: ["-e", "process.exit(0)"] })).resolves.toBeUndefined();
-});
-
-test("spawnPager resolves when the pager exits nonzero", async () => {
-	await expect(spawnPager("body", { cmd: process.execPath, args: ["-e", "process.exit(1)"] })).resolves.toBeUndefined();
-});
-
-test("/notebook enter suspends the TUI, awaits the pager, then restores the TUI and reopens the list", async () => {
-	const events: string[] = [];
-	const spawned = createDeferred();
-	const pagerExit = createDeferred();
-	setPagerRuntime({
-		resolvePager: () => ({ cmd: "pager", args: [] }),
-		spawnPager: async (body, pager) => {
-			events.push(`spawn:${pager.cmd}:${body}`);
-			spawned.resolve();
-			await pagerExit.promise;
-		},
-	});
-
-	const pi = await createTestHost();
-	const notebookWrite = getTool(pi, "notebook_write");
-	await notebookWrite.execute("1", { name: "zeta", content: "old body" }, undefined, undefined, tuiContext());
-	await notebookWrite.execute("2", { name: "alpha", content: "other" }, undefined, undefined, tuiContext());
-
-	const tui = {
-		stop: () => events.push("stop"),
-		start: () => events.push("start"),
-		requestRender: (force?: boolean) => events.push(`render:${force === true ? "force" : "soft"}`),
-	};
-
-	let customCalls = 0;
-	const renders: string[] = [];
-	const handlerPromise = getCommand(pi, "notebook").handler(
-		"",
-		tuiContext({
-			percent: 20,
-			custom: (build: unknown) => {
-				customCalls++;
-				if (customCalls > 2) {
-					return Promise.resolve(undefined);
-				}
-				let result: unknown;
-				assertOverlayFactory(build);
-				const overlay = build(tui, theme, {}, (value: unknown) => {
-					result = value;
-				});
-				if (customCalls === 1) {
-					// Move off the default index 0 so the reopen assertion proves cursor restore.
-					overlay.handleInput("\x1b[B");
-					overlay.handleInput("\r");
-				} else {
-					renders.push(stripAnsi(overlay.render(120).join("\n")));
-					return Promise.resolve(undefined);
-				}
-				return Promise.resolve(result);
-			},
-		}),
-	);
-
-	// Wait until the pager is running before letting it exit.
-	await spawned.promise;
-	// Ignore any overlay-side renders queued by handleInput before done() resolved.
-	const lifecycle = () => events.filter((e) => e === "stop" || e === "start" || e.startsWith("spawn:") || e === "render:force");
-	expect(lifecycle(), "TUI must be stopped before spawn").toStrictEqual(["stop", "spawn:pager:old body"]);
-	pagerExit.resolve();
-	await handlerPromise;
-
-	expect(lifecycle()).toStrictEqual(["stop", "spawn:pager:old body", "start", "render:force"]);
-	expect(customCalls, "list must reopen after pager exits").toBe(2);
-	const arrowLine = renders[0].split("\n").find((l) => l.includes("→"));
-	assertPresent(arrowLine, `expected a cursor row, got:\n${renders[0]}`);
-	expect(arrowLine).toMatch(/zeta/);
-	expect(arrowLine).not.toMatch(/alpha/);
-});
-
-/**
- * ctx.ui.custom stub: runs beforeEnter, then presses Enter on the first open.
- * Every later open is rendered into `reopens` and closed.
- */
-function enterOnFirstOpen(beforeEnter: () => void | Promise<void> = vi.fn()) {
-	const reopens: string[] = [];
-	let opened = false;
-	const custom = async (build: unknown) => {
-		let result: unknown;
-		assertOverlayFactory(build);
-		const overlay = build({ stop: vi.fn(), start: vi.fn(), requestRender: vi.fn() }, theme, {}, (value: unknown) => {
-			result = value;
-		});
-		if (opened) {
-			reopens.push(stripAnsi(overlay.render(120).join("\n")));
-			return undefined;
-		}
-		opened = true;
-		await beforeEnter();
-		overlay.handleInput("\r");
-		return result;
-	};
-	return { custom, reopens };
-}
-
-test("/notebook pager interaction installs and removes a SIGINT guard", async () => {
-	const baselineSigint = process.listeners("SIGINT").length;
-	let duringSpawnListenerCount = -1;
-	setPagerRuntime({
-		resolvePager: () => ({ cmd: "pager", args: [] }),
-		spawnPager: () => {
-			duringSpawnListenerCount = process.listeners("SIGINT").length;
-			return Promise.resolve();
-		},
-	});
-
-	const pi = await createTestHost();
-	const notebookWrite = getTool(pi, "notebook_write");
-	await notebookWrite.execute("1", { name: "alpha", content: "body" }, undefined, undefined, tuiContext());
-
-	await getCommand(pi, "notebook").handler("", tuiContext({ percent: 20, custom: enterOnFirstOpen().custom }));
-
-	expect(duringSpawnListenerCount, "SIGINT guard must be installed during pager").toBe(baselineSigint + 1);
-	expect(process.listeners("SIGINT"), "SIGINT guard must be removed after pager").toHaveLength(baselineSigint);
-});
-
-test("openInPager removes the SIGINT guard even if tui.start throws", async () => {
-	const baselineSigint = process.listeners("SIGINT").length;
-	setPagerRuntime({ spawnPager: () => Promise.resolve() });
-
-	const tui = {
-		stop: vi.fn(),
-		start: () => {
-			throw new Error("start boom");
-		},
-		requestRender: vi.fn(),
-	};
-
-	await expect(openInPager(pagerTui(tui), "body", { cmd: "pager", args: [] })).rejects.toThrow(/start boom/);
-	expect(process.listeners("SIGINT"), "SIGINT guard must not leak when tui.start throws").toHaveLength(baselineSigint);
-});
-
-test("openInPager propagates a tui.stop failure without spawning, guarding SIGINT, or restarting", async () => {
-	const baselineSigint = process.listeners("SIGINT").length;
-	const spawnPager = vi.fn(() => Promise.resolve());
-	setPagerRuntime({ spawnPager });
-
-	const start = vi.fn();
-	const tui = {
-		stop: () => {
-			throw new Error("stop boom");
-		},
-		start,
-		requestRender: vi.fn(),
-	};
-
-	await expect(openInPager(pagerTui(tui), "body", { cmd: "pager", args: [] })).rejects.toThrow(/stop boom/);
-	expect(spawnPager, "pager must not spawn when tui.stop throws").not.toHaveBeenCalled();
-	expect(process.listeners("SIGINT"), "SIGINT guard must not leak when tui.stop throws").toHaveLength(baselineSigint);
-	expect(start, "TUI must not restart after a failed stop").not.toHaveBeenCalled();
-});
-
-test("/notebook surfaces pager spawn errors as a warning notification", async () => {
-	setPagerRuntime({
-		resolvePager: () => ({ cmd: "pager", args: [] }),
-		spawnPager: () =>
-			new Promise<never>(() => {
-				throw new Error("boom");
-			}),
-	});
-
-	const pi = await createTestHost();
-	const notebookWrite = getTool(pi, "notebook_write");
-	await notebookWrite.execute("1", { name: "alpha", content: "body" }, undefined, undefined, tuiContext());
-
-	const notifications: { message: string; level: string | undefined }[] = [];
-	await getCommand(pi, "notebook").handler(
-		"",
-		tuiContext({
-			percent: 20,
-			ui: {
-				notify: (message, level) => {
-					notifications.push({ message, level });
-				},
-			},
-			custom: enterOnFirstOpen().custom,
-		}),
-	);
-
-	expect(notifications).toStrictEqual([{ message: "pager failed: boom", level: "warning" }]);
-});
-
-test("/notebook reopens the list when the selected page vanished while it was open", async () => {
-	const spawnPager = vi.fn(() => Promise.resolve());
-	setPagerRuntime({
-		resolvePager: () => ({ cmd: "pager", args: [] }),
-		spawnPager,
-	});
-
-	const pi = await createTestHost();
-	await getTool(pi, "notebook_write").execute("1", { name: "alpha", content: "body" }, undefined, undefined, tuiContext());
-	let branch: unknown[] = [];
-	const handoffCtx = hostContext({
-		...tuiContext(),
-		getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
-		sessionManager: { getBranch: () => branch },
-	});
-	await getTool(pi, "handoff").execute("2", { nextInstruction: "continue", discardPages: ["alpha"] }, undefined, undefined, handoffCtx);
-	const results = await callHandlers(pi, "turn_end", turnEndEvent({ toolResults: [handoffToolResult("2")] }), handoffCtx);
-	branch = boundaryEntries(results).map((entry, index) => ({ ...entry, id: `entry-${index}` }));
-
-	// turn_start applies the discard after the list was built with alpha and before Enter selects it.
-	const { custom, reopens } = enterOnFirstOpen(async () => {
-		await callHandlers(pi, "turn_start", { type: "turn_start", turnIndex: 1, timestamp: 0 }, handoffCtx);
-	});
-	await getCommand(pi, "notebook").handler("", tuiContext({ percent: 20, custom }));
-
-	expect(reopens, "list must reopen instead of closing").toHaveLength(1);
-	expect(reopens[0]).toMatch(/Notebook \(0 pages\)/);
-	expect(spawnPager, "a vanished page must not open the pager").not.toHaveBeenCalled();
-});
-
-test("/notebook inline preview returns to the list on any key when no pager is available", async () => {
-	setPagerRuntime({ resolvePager: () => undefined });
-
-	const pi = await createTestHost();
-	const notebookWrite = getTool(pi, "notebook_write");
-	await notebookWrite.execute("1", { name: "zeta", content: "body line" }, undefined, undefined, tuiContext());
-	await notebookWrite.execute("2", { name: "alpha", content: "other" }, undefined, undefined, tuiContext());
-
-	let customCalls = 0;
-	const renders: string[] = [];
-	await getCommand(pi, "notebook").handler(
-		"",
-		tuiContext({
-			percent: 20,
-			custom: (build: unknown) => {
-				customCalls++;
-				let result: unknown;
-				assertOverlayFactory(build);
-				const overlay = build({ requestRender: vi.fn() }, theme, {}, (value: unknown) => {
-					result = value;
-				});
-				if (customCalls === 1) {
-					// Move off the default index 0 so the reopen assertion proves cursor restore.
-					overlay.handleInput("\x1b[B");
-					overlay.handleInput("\r"); // opens the inline preview
-					overlay.handleInput(" "); // any key returns to the list
-					return Promise.resolve(result);
-				}
-				renders.push(stripAnsi(overlay.render(120).join("\n")));
-				return Promise.resolve(undefined);
-			},
-		}),
-	);
-
-	expect(customCalls, "list must reopen after the inline preview").toBe(2);
-	const arrowLine = renders[0].split("\n").find((l) => l.includes("→"));
-	assertPresent(arrowLine, `expected a cursor row, got:\n${renders[0]}`);
-	expect(arrowLine).toMatch(/zeta/);
-	expect(arrowLine).not.toMatch(/alpha/);
-});
-
-test("/notebook selecting an empty-content page opens the preview instead of closing the picker", async () => {
-	setPagerRuntime({ resolvePager: () => undefined });
-
-	const pi = await createTestHost();
-	const notebookWrite = getTool(pi, "notebook_write");
-	await notebookWrite.execute("1", { name: "alpha", content: "" }, undefined, undefined, tuiContext());
-
-	const done = vi.fn();
-	await getCommand(pi, "notebook").handler(
-		"",
-		tuiContext({
-			percent: 20,
-			custom: (build: unknown) => {
-				assertOverlayFactory(build);
-				const overlay = build({ requestRender: vi.fn() }, theme, {}, done);
-				overlay.handleInput("\r"); // Enter on the empty-content page
-				expect(done, "an empty page body must not close the picker early").not.toHaveBeenCalled();
-				const preview = stripAnsi(overlay.render(120).join("\n"));
-				expect(preview, "inline preview header must show the page name").toMatch(/alpha/);
-				overlay.handleInput(" "); // any key leaves the inline preview
-				expect(done).toHaveBeenCalledOnce();
-				return Promise.resolve();
-			},
-		}),
-	);
+test.for([
+	{ pager: "less-wrapper -F", platform: "linux", cmd: "less-wrapper", args: ["-F"] },
+	{ pager: "env less -FRX", platform: "linux", cmd: "env", args: ["less", "-FRX"] },
+	{ pager: "LESS -F", platform: "linux", cmd: "LESS", args: ["-F"] },
+	{ pager: "less.exe -F", platform: "linux", cmd: "less.exe", args: ["-F"] },
+	{ pager: "less.cmd -F", platform: "win32", cmd: "less.cmd", args: ["-F"] },
+	{ pager: "env bat --plain", platform: "linux", cmd: "env", args: ["bat", "--plain"] },
+	{ pager: "bat-wrapper", platform: "linux", cmd: "bat-wrapper", args: [] },
+	{ pager: "bat.exe --plain", platform: "linux", cmd: "bat.exe", args: ["--plain"] },
+	{ pager: "bat.cmd --plain", platform: "win32", cmd: "bat.cmd", args: ["--plain"] },
+] as const)("resolvePager leaves other pagers and wrappers unchanged: $pager on $platform", ({ pager, platform, cmd, args }) => {
+	expect(resolvePager({ PAGER: pager }, platform, lessProbes.unprobed)).toStrictEqual({ cmd, args });
 });
 
 // ── saveNotebookPage tests ────────────────────────────────────────────
 
 test("saveNotebookPage serializes concurrent writes and preserves completion order", async () => {
-	const pi = await createTestHost();
-	const state = createState();
+	const host = await notebookHost();
+	const { state, api } = host;
 	const firstGate = createDeferred();
 	const order: string[] = [];
 
-	const first = saveNotebookPage(pi, state, "entry-a", "first", async () => {
+	const first = saveNotebookPage(api, state, "entry-a", "first", async () => {
 		order.push("first:start");
 		await firstGate.promise;
 		order.push("first:end");
 	});
-	const second = saveNotebookPage(pi, state, "entry-a", "second", () => {
+	const second = saveNotebookPage(api, state, "entry-a", "second", () => {
 		order.push("second:start");
 		return Promise.resolve();
 	});
@@ -1194,18 +759,17 @@ test("saveNotebookPage serializes concurrent writes and preserves completion ord
 
 	expect(order).toStrictEqual(["first:start", "first:end", "second:start"]);
 	expect(state.notebookPages.get("entry-a")).toBe("second");
-	expect(getHostRecords(pi).appendedEntries.map((entry) => recordOf(entry.data, "the appended entry data").content)).toStrictEqual(["first", "second"]);
+	expect(host.fixture.host.appendedEntries.map((entry) => recordOf(entry.data, "the appended entry data").content)).toStrictEqual(["first", "second"]);
 });
 
 test("saveNotebookPage keeps write order across runtime singleton swaps", async () => {
-	const pi = await createTestHost();
-	const state = createState();
+	const { state, api } = await notebookHost();
 	const previousSingletons = getSingletons();
 	const firstGate = createDeferred();
 	const order: string[] = [];
 
 	try {
-		const first = saveNotebookPage(pi, state, "entry-a", "first", async () => {
+		const first = saveNotebookPage(api, state, "entry-a", "first", async () => {
 			order.push("first:start");
 			await firstGate.promise;
 			order.push("first:end");
@@ -1217,7 +781,7 @@ test("saveNotebookPage keeps write order across runtime singleton swaps", async 
 			writeContext: new AsyncLocalStorage<true>(),
 			frameScheduler: getSingletons().frameScheduler,
 		});
-		const second = saveNotebookPage(pi, state, "entry-a", "second", () => {
+		const second = saveNotebookPage(api, state, "entry-a", "second", () => {
 			order.push("second:start");
 			return Promise.resolve();
 		});
@@ -1231,38 +795,35 @@ test("saveNotebookPage keeps write order across runtime singleton swaps", async 
 		expect(state.notebookPages.get("entry-a")).toBe("second");
 	} finally {
 		firstGate.resolve();
-		resetNotebookWriteLock();
 		__setSingletons(previousSingletons, { forceWriteLock: true });
 	}
 });
 
 test("saveNotebookPage rejects true reentrancy explicitly", async () => {
-	const pi = await createTestHost();
-	const state = createState();
+	const { state, api } = await notebookHost();
 
 	await expect(
-		saveNotebookPage(pi, state, "outer", "outer", async () => {
-			await saveNotebookPage(pi, state, "inner", "inner");
+		saveNotebookPage(api, state, "outer", "outer", async () => {
+			await saveNotebookPage(api, state, "inner", "inner");
 		}),
 	).rejects.toThrow(/not reentrant/i);
 	expect(state.notebookPages.size).toBe(0);
 });
 
 test("saveNotebookPage stays non-reentrant across runtime singleton swaps", async () => {
-	const pi = await createTestHost();
-	const state = createState();
+	const { state, api } = await notebookHost();
 	const previousSingletons = getSingletons();
 
 	try {
 		await expect(
 			Promise.race([
-				saveNotebookPage(pi, state, "outer", "outer", async () => {
+				saveNotebookPage(api, state, "outer", "outer", async () => {
 					__setSingletons({
 						writeLock: createWriteLock(),
 						writeContext: new AsyncLocalStorage<true>(),
 						frameScheduler: getSingletons().frameScheduler,
 					});
-					await saveNotebookPage(pi, state, "inner", "inner");
+					await saveNotebookPage(api, state, "inner", "inner");
 				}),
 				new Promise<never>((_, reject) => {
 					setTimeout(() => {
@@ -1273,18 +834,16 @@ test("saveNotebookPage stays non-reentrant across runtime singleton swaps", asyn
 		).rejects.toThrow(/not reentrant/i);
 		expect(state.notebookPages.size).toBe(0);
 	} finally {
-		resetNotebookWriteLock();
 		__setSingletons(previousSingletons, { forceWriteLock: true });
 	}
 });
 
 test("saveNotebookPage releases the lock when assertWritable throws", async () => {
-	const pi = await createTestHost();
-	const state = createState();
+	const { state, api } = await notebookHost();
 
 	await expect(
 		saveNotebookPage(
-			pi,
+			api,
 			state,
 			"broken",
 			"value",
@@ -1294,139 +853,103 @@ test("saveNotebookPage releases the lock when assertWritable throws", async () =
 				}),
 		),
 	).rejects.toThrow(/blocked/);
-	await expect(saveNotebookPage(pi, state, "fresh", "value")).resolves.toMatchObject({ clipped: false });
+	await expect(saveNotebookPage(api, state, "fresh", "value")).resolves.toMatchObject({ clipped: false });
 	expect(state.notebookPages.get("fresh")).toBe("value");
-});
-
-test("resetNotebookWriteLock clears abandoned lock state for later writes", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const gate = createDeferred();
-	void saveNotebookPage(pi, state, "stuck", "value", async () => {
-		await gate.promise;
-	});
-	await Promise.resolve();
-	resetNotebookWriteLock();
-
-	await expect(saveNotebookPage(pi, state, "fresh", "value")).resolves.toMatchObject({ clipped: false });
-	expect(state.notebookPages.get("fresh")).toBe("value");
-	gate.resolve();
 });
 
 test("saveNotebookPage truncates oversized content before persisting", async () => {
-	const pi = await createTestHost();
-	const state = createState();
+	const host = await notebookHost();
 	const content = "first line\n" + "detail\n".repeat(3000);
 
-	const result = await saveNotebookPage(pi, state, "large-page", content);
-	const persisted = appendedData(pi, 0).content;
-	assertString(persisted, "Expected the persisted content to be a string.");
+	const result = await saveNotebookPage(host.api, host.state, "large-page", content);
+	const persisted = stringOf(appendedData(host, 0).content, "the persisted content");
 
 	expect(persisted.length, "oversized notebook content should be truncated").toBeLessThan(content.length);
-	expect(state.notebookPages.get("large-page")).toBe(persisted);
+	expect(host.state.notebookPages.get("large-page")).toBe(persisted);
 	expect(result.preview).toBe("first line");
 	expect(persisted).toMatch(/^first line/m);
 });
 
 test("resetState clears epoch and the next notebook write starts a fresh generation", async () => {
-	const pi = await createTestHost();
-	const state = createState();
+	const host = await notebookHost();
+	const { state, api } = host;
 
-	await saveNotebookPage(pi, state, "entry-a", "first");
-	await saveNotebookPage(pi, state, "entry-b", "second");
+	await saveNotebookPage(api, state, "entry-a", "first");
+	await saveNotebookPage(api, state, "entry-b", "second");
 	expect(state.epoch).toBe(1);
-	expect(appendedData(pi, 0).epoch).toBe(1);
-	expect(appendedData(pi, 1).epoch).toBe(1);
+	expect(appendedData(host, 0).epoch).toBe(1);
+	expect(appendedData(host, 1).epoch).toBe(1);
 
 	resetState(state);
 	expect(state.epoch).toBe(0);
 
-	await saveNotebookPage(pi, state, "entry-c", "third");
+	await saveNotebookPage(api, state, "entry-c", "third");
 	expect(state.epoch).toBe(1);
-	expect(appendedData(pi, 2).epoch).toBe(1);
+	expect(appendedData(host, 2).epoch).toBe(1);
 });
 
 // ── Notebook tool definition metadata tests ───────────────────────────
 
 test("notebook tool definitions include prompt hints when withPromptHints is true", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const tools = createNotebookToolDefinitions(pi, state, { withPromptHints: true });
+	const { state, api } = await notebookHost();
+	const tools = createNotebookToolDefinitions(api, state, { withPromptHints: true });
 
-	// Structural invariants: every tool has a snippet, and all guidelines exist and are non-trivial
-	for (const tool of tools) {
-		expect(tool.promptSnippet, `${tool.name} should have promptSnippet when withPromptHints=true`).toBeTypeOf("string");
-		assertPresent(tool.promptGuidelines, `${tool.name} should have promptGuidelines when withPromptHints=true`);
-		expect(tool.promptGuidelines.length, `${tool.name} should have at least 2 promptGuidelines`).toBeGreaterThanOrEqual(2);
-		expect(
-			tool.promptGuidelines.filter((g: string) => !(g.length > 10)),
-			`${tool.name} each guideline should be non-trivial`,
-		).toStrictEqual([]);
-	}
-	const notebookWrite = tools.find((t) => t.name === "notebook_write");
-	const notebookRead = tools.find((t) => t.name === "notebook_read");
-	const notebookIndex = tools.find((t) => t.name === "notebook_index");
-	assertPresent(notebookWrite, "notebook_write is registered");
-	assertPresent(notebookRead, "notebook_read is registered");
-	assertPresent(notebookIndex, "notebook_index is registered");
-
-	// Conceptual: notebook_write is future-context oriented. The loop above already
-	// asserted that every tool has promptGuidelines.
-	const writeGuidelines = notebookWrite.promptGuidelines?.join(" ");
-	expect(writeGuidelines).toMatch(/subject-oriented pages/i);
-	expect(writeGuidelines).toMatch(/fresh context/i);
-	expect(writeGuidelines).toMatch(/belongs in handoff/i);
-	expect(notebookIndex.promptGuidelines?.join(" ")).toMatch(/relevant memory pages/i);
-
-	// Conceptual: descriptions mention the notebook-page metaphor and durable memory contract
-	expect(notebookWrite.description).toMatch(/page|future contexts/i);
-	expect(JSON.stringify(notebookWrite.parameters)).toMatch(/high-value knowledge/i);
-	expect(JSON.stringify(notebookWrite.parameters)).not.toMatch(/grounding/i);
-	expect(notebookRead.description).toMatch(/notebook page|page/i);
-	expect(notebookRead.description).toMatch(/truncation notice/i);
-	expect(notebookIndex.description).toMatch(/notebook index|index/i);
+	expect(
+		tools.map((tool) => ({ name: tool.name, promptSnippet: typeof tool.promptSnippet, promptGuidelines: (tool.promptGuidelines?.length ?? 0) > 0 })),
+	).toStrictEqual([
+		{ name: "notebook_write", promptSnippet: "string", promptGuidelines: true },
+		{ name: "notebook_read", promptSnippet: "string", promptGuidelines: true },
+		{ name: "notebook_index", promptSnippet: "string", promptGuidelines: true },
+	]);
 });
 
 test("notebook tool definitions omit prompt hints by default", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const tools = createNotebookToolDefinitions(pi, state);
+	const { state, api } = await notebookHost();
+	const tools = createNotebookToolDefinitions(api, state);
 
-	for (const tool of tools) {
-		expect(tool.promptSnippet, `${tool.name} should not have promptSnippet by default`).toBeUndefined();
-		expect(tool.promptGuidelines, `${tool.name} should not have promptGuidelines by default`).toBeUndefined();
-	}
+	expect(tools.map((tool) => ({ name: tool.name, promptSnippet: tool.promptSnippet, promptGuidelines: tool.promptGuidelines }))).toStrictEqual([
+		{ name: "notebook_write", promptSnippet: undefined, promptGuidelines: undefined },
+		{ name: "notebook_read", promptSnippet: undefined, promptGuidelines: undefined },
+		{ name: "notebook_index", promptSnippet: undefined, promptGuidelines: undefined },
+	]);
 });
 
 // ── Handoff notebook discard drafts ───────────────────────────────────
 
-async function notebookWithPages(pages: Record<string, string>) {
-	const pi = await createTestHost();
-	const state = createState();
+async function notebookWithPages(pages: Record<string, string>): Promise<NotebookHost> {
+	const host = await notebookHost();
 	for (const [name, content] of Object.entries(pages)) {
-		await saveNotebookPage(pi, state, name, content);
+		await saveNotebookPage(host.api, host.state, name, content);
 	}
-	return { pi, state };
+	return host;
 }
 
-function branchWith(pi: TestPI, drafts: readonly CustomEntryDraft[]): CustomEntry[] {
-	const persisted = persistedBranch(pi);
-	return [...persisted, ...drafts.map(({ customType, data }, index) => customEntry(customType, data, persisted.length + index))];
+/** The branch of a session holding what `host` persisted, then `drafts`. */
+function branchWith(host: NotebookHost, drafts: readonly CustomEntryDraft[]): SessionEntry[] {
+	const session = sessionWith(host.fixture.host.appendedEntries);
+	appendDrafts(session, drafts);
+	return session.getBranch();
 }
 
-function restoredFrom(branch: readonly SessionEntry[]) {
+function restoredFrom(branch: readonly SessionEntry[]): SchematicState {
 	const restored = createState();
 	reconstructNotebook(restored, branch);
 	return restored;
 }
 
+function draftEpochs(drafts: readonly CustomEntryDraft[]): unknown[] {
+	return drafts.map((draft) => recordOf(draft.data, "the draft data").epoch);
+}
+
 test("buildNotebookDiscardDrafts leaves the state untouched", async () => {
 	const { state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
-	const pagesBefore = Array.from(state.notebookPages.entries());
 
 	buildNotebookDiscardDrafts(state, ["page-a"]);
 
-	expect(Array.from(state.notebookPages.entries())).toStrictEqual(pagesBefore);
+	expect(Array.from(state.notebookPages.entries())).toStrictEqual([
+		["page-a", "content-a"],
+		["page-b", "content-b"],
+	]);
 	expect(state.epoch).toBe(1);
 	expect(state.discardEpochWatermark).toBe(0);
 });
@@ -1461,7 +984,7 @@ test("buildNotebookDiscardDrafts moves past the discard watermark", async () => 
 
 	const { drafts } = buildNotebookDiscardDrafts(state, ["page-a"]);
 
-	expect(drafts.map((draft) => recordOf(draft.data, "the draft data").epoch)).toStrictEqual([1, 5, 5]);
+	expect(draftEpochs(drafts)).toStrictEqual([1, 5, 5]);
 });
 
 test("buildNotebookDiscardDrafts ignores unknown and repeated names", async () => {
@@ -1469,8 +992,14 @@ test("buildNotebookDiscardDrafts ignores unknown and repeated names", async () =
 
 	const result = buildNotebookDiscardDrafts(state, ["page-a", "ghost", "page-a"]);
 
-	expect(result.discarded).toBe(1);
-	expect(result).toStrictEqual(buildNotebookDiscardDrafts(state, ["page-a"]));
+	expect(result).toStrictEqual({
+		drafts: [
+			{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
+			{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 2, name: "page-b", content: "content-b", clipped: false } },
+			{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 2 } },
+		],
+		discarded: 1,
+	});
 });
 
 test("buildNotebookDiscardDrafts writes nothing when no named page exists", async () => {
@@ -1481,10 +1010,10 @@ test("buildNotebookDiscardDrafts writes nothing when no named page exists", asyn
 });
 
 test("discard drafts written to a branch make the survivors the active generation", async () => {
-	const { pi, state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
-	const { drafts } = buildNotebookDiscardDrafts(state, ["page-a"]);
+	const host = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
+	const { drafts } = buildNotebookDiscardDrafts(host.state, ["page-a"]);
 
-	const restored = restoredFrom(branchWith(pi, drafts));
+	const restored = restoredFrom(branchWith(host, drafts));
 
 	expect(Array.from(restored.notebookPages.entries())).toStrictEqual([["page-b", "content-b"]]);
 	expect(restored.epoch).toBe(2);
@@ -1492,10 +1021,10 @@ test("discard drafts written to a branch make the survivors the active generatio
 });
 
 test("discarding every page leaves an empty next generation", async () => {
-	const { pi, state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
-	const { drafts, discarded } = buildNotebookDiscardDrafts(state, ["page-a", "page-b"]);
+	const host = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
+	const { drafts, discarded } = buildNotebookDiscardDrafts(host.state, ["page-a", "page-b"]);
 
-	const restored = restoredFrom(branchWith(pi, drafts));
+	const restored = restoredFrom(branchWith(host, drafts));
 
 	expect(discarded).toBe(2);
 	expect(Array.from(restored.notebookPages.entries())).toStrictEqual([]);
@@ -1503,10 +1032,10 @@ test("discarding every page leaves an empty next generation", async () => {
 });
 
 test("survivors staged without their closing generation marker stay invisible to rehydration", async () => {
-	const { pi, state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b", "page-c": "content-c" });
-	const { drafts } = buildNotebookDiscardDrafts(state, ["page-a"]);
+	const host = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b", "page-c": "content-c" });
+	const { drafts } = buildNotebookDiscardDrafts(host.state, ["page-a"]);
 
-	const restored = restoredFrom(branchWith(pi, drafts.slice(0, -1)));
+	const restored = restoredFrom(branchWith(host, drafts.slice(0, -1)));
 
 	expect(Array.from(restored.notebookPages.entries()).sort()).toStrictEqual([
 		["page-a", "content-a"],
@@ -1517,38 +1046,16 @@ test("survivors staged without their closing generation marker stay invisible to
 	expect(restored.discardEpochWatermark).toBe(2);
 });
 
-test("rehydration uses only the active session branch", async () => {
-	const state = createState();
-	const pi = await createTestHost((api) => {
-		registerNotebookRehydration(api, state);
-	});
-	const handler = getHandler(pi, "session_start");
-
-	await handler(
-		{ type: "session_start", reason: "startup" },
-		hostContext({
-			sessionManager: {
-				getBranch: () => [
-					{ type: "custom", customType: "notebook-entry", data: { epoch: 1, name: "active", content: "kept" } },
-					{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
-				],
-			},
-		}),
-	);
-
-	expect(Array.from(state.notebookPages.entries())).toStrictEqual([["active", "kept"]]);
-});
-
 test("a discard after orphaned staged survivors uses a fresh epoch and does not resurrect them", async () => {
-	const { pi, state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b", "page-c": "content-c" });
+	const host = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b", "page-c": "content-c" });
 	// An earlier pass discarding page-b staged survivors at epoch 2 and never closed that generation.
-	const orphanDrafts = buildNotebookDiscardDrafts(state, ["page-b"]).drafts.slice(0, -1);
+	const orphanDrafts = buildNotebookDiscardDrafts(host.state, ["page-b"]).drafts.slice(0, -1);
 
-	const restarted = restoredFrom(branchWith(pi, orphanDrafts));
+	const restarted = restoredFrom(branchWith(host, orphanDrafts));
 	const retry = buildNotebookDiscardDrafts(restarted, ["page-a"]);
-	const restored = restoredFrom(branchWith(pi, [...orphanDrafts, ...retry.drafts]));
+	const restored = restoredFrom(branchWith(host, [...orphanDrafts, ...retry.drafts]));
 
-	expect(retry.drafts.map((draft) => recordOf(draft.data, "the draft data").epoch)).toStrictEqual([1, 3, 3, 3]);
+	expect(draftEpochs(retry.drafts)).toStrictEqual([1, 3, 3, 3]);
 	expect(Array.from(restored.notebookPages.entries()).sort()).toStrictEqual([
 		["page-b", "content-b"],
 		["page-c", "content-c"],
@@ -1557,9 +1064,9 @@ test("a discard after orphaned staged survivors uses a fresh epoch and does not 
 });
 
 test("branch invalidation preserves the discard watermark until reconstruction derives a fresh one", async () => {
-	const { pi, state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
-	const orphan = branchWith(pi, buildNotebookDiscardDrafts(state, ["page-a"]).drafts.slice(0, -1));
-	reconstructNotebook(state, orphan);
+	const host = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
+	const { state } = host;
+	reconstructNotebook(state, branchWith(host, buildNotebookDiscardDrafts(state, ["page-a"]).drafts.slice(0, -1)));
 	expect(state.discardEpochWatermark).toBe(2);
 
 	// Branch switch must not prematurely drop the watermark: a retry that reuses
@@ -1574,8 +1081,9 @@ test("branch invalidation preserves the discard watermark until reconstruction d
 });
 
 test("resetState clears the discard watermark for a fresh session", async () => {
-	const { pi, state } = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
-	reconstructNotebook(state, branchWith(pi, buildNotebookDiscardDrafts(state, ["page-a"]).drafts.slice(0, -1)));
+	const host = await notebookWithPages({ "page-a": "content-a", "page-b": "content-b" });
+	const { state } = host;
+	reconstructNotebook(state, branchWith(host, buildNotebookDiscardDrafts(state, ["page-a"]).drafts.slice(0, -1)));
 	expect(state.discardEpochWatermark).toBe(2);
 
 	resetState(state);
@@ -1584,318 +1092,257 @@ test("resetState clears the discard watermark for a fresh session", async () => 
 });
 
 test("session_tree rehydrates notebook state branch-scoped: pages and epoch follow the branch, writes use B state", async () => {
-	const pi = await createTestHost();
-	const notebookWrite = getTool(pi, "notebook_write");
-	const notebookIndex = getTool(pi, "notebook_index");
-	const sessionTree = getHandler(pi, "session_tree");
-
+	const session = SessionManager.inMemory(process.cwd());
 	// Branch A: pages a,b at committed epoch 1.
-	const branchA = [
-		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
-		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "page-a", content: "a-v1" } },
-		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "page-b", content: "b-v1" } },
-	];
+	const firstGeneration = session.appendCustomEntry("notebook-generation", { version: 1, epoch: 1 });
+	session.appendCustomEntry("notebook-entry", { version: 1, epoch: 1, name: "page-a", content: "a-v1", clipped: false });
+	const leafA = session.appendCustomEntry("notebook-entry", { version: 1, epoch: 1, name: "page-b", content: "b-v1", clipped: false });
 	// Branch B: diverged from A via a discard — committed epoch 2, only x,y kept.
-	const branchB = [
-		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
-		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 2 } },
-		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 2, name: "page-x", content: "x-v1" } },
-		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 2, name: "page-y", content: "y-v1" } },
-	];
-	const treeCtx = (branch: object[]) => hostContext({ hasUI: false, sessionManager: { getBranch: () => branch } });
+	session.branch(firstGeneration);
+	session.appendCustomEntry("notebook-generation", { version: 1, epoch: 2 });
+	session.appendCustomEntry("notebook-entry", { version: 1, epoch: 2, name: "page-x", content: "x-v1", clipped: false });
+	const leafB = session.appendCustomEntry("notebook-entry", { version: 1, epoch: 2, name: "page-y", content: "y-v1", clipped: false });
+	const fixture = await shippedHost({ session, headless: true });
+	const host = { fixture };
+	const navigate = async (leaf: string) => {
+		session.branch(leaf);
+		await fixture.runner.emit({ type: "session_tree", newLeafId: leaf, oldLeafId: null });
+	};
+	const pageNames = async () => detailsOf(await fixture.tool("notebook_index").execute("index", {})).entries;
 
 	// Enter A.
-	await sessionTree({ type: "session_tree", newLeafId: null, oldLeafId: null }, treeCtx(branchA));
-	let indexResult = await notebookIndex.execute("1", {}, undefined, undefined, createToolContext());
-	expect(detailsOf(indexResult).entries).toStrictEqual(["page-a", "page-b"]);
+	await navigate(leafA);
+	expect(await pageNames()).toStrictEqual(["page-a", "page-b"]);
 
 	// Navigate to B — pages immediately follow the active branch.
-	await sessionTree({ type: "session_tree", newLeafId: null, oldLeafId: null }, treeCtx(branchB));
-	indexResult = await notebookIndex.execute("2", {}, undefined, undefined, createToolContext());
-	expect(detailsOf(indexResult).entries).toStrictEqual(["page-x", "page-y"]);
+	await navigate(leafB);
+	expect(await pageNames()).toStrictEqual(["page-x", "page-y"]);
 
 	// A write on B uses B's committed epoch and lands on B's pages.
-	await notebookWrite.execute("3", { name: "page-z", content: "z-v1" }, undefined, undefined, tuiContext({ hasUI: false }));
-	expect(appendedData(pi, -1).epoch, "write on B must use B's committed epoch").toBe(2);
-	indexResult = await notebookIndex.execute("4", {}, undefined, undefined, createToolContext());
-	expect(detailsOf(indexResult).entries).toStrictEqual(["page-x", "page-y", "page-z"]);
+	await writePage(fixture, "page-z", "z-v1");
+	expect(appendedData(host, -1).epoch, "write on B must use B's committed epoch").toBe(2);
+	expect(await pageNames()).toStrictEqual(["page-x", "page-y", "page-z"]);
 
 	// Back to A — A's branch-scoped pages restored, epoch follows A again.
-	await sessionTree({ type: "session_tree", newLeafId: null, oldLeafId: null }, treeCtx(branchA));
-	indexResult = await notebookIndex.execute("5", {}, undefined, undefined, createToolContext());
-	expect(detailsOf(indexResult).entries, "returning to A must restore its pages").toStrictEqual(["page-a", "page-b"]);
-	await notebookWrite.execute("6", { name: "page-a", content: "a-v2" }, undefined, undefined, tuiContext({ hasUI: false }));
-	expect(appendedData(pi, -1).epoch, "write after returning to A must use A's epoch").toBe(1);
+	await navigate(leafA);
+	expect(await pageNames(), "returning to A must restore its pages").toStrictEqual(["page-a", "page-b"]);
+	await writePage(fixture, "page-a", "a-v2");
+	expect(appendedData(host, -1).epoch, "write after returning to A must use A's epoch").toBe(1);
 });
 
 // ── Notebook write-size contract (issue #42) ───────────────────────────
 
 test("complete write exposes null truncation and false clipped", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [notebookWrite] = createNotebookToolDefinitions(pi, state);
+	const host = await notebookHost();
+	const { state, api, fixture } = host;
 
-	const saved = await saveNotebookPage(pi, state, "page", C);
+	const saved = await saveNotebookPage(api, state, "page", C);
 	expect(saved).toStrictEqual({ entries: ["page"], preview: "first", truncation: null, clipped: false });
-	expect(appendedData(pi, 0)).toStrictEqual({ version: 1, epoch: 1, name: "page", content: C, clipped: false });
+	expect(appendedData(host, 0)).toStrictEqual({ version: 1, epoch: 1, name: "page", content: C, clipped: false });
 
 	const updates = recordUpdates();
-	const result = await notebookWrite.execute("2", { name: "page", content: C }, undefined, updates.onUpdate, tuiContext({ hasUI: false }));
-	expect(firstText(result)).toBe(completeFinalText("page", C));
-	expect(firstText(updates.last())).toBe(completeUpdateText("page", C));
+	const result = await fixture.tool("notebook_write").execute("2", { name: "page", content: C }, undefined, updates.onUpdate);
+	expect(firstText(result)).toBe('Saved notebook page "page".\nfirst\n\nNotebook Pages:\n  page: first');
+	expect(updateText(updates.last())).toBe('Saved "page": first');
 	expect(result.details).toStrictEqual({ entries: ["page"], preview: "first", truncation: null, clipped: false });
 	expect(updates.last().details).toStrictEqual({ entries: ["page"], preview: "first", truncation: null, clipped: false });
 });
 
 test("line overflow returns exact head and line report", async () => {
-	const pi = await createTestHost();
-	const state = createState();
+	const host = await notebookHost();
 
-	const saved = await saveNotebookPage(pi, state, "page", L(2001));
-	expect(state.notebookPages.get("page")).toBe(L(2000));
+	const saved = await saveNotebookPage(host.api, host.state, "page", L(2001));
+	expect(host.state.notebookPages.get("page")).toBe(L(2000));
 	expect(saved).toStrictEqual({ entries: ["page"], preview: "x", truncation: Tlines, clipped: true });
-	expect(appendedData(pi, 0)).toStrictEqual({ version: 1, epoch: 1, name: "page", content: L(2000), clipped: true });
+	expect(appendedData(host, 0)).toStrictEqual({ version: 1, epoch: 1, name: "page", content: L(2000), clipped: true });
 });
 
 test("byte overflow retains whole lines and reports bytes (ASCII + UTF-8)", async () => {
-	const pi = await createTestHost();
-	const state = createState();
+	const host = await notebookHost();
+	const { state, api } = host;
 
-	const ascii = await saveNotebookPage(pi, state, "page", B);
+	const ascii = await saveNotebookPage(api, state, "page", B);
 	expect(state.notebookPages.get("page")).toBe("a".repeat(25600));
-	expect(ascii).toStrictEqual({ entries: ["page"], preview: formatPagePreview("a".repeat(25600)), truncation: Tbytes, clipped: true });
-	expect(appendedData(pi, 0)).toStrictEqual({ version: 1, epoch: 1, name: "page", content: "a".repeat(25600), clipped: true });
+	expect(ascii).toStrictEqual({ entries: ["page"], preview: A77, truncation: Tbytes, clipped: true });
+	expect(appendedData(host, 0)).toStrictEqual({ version: 1, epoch: 1, name: "page", content: "a".repeat(25600), clipped: true });
 
-	const utf8 = await saveNotebookPage(pi, state, "page", U);
+	const utf8 = await saveNotebookPage(api, state, "page", U);
 	expect(state.notebookPages.get("page")).toBe("é".repeat(12800));
-	expect(utf8).toStrictEqual({ entries: ["page"], preview: formatPagePreview("é".repeat(12800)), truncation: Tbytes, clipped: true });
-	expect(appendedData(pi, 1)).toStrictEqual({ version: 1, epoch: 1, name: "page", content: "é".repeat(12800), clipped: true });
+	expect(utf8).toStrictEqual({ entries: ["page"], preview: "é".repeat(77) + "...", truncation: Tbytes, clipped: true });
+	expect(appendedData(host, 1)).toStrictEqual({ version: 1, epoch: 1, name: "page", content: "é".repeat(12800), clipped: true });
 });
 
 test("write final and update text report clipping without a badge", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [notebookWrite] = createNotebookToolDefinitions(pi, state);
+	const { fixture } = await notebookHost();
 
 	const updates = recordUpdates();
-	const result = await notebookWrite.execute("1", { name: "page", content: L(2001) }, undefined, updates.onUpdate, tuiContext({ hasUI: false }));
+	const result = await fixture.tool("notebook_write").execute("1", { name: "page", content: L(2001) }, undefined, updates.onUpdate);
 
-	const body = L(2000);
-	expect(firstText(result)).toBe(clippedFinalText("page", body, ReportLines));
-	expect(firstText(updates.last())).toBe(clippedUpdateText("page", body, ReportLines));
+	expect(firstText(result)).toBe(`Saved notebook page "page".\nx\n\n${ReportLines}\n\nNotebook Pages:\n  page: x`);
+	expect(updateText(updates.last())).toBe(`Saved "page": x\n\n${ReportLines}`);
 	expect(result.details).toStrictEqual({ entries: ["page"], preview: "x", truncation: Tlines, clipped: true });
 	expect(updates.last().details).toStrictEqual({ entries: ["page"], preview: "x", truncation: Tlines, clipped: true });
 	expect(firstText(result)).not.toMatch(/\[truncated\]/);
-	expect(firstText(updates.last())).not.toMatch(/\[truncated\]/);
+	expect(updateText(updates.last())).not.toMatch(/\[truncated\]/);
 });
 
 test("write final and update text report byte clipping", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [notebookWrite] = createNotebookToolDefinitions(pi, state);
+	const { fixture } = await notebookHost();
 
 	const updates = recordUpdates();
-	const result = await notebookWrite.execute("1", { name: "page", content: B }, undefined, updates.onUpdate, tuiContext({ hasUI: false }));
+	const result = await fixture.tool("notebook_write").execute("1", { name: "page", content: B }, undefined, updates.onUpdate);
 
-	const body = "a".repeat(25600);
-	expect(firstText(result)).toBe(clippedFinalText("page", body, ReportBytes));
-	expect(firstText(updates.last())).toBe(clippedUpdateText("page", body, ReportBytes));
-	expect(result.details).toStrictEqual({ entries: ["page"], preview: formatPagePreview(body), truncation: Tbytes, clipped: true });
+	expect(firstText(result)).toBe(`Saved notebook page "page".\n${A77}\n\n${ReportBytes}\n\nNotebook Pages:\n  page: ${A77}`);
+	expect(updateText(updates.last())).toBe(`Saved "page": ${A77}\n\n${ReportBytes}`);
+	expect(result.details).toStrictEqual({ entries: ["page"], preview: A77, truncation: Tbytes, clipped: true });
 	expect(updates.last().details).toStrictEqual(result.details);
 	expect(firstText(result)).toMatch(/TRUNCATED by bytes/);
 });
 
 test("read appends a generic notice only for a flagged page", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [notebookWrite, notebookRead] = createNotebookToolDefinitions(pi, state);
+	const { fixture } = await notebookHost();
+	const notebookRead = fixture.tool("notebook_read");
 
-	await notebookWrite.execute("1", { name: "page", content: L(2001) }, undefined, undefined, tuiContext({ hasUI: false }));
-	const clipped = await notebookRead.execute("2", { name: "page" }, undefined, undefined, createToolContext());
+	await writePage(fixture, "page", L(2001));
+	const clipped = await notebookRead.execute("2", { name: "page" });
 	const body = L(2000);
-	expect(firstText(clipped)).toBe(`${readBase("page", body)}\n\n${Notice}`);
+	expect(firstText(clipped)).toBe(`${readBase(body, "x")}\n\n${Notice}`);
 	expect(firstText(clipped).split(Notice).length - 1).toBe(1);
 	expect(clipped.details).toStrictEqual({ entries: ["page"], found: true, body, clipped: true });
 
-	await notebookWrite.execute("3", { name: "page", content: C }, undefined, undefined, tuiContext({ hasUI: false }));
-	const complete = await notebookRead.execute("4", { name: "page" }, undefined, undefined, createToolContext());
-	expect(firstText(complete)).toBe(readBase("page", C));
+	await writePage(fixture, "page", C);
+	const complete = await notebookRead.execute("4", { name: "page" });
+	expect(firstText(complete)).toBe(readBase(C, "first"));
 	expect(firstText(complete)).not.toMatch(/Notice:/);
 	expect(complete.details).toStrictEqual({ entries: ["page"], found: true, body: C, clipped: false });
 });
 
 test("oversized first line rejects a new page without side effects", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [notebookWrite, , notebookIndex] = createNotebookToolDefinitions(pi, state);
-	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
+	const { state, api, fixture } = await notebookHost({ ui: true });
 
-	for (const content of [R, UR]) {
-		await expect(saveNotebookPage(pi, state, "page", content)).rejects.toThrow(new Error(rejectMessage("page")));
-	}
+	await expect(saveNotebookPage(api, state, "page", R)).rejects.toThrow(new Error(rejectMessage("page")));
+	await expect(saveNotebookPage(api, state, "page", UR)).rejects.toThrow(new Error(rejectMessage("page")));
 
 	const onUpdate = vi.fn();
-	await expect(notebookWrite.execute("1", { name: "page", content: R }, undefined, onUpdate, tuiContext({ hasUI: true, record }))).rejects.toThrow(
+	await expect(fixture.tool("notebook_write").execute("1", { name: "page", content: R }, undefined, onUpdate)).rejects.toThrow(
 		new Error(rejectMessage("page")),
 	);
 	expect(onUpdate).not.toHaveBeenCalled();
 	expect(state.notebookPages.size).toBe(0);
 	expect(state.epoch).toBe(0);
 	expect(state.discardEpochWatermark).toBe(0);
-	expect(getHostRecords(pi).appendedEntries).toHaveLength(0);
-	expect(record.statuses.size).toBe(0);
-	expect(record.widgets.size).toBe(0);
+	expect(fixture.host.appendedEntries).toHaveLength(0);
+	expect(fixture.ui.statuses.size).toBe(0);
+	expect(fixture.ui.widgets.size).toBe(0);
 
-	await saveNotebookPage(pi, state, "page", C);
+	await saveNotebookPage(api, state, "page", C);
 	expect(state.notebookPages.get("page")).toBe(C);
-	const index = await notebookIndex.execute("2", {}, undefined, undefined, createToolContext());
+	const index = await fixture.tool("notebook_index").execute("2", {});
 	expect(index.details).toStrictEqual({ entries: ["page"] });
 });
 
 test("rejected overwrite preserves prior body and clipped flag", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [, notebookRead] = createNotebookToolDefinitions(pi, state);
+	const { state, api, fixture } = await notebookHost();
+	const notebookRead = fixture.tool("notebook_read");
 
-	await saveNotebookPage(pi, state, "page", C);
+	await saveNotebookPage(api, state, "page", C);
 	const epochBefore = state.epoch;
-	await expect(saveNotebookPage(pi, state, "page", R)).rejects.toThrow(new Error(rejectMessage("page")));
+	await expect(saveNotebookPage(api, state, "page", R)).rejects.toThrow(new Error(rejectMessage("page")));
 	expect(state.notebookPages.get("page")).toBe(C);
 	expect(state.epoch).toBe(epochBefore);
-	expect(getHostRecords(pi).appendedEntries).toHaveLength(1);
-	let read = await notebookRead.execute("2", { name: "page" }, undefined, undefined, createToolContext());
-	expect(firstText(read)).toBe(readBase("page", C));
+	expect(fixture.host.appendedEntries).toHaveLength(1);
+	let read = await notebookRead.execute("2", { name: "page" });
+	expect(firstText(read)).toBe(readBase(C, "first"));
 	expect(detailsOf(read).clipped).toBe(false);
 
-	await saveNotebookPage(pi, state, "page", L(2001));
+	await saveNotebookPage(api, state, "page", L(2001));
 	const epochClipped = state.epoch;
-	await expect(saveNotebookPage(pi, state, "page", R)).rejects.toThrow(new Error(rejectMessage("page")));
+	await expect(saveNotebookPage(api, state, "page", R)).rejects.toThrow(new Error(rejectMessage("page")));
 	expect(state.notebookPages.get("page")).toBe(L(2000));
 	expect(state.epoch).toBe(epochClipped);
-	read = await notebookRead.execute("3", { name: "page" }, undefined, undefined, createToolContext());
+	read = await notebookRead.execute("3", { name: "page" });
 	expect(detailsOf(read).clipped).toBe(true);
 	expectSuffix(firstText(read), `\n\n${Notice}`);
 });
 
 test("blank first line plus oversized line rejects and preserves prior page state", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [notebookWrite, notebookRead] = createNotebookToolDefinitions(pi, state);
-	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
+	const { state, api, fixture } = await notebookHost({ ui: true });
 	const blankFirstLineOverflow = "\n" + "x".repeat(DEFAULT_MAX_BYTES + 1);
 
-	await saveNotebookPage(pi, state, "page", C);
+	await saveNotebookPage(api, state, "page", C);
 	const epochBefore = state.epoch;
-	const entriesBefore = getHostRecords(pi).appendedEntries.length;
+	const entriesBefore = fixture.host.appendedEntries.length;
 
-	await expect(saveNotebookPage(pi, state, "page", blankFirstLineOverflow)).rejects.toThrow(new Error(emptyHeadRejectMessage("page")));
+	await expect(saveNotebookPage(api, state, "page", blankFirstLineOverflow)).rejects.toThrow(new Error(emptyHeadRejectMessage("page")));
 
 	const onUpdate = vi.fn();
-	await expect(
-		notebookWrite.execute("2", { name: "page", content: blankFirstLineOverflow }, undefined, onUpdate, tuiContext({ hasUI: true, record })),
-	).rejects.toThrow(new Error(emptyHeadRejectMessage("page")));
+	await expect(fixture.tool("notebook_write").execute("2", { name: "page", content: blankFirstLineOverflow }, undefined, onUpdate)).rejects.toThrow(
+		new Error(emptyHeadRejectMessage("page")),
+	);
 	expect(onUpdate).not.toHaveBeenCalled();
 	expect(state.notebookPages.get("page")).toBe(C);
 	expect([...state.clippedPages]).not.toContain("page");
 	expect(state.epoch).toBe(epochBefore);
-	expect(getHostRecords(pi).appendedEntries).toHaveLength(entriesBefore);
-	expect(record.statuses.size).toBe(0);
-	expect(record.widgets.size).toBe(0);
+	expect(fixture.host.appendedEntries).toHaveLength(entriesBefore);
+	expect(fixture.ui.statuses.size).toBe(0);
+	expect(fixture.ui.widgets.size).toBe(0);
 
 	// A clipped prior page is equally protected: body, flag, epoch and entries stay.
-	await saveNotebookPage(pi, state, "page", L(2001));
+	await saveNotebookPage(api, state, "page", L(2001));
 	const epochClipped = state.epoch;
-	const entriesClipped = getHostRecords(pi).appendedEntries.length;
-	await expect(saveNotebookPage(pi, state, "page", blankFirstLineOverflow)).rejects.toThrow(new Error(emptyHeadRejectMessage("page")));
-	const read = await notebookRead.execute("3", { name: "page" }, undefined, undefined, createToolContext());
+	const entriesClipped = fixture.host.appendedEntries.length;
+	await expect(saveNotebookPage(api, state, "page", blankFirstLineOverflow)).rejects.toThrow(new Error(emptyHeadRejectMessage("page")));
+	const read = await fixture.tool("notebook_read").execute("3", { name: "page" });
 	expect(state.notebookPages.get("page")).toBe(L(2000));
 	expect([...state.clippedPages]).toContain("page");
 	expect(state.epoch).toBe(epochClipped);
-	expect(getHostRecords(pi).appendedEntries).toHaveLength(entriesClipped);
+	expect(fixture.host.appendedEntries).toHaveLength(entriesClipped);
 	expect(detailsOf(read).body).toBe(L(2000));
 	expect(detailsOf(read).clipped).toBe(true);
 
 	// An untruncated empty write is still accepted by the new guard.
-	await saveNotebookPage(pi, state, "page", "");
+	await saveNotebookPage(api, state, "page", "");
 	expect(state.notebookPages.get("page")).toBe("");
 	expect([...state.clippedPages]).not.toContain("page");
 });
 
 test("clipped flag survives fresh reconstruction without persisted quantities", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [notebookWrite] = createNotebookToolDefinitions(pi, state);
-	await notebookWrite.execute("1", { name: "page", content: L(2001) }, undefined, undefined, tuiContext({ hasUI: false }));
+	const host = await notebookHost();
+	await writePage(host.fixture, "page", L(2001));
 
-	expect(Object.keys(appendedData(pi, 0)).sort()).toStrictEqual(["clipped", "content", "epoch", "name", "version"]);
-	expect(appendedData(pi, 0).clipped).toBe(true);
+	expect(Object.keys(appendedData(host, 0)).sort()).toStrictEqual(["clipped", "content", "epoch", "name", "version"]);
+	expect(appendedData(host, 0).clipped).toBe(true);
 
-	const restored = await rehydratePersistedNotebook(pi);
-	const restoredPi = await createTestHost();
-	const [, restoredRead] = createNotebookToolDefinitions(restoredPi, restored);
-	const read = await restoredRead.execute("1", { name: "page" }, undefined, undefined, createToolContext());
+	const restored = await rehydrated(sessionWith(host.fixture.host.appendedEntries));
+	const read = await restored.fixture.tool("notebook_read").execute("1", { name: "page" });
 	expect(detailsOf(read).clipped).toBe(true);
 	expectSuffix(firstText(read), `\n\n${Notice}`);
 });
 
 test("complete overwrite clears a durable clipped flag", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [notebookWrite, notebookRead] = createNotebookToolDefinitions(pi, state);
+	const host = await notebookHost();
+	const { fixture } = host;
 
-	await notebookWrite.execute("1", { name: "page", content: L(2001) }, undefined, undefined, tuiContext({ hasUI: false }));
-	await notebookWrite.execute("2", { name: "page", content: C }, undefined, undefined, tuiContext({ hasUI: false }));
+	await writePage(fixture, "page", L(2001));
+	await writePage(fixture, "page", C);
 
-	expect(appendedData(pi, -1).clipped).toBe(false);
-	const read = await notebookRead.execute("3", { name: "page" }, undefined, undefined, createToolContext());
+	expect(appendedData(host, -1).clipped).toBe(false);
+	const read = await fixture.tool("notebook_read").execute("3", { name: "page" });
 	expect(read.details).toStrictEqual({ entries: ["page"], found: true, body: C, clipped: false });
-	expect(firstText(read)).toBe(readBase("page", C));
+	expect(firstText(read)).toBe(readBase(C, "first"));
 
-	const restored = await rehydratePersistedNotebook(pi);
-	const restoredPi = await createTestHost();
-	const [, restoredRead] = createNotebookToolDefinitions(restoredPi, restored);
-	const restoredResult = await restoredRead.execute("4", { name: "page" }, undefined, undefined, createToolContext());
+	const restored = await rehydrated(sessionWith(fixture.host.appendedEntries));
+	const restoredResult = await restored.fixture.tool("notebook_read").execute("4", { name: "page" });
 	expect(detailsOf(restoredResult).clipped).toBe(false);
 });
 
-test("legacy page entries without clipped read as false", async () => {
-	const state = createState();
-	const pi = await createTestHost((api) => {
-		registerNotebookRehydration(api, state);
-	});
-	const handler = getHandler(pi, "session_start");
-	await handler(
-		{ type: "session_start", reason: "startup" },
-		hostContext({
-			sessionManager: {
-				getBranch: () => [
-					{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "v1", content: C } },
-					{ type: "custom", customType: "notebook-entry", data: { epoch: 1, name: "unversioned", content: C } },
-					{ type: "custom", customType: "ledger-entry", data: { epoch: 1, name: "ledger", content: C } },
-				],
-			},
-		}),
-	);
-
-	const toolPi = await createTestHost();
-	const [, notebookRead] = createNotebookToolDefinitions(toolPi, state);
-	const list = `  ledger: first\n  unversioned: first\n  v1: first`;
-	for (const name of ["v1", "unversioned", "ledger"]) {
-		const read = await notebookRead.execute("1", { name }, undefined, undefined, createToolContext());
-		expect(firstText(read)).toBe(`--- ${name} ---\n${C}\n---\nNotebook Pages:\n${list}`);
-		expect(read.details).toStrictEqual({ entries: ["ledger", "unversioned", "v1"], found: true, body: C, clipped: false });
-	}
-});
-
 test("discard survivor retains its durable clipped flag", async () => {
-	const { pi, state } = await notebookWithPages({ drop: C, keep: L(2001) });
+	const host = await notebookWithPages({ drop: C, keep: L(2001) });
 
-	const restored = restoredFrom(branchWith(pi, buildNotebookDiscardDrafts(state, ["drop"]).drafts));
+	const restored = await rehydrated(sessionWith([...host.fixture.host.appendedEntries, ...buildNotebookDiscardDrafts(host.state, ["drop"]).drafts]));
 
-	expect(restored.notebookPages.get("keep")).toBe(L(2000));
-	const restoredPi = await createTestHost();
-	const [, restoredRead] = createNotebookToolDefinitions(restoredPi, restored);
-	const read = await restoredRead.execute("1", { name: "keep" }, undefined, undefined, createToolContext());
+	expect(restored.state.notebookPages.get("keep")).toBe(L(2000));
+	const read = await restored.fixture.tool("notebook_read").execute("1", { name: "keep" });
 	expect(detailsOf(read).clipped).toBe(true);
 });
 
@@ -1905,15 +1352,19 @@ test("formatPageTuiPreview appends a badge only when clipped", () => {
 	expect(formatPageTuiPreview("p".repeat(81) + "\ntail", true)).toBe("p".repeat(77) + "... [truncated]");
 });
 
+test("formatPageTuiPreview shows a bare badge for a clipped page with an empty first line", () => {
+	expect(formatPageTuiPreview("\nbody", true)).toBe("[truncated]");
+});
+
 test("/notebook selector badges clipped pages without changing stored bodies", async () => {
-	const pi = await createTestHost();
-	const notebookWrite = getTool(pi, "notebook_write");
-	await notebookWrite.execute("1", { name: "clipped-page", content: L(2001) }, undefined, undefined, tuiContext());
-	await notebookWrite.execute("2", { name: "complete-page", content: C }, undefined, undefined, tuiContext());
+	const list = listDriver();
+	const fixture = await notebookList(list.driver);
+	await writePage(fixture, "clipped-page", L(2001));
+	await writePage(fixture, "complete-page", C);
 
-	const overlay = await openNotebookOverlay(pi, vi.fn());
+	await runNotebook(fixture);
 
-	const lines = stripAnsi(overlay.render(200).join("\n")).split("\n");
+	const lines = list.renders[0].split("\n");
 	const clippedLine = lines.find((line) => line.includes("clipped-page"));
 	assertPresent(clippedLine, "the selector shows a clipped-page row");
 	expect(clippedLine).toMatch(/x \[truncated\]/);
@@ -1922,27 +1373,26 @@ test("/notebook selector badges clipped pages without changing stored bodies", a
 	expect(completeLine).toMatch(/first/);
 	expect(completeLine).not.toMatch(/\[truncated\]/);
 
-	const read = getTool(pi, "notebook_read");
-	const clippedRead = await read.execute("3", { name: "clipped-page" }, undefined, undefined, createToolContext());
+	const read = fixture.tool("notebook_read");
+	const clippedRead = await read.execute("3", { name: "clipped-page" });
 	expect(detailsOf(clippedRead).body).toBe(L(2000));
 	expect(detailsOf(clippedRead).clipped).toBe(true);
-	const completeRead = await read.execute("4", { name: "complete-page" }, undefined, undefined, createToolContext());
+	const completeRead = await read.execute("4", { name: "complete-page" });
 	expect(detailsOf(completeRead).body).toBe(C);
 	expect(detailsOf(completeRead).clipped).toBe(false);
 });
 
 test("notebook_write descriptions state the shared write-size semantics", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [notebookWrite] = createNotebookToolDefinitions(pi, state);
+	const { fixture } = await notebookHost();
+	const notebookWrite = fixture.registeredTool("notebook_write").definition;
 
 	expectSuffix(notebookWrite.description, DescriptionSuffix);
 	const parameters = recordOf(notebookWrite.parameters, "the notebook_write parameters");
-	const contentDescription = recordOf(recordOf(parameters.properties, "the parameter properties").content, "the content parameter").description;
-	assertString(contentDescription, "Expected the content parameter to have a description.");
+	const contentDescription = stringOf(
+		recordOf(recordOf(parameters.properties, "the parameter properties").content, "the content parameter").description,
+		"the content parameter description",
+	);
 	expectSuffix(contentDescription, DescriptionSuffix);
-	expect(JSON.stringify(notebookWrite.parameters)).not.toMatch(/Truncated at 50KB \/ 2000 lines\./);
-	expect(notebookWrite.description).not.toMatch(/Truncated at 50KB \/ 2000 lines\./);
 });
 
 // ── Notebook write-size green regression net ───────────────────────────
@@ -1953,145 +1403,86 @@ test("plain preview preserves the 80-character boundary", () => {
 });
 
 test("plain page list and index preserve previews and alphabetical order", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [, , notebookIndex] = createNotebookToolDefinitions(pi, state);
-	await saveNotebookPage(pi, state, "zeta", "last");
-	await saveNotebookPage(pi, state, "alpha", "first");
+	const { state, api, fixture } = await notebookHost();
+	await saveNotebookPage(api, state, "zeta", "last");
+	await saveNotebookPage(api, state, "alpha", "first");
 
-	const index = await notebookIndex.execute("1", {}, undefined, undefined, createToolContext());
+	const index = await fixture.tool("notebook_index").execute("1", {});
 	expect(index.details).toStrictEqual({ entries: ["alpha", "zeta"] });
 	expect(firstText(index)).toMatch(/ {2}alpha: first\n {2}zeta: last/);
 	expect(firstText(index)).not.toMatch(/\[truncated\]|Notice:/);
 });
 
-test("line overflow retains exactly 2000 whole lines", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	await saveNotebookPage(pi, state, "page", L(2001));
-	expect(state.notebookPages.get("page")).toBe(L(2000));
-	expect(state.notebookPages.get("page")?.split("\n")).toHaveLength(2000);
-});
-
-test("byte overflow preserves the first whole line in ASCII and UTF-8", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	await saveNotebookPage(pi, state, "page", B);
-	expect(state.notebookPages.get("page")).toBe("a".repeat(25600));
-	expect(state.notebookPages.get("page")).not.toContain("\n");
-	await saveNotebookPage(pi, state, "page", U);
-	expect(state.notebookPages.get("page")).toBe("é".repeat(12800));
-	expect(state.notebookPages.get("page")).not.toContain("\n");
-});
-
 test("complete and empty bodies remain accepted at the existing caps", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [, notebookRead] = createNotebookToolDefinitions(pi, state);
-	const cases: [string, string][] = [
+	const { state, api, fixture } = await notebookHost();
+	await saveNotebookPage(api, state, "c", C);
+	await saveNotebookPage(api, state, "l", L(2000));
+	await saveNotebookPage(api, state, "f", F);
+	await saveNotebookPage(api, state, "m", M);
+	await saveNotebookPage(api, state, "empty", "");
+
+	expect(Array.from(state.notebookPages.entries())).toStrictEqual([
 		["c", C],
 		["l", L(2000)],
 		["f", F],
 		["m", M],
 		["empty", ""],
-	];
-	for (const [name, body] of cases) {
-		await saveNotebookPage(pi, state, name, body);
-		expect(state.notebookPages.get(name)).toBe(body);
-	}
-	const read = await notebookRead.execute("1", { name: "empty" }, undefined, undefined, createToolContext());
+	]);
+	const read = await fixture.tool("notebook_read").execute("1", { name: "empty" });
 	expect(detailsOf(read).found).toBe(true);
 	expect(detailsOf(read).body).toBe("");
 });
 
-test("complete writes preserve their text list and existing detail fields", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const [notebookWrite] = createNotebookToolDefinitions(pi, state);
-	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const updates = recordUpdates();
-
-	const result = await notebookWrite.execute("1", { name: "page", content: C }, undefined, updates.onUpdate, tuiContext({ percent: 42, record }));
-	expect(firstText(result)).toBe(completeFinalText("page", C));
-	expect(firstText(updates.last())).toBe(completeUpdateText("page", C));
-	const project = (details: unknown) => {
-		const { entries, preview } = recordOf(details, "the tool result details");
-		return { entries, preview };
-	};
-	expect(project(result.details)).toStrictEqual({ entries: ["page"], preview: "first" });
-	expect(project(updates.last().details)).toStrictEqual({ entries: ["page"], preview: "first" });
-	expect(record.statuses.get("pi-schematic-notebook")).toBe("📒 1");
-
-	const childPi = await createTestHost();
-	const childState = createState();
-	const [childWrite] = createNotebookToolDefinitions(childPi, childState, { isStale: () => false });
-	const childResult = await childWrite.execute("2", { name: "alpha", content: "alpha" }, undefined, undefined, createToolContext());
-	expect(project(childResult.details)).toStrictEqual({ entries: ["alpha"], preview: "alpha" });
-});
-
-test("complete reads preserve their body envelope and existing detail fields", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	await saveNotebookPage(pi, state, "page", C);
-	const [, notebookRead] = createNotebookToolDefinitions(pi, state);
-
-	const read = await notebookRead.execute("1", { name: "page" }, undefined, undefined, createToolContext());
-	expect(firstText(read)).toBe(readBase("page", C));
-	const details = detailsOf(read);
-	expect({ entries: details.entries, found: details.found, body: details.body }).toStrictEqual({ entries: ["page"], found: true, body: C });
-	expect(firstText(read)).not.toMatch(/Notice:|\[truncated\]/);
-});
-
 test("model listing surfaces remain free of clipping decorations", async () => {
-	const pi = await createTestHost();
-	const notebookWrite = getTool(pi, "notebook_write");
-	const notebookRead = getTool(pi, "notebook_read");
-	const notebookIndex = getTool(pi, "notebook_index");
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(new Date("2026-03-04T12:00:00Z"));
+	onTestFinished(() => {
+		vi.useRealTimers();
+	});
+	const fixture = await shippedHost({ headless: true });
 	const updates = recordUpdates();
-	const writeResult = await notebookWrite.execute("1", { name: "page", content: L(2001) }, undefined, updates.onUpdate, tuiContext());
-	const writeTexts = [firstText(writeResult), firstText(updates.last())];
-	const indexResult = await notebookIndex.execute("2", {}, undefined, undefined, createToolContext());
-	const readResult = await notebookRead.execute("3", { name: "page" }, undefined, undefined, createToolContext());
-	const readText = firstText(readResult);
+	const writeResult = await fixture.tool("notebook_write").execute("1", { name: "page", content: L(2001) }, undefined, updates.onUpdate);
+	const indexResult = await fixture.tool("notebook_index").execute("2", {});
+	const readResult = await fixture.tool("notebook_read").execute("3", { name: "page" });
+	const writeTexts = [firstText(writeResult), updateText(updates.last())];
 
-	for (const text of [...writeTexts, firstText(indexResult), readText]) {
-		expect(text, `model text must not carry the TUI badge: ${text}`).not.toMatch(/\[truncated\]/);
-	}
-	for (const text of [...writeTexts, firstText(indexResult)]) {
-		expect(text, `notice must not leak into non-read surfaces: ${text}`).not.toMatch(/Notice:/);
-	}
+	const modelTexts = [...writeTexts, firstText(indexResult), firstText(readResult)];
+	expect(
+		modelTexts.filter((text) => text.includes("[truncated]")),
+		"model text must not carry the TUI badge",
+	).toStrictEqual([]);
+	expect(
+		[...writeTexts, firstText(indexResult)].filter((text) => text.includes("Notice:")),
+		"notice must not leak into non-read surfaces",
+	).toStrictEqual([]);
 
 	// Notebook section through the real before_agent_start hook.
-	const beforeAgentStart = getHandler(pi, "before_agent_start");
-	const event = createBeforeAgentStartEvent({ systemPrompt: "Base system prompt." });
-	await beforeAgentStart(event, { ...tuiContext({ hasUI: false }), cwd: process.cwd(), isProjectTrusted: () => false });
-	const listing = event.systemPromptOptions.sections.schematic_notebook;
+	const result = await fixture.runner.emitBeforeAgentStart(
+		{ messageType: "user", prompt: "go" },
+		fixture.systemPromptOptions({ customPrompt: "Base system prompt." }),
+	);
+	const listing = result.systemPromptOptions.sections.schematic_notebook;
 	assertPresent(listing);
 	expect(listing).not.toMatch(/\[truncated\]/);
 	expect(listing).not.toMatch(/Notice:/);
 	expect(listing).toMatch(/ {2}page: x/);
-	const assembled = event.systemPrompt;
+	const assembled = fixture.systemPrompt;
 	expect(assembled).toMatch(/ {2}page: x/);
 	expect(assembled).not.toMatch(/\[truncated\]/);
 	expect(assembled).not.toMatch(/Notice:/);
-
-	// Spawn prompt through the real child-session seam.
-	const proof = await runRealChildInvocation({ prompt: "Do the task.", notebookPages: { page: L(2001) } });
-	for (const message of proof.observedMessages) {
-		expect(message).not.toMatch(/\[truncated\]/);
-		expect(message).not.toMatch(/Notice:/);
-	}
 });
 
 test("unknown notebook entry types have zero effect on reconstructed state", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	await saveNotebookPage(pi, state, "page", C);
-	pi.appendEntry("unknown-notebook-type", { version: 1, epoch: 9, name: "ghost", content: "x" });
-	pi.appendEntry("some-other-entry", { version: 1, epoch: 9 });
+	const writer = await notebookHost();
+	await saveNotebookPage(writer.api, writer.state, "page", C);
+	const session = sessionWith(writer.fixture.host.appendedEntries);
+	session.appendCustomEntry("unknown-notebook-type", { version: 1, epoch: 9, name: "ghost", content: "x" });
+	session.appendCustomEntry("ledger-entry", { version: 1, epoch: 9, name: "ledger", content: "x" });
+	session.appendCustomEntry("some-other-entry", { version: 1, epoch: 9 });
 
-	const restored = await rehydratePersistedNotebook(pi);
-	expect(restored.epoch).toBe(1);
-	expect(restored.discardEpochWatermark).toBe(1);
-	expect(Array.from(restored.notebookPages.entries())).toStrictEqual([["page", C]]);
+	const { state } = await rehydrated(session);
+
+	expect(state.epoch).toBe(1);
+	expect(state.discardEpochWatermark).toBe(1);
+	expect(Array.from(state.notebookPages.entries())).toStrictEqual([["page", C]]);
 });

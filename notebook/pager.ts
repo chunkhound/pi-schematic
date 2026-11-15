@@ -2,9 +2,7 @@
  * External pager integration for the /notebook TUI.
  *
  * Resolves a pager command (respecting $PI_PAGER, then $PAGER, falling back to
- * `less` on POSIX) and runs it with the page body fed via stdin. Exports a
- * mutable `pagerRuntime` seam so tests can swap resolvePager/spawnPager
- * without shelling out.
+ * `less` on POSIX) and runs it with the page body fed via stdin.
  */
 
 import { execSync, spawn, type StdioOptions } from "node:child_process";
@@ -45,6 +43,9 @@ function defaultHasLess(): boolean {
  * (no `sh -c`); on Windows spawnPager hands the joined line to cmd.exe. Users
  * needing complex pager invocations should wrap them in a script and point
  * $PI_PAGER or $PAGER at it.
+ *
+ * The parameters exist for tests: production calls `resolvePager()` with the
+ * process environment, platform and `less` probe.
  */
 export function resolvePager(
 	env: NodeJS.ProcessEnv = process.env,
@@ -161,7 +162,7 @@ export async function openInPager(tui: TUI, body: string, pager: ResolvedPager):
 	};
 	process.on("SIGINT", ignoreSigint);
 	try {
-		await pagerRuntime.spawnPager(body, pager);
+		await spawnPager(body, pager);
 		return undefined;
 	} catch (err) {
 		return err instanceof Error ? err : new Error(String(err));
@@ -170,19 +171,4 @@ export async function openInPager(tui: TUI, body: string, pager: ResolvedPager):
 		tui.start();
 		tui.requestRender(true);
 	}
-}
-
-interface PagerRuntime {
-	resolvePager: typeof resolvePager;
-	spawnPager: typeof spawnPager;
-}
-
-const defaultPagerRuntime: PagerRuntime = { resolvePager, spawnPager };
-
-/** Test seam: index.ts and openInPager call pagerRuntime.* so tests can swap per-test. */
-export const pagerRuntime: PagerRuntime = { ...defaultPagerRuntime };
-
-/** Test seam: swap one or more pagerRuntime methods; pass null to restore the originals. */
-export function __setPagerRuntimeForTests(next: Partial<PagerRuntime> | null): void {
-	Object.assign(pagerRuntime, defaultPagerRuntime, next);
 }

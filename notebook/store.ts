@@ -7,15 +7,10 @@
 import type { CustomEntryDraft, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateHead } from "@earendil-works/pi-coding-agent";
 import type { SchematicState } from "../state.js";
-import { createWriteLock, __setSingletons, getSingletons } from "../runtime-singletons.js";
+import { getSingletons } from "../runtime-singletons.js";
 
 /** Version stamped on every persisted notebook entry and generation marker. */
 export const NOTEBOOK_ENTRY_VERSION = 1;
-
-/** Reset write lock state. Only for test cleanup after concurrent runs. */
-export function resetNotebookWriteLock(): void {
-	__setSingletons({ ...getSingletons(), writeLock: createWriteLock() }, { forceWriteLock: true });
-}
 
 async function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
 	const s = getSingletons();

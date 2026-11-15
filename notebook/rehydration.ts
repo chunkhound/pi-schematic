@@ -36,16 +36,16 @@ interface NotebookCandidate {
 
 // ── Rehydration entry types ───────────────────────────────────────────
 
-const PAGE_ENTRY_TYPES = new Set(["notebook-entry", "ledger-entry"]);
+const PAGE_ENTRY_TYPE = "notebook-entry";
 const GENERATION_ENTRY_TYPE = "notebook-generation";
 
 function isNotebookEpoch(value: unknown): value is number {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-/** Accept the current version or absent (legacy); reject unknown future versions. */
+/** Accept only the current version; entries without a version or from a future version are skipped. */
 function isKnownNotebookVersion(value: unknown): boolean {
-	return value === undefined || value === NOTEBOOK_ENTRY_VERSION;
+	return value === NOTEBOOK_ENTRY_VERSION;
 }
 
 // ── Reconstruction ────────────────────────────────────────────────────
@@ -61,14 +61,14 @@ function isKnownNotebookVersion(value: unknown): boolean {
  * (or a retry on a restarted process) therefore cannot reuse that staged epoch
  * and resurrect orphaned survivors; the next discard pass moves past it.
  */
-export function reconstructNotebook(state: SchematicState, branch: readonly (SessionEntry | null | undefined)[]): void {
+export function reconstructNotebook(state: SchematicState, branch: readonly SessionEntry[]): void {
 	// A generation is visible only after its marker is appended. Staged
 	// survivor entries from an interrupted discard therefore cannot eclipse
 	// the last durable notebook generation.
 	let committedEpoch: number | null = null;
 	let maxObservedEpoch = 0;
 	for (const entry of branch) {
-		if (entry?.type !== "custom") {
+		if (entry.type !== "custom") {
 			continue;
 		}
 		const customEntry = entry;
@@ -80,7 +80,7 @@ export function reconstructNotebook(state: SchematicState, branch: readonly (Ses
 			}
 			continue;
 		}
-		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) {
+		if (customEntry.customType !== PAGE_ENTRY_TYPE) {
 			continue;
 		}
 		const data = customEntry.data as NotebookEntryData | undefined;
@@ -100,11 +100,11 @@ export function reconstructNotebook(state: SchematicState, branch: readonly (Ses
 	const candidates = new Map<string, NotebookCandidate>();
 	for (let i = branch.length - 1; i >= 0; i--) {
 		const entry = branch[i];
-		if (entry?.type !== "custom") {
+		if (entry.type !== "custom") {
 			continue;
 		}
 		const customEntry = entry;
-		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) {
+		if (customEntry.customType !== PAGE_ENTRY_TYPE) {
 			continue;
 		}
 		const data = customEntry.data as NotebookEntryData | undefined;
