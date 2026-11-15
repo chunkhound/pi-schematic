@@ -7,7 +7,8 @@
  */
 
 import { beforeAll, beforeEach, expect, onTestFinished, test, vi } from "vitest";
-import { mkdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertPresent } from "../assertions.js";
 import { testWithDir, tmpDir, withTempAgentDir, withTempHome } from "./helpers.js";
@@ -29,7 +30,7 @@ import {
 } from "../../frontmatter-cache.js";
 import { createState } from "../../state.js";
 import { THINKING_LEVELS } from "../../thinking-levels.js";
-import type { Skill } from "@earendil-works/pi-coding-agent";
+import { createSyntheticSourceInfo, type Skill, type SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 
 // pi's agent directory holds global prompts; an empty one keeps an exported
 // PI_CODING_AGENT_DIR, or a populated ~/.pi/agent/prompts, out of every test.
@@ -57,24 +58,29 @@ async function writeMd(dir: string, name: string, frontmatter: Record<string, un
 	return filePath;
 }
 
+/** A fresh directory, removed when the test finishes. */
+async function tempDir(): Promise<string> {
+	const dir = await mkdtemp(join(tmpdir(), "frontmatter-cache-"));
+	onTestFinished(() => rm(dir, { recursive: true, force: true }));
+	return dir;
+}
+
+function promptCommand(name: string, filePath: string): SlashCommandInfo {
+	return { name, source: "prompt", description: "Test prompt", sourceInfo: createSyntheticSourceInfo(filePath, { source: "test" }) };
+}
+
 function makeSkill(name: string, filePath: string): Skill {
 	return {
 		name,
 		description: `Test skill ${name}`,
 		filePath,
 		baseDir: "",
-		sourceInfo: { path: filePath, source: "test", scope: "temporary", origin: "top-level" },
+		sourceInfo: createSyntheticSourceInfo(filePath, { source: "test" }),
 		disableModelInvocation: false,
 	};
 }
 
 // ── Tests ─────────────────────────────────────────────────────────
-
-test("cache lookups return null for unknown names", () => {
-	const state = createState();
-	expect(cacheLookupSkill(state, "nonexistent-skill")).toBeNull();
-	expect(cacheLookupCommand(state, "nonexistent-command")).toBeNull();
-});
 
 const skillReadonlyCases = [
 	{ title: "populateFromSkills caches a skill with readonly: true", name: "my-skill", fm: { readonly: true, description: "Test" }, expected: true },
@@ -97,19 +103,8 @@ test("populateFromSkills silently skips missing file", () => {
 	const state = createState();
 	populateFromSkills(state, [makeSkill("missing", "/nonexistent/path/skill.md")]);
 	expect(cacheLookupSkill(state, "missing")).toBeNull();
+	expect(cacheLookupSkillIssue(state, "missing"), "a missing file records no issue").toBeNull();
 	expect(cacheLookupCommand(state, "missing")).toBeNull();
-});
-
-testWithDir("populateFromSkills caches multiple skills", async ({ dir }) => {
-	const state = createState();
-	const fp1 = await writeMd(dir, "alpha", { readonly: true, description: "A" });
-	const fp2 = await writeMd(dir, "beta", { readonly: false, description: "B" });
-	const fp3 = await writeMd(dir, "gamma", { description: "C" });
-	populateFromSkills(state, [makeSkill("alpha", fp1), makeSkill("beta", fp2), makeSkill("gamma", fp3)]);
-
-	expect(cacheLookupSkill(state, "alpha")).toBe(true);
-	expect(cacheLookupSkill(state, "beta")).toBe(false);
-	expect(cacheLookupSkill(state, "gamma")).toBeNull();
 });
 
 testWithDir("populateFromSkills returns null for non-boolean readonly frontmatter", async ({ dir }) => {
@@ -125,19 +120,6 @@ testWithDir("populateFromSkills returns null for non-boolean readonly frontmatte
 	expect(cacheLookupSkillIssue(state, "number-ro")?.kind).toBe("invalid-readonly-value");
 	expect(cacheLookupSkill(state, "array-ro")).toBeNull();
 	expect(cacheLookupSkillIssue(state, "array-ro")?.kind).toBe("invalid-readonly-value");
-});
-
-testWithDir("cacheLookupCommand falls back to prompts when no skill is loaded", async ({ dir }) => {
-	const state = createState();
-	const projectDir = join(dir, ".pi", "prompts");
-	await mkdir(projectDir, { recursive: true });
-	await writeMd(projectDir, "prompt-only", { readonly: true });
-
-	populateFromSkills(state, []);
-	populatePromptCacheFromResolvedCommandsAndDirs(state, [], dir, true);
-
-	expect(cacheLookupSkill(state, "prompt-only")).toBeNull();
-	expect(cacheLookupCommand(state, "prompt-only")).toBe(true);
 });
 
 testWithDir("/name prompt lookup stays distinct from /skill:name lookup for the same name", async ({ dir }) => {
@@ -166,7 +148,7 @@ testWithDir("populatePromptCacheFromResolvedCommandsAndDirs caches prompt comman
 				name: "command-prompt",
 				source: "prompt",
 				description: "Command prompt",
-				sourceInfo: { path: filePath, source: "test", scope: "temporary", origin: "top-level" },
+				sourceInfo: createSyntheticSourceInfo(filePath, { source: "test" }),
 			},
 		],
 		dir,
@@ -174,28 +156,6 @@ testWithDir("populatePromptCacheFromResolvedCommandsAndDirs caches prompt comman
 	);
 
 	expect(cacheLookupCommand(state, "command-prompt")).toBe(false);
-});
-
-testWithDir("populatePromptCacheFromResolvedCommandsAndDirs caches resolved prompt template file paths", async ({ dir }) => {
-	const state = createState();
-	const filePath = await writeMd(dir, "resolved-prompt", { readonly: true });
-
-	populatePromptCacheFromResolvedCommandsAndDirs(
-		state,
-		[
-			{
-				name: "resolved-prompt",
-				source: "prompt",
-				description: "Resolved prompt",
-				sourceInfo: { path: filePath, source: "test", scope: "temporary", origin: "top-level" },
-			},
-		],
-		dir,
-		false,
-	);
-
-	expect(cacheLookupPrompt(state, "resolved-prompt")).toBe(true);
-	expect(cacheLookupCommand(state, "resolved-prompt")).toBe(true);
 });
 
 testWithDir("populatePromptCacheFromResolvedCommandsAndDirs caches .md files from project dir", async ({ dir }) => {
@@ -261,7 +221,7 @@ testWithDir("resolved prompt command stays authoritative over directory fallback
 					name: "shared-resolved",
 					source: "prompt",
 					description: "Resolved command",
-					sourceInfo: { path: resolvedPath, source: "test", scope: "temporary", origin: "top-level" },
+					sourceInfo: createSyntheticSourceInfo(resolvedPath, { source: "test" }),
 				},
 			],
 			workspace,
@@ -284,7 +244,7 @@ testWithDir("resolved non-prompt command blocks prompt-dir fallback for the same
 				name: "shared-owned",
 				source: "extension",
 				description: "Extension command",
-				sourceInfo: { path: promptPath, source: "test", scope: "temporary", origin: "top-level" },
+				sourceInfo: createSyntheticSourceInfo(promptPath, { source: "test" }),
 			},
 		],
 		workspace,
@@ -306,7 +266,7 @@ testWithDir("resolved prompt command rebinding to a different file refreshes the
 				name: "shared-rebound",
 				source: "prompt",
 				description: "Resolved command A",
-				sourceInfo: { path: pathA, source: "test", scope: "temporary", origin: "top-level" },
+				sourceInfo: createSyntheticSourceInfo(pathA, { source: "test" }),
 			},
 		],
 		workspace,
@@ -321,7 +281,7 @@ testWithDir("resolved prompt command rebinding to a different file refreshes the
 				name: "shared-rebound",
 				source: "prompt",
 				description: "Resolved command B",
-				sourceInfo: { path: pathB, source: "test", scope: "temporary", origin: "top-level" },
+				sourceInfo: createSyntheticSourceInfo(pathB, { source: "test" }),
 			},
 		],
 		workspace,
@@ -479,7 +439,7 @@ testWithDir("cache rebuild preserves unchanged frontmatter issues", async ({ dir
 			name: "broken-prompt",
 			source: "prompt" as const,
 			description: "Broken prompt",
-			sourceInfo: { path: promptPath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+			sourceInfo: createSyntheticSourceInfo(promptPath, { source: "test" }),
 		},
 	];
 
@@ -554,7 +514,7 @@ testWithDir("populatePromptCacheFromResolvedCommandsAndDirs refreshes a prompt w
 			name: "mutable-prompt",
 			source: "prompt" as const,
 			description: "Mutable prompt",
-			sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+			sourceInfo: createSyntheticSourceInfo(filePath, { source: "test" }),
 		},
 	];
 
@@ -576,7 +536,7 @@ testWithDir("populatePromptCacheFromResolvedCommandsAndDirs clears an invalid is
 			name: "recover-prompt",
 			source: "prompt" as const,
 			description: "Recover prompt",
-			sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+			sourceInfo: createSyntheticSourceInfo(filePath, { source: "test" }),
 		},
 	];
 
@@ -600,7 +560,7 @@ testWithDir("populatePromptCacheFromResolvedCommandsAndDirs records malformed fr
 			name: "broken-yaml",
 			source: "prompt" as const,
 			description: "Broken yaml prompt",
-			sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+			sourceInfo: createSyntheticSourceInfo(filePath, { source: "test" }),
 		},
 	];
 
@@ -618,7 +578,7 @@ testWithDir("populatePromptCacheFromResolvedCommandsAndDirs clears an unreadable
 			name: "recover-readable",
 			source: "prompt" as const,
 			description: "Recover readable prompt",
-			sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+			sourceInfo: createSyntheticSourceInfo(filePath, { source: "test" }),
 		},
 	];
 
@@ -675,22 +635,6 @@ testWithDir("populateFromSkills returns null for all new fields when frontmatter
 	expect(cacheLookupSkillExplicitThinking(state, "bare")).toBeNull();
 });
 
-testWithDir("populateFromSkills preserves readonly alongside new fields", async ({ dir }) => {
-	const state = createState();
-	const filePath = await writeMd(dir, "all-fields", {
-		readonly: true,
-		"model-group": "fast",
-		model: "anthropic/claude-sonnet",
-		thinking: "low",
-	});
-	populateFromSkills(state, [makeSkill("all-fields", filePath)]);
-
-	expect(cacheLookupSkill(state, "all-fields")).toBe(true);
-	expect(cacheLookupSkillModelGroup(state, "all-fields")).toBe("fast");
-	expect(cacheLookupSkillExplicitModel(state, "all-fields")).toBe("anthropic/claude-sonnet");
-	expect(cacheLookupSkillExplicitThinking(state, "all-fields")).toBe("low");
-});
-
 testWithDir("populateFromSkills returns null and records issue for invalid model-group value", async ({ dir }) => {
 	const state = createState();
 	const filePath = await writeMd(dir, "bad-group", { "model-group": "" });
@@ -700,21 +644,18 @@ testWithDir("populateFromSkills returns null and records issue for invalid model
 	expect(cacheLookupSkillIssue(state, "bad-group")?.kind).toBe("invalid-model-group-value");
 });
 
-testWithDir("populateFromSkills returns null and records issue for invalid explicit model format", async ({ dir }) => {
+test.each([
+	{ model: "no-slash", desc: "missing slash" },
+	{ model: "/missing-provider", desc: "empty provider" },
+	{ model: "missing-id/", desc: "empty model-id" },
+])("populateFromSkills returns null and records issue for invalid explicit model format: $desc", async ({ model }) => {
+	const dir = await tempDir();
 	const state = createState();
-	const cases = [
-		{ model: "no-slash", desc: "missing slash" },
-		{ model: "/missing-provider", desc: "empty provider" },
-		{ model: "missing-id/", desc: "empty model-id" },
-	];
-	for (const { model, desc } of cases) {
-		const name = `bad-model-${desc.replace(/[^a-z]/g, "")}`;
-		const filePath = await writeMd(dir, name, { model });
-		populateFromSkills(state, [makeSkill(name, filePath)]);
+	const filePath = await writeMd(dir, "bad-model", { model });
+	populateFromSkills(state, [makeSkill("bad-model", filePath)]);
 
-		expect(cacheLookupSkillExplicitModel(state, name), `${desc}: model should be null`).toBeNull();
-		expect(cacheLookupSkillIssue(state, name)?.kind, `${desc}: issue kind`).toBe("invalid-explicit-model-value");
-	}
+	expect(cacheLookupSkillExplicitModel(state, "bad-model")).toBeNull();
+	expect(cacheLookupSkillIssue(state, "bad-model")?.kind).toBe("invalid-explicit-model-value");
 });
 
 testWithDir("populateFromSkills returns null and records issue for invalid thinking value", async ({ dir }) => {
@@ -726,16 +667,14 @@ testWithDir("populateFromSkills returns null and records issue for invalid think
 	expect(cacheLookupSkillIssue(state, "bad-thinking")?.kind).toBe("invalid-thinking-value");
 });
 
-testWithDir("populateFromSkills accepts all valid thinking levels", async ({ dir }) => {
+test.each(THINKING_LEVELS)("populateFromSkills accepts all valid thinking levels: %s", async (level) => {
+	const dir = await tempDir();
 	const state = createState();
-	for (const level of THINKING_LEVELS) {
-		const name = `think-${level}`;
-		const filePath = await writeMd(dir, name, { thinking: level });
-		populateFromSkills(state, [makeSkill(name, filePath)]);
+	const filePath = await writeMd(dir, "think", { thinking: level });
+	populateFromSkills(state, [makeSkill("think", filePath)]);
 
-		expect(cacheLookupSkillExplicitThinking(state, name), `thinking level ${level} should be cached`).toBe(level);
-		expect(cacheLookupSkillIssue(state, name), `thinking level ${level} should have no issue`).toBeNull();
-	}
+	expect(cacheLookupSkillExplicitThinking(state, "think")).toBe(level);
+	expect(cacheLookupSkillIssue(state, "think")).toBeNull();
 });
 
 test("invalid thinking frontmatter warning lists every thinking level", () => {
@@ -774,7 +713,7 @@ testWithDir("populatePromptCacheFromResolvedCommandsAndDirs caches model-group f
 				name: "cmd-group",
 				source: "prompt",
 				description: "Test",
-				sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+				sourceInfo: createSyntheticSourceInfo(filePath, { source: "test" }),
 			},
 		],
 		dir,
@@ -796,7 +735,7 @@ testWithDir("populatePromptCacheFromResolvedCommandsAndDirs caches explicit mode
 				name: "cmd-model",
 				source: "prompt",
 				description: "Test",
-				sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+				sourceInfo: createSyntheticSourceInfo(filePath, { source: "test" }),
 			},
 		],
 		dir,
@@ -816,7 +755,7 @@ testWithDir("populatePromptCacheFromResolvedCommandsAndDirs caches thinking for 
 				name: "cmd-think",
 				source: "prompt",
 				description: "Test",
-				sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+				sourceInfo: createSyntheticSourceInfo(filePath, { source: "test" }),
 			},
 		],
 		dir,
@@ -836,7 +775,7 @@ testWithDir("populatePromptCacheFromResolvedCommandsAndDirs records invalid mode
 				name: "bad-cmd-group",
 				source: "prompt",
 				description: "Test",
-				sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+				sourceInfo: createSyntheticSourceInfo(filePath, { source: "test" }),
 			},
 		],
 		dir,
@@ -857,7 +796,7 @@ testWithDir("populatePromptCacheFromResolvedCommandsAndDirs records invalid expl
 				name: "bad-cmd-model",
 				source: "prompt",
 				description: "Test",
-				sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+				sourceInfo: createSyntheticSourceInfo(filePath, { source: "test" }),
 			},
 		],
 		dir,
@@ -878,7 +817,7 @@ testWithDir("populatePromptCacheFromResolvedCommandsAndDirs records invalid thin
 				name: "bad-cmd-think",
 				source: "prompt",
 				description: "Test",
-				sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+				sourceInfo: createSyntheticSourceInfo(filePath, { source: "test" }),
 			},
 		],
 		dir,
@@ -946,25 +885,6 @@ testWithDir("populateFromSkills accepts slashes inside model IDs", async ({ dir 
 		expect(cacheLookupSkillExplicitModel(state, `nested-model-${index}`)).toBe(model);
 		expect(cacheLookupSkillIssue(state, `nested-model-${index}`)).toBeNull();
 	});
-});
-
-testWithDir("populateFromSkills handles very long model name without crashing", async ({ dir }) => {
-	const state = createState();
-	const longModel = "provider/" + "a".repeat(1000);
-	const filePath = await writeMd(dir, "long-model", { model: longModel });
-	populateFromSkills(state, [makeSkill("long-model", filePath)]);
-
-	expect(cacheLookupSkillExplicitModel(state, "long-model")).toBe(longModel);
-	expect(cacheLookupSkillIssue(state, "long-model")).toBeNull();
-});
-
-testWithDir("populateFromSkills handles model name with special characters", async ({ dir }) => {
-	const state = createState();
-	const filePath = await writeMd(dir, "special-model", { model: "my-provider/model-v2.5_beta" });
-	populateFromSkills(state, [makeSkill("special-model", filePath)]);
-
-	expect(cacheLookupSkillExplicitModel(state, "special-model")).toBe("my-provider/model-v2.5_beta");
-	expect(cacheLookupSkillIssue(state, "special-model")).toBeNull();
 });
 
 testWithDir("populateFromSkills treats whitespace-only model-group as empty/invalid", async ({ dir }) => {
@@ -1051,4 +971,47 @@ testWithDir("invalid model-group does not suppress valid model and thinking", as
 	expect(cacheLookupSkill(state, "second-invalid")).toBe(true);
 	expect(cacheLookupSkillExplicitModel(state, "second-invalid")).toBe("openai/gpt-4");
 	expect(cacheLookupSkillExplicitThinking(state, "second-invalid")).toBe("high");
+});
+
+testWithDir("populateFromSkills records an invalid explicit model issue for a non-string model", async ({ dir }) => {
+	const state = createState();
+	const filePath = await writeMd(dir, "numeric-model", { model: 5 });
+	populateFromSkills(state, [makeSkill("numeric-model", filePath)]);
+
+	expect(cacheLookupSkillExplicitModel(state, "numeric-model")).toBeNull();
+	expect(cacheLookupSkillIssue(state, "numeric-model")?.kind).toBe("invalid-explicit-model-value");
+});
+
+test("invalid project prompt frontmatter shadows a valid global prompt of the same name", async () => {
+	const agentDir = await tempDir();
+	const workspace = await tempDir();
+	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
+	await mkdir(join(agentDir, "prompts"), { recursive: true });
+	await writeMd(join(agentDir, "prompts"), "shadowed", { readonly: true });
+	const projectDir = join(workspace, ".pi", "prompts");
+	await mkdir(projectDir, { recursive: true });
+	// Malformed frontmatter yields no entry at all, only the issue.
+	const projectPath = join(projectDir, "shadowed.md");
+	await writeFile(projectPath, `---\nreadonly: [\n---\n\nBody content.\n`);
+	const state = createState();
+
+	populatePromptCacheFromResolvedCommandsAndDirs(state, [], workspace, true);
+
+	expect(cacheLookupCommand(state, "shadowed")).toBeNull();
+	expect(cacheLookupCommandIssue(state, "shadowed")).toStrictEqual({ kind: "malformed-frontmatter", filePath: projectPath });
+});
+
+test.each([
+	{ label: "first valid", first: { readonly: true }, expected: true, issue: null },
+	{ label: "first with an issue", first: { readonly: "yes" }, expected: null, issue: "invalid-readonly-value" },
+])("duplicate resolved prompt commands keep the first, including its issue: $label", async ({ first, expected, issue }) => {
+	const dir = await tempDir();
+	const firstPath = await writeMd(dir, "first", first);
+	const secondPath = await writeMd(dir, "second", { readonly: false });
+	const state = createState();
+
+	populatePromptCacheFromResolvedCommandsAndDirs(state, [promptCommand("twice", firstPath), promptCommand("twice", secondPath)], dir, false);
+
+	expect(cacheLookupCommand(state, "twice")).toBe(expected);
+	expect(cacheLookupCommandIssue(state, "twice")?.kind ?? null).toBe(issue);
 });

@@ -200,7 +200,7 @@
   },
   "tests/unit/frontmatter-cache.test.ts": {
     "vitest/max-expects": {
-      "count": 112
+      "count": 93
     }
   },
   "tests/unit/handoff-eligibility.test.ts": {
@@ -219,11 +219,6 @@
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
-    }
-  },
-  "tests/unit/model-group-frontmatter.test.ts": {
-    "vitest/max-expects": {
-      "count": 9
     }
   },
   "tests/unit/model-groups-autocomplete.test.ts": {
@@ -247,10 +242,7 @@
       "count": 1
     },
     "vitest/max-expects": {
-      "count": 46
-    },
-    "vitest/no-conditional-expect": {
-      "count": 2
+      "count": 29
     }
   },
   "tests/unit/model-groups-modality.test.ts": {

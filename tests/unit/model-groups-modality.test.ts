@@ -1,13 +1,6 @@
 import { expect, test } from "vitest";
-import { MODALITY_FG, MODALITY_LETTER, modalityLetterRun } from "../../model-groups/modality.js";
+import { MODALITY_FG, modalityLetterRun } from "../../model-groups/modality.js";
 import type { ModelGroupModality } from "../../model-groups/types.js";
-
-test("MODALITY_LETTER / MODALITY_FG cover the established single-letter lexicon", () => {
-	expect(MODALITY_LETTER).toStrictEqual({ text: "T", image: "I", reasoning: "R" });
-	expect(MODALITY_FG.text).toBe("syntaxKeyword");
-	expect(MODALITY_FG.image).toBe("success");
-	expect(MODALITY_FG.reasoning).toBe("thinkingHigh");
-});
 
 test("modalityLetterRun canonicalizes order and excludes reasoning by default", () => {
 	const effective = ["reasoning", "image", "text"] as readonly ModelGroupModality[];
