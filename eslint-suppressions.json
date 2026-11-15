@@ -449,10 +449,7 @@
   },
   "tests/unit/watchdog.test.ts": {
     "vitest/max-expects": {
-      "count": 15
-    },
-    "vitest/no-conditional-expect": {
-      "count": 4
+      "count": 8
     }
   },
   "thinking-levels.ts": {
