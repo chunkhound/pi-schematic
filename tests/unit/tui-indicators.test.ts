@@ -69,10 +69,18 @@ test("updateIndicators handles missing context usage", async () => {
 });
 
 test.for([Number.NaN, Number.POSITIVE_INFINITY, -1])("updateIndicators treats malformed percentages as unavailable: %s", async (percent) => {
-	const ui = await indicatorsAt(percent);
+	const { fixture, ctx, setPercent } = await createIndicatorRunner();
+	const state = createState();
+	// Show the widget first, to verify it gets cleared.
+	setPercent(85);
+	updateIndicators(ctx, state);
+	expect(fixture.ui.widgets.get(WIDGET_KEY_WARNING), "the warning widget is shown before the malformed percentage").toBeDefined();
+	setPercent(percent);
 
-	expect(ui.statuses.get(STATUS_KEY_CTX)).toBe(realTheme.fg("dim", "ctx --%"));
-	expect(ui.widgets.get(WIDGET_KEY_WARNING)).toBeUndefined();
+	updateIndicators(ctx, state);
+
+	expect(fixture.ui.statuses.get(STATUS_KEY_CTX)).toBe(realTheme.fg("dim", "ctx --%"));
+	expect(fixture.ui.widgets.get(WIDGET_KEY_WARNING)).toBeUndefined();
 });
 
 test("updateIndicators preserves overflow context percentages", async () => {
@@ -134,12 +142,18 @@ test("updateIndicators shows readonly indicator when enabled", async () => {
 });
 
 test("updateIndicators hides readonly indicator when disabled", async () => {
+	const { fixture, ctx, setPercent } = await createIndicatorRunner();
 	const state = createState();
+	setPercent(null);
+	// Show the indicator first, to verify it gets cleared.
+	state.readonlyEnabled = true;
+	updateIndicators(ctx, state);
+	expect(fixture.ui.statuses.get(STATUS_KEY_READONLY), "the indicator is shown before it is disabled").toBe(realTheme.fg("warning", "\u{1F512} readonly"));
 	state.readonlyEnabled = false;
 
-	const ui = await indicatorsAt(null, state);
+	updateIndicators(ctx, state);
 
-	expect(ui.statuses.get(STATUS_KEY_READONLY), "readonly indicator should be undefined when disabled").toBeUndefined();
+	expect(fixture.ui.statuses.get(STATUS_KEY_READONLY), "readonly indicator should be undefined when disabled").toBeUndefined();
 });
 
 test("updateIndicators shows readonly-specific warning widget at 70%+ context", async () => {
