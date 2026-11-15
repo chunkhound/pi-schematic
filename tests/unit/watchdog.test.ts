@@ -321,6 +321,17 @@ test("the context nudge emits topic and spawn guidance", async () => {
 	expect(nudge).toMatch(/prefer spawn/i);
 });
 
+test("the watchdog nudge below 70% with an active topic gives the topic-fit advice", async () => {
+	const runner = await createWatchdogRunner({ headless: true });
+	await runCommand(runner, "notebook", "oauth");
+
+	const nudge = await contextNudge(runner, percentUsage(46));
+
+	expect(nudge).toBe(
+		"Context at 46% — choose your next step by topic fit.\nActive notebook topic: oauth.\nUse the topic as the current semantic frame. If the current work still fits this topic, prefer spawn for isolated noisy subtasks. If it no longer fits, continue working until handoff is available instead of dragging stale context forward.\nSave durable findings to the notebook before handoff.",
+	);
+});
+
 test("the context nudge does not require an ineligible pending handoff by default", async () => {
 	const runner = await createWatchdogRunner({ headless: true });
 	await runCommand(runner, "handoff", "continue work");
@@ -359,6 +370,17 @@ test("the context nudge asks a requested handoff with a set instruction for only
 	expect(directed).not.toMatch(/next instruction and the remaining context/i);
 });
 
+test("the eligible requested-handoff nudge says the context is discarded and asks to save findings before the handoff", async () => {
+	const runner = await createWatchdogRunner({ headless: true });
+	await runCommand(runner, "handoff", "continue work");
+
+	const directed = await contextNudge(runner, windowUsage(30));
+
+	expect(directed).toBe(
+		"A real handoff is required in this session now.\nDo not perform the new instruction here — this context is discarded at compaction.\nSave durable findings to the notebook if needed, then call handoff with only the remaining context.\nThe successor receives the instruction verbatim.",
+	);
+});
+
 test("the context nudge asks an eligible topic boundary for a handoff with the next instruction", async () => {
 	const runner = await createWatchdogRunner({ headless: true });
 	await runCommand(runner, "notebook", "oauth");
@@ -370,6 +392,29 @@ test("the context nudge asks an eligible topic boundary for a handoff with the n
 	expect(boundary).toMatch(/next instruction/i);
 	expect(boundary).toMatch(/remaining context/i);
 	expect(boundary).toMatch(/call handoff/i);
+});
+
+test.for([
+	{
+		case: "eligible",
+		usage: windowUsage(30),
+		nudge:
+			"Notebook topic changed from oauth to billing.\nTreat this as a strong task-boundary signal. Prefer a deliberate handoff before continuing under the new topic: save durable findings to the notebook, then call handoff with the next instruction and the remaining context.\nOnly continue inline if this was merely a rename rather than a real pivot.",
+	},
+	{
+		case: "ineligible",
+		usage: UNKNOWN_USAGE,
+		nudge:
+			"Notebook topic changed from oauth to billing.\nTreat this as a strong task-boundary signal. Continue working until context is ready for handoff; this boundary remains advisory for now.\nOnly continue inline if this was merely a rename rather than a real pivot.",
+	},
+])("the topic boundary nudge gives the $case advice", async ({ usage, nudge }) => {
+	const runner = await createWatchdogRunner({ headless: true });
+	await runCommand(runner, "notebook", "oauth");
+	await runCommand(runner, "notebook", "billing");
+
+	const boundary = await contextNudge(runner, usage);
+
+	expect(boundary).toBe(nudge);
 });
 
 test("the context nudge handles null percent and boundary hints before topic guidance", async () => {
@@ -682,6 +727,21 @@ test("a run nudged only to keep working does not count", async () => {
 	}
 
 	expect(warnings()).toStrictEqual([]);
+});
+
+test("outside readonly mode the handoff cancellation notice gives the plain retry advice", async () => {
+	const runner = await createWatchdogRunner();
+	await runCommand(runner, "handoff", "continue work");
+
+	for (let run = 0; run < MAX_HANDOFF_ATTEMPTS; run++) {
+		await runContext(runner, eligibleUsage(), "work", run);
+		await emitAgentSettled(runner);
+	}
+
+	expect(runner.fixture.ui.notifications.at(-1)).toStrictEqual({
+		message: "Required handoff cancelled after 5 attempts without completion. Use /handoff <direction> again to retry.",
+		type: "warning",
+	});
 });
 
 // ── Readonly-specific injection contracts ─────────────────────────
