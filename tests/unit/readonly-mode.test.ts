@@ -174,6 +174,11 @@ test.for([
 	{ label: "an object with a toString method", command: { toString: () => OUTSIDE_TEMP_WRITE } },
 	{ label: "a number", command: 42 },
 	{ label: "undefined", command: undefined },
+	{ label: "null", command: null },
+	{ label: "a boolean", command: true },
+	{ label: "a symbol", command: Symbol(OUTSIDE_TEMP_WRITE) },
+	{ label: "a bigint", command: 42n },
+	{ label: "a function returning a command", command: () => OUTSIDE_TEMP_WRITE },
 ])("readonly blocks a bash call whose command an earlier extension replaced with $label", async ({ command }) => {
 	const readonly = await createReadonlyRunner({ before: replacingBashCommand(command) });
 	await readonly.runCommand("readonly");
