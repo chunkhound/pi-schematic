@@ -43,7 +43,7 @@ async function pagerScript(options: { hold?: boolean } = {}): Promise<PagerScrip
 		path,
 		[
 			"#!/bin/sh",
-			`dir='${dir}'`,
+			'dir=$(dirname "$0")',
 			'cat > "$dir/body"',
 			': > "$dir/started"',
 			"i=0",
@@ -111,26 +111,26 @@ test("spawnPager pipes the full body to the child's stdin", { timeout: PAGER_DEA
 	const tmpDir = await mkdtemp(join(tmpdir(), "pager-stdin-test-"));
 	const scriptPath = join(tmpDir, "pager.cjs");
 	const outPath = join(tmpDir, "out.txt");
-	try {
-		// Writes only to a file — produces no stdout, so the child's
-		// inherited stdout doesn't pollute the test runner's own output.
-		// A script file, not `-e`: shell: true on Windows joins args unquoted,
-		// which would split a multi-word -e script apart.
-		const script = [
-			'const fs = require("node:fs");',
-			"const chunks = [];",
-			'process.stdin.on("data", (c) => chunks.push(c));',
-			'process.stdin.on("end", () => { fs.writeFileSync(process.argv[2], Buffer.concat(chunks)); });',
-		].join("\n");
-		await writeFile(scriptPath, script);
-		const body = "line one\nline two\n";
-
-		await spawnPager(body, { cmd: process.execPath, args: [scriptPath, outPath] });
-
-		expect(await readFile(outPath, "utf8")).toBe(body);
-	} finally {
+	// Removed after the test rather than in a finally, so a test that times out on a pager that never exits still removes it.
+	onTestFinished(async () => {
 		await rm(tmpDir, { recursive: true, force: true });
-	}
+	});
+	// Writes only to a file — produces no stdout, so the child's
+	// inherited stdout doesn't pollute the test runner's own output.
+	// A script file, not `-e`: shell: true on Windows joins args unquoted,
+	// which would split a multi-word -e script apart.
+	const script = [
+		'const fs = require("node:fs");',
+		"const chunks = [];",
+		'process.stdin.on("data", (c) => chunks.push(c));',
+		'process.stdin.on("end", () => { fs.writeFileSync(process.argv[2], Buffer.concat(chunks)); });',
+	].join("\n");
+	await writeFile(scriptPath, script);
+	const body = "line one\nline two\n";
+
+	await spawnPager(body, { cmd: process.execPath, args: [scriptPath, outPath] });
+
+	expect(await readFile(outPath, "utf8")).toBe(body);
 });
 
 test("spawnPager resolves when the pager exits without reading stdin (EPIPE/EOF is swallowed)", { timeout: PAGER_DEADLINE_MS }, async () => {
@@ -245,10 +245,10 @@ test.skipIf(process.platform === "win32")("openInPager removes the SIGINT guard 
 });
 
 test.skipIf(process.platform === "win32")("openInPager propagates a tui.stop failure without spawning, guarding SIGINT, or restarting", async () => {
-	// Held, so a pager spawned by mistake is still running when the command has settled.
-	await pagerScript({ hold: true });
+	// Held, so a pager spawned by mistake and not awaited is still running when the command has
+	// settled; one that was awaited has left its started marker.
+	const pager = await pagerScript({ hold: true });
 	const baselineSigint = process.listeners("SIGINT").length;
-	const baselineChildren = childProcessHandles();
 	const start = vi.fn();
 	const list = listDriver((component) => {
 		press(component, "\r");
@@ -262,7 +262,11 @@ test.skipIf(process.platform === "win32")("openInPager propagates a tui.stop fai
 	await writePage(fixture, "alpha", "body");
 
 	await expect(runNotebook(fixture)).rejects.toThrow(/stop boom/);
-	expect(childProcessHandles(), "pager must not spawn when tui.stop throws").toBe(baselineChildren);
+	// Every earlier test in this file waits for its children to exit, so any live child is a pager spawned by mistake.
+	expect({ liveChildren: childProcessHandles(), started: pager.started() }, "pager must not spawn when tui.stop throws").toStrictEqual({
+		liveChildren: 0,
+		started: false,
+	});
 	expect(process.listeners("SIGINT"), "SIGINT guard must not leak when tui.stop throws").toHaveLength(baselineSigint);
 	expect(start, "TUI must not restart after a failed stop").not.toHaveBeenCalled();
 });
