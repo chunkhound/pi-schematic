@@ -78,7 +78,9 @@ test.skipIf(process.platform !== "linux" || !canUseOsSandbox())("bwrap executes 
 
 test.skipIf(!hasPosixShell()).for([
 	{ label: "plain word", raw: "normal", expected: "1:normal" },
-	{ label: "spaces (no space)", raw: "spaces", expected: "1:spaces" },
+	{ label: "space", raw: "two words", expected: "1:two words" },
+	{ label: "double quote", raw: 'say "hi"', expected: '1:say "hi"' },
+	{ label: "backslash", raw: String.raw`back\\slash`, expected: String.raw`1:back\\slash` },
 	{ label: "dollar sign", raw: "dollar$ign", expected: "1:dollar$ign" },
 	{ label: "backtick", raw: "backtick`", expected: "1:backtick`" },
 	{ label: "newline", raw: "line1\nline2", expected: "1:line1\nline2" },
