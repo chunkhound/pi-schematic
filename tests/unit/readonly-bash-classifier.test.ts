@@ -336,10 +336,15 @@ test.each([
 	["find /etc -exec rm {} \\;", block("find blocked outside temp dir: /etc")],
 	[`find ${tmp} -fprint /etc/x`, block("find blocked outside temp dir: /etc/x")],
 	[`find ${tmp} -fprint ~/x`, block("find blocked outside temp dir: ~/x")],
-	[`find ${tmp} -delete`, ALLOW],
 	["find /etc -name '*.ts'", ALLOW],
 ])("classifies find by its mutating actions: %s", (command, expected) => {
 	expect(classifyBashCommand(command, "/workspace")).toStrictEqual(expected);
+});
+
+// The root is relative to a temp working directory: an absolute temp root containing `~`, as
+// Windows 8.3 short paths do, is not read as a root.
+test("allows find -delete under the temp dir", () => {
+	expect(classifyBashCommand("find . -delete", tmp)).toStrictEqual(ALLOW);
 });
 
 test.each([
