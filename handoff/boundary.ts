@@ -246,9 +246,6 @@ function resolveStagedHandoff(pi: ExtensionAPI, state: SchematicState, ctx: Exte
 			}
 			return;
 		case "declined":
-			if (staged.declineReason === null) {
-				throw new Error("Declined handoff has no decline reason.");
-			}
 			failStagedHandoff(pi, state, ctx, staged.declineReason);
 			return;
 		case "submitted": {
@@ -326,8 +323,7 @@ export function registerHandoffBoundary(pi: ExtensionAPI, state: SchematicState)
 		}
 		const reason = declineReason(event, ctx, staged);
 		if (reason !== null) {
-			staged.phase = "declined";
-			staged.declineReason = reason;
+			state.stagedHandoff = { ...staged, phase: "declined", declineReason: reason };
 			return undefined;
 		}
 		const { drafts, discardedPages } = buildHandoffBoundaryDrafts(state, staged);

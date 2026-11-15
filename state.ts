@@ -10,8 +10,7 @@ import type { ModelGroupsBootValidation, ResolvedModelGroup } from "./model-grou
 import type { FrontmatterEntry, FrontmatterIssue } from "./frontmatter-cache.js";
 import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
 
-/** A handoff accepted by the tool, kept until its turn_end boundary is confirmed or failed. */
-export interface StagedHandoff {
+interface StagedHandoffBase {
 	/** Written to the cut's and the successor's details; identifies the cut on the branch. */
 	handoffId: string;
 	toolCallId: string;
@@ -25,10 +24,11 @@ export interface StagedHandoff {
 	 * and warns about every name still present. Empty until the boundary is submitted.
 	 */
 	discardedPages: string[];
-	phase: "staged" | "submitted" | "declined";
-	/** Non-null exactly when phase is "declined". */
-	declineReason: string | null;
 }
+
+/** A handoff accepted by the tool, kept until its turn_end boundary is confirmed or failed. */
+export type StagedHandoff =
+	(StagedHandoffBase & { phase: "staged" | "submitted"; declineReason: null }) | (StagedHandoffBase & { phase: "declined"; declineReason: string });
 
 /** A required handoff request; lifecycle on `SchematicState.pendingRequestedHandoff`. */
 export interface RequestedHandoff {
