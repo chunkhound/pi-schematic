@@ -12,7 +12,8 @@ import { buildChildToolNames, createReadonlyChildBashTool, filterReadonlyToolNam
 import { expectSuffix, isRecord } from "../assertions.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
-import { createToolContext, runRealChildInvocation, SANDBOX_DENIAL_PHRASES, textOf, tmpDir } from "./helpers.js";
+import { createToolContext, SANDBOX_DENIAL_PHRASES, textOf, tmpDir } from "./helpers.js";
+import { runRealChildInvocation } from "../support/real-child.js";
 
 function fulfilledValue<T>(result: PromiseSettledResult<T>): T {
 	expect(result.status).toBe("fulfilled");

@@ -1,8 +1,11 @@
-// Runs a Node child process for a unit test. This module imports no test runner.
+// Runs a Node child process for a unit or integration test. This module imports no test runner.
 
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 
-/** Default child deadline: below the unit testTimeout, so a hung child fails with its own message. */
+/**
+ * Default child deadline: below the test timeout of both the unit and the integration project, so a
+ * hung child fails with its own message.
+ */
 const CHILD_TIMEOUT_MS = 20_000;
 
 export interface SpawnNodeOptions {

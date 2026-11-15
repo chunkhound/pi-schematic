@@ -3,7 +3,7 @@ import fc from "fast-check";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { formatCurrentDate, formatCurrentDatePrompt, formatZoneOffset, hostZone } from "../../time/format.js";
-import { spawnNode } from "./spawn-node.js";
+import { spawnNode } from "../support/spawn-node.js";
 import { assertPresent, expectPrefix } from "../assertions.js";
 
 // Instants are built with Date.UTC throughout, so a run in any host zone

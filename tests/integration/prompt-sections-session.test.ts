@@ -21,7 +21,7 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFact
 import registerSchematic from "../../index.js";
 import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
 import { buildNudge } from "../../watchdog.js";
-import { createDeferred, setTempHome } from "./helpers.js";
+import { createDeferred, setTempHome } from "../unit/helpers.js";
 
 let sandboxDir: string;
 

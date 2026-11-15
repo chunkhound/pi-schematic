@@ -48,8 +48,8 @@ import {
 	createDeferred,
 	theme,
 	stripAnsi,
-	runRealChildInvocation,
 } from "./helpers.js";
+import { runRealChildInvocation } from "../support/real-child.js";
 import { createBeforeAgentStartEvent, createTestHost, getCommand, getHandler, getHandlers, getHostRecords, getTool } from "./test-host.js";
 import type { TestPI } from "./test-host.js";
 

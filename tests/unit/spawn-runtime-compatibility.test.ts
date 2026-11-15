@@ -10,7 +10,8 @@ import { createState } from "../../state.js";
 import { THINKING_LEVELS } from "../../thinking-levels.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
 import { createTestHost, getTool } from "./test-host.js";
-import { assertErrorResult, createExtensionContext, EMPTY_CHILD_USAGE, recordOf, runRealChildInvocation } from "./helpers.js";
+import { assertErrorResult, createExtensionContext, EMPTY_CHILD_USAGE, recordOf } from "./helpers.js";
+import { runRealChildInvocation } from "../support/real-child.js";
 
 // The fields isSpawnToolResult checks; everything else stays unknown.
 interface CheckedSpawnResult {

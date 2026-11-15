@@ -50,7 +50,7 @@ import {
 } from "../../handoff/copy.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS, buildNudge } from "../../watchdog.js";
-import { createDeferred, createUIContext, recordOf, setTempHome } from "./helpers.js";
+import { createDeferred, createUIContext, recordOf, setTempHome } from "../unit/helpers.js";
 import { assertPresent, assertString } from "../assertions.js";
 
 type ExtensionFactory = (pi: ExtensionAPI) => void;

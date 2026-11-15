@@ -14,7 +14,7 @@ Welcome! This project welcomes focused, well-validated contributions. Use coding
 
 1. **Research the area**
    - Identify the relevant primitive: spawn, notebook, handoff, watchdog, or extension wiring.
-   - Read the relevant suite in `tests/unit/` before changing behavior.
+   - Read the relevant suites in `tests/unit/` and `tests/integration/` before changing behavior.
 
 2. **Plan the smallest safe change**
    - Reuse existing state and lifecycle hooks when possible.
@@ -40,10 +40,19 @@ Before submitting, check that your change:
 
 ## Tests
 
-Tests run on Vitest, in two projects of `vitest.config.ts`: `unit` runs `tests/unit/**/*.test.ts` and `e2e` runs `tests/e2e/**/*.test.ts`. A new test file under either directory is picked up by its glob. Run one file with `npx vitest run --project <project> <file>`, for example `npx vitest run --project unit tests/unit/handoff.test.ts`. The suites test the behaviour of the shipped extension; repository configuration, documentation, CI helper scripts and the test helpers themselves have no tests.
+Tests run on Vitest, in three projects of `vitest.config.ts`: `unit` runs `tests/unit/**/*.test.ts`, `integration` runs `tests/integration/**/*.test.ts` and `e2e` runs `tests/e2e/**/*.test.ts`. A new test file under one of these directories is picked up by its glob. Run one file with `npx vitest run --project <project> <file>`, for example `npx vitest run --project unit tests/unit/handoff.test.ts`. The suites test the behaviour of the shipped extension; repository configuration, documentation, CI helper scripts and the test helpers themselves have no tests.
 
-- `npm test` runs the unit suite (`vitest run --project unit`). Arguments after `--` go to Vitest, so a file filter works there too. A render snapshot whose golden file is missing is written locally and fails under CI.
-- `npm run test:coverage` runs the same unit tests as `npm test` with V8 coverage (`vitest run --project unit --coverage`). It prints a text table and writes the report to `coverage/`: `coverage/lcov.info`, `coverage/coverage-summary.json` and the HTML report in `coverage/lcov-report/`. CI uploads this report as an artifact and, on a pull request from a branch of this repository, posts the coverage summary as a comment that later runs update. The comment also shows the totals against the PR's base commit.
+Each test goes into the project that matches what it needs:
+
+- `unit` holds deterministic in-process tests: pure modules, and extension handlers, tools and commands driven through pi's own extension runner, with in-memory sessions and model registries and files under a temp directory.
+- `integration` holds tests that leave the process or are not deterministic: a real pi agent session, child processes, shells, the OS sandbox, git.
+- `e2e` holds the tests that run the real pi CLI.
+
+The project is decided per test. A file whose tests fall on both sides is split into two files with the same name, one in `tests/unit/` and one in `tests/integration/`. The shared test fixtures live in `tests/support/`.
+
+- `npm test` runs the unit and integration projects (`vitest run --project unit --project integration`). Arguments after `--` go to Vitest, so a file filter works there too. A render snapshot whose golden file is missing is written locally and fails under CI.
+- `npm run test:unit` runs the unit project (`vitest run --project unit`), and `npm run test:integration` runs the integration project (`vitest run --project integration`).
+- `npm run test:coverage` runs the same tests as `npm test` with V8 coverage (`vitest run --project unit --project integration --coverage`). It prints a text table and writes the report to `coverage/`: `coverage/lcov.info`, `coverage/coverage-summary.json` and the HTML report in `coverage/lcov-report/`. CI uploads this report as an artifact and, on a pull request from a branch of this repository, posts the coverage summary as a comment that later runs update. The comment also shows the totals against the PR's base commit.
 - `npm run test:snapshots:check` runs only the render-snapshot tests with `--update=none`; fails on a missing or differing golden file in `tests/snapshots/`.
 - `npm run test:snapshots:update` runs only the render-snapshot tests with `--update=all`, which rewrites each golden file in `tests/snapshots/` whose render differs from it, and writes a missing one, after an intentional render change. Review the diff carefully: snapshot updates are the only signal that catches unintended UI regressions.
 - `npm run test:e2e` runs the `e2e` project, the real-host suite under `tests/e2e/`: it drives the pi CLI in RPC mode through `RpcClient` with schematic and a scripted probe provider. `E2E_REAL_HOST_TIMEOUT_MS` sets how long a real-host step's barrier waits for outstanding runs, handoff calls awaiting their turn_end and extension inputs awaiting delivery before it fails (default 20 000 ms); a step that has counted fewer runs than it expects barriers again inside that same budget, because a run that a command handler starts (schematic's `/handoff`) is first visible to the probe at its input event. The real-host suite's `describe` sets a Vitest timeout of `4 × (E2E_REAL_HOST_TIMEOUT_MS + 5 000) + 60 000` ms (`REAL_HOST_TEST_TIMEOUT_MS`, `tests/e2e/real-host.ts`) for each of its tests: room for the four barriers a host may make, each running to the harness's own deadline (a step that barriers again inside its deadline adds at most one report backstop to its phase), so a slow test fails with the harness's message rather than Vitest's timeout. The timeout covers the test body: start, commands and the barriers of its steps. The test-finish callback runs afterwards: it first waits for a timed-out body to settle and then closes the host, a close bounded by its own waits whose barrier counts as one of the four. A test that needs a fifth barrier fails until `REAL_HOST_MAX_BARRIERS_PER_TEST` is raised, and an override that would push the per-test timeout above Vitest's limit of 2 147 483 647 ms is rejected at load.

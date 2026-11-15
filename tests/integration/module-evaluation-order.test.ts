@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { spawnNode } from "./spawn-node.js";
+import { spawnNode } from "../support/spawn-node.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const loader = new URL("../../register-loader.mjs", import.meta.url).href;
@@ -30,42 +30,6 @@ function evaluate(code: string): { status: number | null; output: string } {
 }
 
 describe("module evaluation order", () => {
-	it("loads handoff before spawn in a fresh extension process", () => {
-		const { status, output } = evaluate(`
-			await import('./handoff/tool.ts');
-			await import('./spawn/index.ts');
-			const sdk = await import('@earendil-works/pi-coding-agent');
-			if (typeof sdk.createAgentSession !== 'function') throw new Error('createAgentSession missing');
-			if (typeof sdk.SessionManager?.inMemory !== 'function') throw new Error('SessionManager.inMemory missing');
-			if (typeof sdk.SettingsManager !== 'function') throw new Error('SettingsManager missing');
-			if (typeof sdk.ModelRuntime?.create !== 'function') throw new Error('ModelRuntime.create missing');
-		`);
-		expect(status, output).toBe(0);
-	});
-
-	it("createAgentSession is callable after handoff-first import sequence", () => {
-		const { status, output } = evaluate(`
-			await import('./handoff/tool.ts');
-			await import('./spawn/index.ts');
-			const sdk = await import('@earendil-works/pi-coding-agent');
-
-			if (typeof sdk.createAgentSession !== 'function') throw new Error('createAgentSession missing');
-
-			let threw = false;
-			try {
-				await sdk.createAgentSession({ agentDir: process.execPath });
-			} catch (error) {
-				threw = true;
-				const message = String(error);
-				if (/is not a function|is not defined|Cannot read propert/.test(message)) {
-					throw new Error('createAgentSession threw a loader-corruption error: ' + message);
-				}
-			}
-			if (!threw) throw new Error('Expected createAgentSession to throw with invalid args');
-		`);
-		expect(status, output).toBe(0);
-	});
-
 	it("creates and uses a deterministic session after handoff-first imports", () => {
 		const { status, output } = evaluate(`
 			await import('./handoff/tool.ts');

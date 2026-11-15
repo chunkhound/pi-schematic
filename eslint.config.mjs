@@ -22,7 +22,7 @@ if (nodeFloor === "") {
 
 // Production code is every TypeScript file outside tests/ and scripts/, except the Vitest config.
 const PRODUCTION = { files: ["**/*.ts"], ignores: ["tests/**", "scripts/**", "vitest.config.ts"] };
-const SPAWN_NODE = "tests/unit/spawn-node.ts";
+const SPAWN_NODE = "tests/support/spawn-node.ts";
 
 // no-restricted-imports and no-restricted-syntax replace their options in each matching block, so
 // every block below carries the full set for its file class.
@@ -394,7 +394,7 @@ export default defineConfig([
 				...["node:child_process", "child_process"].map((name) => ({
 					name,
 					importNames: ["spawnSync"],
-					message: "spawnSync is not allowed in tests; use it only in tests/unit/spawn-node.ts.",
+					message: "spawnSync is not allowed in tests; use it only in tests/support/spawn-node.ts.",
 				})),
 			],
 		},

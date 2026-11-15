@@ -30,7 +30,8 @@ export default defineConfig({
 		// 0 disables truncation, so test names built from test.each/test.for rows stay whole.
 		taskTitleValueFormatTruncate: 0,
 		// Coverage is collected only when a run passes --coverage. These root options would apply to
-		// the e2e project too, so `npm run test:coverage` restricts the run to the unit project.
+		// the e2e project too, so `npm run test:coverage` restricts the run to the unit and integration
+		// projects.
 		coverage: {
 			provider: "v8",
 			reporter: ["text", "lcov", "json-summary"],
@@ -44,6 +45,14 @@ export default defineConfig({
 					include: ["tests/unit/**/*.test.ts"],
 					testTimeout: 30_000,
 					hookTimeout: 30_000,
+				},
+			},
+			{
+				test: {
+					name: "integration",
+					include: ["tests/integration/**/*.test.ts"],
+					testTimeout: 60_000,
+					hookTimeout: 60_000,
 				},
 			},
 			{
