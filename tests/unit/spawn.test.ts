@@ -1395,7 +1395,8 @@ test("executeSpawn propagates missing modalities before creating child work", as
 			sourcePath: "<test>",
 			models: [{ provider: PROVIDER, modelId: "text" }],
 			modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
-			validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
+			validation: { unavailableRefs: [], shadowedByProject: false, degraded: false },
+			evaluations: [],
 		},
 	];
 	const host = await spawnRunner({
@@ -1451,7 +1452,8 @@ test("registered spawn tool rejects missing modalities before creating child wor
 			sourcePath: "<test>",
 			models: [{ provider: PROVIDER, modelId: "text" }],
 			modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
-			validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
+			validation: { unavailableRefs: [], shadowedByProject: false, degraded: false },
+			evaluations: [],
 		},
 	];
 	const sessionFactory = vi.fn(
@@ -1496,7 +1498,8 @@ test("registered spawn tool rejects injected scalar group and model requirements
 			sourcePath: "<test>",
 			models: [{ provider: PROVIDER, modelId: "small" }],
 			modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
-			validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
+			validation: { unavailableRefs: [], shadowedByProject: false, degraded: false },
+			evaluations: [],
 		},
 	];
 	const host = await spawnRunner({
@@ -1512,9 +1515,7 @@ test("registered spawn tool rejects injected scalar group and model requirements
 			const routeError = routeErrorOf(error);
 			expect(routeError.reason).toBe("constraint-unsatisfied");
 			expect(routeError.constraintUnsatisfied).toHaveLength(2);
-			expect(routeError.missingModalities).toHaveLength(0);
-			expect(routeError.missingFromGroup).toHaveLength(0);
-			expect(routeError.missingFromModel).toHaveLength(0);
+			expect(routeError.message).toBe("Spawn route 'small' cannot satisfy constraint requirements.");
 			return true;
 		},
 	);

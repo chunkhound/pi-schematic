@@ -44,18 +44,12 @@ function buildCapsLetters(group: ResolvedModelGroup, colorize: DescriptionColori
 /**
  * Assemble the `#`-mention tooltip description.
  *
- * With a colorizer: `T I  provider/model • thinking` — the colored media
- * letters (reasoning excluded) are padded to a fixed `capsWidth` column, then
- * the per-model route details in muted. The muted color is re-asserted after
- * every colored span and after the padding so the one-line row stays legible.
- *
- * Without a colorizer: the plain per-model route details are returned
- * unchanged (rows are inherently aligned to the left edge).
+ * `T I  provider/model • thinking`: the colored media letters (reasoning
+ * excluded) are padded to a fixed `capsWidth` column, then the per-model route
+ * details in muted. The muted color is re-asserted after every colored span and
+ * after the padding so the one-line row stays legible.
  */
-function buildSuggestionDescription(route: string, letters: string, capsWidth: number, colorize?: DescriptionColorizer): string {
-	if (!colorize) {
-		return route;
-	}
+function buildSuggestionDescription(route: string, letters: string, capsWidth: number, colorize: DescriptionColorizer): string {
 	const gap = colorize("muted", "  ");
 	if (capsWidth === 0) {
 		return colorize("muted", route);
@@ -65,7 +59,7 @@ function buildSuggestionDescription(route: string, letters: string, capsWidth: n
 	return `${padded}${gap}${colorize("muted", route)}`;
 }
 
-export function createModelGroupAutocompleteProvider(state: SchematicState, colorize?: DescriptionColorizer): AutocompleteProviderFactory {
+export function createModelGroupAutocompleteProvider(state: SchematicState, colorize: DescriptionColorizer): AutocompleteProviderFactory {
 	return (current) => ({
 		async getSuggestions(lines, cursorLine, cursorCol, options) {
 			const line = lines[cursorLine] ?? "";
@@ -82,7 +76,7 @@ export function createModelGroupAutocompleteProvider(state: SchematicState, colo
 				value: `#${group.name}`,
 				label: `#${group.name}`,
 				route: formatModelGroupRouteDetails(group),
-				letters: colorize ? buildCapsLetters(group, colorize) : "",
+				letters: buildCapsLetters(group, colorize),
 			}));
 			// Align the route column across every visible suggestion row.
 			const capsWidth = rows.reduce((max, row) => Math.max(max, visibleWidth(row.letters)), 0);
@@ -109,14 +103,11 @@ export function registerModelGroupAutocomplete(ctx: ExtensionContext, state: Sch
 		return;
 	}
 	const ui = ctx.ui;
-	if (typeof ui.addAutocompleteProvider !== "function") {
-		return;
-	}
 	if (registeredUis.has(ui)) {
 		return;
 	}
 	registeredUis.add(ui);
 	// Lazy adapter so the colorizer reflects the live theme (not a snapshot).
-	const colorize: DescriptionColorizer | undefined = ui.theme ? (color, text) => ui.theme.fg(color, text) : undefined;
+	const colorize: DescriptionColorizer = (color, text) => ui.theme.fg(color, text);
 	ui.addAutocompleteProvider(createModelGroupAutocompleteProvider(state, colorize));
 }

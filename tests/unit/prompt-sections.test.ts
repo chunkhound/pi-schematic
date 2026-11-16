@@ -225,7 +225,7 @@ for (const sectionName of ["schematic", "schematic_topic", "schematic_model_grou
 			fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 			fs.writeFileSync(
 				modelGroupsPath("project", cwd),
-				JSON.stringify({ version: 1, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }),
+				JSON.stringify({ version: 2, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }),
 				"utf8",
 			);
 			const models = [{ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } }];

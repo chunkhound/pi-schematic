@@ -11,20 +11,19 @@ import {
 	type ExtensionContext,
 	type ExtensionToolContext,
 	type ExtensionUIContext,
-	type KeybindingsManager,
 	type ToolCallEventResult,
 	type ToolDefinition,
 	type TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model, ToolResultMessage } from "@earendil-works/pi-ai";
-import { stripTerminalSequences, TuiMainScreen, type Component } from "@earendil-works/pi-tui";
+import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import os from "node:os";
 import { test as base, expect, vi } from "vitest";
 import { isRecord } from "../assertions.js";
 import { AGENT_DIR_ENV_KEY } from "../paths.js";
-import { createTestHost, loadTestKeybindings, type TestPI } from "./test-host.js";
+import { createTestHost, type TestPI } from "./test-host.js";
 
 export const theme = createTheme({
 	fg: (_name: string, text: string) => text,
@@ -460,44 +459,6 @@ export function createToolContext(overrides: Partial<ExtensionToolContext> = {})
 		tools: tools ?? [],
 		executeTool: executeTool ?? unstubbedAsync("ctx.executeTool"),
 	});
-}
-
-/**
- * A `ctx.ui.custom` that builds the component with a TUI whose `requestRender` does
- * nothing, `renderTheme` and pi's default keybindings, then runs `onOpen` with it.
- * As pi does, the first `done` disposes a built component that has a `dispose`
- * method. It resolves to the value the component passed to the first `done` by the
- * time `onOpen` finished, and rejects when the component did not call `done` by then.
- */
-export function createCustomUI(renderTheme: Theme, onOpen: (component: Component) => void | Promise<void>): ExtensionUIContext["custom"] {
-	const tui = stubInstance(TuiMainScreen.prototype, { requestRender: () => undefined });
-	return async <T>(
-		factory: (tui: TuiMainScreen, theme: Theme, keybindings: KeybindingsManager, done: (result: T) => void) => Component | Promise<Component>,
-	): Promise<T> => {
-		const keybindings = await loadTestKeybindings();
-		const results: T[] = [];
-		let built: Component | undefined;
-		const component = await factory(tui, renderTheme, keybindings, (result) => {
-			results.push(result);
-			if (results.length === 1 && built !== undefined) {
-				disposeComponent(built);
-			}
-		});
-		built = component;
-		await onOpen(component);
-		if (results.length === 0) {
-			throw new Error("The custom component did not call done.");
-		}
-		return results[0];
-	};
-}
-
-// pi's `Component` type declares no `dispose`; pi calls it when a component has one.
-function disposeComponent(component: Component): void {
-	const dispose: unknown = Reflect.get(component, "dispose");
-	if (typeof dispose === "function") {
-		Reflect.apply(dispose, component, []);
-	}
 }
 
 // ── Readonly test helpers ────────────────────────────────────────────

@@ -34,7 +34,7 @@ function satisfaction(missing: ModelGroupModality[]): ConstraintSatisfaction {
 }
 
 export function getModalitiesModelFact(model: Model<Api>): ModelGroupModality[] {
-	return ordered([...(Array.isArray(model.input) ? (model.input as ModelGroupModality[]) : []), ...(model.reasoning ? ["reasoning" as const] : [])]);
+	return ordered([...model.input, ...(model.reasoning ? ["reasoning" as const] : [])]);
 }
 
 export const modalitiesConstraint: ConstraintDescriptor<
@@ -129,18 +129,7 @@ export const modalitiesConstraint: ConstraintDescriptor<
 	},
 };
 
-export function deriveModalitiesEvaluation(
-	members: readonly { ref: { provider: string; modelId: string }; model?: Model<Api> }[],
-	override: ModelGroupModality[] | undefined,
-): ConstraintEvaluation<ModelGroupModalities, ModelGroupModality[]> {
-	const aggregate = modalitiesConstraint.aggregate({
-		members: members.map(({ ref, model }) => ({ ref, ...(model ? { fact: modalitiesConstraint.modelFact(model) } : {}) })),
-	});
-	const reconciled = modalitiesConstraint.reconcile({ aggregate, override });
-	return { key: modalitiesConstraint.key, aggregate, effective: reconciled.effective, diagnostics: reconciled.diagnostics };
-}
-
-export function assertModalitiesOverrideSupported(
+function assertModalitiesOverrideSupported(
 	evaluation: ConstraintEvaluation<ModelGroupModalities, ModelGroupModality[]>,
 	override: ModelGroupModality[] | undefined,
 ): void {
@@ -151,8 +140,4 @@ export function assertModalitiesOverrideSupported(
 	if (missing !== undefined && missing.length > 0) {
 		throw new Error(`Model group modality override includes unsupported modalities: ${missing.join(", ")}.`);
 	}
-}
-
-export function getMissingModalitiesFromModel(model: Model<Api>, required: readonly ModelGroupModality[]): ModelGroupModality[] {
-	return ordered(required.filter((modality) => !getModalitiesModelFact(model).includes(modality)));
 }

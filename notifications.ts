@@ -124,7 +124,8 @@ export function buildModelGroupNotification(groupName: string, provider: string,
 
 /** Error notification when a frontmatter model-group cannot be resolved. */
 export function buildModelGroupErrorNotification(groupName: string, commandRef: string, detail: string): string {
-	return `Cannot execute \`${commandRef}\`: Model Group \`${groupName}\` error — ${detail}.`;
+	const sentence = detail.endsWith(".") ? detail : `${detail}.`;
+	return `Cannot execute \`${commandRef}\`: Model Group \`${groupName}\` error — ${sentence}`;
 }
 
 /** Error notification when model change fails after group resolution. */

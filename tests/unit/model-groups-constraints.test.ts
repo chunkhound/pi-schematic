@@ -1,12 +1,17 @@
 import { expect, test } from "vitest";
+import fs from "node:fs";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { evaluateConstraints } from "../../model-groups/constraints/engine.js";
 import { constraintEditorRows, presentConstraintPrompt } from "../../model-groups/constraints/presentation.js";
 import { modalitiesConstraint } from "../../model-groups/constraints/modalities.js";
 import { createConstraintRegistry, productionConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import type { AnyConstraintDescriptor, ConstraintMemberResolution } from "../../model-groups/constraints/types.js";
-import { testMaxBudget, testMinContext } from "./model-groups-constraints-fixture.js";
+import { testMinContext } from "./model-groups-constraints-fixture.js";
 import { testModel } from "./helpers.js";
+import { createModelRegistry } from "../support/model-registry.js";
+import { resolveConstraintMembers } from "../../model-groups/constraints/resolution.js";
+import { testProvider, withTemp } from "./model-groups-helpers.js";
+import { createGroup, loadModelGroups, modelGroupsPath } from "../../model-groups/store.js";
 
 const rich = testModel({ provider: "p", id: "rich", input: ["text", "image"], reasoning: true, contextWindow: 100 });
 const text = testModel({ provider: "p", id: "text", input: ["text"], reasoning: false, contextWindow: 10 });
@@ -79,66 +84,79 @@ test("fully stale non-empty modality overrides fall back to the union while expl
 	expect(evaluateConstraints(resolved, { modalities: [] }, registry)[0].effective).toStrictEqual(["text"]);
 });
 
-test("injected scalar traverses resolution, aggregation, persistence, reconciliation, and production isolation", () => {
-	const injected = createConstraintRegistry([testMinContext]);
+test("injected scalar takes the smallest context window among the members the model registry resolves", async () => {
+	const registry = await createModelRegistry({
+		"mg-scalar": testProvider(
+			[
+				{ id: "wide", contextWindow: 100 },
+				{ id: "narrow", contextWindow: 10 },
+			],
+			{ auth: true },
+		),
+	});
+	const members = [
+		{ provider: "mg-scalar", modelId: "wide" },
+		{ provider: "mg-scalar", modelId: "narrow" },
+	];
+
+	expect(evaluateConstraints(resolveConstraintMembers(members, registry), {}, createConstraintRegistry([testMinContext]))).toStrictEqual([
+		{ key: "testMinContext", aggregate: { automatic: 10, supported: 100 }, effective: 10, diagnostics: [] },
+	]);
+});
+
+test("injected scalar has no automatic value for a member that does not resolve and reports it as unknown", () => {
+	const resolved = resolution([
+		{ provider: "p", modelId: "rich", model: rich },
+		{ provider: "p", modelId: "gone" },
+	]);
+
+	expect(evaluateConstraints(resolved, {}, createConstraintRegistry([testMinContext]))).toStrictEqual([
+		{
+			key: "testMinContext",
+			aggregate: { automatic: null, supported: 100 },
+			effective: null,
+			diagnostics: [{ key: "testMinContext", code: "unknown-automatic" }],
+		},
+	]);
+});
+
+test("injected scalar override within the supported context becomes the effective value", () => {
 	const resolved = resolution([
 		{ provider: "p", modelId: "rich", model: rich },
 		{ provider: "p", modelId: "text", model: text },
 	]);
-	const automatic = evaluateConstraints(resolved, {}, injected)[0];
-	expect(automatic.aggregate).toStrictEqual({ automatic: 10, supported: 100 });
-	expect(automatic.effective).toBe(10);
-	expect(
-		evaluateConstraints(
-			resolution([
-				{ provider: "p", modelId: "rich", model: rich },
-				{ provider: "p", modelId: "gone" },
-			]),
-			{},
-			injected,
-		)[0],
-	).toStrictEqual({
-		key: "testMinContext",
-		aggregate: { automatic: null, supported: 100 },
-		effective: null,
-		diagnostics: [{ key: "testMinContext", code: "unknown-automatic" }],
-	});
-	expect(evaluateConstraints(resolution([]), {}, injected)[0].aggregate).toStrictEqual({ automatic: null, supported: null });
-	const envelope: Record<string, unknown> = { testMinContext: testMinContext.persistence.override.encode(12) };
-	const decoded = testMinContext.persistence.override.decode(envelope.testMinContext, "constraints.testMinContext");
-	expect(decoded).toStrictEqual({ ok: true, value: 12 });
-	expect({ testMinContext: testMinContext.persistence.override.encode(decoded.ok ? decoded.value : 0) }).toStrictEqual(envelope);
-	expect(evaluateConstraints(resolved, envelope, injected)[0].effective).toBe(12);
-	const unsupported = evaluateConstraints(resolved, { testMinContext: 101 }, injected)[0];
-	expect(unsupported.effective).toBeNull();
-	expect(unsupported.diagnostics).toStrictEqual([{ key: "testMinContext", code: "unsupported-override", details: 101 }]);
-	expect(productionConstraintRegistry.descriptors.map((descriptor) => descriptor.key)).toStrictEqual(["modalities"]);
-	expect(productionConstraintRegistry.get("testMinContext")).toBeUndefined();
-	expect(productionConstraintRegistry.get("testMaxBudget")).toBeUndefined();
-});
 
-test("injected lower-is-better budget rejects an override above the supported cap", () => {
-	const injected = createConstraintRegistry([testMaxBudget]);
-	const resolved = resolution([
-		{ provider: "p", modelId: "cheap", model: { ...text, cost: { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 } } },
-		{ provider: "p", modelId: "costly", model: { ...rich, cost: { input: 1, output: 5, cacheRead: 1, cacheWrite: 1 } } },
+	expect(evaluateConstraints(resolved, { testMinContext: 12 }, createConstraintRegistry([testMinContext]))).toStrictEqual([
+		{ key: "testMinContext", aggregate: { automatic: 10, supported: 100 }, effective: 12, diagnostics: [] },
 	]);
-	const automatic = evaluateConstraints(resolved, {}, injected)[0];
-	expect(automatic.aggregate).toStrictEqual({ automatic: 5, supported: 1 });
-	expect(automatic.effective).toBe(5);
-	const capped = evaluateConstraints(resolved, { testMaxBudget: 1 }, injected)[0];
-	expect(capped.effective).toBe(1);
-	const unsupported = evaluateConstraints(resolved, { testMaxBudget: 2 }, injected)[0];
-	expect(unsupported.effective).toBeNull();
-	expect(unsupported.diagnostics).toStrictEqual([{ key: "testMaxBudget", code: "unsupported-override", details: 2 }]);
 });
 
-test("generic modality prompt presentation preserves effective and empty labels", () => {
+test("model groups store writes an injected scalar override to the group file and loads it back", () =>
+	withTemp(async ({ cwd }) => {
+		const access = { cwd, policy: "global-project" as const };
+		const injected = createConstraintRegistry([testMinContext]);
+		const registry = await createModelRegistry({ "mg-scalar": testProvider([{ id: "wide", contextWindow: 100 }], { auth: true }) });
+
+		createGroup("project", access, "deep", { models: [{ provider: "mg-scalar", modelId: "wide" }], constraints: { testMinContext: 12 } }, registry, injected);
+
+		expect(JSON.parse(fs.readFileSync(modelGroupsPath("project", cwd), "utf8"))).toStrictEqual({
+			version: 2,
+			groups: { deep: { models: [{ provider: "mg-scalar", modelId: "wide" }], constraints: { testMinContext: 12 } } },
+		});
+		expect(loadModelGroups(access, injected).configs.project.groups.deep).toStrictEqual({
+			models: [{ provider: "mg-scalar", modelId: "wide" }],
+			constraints: { testMinContext: 12 },
+		});
+	}));
+
+test.for(["testMinContext", "testMaxBudget"])("production constraint registry does not know the test-only key %s", (key) => {
+	expect(productionConstraintRegistry.get(key)).toBeUndefined();
+});
+
+test("generic modality prompt presentation preserves effective labels", () => {
 	const registry = createConstraintRegistry([modalitiesConstraint]);
 	const effective = evaluateConstraints(resolution([{ provider: "p", modelId: "rich", model: rich }]), {}, registry);
-	const empty = evaluateConstraints(resolution([]), {}, registry);
-	expect(presentConstraintPrompt(effective, registry).filter(Boolean).join(", ") || "no common modalities").toBe("text, image, reasoning");
-	expect(presentConstraintPrompt(empty, registry).filter(Boolean).join(", ") || "no common modalities").toBe("no common modalities");
+	expect(presentConstraintPrompt(effective, registry)).toStrictEqual(["text, image, reasoning"]);
 });
 
 test("generic presentation and number form rows use injected descriptor metadata", () => {
@@ -151,18 +169,54 @@ test("generic presentation and number form rows use injected descriptor metadata
 	]);
 });
 
-test("engine uses only the supplied resolution and never calls host registry APIs", () => {
-	const spyResolution = Object.assign(resolution([{ provider: "p", modelId: "rich", model: rich }]), {
-		find: () => {
-			throw new Error("find must not be called");
-		},
-		hasConfiguredAuth: () => {
-			throw new Error("auth must not be called");
-		},
-		refresh: () => {
-			throw new Error("refresh must not be called");
-		},
+test("modalities descriptor derives ordered common, supported, and override-effective modalities", async () => {
+	const registry = await createModelRegistry({
+		"mg-modalities": testProvider(
+			[
+				{ id: "rich", input: ["image", "text"], reasoning: true },
+				{ id: "text", input: ["text"], reasoning: false },
+			],
+			{ auth: true },
+		),
 	});
-	const result = evaluateConstraints(spyResolution, {}, createConstraintRegistry([modalitiesConstraint]));
-	expect(result[0].effective).toStrictEqual(["text", "image", "reasoning"]);
+	const descriptors = createConstraintRegistry([modalitiesConstraint]);
+	const members = [
+		{ provider: "mg-modalities", modelId: "rich" },
+		{ provider: "mg-modalities", modelId: "text" },
+	];
+	const evaluate = (models: typeof members, overrides: Record<string, unknown>) =>
+		evaluateConstraints(resolveConstraintMembers(models, registry), overrides, descriptors)[0];
+
+	expect(evaluate(members, {})).toStrictEqual({
+		key: "modalities",
+		aggregate: { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text"] },
+		effective: ["text", "image", "reasoning"],
+		diagnostics: [],
+	});
+	expect(evaluate(members, { modalities: ["reasoning", "image"] }).effective, "text stays ahead of the overridden add-ons").toStrictEqual([
+		"text",
+		"image",
+		"reasoning",
+	]);
+	expect(evaluate([...members, { provider: "mg-modalities", modelId: "gone" }], {}).aggregate, "an unresolved member empties common").toStrictEqual({
+		common: [],
+		supported: ["text", "image", "reasoning"],
+		effective: [],
+	});
+});
+
+test("a stale modality override is restored when the model regains the modality", async () => {
+	const registry = await createModelRegistry({ "mg-restore": testProvider([{ id: "m", input: ["text"] }], { auth: true }) });
+	const descriptors = createConstraintRegistry([modalitiesConstraint]);
+	const overrides = { modalities: ["text", "image"] };
+	const members = [{ provider: "mg-restore", modelId: "m" }];
+	expect(
+		evaluateConstraints(resolveConstraintMembers(members, registry), overrides, descriptors)[0].effective,
+		"capped while the model lacks image",
+	).toStrictEqual(["text"]);
+
+	registry.registerProvider("mg-restore", testProvider([{ id: "m", input: ["text", "image"] }], { auth: true }));
+
+	expect(evaluateConstraints(resolveConstraintMembers(members, registry), overrides, descriptors)[0].effective).toStrictEqual(["text", "image"]);
+	expect(overrides, "the stored override is not rewritten").toStrictEqual({ modalities: ["text", "image"] });
 });

@@ -29,6 +29,7 @@ import {
 const CURRENT_VERSION = 2;
 type FsOps = Pick<typeof fs, "existsSync" | "mkdirSync" | "readFileSync" | "writeFileSync" | "renameSync" | "copyFileSync" | "unlinkSync" | "statSync">;
 let fsOps: FsOps = fs;
+// Filesystem fault-injection seam for tests: EIO, rename and stat failures that a real filesystem cannot produce portably.
 export function __setModelGroupsFsForTests(next: Partial<FsOps> | null): void {
 	fsOps = next ? { ...fs, ...next } : fs;
 }
@@ -135,16 +136,9 @@ function validateModelEntry(value: unknown, at: string): { ok: true; model: Mode
 }
 function normalizeOverrideEnvelope(
 	rawDef: Record<string, unknown>,
-	sourceVersion: number,
 	rawName: string,
 	registry: ConstraintRegistry,
 ): { ok: true; constraints?: Record<string, unknown> } | { ok: false; message: string } {
-	if (sourceVersion < 2) {
-		if (Object.hasOwn(rawDef, "constraints")) {
-			return { ok: false, message: `group ${rawName}.constraints is unsupported in legacy config` };
-		}
-		return { ok: true };
-	}
 	if (rawDef.constraints !== undefined && !isPlainRecord(rawDef.constraints)) {
 		return { ok: false, message: `group ${rawName}.constraints must be an object` };
 	}
@@ -169,7 +163,6 @@ function normalizeOverrideEnvelope(
 }
 function normalizeGroups(
 	rawGroups: Record<string, unknown>,
-	sourceVersion: number,
 	registry: ConstraintRegistry,
 ): { ok: true; groups: Record<string, ModelGroupDef> } | { ok: false; message: string } {
 	const groups = ownGroups();
@@ -195,7 +188,7 @@ function normalizeGroups(
 			}
 			models.push(result.model);
 		}
-		const envelope = normalizeOverrideEnvelope(rawDef, sourceVersion, rawName, registry);
+		const envelope = normalizeOverrideEnvelope(rawDef, rawName, registry);
 		if (!envelope.ok) {
 			return envelope;
 		}
@@ -206,33 +199,29 @@ function normalizeGroups(
 			sourcePath: _sourcePath,
 			modalities: _modalities,
 			validation: _validation,
+			evaluations: _evaluations,
 			models: _rawModels,
 			constraints: _constraints,
-			modalityOverride: _modalityOverride,
 			...configDef
 		} = rawDef;
 		const { ok: _ok, ...normalizedEnvelope } = envelope;
-		defineGroup(groups, name, {
-			...configDef,
-			models,
-			...normalizedEnvelope,
-			...(sourceVersion < 2 && Object.hasOwn(rawDef, "modalityOverride") ? { modalityOverride: rawDef.modalityOverride } : {}),
-		});
+		defineGroup(groups, name, { ...configDef, models, ...normalizedEnvelope });
 	}
 	return { ok: true, groups };
 }
 function validateConfig(raw: unknown, registry: ConstraintRegistry): { ok: true; config: ModelGroupsConfig } | { ok: false; message: string } {
-	if (!isPlainRecord(raw) || !isPlainRecord(raw.groups)) {
-		return { ok: false, message: !isPlainRecord(raw) ? "config root must be an object" : "groups must be an object" };
+	if (!isPlainRecord(raw)) {
+		return { ok: false, message: "config root must be an object" };
 	}
-	const sourceVersion = raw.version === undefined || raw.version === 0 ? 1 : raw.version;
-	if (typeof sourceVersion !== "number" || !Number.isInteger(sourceVersion) || sourceVersion < 1) {
-		return { ok: false, message: "version must be a non-negative supported integer (only missing/0 normalize)" };
+	// The version is checked before the groups, so a file from before version 2 reports the version whatever else it lacks.
+	// loadScope reports an integer version above the current one as unsupported before validation runs.
+	if (raw.version !== CURRENT_VERSION) {
+		return { ok: false, message: `version must be ${CURRENT_VERSION}` };
 	}
-	if (sourceVersion > CURRENT_VERSION) {
-		return { ok: false, message: `unsupported version ${sourceVersion}` };
+	if (!isPlainRecord(raw.groups)) {
+		return { ok: false, message: "groups must be an object" };
 	}
-	const normalized = normalizeGroups(raw.groups, sourceVersion, registry);
+	const normalized = normalizeGroups(raw.groups, registry);
 	return normalized.ok ? { ok: true, config: { version: CURRENT_VERSION, groups: normalized.groups } } : normalized;
 }
 function backupAndIssue(
@@ -317,7 +306,7 @@ export function loadModelGroups(access: ModelGroupsAccess, constraintRegistry: C
 	};
 }
 function normalizeSaveConfig(scope: ModelGroupScope, sourcePath: string, config: ModelGroupsConfig, registry: ConstraintRegistry): ModelGroupsConfig {
-	const normalized = normalizeGroups(config.groups, 2, registry);
+	const normalized = normalizeGroups(config.groups, registry);
 	if (!normalized.ok) {
 		throw persistenceError({ operation: "save", scope, sourcePath, phase: "config-validation", message: normalized.message });
 	}
@@ -408,7 +397,7 @@ function canonicalName(raw: string): string {
 	return name;
 }
 function normalizeMutationDef(def: ModelGroupDef, registry: ConstraintRegistry): ModelGroupDef {
-	const normalized = normalizeGroups({ group: def }, CURRENT_VERSION, registry);
+	const normalized = normalizeGroups({ group: def }, registry);
 	if (!normalized.ok) {
 		throw persistenceError({ operation: "save", phase: "config-validation", message: normalized.message });
 	}
@@ -571,16 +560,8 @@ export function validateModelGroups(
 		// when present; injected registries without it project an empty capability set.
 		const modalityEvaluation = evaluations.find((evaluation) => evaluation.key === modalitiesConstraint.key);
 		const modalities = (modalityEvaluation?.aggregate as ModelGroupModalities | undefined) ?? { common: [], supported: [], effective: [] };
-		const diagnostics = presentConstraintDiagnosticRecords(evaluations, constraintRegistry);
-		const unsupportedOverrideModalities = modalityEvaluation
-			? ((diagnostics.find((diagnostic) => diagnostic.key === "modalities" && diagnostic.code === "unsupported-override")?.details as
-					ModelGroupModality[] | undefined) ?? [])
-			: [];
 		const shadowedByProject = group.scope === "global" && projectNames.has(group.name);
 		const degraded = unavailableRefs.length > 0 && unavailableRefs.length < group.models.length;
-		const emptyCommonModalities = modalityEvaluation
-			? diagnostics.some((diagnostic) => diagnostic.key === "modalities" && diagnostic.code === "empty-common")
-			: false;
 		return {
 			...group,
 			modalities: { ...modalities, effective: (modalityEvaluation?.effective as ModelGroupModality[] | undefined) ?? [] },
@@ -589,8 +570,6 @@ export function validateModelGroups(
 				unavailableRefs,
 				shadowedByProject,
 				degraded,
-				emptyCommonModalities,
-				unsupportedOverrideModalities,
 			},
 		};
 	});
@@ -607,7 +586,7 @@ export function summarizeBootValidation(
 	groups: ResolvedModelGroup[],
 	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
 ): { unavailableCount: number; overrideCount: number; emptyModalityCount: number; staleModalityOverrideCount: number } {
-	const diagnostics = groups.flatMap((group) => (group.evaluations ? presentConstraintDiagnosticRecords(group.evaluations, constraintRegistry) : []));
+	const diagnostics = groups.flatMap((group) => presentConstraintDiagnosticRecords(group.evaluations, constraintRegistry));
 	return {
 		unavailableCount: groups.reduce((sum, group) => sum + group.validation.unavailableRefs.length, 0),
 		overrideCount: groups.filter((g) => g.validation.shadowedByProject).length,

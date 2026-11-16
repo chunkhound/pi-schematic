@@ -16,7 +16,7 @@ export function modelGroupsSection(state: SchematicState, constraintRegistry: Co
 			}
 			const labels = groups.map(
 				(group) =>
-					`${escapeDisplayLabel(group.name)} (${(group.evaluations ? presentConstraintPrompt(group.evaluations, constraintRegistry).filter(Boolean).join(", ") : group.modalities.effective.join(", ")) || "no common modalities"})`,
+					`${escapeDisplayLabel(group.name)} (${presentConstraintPrompt(group.evaluations, constraintRegistry).filter(Boolean).join(", ") || "no common modalities"})`,
 			);
 			return (
 				`## Model Groups for spawn\n` +
