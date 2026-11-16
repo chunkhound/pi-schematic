@@ -1,74 +1,13 @@
-import { expect, test } from "vitest";
 import path from "node:path";
-import os from "node:os";
-import fs from "node:fs";
-import { execFileSync, spawn } from "node:child_process";
-import {
-	appendSandboxBlockNotice,
-	appendSandboxBlockNoticeToResult,
-	buildMacProfile,
-	canUseOsSandbox,
-	quoteShellArgument,
-	wrapCommandWithOsSandbox,
-	wrapWithBwrap,
-	wrapWithSandboxExec,
-} from "../../os-sandbox.js";
-import { READONLY_SANDBOX_BLOCK_NOTICE } from "../../notifications.js";
+import { expect, test } from "vitest";
+import { appendSandboxBlockNotice, appendSandboxBlockNoticeToResult, buildMacProfile, wrapWithBwrap, wrapWithSandboxExec } from "../../os-sandbox.js";
 import { resolveRealPath } from "../../resolve-path.js";
 import { bashResult, SANDBOX_DENIAL_PHRASES } from "./helpers.js";
 import { expectSuffix } from "../assertions.js";
 
-const NOTICE_SUFFIX = `\n\n${READONLY_SANDBOX_BLOCK_NOTICE}`;
-
-function hasPosixShell(): boolean {
-	if (process.platform === "win32") {
-		return false;
-	}
-	try {
-		execFileSync("/bin/sh", ["-c", "true"], { stdio: "ignore", timeout: 2000 });
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-interface RunResult {
-	stdout: Buffer;
-	stderr: Buffer;
-	code: number | null;
-	signal: NodeJS.Signals | null;
-}
-
-/**
- * Run a command the way pi's bash tool spawns it: `<shell> -c`, stdin at
- * /dev/null, separate pipes, its own process group.
- */
-function runLikePi(command: string, shell = "/bin/bash"): Promise<RunResult> {
-	return new Promise((resolve, reject) => {
-		const child = spawn(shell, ["-c", command], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
-		const stdout: Buffer[] = [];
-		const stderr: Buffer[] = [];
-		child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-		child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-		child.on("error", reject);
-		child.on("close", (code, signal) => {
-			resolve({ stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), code, signal });
-		});
-	});
-}
-
-/** Run `command` like pi and assert that it exits 0. */
-async function runLikePiOk(command: string): Promise<RunResult> {
-	const run = await runLikePi(command);
-	expect(run.code, run.stderr.toString()).toBe(0);
-	return run;
-}
-
-async function runSandboxedAndPlain(command: string): Promise<{ sandboxed: RunResult; plain: RunResult }> {
-	return { sandboxed: await runLikePi(wrapCommandWithOsSandbox(command)), plain: await runLikePi(command) };
-}
-
-const SANDBOX_TIMEOUT_MS = 20_000;
+const BLOCK_NOTICE =
+	"[readonly mode] If this command failed on a write outside the OS temp dir, the OS sandbox blocked it.\nUse /readonly to disable, or write within the OS temp dir.";
+const NOTICE_SUFFIX = `\n\n${BLOCK_NOTICE}`;
 
 /** A blocked write's error on the current host, or `undefined` on a platform without a sandbox. */
 const HOST_DENIAL_PHRASE = SANDBOX_DENIAL_PHRASES[process.platform];
@@ -130,13 +69,12 @@ test("block notice leaves the input result unchanged", () => {
 	expect(result).toStrictEqual(before);
 });
 
-test("block notice goes after the last text block only", () => {
+test("block notice goes on the last text block when a non-text block ends the result", () => {
+	const image = { type: "image" as const, data: "aW1hZ2U=", mimeType: "image/png" };
+
 	const noticed = appendSandboxBlockNoticeToResult(
 		{
-			content: [
-				{ type: "text", text: "bash: /outside: Operation not permitted" },
-				{ type: "text", text: "Command exited with code 1" },
-			],
+			content: [{ type: "text", text: "bash: /outside: Operation not permitted" }, { type: "text", text: "Command exited with code 1" }, image],
 			isError: true,
 		},
 		"darwin",
@@ -145,6 +83,7 @@ test("block notice goes after the last text block only", () => {
 	expect(noticed?.content).toStrictEqual([
 		{ type: "text", text: "bash: /outside: Operation not permitted" },
 		{ type: "text", text: `Command exited with code 1${NOTICE_SUFFIX}` },
+		image,
 	]);
 });
 
@@ -205,7 +144,7 @@ test("block notice adds a text block when the phrase is only in the structured o
 	);
 
 	expect(noticed).toStrictEqual({
-		content: [{ type: "text", text: READONLY_SANDBOX_BLOCK_NOTICE }],
+		content: [{ type: "text", text: BLOCK_NOTICE }],
 		structuredContent: { output: `bash: /outside: Operation not permitted${NOTICE_SUFFIX}`, exit_code: 1 },
 	});
 });
@@ -213,7 +152,6 @@ test("block notice adds a text block when the phrase is only in the structured o
 for (const { name, structuredContent } of [
 	{ name: "an array", structuredContent: ["bash: /outside: Operation not permitted"] },
 	{ name: "a string", structuredContent: "bash: /outside: Operation not permitted" },
-	{ name: "a number", structuredContent: 1 },
 ]) {
 	test(`block notice keeps ${name} structured content as it is`, () => {
 		const before = structuredClone(structuredContent);
@@ -259,9 +197,9 @@ test(`sandbox wrappers pass the command as one quoted argument to "$0" -c with n
 	const command = `printf '%s\\n' "it's quoted"\necho second line`;
 
 	for (const wrapped of [wrapWithSandboxExec(command), wrapWithBwrap(command)]) {
-		expectSuffix(wrapped, ` "$0" -c ${quoteShellArgument(command)}`);
+		expectSuffix(wrapped, ` "$0" -c 'printf '"'"'%s\\n'"'"' "it'"'"'s quoted"\necho second line'`);
 		expect(wrapped, wrapped).not.toContain("<<");
-		expect(wrapped, wrapped).not.toContain(READONLY_SANDBOX_BLOCK_NOTICE);
+		expect(wrapped, wrapped).not.toContain(BLOCK_NOTICE);
 		expect(wrapped, wrapped).not.toContain("2>&1");
 	}
 });
@@ -274,292 +212,11 @@ test("buildMacProfile rejects paths containing quotes", () => {
 });
 
 test("quotes dynamic Linux sandbox paths for the outer shell", () => {
-	const tempPath = "/tmp/readonly' ; echo injected; #";
-	const canonicalPath = resolveRealPath(tempPath);
-	const quotedPath = quoteShellArgument(canonicalPath);
-	const wrapped = wrapWithBwrap("true", tempPath);
+	// Only the canonical form of /tmp (/private/tmp on macOS, a drive path on
+	// Windows) and the path separator depend on the host.
+	const tmpPrefix = `${resolveRealPath("/tmp")}${path.sep}`;
+	const wrapped = wrapWithBwrap("true", "/tmp/readonly' ; echo injected; #");
 
-	expect(quoteShellArgument("a'b")).toBe(`'a'"'"'b'`);
-	expect(wrapped).toContain(`--bind ${quotedPath} ${quotedPath}`);
-	expect(wrapped).not.toContain(`--bind "${canonicalPath}" "${canonicalPath}"`);
+	expect(wrapped).toContain(`--bind '${tmpPrefix}readonly'"'"' ; echo injected; #' '${tmpPrefix}readonly'"'"' ; echo injected; #'`);
+	expect(wrapped).not.toContain(`--bind "${tmpPrefix}readonly' ; echo injected; #" "${tmpPrefix}readonly' ; echo injected; #"`);
 });
-
-test.skipIf(process.platform !== "linux" || !canUseOsSandbox())("bwrap executes a quoted bind path without shell injection", async () => {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-quote'-"));
-	const target = path.join(dir, "result.txt");
-	try {
-		await runLikePiOk(wrapWithBwrap(`printf wrapped > ${quoteShellArgument(target)}`, dir));
-		expect(fs.readFileSync(target, "utf8")).toBe("wrapped");
-	} finally {
-		try {
-			fs.rmSync(dir, { recursive: true, force: true });
-		} catch {
-			/* best-effort cleanup */
-		}
-	}
-});
-
-test("quoteShellArgument emits POSIX single-quoted arguments", () => {
-	// POSIX shell single-quote invariant: input is wrapped in single quotes.
-	// Embedded single quotes close, quote, and reopen the outer argument.
-	expect(quoteShellArgument("")).toBe("''");
-	expect(quoteShellArgument("normal")).toBe("'normal'");
-	expect(quoteShellArgument("'")).toBe(`''"'"''`);
-});
-
-test.skipIf(!hasPosixShell())("quoteShellArgument round-trips through a POSIX shell", () => {
-	for (const raw of ["normal", "spaces", "dollar$ign", "backtick`", "line1\nline2", "'mixed' quotes", "'"]) {
-		const quoted = quoteShellArgument(raw);
-		const result = execFileSync("/bin/sh", ["-c", `printf '%s' ${quoted}`], { encoding: "utf8", timeout: 2000 });
-		expect(result, `quoteShellArgument(${JSON.stringify(raw)}) should round-trip`).toBe(raw);
-	}
-});
-
-// ── Behavioral contract: observable sandbox effects ──────────────
-
-for (const { name, write } of [
-	{ name: "a shell redirect", write: (target: string) => `echo blocked > ${quoteShellArgument(target)}` },
-	{
-		name: "node writeFileSync",
-		write: (target: string) =>
-			`${quoteShellArgument(process.execPath)} -e ${quoteShellArgument(`require("fs").writeFileSync(${JSON.stringify(target)}, "blocked")`)}`,
-	},
-]) {
-	test.skipIf(!canUseOsSandbox())(
-		`sandbox blocks ${name} outside temp`,
-		async () => {
-			const outsidePath = path.join(os.homedir(), `.pi-readonly-outside-${process.pid}-${Date.now()}`);
-			try {
-				const run = await runLikePi(wrapCommandWithOsSandbox(write(outsidePath)));
-
-				expect(run.code).not.toBe(0);
-				expect(fs.existsSync(outsidePath), "outside temp file should not be created").toBe(false);
-			} finally {
-				fs.rmSync(outsidePath, { force: true });
-			}
-		},
-		SANDBOX_TIMEOUT_MS,
-	);
-
-	test.skipIf(!canUseOsSandbox())(
-		`the failed result of ${name} the sandbox blocked gets the block notice`,
-		async () => {
-			const outsidePath = path.join(os.homedir(), `.pi-readonly-outside-${process.pid}-${Date.now()}`);
-			try {
-				const run = await runLikePi(wrapCommandWithOsSandbox(write(outsidePath)));
-
-				const noticed = appendSandboxBlockNoticeToResult(bashResult(`${run.stdout.toString()}${run.stderr.toString()}`));
-
-				const firstBlock = noticed?.content[0];
-				expect(firstBlock?.type, JSON.stringify(noticed)).toBe("text");
-				if (firstBlock?.type !== "text") {
-					expect.unreachable();
-				}
-				expectSuffix(firstBlock.text, NOTICE_SUFFIX);
-			} finally {
-				fs.rmSync(outsidePath, { force: true });
-			}
-		},
-		SANDBOX_TIMEOUT_MS,
-	);
-}
-
-test.skipIf(!canUseOsSandbox())(
-	"sandbox allows writes inside temp",
-	async () => {
-		const insideDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-sandbox-"));
-		const insidePath = path.join(insideDir, "inside.txt");
-		try {
-			await runLikePiOk(wrapCommandWithOsSandbox(`echo allowed > "${insidePath}"`));
-			expect(fs.readFileSync(insidePath, "utf8").trim(), "sandbox should allow temp writes").toBe("allowed");
-		} finally {
-			try {
-				fs.rmSync(insideDir, { recursive: true, force: true });
-			} catch {
-				/* best-effort cleanup */
-			}
-		}
-	},
-	SANDBOX_TIMEOUT_MS,
-);
-
-test.skipIf(!canUseOsSandbox())(
-	"sandboxed command runs under the shell that launched the sandbox",
-	async () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-bash-"));
-		const linkedBash = path.join(dir, "bash");
-		try {
-			fs.symlinkSync("/bin/bash", linkedBash);
-
-			const run = await runLikePi(wrapCommandWithOsSandbox('echo "$0"'), linkedBash);
-
-			expect(run.code, run.stderr.toString()).toBe(0);
-			expect(run.stdout.toString()).toBe(`${linkedBash}\n`);
-		} finally {
-			fs.rmSync(dir, { recursive: true, force: true });
-		}
-	},
-	SANDBOX_TIMEOUT_MS,
-);
-
-test.skipIf(!canUseOsSandbox())(
-	"sandboxed command launched from /bin/sh runs under /bin/sh",
-	async () => {
-		const run = await runLikePi(wrapCommandWithOsSandbox('echo "$0"'), "/bin/sh");
-
-		expect(run.code, run.stderr.toString()).toBe(0);
-		expect(run.stdout.toString()).toBe("/bin/sh\n");
-	},
-	SANDBOX_TIMEOUT_MS,
-);
-
-test.skipIf(!canUseOsSandbox() || !fs.existsSync("/bin/zsh"))(
-	"sandboxed command launched from zsh runs under zsh",
-	async () => {
-		const run = await runLikePi(wrapCommandWithOsSandbox('echo "$0"'), "/bin/zsh");
-
-		expect(run.code, run.stderr.toString()).toBe(0);
-		expect(run.stdout.toString()).toBe("/bin/zsh\n");
-	},
-	SANDBOX_TIMEOUT_MS,
-);
-
-for (const reader of ["cat", "read x", "head -1"]) {
-	test.skipIf(!canUseOsSandbox())(
-		`sandboxed ${reader} on pi's /dev/null stdin behaves as unsandboxed`,
-		async () => {
-			const { sandboxed, plain } = await runSandboxedAndPlain(`${reader}; echo after; false`);
-
-			expect(sandboxed).toStrictEqual(plain);
-			expect(sandboxed.stdout.toString()).toBe("after\n");
-			expect(sandboxed.code).toBe(1);
-		},
-		SANDBOX_TIMEOUT_MS,
-	);
-}
-
-for (const { command, bytes } of [
-	{ command: String.raw`printf 'a\n\n\n'`, bytes: "a\n\n\n" },
-	{ command: "printf -- -n", bytes: "-n" },
-	{ command: String.raw`printf 'a\0b'`, bytes: "a\0b" },
-]) {
-	test.skipIf(!canUseOsSandbox())(
-		`sandboxed ${command} writes the same bytes as unsandboxed`,
-		async () => {
-			const { sandboxed, plain } = await runSandboxedAndPlain(command);
-
-			expect(sandboxed).toStrictEqual(plain);
-			expect(sandboxed.stdout).toStrictEqual(Buffer.from(bytes));
-		},
-		SANDBOX_TIMEOUT_MS,
-	);
-}
-
-test.skipIf(!canUseOsSandbox())(
-	"sandboxed output to stderr reaches stderr, not stdout",
-	async () => {
-		const { sandboxed, plain } = await runSandboxedAndPlain("echo to-stderr >&2");
-
-		expect(sandboxed).toStrictEqual(plain);
-		expect(sandboxed.stdout.length).toBe(0);
-		expect(sandboxed.stderr.toString()).toBe("to-stderr\n");
-	},
-	SANDBOX_TIMEOUT_MS,
-);
-
-test.skipIf(!canUseOsSandbox())(
-	"sandboxed trailing backslash prints as unsandboxed",
-	async () => {
-		// The output differs between bash versions, so it is compared with the
-		// unsandboxed run rather than with a literal.
-		const { sandboxed, plain } = await runSandboxedAndPlain("echo hi \\");
-
-		expect(sandboxed).toStrictEqual(plain);
-		expect(sandboxed.code).toBe(0);
-	},
-	SANDBOX_TIMEOUT_MS,
-);
-
-test.skipIf(!canUseOsSandbox())(
-	"sandboxed output streams while the command runs",
-	async () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-stream-"));
-		const flag = path.join(dir, "flag");
-		// The command waits for the flag, which the test creates only after the
-		// first chunk arrived. Buffered output would never deliver that chunk
-		// early, so the wait would run out (about 10 s) and print "timeout".
-		const command =
-			`printf first; i=0; while [ ! -e ${quoteShellArgument(flag)} ]; do ` +
-			`if [ "$i" -ge 100 ]; then printf timeout; break; fi; sleep 0.1; i=$((i + 1)); done; printf second`;
-		try {
-			const stdout = await new Promise<string>((resolve, reject) => {
-				const child = spawn("/bin/bash", ["-c", wrapCommandWithOsSandbox(command)], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
-				const chunks: Buffer[] = [];
-				child.stdout.on("data", (chunk: Buffer) => {
-					if (chunks.length === 0) {
-						fs.writeFileSync(flag, "");
-					}
-					chunks.push(chunk);
-				});
-				child.on("error", reject);
-				child.on("close", () => {
-					resolve(Buffer.concat(chunks).toString());
-				});
-			});
-
-			expect(stdout).toBe("firstsecond");
-		} finally {
-			fs.rmSync(dir, { recursive: true, force: true });
-		}
-	},
-	SANDBOX_TIMEOUT_MS,
-);
-
-test.skipIf(!canUseOsSandbox())(
-	"sandboxed stray closing brace is the same syntax error as unsandboxed",
-	async () => {
-		const { sandboxed, plain } = await runSandboxedAndPlain("echo one; } ; echo two");
-
-		expect(plain.code).not.toBe(0);
-		expect(sandboxed).toStrictEqual(plain);
-	},
-	SANDBOX_TIMEOUT_MS,
-);
-
-test.skipIf(!canUseOsSandbox())(
-	"sandbox allows writes to /dev/null",
-	async () => {
-		// CONTRACT: /dev/null redirects are always allowed (not a real write)
-		const run = await runLikePi(wrapCommandWithOsSandbox("echo discard > /dev/null"));
-		expect(run.code, run.stderr.toString()).toBe(0);
-	},
-	SANDBOX_TIMEOUT_MS,
-);
-
-test.skipIf(!canUseOsSandbox())(
-	"sandbox allows writes through a symlinked temp path",
-	async () => {
-		const realDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-readonly-real-"));
-		const linkDir = path.join(os.tmpdir(), `pi-readonly-link-${Date.now()}`);
-		try {
-			// Create symlink to mimic /tmp → /private/tmp on macOS
-			fs.symlinkSync(realDir, linkDir);
-			const insidePath = path.join(linkDir, "via-symlink.txt");
-
-			await runLikePiOk(wrapCommandWithOsSandbox(`echo symlink-works > "${insidePath}"`));
-			expect(fs.readFileSync(insidePath, "utf8").trim(), "sandbox should allow writes through symlinks to temp").toBe("symlink-works");
-		} finally {
-			try {
-				fs.rmSync(linkDir, { force: true });
-			} catch {
-				/* best-effort cleanup */
-			}
-			try {
-				fs.rmSync(realDir, { recursive: true, force: true });
-			} catch {
-				/* best-effort cleanup */
-			}
-		}
-	},
-	SANDBOX_TIMEOUT_MS,
-);

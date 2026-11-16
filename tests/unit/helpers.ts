@@ -200,20 +200,10 @@ function registeredHandlers(pi: TestPI, event: string): unknown[] {
 }
 
 /**
- * Run every handler registered for `event` in registration order. Unlike pi, which
- * catches each handler's error and runs the rest, a throwing handler stops the run
- * and fails the test. Throws when no handler is registered, so an unregistered
- * event cannot pass vacuously.
- */
-export async function emitAll(pi: TestPI, event: string, payload: unknown, ctx: unknown): Promise<void> {
-	for (const handler of registeredHandlers(pi, event)) {
-		assertRegisteredHandler(handler, event);
-		await handler(payload, ctx);
-	}
-}
-
-/**
- * Like `emitAll`, but returns each handler's result in registration order. Each
+ * Run every handler registered for `event` in registration order and return each
+ * handler's result in that order. Unlike pi, which catches each handler's error and
+ * runs the rest, a throwing handler stops the run and fails the test. Throws when no
+ * handler is registered, so an unregistered event cannot pass vacuously. Each
  * handler sees the same payload: pi's chaining of boundary results between
  * handlers is not emulated.
  */
@@ -503,16 +493,6 @@ export async function registerReadonlyPI(): Promise<{ pi: TestPI; toolCall: Tool
 		return undefined;
 	};
 	return { pi, toolCall };
-}
-
-/** A UI command context whose notifications, statuses and widgets go nowhere, with no context usage. */
-export function uiCommandContext(overrides: Partial<ExtensionCommandContext> = {}): ExtensionCommandContext {
-	return createCommandContext({
-		hasUI: true,
-		ui: createUIContext({ notify: vi.fn(), setStatus: vi.fn(), setWidget: vi.fn() }),
-		getContextUsage: () => undefined,
-		...overrides,
-	});
 }
 
 /** The denial phrase each platform's OS sandbox puts in a blocked write's error. */

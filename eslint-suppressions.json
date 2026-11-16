@@ -97,11 +97,6 @@
       "count": 1
     }
   },
-  "readonly-rehydration.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 2
-    }
-  },
   "register-loader.mjs": {
     "n/no-unsupported-features/node-builtins": {
       "count": 1
@@ -169,12 +164,22 @@
       "count": 48
     }
   },
+  "tests/integration/os-sandbox.test.ts": {
+    "vitest/no-conditional-expect": {
+      "count": 1
+    }
+  },
   "tests/integration/pi-module-identity.test.ts": {
     "ban/find-package-json-import": {
       "count": 1
     },
     "n/no-unsupported-features/node-builtins": {
       "count": 1
+    }
+  },
+  "tests/integration/readonly-spawn.test.ts": {
+    "vitest/max-expects": {
+      "count": 6
     }
   },
   "tests/integration/spawn-runtime-compatibility.test.ts": {
@@ -261,17 +266,9 @@
       "count": 1
     }
   },
-  "tests/unit/os-sandbox.test.ts": {
-    "ban/wall-clock": {
-      "count": 3
-    },
-    "vitest/no-conditional-expect": {
-      "count": 1
-    }
-  },
   "tests/unit/readonly-frontmatter.test.ts": {
     "vitest/max-expects": {
-      "count": 69
+      "count": 67
     }
   },
   "tests/unit/readonly-handoff.test.ts": {
@@ -282,20 +279,9 @@
       "count": 2
     }
   },
-  "tests/unit/readonly-mode.test.ts": {
-    "vitest/max-expects": {
-      "count": 3
-    }
-  },
   "tests/unit/readonly-spawn.test.ts": {
-    "@typescript-eslint/no-base-to-string": {
-      "count": 1
-    },
-    "ban/wall-clock": {
-      "count": 1
-    },
     "vitest/max-expects": {
-      "count": 7
+      "count": 1
     }
   },
   "tests/unit/resolve-path.test.ts": {
