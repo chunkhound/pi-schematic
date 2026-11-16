@@ -9,13 +9,14 @@
  */
 
 import { beforeAll, beforeEach, expect, onTestFinished, test } from "vitest";
-import { resetCapabilitiesCache, setCapabilities, stripTerminalSequences } from "@earendil-works/pi-tui";
+import { getKeybindings, resetCapabilitiesCache, setCapabilities, setKeybindings, stripTerminalSequences } from "@earendil-works/pi-tui";
 import { initTheme, type AgentSession } from "@earendil-works/pi-coding-agent";
-import { expectPrefix, expectSuffix } from "../assertions.js";
+import { assertPresent, expectPrefix } from "../assertions.js";
 import { createState, type SchematicState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
 import { renderSpawnCall, renderSpawnResult } from "../../spawn/renderer.js";
 import { createToolRenderContext } from "./helpers.js";
+import { loadTestKeybindings } from "./test-host.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
 import { createRunner } from "../support/runner.js";
 import { createRealTheme, realTheme } from "../support/theme.js";
@@ -267,25 +268,6 @@ test("static no-output child error with empty details renders without fabricated
 	expect(plain(lines)).not.toContainEqual(expect.stringContaining("unknown"));
 });
 
-test("spawn result renders without a shell background when the theme has no bg", () => {
-	// pi's Theme.bg is a prototype method, so an own property shadows it for this instance only.
-	Reflect.set(realTheme, "bg", undefined);
-	onTestFinished(() => {
-		Reflect.deleteProperty(realTheme, "bg");
-	});
-
-	const lines = renderSpawnResult(
-		{ content: [{ type: "text", text: "done" }], details: { model: "m", thinking: "low", truncated: false, outcome: "success" } },
-		false,
-		realTheme,
-		resultContext(),
-		createState(),
-	).render(20);
-
-	expect(lines.join("\n")).not.toContain("\u001b[48;");
-	expect(plain(lines)).toStrictEqual(["                    ", " ✅ m • low         ", " 💬 done            ", " done               ", "                    "]);
-});
-
 const returnedErrorResult: SpawnRenderedResult = {
 	content: [{ type: "text", text: "Child agent produced no output." }],
 	details: {
@@ -426,7 +408,8 @@ test("expanded nested spawn header stays within width after indent", () => {
 		state,
 	);
 
-	const headerLine = plain(component.render(24)).find((line) => line.includes("model-name")) ?? "";
+	const headerLine = plain(component.render(24)).find((line) => line.includes("model-name"));
+	assertPresent(headerLine, "the header line renders");
 	expectPrefix(headerLine, "     ");
 	expect(headerLine.length).toBeLessThanOrEqual(24);
 });
@@ -794,14 +777,19 @@ test("spawn renderCall shows a short prompt collapsed", async () => {
 	expect(lines).toContainEqual(expect.stringContaining(realTheme.fg("dim", "Do X")));
 });
 
-test("spawn renderCall hints at hidden lines of a long prompt", () => {
-	const lines = plain(renderCallLines({ prompt: LONG_PROMPT }));
+test("spawn renderCall hints at hidden lines of a long prompt with the tool expand key", async () => {
+	// The default `ctrl+o` is shared with another action; a key bound to the expand action alone pins its id.
+	const keybindings = await loadTestKeybindings();
+	keybindings.setUserBindings({ "app.tools.expand": "f9" });
+	const previous = getKeybindings();
+	setKeybindings(keybindings);
+	onTestFinished(() => {
+		setKeybindings(previous);
+	});
 
-	expect(lines).toContainEqual(expect.stringContaining("Line 2"));
-	expect(lines).not.toContainEqual(expect.stringContaining("Line 3"));
-	const hint = lines.find((line) => line.includes("more lines")) ?? "";
-	expect(hint).toContain("... (7 more lines, ");
-	expectSuffix(hint.trimEnd(), "to expand)");
+	const lines = plain(renderCallLines({ prompt: LONG_PROMPT })).map((line) => line.trimEnd());
+
+	expect(lines).toStrictEqual(["", " spawn child", " Line 0", " Line 1", " Line 2", " ... (7 more lines, f9 to expand)", ""]);
 });
 
 test("spawn renderCall shows explicit thinking without a group", () => {

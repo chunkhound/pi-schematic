@@ -1168,6 +1168,18 @@ test.each([
 		expectedText: "z".repeat(51200) + TRUNCATION_MARKER,
 	},
 	{
+		// Lines split on the line feed, so the last kept CRLF line keeps its carriage return before the marker.
+		name: "spawn result over the line limit with CRLF line endings keeps the first lines up to the limit",
+		input: Array.from({ length: 2001 }, (_, i) => `line ${i}`).join("\r\n"),
+		expectedText: Array.from({ length: 2000 }, (_, i) => `line ${i}\r`).join("\n") + TRUNCATION_MARKER,
+	},
+	{
+		// The carriage return is the 51 200th byte, so the byte cut falls between it and its line feed.
+		name: "spawn result over the byte limit cuts between a carriage return and its line feed",
+		input: "a".repeat(51199) + "\r\nb",
+		expectedText: "a".repeat(51199) + "\r" + TRUNCATION_MARKER,
+	},
+	{
 		// 17 067 characters take 51 201 bytes; the byte limit falls inside the last one, so the cut backs off to 17 066.
 		name: "spawn result cuts an oversized line of 3-byte characters on a character boundary",
 		input: "語".repeat(17067),
@@ -1532,6 +1544,18 @@ test("spawn prompt guidelines name the keys of the injected constraint registry"
 	expect(host.registeredTool("spawn").definition.promptGuidelines).toContain(
 		"A constraint is keyed by its exact name (testMinContext, testMaxBudget); values must match the key's schema — unknown keys or invalid values are rejected before any child is created.",
 	);
+});
+
+test("the registered spawn tool presents its label, prompt snippet and description", async () => {
+	const { label, promptSnippet, description } = (await spawnRunner({ state: createState() })).registeredTool("spawn").definition;
+	expect({ label, promptSnippet, description }).toStrictEqual({
+		label: "Spawn",
+		promptSnippet: "Spawn a focused subtask agent",
+		description:
+			"Spawn an isolated child agent for a focused subtask. " +
+			"Child inherits parent model, thinking level, cwd, active registered tools executable in the child session, and shared notebook tools unless an optional Model Group routes its model/thinking; children cannot spawn or handoff. " +
+			"Reference notebook pages by name — child will notebook_read them on demand.",
+	});
 });
 
 test("spawn schema advertises the thinking levels as a plain string enum", async () => {
