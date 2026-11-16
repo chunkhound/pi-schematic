@@ -355,7 +355,9 @@ export default function(pi) {
 		for (const name of PROBE_GLOBALS) {
 			Reflect.deleteProperty(globalThis, name);
 		}
-		await rm(tempRoot, { recursive: true, force: true });
+		// Pi takes lock directories next to auth.json and models-store.json in agent/;
+		// retry when one appears during removal (ENOTEMPTY).
+		await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 		await rm(readonlyWriteTarget, { force: true });
 	}
 }
