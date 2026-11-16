@@ -66,8 +66,7 @@ let current: RuntimeSingletons = {
  * While a write is pending on the current lock, the current writeLock and
  * writeContext are kept and only the other fields come from `s`; pass
  * `{ forceWriteLock: true }` to replace the lock and context as well.
- * Called by spawn/renderer.ts at module evaluation time (production), by
- * notebook/store.ts resetNotebookWriteLock() with forceWriteLock, and by
+ * Called by spawn/renderer.ts at module evaluation time (production) and by
  * tests, through createTestHarness() or directly.  The __ prefix signals
  * that callers should understand the lifecycle implications — see
  * spawn/renderer.ts for the production registration pattern. */

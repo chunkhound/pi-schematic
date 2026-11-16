@@ -48,7 +48,7 @@ test("lists only the first line of each page", () => {
 	expect(body).not.toContain("second line");
 });
 
-test("truncates a page summary at 80 characters", () => {
+test("cuts a long page summary to 77 characters plus an ellipsis", () => {
 	const state = createState();
 	state.notebookPages.set("alpha", "x".repeat(81));
 
@@ -56,7 +56,34 @@ test("truncates a page summary at 80 characters", () => {
 	assertPresent(rendered, "the pages section renders");
 	const line = rendered.split("\n").find((l) => l.startsWith("  alpha: "));
 
+	expect(line).toBe(`  alpha: ${"x".repeat(77)}...`);
+});
+
+test("keeps an 80-character page summary whole", () => {
+	const state = createState();
+	state.notebookPages.set("alpha", "x".repeat(80));
+
+	const rendered = notebookPagesSection(state).render();
+	assertPresent(rendered, "the pages section renders");
+	const line = rendered.split("\n").find((l) => l.startsWith("  alpha: "));
+
 	expect(line).toBe(`  alpha: ${"x".repeat(80)}`);
+});
+
+test.for([
+	{ label: "an astral character before the cut", summary: "😀" + "a".repeat(80), expected: "😀" + "a".repeat(76) + "..." },
+	{ label: "an astral character as the last kept character", summary: "a".repeat(76) + "😀" + "bbbb", expected: "a".repeat(76) + "😀..." },
+	{ label: "an astral character after the cut", summary: "a".repeat(77) + "😀" + "bbb", expected: "a".repeat(77) + "..." },
+	{ label: "80 astral characters", summary: "😀".repeat(80), expected: "😀".repeat(80) },
+])("counts and cuts a page summary by code point: $label", ({ summary, expected }) => {
+	const state = createState();
+	state.notebookPages.set("alpha", summary);
+
+	const rendered = notebookPagesSection(state).render();
+	assertPresent(rendered, "the pages section renders");
+	const line = rendered.split("\n").find((l) => l.startsWith("  alpha: "));
+
+	expect(line).toBe(`  alpha: ${expected}`);
 });
 
 test("omits the pages section when the notebook is empty", () => {

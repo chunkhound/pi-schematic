@@ -8,20 +8,20 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 
 /** Scope of bash filesystem mutations blocked by readonly mode. */
-export const READONLY_BASH_SCOPE = "bash writes/deletions outside temp blocked";
+const READONLY_BASH_SCOPE = "bash writes/deletions outside temp blocked";
 /** Scope of non-temporary mutations blocked while readonly is active. */
 export const READONLY_NON_TEMP_MUTATION_SCOPE = "write, edit, powershell, and non-temp bash filesystem mutations remain blocked";
 /** Notice appended to a failed sandboxed command's result whose output shows the sandbox's denial phrase. */
 export const READONLY_SANDBOX_BLOCK_NOTICE =
 	"[readonly mode] If this command failed on a write outside the OS temp dir, the OS sandbox blocked it.\nUse /readonly to disable, or write within the OS temp dir.";
 /** User-visible shorthand for an explicit handoff request. */
-export const READONLY_EXPLICIT_HANDOFF = "explicit /handoff";
+const READONLY_EXPLICIT_HANDOFF = "explicit /handoff";
 /** All supported ways to activate the temporary readonly handoff exception. */
 export const READONLY_HANDOFF_TRIGGER = "explicit /handoff or an eligible human topic boundary";
 /** Post-handoff readonly outcome announced while this context prepares the handoff. */
 export const READONLY_NEXT_CONTEXT_RESUMES = "Fresh context resumes in readonly mode.";
 /** Child-agent summary of the readonly mutation policy. */
-export const READONLY_WRITE_EDIT_BASH = `write/edit/powershell blocked; ${READONLY_BASH_SCOPE}`;
+const READONLY_WRITE_EDIT_BASH = `write/edit/powershell blocked; ${READONLY_BASH_SCOPE}`;
 
 /** Reason for malformed bash tool input at the readonly boundary. */
 export const READONLY_INVALID_BASH_COMMAND_REASON = "bash command input must be a string";

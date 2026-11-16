@@ -27,7 +27,7 @@ import { ensureNotebookToolsActive, registerNotebookRehydration, reconstructNote
 import { registerNotebookTopicTool } from "./notebook/topic-tool.js";
 import { setActiveNotebookTopic } from "./notebook/topic.js";
 import { formatPageTuiPreview } from "./notebook/store.js";
-import { openInPager, pagerRuntime, type ResolvedPager } from "./notebook/pager.js";
+import { openInPager, resolvePager, type InvalidPager, type ResolvedPager } from "./notebook/pager.js";
 import { HANDOFF_TOOL_NAME, registerHandoffTool } from "./handoff/tool.js";
 import { canPromoteBoundary, markBoundaryAdvisory, promoteBoundary } from "./readonly-boundary.js";
 import { isHandoffEligible, normalizeContextPercent } from "./handoff/eligibility.js";
@@ -450,13 +450,14 @@ function refreshModelGroupsState(state: SchematicState, ctx: ExtensionContext) {
 // Pi has no extension API to suspend the TUI, so the "pager" result carries
 // custom()'s handle for openInPager, which runs after done() closes the list.
 // It is Pi's long-lived TUI reference, so it stays valid past done().
-type NotebookListResult = { action: "pager"; name: string; body: string; tui: TUI; pager: ResolvedPager } | { action: "reopen"; name: string } | undefined;
+type NotebookListResult =
+	{ action: "pager"; name: string; body: string; tui: TUI; pager: ResolvedPager | InvalidPager } | { action: "reopen"; name: string } | undefined;
 
 /** Shows the /notebook page list once, preselecting lastSelectedName; undefined means the list was closed. */
 function openNotebookList(
 	ctx: ExtensionContext,
 	state: SchematicState,
-	pager: ResolvedPager | undefined,
+	pager: ResolvedPager | InvalidPager | undefined,
 	lastSelectedName: string | undefined,
 ): Promise<NotebookListResult> {
 	return ctx.ui.custom<NotebookListResult>((tui, theme, _kb, done) => {
@@ -500,8 +501,8 @@ function openNotebookList(
 					done({ action: "reopen", name: value });
 					return;
 				}
-				// Prefer a real pager when available; else fall back to a
-				// truncated inline preview.
+				// A configured pager, or an invalid pager value to report, closes
+				// the list; with no pager, show a truncated inline preview.
 				if (pager) {
 					finished = true;
 					done({ action: "pager", name: value, body, tui, pager });
@@ -778,7 +779,7 @@ export default function (pi: ExtensionAPI): void {
 
 			let lastSelectedName: string | undefined;
 			// Resolve once per /notebook so onSelect doesn't run `command -v less` on every Enter.
-			const pager = pagerRuntime.resolvePager();
+			const pager = resolvePager();
 			for (
 				let result = await openNotebookList(ctx, state, pager, lastSelectedName);
 				result !== undefined;
@@ -786,6 +787,10 @@ export default function (pi: ExtensionAPI): void {
 			) {
 				lastSelectedName = result.name;
 				if (result.action === "pager") {
+					if ("error" in result.pager) {
+						ctx.ui.notify(`pager failed: ${result.pager.error}`, "warning");
+						continue;
+					}
 					const err = await openInPager(result.tui, result.body, result.pager);
 					if (err) {
 						ctx.ui.notify(`pager failed: ${err.message}`, "warning");

@@ -1,5 +1,6 @@
 import type { PromptSection } from "../prompt-sections.js";
 import type { SchematicState } from "../state.js";
+import { formatPageList } from "./store.js";
 
 export function notebookTopicSection(state: SchematicState): PromptSection {
 	return {
@@ -27,14 +28,7 @@ export function notebookPagesSection(state: SchematicState): PromptSection {
 			if (state.notebookPages.size === 0) {
 				return undefined;
 			}
-			// Code-unit order, matching Array.prototype.sort() without a comparator.
-			const listing = [...state.notebookPages]
-				.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-				.map(([name, content]) => {
-					const firstLine = (content.split("\n")[0] ?? "").slice(0, 80);
-					return `  ${name}: ${firstLine}`;
-				})
-				.join("\n");
+			const listing = formatPageList(state);
 			return (
 				`## Active Notebook Pages\n` +
 				`The following pages are available via notebook_read by name:\n${listing}\n` +

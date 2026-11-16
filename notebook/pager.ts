@@ -2,9 +2,7 @@
  * External pager integration for the /notebook TUI.
  *
  * Resolves a pager command (respecting $PI_PAGER, then $PAGER, falling back to
- * `less` on POSIX) and runs it with the page body fed via stdin. Exports a
- * mutable `pagerRuntime` seam so tests can swap resolvePager/spawnPager
- * without shelling out.
+ * `less` on POSIX) and runs it with the page body fed via stdin.
  */
 
 import { execSync, spawn, type StdioOptions } from "node:child_process";
@@ -14,6 +12,11 @@ import type { TUI } from "@earendil-works/pi-tui";
 export interface ResolvedPager {
 	cmd: string;
 	args: string[];
+}
+
+/** A $PI_PAGER or $PAGER value that is not a valid command line; `error` names the variable. */
+export interface InvalidPager {
+	error: string;
 }
 
 // Override -F and -X (including inherited LESS) so short pages stay readable
@@ -30,6 +33,65 @@ function defaultHasLess(): boolean {
 }
 
 /**
+ * Splits a command line into words with the quoting of a POSIX shell's word
+ * splitting and nothing else: no expansion, globbing, pipes or separators.
+ * Only space, tab and newline separate words. Double quotes unescape only
+ * `"`, `\`, `$` and a backtick; outside quotes a backslash makes the next
+ * character literal. Outside quotes and inside double quotes a backslash
+ * followed by a newline is removed, as a shell's line continuation is.
+ */
+function splitCommandLine(line: string): { words: string[] } | { problem: string } {
+	const words: string[] = [];
+	// undefined until a character or a pair of quotes starts a word, so "" is an empty word.
+	let word: string | undefined;
+	for (let i = 0; i < line.length; i++) {
+		const ch = line.charAt(i);
+		if (ch === " " || ch === "\t" || ch === "\n") {
+			if (word !== undefined) {
+				words.push(word);
+				word = undefined;
+			}
+		} else if (line.startsWith("\\\n", i)) {
+			i++;
+		} else if (ch === "\\") {
+			i++;
+			if (i === line.length) {
+				return { problem: "ends with an unquoted backslash" };
+			}
+			word = (word ?? "") + line.charAt(i);
+		} else if (ch === "'") {
+			const end = line.indexOf("'", i + 1);
+			if (end === -1) {
+				return { problem: "has an unbalanced single quote" };
+			}
+			word = (word ?? "") + line.slice(i + 1, end);
+			i = end;
+		} else if (ch === '"') {
+			word ??= "";
+			for (i++; line.charAt(i) !== '"'; i++) {
+				if (i === line.length) {
+					return { problem: "has an unbalanced double quote" };
+				}
+				if (line.startsWith("\\\n", i)) {
+					i++;
+					continue;
+				}
+				if (line.charAt(i) === "\\" && i + 1 < line.length && '"\\$`'.includes(line.charAt(i + 1))) {
+					i++;
+				}
+				word += line.charAt(i);
+			}
+		} else {
+			word = (word ?? "") + ch;
+		}
+	}
+	if (word !== undefined) {
+		words.push(word);
+	}
+	return { words };
+}
+
+/**
  * $PI_PAGER takes precedence over $PAGER, as $GIT_PAGER does in git, so a
  * pager can be chosen for Pi alone. This matters for bat < 0.22, which uses
  * $PAGER as its own pager and recurses forever on PAGER=batcat. Unlike git,
@@ -40,45 +102,60 @@ function defaultHasLess(): boolean {
  * printed once it restarts. Unlike git, which only skips an exact `cat`,
  * `/bin/cat` and `cat -v` match too.
  *
- * The pager value may carry args (e.g. "less -R"), split on whitespace with no
- * quoting, matching git's historical behavior. POSIX spawns it without a shell
- * (no `sh -c`); on Windows spawnPager hands the joined line to cmd.exe. Users
- * needing complex pager invocations should wrap them in a script and point
- * $PI_PAGER or $PAGER at it.
+ * The pager value is a program followed by args (e.g. "less -R"). On POSIX it
+ * is split with a shell's quoting rules and spawned without a shell (no
+ * `sh -c`), so `"/path with space/pager" -R` works and `$HOME`, `~` or `|`
+ * reach the program literally; a backslash-newline is removed outside single
+ * quotes. Characters other than space, tab and newline, such as a trailing
+ * carriage return, belong to a word. A value with an unbalanced quote, a
+ * trailing unquoted backslash or an empty program returns InvalidPager. On Windows the
+ * value is split on whitespace with no quoting and spawnPager hands the joined
+ * line to cmd.exe, which applies its own quoting. Users needing complex pager
+ * invocations should wrap them in a script and point $PI_PAGER or $PAGER at it.
+ *
+ * The parameters exist for tests: production calls `resolvePager()` with the
+ * process environment, platform and `less` probe.
  */
 export function resolvePager(
 	env: NodeJS.ProcessEnv = process.env,
 	platform: NodeJS.Platform = process.platform,
 	hasLess: () => boolean = defaultHasLess,
-): ResolvedPager | undefined {
-	const piPager = env.PI_PAGER?.trim();
-	const raw = piPager !== undefined && piPager !== "" ? piPager : env.PAGER?.trim();
-	if (raw !== undefined && raw !== "") {
-		const [cmd, ...args] = raw.split(/\s+/);
-		if (cmd) {
-			const executable =
-				platform === "win32"
-					? win32
-							.basename(cmd)
-							.toLowerCase()
-							.replace(/\.(exe|com)$/, "")
-					: posix.basename(cmd);
-			if (executable === "cat" || executable === "more") {
-				return undefined;
-			}
-			// Injected args go last, but before any end-of-options marker.
-			const endOfOptions = args.indexOf("--");
-			const at = endOfOptions === -1 ? args.length : endOfOptions;
-			if (executable === "less") {
-				args.splice(at, 0, ...LESS_KEEP_OPEN);
-			} else if (executable === "bat" || executable === "batcat") {
-				// bat's default --paging=auto runs less with -F, so short pages
-				// would vanish immediately. The last --paging wins in bat. An
-				// inherited LESS=-F still applies to bat's less; not overridden.
-				args.splice(at, 0, "--paging=always");
-			}
-			return { cmd, args };
+): ResolvedPager | InvalidPager | undefined {
+	const source = (env.PI_PAGER?.trim() ?? "") !== "" ? "PI_PAGER" : "PAGER";
+	const raw = env[source];
+	if (raw !== undefined && raw.trim() !== "") {
+		// Parsed untrimmed: an escaped or quoted space at either end belongs to a word.
+		const parsed = platform === "win32" ? { words: raw.trim().split(/\s+/) } : splitCommandLine(raw);
+		if ("problem" in parsed) {
+			return { error: `${source} ${parsed.problem}` };
 		}
+		const [cmd, ...args] = parsed.words;
+		// No word at all is left of a value that is only a line continuation.
+		if (parsed.words.length === 0 || cmd === "") {
+			return { error: `${source} names an empty program` };
+		}
+		const executable =
+			platform === "win32"
+				? win32
+						.basename(cmd)
+						.toLowerCase()
+						.replace(/\.(exe|com)$/, "")
+				: posix.basename(cmd);
+		if (executable === "cat" || executable === "more") {
+			return undefined;
+		}
+		// Injected args go last, but before any end-of-options marker.
+		const endOfOptions = args.indexOf("--");
+		const at = endOfOptions === -1 ? args.length : endOfOptions;
+		if (executable === "less") {
+			args.splice(at, 0, ...LESS_KEEP_OPEN);
+		} else if (executable === "bat" || executable === "batcat") {
+			// bat's default --paging=auto runs less with -F, so short pages
+			// would vanish immediately. The last --paging wins in bat. An
+			// inherited LESS=-F still applies to bat's less; not overridden.
+			args.splice(at, 0, "--paging=always");
+		}
+		return { cmd, args };
 	}
 	// Skip probing on Windows: `command -v` isn't standard and less is
 	// rarely present. Respect $PI_PAGER/$PAGER above, otherwise fall through.
@@ -161,7 +238,7 @@ export async function openInPager(tui: TUI, body: string, pager: ResolvedPager):
 	};
 	process.on("SIGINT", ignoreSigint);
 	try {
-		await pagerRuntime.spawnPager(body, pager);
+		await spawnPager(body, pager);
 		return undefined;
 	} catch (err) {
 		return err instanceof Error ? err : new Error(String(err));
@@ -170,19 +247,4 @@ export async function openInPager(tui: TUI, body: string, pager: ResolvedPager):
 		tui.start();
 		tui.requestRender(true);
 	}
-}
-
-interface PagerRuntime {
-	resolvePager: typeof resolvePager;
-	spawnPager: typeof spawnPager;
-}
-
-const defaultPagerRuntime: PagerRuntime = { resolvePager, spawnPager };
-
-/** Test seam: index.ts and openInPager call pagerRuntime.* so tests can swap per-test. */
-export const pagerRuntime: PagerRuntime = { ...defaultPagerRuntime };
-
-/** Test seam: swap one or more pagerRuntime methods; pass null to restore the originals. */
-export function __setPagerRuntimeForTests(next: Partial<PagerRuntime> | null): void {
-	Object.assign(pagerRuntime, defaultPagerRuntime, next);
 }

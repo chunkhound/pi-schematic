@@ -129,8 +129,8 @@ export interface UIRecords {
 	readonly notifications: readonly Notification[];
 	readonly statuses: ReadonlyMap<string, string | undefined>;
 	readonly widgets: ReadonlyMap<string, WidgetContent>;
-	/** How often a `ctx.ui.custom` component called `tui.requestRender`. */
-	readonly renderRequests: number;
+	/** The `force` argument of each `tui.requestRender` call a `ctx.ui.custom` component made, in call order. */
+	readonly renderRequests: readonly (boolean | undefined)[];
 }
 
 export interface RunnerFixture {
@@ -198,7 +198,7 @@ interface UIState {
 	notifications: Notification[];
 	statuses: Map<string, string | undefined>;
 	widgets: Map<string, WidgetContent>;
-	renderRequests: number;
+	renderRequests: (boolean | undefined)[];
 }
 
 function createRecordingUI(bindings: UIBindings, state: UIState): ExtensionUIContext {
@@ -208,8 +208,8 @@ function createRecordingUI(bindings: UIBindings, state: UIState): ExtensionUICon
 		TuiMainScreen.prototype,
 		{
 			...bindings.tui,
-			requestRender: () => {
-				state.renderRequests++;
+			requestRender: (force?: boolean) => {
+				state.renderRequests.push(force);
 			},
 		},
 		["mode", "terminal", "onDebug", "children", "fullRedraws"],
@@ -478,7 +478,7 @@ export async function createRunner(options: RunnerOptions): Promise<RunnerFixtur
 		reload: options.commandContext?.reload ?? command("reload"),
 	});
 
-	const uiState: UIState = { notifications: [], statuses: new Map(), widgets: new Map(), renderRequests: 0 };
+	const uiState: UIState = { notifications: [], statuses: new Map(), widgets: new Map(), renderRequests: [] };
 	const uiBindings = options.ui;
 	runner.setUIContext(uiBindings === undefined ? undefined : createRecordingUI(uiBindings, uiState), options.mode);
 

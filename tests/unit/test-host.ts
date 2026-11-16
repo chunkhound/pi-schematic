@@ -19,16 +19,13 @@ import type {
 	ContextEventResult,
 	Extension,
 	ExtensionAPI,
-	ExtensionError,
 	ExtensionEvent,
 	ExtensionFactory,
 	ExtensionHandler,
 	ExtensionRuntime,
 	InputEventResult,
 	MessageEndEventResult,
-	ModelRegistry,
 	NormalizedBuildSystemPromptOptions,
-	RegisteredCommand,
 	ResourcesDiscoverResult,
 	SessionBeforeCompactResult,
 	SessionBeforeForkResult,
@@ -43,7 +40,7 @@ import type {
 	TurnEndEventResult,
 	UserBashEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { DefaultResourceLoader, ExtensionRunner, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -111,19 +108,19 @@ interface TestAccessors {
 export type TestPI = ExtensionAPI & TestAccessors;
 
 /** A `pi.sendUserMessage` call the host recorded. */
-export interface SentUserMessage {
+interface SentUserMessage {
 	content: Parameters<ExtensionAPI["sendUserMessage"]>[0];
 	options?: Parameters<ExtensionAPI["sendUserMessage"]>[1];
 }
 
 /** A `pi.sendMessage` call the host recorded. */
-export interface SentMessage {
+interface SentMessage {
 	message: Parameters<ExtensionAPI["sendMessage"]>[0];
 	options?: Parameters<ExtensionAPI["sendMessage"]>[1];
 }
 
 /** A `pi.appendEntry` call the host recorded. */
-export interface AppendedEntry {
+interface AppendedEntry {
 	customType: string;
 	data: unknown;
 }
@@ -445,34 +442,6 @@ export function createBeforeAgentStartEvent(init?: { systemPrompt?: string; skil
 	};
 }
 
-/**
- * Dispatch one `before_agent_start` run through pi's real `ExtensionRunner` with
- * the `before` factories, then schematic, then the `after` factories loaded in
- * that order. Throws when any handler threw, because pi reports handler errors
- * and continues. `prompt` is `buildSystemPrompt` over the resulting options: it
- * is faithful for extension sections, while pi finalizes its own tools section
- * later in the run.
- */
-export async function emitBeforeAgentStart(init: {
-	before?: ExtensionFactory[];
-	after?: ExtensionFactory[];
-}): Promise<{ result: Awaited<ReturnType<ExtensionRunner["emitBeforeAgentStart"]>>; prompt: string }> {
-	const cwd = process.cwd();
-	const { extensions, runtime } = await loadExtensions([...(init.before ?? []), registerSchematic, ...(init.after ?? [])], cwd);
-	bindHostActions(runtime, createHostState({}));
-	// No registry: refreshModelGroupsState skips loading, so model-group config in the real home directory cannot leak in.
-	const runner = new ExtensionRunner(extensions, runtime, cwd, SessionManager.inMemory(cwd), undefined as unknown as ModelRegistry);
-	const errors: ExtensionError[] = [];
-	runner.onError((error) => {
-		errors.push(error);
-	});
-	const result = await runner.emitBeforeAgentStart({ messageType: "user", prompt: "" }, { cwd });
-	if (errors.length > 0) {
-		throw new AggregateError(errors, "before_agent_start handler failed");
-	}
-	return { result, prompt: buildSystemPrompt(result.systemPromptOptions) };
-}
-
 function hostOf(pi: TestPI): { extension: Extension; state: HostState } {
 	const host = hosts.get(pi);
 	if (host === undefined) {
@@ -496,7 +465,7 @@ function assertHostHandler<K extends HostEventName>(value: unknown, event: K): a
  * types it. Throws when none is registered, so an unregistered event cannot pass
  * vacuously.
  */
-export function getHandlers<K extends HostEventName>(pi: TestPI, event: K): HostHandler<K>[] {
+function getHandlers<K extends HostEventName>(pi: TestPI, event: K): HostHandler<K>[] {
 	const registered = hostOf(pi).extension.handlers.get(event) ?? [];
 	if (registered.length === 0) {
 		throw new Error(`No "${event}" handler is registered on the test host.`);
@@ -528,27 +497,4 @@ export function getTool(pi: TestPI, name: string): ToolDefinition {
 		throw new Error(`No tool "${name}" is registered on the test host.`);
 	}
 	return registered.definition;
-}
-
-/** The command registered as `name`. Throws, naming the command, when none is. */
-export function getCommand(pi: TestPI, name: string): RegisteredCommand {
-	const command = hostOf(pi).extension.commands.get(name);
-	if (command === undefined) {
-		throw new Error(`No command "${name}" is registered on the test host.`);
-	}
-	return command;
-}
-
-/**
- * The host's live records of `sendMessage`, `sendUserMessage` and `appendEntry`
- * calls: the same arrays as `pi.sentMessages`, `pi.sentUserMessages` and
- * `pi.appendedEntries`, typed.
- */
-export function getHostRecords(pi: TestPI): {
-	sentMessages: readonly SentMessage[];
-	sentUserMessages: readonly SentUserMessage[];
-	appendedEntries: readonly AppendedEntry[];
-} {
-	const { state } = hostOf(pi);
-	return { sentMessages: state.sentMessages, sentUserMessages: state.sentUserMessages, appendedEntries: state.appendedEntries };
 }

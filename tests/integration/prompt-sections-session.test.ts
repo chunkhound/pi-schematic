@@ -12,7 +12,7 @@
  * credentials.
  */
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import os from "node:os";
@@ -20,7 +20,6 @@ import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFactory, type Message, type SystemMessage } from "@earendil-works/pi-ai";
 import registerSchematic from "../../index.js";
 import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
-import { buildNudge } from "../../watchdog.js";
 import { createDeferred, setTempHome } from "../unit/helpers.js";
 
 let sandboxDir: string;
@@ -36,6 +35,15 @@ beforeAll(async () => {
 });
 
 describe("prompt sections in a real agent session", () => {
+	// The date section renders from the clock; a fixed instant keeps it the same in every request.
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(new Date(Date.UTC(2026, 9, 5, 12)));
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	it("re-sends only the changed section when the topic changes between prompts", async () => {
 		const systemMessagesPerRequest: SystemMessage[][] = [];
 		const recording =
@@ -156,21 +164,11 @@ describe("prompt sections in a real agent session", () => {
 
 		expect(requests).toHaveLength(3);
 		const handoffRunRequest = requests[2];
-		const nudgeFirstLine = buildNudge(
-			{
-				activeNotebookTopic: null,
-				pendingTopicBoundaryHint: null,
-				readonlyEnabled: false,
-				pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: "x" },
-			},
-			null,
-			true,
-		).split("\n")[0];
 		const nonSystemText = handoffRunRequest
 			.filter((message) => message.role !== "system")
 			.map((message) => JSON.stringify(message.content))
 			.join("\n");
-		expect(nonSystemText, "the handoff run's request carries the eligible handoff nudge").toContain(JSON.stringify(nudgeFirstLine).slice(1, -1));
+		expect(nonSystemText, "the handoff run's request carries the eligible handoff nudge").toContain("A real handoff is required in this session now.");
 		const sections = new Map<string, string>();
 		for (const message of handoffRunRequest.filter((candidate): candidate is SystemMessage => candidate.role === "system")) {
 			for (const [name, body] of Object.entries(message.sections ?? {})) {
