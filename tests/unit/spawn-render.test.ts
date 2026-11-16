@@ -9,14 +9,13 @@
  */
 
 import { beforeAll, beforeEach, expect, onTestFinished, test } from "vitest";
-import { getKeybindings, resetCapabilitiesCache, setCapabilities, setKeybindings, stripTerminalSequences } from "@earendil-works/pi-tui";
+import { getKeybindings, KeybindingsManager, resetCapabilitiesCache, setCapabilities, setKeybindings, stripTerminalSequences } from "@earendil-works/pi-tui";
 import { initTheme, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { assertPresent, expectPrefix } from "../assertions.js";
 import { createState, type SchematicState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
 import { renderSpawnCall, renderSpawnResult } from "../../spawn/renderer.js";
 import { createToolRenderContext } from "./helpers.js";
-import { loadTestKeybindings } from "./test-host.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
 import { createRunner } from "../support/runner.js";
 import { createRealTheme, realTheme } from "../support/theme.js";
@@ -777,12 +776,10 @@ test("spawn renderCall shows a short prompt collapsed", async () => {
 	expect(lines).toContainEqual(expect.stringContaining(realTheme.fg("dim", "Do X")));
 });
 
-test("spawn renderCall hints at hidden lines of a long prompt with the tool expand key", async () => {
-	// The default `ctrl+o` is shared with another action; a key bound to the expand action alone pins its id.
-	const keybindings = await loadTestKeybindings();
-	keybindings.setUserBindings({ "app.tools.expand": "f9" });
+test("spawn renderCall hints at hidden lines of a long prompt with the tool expand key", () => {
+	// pi's default `ctrl+o` is shared with another action; a key bound to the expand action alone pins its id.
 	const previous = getKeybindings();
-	setKeybindings(keybindings);
+	setKeybindings(new KeybindingsManager({ "app.tools.expand": { defaultKeys: "f9" } }));
 	onTestFinished(() => {
 		setKeybindings(previous);
 	});
