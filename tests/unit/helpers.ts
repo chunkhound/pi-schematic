@@ -23,8 +23,6 @@ import { AGENT_DIR_ENV_KEY } from "../paths.js";
 const theme = createTheme({
 	fg: (_name: string, text: string) => text,
 	bold: (text: string) => text,
-	// No `bg`: renderers that find none skip the shell background.
-	bg: undefined,
 });
 
 /** `value` as a record; throws, naming `what`, unless it is an object. */

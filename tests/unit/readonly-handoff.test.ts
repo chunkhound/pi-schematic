@@ -538,6 +538,25 @@ test("readonly topic boundary promotion exposes the handoff status", async () =>
 	]);
 });
 
+test.for([
+	{
+		label: "eligible usage announces the handoff exception",
+		usage: ELIGIBLE_USAGE,
+		nudge: "[readonly] temporary handoff exception active; write/edit/powershell remain blocked; bash writes/deletions outside temp blocked.",
+	},
+	{ label: "ineligible usage announces plain readonly", usage: { tokens: 29_999, percent: 15, contextWindow: 200000 }, nudge: READONLY_ACTIVE_SUMMARY },
+])("a readonly toggle-on nudge delivered with a topic boundary: $label", async ({ usage, nudge }) => {
+	const handoff = await createHandoffRunner();
+	await handoff.toggleReadonly();
+	await handoff.runCommand("notebook", "oauth");
+	await handoff.runCommand("notebook", "billing");
+	handoff.setUsage(usage);
+
+	const messages = await handoff.context("continue", 1);
+
+	expect(lastReadonlyNudge(messages)).toBe(nudge);
+});
+
 test("readonly topic boundary stays advisory until handoff is eligible", async () => {
 	const handoff = await readonlyTopicBoundary();
 

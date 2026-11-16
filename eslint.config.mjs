@@ -8,6 +8,7 @@ import n from "eslint-plugin-n";
 import comments from "@eslint-community/eslint-plugin-eslint-comments/configs";
 import globals from "globals";
 import vitest from "@vitest/eslint-plugin";
+import packageJson from "eslint-plugin-package-json";
 
 const nodeFloor = readFileSync(new URL(".node-version", import.meta.url), "utf8").trim();
 if (nodeFloor === "") {
@@ -456,6 +457,21 @@ export default defineConfig([
 			"vitest/prefer-strict-boolean-matchers": "error",
 			"vitest/prefer-to-be": "error",
 			"vitest/prefer-to-contain": "error",
+		},
+	},
+	{
+		files: ["package.json"],
+		languageOptions: { parser: packageJson.configs.recommended.languageOptions.parser },
+		plugins: { "package-json": packageJson },
+		rules: {
+			// The suites test against exact devDependency versions; the peers are open-ended `>=` ranges.
+			"package-json/restrict-dependency-ranges": [
+				"error",
+				[
+					{ forDependencyTypes: ["devDependencies"], forPackages: ["^@earendil-works/pi-", "^typebox$"], rangeType: "pin" },
+					{ forDependencyTypes: ["peerDependencies"], forPackages: ["^@earendil-works/pi-", "^typebox$"], rangeType: ">=" },
+				],
+			],
 		},
 	},
 	{

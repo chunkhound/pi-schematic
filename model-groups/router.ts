@@ -91,9 +91,6 @@ export class SpawnRouteError extends Error {
 		}
 	}
 }
-function parentProvider(model: Model<Api>): string {
-	return typeof model.provider === "string" ? model.provider : "";
-}
 function effectiveGroupMap(groups: ResolvedModelGroup[]): Map<string, ResolvedModelGroup> {
 	const map = new Map<string, ResolvedModelGroup>();
 	for (const group of groups) {
@@ -153,7 +150,7 @@ function inheritedRoute(parentModel: Model<Api>, parentThinking: ModelThinkingLe
 	return {
 		status: "inherited",
 		model: parentModel,
-		provider: parentProvider(parentModel),
+		provider: parentModel.provider,
 		modelId: parentModel.id,
 		thinking: parentThinking,
 	};
