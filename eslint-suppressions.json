@@ -14,14 +14,6 @@
       "count": 2
     }
   },
-  "model-groups/autocomplete.ts": {
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 1
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 1
-    }
-  },
   "model-groups/constraints/engine.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
@@ -287,7 +279,7 @@
   },
   "tests/unit/watchdog.test.ts": {
     "vitest/max-expects": {
-      "count": 8
+      "count": 7
     }
   },
   "thinking-levels.ts": {

@@ -22,7 +22,7 @@ import {
 import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
 import { assertPresent } from "../assertions.js";
 import { createRunner, type RunnerFixture } from "../support/runner.js";
-import { appendDrafts } from "../support/session.js";
+import { appendDrafts, ZERO_USAGE } from "../support/session.js";
 import { realTheme } from "../support/theme.js";
 
 type ContextMessage = Awaited<ReturnType<ExtensionRunner["emitContext"]>>[number];
@@ -123,8 +123,6 @@ function executeHandoff(
 async function runCommand({ fixture }: HandoffHost, name: string, args: string): Promise<void> {
 	await fixture.command(name).handler(args, fixture.runner.createCommandContext());
 }
-
-const ZERO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 
 function assistantMessage(...calls: { id: string; name: string }[]): AssistantMessage {
 	return {

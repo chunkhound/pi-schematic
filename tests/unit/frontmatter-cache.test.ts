@@ -6,12 +6,12 @@
  * pattern as readonly-bash-classifier.test.ts.
  */
 
-import { beforeAll, beforeEach, expect, onTestFinished, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, onTestFinished, test } from "vitest";
 import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertPresent } from "../assertions.js";
-import { testWithDir, tmpDir, withTempAgentDir, withTempHome } from "../support/temp.js";
+import { setTempHome, testWithDir, tmpDir, withTempAgentDir, withTempHome } from "../support/temp.js";
 import {
 	cacheLookupCommand,
 	cacheLookupCommandExplicitModel,
@@ -32,16 +32,17 @@ import { createState } from "../../state.js";
 import { THINKING_LEVELS } from "../../thinking-levels.js";
 import { createSyntheticSourceInfo, type Skill, type SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 
-// pi's agent directory holds global prompts; an empty one keeps an exported
+// pi's agent directory holds global prompts; an empty temp home keeps an exported
 // PI_CODING_AGENT_DIR, or a populated ~/.pi/agent/prompts, out of every test.
-let isolatedAgentDir: string;
-beforeAll(async () => {
-	isolatedAgentDir = await tmpDir();
-	return () => rm(isolatedAgentDir, { recursive: true, force: true });
+let restoreHome: () => void;
+let isolatedHome: string;
+beforeEach(async () => {
+	isolatedHome = await tmpDir();
+	restoreHome = setTempHome(isolatedHome);
 });
-beforeEach(() => {
-	// A hook cannot wrap a test body in withTempAgentDir; the config's unstubEnvs restores this stub after each test.
-	vi.stubEnv("PI_CODING_AGENT_DIR", isolatedAgentDir);
+afterEach(async () => {
+	restoreHome();
+	await rm(isolatedHome, { recursive: true, force: true });
 });
 
 // ── Helpers ───────────────────────────────────────────────────────

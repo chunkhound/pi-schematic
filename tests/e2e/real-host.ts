@@ -599,7 +599,7 @@ function removeRoot(root: string): void {
 }
 
 /** The members of a Vitest test context `withRealHost` uses. */
-export interface HostTestContext {
+interface HostTestContext {
 	signal: AbortSignal;
 	onTestFinished(fn: () => Promise<void>, timeout?: number): void;
 }

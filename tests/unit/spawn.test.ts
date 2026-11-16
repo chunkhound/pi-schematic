@@ -39,16 +39,6 @@ const CWD = "/tmp";
 /** The provider the test registries register their models under; no pi built-in provider uses it. */
 const PROVIDER = "spawn-test";
 
-/** The usage of a child whose entries record none. */
-const ZERO_USAGE = {
-	input: 0,
-	output: 0,
-	cacheRead: 0,
-	cacheWrite: 0,
-	totalTokens: 0,
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-};
-
 /** A chat model with `fields` over placeholder metadata: no reasoning, text input, zero cost. */
 function spawnModel(fields: Partial<Model<Api>> & Pick<Model<Api>, "id">): Model<Api> {
 	return {
@@ -1169,6 +1159,18 @@ test.each([
 		expectedText: "z".repeat(51200) + TRUNCATION_MARKER,
 	},
 	{
+		// Lines split on the line feed, so the last kept CRLF line keeps its carriage return before the marker.
+		name: "spawn result over the line limit with CRLF line endings keeps the first lines up to the limit",
+		input: Array.from({ length: 2001 }, (_, i) => `line ${i}`).join("\r\n"),
+		expectedText: Array.from({ length: 2000 }, (_, i) => `line ${i}\r`).join("\n") + TRUNCATION_MARKER,
+	},
+	{
+		// The carriage return is the 51 200th byte, so the byte cut falls between it and its line feed.
+		name: "spawn result over the byte limit cuts between a carriage return and its line feed",
+		input: "a".repeat(51199) + "\r\nb",
+		expectedText: "a".repeat(51199) + "\r" + TRUNCATION_MARKER,
+	},
+	{
 		// 17 067 characters take 51 201 bytes; the byte limit falls inside the last one, so the cut backs off to 17 066.
 		name: "spawn result cuts an oversized line of 3-byte characters on a character boundary",
 		input: "語".repeat(17067),
@@ -1243,7 +1245,14 @@ test("headless spawn aggregates Error and cleanup failures without mutating the 
 	Object.freeze(primaryFailure);
 	const { execution, state } = await executeWithFailingCleanup(primaryFailure, cleanupFailure);
 
-	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", ZERO_USAGE);
+	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	expect(primaryFailure.cause).toBe(originalCause);
 	assertChildRegistriesCleared(state);
 });
@@ -1253,14 +1262,28 @@ test("headless spawn aggregates primitive and cleanup failures", async () => {
 	const cleanupFailure = new Error("dispose failed");
 	const { execution, state } = await executeWithFailingCleanup(primaryFailure, cleanupFailure);
 
-	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", ZERO_USAGE);
+	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	assertChildRegistriesCleared(state);
 });
 
 test("UI spawn notifies when cleanup also fails after a primary failure", async () => {
 	const { execution, state, host } = await executeWithFailingCleanup(new Error("prompt failed"), new Error("dispose failed"), "recording");
 
-	assertErrorResult(await execution, "prompt failed", ZERO_USAGE);
+	assertErrorResult(await execution, "prompt failed", {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	expect(host.ui.notifications).toStrictEqual([{ message: "Spawn cleanup failed: dispose failed", type: "error" }]);
 	assertChildRegistriesCleared(state);
 });
@@ -1268,7 +1291,14 @@ test("UI spawn notifies when cleanup also fails after a primary failure", async 
 test("UI spawn names both failures when the cleanup notice throws", async () => {
 	const { execution, state, notify } = await executeWithFailingCleanup(new Error("prompt failed"), new Error("dispose failed"), "throwing");
 
-	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", ZERO_USAGE);
+	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	expect(notify).toHaveBeenCalledOnce();
 	assertChildRegistriesCleared(state);
 });
@@ -1535,6 +1565,18 @@ test("spawn prompt guidelines name the keys of the injected constraint registry"
 	);
 });
 
+test("the registered spawn tool presents its label, prompt snippet and description", async () => {
+	const { label, promptSnippet, description } = (await spawnRunner({ state: createState() })).registeredTool("spawn").definition;
+	expect({ label, promptSnippet, description }).toStrictEqual({
+		label: "Spawn",
+		promptSnippet: "Spawn a focused subtask agent",
+		description:
+			"Spawn an isolated child agent for a focused subtask. " +
+			"Child inherits parent model, thinking level, cwd, active registered tools executable in the child session, and shared notebook tools unless an optional Model Group routes its model/thinking; children cannot spawn or handoff. " +
+			"Reference notebook pages by name — child will notebook_read them on demand.",
+	});
+});
+
 test("spawn schema advertises the thinking levels as a plain string enum", async () => {
 	const thinkingSchema = thinkingWireSchema(await spawnRunner({ state: createState() }));
 	expect(thinkingSchema.type).toBe("string");
@@ -1696,7 +1738,14 @@ test("a real prompt failure that races with a parent abort keeps its text under 
 	expect(result.isError).toBe(true);
 	expect(result.content).toStrictEqual([{ type: "text", text: "prompt failed despite abort" }]);
 	expect(result.details.outcome).toBe("aborted");
-	expect(result.usage).toStrictEqual(ZERO_USAGE);
+	expect(result.usage).toStrictEqual({
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	expect(factory.children[0].dispose).toHaveBeenCalledOnce();
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
@@ -1726,7 +1775,14 @@ test("spawn invalidation wins the abort and prompt-rejection race", async () => 
 	resetState(state);
 	rejectPrompt(new Error("prompt rejected after abort and reset"));
 
-	assertErrorResult(await execution, "Spawn invalidated by reset.", ZERO_USAGE);
+	assertErrorResult(await execution, "Spawn invalidated by reset.", {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	expect(factory.children[0].abort, "signal cancellation and reset share one abort").toHaveBeenCalledOnce();
 	expect(factory.children[0].dispose, "the raced child disposes exactly once").toHaveBeenCalledOnce();
 	expect(state.childSessions.size).toBe(0);
@@ -1760,7 +1816,14 @@ test("reset before registration returns the invalidation and abort failure", asy
 	// Allow the factory to resolve — session is immediately stale
 	factoryReady.resolve();
 
-	assertErrorResult(await execution, "Spawn invalidated by reset; child abort failed.", ZERO_USAGE);
+	assertErrorResult(await execution, "Spawn invalidated by reset; child abort failed.", {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	expect(factoryCalled, "factory was called").toBe(true);
 	expect(child.abort, "abort was called exactly once").toHaveBeenCalledOnce();
 	expect(child.dispose, "child disposed exactly once").toHaveBeenCalledOnce();
@@ -1794,7 +1857,14 @@ test("reset during prompt reports a failed abort once through the UI", async () 
 	resetState(state);
 	rejectPrompt(new Error("prompt rejected"));
 
-	assertErrorResult(await execution, "Spawn invalidated by reset; child abort failed.", ZERO_USAGE);
+	assertErrorResult(await execution, "Spawn invalidated by reset; child abort failed.", {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	expect(host.ui.notifications).toStrictEqual([{ message: "Spawn cleanup failed: abort failed", type: "error" }]);
 	expect(factory.children[0].abort).toHaveBeenCalledOnce();
 	expect(factory.children[0].dispose).toHaveBeenCalledOnce();
@@ -1841,7 +1911,14 @@ test("a throwing notice for a failed reset abort does not emit an unhandled reje
 		resetState(state);
 		rejectPrompt(new Error("prompt rejected"));
 
-		assertErrorResult(await execution, "Spawn invalidated by reset; child abort failed.", ZERO_USAGE);
+		assertErrorResult(await execution, "Spawn invalidated by reset; child abort failed.", {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		});
 		// Give any detached microtasks a chance to flush
 		await new Promise((resolve) => setImmediate(resolve));
 
@@ -1937,7 +2014,14 @@ test("executeSpawn detects stale session before session creation", async () => {
 	// Now allow the factory to resolve — session should be immediately stale
 	resolveFactory({});
 
-	assertErrorResult(await executePromise, "Spawn invalidated by reset.", ZERO_USAGE);
+	assertErrorResult(await executePromise, "Spawn invalidated by reset.", {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	expect(factoryCalled).toBe(true);
 	expect(child.abort).toHaveBeenCalledOnce();
 	expect(state.childSessions.size).toBe(0);
@@ -1955,7 +2039,14 @@ test("executeSpawn does not prompt when onUpdate synchronously resets the child 
 		},
 	});
 
-	assertErrorResult(await execution, "Spawn invalidated by reset.", ZERO_USAGE);
+	assertErrorResult(await execution, "Spawn invalidated by reset.", {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	const [child] = factory.children;
 	expect(child.prompt).not.toHaveBeenCalled();
 	expect(child.abort).toHaveBeenCalledOnce();
@@ -1982,7 +2073,14 @@ test("executeSpawn does not prompt when onUpdate synchronously aborts the signal
 	expect(result.isError).toBe(true);
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.content[0].text).toBe("Child agent aborted: cancelled during update");
-	expect(result.usage).toStrictEqual(ZERO_USAGE);
+	expect(result.usage).toStrictEqual({
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	const [child] = factory.children;
 	expect(child.prompt).not.toHaveBeenCalled();
 	expect(child.abort).toHaveBeenCalledOnce();
@@ -2030,7 +2128,14 @@ test("reset during a running update reports one failed abort", async () => {
 		},
 	});
 
-	assertErrorResult(result, "Spawn invalidated by reset; child abort failed.", ZERO_USAGE);
+	assertErrorResult(result, "Spawn invalidated by reset; child abort failed.", {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	expect(host.ui.notifications).toStrictEqual([{ message: "Spawn cleanup failed: abort failed", type: "error" }]);
 	expect(factory.children[0].prompt).not.toHaveBeenCalled();
 });
@@ -2064,7 +2169,14 @@ test("executeSpawn aborts stale child when resetState fires during prompt", asyn
 	// Reset cleanup starts the shared abort, then prompt rejection reaches invalidation.
 	resetState(state);
 
-	assertErrorResult(await executePromise, "Spawn invalidated by reset.", ZERO_USAGE);
+	assertErrorResult(await executePromise, "Spawn invalidated by reset.", {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	expect(factory.children[0].abort, "reset and invalidation share one abort").toHaveBeenCalledOnce();
 	expect(state.childSessions.size).toBe(0);
 	expect(state.liveChildSessions.size).toBe(0);
@@ -2100,7 +2212,14 @@ test("executeSpawn suppresses a successful stale prompt that ignores reset abort
 	resetState(state);
 	resolvePrompt();
 
-	assertErrorResult(await execution, "Spawn invalidated by reset.", ZERO_USAGE);
+	assertErrorResult(await execution, "Spawn invalidated by reset.", {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	expect(factory.children[0].abort).toHaveBeenCalledOnce();
 	expect(factory.children[0].dispose).toHaveBeenCalledOnce();
 	expect(updates, "no stale completion update is published").toHaveLength(1);
@@ -2136,7 +2255,14 @@ test("spawn abort before its prompt returns the failed abort and notifies the UI
 	expect(result.isError).toBe(true);
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.content[0].text).toBe("abort failed");
-	expect(result.usage).toStrictEqual(ZERO_USAGE);
+	expect(result.usage).toStrictEqual({
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	expect(host.ui.notifications).toStrictEqual([{ message: "Spawn cleanup failed: abort failed", type: "error" }]);
 });
 

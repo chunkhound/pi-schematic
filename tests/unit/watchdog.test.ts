@@ -354,9 +354,9 @@ test("the context nudge asks an eligible requested handoff for the next instruct
 
 	const requested = await contextNudge(runner, windowUsage(30));
 
-	expect(requested).toMatch(/real handoff is required/i);
-	expect(requested).toMatch(/do not perform the new instruction here/i);
-	expect(requested).toMatch(/call handoff with the next instruction and the remaining context/i);
+	expect(requested).toBe(
+		"A real handoff is required in this session now.\nDo not perform the new instruction here — this context is discarded at compaction.\nSave durable findings to the notebook if needed, then call handoff with the next instruction and the remaining context.\nThe successor receives the instruction verbatim.",
+	);
 });
 
 test("the context nudge asks a requested handoff with a set instruction for only the remaining context", async () => {
@@ -789,12 +789,9 @@ test("context injects readonly handoff guidance after explicit user /handoff", a
 	const watchdogMessage = findCustomMessage(result, "pi-schematic-watchdog");
 
 	assertPresent(watchdogMessage, "requested handoff should inject watchdog guidance");
-	expect(watchdogMessage.content).toMatch(/handoff/i);
-	expect(watchdogMessage.content).toMatch(/readonly/i);
-	expect(watchdogMessage.content).toMatch(/temporary handoff exception active/i);
-	expect(watchdogMessage.content).toMatch(/write\/edit\/powershell remain blocked/i);
-	expect(watchdogMessage.content).toMatch(/fresh context resumes in readonly mode|resumes readonly mode/i);
-	expect(watchdogMessage.content).not.toMatch(/User explicitly requested|this request only/i);
+	expect(watchdogMessage.content).toBe(
+		"A real handoff is required in this session now.\nDo not perform the new instruction here — this context is discarded at compaction.\nSave durable findings to the notebook if needed, then call handoff with only the remaining context.\n[readonly] temporary handoff exception active; write/edit/powershell remain blocked; bash writes/deletions outside temp blocked. This temporary bypass exists only so you can complete the required handoff now. After success, fresh context resumes in readonly mode.",
+	);
 });
 
 test("readonly toggle nudge aligns with handoff exception in the same turn", async () => {

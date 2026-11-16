@@ -33,16 +33,6 @@ function isSpawnToolResult(value: unknown): value is CheckedSpawnResult {
 	);
 }
 
-/** The usage of a child that recorded none. */
-const ZERO_USAGE = {
-	input: 0,
-	output: 0,
-	cacheRead: 0,
-	cacheWrite: 0,
-	totalTokens: 0,
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-};
-
 /**
  * A runner fixture for `cwd` that loads no tool and whose parent model is `model`, with the
  * extension API it handed its factory; `agentDir` becomes pi's agent directory when given.
@@ -127,7 +117,14 @@ test("real child abort before prompt returns an aborted result without a running
 	expect(result.isError).toBe(true);
 	expect(result.content).toStrictEqual([{ type: "text", text: "Child agent aborted: fixture abort" }]);
 	expect(result.details.outcome).toBe("aborted");
-	expect(result.usage).toStrictEqual(ZERO_USAGE);
+	expect(result.usage).toStrictEqual({
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	expect(proof.updates).toHaveLength(0);
 });
 
@@ -136,7 +133,14 @@ test("real child reset during its running update invalidates the session", async
 		prompt: "Use the agentic_e2e_probe tool.",
 		resetOnRunningUpdate: true,
 	});
-	assertErrorResult(proof.result, "Spawn invalidated by reset.", ZERO_USAGE);
+	assertErrorResult(proof.result, "Spawn invalidated by reset.", {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 });
 
 test("concurrent real children both complete", async () => {
@@ -195,7 +199,14 @@ test("a parent-transient selected model fails explicitly in the real child runti
 // 1. No output: empty assistant text returns an error result, with no lingering child.
 test("real child with no output returns the 'produced no output' error result", async () => {
 	const proof = await runRealChildInvocation({ prompt: "say nothing", noOutput: true });
-	assertErrorResult(proof.result, "Child agent produced no output.", ZERO_USAGE);
+	assertErrorResult(proof.result, "Child agent produced no output.", {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 	expect(proof.state.childSessions.size, "no child session lingers after the error").toBe(0);
 });
 
@@ -239,10 +250,60 @@ test("real child session registry is cleared after a successful spawn", async ()
 	expect(proof.state.childSessions.size, "child session registry is cleared after a successful spawn").toBe(0);
 });
 
+test("a completed spawn disposes its real child session", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-schematic-child-dispose-"));
+	onTestFinished(() => rm(root, { recursive: true, force: true }));
+	const faux = fauxProvider();
+	faux.setResponses([fauxAssistantMessage("child done")]);
+	const modelRuntime = await ModelRuntime.create({ authPath: join(root, "auth.json"), modelsPath: null, refreshOnCreate: false });
+	modelRuntime.registerNativeProvider(faux.provider);
+	// Disposing a session marks the extension API its extensions received as stale, so a later call on it throws.
+	let childPi: ExtensionAPI | undefined;
+	const resourceLoader = new DefaultResourceLoader({
+		cwd: root,
+		agentDir: root,
+		noSkills: true,
+		noPromptTemplates: true,
+		noThemes: true,
+		noContextFiles: true,
+		extensionFactories: [
+			(api) => {
+				childPi = api;
+			},
+		],
+	});
+	await resourceLoader.reload();
+	const { fixture, pi } = await parentHost(root, faux.getModel());
+
+	const result = await executeSpawn(
+		"spawn-dispose",
+		pi,
+		fixture.runner.createToolContext("spawn-dispose", undefined),
+		createState(),
+		{ prompt: "work" },
+		undefined,
+		undefined,
+		"medium",
+		(config) => createAgentSession({ ...config, agentDir: root, modelRuntime, resourceLoader }),
+	);
+
+	expect(result.content).toStrictEqual([{ type: "text", text: "child done" }]);
+	const childApi = childPi;
+	assertPresent(childApi, "the child session loaded the capturing extension");
+	expect(() => childApi.getFlag("unused")).toThrow("This extension ctx is stale after session replacement or reload.");
+});
+
 // 5. Stale during prompt: reset inside the first stream call invalidates the child.
 test("real child invalidated when state is reset mid-prompt", async () => {
 	const proof = await runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool.", resetDuringPrompt: true });
-	assertErrorResult(proof.result, "Spawn invalidated by reset.", ZERO_USAGE);
+	assertErrorResult(proof.result, "Spawn invalidated by reset.", {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	});
 });
 
 // 6. Mid-prompt abort: the parent controller abort yields an aborted outcome (the

@@ -29,6 +29,16 @@ export function appendDrafts(session: SessionManager, drafts: readonly SessionBo
 // A fixed time for every message these helpers build.
 const MESSAGE_TIME = 1_767_225_600_000;
 
+/** The usage of a message that recorded none, for test messages to carry. */
+export const ZERO_USAGE: Usage = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
 /**
  * An assistant message with `content` from a fixed test provider and time, ending with `fields.stopReason`
  * (`"stop"` when omitted) and carrying `fields.usage` (zero usage when omitted).

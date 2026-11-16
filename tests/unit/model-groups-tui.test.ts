@@ -97,15 +97,27 @@ function memoryStore(initial: ScopedGroupDefs): ModelGroupsStoreOps {
 	};
 }
 
-function component(args: {
+interface ComponentArgs {
 	registry: ModelRegistry;
 	defs?: ScopedGroupDefs;
 	store?: (memory: ModelGroupsStoreOps) => Partial<ModelGroupsStoreOps>;
 	notify?: ModelGroupsComponentOptions["notify"];
 	policy?: ModelGroupsAccess["policy"];
-	/** Groups the component opens with, resolved from these defs whatever the access policy; by default the store's listing under that policy. */
-	initialDefs?: ScopedGroupDefs;
-}) {
+}
+
+type InitialValidation = NonNullable<ModelGroupsComponentOptions["initialValidation"]>;
+
+/** A component over the in-memory store that opens with the store's listing under the access policy. */
+function component(args: ComponentArgs) {
+	return mountComponent(args, (memory, access) => memory.listResolvedModelGroups(access, args.registry));
+}
+
+/** A component over the in-memory store that opens with the groups resolved from `initialDefs`, whatever the access policy. */
+function componentOpenedWith(args: ComponentArgs & { initialDefs: ScopedGroupDefs }) {
+	return mountComponent(args, () => ({ groups: resolveGroups(args.registry, args.initialDefs), loadIssues: [] }));
+}
+
+function mountComponent(args: ComponentArgs, initialValidation: (memory: ModelGroupsStoreOps, access: ModelGroupsAccess) => InitialValidation) {
 	let renders = 0;
 	const memory = memoryStore(args.defs ?? {});
 	const access: ModelGroupsAccess = { cwd: "/tmp/project", policy: args.policy ?? "global-project" };
@@ -118,10 +130,7 @@ function component(args: {
 		access,
 		vi.fn(),
 		{
-			initialValidation:
-				args.initialDefs === undefined
-					? memory.listResolvedModelGroups(access, args.registry)
-					: { groups: resolveGroups(args.registry, args.initialDefs), loadIssues: [] },
+			initialValidation: initialValidation(memory, access),
 			store: { ...memory, ...args.store?.(memory) },
 			notify: args.notify,
 		},
@@ -937,7 +946,7 @@ test("model groups TUI under global-only access creates a global group from the 
 test("model groups TUI under global-only access lists only global groups", async () => {
 	// The session's groups were resolved while the project was trusted, so the component opens with project groups it must not list.
 	const defs: ScopedGroupDefs = { global: { "global-name": { models: [] } }, project: { "project-secret": { models: [] } } };
-	const c = component({ registry: await tuiRegistry(), defs, initialDefs: defs, policy: "global-only" }).c;
+	const c = componentOpenedWith({ registry: await tuiRegistry(), defs, initialDefs: defs, policy: "global-only" }).c;
 	expect(rendered(c)).toMatch(/global-name/);
 	expect(rendered(c)).not.toMatch(/project-secret/);
 });
