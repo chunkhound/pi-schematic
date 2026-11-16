@@ -70,9 +70,6 @@ export interface SchematicState {
 	 */
 	pendingTopicBoundaryHint: NotebookTopicBoundaryHint | null;
 
-	/** Last context usage percent from getContextUsage() */
-	lastContextPercent: number | null;
-
 	/** The handoff the tool accepted in the current turn, until its boundary is confirmed or failed. */
 	stagedHandoff: StagedHandoff | null;
 
@@ -194,7 +191,6 @@ export function createState(): SchematicState {
 		activeNotebookTopic: null,
 		activeNotebookTopicSource: null,
 		pendingTopicBoundaryHint: null,
-		lastContextPercent: null,
 		stagedHandoff: null,
 		handoffRefusals: new Map(),
 		handoffFailedInRun: false,
@@ -249,7 +245,6 @@ export function resetState(state: SchematicState): void {
 	state.discardEpochWatermark = 0;
 	state.activeNotebookTopic = null;
 	state.activeNotebookTopicSource = null;
-	state.lastContextPercent = null;
 	invalidateHandoffState(state);
 	state.modelGroups.groups = [];
 	state.modelGroups.validation = null;

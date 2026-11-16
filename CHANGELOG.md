@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Pi 1.2.0 minimum**: the `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` peers now require 1.2.0 or later, up from 0.99.2. The `typebox` peer minimum stays 1.3.27.
 
+### Fixed
+
+- **Context percent rounded once**: the status bar tone, the high-context warning widget, the watchdog reminders and their thresholds, and the context note of the readonly-off message all use pi's context percent rounded to a whole number. Before, the warning widget, the watchdog thresholds and the readonly-off note compared the unrounded percent, so at 69.6% the status showed an error-tone 70% with no warning widget, and the same mismatch held just below 30% and 50%.
+
 ## [0.7.1] - 2026-11-08
 
 ### Changed

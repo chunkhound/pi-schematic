@@ -140,7 +140,7 @@ export function registerHandoffTool(pi: ExtensionAPI, state: SchematicState): vo
 					throw new Error(formatHandoffFailure(error.message, true), { cause: error });
 				}
 				// Status first: a throwing UI call must leave no staged handoff behind.
-				if (ctx.hasUI && ctx.ui.theme) {
+				if (ctx.hasUI) {
 					ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_IN_PROGRESS_STATUS));
 				}
 				const discardPages = [...new Set(params.discardPages ?? [])];

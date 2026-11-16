@@ -38,11 +38,10 @@ export function updateIndicators(ctx: ExtensionContext, state: SchematicState): 
 
 	const theme = ctx.ui.theme;
 
-	// Context usage
-	const usage = ctx.getContextUsage();
-	const percent = normalizeContextPercent(usage?.percent);
-	if (percent !== null) {
-		const pct = Math.round(percent);
+	// Context usage, rounded once: the shown number drives the tone and the warning widget.
+	const percent = normalizeContextPercent(ctx.getContextUsage()?.percent);
+	const pct = percent === null ? null : Math.round(percent);
+	if (pct !== null) {
 		const tone = pct >= 70 ? "error" : pct >= 50 ? "warning" : pct >= 30 ? "accent" : "dim";
 		ctx.ui.setStatus(STATUS_KEY_CTX, theme.fg("dim", "ctx ") + theme.fg(tone, `${pct}%`));
 	} else {
@@ -63,8 +62,7 @@ export function updateIndicators(ctx: ExtensionContext, state: SchematicState): 
 	);
 
 	// High-context warning widget (above editor)
-	if (percent !== null && percent >= 70) {
-		const pct = Math.round(percent);
+	if (pct !== null && pct >= 70) {
 		const warning = state.readonlyEnabled
 			? `Context at ${pct}% — readonly: same topic → spawn; different topic → ${READONLY_HANDOFF_TRIGGER}`
 			: state.activeNotebookTopic !== null && state.activeNotebookTopic !== ""

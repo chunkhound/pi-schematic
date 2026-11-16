@@ -91,41 +91,6 @@ async function emitAgentSettled({ fixture }: WatchdogRunner, aborted = false): P
 	await fixture.runner.emit({ type: "agent_settled", aborted });
 }
 
-function watchdogRegistration(state: ReturnType<typeof createState>): ExtensionFactory[] {
-	return [
-		(api) => {
-			registerWatchdog(api, state);
-		},
-	];
-}
-
-test("watchdog records context usage without user notifications", async () => {
-	const state = createState();
-	const runner = await createWatchdogRunner({ factories: watchdogRegistration(state) });
-	runner.setUsage(percentUsage(70));
-
-	await emitAgentEnd(runner);
-
-	expect(runner.fixture.ui.notifications).toStrictEqual([]);
-	expect(state.lastContextPercent).toBe(70);
-});
-
-test.for([Number.NaN, Number.POSITIVE_INFINITY, -1])("watchdog ignores malformed percentages: %s", async (percent) => {
-	const state = createState();
-	const runner = await createWatchdogRunner({ factories: watchdogRegistration(state), headless: true });
-	runner.setUsage(percentUsage(percent));
-	await emitAgentEnd(runner);
-	expect(state.lastContextPercent).toBeNull();
-});
-
-test("watchdog records overflow percentages", async () => {
-	const state = createState();
-	const runner = await createWatchdogRunner({ factories: watchdogRegistration(state), headless: true });
-	runner.setUsage({ tokens: 250_000, contextWindow: 200_000, percent: 125 });
-	await emitAgentEnd(runner);
-	expect(state.lastContextPercent).toBe(125);
-});
-
 /** Asserts `message` is the hidden watchdog reminder and narrows it to a custom message. */
 function assertWatchdogReminder(message: ContextMessage | undefined): asserts message is CustomContextMessage {
 	expect(message).toMatchObject({ role: "custom", customType: "pi-schematic-watchdog", display: false });
@@ -215,6 +180,104 @@ test("context nudges at band crossings and after a below-30% reset", async () =>
 		const result = await runContext(runner, percentUsage(percent), `at ${percent}`, percent);
 		expect(result, `watchdog nudge at ${percent}%`).toStrictEqual([...userMessages(`at ${percent}`, percent), ...injected]);
 	}
+});
+
+test.for([
+	{ percent: 29.4, nudge: undefined },
+	{
+		percent: 29.5,
+		nudge:
+			"Context at 30% — choose your next step by topic fit.\nNo active notebook topic is set. Assign a short stable topic soon. If the work stays within that topic, prefer spawn for noisy subtasks. If the work shifts beyond it, continue working until handoff is available.",
+	},
+])("context sends the first watchdog nudge only from a rounded 30%: $percent%", async ({ percent, nudge }) => {
+	const runner = await createWatchdogRunner({ headless: true });
+
+	const result = await runContext(runner, percentUsage(percent));
+
+	expect(findCustomMessage(result, "pi-schematic-watchdog")?.content).toBe(nudge);
+});
+
+test.for([
+	{ from: 30, to: 49.4, nudge: undefined },
+	{
+		from: 30,
+		to: 49.5,
+		nudge:
+			"Context at 50% — topic discipline matters now.\nNo active notebook topic is set. Assign a short stable topic soon. If the work stays within that topic, prefer spawn for noisy subtasks. If the work shifts beyond it, continue working until handoff is available.",
+	},
+	{ from: 50, to: 69.4, nudge: undefined },
+	{
+		from: 50,
+		to: 69.5,
+		nudge:
+			"Context at 70% — topic discipline is urgent.\nNo active notebook topic is set. Assign a fresh topic now; continue working until handoff is available.",
+	},
+])("context nudges again only when the rounded percent enters a higher band: $from% to $to%", async ({ from, to, nudge }) => {
+	const runner = await createWatchdogRunner({ headless: true });
+	await runContext(runner, percentUsage(from));
+
+	const result = await runContext(runner, percentUsage(to), "hi", 2);
+
+	expect(findCustomMessage(result, "pi-schematic-watchdog")?.content).toBe(nudge);
+});
+
+const READONLY_DISABLED_NUDGE = "[readonly] disabled — write, edit, handoff, and bash writes are now fully available, as is powershell where it is active.";
+
+test.for([
+	{ percent: 29, content: READONLY_DISABLED_NUDGE },
+	{ percent: 29.4, content: READONLY_DISABLED_NUDGE },
+	{ percent: 29.5, content: `${READONLY_DISABLED_NUDGE} Context at 30% — if the work changed topics, you can handoff now.` },
+	{ percent: 30, content: `${READONLY_DISABLED_NUDGE} Context at 30% — if the work changed topics, you can handoff now.` },
+])("the readonly-off nudge carries the context suffix only from a rounded 30%: $percent%", async ({ percent, content }) => {
+	const runner = await createWatchdogRunner();
+	await runCommand(runner, "readonly", "");
+	await drainReadonlyNudge(runner);
+	await runCommand(runner, "readonly", "");
+
+	const result = await runContext(runner, percentUsage(percent), "hi", 2);
+
+	expect(findCustomMessage(result, "pi-schematic-readonly-nudge")?.content).toBe(content);
+});
+
+const ELIGIBLE_AT_75: ContextUsage = { tokens: 150_000, contextWindow: 200_000, percent: 75 };
+const INELIGIBLE_AT_75: ContextUsage = { tokens: 20_000, contextWindow: 26_667, percent: 75 };
+
+test.for([
+	{
+		case: "topic and eligible",
+		topic: "oauth",
+		usage: ELIGIBLE_AT_75,
+		nudge:
+			"Context at 75% — topic discipline is urgent.\nActive notebook topic: oauth.\nUse the topic as the current semantic frame. If the work no longer fits this topic, prefer a deliberate handoff. If it still fits and only a focused noisy branch is needed, spawn it instead of polluting the parent context.\nSave durable findings to the notebook before handoff.",
+	},
+	{
+		case: "topic and ineligible",
+		topic: "oauth",
+		usage: INELIGIBLE_AT_75,
+		nudge:
+			"Context at 75% — topic discipline is urgent.\nActive notebook topic: oauth.\nUse the topic as the current semantic frame. If the work no longer fits this topic, continue working until handoff is available. If it still fits and only a focused noisy branch is needed, spawn it instead of polluting the parent context.\nSave durable findings to the notebook before handoff.",
+	},
+	{
+		case: "no topic and eligible",
+		topic: "",
+		usage: ELIGIBLE_AT_75,
+		nudge: "Context at 75% — topic discipline is urgent.\nNo active notebook topic is set. Assign a fresh topic in the next clean context after handoff.",
+	},
+	{
+		case: "no topic and ineligible",
+		topic: "",
+		usage: INELIGIBLE_AT_75,
+		nudge:
+			"Context at 75% — topic discipline is urgent.\nNo active notebook topic is set. Assign a fresh topic now; continue working until handoff is available.",
+	},
+])("the watchdog nudge at 75% gives the $case advice", async ({ topic, usage, nudge }) => {
+	const runner = await createWatchdogRunner({ headless: true });
+	// An empty argument opens the picker, which a headless session skips, so no topic is set.
+	await runCommand(runner, "notebook", topic);
+
+	const result = await runContext(runner, usage);
+
+	expect(findCustomMessage(result, "pi-schematic-watchdog")?.content).toBe(nudge);
 });
 
 test("context consumes a boundary hint after the first injected nudge", async () => {
@@ -494,10 +557,14 @@ test("a nudged run whose staged handoff cut was not persisted counts one attempt
 	const userMessagesBeforeSettle = sentUserMessages.length;
 	await emitAgentSettled(runner);
 
-	expect(state.pendingRequestedHandoff?.toolCalled, "the failure resets toolCalled before the watchdog counts").toBe(false);
+	expect(state.pendingRequestedHandoff?.toolCalled, "the failure leaves the request retryable as not yet called").toBe(false);
 	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(1);
 	expect(sentUserMessages, "a dropped cut starts no run").toHaveLength(userMessagesBeforeSettle);
-	expect(sentMessages.at(-1)?.message.customType).toBe("pi-schematic-handoff-failed");
+	expect(sentMessages.at(-1)?.message, "the failure names the cut pi did not persist").toMatchObject({
+		customType: "pi-schematic-handoff-failed",
+		content:
+			"Handoff failed — pi did not persist the cut (another extension replaced the turn_end entries, or pi rejected them). The required handoff remains pending; retry when context usage is eligible.",
+	});
 	expect(sentMessages.at(-1)?.options?.triggerTurn).toBe(false);
 });
 
@@ -616,16 +683,6 @@ test("a run nudged only to keep working does not count", async () => {
 	expect(warnings()).toStrictEqual([]);
 });
 
-test("agent_settled does not record context usage", async () => {
-	const state = createState();
-	const runner = await createWatchdogRunner({ factories: watchdogRegistration(state), headless: true });
-	runner.setUsage(percentUsage(70));
-
-	await emitAgentSettled(runner);
-
-	expect(state.lastContextPercent).toBeNull();
-});
-
 // ── Readonly-specific injection contracts ─────────────────────────
 
 async function drainReadonlyNudge(runner: WatchdogRunner): Promise<void> {
@@ -715,4 +772,34 @@ test("eligible readonly human topic boundary auto-creates handoff bypass equival
 
 	const blockResult = await runner.fixture.runner.emitToolCall({ type: "tool_call", toolCallId: "handoff-call", toolName: "handoff", input: {} });
 	expect(blockResult, "handoff tool should be unblocked after topic boundary creates bypass").toBeUndefined();
+});
+
+test("in readonly mode the not-ready requested-handoff nudge carries the readonly wait notice", async () => {
+	const runner = await createWatchdogRunner();
+	await runCommand(runner, "readonly", "");
+	await drainReadonlyNudge(runner);
+	await runCommand(runner, "handoff", "continue readonly work");
+
+	const result = await runContext(runner, { tokens: 5000, percent: 2.5, contextWindow: 200000 }, "hi", 2);
+
+	expect(findCustomMessage(result, "pi-schematic-watchdog")?.content).toBe(
+		"A handoff is requested, but context is not yet ready for compaction. Continue working and retry handoff later. Readonly remains active; write, edit, powershell, and non-temp bash filesystem mutations remain blocked.",
+	);
+});
+
+test("in readonly mode the handoff cancellation notice gives the readonly retry advice", async () => {
+	const runner = await createWatchdogRunner();
+	await runCommand(runner, "readonly", "");
+	await runCommand(runner, "handoff", "continue readonly work");
+
+	for (let run = 0; run < MAX_HANDOFF_ATTEMPTS; run++) {
+		await runContext(runner, eligibleUsage(), "work", run);
+		await emitAgentSettled(runner);
+	}
+
+	expect(runner.fixture.ui.notifications.at(-1)).toStrictEqual({
+		message:
+			"Required handoff cancelled after 5 attempts without completion. Use /handoff <direction> again to recreate the temporary readonly exception and retry.",
+		type: "warning",
+	});
 });

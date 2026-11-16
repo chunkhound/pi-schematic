@@ -85,9 +85,9 @@ export const READONLY_PENDING_HANDOFF_READONLY_OFF_NOTIFICATION =
 /** Notification in /handoff command when readonly is active. */
 export const READONLY_HANDOFF_EXCEPTION_NOTIFICATION = `Readonly is active. An ${READONLY_EXPLICIT_HANDOFF} exception is reserved for this request; the handoff will start a fresh context once feasible. Write/edit/powershell remain blocked, and ${READONLY_BASH_SCOPE} stays in effect. After a successful handoff, ${READONLY_NEXT_CONTEXT_RESUMES.toLowerCase()}`;
 
-/** Add context usage to the one-shot readonly-disabled message. */
-export function buildReadonlyDisabledContextSuffix(percent: number): string {
-	return ` Context at ${Math.round(percent)}% — if the work changed topics, you can handoff now.`;
+/** Add the rounded context percent `pct` to the one-shot readonly-disabled message. */
+export function buildReadonlyDisabledContextSuffix(pct: number): string {
+	return ` Context at ${pct}% — if the work changed topics, you can handoff now.`;
 }
 
 /** Explain that an eligible human topic boundary will activate the temporary bypass. */
