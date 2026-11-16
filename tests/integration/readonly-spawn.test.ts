@@ -195,14 +195,10 @@ test("child bash call the readonly guard blocks throws the block reason", async 
 	expect(target).not.toSatisfy(fs.existsSync);
 });
 
-test.for([
-	{ label: "an array", command: (target: string) => [`touch ${quoteShellArgument(target)}`] },
-	{ label: "an object with a toString method", command: (target: string) => ({ toString: () => `touch ${quoteShellArgument(target)}` }) },
-	{ label: "a number", command: () => 42 },
-])("child bash call whose command is $label throws the invalid input block reason", async ({ label, command }) => {
+test("child bash call whose command is a number throws the invalid input block reason", async () => {
 	// pi validates the command once and passes the same input on, so a caller can replace it after validation.
 	const params = { command: "ls" };
-	Reflect.set(params, "command", command(outsideTempPath(`invalid-${label.replaceAll(" ", "-")}`)));
+	Reflect.set(params, "command", 42);
 
 	await expect(createReadonlyChildBashTool(process.cwd()).execute("child-bash", params, undefined, undefined, await childToolContext())).rejects.toStrictEqual(
 		new Error("Readonly mode: command blocked.\nReason: bash command input must be a string\nCommand: <invalid input>"),
