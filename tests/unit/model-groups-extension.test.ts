@@ -7,7 +7,7 @@ import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { __setModelGroupsFsForTests } from "../../model-groups/store.js";
 import { assertPresent } from "../assertions.js";
 import { createModelRegistry } from "../support/model-registry.js";
-import { createRunner, type RunnerFixture, type RunnerOptions } from "../support/runner.js";
+import { createRunner, type CustomComponentDriver, type RunnerFixture, type RunnerOptions } from "../support/runner.js";
 import { realTheme } from "../support/theme.js";
 import { createExtensionContext, createModelRegistry as createHandModelRegistry, testModel } from "./helpers.js";
 import { createBeforeAgentStartEvent, createTestHost, getHandler } from "./test-host.js";
@@ -15,6 +15,8 @@ import { testProvider, withTemp } from "./model-groups-helpers.js";
 
 // Escape on the Model Groups list closes the component, which resolves ctx.ui.custom.
 const ESCAPE = "\u001b";
+const DOWN = "\u001b[B";
+const ENTER = "\r";
 
 interface Dirs {
 	/** The project directory, the fixture's cwd. */
@@ -176,6 +178,44 @@ test("index session_start notifies schema-invalid load issues", async () => {
 			/^Model Groups config schema-invalid in project scope \((?:[^\\]|\\\\)*model-groups-extension-[^\\/)]+(?:\/|\\\\)project(?:\/|\\\\)\.pi(?:\/|\\\\)pi-schematic(?:\/|\\\\)model-groups\.json\); using empty config for that scope; group broken\.models\[0\]\.provider must be a non-empty string$/,
 		),
 	);
+});
+
+test("/model-groups reopened after a delete no longer lists the deleted group", async () => {
+	const dirs = tempDirs();
+	writeConfig(globalConfigPath(dirs), { version: 2, groups: { alpha: { models: [] }, beta: { models: [] } } });
+	let reopened: string | undefined;
+	const drivers: CustomComponentDriver[] = [
+		(component) => {
+			// D on the first row, alpha, opens the delete confirmation; Down and Enter confirm it.
+			component.handleInput?.("D");
+			component.handleInput?.(DOWN);
+			component.handleInput?.(ENTER);
+			component.handleInput?.(ESCAPE);
+		},
+		(component) => {
+			reopened = stripTerminalSequences(component.render(80).join("\n"));
+			component.handleInput?.(ESCAPE);
+		},
+	];
+	const fixture = await extensionRunner(dirs, {
+		ui: {
+			theme: realTheme,
+			addAutocompleteProvider: () => undefined,
+			custom: (component, tui) => {
+				const drive = drivers.shift();
+				assertPresent(drive, "one driver per /model-groups run");
+				return drive(component, tui);
+			},
+		},
+	});
+	await fixture.runner.emit({ type: "session_start", reason: "startup" });
+	await fixture.command("model-groups").handler("", fixture.runner.createCommandContext());
+
+	await fixture.command("model-groups").handler("", fixture.runner.createCommandContext());
+
+	assertPresent(reopened, "the reopened /model-groups component rendered");
+	expect(reopened).not.toMatch(/alpha/);
+	expect(reopened).toMatch(/beta/);
 });
 
 test("before_agent_start writes fresh names-and-effective-modalities guidance", async () => {
