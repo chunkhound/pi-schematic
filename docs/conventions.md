@@ -64,13 +64,13 @@ Applies to: every pull request that changes production code.
 
 ## Untested behaviour recorded
 
-A behaviour that a pull request adds or changes and that the suites leave unpinned has an entry in the "Untested behaviour" list of `CONTRIBUTING.md`. An entry for a deliberate choice says so and gives the reason; an entry without that is a gap.
+A behaviour of the extension or of the test tooling that a pull request adds or changes and that the suites leave unpinned has an entry in the "Untested behaviour" list of `CONTRIBUTING.md`. An entry for a deliberate choice says so and gives the reason; an entry without that is a gap. A script that reports in CI, such as `scripts/check-conventions.mjs` or `scripts/coverage-comment.mjs`, gets no entry: review and its run in CI cover it.
 
 Applies to: every pull request that changes production code or a test.
 
 ## Changelog
 
-`CHANGELOG.md` has one `[Unreleased]` section. A feature pull request adds its entries under `[Unreleased]` and does not change `version` in `package.json`. An entry that removes or changes something a user or another extension can rely on is listed under Breaking Changes, and that includes an export that a module other than `index.ts` stops providing.
+`CHANGELOG.md` has one `[Unreleased]` section. A pull request that changes what a user or another extension sees (a feature, a fix, a raised requirement) adds its entries under `[Unreleased]` and does not change `version` in `package.json`; a pull request that only changes tests, tooling, CI or contributor documentation adds none. An entry that removes or changes something a user or another extension can rely on is listed under Breaking Changes, and that includes an export that a module other than `index.ts` stops providing.
 
 Applies to: `CHANGELOG.md`, `package.json` (`version`).
 
