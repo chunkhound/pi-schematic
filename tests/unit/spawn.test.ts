@@ -1372,6 +1372,18 @@ test.each([
 		expectedText: "z".repeat(51200) + TRUNCATION_MARKER,
 	},
 	{
+		// Lines split on the line feed, so the last kept CRLF line keeps its carriage return before the marker.
+		name: "spawn result over the line limit with CRLF line endings keeps the first lines up to the limit",
+		input: Array.from({ length: 2001 }, (_, i) => `line ${i}`).join("\r\n"),
+		expectedText: Array.from({ length: 2000 }, (_, i) => `line ${i}\r`).join("\n") + TRUNCATION_MARKER,
+	},
+	{
+		// The carriage return is the 51 200th byte, so the byte cut falls between it and its line feed.
+		name: "spawn result over the byte limit cuts between a carriage return and its line feed",
+		input: "a".repeat(51199) + "\r\nb",
+		expectedText: "a".repeat(51199) + "\r" + TRUNCATION_MARKER,
+	},
+	{
 		// 17 067 characters take 51 201 bytes; the byte limit falls inside the last one, so the cut backs off to 17 066.
 		name: "spawn result cuts an oversized line of 3-byte characters on a character boundary",
 		input: "語".repeat(17067),
