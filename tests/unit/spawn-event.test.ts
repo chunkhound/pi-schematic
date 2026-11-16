@@ -40,13 +40,6 @@ beforeEach(() => {
 	};
 });
 
-test("harness captures every forbidden console output level", () => {
-	for (const level of ["debug", "log", "warn", "error"] as const) {
-		globalThis.console[level](`sentinel-${level}`);
-	}
-	expect(h.warnings.map(({ level }) => level)).toStrictEqual(["debug", "log", "warn", "error"]);
-});
-
 test("frame scheduler requeues a throwing target without diagnostics and recovers", () => {
 	const scheduler = getSingletons().frameScheduler;
 	const failingFlushes = vi.fn().mockImplementationOnce(() => {

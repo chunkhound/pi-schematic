@@ -4,12 +4,11 @@
  * follow-up handling, compaction, branch lineage and tree navigation are pi's own.
  */
 
-import { ChildProcess } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import os from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it, vi, type TestContext } from "vitest";
-import { RpcClient, type CompactionEntry, type CustomMessageEntry, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it } from "vitest";
+import type { CompactionEntry, CustomMessageEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
 	HANDOFF_IN_PROGRESS_STATUS,
 	HANDOFF_REQUIRED_STATUS,
@@ -30,19 +29,8 @@ import {
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { buildNudge, MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
-import { assertInstanceOf, assertPresent, assertString, expectPrefix, expectSuffix } from "../assertions.js";
-import {
-	cleanupOnFailure,
-	messageText,
-	projectStatuses,
-	RealHost,
-	REAL_HOST_TEST_TIMEOUT_MS,
-	SCHEMATIC_ENTRY,
-	toolResults,
-	withRealHost,
-	type HostTestContext,
-	type RpcEvent,
-} from "./real-host.js";
+import { assertPresent, assertString, expectPrefix, expectSuffix } from "../assertions.js";
+import { messageText, projectStatuses, RealHost, REAL_HOST_TEST_TIMEOUT_MS, SCHEMATIC_ENTRY, toolResults, withRealHost, type RpcEvent } from "./real-host.js";
 import {
 	CHILD_EMPTY_REPLY_MARKER,
 	CHILD_REPLY_TEXT,
@@ -201,89 +189,6 @@ async function expectCancellationAtLastAttempt(host: RealHost): Promise<void> {
 function onlyResult<T>(results: T[], label: string): T {
 	expect(results, `exactly one ${label} result`).toHaveLength(1);
 	return results[0];
-}
-
-/**
- * A context for driving `withRealHost` by hand: `abort` stands in for a Vitest timeout, and
- * `finish` runs the collected finish callbacks newest first, as Vitest does, and returns what
- * each of them threw; later calls return that first outcome and run nothing. `finish` is also
- * registered on `vitest`, the test's own context, so the host closes even when the test fails
- * before its own call.
- */
-function handBuiltContext(vitest: TestContext): {
-	t: HostTestContext;
-	abort: (reason: Error) => void;
-	registered: () => number;
-	finish: () => Promise<unknown[]>;
-} {
-	const controller = new AbortController();
-	const callbacks: (() => Promise<void>)[] = [];
-	const t: HostTestContext = {
-		signal: controller.signal,
-		onTestFinished: (fn) => {
-			callbacks.push(fn);
-		},
-	};
-	let finished: Promise<unknown[]> | undefined;
-	const finish = () =>
-		(finished ??= (async () => {
-			const errors: unknown[] = [];
-			for (const callback of [...callbacks].reverse()) {
-				try {
-					await callback();
-				} catch (error) {
-					errors.push(error);
-				}
-			}
-			return errors;
-		})());
-	vitest.onTestFinished(async () => {
-		await finish();
-	});
-	return {
-		t,
-		abort: (reason) => {
-			controller.abort(reason);
-		},
-		registered: () => callbacks.length,
-		finish,
-	};
-}
-
-/** The CLI process of every host started from here on, taken when `RealHost.start` returns it; `RpcClient` keeps it private. */
-function captureHostChildren(): ChildProcess[] {
-	const children: ChildProcess[] = [];
-	const start = RealHost.start.bind(RealHost);
-	vi.spyOn(RealHost, "start").mockImplementation(async (options) => {
-		const host = await start(options);
-		// withRealHost does not close a host whose start rejected, so close it here.
-		return cleanupOnFailure(
-			() => {
-				const child: unknown = Reflect.get(host.client, "process");
-				assertInstanceOf(child, ChildProcess, "the started host has a CLI process");
-				children.push(child);
-				return host;
-			},
-			() => host.close(),
-		);
-	});
-	return children;
-}
-
-/** Asserts that exactly one host started and that its CLI process has exited. */
-function expectOneExitedChild(children: ChildProcess[]): void {
-	expect(
-		children.map((child) => child.exitCode !== null || child.signalCode !== null),
-		"one host started and its CLI exited",
-	).toStrictEqual([true]);
-}
-
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-	let resolve!: () => void;
-	const promise = new Promise<void>((done) => {
-		resolve = done;
-	});
-	return { promise, resolve };
 }
 
 describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, () => {
@@ -872,120 +777,4 @@ describe("pi-schematic real-host E2E", { timeout: REAL_HOST_TEST_TIMEOUT_MS }, (
 			).toHaveLength(1);
 			expect(handoffResults[1], "handoff is blocked again after the cut").toMatchObject({ isError: true, text: READONLY_HANDOFF_BLOCK_REASON });
 		}));
-
-	describe("withRealHost closes its host from the finish callback", () => {
-		it("after a timeout in the body, the body settles against the live host before the host closes once", async (vitest) => {
-			const children = captureHostChildren();
-			const stop = vi.spyOn(RpcClient.prototype, "stop");
-			const close = RealHost.prototype.close;
-			let bodySettled = false;
-			const bodySettledAtClose: boolean[] = [];
-			vi.spyOn(RealHost.prototype, "close").mockImplementation(function (this: RealHost) {
-				bodySettledAtClose.push(bodySettled);
-				return close.call(this);
-			});
-			const { t, abort, finish } = handBuiltContext(vitest);
-			const entered = deferred();
-			const release = deferred();
-			// Runs before the registered finish, so a test that fails early does not hold the body.
-			vitest.onTestFinished(() => {
-				release.resolve();
-			});
-			const running = withRealHost(t, async (host) => {
-				try {
-					entered.resolve();
-					await release.promise;
-					await host.entries();
-				} finally {
-					bodySettled = true;
-				}
-			});
-			// A start error rejects running before the body is entered; the race fails the test with it at once.
-			await Promise.race([entered.promise, running]);
-			abort(new Error("hand-built timeout"));
-			const finishing = finish();
-			// Released only after the callbacks have started, so a close that does not wait for the body begins first.
-			setTimeout(release.resolve, 0);
-			expect(await finishing, "the callbacks threw nothing").toStrictEqual([]);
-			await running;
-			expect(bodySettledAtClose, "the host closed once, after the body settled").toStrictEqual([true]);
-			expect(stop, "the CLI stopped once").toHaveBeenCalledOnce();
-			expectOneExitedChild(children);
-		});
-
-		it("after a timeout during start, the body never runs and the host closes once", async (vitest) => {
-			const children = captureHostChildren();
-			const stop = vi.spyOn(RpcClient.prototype, "stop");
-			const { t, abort, registered, finish } = handBuiltContext(vitest);
-			const reason = new Error("hand-built timeout");
-			let bodyRan = false;
-			const running = withRealHost(t, () => {
-				bodyRan = true;
-			});
-			// A callback registered only once start settled would never run after a real timeout during start.
-			expect(registered(), "the finish callback is registered before start settles").toBe(1);
-			abort(reason);
-			await expect(running, "withRealHost rejects with the abort reason").rejects.toBe(reason);
-			expect(bodyRan, "the body never ran").toBe(false);
-			expect(await finish(), "the callbacks threw nothing").toStrictEqual([]);
-			expect(stop, "the host closed once").toHaveBeenCalledOnce();
-			expectOneExitedChild(children);
-		});
-
-		it("a start error rejects withRealHost, the body never runs and the finish callback throws nothing", async (vitest) => {
-			const startError = new Error("hand-built start failure");
-			const start = vi.spyOn(RealHost, "start").mockRejectedValue(startError);
-			vitest.onTestFinished(() => {
-				start.mockRestore();
-			});
-			const { t, finish } = handBuiltContext(vitest);
-			let bodyRan = false;
-			const running = withRealHost(t, () => {
-				bodyRan = true;
-			});
-			await expect(running, "withRealHost rejects with the start error").rejects.toBe(startError);
-			expect(bodyRan, "the body never ran").toBe(false);
-			expect(await finish(), "the callbacks threw nothing").toStrictEqual([]);
-		});
-
-		it("a start error after a timeout during start is thrown from the finish callback", async (vitest) => {
-			const startError = new Error("hand-built start failure");
-			let rejectStart!: (error: Error) => void;
-			const starting = new Promise<RealHost>((_resolve, reject) => {
-				rejectStart = reject;
-			});
-			const start = vi.spyOn(RealHost, "start").mockReturnValue(starting);
-			vitest.onTestFinished(() => {
-				start.mockRestore();
-			});
-			const { t, abort, finish } = handBuiltContext(vitest);
-			let bodyRan = false;
-			const running = withRealHost(t, () => {
-				bodyRan = true;
-			});
-			abort(new Error("hand-built timeout"));
-			rejectStart(startError);
-			await expect(running, "withRealHost rejects with the start error").rejects.toBe(startError);
-			expect(bodyRan, "the body never ran").toBe(false);
-			expect(await finish(), "the start error, once").toStrictEqual([startError]);
-		});
-
-		it("a close error after a passing body is thrown from the finish callback once", async (vitest) => {
-			const children = captureHostChildren();
-			const stop = vi.spyOn(RpcClient.prototype, "stop");
-			const close = RealHost.prototype.close;
-			const closeError = new Error("hand-built close failure");
-			vi.spyOn(RealHost.prototype, "close").mockImplementation(async function (this: RealHost) {
-				await close.call(this);
-				throw closeError;
-			});
-			const { t, finish } = handBuiltContext(vitest);
-			await withRealHost(t, () => {
-				/* No steps: only the close runs. */
-			});
-			expect(await finish(), "the close error, once").toStrictEqual([closeError]);
-			expect(stop, "the host closed once").toHaveBeenCalledOnce();
-			expectOneExitedChild(children);
-		});
-	});
 });

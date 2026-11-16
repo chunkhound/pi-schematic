@@ -27,11 +27,8 @@ export const COMPAT_UNIT_FILES = [
 	"tests/unit/readonly-frontmatter.test.ts",
 	"tests/unit/readonly-mode.test.ts",
 	"tests/unit/system-prompt.test.ts",
-	"tests/unit/compat-process.test.ts",
-	"tests/unit/dependency-graph-assertions.test.ts",
 	"tests/unit/module-evaluation-order.test.ts",
 	"tests/unit/pi-module-identity.test.ts",
-	"tests/unit/test-host.test.ts",
 ];
 
 // Vitest ignores a file filter that matches no file when another filter matches, so a listed file

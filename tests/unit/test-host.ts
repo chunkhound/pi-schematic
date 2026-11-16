@@ -178,19 +178,8 @@ export type HostEventResult<K extends HostEventName> = K extends keyof HostEvent
 /** A handler as `pi.on(event, handler)` types it. */
 export type HostHandler<K extends HostEventName> = ExtensionHandler<HostEvent<K>, HostEventResult<K>>;
 
-/**
- * What the extension sees from its host: the values the host actions report once
- * loading finished, and the project directory pi works in.
- */
+/** What the extension sees from its host: the values the host actions report once loading finished. */
 export interface TestHostSeed {
-	/**
-	 * The project directory pi's loader uses, which is also where a factory's
-	 * `pi.exec` call runs during registration (after loading, the host replaces
-	 * `pi.exec` with a stub that throws). Defaults to `process.cwd()`. Only
-	 * `createTestHost` reads it; helpers that build their own context, event,
-	 * session or host use `process.cwd()`.
-	 */
-	cwd?: string;
 	activeTools?: string[];
 	allTools?: string[];
 	toolSources?: Record<string, string>;
@@ -442,9 +431,8 @@ async function loadExtensions(
  * @param seed Host state the actions report once loading finished.
  */
 export async function createTestHost(factory: ExtensionFactory = registerSchematic, seed: TestHostSeed = {}): Promise<TestPI> {
-	const cwd = seed.cwd ?? process.cwd();
 	const state = createHostState(seed);
-	const { apis, extensions } = await loadExtensions([factory], state, cwd);
+	const { apis, extensions } = await loadExtensions([factory], state, process.cwd());
 	return stampAccessors(apis[0], extensions[0], state);
 }
 

@@ -1,9 +1,9 @@
-// Runs a Node or git child process for a unit test. This module imports no test runner.
+// Runs a Node child process for a unit test. This module imports no test runner.
 
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 
 /** Default child deadline: below the unit testTimeout, so a hung child fails with its own message. */
-export const CHILD_TIMEOUT_MS = 20_000;
+const CHILD_TIMEOUT_MS = 20_000;
 
 export interface SpawnNodeOptions {
 	cwd: string;
@@ -42,39 +42,4 @@ export function spawnNode(args: readonly string[], options: SpawnNodeOptions): S
 		throw spawnError;
 	}
 	return result;
-}
-
-export interface RunGitOptions {
-	cwd: string;
-}
-
-/**
- * Run `git ...args` to completion and return its stdout. Throws when git fails to spawn, outlives
- * the deadline, dies from a signal, or exits non-zero. The message names the command and, for a
- * spawn failure or timeout, the spawn error; for a signal or exit status, that and stderr. A signal
- * message also carries the spawn error when there is one, such as ENOBUFS for output beyond maxBuffer.
- */
-export function runGit(args: readonly string[], options: RunGitOptions): string {
-	const command = ["git", ...args].join(" ");
-	const result = spawnSync("git", args, {
-		cwd: options.cwd,
-		encoding: "utf8",
-		timeout: CHILD_TIMEOUT_MS,
-		// The timeout otherwise sends SIGTERM and waits, so a git process that handles SIGTERM outlives it.
-		killSignal: "SIGKILL",
-	});
-	const spawnError = result.error;
-	if (spawnError && "code" in spawnError && spawnError.code === "ETIMEDOUT") {
-		throw new Error(`${command} did not exit within ${String(CHILD_TIMEOUT_MS)} ms (${spawnError.message})`, { cause: spawnError });
-	}
-	if (result.signal !== null) {
-		throw new Error(`${command} was killed by ${result.signal}${spawnError ? ` (${spawnError.message})` : ""}; stderr: ${result.stderr}`);
-	}
-	if (spawnError) {
-		throw new Error(`${command} failed to spawn: ${spawnError.message}`, { cause: spawnError });
-	}
-	if (result.status !== 0) {
-		throw new Error(`${command} exited with status ${String(result.status)}; stderr: ${result.stderr}`);
-	}
-	return result.stdout;
 }

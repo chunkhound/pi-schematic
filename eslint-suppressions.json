@@ -212,12 +212,6 @@
     }
   },
   "tests/e2e/real-host.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 2
-    },
-    "ban/zero-delay-timeout": {
-      "count": 1
-    },
     "vitest/max-expects": {
       "count": 31
     }
@@ -228,14 +222,6 @@
     },
     "preserve-caught-error": {
       "count": 1
-    }
-  },
-  "tests/unit/config-invariants.test.ts": {
-    "ban/wall-clock": {
-      "count": 1
-    },
-    "vitest/max-expects": {
-      "count": 7
     }
   },
   "tests/unit/frontmatter-cache.test.ts": {
@@ -262,11 +248,6 @@
     },
     "vitest/no-conditional-in-test": {
       "count": 1
-    }
-  },
-  "tests/unit/helpers.test.ts": {
-    "@typescript-eslint/no-dynamic-delete": {
-      "count": 2
     }
   },
   "tests/unit/helpers.ts": {
@@ -400,14 +381,6 @@
       "count": 7
     }
   },
-  "tests/unit/register-loader.test.ts": {
-    "ban/find-package-json-import": {
-      "count": 1
-    },
-    "n/no-unsupported-features/node-builtins": {
-      "count": 1
-    }
-  },
   "tests/unit/render-snapshots.test.ts": {
     "no-control-regex": {
       "count": 1
@@ -416,11 +389,6 @@
   "tests/unit/resolve-path.test.ts": {
     "ban/wall-clock": {
       "count": 2
-    }
-  },
-  "tests/unit/runtime-singletons.test.ts": {
-    "vitest/max-expects": {
-      "count": 7
     }
   },
   "tests/unit/spawn-event.test.ts": {
@@ -435,7 +403,7 @@
   },
   "tests/unit/spawn-runtime-compatibility.test.ts": {
     "vitest/max-expects": {
-      "count": 7
+      "count": 3
     }
   },
   "tests/unit/spawn.test.ts": {
@@ -446,7 +414,7 @@
       "count": 1
     },
     "vitest/max-expects": {
-      "count": 56
+      "count": 53
     }
   },
   "tests/unit/state-invariants.test.ts": {
