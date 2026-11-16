@@ -523,16 +523,19 @@ test.for([
 test("readonly topic boundary promotion exposes the handoff status", async () => {
 	const handoff = await readonlyTopicBoundary();
 	handoff.setUsage(ELIGIBLE_USAGE);
+	const { statuses, notifications } = handoff.fixture.ui;
+	const shown = notifications.length;
 
 	await handoff.context("continue", 2);
 
-	const { statuses, notifications } = handoff.fixture.ui;
 	expect(statuses.get(STATUS_KEY_HANDOFF)).toBe(realTheme.fg("accent", "🤝 Handoff required — ready to compact"));
-	expect(notifications.at(-1)).toStrictEqual({
-		message:
-			"Readonly topic boundary detected. The handoff exception is now active because context usage is eligible; complete the handoff before continuing normal work.",
-		type: "warning",
-	});
+	expect(notifications.slice(shown), "the promotion shows exactly one notification").toStrictEqual([
+		{
+			message:
+				"Readonly topic boundary detected. The handoff exception is now active because context usage is eligible; complete the handoff before continuing normal work.",
+			type: "warning",
+		},
+	]);
 });
 
 test("readonly topic boundary stays advisory until handoff is eligible", async () => {
