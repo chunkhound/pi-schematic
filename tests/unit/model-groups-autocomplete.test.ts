@@ -27,6 +27,11 @@ async function projectGroups(groups: Record<string, ModelGroupDef>) {
 	return resolveGroups(await suggestionRegistry(), { project: groups });
 }
 
+/** A colorizer that leaves every span uncolored, so descriptions compare as plain text. */
+function uncolored(_color: string, text: string): string {
+	return text;
+}
+
 function suggestOptions() {
 	return { signal: new AbortController().signal };
 }
@@ -62,7 +67,10 @@ test("#group autocomplete suggests effective live group names and delegates else
 		research: { models: [{ provider: "mg-google", modelId: "gemini-2.5-pro", thinkingLevel: "xhigh" }] },
 	});
 	let delegated = 0;
-	const provider = createModelGroupAutocompleteProvider(state)(
+	const provider = createModelGroupAutocompleteProvider(
+		state,
+		uncolored,
+	)(
 		delegateProvider(() => {
 			delegated++;
 		}),
@@ -73,8 +81,8 @@ test("#group autocomplete suggests effective live group names and delegates else
 	expect(suggestions.prefix).toBe("#re");
 	expect(suggestions.items.map((item) => item.value)).toStrictEqual(["#research", "#review"]);
 	expect(suggestions.items.map((item) => item.description)).toStrictEqual([
-		"mg-google/gemini-2.5-pro • xhigh",
-		"mg-openai/gpt-5 • high; mg-anthropic/claude-sonnet-4 • inherit",
+		"I  mg-google/gemini-2.5-pro • xhigh",
+		"T  mg-openai/gpt-5 • high; mg-anthropic/claude-sonnet-4 • inherit",
 	]);
 	expect(delegated).toBe(0);
 
@@ -82,7 +90,7 @@ test("#group autocomplete suggests effective live group names and delegates else
 	const fresh = await provider.getSuggestions(["#rev"], 0, 4, suggestOptions());
 	assertPresent(fresh);
 	expect(fresh.items.map((item) => item.value)).toStrictEqual(["#reviewers"]);
-	expect(fresh.items[0]?.description).toBe("mg-noauth/gpt-5 • inherit (unavailable)");
+	expect(fresh.items[0]?.description).toBe("T  mg-noauth/gpt-5 • inherit (unavailable)");
 
 	const other = await provider.getSuggestions(["no hash"], 0, 7, suggestOptions());
 	expect(delegated).toBe(1);
@@ -102,7 +110,7 @@ test("#group autocomplete hands the delegate the caller's getSuggestions options
 			return Promise.resolve(null);
 		},
 	};
-	const provider = createModelGroupAutocompleteProvider(state)(current);
+	const provider = createModelGroupAutocompleteProvider(state, uncolored)(current);
 	const options = { signal: new AbortController().signal, force: true };
 
 	await provider.getSuggestions(["no hash"], 0, 7, options);
@@ -114,7 +122,7 @@ test("#group autocomplete triggers file completion when the delegate does not de
 	const state = createState();
 	const current = delegateProvider();
 	delete current.shouldTriggerFileCompletion;
-	const provider = createModelGroupAutocompleteProvider(state)(current);
+	const provider = createModelGroupAutocompleteProvider(state, uncolored)(current);
 
 	expect(provider.shouldTriggerFileCompletion?.(["@src"], 0, 4)).toBe(true);
 });
@@ -196,8 +204,7 @@ test("group autocomplete consolidates to a single consistent letter column", asy
 		alpha: { models: [{ provider: "mg-anthropic", modelId: "claude", thinkingLevel: "high" }] },
 		beta: { models: [{ provider: "mg-openai", modelId: "gpt-5" }] },
 	});
-	const identity = (color: string, text: string) => text;
-	const provide = createModelGroupAutocompleteProvider(state, identity)(delegateProvider());
+	const provide = createModelGroupAutocompleteProvider(state, uncolored)(delegateProvider());
 	const suggestions = await provide.getSuggestions(["#"], 0, 1, suggestOptions());
 	assertPresent(suggestions);
 	const alpha = suggestions.items[0]?.description;
@@ -215,8 +222,7 @@ test("group autocomplete omits the letter column when no group has letters", asy
 	const state = createState();
 	// A group without members has no effective modalities, so it has no letters.
 	state.modelGroups.groups = await projectGroups({ empty: { models: [] } });
-	const identity = (_color: string, text: string) => text;
-	const provide = createModelGroupAutocompleteProvider(state, identity)(delegateProvider());
+	const provide = createModelGroupAutocompleteProvider(state, uncolored)(delegateProvider());
 
 	const suggestions = await provide.getSuggestions(["#"], 0, 1, suggestOptions());
 
@@ -230,7 +236,7 @@ test.for([
 ])("#group autocomplete matches group names case-insensitively and inserts the group's own spelling: $label", async ({ group, typed, value }) => {
 	const state = createState();
 	state.modelGroups.groups = await projectGroups({ [group]: { models: [{ provider: "mg-openai", modelId: "gpt-5" }] } });
-	const provider = createModelGroupAutocompleteProvider(state)(delegateProvider());
+	const provider = createModelGroupAutocompleteProvider(state, uncolored)(delegateProvider());
 
 	const suggestions = await provider.getSuggestions([typed], 0, typed.length, suggestOptions());
 
