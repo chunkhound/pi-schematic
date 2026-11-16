@@ -313,7 +313,7 @@
       "count": 1
     },
     "vitest/max-expects": {
-      "count": 35
+      "count": 33
     }
   },
   "tests/unit/state-invariants.test.ts": {
