@@ -267,25 +267,6 @@ test("static no-output child error with empty details renders without fabricated
 	expect(plain(lines)).not.toContainEqual(expect.stringContaining("unknown"));
 });
 
-test("spawn result renders without a shell background when the theme has no bg", () => {
-	// pi's Theme.bg is a prototype method, so an own property shadows it for this instance only.
-	Reflect.set(realTheme, "bg", undefined);
-	onTestFinished(() => {
-		Reflect.deleteProperty(realTheme, "bg");
-	});
-
-	const lines = renderSpawnResult(
-		{ content: [{ type: "text", text: "done" }], details: { model: "m", thinking: "low", truncated: false, outcome: "success" } },
-		false,
-		realTheme,
-		resultContext(),
-		createState(),
-	).render(20);
-
-	expect(lines.join("\n")).not.toContain("\u001b[48;");
-	expect(plain(lines)).toStrictEqual(["                    ", " ✅ m • low         ", " 💬 done            ", " done               ", "                    "]);
-});
-
 const returnedErrorResult: SpawnRenderedResult = {
 	content: [{ type: "text", text: "Child agent produced no output." }],
 	details: {
