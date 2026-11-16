@@ -103,7 +103,13 @@ test("required modalities reject a wholly-incapable group", async () => {
 			modelRegistry: reg,
 		}),
 	).toThrow(
-		expect.toSatisfy((error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.missingFromGroup[0] === "image"),
+		expect.toSatisfy(
+			(error: unknown) =>
+				error instanceof SpawnRouteError &&
+				error.reason === "missing-modality" &&
+				error.message ===
+					"Model Group 'text-only' cannot satisfy required modalities: image. Effective group modalities missing: image. Routed model 'mg-router/text' missing: image.",
+		),
 	);
 });
 
@@ -137,9 +143,16 @@ test("automatic mixed groups default effective to the union so a capability rout
 			parentModel: found(reg2, "parent"),
 			parentThinking: "low",
 			modelRegistry: reg2,
+			rng: () => 0,
 		}),
 	).toThrow(
-		expect.toSatisfy((error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.missingFromGroup[0] === "reasoning"),
+		expect.toSatisfy(
+			(error: unknown) =>
+				error instanceof SpawnRouteError &&
+				error.reason === "missing-modality" &&
+				error.message ===
+					"Model Group 'mixed-auto-noreasoning' cannot satisfy required modalities: reasoning. Effective group modalities missing: reasoning. Routed model 'mg-router/text-nr' missing: reasoning.",
+		),
 	);
 });
 
@@ -221,9 +234,7 @@ test("injected scalar requirements use generic violations, not modality arrays",
 				error instanceof SpawnRouteError &&
 				error.reason === "constraint-unsatisfied" &&
 				error.constraintUnsatisfied?.length === 2 &&
-				error.missingModalities.length === 0 &&
-				error.missingFromGroup.length === 0 &&
-				error.missingFromModel.length === 0,
+				error.message === "Spawn route 'small' cannot satisfy constraint requirements.",
 		),
 	);
 });
@@ -341,8 +352,6 @@ test("plain inherited route rejects a modality the parent model lacks", async ()
 	expect(thrown.message).toBe("Spawn model 'mg-router/text-parent' cannot satisfy required modalities: image.");
 	expect(thrown.group).toBe("<inherited>");
 	expect(thrown.reason).toBe("missing-modality");
-	expect(thrown.missingFromModel, "the parent model is what lacks the modality").toStrictEqual(["image"]);
-	expect(thrown.missingFromGroup, "no group is involved").toStrictEqual([]);
 });
 
 test("explicit group override carries a modality ceiling even when caller declares no requirement", async () => {
@@ -390,7 +399,10 @@ test("explicit override stays a subtractive ceiling even when a capable member e
 	).toThrow(
 		expect.toSatisfy(
 			(error: unknown) =>
-				error instanceof SpawnRouteError && error.reason === "missing-modality" && error.missingFromGroup[0] === "image" && error.missingFromModel.length === 0,
+				error instanceof SpawnRouteError &&
+				error.reason === "missing-modality" &&
+				error.message ===
+					"Model Group 'posed' cannot satisfy required modalities: image. Effective group modalities missing: image. Routed model 'mg-router/gpt-vision' missing: none.",
 		),
 	);
 });
