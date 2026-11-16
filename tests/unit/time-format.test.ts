@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import fc from "fast-check";
 import { formatCurrentDate, formatCurrentDatePrompt } from "../../time/format.js";
-import { assertPresent, expectPrefix, expectSuffix } from "../assertions.js";
+import { assertPresent, expectSuffix } from "../assertions.js";
 
 // Instants are built with Date.UTC throughout, so a run in any host zone
 // exercises the same instants — the tests never inherit the runner's wall clock.
@@ -56,12 +56,10 @@ test("formatCurrentDate offset property: minutes east of UTC match Intl", () => 
 // modes were the literal text "undefined" in the prompt, then a RangeError that
 // killed before_agent_start. Driven through the public entry point so the branch
 // is covered on every runner, whatever the host reports.
-test("formatCurrentDate degrades an unusable zone to the fallback", () => {
-	for (const zone of ["", "Invalid/Zone", "Etc/Unknown"]) {
-		const line = formatCurrentDate(utc(2025, 0, 1, 12), zone);
-		expect(line, `${JSON.stringify(zone)} leaked into the prompt`).not.toMatch(/undefined|Invalid|Unknown/);
-		expect(line, `${JSON.stringify(zone)} must fall back to UTC`).toBe("2025-01-01 (Wednesday), UTC (UTC+00:00)");
-	}
+test.for(["", "Invalid/Zone", "Etc/Unknown"])("formatCurrentDate degrades the unusable zone %j to the fallback", (zone) => {
+	const line = formatCurrentDate(utc(2025, 0, 1, 12), zone);
+	expect(line, "the zone leaked into the prompt").not.toMatch(/undefined|Invalid|Unknown/);
+	expect(line, "the zone must fall back to UTC").toBe("2025-01-01 (Wednesday), UTC (UTC+00:00)");
 });
 
 // ── formatCurrentDate ─────────────────────────────────────────────────
@@ -78,25 +76,25 @@ test("formatCurrentDate renders the calendar day of the zone, not the host", () 
 
 // docs/architecture.md "Date anchor": the block is byte-stable within a calendar
 // day. Sweep every minute of a zone's day so no time-of-day reading can leak in.
-test("formatCurrentDatePrompt is byte-stable across a whole calendar day", () => {
-	const start = utc(2026, 9, 5, 4).getTime(); // 2026-10-05 00:00 in America/New_York
-	const baseline = formatCurrentDatePrompt(new Date(start), "America/New_York");
-	expectPrefix(baseline, "## Current date\n2026-10-05 (Monday), America/New_York (UTC-04:00)");
-	for (let minute = 0; minute < 1440; minute++) {
-		const instant = new Date(start + minute * MINUTE);
-		expect(formatCurrentDatePrompt(instant, "America/New_York"), `minute ${minute} drifted`).toBe(baseline);
-	}
+const DAY_START = utc(2026, 9, 5, 4).getTime(); // 2026-10-05 00:00 in America/New_York
+const MINUTES_OF_DAY = Array.from({ length: 1440 }, (_, minute) => minute);
+
+test.for(MINUTES_OF_DAY)("formatCurrentDatePrompt renders the same block at minute %i of a calendar day", (minute) => {
+	expect(formatCurrentDatePrompt(new Date(DAY_START + minute * MINUTE), "America/New_York")).toBe(
+		"## Current date\n2026-10-05 (Monday), America/New_York (UTC-04:00)\n\n" +
+			'Resolve every relative or ambiguous time reference ("today", "yesterday", "last Friday", "this week", "recently", "latest") to an absolute date from this anchor before you answer or act. The anchor is the date this request started and is not updated during it; never guess a date.',
+	);
 });
 
-// The offset must be instant-correct against Intl, so a DST flip can never
+// The offset must be instant-correct, so a DST flip can never
 // render an offset that belongs to the other side of the transition.
-test("formatCurrentDate offset matches Intl longOffset authority incl. DST", () => {
-	const instants = [utc(2026, 2, 8, 6), utc(2026, 2, 8, 9), utc(2026, 10, 1, 6), utc(2026, 10, 1, 9)];
-	for (const instant of instants) {
-		expectSuffix(formatCurrentDate(instant, "America/New_York"), `(${intlOffset(instant, "America/New_York")})`);
-	}
-	expectSuffix(formatCurrentDate(utc(2026, 2, 8, 6), "America/New_York"), "(UTC-05:00)");
-	expectSuffix(formatCurrentDate(utc(2026, 2, 8, 9), "America/New_York"), "(UTC-04:00)");
+test.for([
+	{ label: "2026-03-08 06:00 UTC", instant: utc(2026, 2, 8, 6), offset: "(UTC-05:00)" },
+	{ label: "2026-03-08 09:00 UTC", instant: utc(2026, 2, 8, 9), offset: "(UTC-04:00)" },
+	{ label: "2026-11-01 06:00 UTC", instant: utc(2026, 10, 1, 6), offset: "(UTC-05:00)" },
+	{ label: "2026-11-01 09:00 UTC", instant: utc(2026, 10, 1, 9), offset: "(UTC-05:00)" },
+])("formatCurrentDate renders the America/New_York offset of the DST side at $label", ({ instant, offset }) => {
+	expectSuffix(formatCurrentDate(instant, "America/New_York"), offset);
 });
 
 // ── formatCurrentDatePrompt ───────────────────────────────────────────
