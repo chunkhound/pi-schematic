@@ -321,8 +321,8 @@ test("real child records an aborted outcome when the parent aborts mid-prompt", 
 // 7. Usage parity: the usage spawn returns matches Pi's own session stats on a real child session.
 test("real child usage matches the session stats across assistant, tool result, usage, compaction and branch-summary entries", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-schematic-usage-parity-"));
-	// Pi takes a lock directory next to auth.json; retry when one appears during removal.
-	onTestFinished(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
+	// With modelsPath null, Pi takes no lock after create, so nothing writes into root during removal.
+	onTestFinished(() => rm(root, { recursive: true, force: true }));
 	const faux = fauxProvider();
 	const usageOf = (input: number, output: number, cacheRead: number, cacheWrite: number, total: number) => ({
 		input,

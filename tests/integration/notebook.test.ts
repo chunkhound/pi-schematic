@@ -96,6 +96,26 @@ async function runNotebook(fixture: RunnerFixture): Promise<void> {
 	await fixture.command("notebook").handler("", fixture.runner.createCommandContext());
 }
 
+/**
+ * Starts /notebook without awaiting it. When the test body fails before it awaits the handler, the
+ * handler keeps running with its SIGINT guard installed; this releases the pager and waits for the
+ * handler to settle before the next test starts. Callbacks run in reverse registration order, so
+ * this one runs before `pagerScript` removes the pager's directory.
+ */
+function startNotebook(fixture: RunnerFixture, pager: PagerScript): Promise<void> {
+	const handler = runNotebook(fixture);
+	const settled = handler.then(
+		() => undefined,
+		// The test body reports the handler's failure; this only waits for it.
+		() => undefined,
+	);
+	onTestFinished(async () => {
+		await pager.release();
+		await settled;
+	});
+	return handler;
+}
+
 /** The child processes this process holds a handle to: Node keeps one from spawn until the child has exited. */
 function childProcessHandles(): number {
 	return process.getActiveResourcesInfo().filter((resource) => resource === "ProcessWrap").length;
@@ -184,7 +204,7 @@ test.skipIf(process.platform === "win32")("/notebook enter suspends the TUI, awa
 	await writePage(fixture, "zeta", "old body");
 	await writePage(fixture, "alpha", "other");
 
-	const handler = runNotebook(fixture);
+	const handler = startNotebook(fixture, pager);
 	// Wait until the pager is running before letting it exit.
 	await vi.waitFor(
 		() => {
@@ -229,7 +249,7 @@ test.skipIf(process.platform === "win32")("/notebook pager interaction installs 
 	const fixture = await shippedHost(list.driver, { stop: vi.fn(), start: vi.fn() });
 	await writePage(fixture, "alpha", "body");
 
-	const handler = runNotebook(fixture);
+	const handler = startNotebook(fixture, pager);
 	await vi.waitFor(
 		() => {
 			expect(pager.started()).toBe(true);

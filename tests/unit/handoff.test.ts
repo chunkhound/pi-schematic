@@ -828,8 +828,21 @@ test("agent_settled fails a handoff whose turn_end never ran", async () => {
 	]);
 });
 
-test("a handoff declined for an abort fails at agent_settled with a displayed message and starts no run", async () => {
-	const host = await boundaryHost({ seed: requestHandoff });
+test.for([
+	{
+		row: "with a pending request",
+		seed: requestHandoff,
+		request: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: null },
+		message: `Handoff failed — the run was aborted before the cut. ${PENDING_SUFFIX}`,
+	},
+	{
+		row: "without a pending request",
+		seed: undefined,
+		request: null,
+		message: `Handoff failed — the run was aborted before the cut. ${NOT_PENDING_SUFFIX}`,
+	},
+])("a handoff declined for an abort $row fails at agent_settled with a displayed message and starts no run", async ({ seed, request, message }) => {
+	const host = await boundaryHost({ seed });
 	await executeHandoff(host);
 	host.setSignal(AbortSignal.abort());
 	await emitTurnEnd(host);
@@ -837,8 +850,8 @@ test("a handoff declined for an abort fails at agent_settled with a displayed me
 
 	await agentSettled(host);
 
-	expect(host.state.pendingRequestedHandoff?.toolCalled).toBe(false);
-	expect(assertFailedWithoutRun(host)).toBe(`Handoff failed — the run was aborted before the cut. ${PENDING_SUFFIX}`);
+	expect(host.state.pendingRequestedHandoff).toStrictEqual(request);
+	expect(assertFailedWithoutRun(host)).toBe(message);
 	expect(host.fixture.ui.notifications).toStrictEqual([
 		{ message: "Handoff failed: the run was aborted before the cut. The handoff can be retried.", type: "error" },
 	]);
