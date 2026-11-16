@@ -442,33 +442,42 @@ test("a staged handoff that completes at the settle is neither counted nor cance
 	expect(runner.fixture.host.sentUserMessages, "a completed handoff sends no failure guidance").toHaveLength(userMessagesBeforeRun);
 });
 
-test("watchdog auto-cancels a required handoff after enough unanswered settled runs", async () => {
-	const { state, runner } = await createPendingHandoffHost();
-	const { ui } = runner.fixture;
-
-	// Runs without the eligible nudge do not consume the cancellation budget.
-	for (let i = 0; i < 3; i++) {
-		await emitAgentSettled(runner);
-	}
-	expect(state.pendingRequestedHandoff?.enforcementAttempts).toBe(0);
-
-	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS - 1; i++) {
+/** Spend the whole budget: deliver the eligible nudge, then settle the run, once per allowed attempt. */
+async function exhaustHandoffBudget(state: ReturnType<typeof createState>, runner: WatchdogRunner): Promise<void> {
+	for (let i = 0; i < MAX_HANDOFF_ATTEMPTS; i++) {
 		deliverEligibleNudge(state);
 		await emitAgentSettled(runner);
 	}
-	assertPresent(state.pendingRequestedHandoff, "handoff must remain pending before the final attempt");
-	expect(ui.notifications, "cancellation must not notify early").toStrictEqual([]);
+}
+
+test("the settle of the last allowed nudged run cancels the required handoff", async () => {
+	const { state, runner } = await createPendingHandoffHost();
+
+	await exhaustHandoffBudget(state, runner);
+
+	expect(state.pendingRequestedHandoff).toBeNull();
+});
+
+test("cancelling a required handoff clears its status", async () => {
+	const { state, runner } = await createPendingHandoffHost();
+	const { ui } = runner.fixture;
 	expect(ui.statuses.get(STATUS_KEY_HANDOFF), "the pending handoff shows its status").toBe(
 		realTheme.fg("accent", "🤝 Handoff requested — waiting for eligible context"),
 	);
 
-	deliverEligibleNudge(state);
-	await emitAgentSettled(runner);
-	expect(state.pendingRequestedHandoff, "pending handoff should be auto-cancelled").toBeNull();
-	expect(ui.statuses.get(STATUS_KEY_HANDOFF), "cancellation should clear the handoff status").toBeUndefined();
-	expect(ui.notifications, "user should receive a cancellation notification").toHaveLength(1);
-	expect(ui.notifications[0].message, "notification should mention cancellation without source-specific wording").toMatch(/Required handoff cancelled/i);
-	expect(ui.notifications[0].message).not.toMatch(/user-requested|temporary bypass/i);
+	await exhaustHandoffBudget(state, runner);
+
+	expect(ui.statuses.get(STATUS_KEY_HANDOFF)).toBeUndefined();
+});
+
+test("cancelling a required handoff notifies once", async () => {
+	const { state, runner } = await createPendingHandoffHost();
+
+	await exhaustHandoffBudget(state, runner);
+
+	expect(runner.fixture.ui.notifications).toStrictEqual([
+		{ message: "Required handoff cancelled after 5 attempts without completion. Use /handoff <direction> again to retry.", type: "warning" },
+	]);
 });
 
 test("a nudged run whose staged handoff cut was not persisted counts one attempt", async () => {
