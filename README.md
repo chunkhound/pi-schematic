@@ -165,7 +165,7 @@ To get the groups back, recreate them in `/model-groups`, or copy `model-groups.
 
 ## Readonly and security
 
-Readonly blocks write/edit and the Windows `powershell` tool, and guards bash while researching; children inherit the posture. macOS uses `sandbox-exec`; Linux uses `bwrap` when available, otherwise only the command classifier remains. Windows is classifier-only. Readonly bash also blocks launching PowerShell or cmd. Interpreters and indirection can bypass classification. **Readonly is a coding guardrail, not a hardened security boundary.**
+Readonly blocks write/edit and the Windows `powershell` tool, and guards bash while researching; children inherit the posture. macOS uses `sandbox-exec`; Linux uses `bwrap` when available, otherwise only the command classifier remains. Windows is classifier-only. Readonly bash also blocks launching PowerShell or cmd. Interpreters and indirection can bypass classification. **Readonly guards against the model's own mistakes and is not a security boundary.** It does not reliably stop a model that tries to write, for example one following instructions injected into a file or page it reads.
 
 Toggle it with `/readonly`, `Ctrl+Shift+R`, `--readonly`, or workflow frontmatter. Skills and prompts can instruct models to run code and use tools, so review workflow files before trusting them.
 

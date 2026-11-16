@@ -59,17 +59,14 @@ function describeRouteError(
 }
 
 /**
- * Unusable/unsatisfiable spawn route. Carries structured failure detail so
- * callers can branch on reason without parsing the message; message strings
- * are stable and asserted by tests.
+ * Unusable/unsatisfiable spawn route. Carries the failure reason so callers
+ * can branch on it without parsing the message; message strings are stable
+ * and asserted by tests.
  */
 export class SpawnRouteError extends Error {
 	readonly kind = "unusable-group" as const;
 	readonly group: string;
 	readonly reason: SpawnRouteErrorReason;
-	readonly missingModalities: ModelGroupModality[];
-	readonly missingFromGroup: ModelGroupModality[];
-	readonly missingFromModel: ModelGroupModality[];
 	readonly constraintUnsatisfied?: readonly ConstraintViolation[];
 
 	constructor(group: string, reason: "missing-modality", details: SpawnRouteErrorDetails & { provider: string; modelId: string });
@@ -83,9 +80,6 @@ export class SpawnRouteError extends Error {
 		this.name = "SpawnRouteError";
 		this.group = group;
 		this.reason = reason;
-		this.missingModalities = missingModalities;
-		this.missingFromGroup = missingFromGroup;
-		this.missingFromModel = missingFromModel;
 		if (details.constraintUnsatisfied) {
 			this.constraintUnsatisfied = details.constraintUnsatisfied;
 		}
