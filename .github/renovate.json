@@ -38,15 +38,12 @@
   ],
   "packageRules": [
     {
-      "matchPackageNames": [
-        "@earendil-works/pi-agent-core",
-        "@earendil-works/pi-ai",
-        "@earendil-works/pi-coding-agent",
-        "@earendil-works/pi-tui",
-        "typebox",
-        "pi-node-floor"
-      ],
-      "groupName": "Pi compatibility floor",
+      "matchPackageNames": ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"],
+      "enabled": false
+    },
+    {
+      "matchPackageNames": ["pi-node-floor"],
+      "groupName": "Node.js floor",
       "dependencyDashboardApproval": true
     },
     {
