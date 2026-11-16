@@ -34,7 +34,7 @@ function satisfaction(missing: ModelGroupModality[]): ConstraintSatisfaction {
 }
 
 export function getModalitiesModelFact(model: Model<Api>): ModelGroupModality[] {
-	return ordered([...(Array.isArray(model.input) ? (model.input as ModelGroupModality[]) : []), ...(model.reasoning ? ["reasoning" as const] : [])]);
+	return ordered([...model.input, ...(model.reasoning ? ["reasoning" as const] : [])]);
 }
 
 export const modalitiesConstraint: ConstraintDescriptor<

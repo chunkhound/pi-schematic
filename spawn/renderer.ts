@@ -241,11 +241,7 @@ function padVisibleWidth(text: string, width: number): string {
 	return vw >= width ? text : text + " ".repeat(width - vw);
 }
 
-function getShellBackground(theme: Theme, outcome: SpawnOutcome): ((text: string) => string) | undefined {
-	// pi's Theme always has `bg`; the check stays so a theme object without one, as a test renders with, draws no shell background.
-	if (typeof theme.bg !== "function") {
-		return undefined;
-	}
+function getShellBackground(theme: Theme, outcome: SpawnOutcome): (text: string) => string {
 	const bgName = outcome === "success" ? "toolSuccessBg" : outcome === "error" || outcome === "aborted" ? "toolErrorBg" : "toolPendingBg";
 	return (text: string) => theme.bg(bgName, text);
 }
@@ -254,8 +250,7 @@ function wrapSpawnShell(lines: string[], width: number, theme: Theme, outcome: S
 	const shellWidth = Math.max(1, width);
 	const innerWidth = Math.max(1, shellWidth - SPAWN_SHELL_PADDING_X * 2);
 	const paddingY = expanded ? SPAWN_SHELL_PADDING_Y : 0;
-	const bg = getShellBackground(theme, outcome);
-	const fill = (text: string) => (bg ? bg(text) : text);
+	const fill = getShellBackground(theme, outcome);
 	const blank = fill(" ".repeat(shellWidth));
 	const wrapped = lines.map((line) => fill(`${" ".repeat(SPAWN_SHELL_PADDING_X)}${padVisibleWidth(line, innerWidth)}${" ".repeat(SPAWN_SHELL_PADDING_X)}`));
 	return [...Array.from({ length: paddingY }, () => blank), ...(wrapped.length > 0 ? wrapped : [blank]), ...Array.from({ length: paddingY }, () => blank)];
