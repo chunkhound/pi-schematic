@@ -2,16 +2,20 @@ import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { repoRootFromScript } from "./compat-process.mjs";
 
 // The extensions are pinned here; the workflow keys its extension cache on this file's hash.
 const EXTENSIONS = ["npm:@nqbao/pi-json-schema@0.1.1", "npm:@aantenore/pi-budget@0.1.0", "npm:@router-for-me/pi-cliproxyapi-provider@1.4.24"];
-const MAX_TURNS = 15;
+const MAX_TURNS = 30;
 const CONVENTIONS_PATH = "docs/conventions.md";
 const VERDICTS = ["pass", "violation", "not_applicable"];
 const RESULT_KEYS = ["convention", "sentence", "verdict", "file", "line", "quote"];
 const OUTPUT_TAIL = 8192;
+const SUMMARY_WIDTH = 120;
+const BUDGET_NOTICE = "[pi-budget] Budget: reached turns limit (";
+// The other stop reasons pi-ai defines (pending, length, error, aborted, deferred) end a run that did not complete.
+const COMPLETED_STOP_REASONS = ["stop", "toolUse"];
 const commandToken = randomBytes(16).toString("hex");
 
 function untrusted(stream, text) {
@@ -42,9 +46,12 @@ function gitChecked(root, args) {
 
 function parseArgs(argv) {
 	let base;
+	let events;
 	for (let i = 0; i < argv.length; i++) {
 		if (argv[i] === "--base" && i + 1 < argv.length && base === undefined) {
 			base = argv[++i];
+		} else if (argv[i] === "--events" && i + 1 < argv.length && events === undefined) {
+			events = argv[++i];
 		} else {
 			throw new UsageError(`unexpected argument ${JSON.stringify(argv[i])}`);
 		}
@@ -52,11 +59,14 @@ function parseArgs(argv) {
 	if (base === undefined || base === "") {
 		throw new UsageError("--base <ref> is required");
 	}
+	if (events === undefined || events === "") {
+		throw new UsageError("--events <file> is required");
+	}
 	const model = process.env.CONVENTIONS_CHECK_MODEL;
 	if (model === undefined || model === "") {
 		throw new UsageError("the CONVENTIONS_CHECK_MODEL environment variable (provider/model) is required");
 	}
-	return { base, model };
+	return { base, events: resolve(events), model };
 }
 
 function escapeData(value) {
@@ -156,6 +166,77 @@ function reportViolation(result) {
 	}
 }
 
+function truncate(text) {
+	return text.length > SUMMARY_WIDTH ? `${text.slice(0, SUMMARY_WIDTH - 1)}…` : text;
+}
+
+function mainArgument(args) {
+	if (typeof args !== "object" || args === null) {
+		return undefined;
+	}
+	return [args.command, args.pattern, args.path].find((value) => typeof value === "string");
+}
+
+// Each turn holds the tool calls and token usage of its assistant messages, read from pi's JSON event stream.
+// lastMessage is the final assistant message, whose stop reason pi does not report in JSON mode.
+function readTurns(eventsPath) {
+	const turns = [];
+	let lastMessage;
+	for (const line of readFileSync(eventsPath, "utf8").split("\n")) {
+		let event;
+		try {
+			event = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		if (typeof event !== "object" || event === null) {
+			continue;
+		}
+		if (event.type === "turn_start") {
+			turns.push({ toolCalls: [], input: 0, output: 0, cacheRead: 0 });
+			continue;
+		}
+		const turn = turns.at(-1);
+		if (event.type !== "message_end" || event.message?.role !== "assistant" || turn === undefined) {
+			continue;
+		}
+		lastMessage = event.message;
+		turn.input += event.message.usage.input;
+		turn.output += event.message.usage.output;
+		turn.cacheRead += event.message.usage.cacheRead;
+		for (const content of event.message.content) {
+			if (content.type === "toolCall") {
+				const argument = mainArgument(content.arguments);
+				turn.toolCalls.push(argument === undefined ? content.name : `${content.name} ${JSON.stringify(argument)}`);
+			}
+		}
+	}
+	return { turns, lastMessage };
+}
+
+function printTurns(turns) {
+	const lines = [];
+	for (const [index, turn] of turns.entries()) {
+		lines.push(`turn ${String(index + 1)}`);
+		for (const toolCall of turn.toolCalls) {
+			lines.push(`  ${truncate(toolCall)}`);
+		}
+		lines.push(`  tokens: ${String(turn.input)} in, ${String(turn.output)} out`);
+	}
+	const sum = (key) => turns.reduce((total, turn) => total + turn[key], 0);
+	lines.push(
+		`${String(turns.length)} turns, ${String(sum("input"))} input tokens, ${String(sum("output"))} output tokens, ${String(sum("cacheRead"))} cache read`,
+	);
+	// Workflow commands are ignored inside a stop-commands window, so the group lines go outside it.
+	if (process.env.GITHUB_ACTIONS !== undefined) {
+		process.stdout.write("::group::pi turns\n");
+	}
+	untrusted(process.stdout, lines.join("\n"));
+	if (process.env.GITHUB_ACTIONS !== undefined) {
+		process.stdout.write("::endgroup::\n");
+	}
+}
+
 function prompt(diffPath, conventionsPath) {
 	return [
 		`Review the pull request diff in ${diffPath} against the conventions in ${conventionsPath}; both files are attached above.`,
@@ -167,7 +248,7 @@ function prompt(diffPath, conventionsPath) {
 	].join("\n");
 }
 
-function check(root, workDir, { base, model }) {
+function check(root, workDir, { base, events, model }) {
 	const resolved = git(root, ["rev-parse", "--verify", "--quiet", `${base}^{commit}`]);
 	if (resolved.status !== 0) {
 		throw new Error(`the base ref ${JSON.stringify(base)} does not resolve to a commit`);
@@ -200,54 +281,71 @@ function check(root, workDir, { base, model }) {
 	const verdictPath = join(workDir, "verdict.json");
 	const schema = readFileSync(join(root, "scripts", "conventions-verdict.schema.json"), "utf8");
 
-	const pi = spawnSync(
-		join(root, "node_modules", ".bin", "pi"),
-		[
-			"-p",
-			"--model",
-			model,
-			"--no-extensions",
-			...EXTENSIONS.flatMap((extension) => ["-e", extension]),
-			"--no-skills",
-			"--no-prompt-templates",
-			"--no-context-files",
-			"--no-approve",
-			"--no-session",
-			// --tools keeps MCP tools unless disabled, so the allowlist alone would not bound the agent.
-			"--no-mcp",
-			"--tools",
-			"read,grep,find,ls,json_output",
-			"--json-schema",
-			JSON.stringify(JSON.parse(schema)),
-			"--json-output",
-			verdictPath,
-			// The best-effort fallback fails with the CLIProxyAPI provider; without json_output there is no verdict.
-			"--json-fallback",
-			"none",
-			"--budget-turns",
-			String(MAX_TURNS),
-			`@${conventionsPath}`,
-			`@${diffPath}`,
-			prompt(diffPath, conventionsPath),
-		],
-		{ cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 },
-	);
+	// The event stream goes straight to the events file, so the spawn output buffer does not bound its size.
+	const eventsFd = openSync(events, "w");
+	let pi;
+	try {
+		pi = spawnSync(
+			join(root, "node_modules", ".bin", "pi"),
+			[
+				"-p",
+				"--mode",
+				"json",
+				"--model",
+				model,
+				"--no-extensions",
+				...EXTENSIONS.flatMap((extension) => ["-e", extension]),
+				"--no-skills",
+				"--no-prompt-templates",
+				"--no-context-files",
+				"--no-approve",
+				"--no-session",
+				// --tools keeps MCP tools unless disabled, so the allowlist alone would not bound the agent.
+				"--no-mcp",
+				"--tools",
+				"read,grep,find,ls,json_output",
+				"--json-schema",
+				JSON.stringify(JSON.parse(schema)),
+				"--json-output",
+				verdictPath,
+				// The best-effort fallback fails with the CLIProxyAPI provider; without json_output there is no verdict.
+				"--json-fallback",
+				"none",
+				"--budget-turns",
+				String(MAX_TURNS),
+				`@${conventionsPath}`,
+				`@${diffPath}`,
+				prompt(diffPath, conventionsPath),
+			],
+			{ cwd: root, encoding: "utf8", stdio: ["ignore", eventsFd, "pipe"], maxBuffer: 64 * 1024 * 1024 },
+		);
+	} finally {
+		closeSync(eventsFd);
+	}
 	if (pi.error) {
 		throw pi.error;
 	}
-	if (pi.status !== 0) {
+	const { turns, lastMessage } = readTurns(events);
+	printTurns(turns);
+	// A budget stop fails even when a verdict was written before it.
+	if (pi.stderr.includes(BUDGET_NOTICE)) {
 		untrusted(
 			process.stderr,
-			`pi exited with status ${String(pi.status)}, signal ${String(pi.signal)}. stderr tail:\n${pi.stderr.slice(-OUTPUT_TAIL)}\nstdout tail:\n${pi.stdout.slice(-OUTPUT_TAIL)}`,
+			`The turn budget of ${String(MAX_TURNS)} was exhausted after ${String(turns.length)} turns. stderr tail:\n${pi.stderr.slice(-OUTPUT_TAIL)}`,
 		);
 		return 1;
 	}
-	// pi exits 0 without a verdict when the turn budget runs out.
+	if (lastMessage !== undefined && !COMPLETED_STOP_REASONS.includes(lastMessage.stopReason)) {
+		const message = `pi's last response stopped with reason ${JSON.stringify(lastMessage.stopReason)}: ${lastMessage.errorMessage ?? "no error message"}`;
+		untrusted(process.stderr, process.env.GITHUB_ACTIONS === undefined ? message.replace(/[\r\n]/g, " ") : message);
+		return 1;
+	}
+	if (pi.status !== 0) {
+		untrusted(process.stderr, `pi exited with status ${String(pi.status)}, signal ${String(pi.signal)}. stderr tail:\n${pi.stderr.slice(-OUTPUT_TAIL)}`);
+		return 1;
+	}
 	if (!existsSync(verdictPath)) {
-		untrusted(
-			process.stderr,
-			`pi wrote no verdict (turn budget of ${String(MAX_TURNS)} exhausted, or json_output never called). stderr tail:\n${pi.stderr.slice(-OUTPUT_TAIL)}`,
-		);
+		untrusted(process.stderr, `pi wrote no verdict (json_output was never called). stderr tail:\n${pi.stderr.slice(-OUTPUT_TAIL)}`);
 		return 1;
 	}
 	let verdict;
@@ -280,7 +378,7 @@ function main() {
 	} catch (error) {
 		if (error instanceof UsageError) {
 			process.stderr.write(
-				`check-conventions: ${error.message}\nUsage: CONVENTIONS_CHECK_MODEL=<provider/model> node scripts/check-conventions.mjs --base <ref>\n`,
+				`check-conventions: ${error.message}\nUsage: CONVENTIONS_CHECK_MODEL=<provider/model> node scripts/check-conventions.mjs --base <ref> --events <file>\n`,
 			);
 			return 2;
 		}

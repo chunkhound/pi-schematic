@@ -68,7 +68,7 @@ Pull requests are automatically tested via GitHub Actions. `.github/workflows/ci
 
 All tracked text is LF in the index and in the working tree, snapshot goldens included: one `.gitattributes` rule, `* text=auto eol=lf`, owns that contract for every text file, so tests do not depend on `core.autocrlf`. A stale clone can still hold CRLF and fail `npm test`; the `repository text has one LF line-ending contract` test in `tests/unit/config-invariants.test.ts` is the executable check, and its assertion message is the only copy of the recovery command. If you update snapshots, CI checks them on every lane of the test matrix.
 
-For maintainers: the conventions check needs the repository secrets `CLIPROXYAPI_BASE_URL` and `CLIPROXYAPI_API_KEY`, which point it at a CLIProxyAPI endpoint. It runs only for pull requests to main from branches of this repository.
+For maintainers: the conventions check needs the repository secrets `CLIPROXYAPI_BASE_URL` and `CLIPROXYAPI_API_KEY`, which point it at a CLIProxyAPI endpoint. It runs only for pull requests to main from branches of this repository. Each run uploads pi's event stream as a `conventions-events-attempt-<n>` artifact, kept for 7 days.
 
 ## Releasing
 

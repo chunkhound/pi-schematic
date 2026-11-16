@@ -22,7 +22,7 @@ jobs:
   conventions:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       # The full history holds the base branch for the merge-base diff.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,7 +37,8 @@ jobs:
       - run: npm ci
 
       # pi installs the extensions the script loads into the agent directory; the script pins their versions.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - id: extension-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/pi-agent/tmp/extensions/npm
           key: pi-extensions-${{ runner.os }}-${{ hashFiles('scripts/check-conventions.mjs') }}
@@ -60,4 +61,20 @@ jobs:
           CONVENTIONS_CHECK_MODEL: "cliproxyapi/deepseek-flash[1m]"
           CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
           CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
-        run: node ./scripts/check-conventions.mjs --base "origin/${{ github.base_ref }}"
+        run: node ./scripts/check-conventions.mjs --base "origin/${{ github.base_ref }}" --events "${{ runner.temp }}/conventions-events.jsonl"
+
+      # Saved even when the check fails, so a failing pull request does not reinstall the extensions on every run.
+      - if: always() && steps.extension-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pi-agent/tmp/extensions/npm
+          key: pi-extensions-${{ runner.os }}-${{ hashFiles('scripts/check-conventions.mjs') }}
+
+      - name: Upload pi events
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: conventions-events-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/conventions-events.jsonl
+          retention-days: 7
+          if-no-files-found: warn
