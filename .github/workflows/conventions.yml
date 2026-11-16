@@ -1,0 +1,63 @@
+# Conventions check for pull requests
+#
+# pi reviews the pull request's diff against docs/conventions.md as the base branch has it, and
+# every sentence the changes make false fails the check with an annotation at the offending line.
+
+name: Conventions
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+
+jobs:
+  # Fork PRs get no secrets, so they skip.
+  conventions:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # The full history holds the base branch for the merge-base diff.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.13.1"
+          cache: "npm"
+
+      - run: npm ci
+
+      # pi installs the extensions the script loads into the agent directory; the script pins their versions.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pi-agent/tmp/extensions/npm
+          key: pi-extensions-${{ runner.os }}-${{ hashFiles('scripts/check-conventions.mjs') }}
+
+      - name: Check required secrets
+        env:
+          CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
+          CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
+        run: |
+          if [ -z "$CLIPROXYAPI_BASE_URL" ] || [ -z "$CLIPROXYAPI_API_KEY" ]; then
+            echo "CLIPROXYAPI_BASE_URL and CLIPROXYAPI_API_KEY must both be set."
+            exit 1
+          fi
+
+      - name: Check conventions
+        env:
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
+          PI_TELEMETRY: "0"
+          PI_SKIP_VERSION_CHECK: "1"
+          CONVENTIONS_CHECK_MODEL: "cliproxyapi/deepseek-flash[1m]"
+          CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
+          CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
+        run: node ./scripts/check-conventions.mjs --base "origin/${{ github.base_ref }}"

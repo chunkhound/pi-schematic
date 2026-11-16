@@ -27,7 +27,7 @@
     },
     {
       "customType": "regex",
-      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/", "/^\\.github/workflows/npm-publish\\.yml$/"],
+      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/", "/^\\.github/workflows/npm-publish\\.yml$/", "/^\\.github/workflows/conventions\\.yml$/"],
       "matchStrings": [
         "track: newest\\s+node-version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
         "uses: actions/setup-node@[^\\n]+\\n\\s+with:\\n\\s+node-version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
