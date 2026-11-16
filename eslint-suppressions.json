@@ -279,7 +279,7 @@
   },
   "tests/unit/watchdog.test.ts": {
     "vitest/max-expects": {
-      "count": 7
+      "count": 4
     }
   },
   "thinking-levels.ts": {

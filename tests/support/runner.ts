@@ -2,8 +2,8 @@
 // pi `ExtensionRunner`. Tests emit events with the runner's own methods, run tools through
 // `wrapRegisteredTool` or `runner.createToolContext`, and run commands through `runner.getCommand`
 // with `runner.createCommandContext`. Every context member a test did not bind throws when used,
-// naming the member, and an error a handler throws rejects the emit that ran it. The extension
-// never reads pi's real agent directory through a fixture.
+// naming the member, and an error a handler throws rejects the emit that ran it. Each fixture
+// points pi's agent directory variable at the test's `agentDir` or at a temp directory of its own.
 
 import {
 	createSyntheticSourceInfo,
@@ -174,7 +174,8 @@ export interface RunnerOptions {
 	/**
 	 * An absolute path the fixture points pi's agent directory variable at for the rest of the test,
 	 * for a test that put files there. Without it the fixture creates a temp directory of its own
-	 * and removes it when the test finishes.
+	 * and removes it when the test finishes. A test passes its directory here and never stubs or
+	 * assigns the variable itself while a fixture is live.
 	 */
 	agentDir?: string;
 }

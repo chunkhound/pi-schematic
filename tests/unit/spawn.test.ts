@@ -967,31 +967,6 @@ function appendFailedChildEntries(manager: SessionManager): void {
 	manager.appendMessage(assistantMessage([], { usage: usageOf(50, 0, 8, 1, 59, { input: 5, output: 0, cacheRead: 2, cacheWrite: 1, total: 8 }) }));
 }
 
-const FAILED_CHILD_USAGE = {
-	input: 80,
-	output: 4,
-	cacheRead: 10,
-	cacheWrite: 1,
-	totalTokens: 95,
-	cost: { input: 8, output: 1, cacheRead: 3, cacheWrite: 1, total: 13 },
-};
-
-function failedSpawnResult(text: string) {
-	return {
-		content: [{ type: "text", text }],
-		details: {
-			model: "mock-model",
-			thinking: "high",
-			truncated: false,
-			outcome: "error",
-			route: { status: "inherited" },
-			stats: { inputTokens: 80, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 1, totalTokens: 95, cost: 13, turns: 2 },
-		},
-		usage: FAILED_CHILD_USAGE,
-		isError: true,
-	};
-}
-
 /**
  * A spawn tool for a parent "mock-model" whose child runs at "high" thinking with the failed child's
  * entries unless `opts` says otherwise; `hostOptions` replaces the parent model or binds a UI.
@@ -1026,7 +1001,19 @@ test("a spawn whose child prompt fails returns an error result with the child us
 			}),
 	});
 
-	expect(await host.execute("spawn-prompt-error")).toStrictEqual(failedSpawnResult("prompt failed"));
+	expect(await host.execute("spawn-prompt-error")).toStrictEqual({
+		content: [{ type: "text", text: "prompt failed" }],
+		details: {
+			model: "mock-model",
+			thinking: "high",
+			truncated: false,
+			outcome: "error",
+			route: { status: "inherited" },
+			stats: { inputTokens: 80, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 1, totalTokens: 95, cost: 13, turns: 2 },
+		},
+		usage: { input: 80, output: 4, cacheRead: 10, cacheWrite: 1, totalTokens: 95, cost: { input: 8, output: 1, cacheRead: 3, cacheWrite: 1, total: 13 } },
+		isError: true,
+	});
 	expect(host.entryReads).toBe(1);
 	assertChildRegistriesCleared(host.state);
 });
@@ -1039,14 +1026,38 @@ test("a spawn whose child prompt rejects with a non-Error value returns its stri
 			}),
 	});
 
-	expect(await host.execute("spawn-prompt-non-error")).toStrictEqual(failedSpawnResult("boom-string"));
+	expect(await host.execute("spawn-prompt-non-error")).toStrictEqual({
+		content: [{ type: "text", text: "boom-string" }],
+		details: {
+			model: "mock-model",
+			thinking: "high",
+			truncated: false,
+			outcome: "error",
+			route: { status: "inherited" },
+			stats: { inputTokens: 80, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 1, totalTokens: 95, cost: 13, turns: 2 },
+		},
+		usage: { input: 80, output: 4, cacheRead: 10, cacheWrite: 1, totalTokens: 95, cost: { input: 8, output: 1, cacheRead: 3, cacheWrite: 1, total: 13 } },
+		isError: true,
+	});
 	assertChildRegistriesCleared(host.state);
 });
 
 test("a spawn whose child produces no output returns an error result with the child usage", async () => {
 	const host = await hostWithFailedUsage({ result: [] });
 
-	expect(await host.execute("spawn-no-output")).toStrictEqual(failedSpawnResult("Child agent produced no output."));
+	expect(await host.execute("spawn-no-output")).toStrictEqual({
+		content: [{ type: "text", text: "Child agent produced no output." }],
+		details: {
+			model: "mock-model",
+			thinking: "high",
+			truncated: false,
+			outcome: "error",
+			route: { status: "inherited" },
+			stats: { inputTokens: 80, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 1, totalTokens: 95, cost: 13, turns: 2 },
+		},
+		usage: { input: 80, output: 4, cacheRead: 10, cacheWrite: 1, totalTokens: 95, cost: { input: 8, output: 1, cacheRead: 3, cacheWrite: 1, total: 13 } },
+		isError: true,
+	});
 	assertChildRegistriesCleared(host.state);
 });
 
@@ -1057,7 +1068,19 @@ test("a completed spawn whose dispose fails returns the dispose error with the c
 		},
 	});
 
-	expect(await host.execute("spawn-dispose-failure")).toStrictEqual(failedSpawnResult("dispose failed"));
+	expect(await host.execute("spawn-dispose-failure")).toStrictEqual({
+		content: [{ type: "text", text: "dispose failed" }],
+		details: {
+			model: "mock-model",
+			thinking: "high",
+			truncated: false,
+			outcome: "error",
+			route: { status: "inherited" },
+			stats: { inputTokens: 80, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 1, totalTokens: 95, cost: 13, turns: 2 },
+		},
+		usage: { input: 80, output: 4, cacheRead: 10, cacheWrite: 1, totalTokens: 95, cost: { input: 8, output: 1, cacheRead: 3, cacheWrite: 1, total: 13 } },
+		isError: true,
+	});
 	expect(host.entryReads).toBe(1);
 	assertChildRegistriesCleared(host.state);
 });
@@ -1074,7 +1097,19 @@ test("a spawn invalidated by a reset after its prompt started returns an error r
 		resetState(host.state);
 	};
 
-	expect(await host.execute("spawn-reset-mid-run")).toStrictEqual(failedSpawnResult("Spawn invalidated by reset."));
+	expect(await host.execute("spawn-reset-mid-run")).toStrictEqual({
+		content: [{ type: "text", text: "Spawn invalidated by reset." }],
+		details: {
+			model: "mock-model",
+			thinking: "high",
+			truncated: false,
+			outcome: "error",
+			route: { status: "inherited" },
+			stats: { inputTokens: 80, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 1, totalTokens: 95, cost: 13, turns: 2 },
+		},
+		usage: { input: 80, output: 4, cacheRead: 10, cacheWrite: 1, totalTokens: 95, cost: { input: 8, output: 1, cacheRead: 3, cacheWrite: 1, total: 13 } },
+		isError: true,
+	});
 	assertChildRegistriesCleared(host.state);
 });
 
@@ -1101,7 +1136,14 @@ test("a parent abort between child creation and the prompt returns an aborted re
 		stats: { inputTokens: 80, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 1, totalTokens: 95, cost: 13, turns: 2 },
 	});
 	expect(result.content[0].text).toBe("Child agent aborted: aborted before start");
-	expect(result.usage).toStrictEqual(FAILED_CHILD_USAGE);
+	expect(result.usage).toStrictEqual({
+		input: 80,
+		output: 4,
+		cacheRead: 10,
+		cacheWrite: 1,
+		totalTokens: 95,
+		cost: { input: 8, output: 1, cacheRead: 3, cacheWrite: 1, total: 13 },
+	});
 	expect(prompts).toBe(0);
 	expect(host.entryReads).toBe(1);
 });
@@ -2276,7 +2318,19 @@ test("a completed UI spawn whose dispose fails returns the dispose error without
 
 	const result = await failed.execute("spawn-dispose-only-ui");
 
-	expect(result).toStrictEqual(failedSpawnResult("dispose failed"));
+	expect(result).toStrictEqual({
+		content: [{ type: "text", text: "dispose failed" }],
+		details: {
+			model: "mock-model",
+			thinking: "high",
+			truncated: false,
+			outcome: "error",
+			route: { status: "inherited" },
+			stats: { inputTokens: 80, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 1, totalTokens: 95, cost: 13, turns: 2 },
+		},
+		usage: { input: 80, output: 4, cacheRead: 10, cacheWrite: 1, totalTokens: 95, cost: { input: 8, output: 1, cacheRead: 3, cacheWrite: 1, total: 13 } },
+		isError: true,
+	});
 	expect(failed.host.ui.notifications).toStrictEqual([]);
 	assertChildRegistriesCleared(failed.state);
 });
