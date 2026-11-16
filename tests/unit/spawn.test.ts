@@ -1735,6 +1735,18 @@ test("spawn prompt guidelines name the keys of the injected constraint registry"
 	);
 });
 
+test("the registered spawn tool presents its label, prompt snippet and description", async () => {
+	const { label, promptSnippet, description } = (await spawnRunner({ state: createState() })).registeredTool("spawn").definition;
+	expect({ label, promptSnippet, description }).toStrictEqual({
+		label: "Spawn",
+		promptSnippet: "Spawn a focused subtask agent",
+		description:
+			"Spawn an isolated child agent for a focused subtask. " +
+			"Child inherits parent model, thinking level, cwd, active registered tools executable in the child session, and shared notebook tools unless an optional Model Group routes its model/thinking; children cannot spawn or handoff. " +
+			"Reference notebook pages by name — child will notebook_read them on demand.",
+	});
+});
+
 test("spawn schema advertises the thinking levels as a plain string enum", async () => {
 	const thinkingSchema = thinkingWireSchema(await spawnRunner({ state: createState() }));
 	expect(thinkingSchema.type).toBe("string");
