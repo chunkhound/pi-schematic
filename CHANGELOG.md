@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking Changes
 
 - **Pi 1.2.0 minimum**: the `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` peers now require 1.2.0 or later, up from 0.99.2. The `typebox` peer minimum stays 1.3.27.
+- **`buildChildToolNames` requires the available tools**: `buildChildToolNames` in `spawn/index.ts` now takes the available tools as a required third argument, and a call with two arguments fails. A caller passes the list `pi.getAllTools()` returns.
 
 ### Fixed
 

@@ -130,12 +130,9 @@
   },
   "spawn/index.ts": {
     "@typescript-eslint/no-unnecessary-condition": {
-      "count": 3
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 1
     },
     "@typescript-eslint/strict-boolean-expressions": {
@@ -205,6 +202,11 @@
     },
     "n/no-unsupported-features/node-builtins": {
       "count": 1
+    }
+  },
+  "tests/integration/spawn-runtime-compatibility.test.ts": {
+    "vitest/max-expects": {
+      "count": 2
     }
   },
   "tests/support/real-child.ts": {
@@ -367,11 +369,6 @@
       "count": 1
     }
   },
-  "tests/unit/spawn-runtime-compatibility.test.ts": {
-    "vitest/max-expects": {
-      "count": 3
-    }
-  },
   "tests/unit/spawn.test.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 2
@@ -380,7 +377,7 @@
       "count": 1
     },
     "vitest/max-expects": {
-      "count": 53
+      "count": 40
     }
   },
   "tests/unit/state-invariants.test.ts": {

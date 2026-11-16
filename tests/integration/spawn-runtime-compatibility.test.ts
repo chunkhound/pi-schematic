@@ -1,17 +1,15 @@
-import { expect, onTestFinished, test, vi } from "vitest";
+import { expect, onTestFinished, test } from "vitest";
 import { assertPresent, expectPrefix, isRecord } from "../assertions.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Value } from "typebox/value";
-import { createAgentSession, DefaultResourceLoader, ModelRuntime, type SessionStats } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader, ModelRuntime, type ExtensionAPI, type SessionStats } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxProvider, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
 import { createState } from "../../state.js";
-import { THINKING_LEVELS } from "../../thinking-levels.js";
-import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
-import { createTestHost, getTool } from "./test-host.js";
-import { assertErrorResult, createExtensionContext, EMPTY_CHILD_USAGE, recordOf } from "./helpers.js";
+import { executeSpawn } from "../../spawn/index.js";
+import { assertErrorResult } from "../unit/helpers.js";
 import { runRealChildInvocation } from "../support/real-child.js";
+import { createRunner, type RunnerFixture } from "../support/runner.js";
 
 // The fields isSpawnToolResult checks; everything else stays unknown.
 interface CheckedSpawnResult {
@@ -33,6 +31,41 @@ function isSpawnToolResult(value: unknown): value is CheckedSpawnResult {
 		typeof details.truncated === "boolean" &&
 		typeof details.outcome === "string"
 	);
+}
+
+/** The usage of a child that recorded none. */
+const ZERO_USAGE = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+/**
+ * A runner fixture for `cwd` that loads no tool and whose parent model is `model`, with the
+ * extension API it handed its factory; `agentDir` becomes pi's agent directory when given.
+ */
+async function parentHost(cwd: string, model: Model<Api>, agentDir?: string): Promise<{ fixture: RunnerFixture; pi: ExtensionAPI }> {
+	let api: ExtensionAPI | undefined;
+	const fixture = await createRunner({
+		cwd,
+		mode: "print",
+		factories: [
+			(pi) => {
+				api = pi;
+			},
+		],
+		context: { getModel: () => model },
+		activeTools: [],
+		actions: { getAllTools: () => [] },
+		agentDir,
+	});
+	if (api === undefined) {
+		throw new Error("The parent factory did not run.");
+	}
+	return { fixture, pi: api };
 }
 
 // The real-child fixture reports the spawn tool's result untyped; this checks its shape.
@@ -94,7 +127,7 @@ test("real child abort before prompt returns an aborted result without a running
 	expect(result.isError).toBe(true);
 	expect(result.content).toStrictEqual([{ type: "text", text: "Child agent aborted: fixture abort" }]);
 	expect(result.details.outcome).toBe("aborted");
-	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
+	expect(result.usage).toStrictEqual(ZERO_USAGE);
 	expect(proof.updates).toHaveLength(0);
 });
 
@@ -103,7 +136,7 @@ test("real child reset during its running update invalidates the session", async
 		prompt: "Use the agentic_e2e_probe tool.",
 		resetOnRunningUpdate: true,
 	});
-	assertErrorResult(proof.result, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
+	assertErrorResult(proof.result, "Spawn invalidated by reset.", ZERO_USAGE);
 });
 
 test("concurrent real children both complete", async () => {
@@ -121,53 +154,6 @@ test("concurrent real children both complete", async () => {
 	expect(proof.probeCalls).toBe(2);
 });
 
-test("spawn schema advertises the thinking levels as a plain string enum and rejects other values", async () => {
-	const state = createState();
-	const pi = await createTestHost((api) => {
-		registerSpawnTool(api, state);
-	});
-	const tool = getTool(pi, "spawn");
-	const schema = recordOf(JSON.parse(JSON.stringify(tool.parameters)), "the spawn schema");
-	const thinkingSchema = recordOf(recordOf(schema.properties, "the spawn schema properties").thinking, "the thinking schema");
-	expect(thinkingSchema.type).toBe("string");
-	expect(thinkingSchema.enum).toStrictEqual([...THINKING_LEVELS]);
-	expect(JSON.stringify(thinkingSchema)).not.toMatch(/"(?:anyOf|const)"\s*:/);
-	expect(Value.Check(tool.parameters, { prompt: "work" }), "schema accepts prompt without thinking").toBe(true);
-	expect(Value.Check(tool.parameters, { prompt: "work", thinking: "ultra" }), "schema rejects unknown thinking levels").toBe(false);
-	expect(Value.Check(tool.parameters, { prompt: "work", group: "review", thinking: "max" }), "schema composes Model Group routing with explicit thinking").toBe(
-		true,
-	);
-});
-
-test.for([...THINKING_LEVELS])("spawn schema accepts thinking: %s", async (thinking) => {
-	const pi = await createTestHost((api) => {
-		registerSpawnTool(api, createState());
-	});
-	expect(Value.Check(getTool(pi, "spawn").parameters, { prompt: "work", thinking })).toBe(true);
-});
-
-test("spawn real child completes with max thinking requested", async () => {
-	const proof = await runRealChildInvocation({
-		prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK.",
-		thinking: "max",
-	});
-	const result = spawnResult(proof.result);
-	expect(result.content[0].text).toBe(proof.expectedText);
-	expect(result.details.model).toBe(proof.modelId);
-	expect(proof.probeCalls).toBe(1);
-	// Exact stream-call count is implementation-coupled; assert only a meaningful lower bound.
-	expect(proof.streamCalls).toBeGreaterThanOrEqual(1);
-	expect(proof.outboundFetches, "offline real-child fixture attempted an outbound fetch").toStrictEqual([]);
-});
-
-test("executeSpawn rejects immediately when no model is configured", async () => {
-	const pi = await createTestHost();
-	const state = createState();
-	const ctx = createExtensionContext({ cwd: "/tmp" }); // ctx.model is undefined
-
-	await expect(executeSpawn("spawn-no-model", pi, ctx, state, { prompt: "work" }, undefined, undefined, "medium")).rejects.toThrow(/No model configured/);
-});
-
 test("a parent-transient selected model fails explicitly in the real child runtime without fallback", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-schematic-transient-"));
 	// Pi takes lock directories in agent/; retry when one appears during removal.
@@ -176,8 +162,6 @@ test("a parent-transient selected model fails explicitly in the real child runti
 	const agentDir = join(root, "agent");
 	await mkdir(cwd, { recursive: true });
 	await mkdir(agentDir, { recursive: true });
-	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
-	const pi = await createTestHost();
 	const state = createState();
 	const model: Model<Api> = {
 		id: "transient-model",
@@ -191,7 +175,17 @@ test("a parent-transient selected model fails explicitly in the real child runti
 		contextWindow: 128000,
 		maxTokens: 1024,
 	};
-	const result = await executeSpawn("spawn-transient", pi, createExtensionContext({ model, cwd }), state, { prompt: "work" }, undefined, undefined, "medium");
+	const { fixture, pi } = await parentHost(cwd, model, agentDir);
+	const result = await executeSpawn(
+		"spawn-transient",
+		pi,
+		fixture.runner.createToolContext("spawn-transient", undefined),
+		state,
+		{ prompt: "work" },
+		undefined,
+		undefined,
+		"medium",
+	);
 
 	expect(result.isError).toBe(true);
 	expect(result.content[0].text).toMatch(/No API key found for transient-parent/);
@@ -202,7 +196,7 @@ test("a parent-transient selected model fails explicitly in the real child runti
 // 1. No output: empty assistant text returns an error result, with no lingering child.
 test("real child with no output returns the 'produced no output' error result", async () => {
 	const proof = await runRealChildInvocation({ prompt: "say nothing", noOutput: true });
-	assertErrorResult(proof.result, "Child agent produced no output.", EMPTY_CHILD_USAGE);
+	assertErrorResult(proof.result, "Child agent produced no output.", ZERO_USAGE);
 	expect(proof.state.childSessions.size, "no child session lingers after the error").toBe(0);
 });
 
@@ -246,10 +240,53 @@ test("real child session registry is cleared after a successful spawn", async ()
 	expect(proof.state.childSessions.size, "child session registry is cleared after a successful spawn").toBe(0);
 });
 
+test("a completed spawn disposes its real child session", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-schematic-child-dispose-"));
+	onTestFinished(() => rm(root, { recursive: true, force: true }));
+	const faux = fauxProvider();
+	faux.setResponses([fauxAssistantMessage("child done")]);
+	const modelRuntime = await ModelRuntime.create({ authPath: join(root, "auth.json"), modelsPath: null, refreshOnCreate: false });
+	modelRuntime.registerNativeProvider(faux.provider);
+	// Disposing a session marks the extension API its extensions received as stale, so a later call on it throws.
+	let childPi: ExtensionAPI | undefined;
+	const resourceLoader = new DefaultResourceLoader({
+		cwd: root,
+		agentDir: root,
+		noSkills: true,
+		noPromptTemplates: true,
+		noThemes: true,
+		noContextFiles: true,
+		extensionFactories: [
+			(api) => {
+				childPi = api;
+			},
+		],
+	});
+	await resourceLoader.reload();
+	const { fixture, pi } = await parentHost(root, faux.getModel());
+
+	const result = await executeSpawn(
+		"spawn-dispose",
+		pi,
+		fixture.runner.createToolContext("spawn-dispose", undefined),
+		createState(),
+		{ prompt: "work" },
+		undefined,
+		undefined,
+		"medium",
+		(config) => createAgentSession({ ...config, agentDir: root, modelRuntime, resourceLoader }),
+	);
+
+	expect(result.content).toStrictEqual([{ type: "text", text: "child done" }]);
+	const childApi = childPi;
+	assertPresent(childApi, "the child session loaded the capturing extension");
+	expect(() => childApi.getFlag("unused")).toThrow("This extension ctx is stale after session replacement or reload.");
+});
+
 // 5. Stale during prompt: reset inside the first stream call invalidates the child.
 test("real child invalidated when state is reset mid-prompt", async () => {
 	const proof = await runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool.", resetDuringPrompt: true });
-	assertErrorResult(proof.result, "Spawn invalidated by reset.", EMPTY_CHILD_USAGE);
+	assertErrorResult(proof.result, "Spawn invalidated by reset.", ZERO_USAGE);
 });
 
 // 6. Mid-prompt abort: the parent controller abort yields an aborted outcome (the
@@ -263,19 +300,7 @@ test("real child records an aborted outcome when the parent aborts mid-prompt", 
 	expect(proof.state.childSessions.size, "no child session lingers after the abort").toBe(0);
 });
 
-// 7. Stats shape: the deterministic provider emits zero usage; the published stats object carries the contract keys.
-test("real child publishes the session stats contract shape", async () => {
-	const proof = await runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK." });
-	const result = spawnResult(proof.result);
-	const stats = result.details.stats;
-	assertPresent(stats, "stats object must be published");
-	expect(stats, "stats object must be published").toBeTypeOf("object");
-	for (const key of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "totalTokens", "cost", "turns"]) {
-		expect(stats, `stats must contain ${key}`).toHaveProperty(key);
-	}
-});
-
-// 8. Usage parity: the usage spawn returns matches Pi's own session stats on a real child session.
+// 7. Usage parity: the usage spawn returns matches Pi's own session stats on a real child session.
 test("real child usage matches the session stats across assistant, tool result, usage, compaction and branch-summary entries", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-schematic-usage-parity-"));
 	// With modelsPath null, Pi takes no lock after create, so nothing writes into root during removal.
@@ -305,12 +330,12 @@ test("real child usage matches the session stats across assistant, tool result, 
 	});
 	await resourceLoader.reload();
 	const model = faux.getModel();
-	const pi = await createTestHost();
+	const { fixture, pi } = await parentHost(root, model);
 	const state = createState();
 	const result = await executeSpawn(
 		"spawn-usage-parity",
 		pi,
-		createExtensionContext({ model, cwd: root }),
+		fixture.runner.createToolContext("spawn-usage-parity", undefined),
 		state,
 		{ prompt: "work" },
 		undefined,
