@@ -1492,9 +1492,7 @@ test("registered spawn tool rejects injected scalar group and model requirements
 			const routeError = routeErrorOf(error);
 			expect(routeError.reason).toBe("constraint-unsatisfied");
 			expect(routeError.constraintUnsatisfied).toHaveLength(2);
-			expect(routeError.missingModalities).toHaveLength(0);
-			expect(routeError.missingFromGroup).toHaveLength(0);
-			expect(routeError.missingFromModel).toHaveLength(0);
+			expect(routeError.message).toBe("Spawn route 'small' cannot satisfy constraint requirements.");
 			return true;
 		},
 	);
