@@ -239,6 +239,49 @@ test("real child session registry is cleared after a successful spawn", async ()
 	expect(proof.state.childSessions.size, "child session registry is cleared after a successful spawn").toBe(0);
 });
 
+test("a completed spawn disposes its real child session", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-schematic-child-dispose-"));
+	onTestFinished(() => rm(root, { recursive: true, force: true }));
+	const faux = fauxProvider();
+	faux.setResponses([fauxAssistantMessage("child done")]);
+	const modelRuntime = await ModelRuntime.create({ authPath: join(root, "auth.json"), modelsPath: null, refreshOnCreate: false });
+	modelRuntime.registerNativeProvider(faux.provider);
+	// Disposing a session marks the extension API its extensions received as stale, so a later call on it throws.
+	let childPi: ExtensionAPI | undefined;
+	const resourceLoader = new DefaultResourceLoader({
+		cwd: root,
+		agentDir: root,
+		noSkills: true,
+		noPromptTemplates: true,
+		noThemes: true,
+		noContextFiles: true,
+		extensionFactories: [
+			(api) => {
+				childPi = api;
+			},
+		],
+	});
+	await resourceLoader.reload();
+	const { fixture, pi } = await parentHost(root, faux.getModel());
+
+	const result = await executeSpawn(
+		"spawn-dispose",
+		pi,
+		fixture.runner.createToolContext("spawn-dispose", undefined),
+		createState(),
+		{ prompt: "work" },
+		undefined,
+		undefined,
+		"medium",
+		(config) => createAgentSession({ ...config, agentDir: root, modelRuntime, resourceLoader }),
+	);
+
+	expect(result.content).toStrictEqual([{ type: "text", text: "child done" }]);
+	const childApi = childPi;
+	assertPresent(childApi, "the child session loaded the capturing extension");
+	expect(() => childApi.getFlag("unused")).toThrow("This extension ctx is stale after session replacement or reload.");
+});
+
 // 5. Stale during prompt: reset inside the first stream call invalidates the child.
 test("real child invalidated when state is reset mid-prompt", async () => {
 	const proof = await runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool.", resetDuringPrompt: true });
