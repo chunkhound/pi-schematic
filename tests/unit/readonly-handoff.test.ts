@@ -9,7 +9,7 @@ import { assertPresent, expectPrefix, expectSuffix } from "../assertions.js";
 import { STATUS_KEY_HANDOFF } from "../../tui.js";
 import { MAX_HANDOFF_ATTEMPTS } from "../../watchdog.js";
 import { createRunner, type RunnerFixture } from "../support/runner.js";
-import { appendDrafts } from "../support/session.js";
+import { appendDrafts, ZERO_USAGE } from "../support/session.js";
 import { realTheme } from "../support/theme.js";
 
 type ContextMessage = Awaited<ReturnType<ExtensionRunner["emitContext"]>>[number];
@@ -123,8 +123,6 @@ function lastMessageContent(messages: ContextMessage[]): string {
 	}
 	return last.content;
 }
-
-const ZERO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 
 function assistantMessage(content: AssistantMessage["content"]): AssistantMessage {
 	return { role: "assistant", content, api: "faux", provider: "faux", model: "faux", usage: ZERO_USAGE, stopReason: "toolUse", timestamp: 0 };

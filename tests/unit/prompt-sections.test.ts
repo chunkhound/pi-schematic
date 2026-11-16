@@ -8,7 +8,7 @@ import registerSchematic from "../../index.js";
 import { applyPromptSections, createPromptSectionRegistry } from "../../prompt-sections.js";
 import { createModelRegistry } from "../support/model-registry.js";
 import { createRunner, type RunnerFixture, type RunnerOptions } from "../support/runner.js";
-import { appendDrafts } from "../support/session.js";
+import { appendDrafts, ZERO_USAGE } from "../support/session.js";
 
 /** Fix the clock the date section reads, for the rest of the test. */
 function fixClock(): void {
@@ -279,7 +279,6 @@ test("renders every schematic section body without surrounding whitespace", asyn
 });
 
 const ELIGIBLE_USAGE = { tokens: 50_000, percent: 25, contextWindow: 200_000 };
-const ZERO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 const TURN_MESSAGE: AssistantMessage = {
 	role: "assistant",
 	content: [{ type: "toolCall", id: "handoff", name: "handoff", arguments: {} }],
