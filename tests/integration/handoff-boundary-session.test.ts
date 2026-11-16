@@ -87,7 +87,8 @@ beforeAll(async () => {
 	const restoreHome = setTempHome(sandboxDir);
 	return async () => {
 		restoreHome();
-		await rm(sandboxDir, { recursive: true, force: true });
+		// Pi takes a lock directory next to auth.json; retry when one appears during removal.
+		await rm(sandboxDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 	};
 });
 
