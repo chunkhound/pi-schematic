@@ -680,14 +680,12 @@ describe("failed handoff cut in a real agent session", () => {
 			expect(failure.content, "the failure carries the instruction").toContain("## Next instruction\n\nfinish the report");
 			expect(failure.content, "the failure carries the context").toContain(HANDOFF_CONTEXT);
 			expect(failure.display).toBe(true);
-			expect(uiAfterHandoffRun, JSON.stringify(uiAfterHandoffRun)).toContain(
-				`notify:error:Handoff failed: ${SUCCESSOR_NOT_PERSISTED}. The instruction is in the failure message.`,
-			);
 			expect(
-				uiAfterHandoffRun.filter((line) => line.startsWith("notify:info:Handoff complete")),
-				"no completion notice",
-			).toStrictEqual([]);
-			expect(uiAfterHandoffRun, "no successor-not-run warning").not.toContain(`notify:warning:${SUCCESSOR_NOT_RUN}`);
+				uiAfterHandoffRun.filter((line) => line.startsWith("notify:")),
+				"the failure is notified once, with no completion notice and no successor-not-run warning",
+			).toStrictEqual([
+				"notify:error:Handoff failed: the cut was written but its successor instruction was not persisted after it (another extension's turn_end handler may have dropped it or written a later compaction). The instruction is in the failure message.",
+			]);
 			const nextRequest = nonSystem(observed.requests[2]).map(messageText);
 			expect(nextRequest, "no successor reaches the next run").not.toContain(lostSuccessor);
 			expect(observed.requests[2], "the request was cleared, so the next run is not enforced").not.toSatisfy(carriesRequiredNudge);
@@ -700,6 +698,12 @@ describe("failed handoff cut in a real agent session", () => {
 				`custom_message:${NOTE_TYPE}`,
 				"message",
 			]);
+			expect(
+				nonSystem(observed.requests[3])
+					.map(messageText)
+					.filter((text) => text.startsWith("## Next instruction")),
+				"only the later handoff's instruction reaches the model after its cut",
+			).toStrictEqual(["## Next instruction\n\nWrite the migration guide for the boundary cut."]);
 			expect(observed.extensionErrors).toStrictEqual([]);
 		});
 	}

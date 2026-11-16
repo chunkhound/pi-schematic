@@ -115,11 +115,8 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 	let runScript: ScriptedStep[] | null = null;
 	let step = 0;
 	let runEntryCount = 0;
-	// How the next turn_end boundary that carries a handoff cut is altered: the whole
-	// boundary dropped, only its successor dropped, a compaction appended after the cut,
-	// or only its notebook rewrite dropped.
-	let nextCutTamper: "drop" | "dropSuccessor" | "compactAfter" | "dropNotebookRewrite" | null = null;
-	let abortAfterHandoff = false;
+	// Whether the next turn_end boundary that carries a handoff cut loses its successor.
+	let dropNextSuccessor = false;
 	// Runs `/e2e-turn <count>` still has to start, one per agent_settled.
 	let chainedTurns = 0;
 
@@ -194,12 +191,15 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		}
 	};
 
+	// Hand-built, not pi-ai's faux provider: faux replaces every scripted reply's usage with its own
+	// estimate (input from prompt length, zero cost), and handoff eligibility above
+	// MIN_HANDOFF_TOKENS and the over-threshold compaction reply depend on exact token counts.
 	pi.registerProvider(PROBE_PROVIDER, {
 		...PROBE_PROVIDER_FIELDS,
 		models: [{ ...PROBE_MODEL_FIELDS, name: "Schematic E2E Model" }],
 		streamSimple(model, context) {
 			const i = step++;
-			log({ kind: "request", step: i, calls: runScript, texts: contextTexts(context.messages) });
+			log({ kind: "request", step: i, texts: contextTexts(context.messages) });
 			const id = `e2e-${runEntryCount}-${i}`;
 			const scripted: ScriptedStep | null = runScript ? (i < runScript.length ? runScript[i] : null) : i === 0 ? { name: "e2e_noop", arguments: {} } : null;
 			const origin = { api: model.api, provider: model.provider, model: model.id, timestamp: Date.now() };
@@ -219,14 +219,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 				});
 				return stream;
 			}
-			const toolCalls: ToolCall[] =
-				scripted === null
-					? []
-					: "name" in scripted
-						? [{ type: "toolCall", id, ...scripted }]
-						: "calls" in scripted
-							? scripted.calls.map((call, n) => ({ type: "toolCall", id: `${id}-${n}`, ...call }))
-							: [];
+			const toolCalls: ToolCall[] = scripted !== null && "name" in scripted ? [{ type: "toolCall", id, ...scripted }] : [];
 			const reply = scripted !== null && "text" in scripted ? scripted : { text: "ack", inputTokens: SCRIPTED_INPUT_TOKENS };
 			const stopReason = toolCalls.length > 0 ? "toolUse" : "stop";
 			const message: AssistantMessage = {
@@ -295,7 +288,7 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		wake();
 	});
 
-	pi.on("tool_execution_end", (event, ctx) => {
+	pi.on("tool_execution_end", (event) => {
 		// The final bash result, after every tool_result handler; the session entry drops structuredContent.
 		if (event.toolName === "bash") {
 			const result: unknown = event.result;
@@ -304,23 +297,13 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 			}
 			const structured: unknown = result.structuredContent;
 			const output = typeof structured === "object" && structured !== null && "output" in structured ? structured.output : undefined;
-			log({
-				kind: "bashResult",
-				toolCallId: event.toolCallId,
-				isError: event.isError,
-				text: messageText(result.content),
-				structuredOutput: typeof output === "string" ? output : null,
-			});
+			log({ kind: "bashResult", structuredOutput: typeof output === "string" ? output : null });
 		}
 		// A handoff call that returned without error has staged a cut for its turn_end.
 		if (event.toolName !== "handoff" || event.isError) {
 			return;
 		}
 		handoffCallsAwaitingBoundary.push(event.toolCallId);
-		if (abortAfterHandoff) {
-			abortAfterHandoff = false;
-			ctx.abort();
-		}
 		wake();
 	});
 
@@ -341,22 +324,12 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		if (handoffId === undefined) {
 			return undefined;
 		}
-		const tamper = nextCutTamper;
-		nextCutTamper = null;
-		log({ kind: "cut", handoffId, dropped: tamper === "drop" });
-		switch (tamper) {
-			case null:
-				return undefined;
-			case "drop":
-				// Drop every draft and the continuation, as pi itself does for an invalid boundary.
-				return { entries: [], continue: false };
-			case "dropSuccessor":
-				return { entries: event.entries.filter((entry) => !(entry.type === "custom_message" && entry.customType === HANDOFF_SUCCESSOR_CUSTOM_TYPE)) };
-			case "compactAfter":
-				return { entries: [...event.entries, { type: "compaction", summary: "e2e compaction after the cut", firstKeptEntryId: null }] };
-			case "dropNotebookRewrite":
-				return { entries: event.entries.filter((entry) => !(entry.type === "custom" && entry.customType.startsWith("notebook-"))) };
+		log({ kind: "cut", handoffId });
+		if (!dropNextSuccessor) {
+			return undefined;
 		}
+		dropNextSuccessor = false;
+		return { entries: event.entries.filter((entry) => !(entry.type === "custom_message" && entry.customType === HANDOFF_SUCCESSOR_CUSTOM_TYPE)) };
 	});
 
 	pi.on("input", (event) => {
@@ -368,9 +341,8 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 		return { action: "continue" };
 	});
 
-	pi.on("session_compact", (event) => {
+	pi.on("session_compact", () => {
 		// A handoff cut is a boundary entry and fires no session_compact; this is pi's own compaction.
-		log({ kind: "compact", entryId: event.compactionEntry.id });
 		wake();
 	});
 
@@ -443,43 +415,11 @@ export default function realHostProbe(pi: ExtensionAPI): void {
 			}),
 	});
 
-	pi.registerCommand(PROBE_COMMAND.dropNextCut, {
-		description: "Drop the next handoff cut and its continuation from the turn_end boundary",
-		handler: () =>
-			asPromise(() => {
-				nextCutTamper = "drop";
-			}),
-	});
-
 	pi.registerCommand(PROBE_COMMAND.dropNextSuccessor, {
 		description: "Keep the next handoff cut but drop its successor from the turn_end boundary",
 		handler: () =>
 			asPromise(() => {
-				nextCutTamper = "dropSuccessor";
-			}),
-	});
-
-	pi.registerCommand(PROBE_COMMAND.compactAfterNextCut, {
-		description: "Append a compaction after the next handoff cut in the turn_end boundary",
-		handler: () =>
-			asPromise(() => {
-				nextCutTamper = "compactAfter";
-			}),
-	});
-
-	pi.registerCommand(PROBE_COMMAND.dropNotebookRewriteAtNextCut, {
-		description: "Keep the next handoff cut and its successor but drop the notebook rewrite from the turn_end boundary",
-		handler: () =>
-			asPromise(() => {
-				nextCutTamper = "dropNotebookRewrite";
-			}),
-	});
-
-	pi.registerCommand(PROBE_COMMAND.abortAfterHandoff, {
-		description: "Abort the run once the next handoff call has returned without error",
-		handler: () =>
-			asPromise(() => {
-				abortAfterHandoff = true;
+				dropNextSuccessor = true;
 			}),
 	});
 

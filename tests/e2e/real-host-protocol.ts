@@ -5,11 +5,10 @@
  *
  * Both sides import this module: the harness in a Vitest worker, the
  * probe inside the pi process under jiti. It imports no pi runtime code, only
- * types and the handoff message builder, so it loads in either environment.
+ * types, so it loads in either environment.
  */
 
 import type { JsonObject, JsonValue, ToolCall, Usage } from "@earendil-works/pi-ai";
-import { buildNextUserMessage } from "../../handoff/format.js";
 
 /** Provider, API and model the probe registers and the harness selects. */
 export const PROBE_PROVIDER = "schematic-e2e";
@@ -65,16 +64,9 @@ export const PROBE_COMMAND = {
 	barrier: "e2e-barrier",
 	tree: "e2e-tree",
 	turn: "e2e-turn",
-	dropNextCut: "e2e-drop-next-cut",
 	dropNextSuccessor: "e2e-drop-next-successor",
-	compactAfterNextCut: "e2e-compact-after-next-cut",
-	dropNotebookRewriteAtNextCut: "e2e-drop-notebook-rewrite-at-next-cut",
-	abortAfterHandoff: "e2e-abort-after-handoff",
 	tools: "e2e-tools",
 } as const;
-
-/** Heading the successor message opens with, read off the production builder. */
-export const NEXT_INSTRUCTION_PREFIX = buildNextUserMessage({ nextInstruction: "x" }).split("\n")[0];
 
 /** One scripted tool call. */
 export interface ScriptedCall {
@@ -93,21 +85,15 @@ interface ScriptedReply {
 	inputTokens: number;
 }
 
-/** Several tool calls the model makes in one assistant message, in order. */
-interface ScriptedBatch {
-	calls: ScriptedCall[];
-}
-
-/** One scripted model response: what `/e2e-script` arms, one per model call of the run, and what the log carries. */
-export type ScriptedStep = ScriptedCall | ScriptedBatch | ScriptedError | ScriptedReply;
+/** One scripted model response: what `/e2e-script` arms, one per model call of the run. */
+export type ScriptedStep = ScriptedCall | ScriptedError | ScriptedReply;
 
 /** One line of the probe log. */
 export type ProbeRecord =
-	| { kind: "request"; step: number; calls: ScriptedStep[] | null; texts: string[] }
-	| { kind: "compact"; entryId: string }
-	| { kind: "cut"; handoffId: string; dropped: boolean }
+	| { kind: "request"; step: number; texts: string[] }
+	| { kind: "cut"; handoffId: string }
 	| { kind: "tools"; names: string[] }
-	| { kind: "bashResult"; toolCallId: string; isError: boolean; text: string; structuredOutput: string | null };
+	| { kind: "bashResult"; structuredOutput: string | null };
 
 /**
  * Outcome of `/e2e-barrier <id> <deadlineMs>`: `failure` is null once nothing is outstanding,
@@ -158,14 +144,6 @@ function requireString(record: Record<string, unknown>, field: string, line: str
 	return value;
 }
 
-function requireBoolean(record: Record<string, unknown>, field: string, line: string): boolean {
-	const value = record[field];
-	if (typeof value !== "boolean") {
-		malformed(line, `${field} is not a boolean: ${JSON.stringify(value)}`);
-	}
-	return value;
-}
-
 function requireStringArray(record: Record<string, unknown>, field: string, line: string): string[] {
 	const value = record[field];
 	if (!Array.isArray(value) || !value.every((item): item is string => typeof item === "string")) {
@@ -193,8 +171,7 @@ function parseScriptedCall(value: unknown, fail: (reason: string) => never): Scr
 
 /**
  * One scripted step, parsed strictly: an object with `error` is a `ScriptedError`, one with `text`
- * a `ScriptedReply`, one with `calls` a `ScriptedBatch`, any other a `ScriptedCall`. `fail` throws
- * with the reason.
+ * a `ScriptedReply`, any other a `ScriptedCall`. `fail` throws with the reason.
  */
 export function parseScriptedStep(value: unknown, fail: (reason: string) => never): ScriptedStep {
 	if (!isJsonObject(value)) {
@@ -223,28 +200,7 @@ export function parseScriptedStep(value: unknown, fail: (reason: string) => neve
 		}
 		return { text, inputTokens };
 	}
-	if ("calls" in value) {
-		const { calls, ...rest } = value;
-		if (!Array.isArray(calls) || calls.length === 0) {
-			fail(`calls is not a non-empty array: ${JSON.stringify(value)}`);
-		}
-		if (Object.keys(rest).length > 0) {
-			fail(`a batch step takes only calls: ${JSON.stringify(value)}`);
-		}
-		return { calls: calls.map((call: unknown, index) => parseScriptedCall(call, (reason) => fail(`calls[${index}]: ${reason}`))) };
-	}
 	return parseScriptedCall(value, fail);
-}
-
-/** A request record's `calls`: the armed script, or null when no script was armed. */
-function requireScriptedCalls(value: unknown, line: string): ScriptedStep[] | null {
-	if (value === null) {
-		return null;
-	}
-	if (!Array.isArray(value)) {
-		malformed(line, `calls is neither an array nor null: ${JSON.stringify(value)}`);
-	}
-	return value.map((step: unknown, index) => parseScriptedStep(step, (reason) => malformed(line, `calls[${index}]: ${reason}`)));
 }
 
 /** Parse one probe-log line; throws on an unknown kind or a record missing a required field. */
@@ -264,17 +220,10 @@ export function parseProbeRecord(line: string): ProbeRecord {
 			return {
 				kind: "request",
 				step: requireStep(parsed, "step", line),
-				calls: requireScriptedCalls(parsed.calls, line),
 				texts: requireStringArray(parsed, "texts", line),
 			};
-		case "compact":
-			return { kind: "compact", entryId: requireString(parsed, "entryId", line) };
 		case "cut":
-			return {
-				kind: "cut",
-				handoffId: requireString(parsed, "handoffId", line),
-				dropped: requireBoolean(parsed, "dropped", line),
-			};
+			return { kind: "cut", handoffId: requireString(parsed, "handoffId", line) };
 		case "tools":
 			return { kind: "tools", names: requireStringArray(parsed, "names", line) };
 		case "bashResult": {
@@ -282,13 +231,7 @@ export function parseProbeRecord(line: string): ProbeRecord {
 			if (structuredOutput !== null && typeof structuredOutput !== "string") {
 				malformed(line, `structuredOutput is neither a string nor null: ${JSON.stringify(structuredOutput)}`);
 			}
-			return {
-				kind: "bashResult",
-				toolCallId: requireString(parsed, "toolCallId", line),
-				isError: requireBoolean(parsed, "isError", line),
-				text: requireString(parsed, "text", line),
-				structuredOutput,
-			};
+			return { kind: "bashResult", structuredOutput };
 		}
 		default:
 			throw new Error(`Probe log line has an unknown kind ${JSON.stringify(parsed.kind)}: ${line}`);
