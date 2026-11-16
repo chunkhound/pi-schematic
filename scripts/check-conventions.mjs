@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { repoRootFromScript } from "./compat-process.mjs";
@@ -16,6 +16,11 @@ const SUMMARY_WIDTH = 120;
 const BUDGET_NOTICE = "[pi-budget] Budget: reached turns limit (";
 // The other stop reasons pi-ai defines (pending, length, error, aborted, deferred) end a run that did not complete.
 const COMPLETED_STOP_REASONS = ["stop", "toolUse"];
+const USAGE = [
+	"Usage: node scripts/check-conventions.mjs --list --base <ref>",
+	"       CONVENTIONS_CHECK_MODEL=<provider/model> node scripts/check-conventions.mjs --base <ref> --convention <heading> --events <file>",
+	"       CONVENTIONS_CHECK_MODEL=<provider/model> node scripts/check-conventions.mjs --base <ref> --events <directory>",
+].join("\n");
 const commandToken = randomBytes(16).toString("hex");
 
 function untrusted(stream, text) {
@@ -47,11 +52,17 @@ function gitChecked(root, args) {
 function parseArgs(argv) {
 	let base;
 	let events;
+	let convention;
+	let list = false;
 	for (let i = 0; i < argv.length; i++) {
 		if (argv[i] === "--base" && i + 1 < argv.length && base === undefined) {
 			base = argv[++i];
 		} else if (argv[i] === "--events" && i + 1 < argv.length && events === undefined) {
 			events = argv[++i];
+		} else if (argv[i] === "--convention" && i + 1 < argv.length && convention === undefined) {
+			convention = argv[++i];
+		} else if (argv[i] === "--list" && !list) {
+			list = true;
 		} else {
 			throw new UsageError(`unexpected argument ${JSON.stringify(argv[i])}`);
 		}
@@ -59,14 +70,23 @@ function parseArgs(argv) {
 	if (base === undefined || base === "") {
 		throw new UsageError("--base <ref> is required");
 	}
+	if (list) {
+		if (convention !== undefined || events !== undefined) {
+			throw new UsageError("--list takes only --base");
+		}
+		return { mode: "list", base };
+	}
+	if (convention === "") {
+		throw new UsageError("--convention needs a heading");
+	}
 	if (events === undefined || events === "") {
-		throw new UsageError("--events <file> is required");
+		throw new UsageError("--events is required: a file with --convention, a directory without it");
 	}
 	const model = process.env.CONVENTIONS_CHECK_MODEL;
 	if (model === undefined || model === "") {
 		throw new UsageError("the CONVENTIONS_CHECK_MODEL environment variable (provider/model) is required");
 	}
-	return { base, events: resolve(events), model };
+	return { mode: convention === undefined ? "all" : "convention", base, convention, events: resolve(events), model };
 }
 
 function escapeData(value) {
@@ -75,6 +95,14 @@ function escapeData(value) {
 
 function escapeProperty(value) {
 	return escapeData(value).replaceAll(":", "%3A").replaceAll(",", "%2C");
+}
+
+function resolveBase(root, base) {
+	const resolved = git(root, ["rev-parse", "--verify", "--quiet", `${base}^{commit}`]);
+	if (resolved.status !== 0) {
+		throw new Error(`the base ref ${JSON.stringify(base)} does not resolve to a commit`);
+	}
+	return resolved.stdout.trim();
 }
 
 function readConventions(root, baseSha, base) {
@@ -87,15 +115,69 @@ function readConventions(root, baseSha, base) {
 	if (!existsSync(local)) {
 		throw new Error(`neither ${base} nor the working tree has ${CONVENTIONS_PATH}`);
 	}
-	process.stdout.write(`::notice::${escapeData(`${base} has no ${CONVENTIONS_PATH}; checking against the working tree's copy`)}\n`);
+	// stderr keeps the --list output on stdout a single JSON value; the runner reads workflow commands from both streams.
+	process.stderr.write(`::notice::${escapeData(`${base} has no ${CONVENTIONS_PATH}; checking against the working tree's copy`)}\n`);
 	return readFileSync(local, "utf8");
+}
+
+function slugify(heading) {
+	return heading
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-|-$/g, "");
+}
+
+// A convention's section runs from its H2 heading to the next H2 heading or the end of the file.
+// A `## ` line inside a fenced code block is example text, not a heading.
+function parseConventions(conventions) {
+	const matches = [];
+	let fence = null;
+	for (const line of conventions.matchAll(/^.*$/gm)) {
+		// A fence closes on a run of the same character at least as long as the one that opened it.
+		const marker = /^(`{3,}|~{3,})/.exec(line[0])?.[1];
+		if (marker !== undefined && (fence === null || (marker[0] === fence[0] && marker.length >= fence.length))) {
+			fence = fence === null ? marker : null;
+			continue;
+		}
+		const heading = fence === null ? /^## (.+?)\r?$/.exec(line[0]) : null;
+		if (heading !== null) {
+			matches.push({ index: line.index, name: heading[1] });
+		}
+	}
+	if (fence !== null) {
+		throw new Error(`${CONVENTIONS_PATH} has an unclosed ${fence} code fence`);
+	}
+	if (matches.length === 0) {
+		throw new Error(`${CONVENTIONS_PATH} has no H2 headings`);
+	}
+	const sections = matches.map((match, index) => ({
+		name: match.name,
+		slug: slugify(match.name),
+		text: conventions.slice(match.index, matches[index + 1]?.index ?? conventions.length),
+	}));
+	const names = new Set();
+	const slugs = new Set();
+	for (const { name, slug } of sections) {
+		if (names.has(name)) {
+			throw new Error(`${CONVENTIONS_PATH} has two conventions headed ${JSON.stringify(name)}`);
+		}
+		if (slug === "") {
+			throw new Error(`the heading ${JSON.stringify(name)} has no letters or digits to name it by`);
+		}
+		if (slugs.has(slug)) {
+			throw new Error(`${CONVENTIONS_PATH} has two headings with the slug ${JSON.stringify(slug)}`);
+		}
+		names.add(name);
+		slugs.add(slug);
+	}
+	return sections;
 }
 
 function isStringOrNull(value) {
 	return value === null || typeof value === "string";
 }
 
-function validateVerdict(verdict, conventions) {
+function validateVerdict(verdict, heading) {
 	if (typeof verdict !== "object" || verdict === null || Array.isArray(verdict)) {
 		return "the verdict is not an object";
 	}
@@ -109,11 +191,6 @@ function validateVerdict(verdict, conventions) {
 	if (verdict.results.length === 0) {
 		return "results is empty";
 	}
-	const headings = new Set(Array.from(conventions.matchAll(/^## (.+)\r?$/gm), (match) => match[1]));
-	if (headings.size === 0) {
-		return "conventions has no H2 headings";
-	}
-	const reported = new Set();
 	for (const [index, result] of verdict.results.entries()) {
 		const where = `results[${String(index)}]`;
 		if (typeof result !== "object" || result === null || Array.isArray(result)) {
@@ -126,10 +203,9 @@ function validateVerdict(verdict, conventions) {
 		if (typeof result.convention !== "string" || typeof result.sentence !== "string") {
 			return `${where}.convention and .sentence must be strings`;
 		}
-		if (!headings.has(result.convention)) {
-			return `${where}.convention names no heading: ${JSON.stringify(result.convention)}`;
+		if (result.convention !== heading) {
+			return `${where}.convention is ${JSON.stringify(result.convention)}, expected ${JSON.stringify(heading)}`;
 		}
-		reported.add(result.convention);
 		if (!VERDICTS.includes(result.verdict)) {
 			return `${where}.verdict is ${JSON.stringify(result.verdict)}, expected one of ${VERDICTS.join(", ")}`;
 		}
@@ -138,11 +214,6 @@ function validateVerdict(verdict, conventions) {
 		}
 		if (result.line !== null && !(Number.isInteger(result.line) && result.line >= 1)) {
 			return `${where}.line must be an integer of at least 1 or null`;
-		}
-	}
-	for (const heading of headings) {
-		if (!reported.has(heading)) {
-			return `no result for convention ${JSON.stringify(heading)}`;
 		}
 	}
 	return null;
@@ -214,7 +285,7 @@ function readTurns(eventsPath) {
 	return { turns, lastMessage };
 }
 
-function printTurns(turns) {
+function printTurns(turns, heading) {
 	const lines = [];
 	for (const [index, turn] of turns.entries()) {
 		lines.push(`turn ${String(index + 1)}`);
@@ -229,7 +300,7 @@ function printTurns(turns) {
 	);
 	// Workflow commands are ignored inside a stop-commands window, so the group lines go outside it.
 	if (process.env.GITHUB_ACTIONS !== undefined) {
-		process.stdout.write("::group::pi turns\n");
+		process.stdout.write(`::group::${escapeData(`pi turns: ${heading}`)}\n`);
 	}
 	untrusted(process.stdout, lines.join("\n"));
 	if (process.env.GITHUB_ACTIONS !== undefined) {
@@ -237,24 +308,19 @@ function printTurns(turns) {
 	}
 }
 
-function prompt(diffPath, conventionsPath) {
+function prompt(diffPath, conventionsPath, heading) {
 	return [
-		`Review the pull request diff in ${diffPath} against the conventions in ${conventionsPath}; both files are attached above.`,
-		"Check every sentence of every convention.",
+		`Review the pull request diff in ${diffPath} against the convention ${JSON.stringify(heading)} in ${conventionsPath}; both files are attached above.`,
+		"Check every sentence of the convention.",
 		"The working directory is the pull request head; read its files with the tools when the diff alone does not settle a sentence.",
 		"A sentence is a violation only when the pull request's changes make it false. A sentence the changes do not touch is not_applicable; one they touch and keep true is pass.",
-		"Return one result per (convention, sentence) pair: the convention's heading, the sentence verbatim, and as evidence the file path relative to the repository root, the line number in the pull request head and a verbatim quote of that line. Use null for evidence that does not exist.",
+		`Return one result per sentence: the convention's heading ${JSON.stringify(heading)}, the sentence verbatim, and as evidence the file path relative to the repository root, the line number in the pull request head and a verbatim quote of that line. Use null for evidence that does not exist.`,
 		"Call json_output exactly once with all results.",
 	].join("\n");
 }
 
-function check(root, workDir, { base, events, model }) {
-	const resolved = git(root, ["rev-parse", "--verify", "--quiet", `${base}^{commit}`]);
-	if (resolved.status !== 0) {
-		throw new Error(`the base ref ${JSON.stringify(base)} does not resolve to a commit`);
-	}
-	const baseSha = resolved.stdout.trim();
-
+// Returns the diff file's path, or undefined when the pull request changes nothing.
+function writeDiff(root, workDir, baseSha, base) {
 	const diffPath = join(workDir, "pr.diff");
 	// The diff goes to a file: a large diff exceeds both the spawn output buffer and Linux's 128 KiB limit on one argument.
 	const diffFd = openSync(diffPath, "w");
@@ -272,13 +338,18 @@ function check(root, workDir, { base, events, model }) {
 	}
 	if (statSync(diffPath).size === 0) {
 		process.stdout.write(`No changes between ${base} and HEAD; nothing to check.\n`);
-		return 0;
+		return undefined;
 	}
+	return diffPath;
+}
 
-	const conventionsPath = join(workDir, "conventions.md");
-	const conventions = readConventions(root, baseSha, base);
-	writeFileSync(conventionsPath, conventions);
-	const verdictPath = join(workDir, "verdict.json");
+function review(root, workDir, diffPath, section, events, model) {
+	process.stdout.write(`Reviewing convention ${JSON.stringify(section.name)}.\n`);
+	const runDir = join(workDir, section.slug);
+	mkdirSync(runDir);
+	const conventionsPath = join(runDir, "conventions.md");
+	writeFileSync(conventionsPath, section.text);
+	const verdictPath = join(runDir, "verdict.json");
 	const schema = readFileSync(join(root, "scripts", "conventions-verdict.schema.json"), "utf8");
 
 	// The event stream goes straight to the events file, so the spawn output buffer does not bound its size.
@@ -315,7 +386,7 @@ function check(root, workDir, { base, events, model }) {
 				String(MAX_TURNS),
 				`@${conventionsPath}`,
 				`@${diffPath}`,
-				prompt(diffPath, conventionsPath),
+				prompt(diffPath, conventionsPath, section.name),
 			],
 			{ cwd: root, encoding: "utf8", stdio: ["ignore", eventsFd, "pipe"], maxBuffer: 64 * 1024 * 1024 },
 		);
@@ -326,7 +397,7 @@ function check(root, workDir, { base, events, model }) {
 		throw pi.error;
 	}
 	const { turns, lastMessage } = readTurns(events);
-	printTurns(turns);
+	printTurns(turns, section.name);
 	// A budget stop fails even when a verdict was written before it.
 	if (pi.stderr.includes(BUDGET_NOTICE)) {
 		untrusted(
@@ -356,7 +427,7 @@ function check(root, workDir, { base, events, model }) {
 		untrusted(process.stderr, process.env.GITHUB_ACTIONS === undefined ? message.replace(/[\r\n]/g, " ") : message);
 		return 1;
 	}
-	const invalid = validateVerdict(verdict, conventions);
+	const invalid = validateVerdict(verdict, section.name);
 	if (invalid !== null) {
 		const message = `The verdict does not match the schema: ${invalid}`;
 		untrusted(process.stderr, process.env.GITHUB_ACTIONS === undefined ? message.replace(/[\r\n]/g, " ") : message);
@@ -371,25 +442,59 @@ function check(root, workDir, { base, events, model }) {
 	return violations.length > 0 ? 1 : 0;
 }
 
+function check(root, workDir, { mode, base, convention, events, model }) {
+	const baseSha = resolveBase(root, base);
+	const sections = parseConventions(readConventions(root, baseSha, base));
+	const selected = mode === "convention" ? sections.find((section) => section.name === convention) : undefined;
+	if (mode === "convention" && selected === undefined) {
+		throw new UsageError(`${CONVENTIONS_PATH} has no convention headed ${JSON.stringify(convention)}`);
+	}
+	const diffPath = writeDiff(root, workDir, baseSha, base);
+	if (diffPath === undefined) {
+		return 0;
+	}
+	if (selected !== undefined) {
+		return review(root, workDir, diffPath, selected, events, model);
+	}
+
+	mkdirSync(events, { recursive: true });
+	const failed = [];
+	for (const section of sections) {
+		if (review(root, workDir, diffPath, section, join(events, `${section.slug}.jsonl`), model) !== 0) {
+			failed.push(section.name);
+		}
+	}
+	if (failed.length > 0) {
+		process.stderr.write(
+			`${String(failed.length)} of ${String(sections.length)} conventions failed: ${failed.map((name) => JSON.stringify(name)).join(", ")}\n`,
+		);
+		return 1;
+	}
+	process.stdout.write(`All ${String(sections.length)} conventions passed.\n`);
+	return 0;
+}
+
 function main() {
-	let options;
 	try {
-		options = parseArgs(process.argv.slice(2));
+		const options = parseArgs(process.argv.slice(2));
+		const root = repoRootFromScript(import.meta.url);
+		if (options.mode === "list") {
+			const sections = parseConventions(readConventions(root, resolveBase(root, options.base), options.base));
+			process.stdout.write(`${JSON.stringify(sections.map(({ name, slug }) => ({ name, slug })))}\n`);
+			return 0;
+		}
+		const workDir = mkdtempSync(join(tmpdir(), "check-conventions-"));
+		try {
+			return check(root, workDir, options);
+		} finally {
+			rmSync(workDir, { recursive: true, force: true });
+		}
 	} catch (error) {
 		if (error instanceof UsageError) {
-			process.stderr.write(
-				`check-conventions: ${error.message}\nUsage: CONVENTIONS_CHECK_MODEL=<provider/model> node scripts/check-conventions.mjs --base <ref> --events <file>\n`,
-			);
+			process.stderr.write(`check-conventions: ${error.message}\n${USAGE}\n`);
 			return 2;
 		}
 		throw error;
-	}
-	const root = repoRootFromScript(import.meta.url);
-	const workDir = mkdtempSync(join(tmpdir(), "check-conventions-"));
-	try {
-		return check(root, workDir, options);
-	} finally {
-		rmSync(workDir, { recursive: true, force: true });
 	}
 }
 

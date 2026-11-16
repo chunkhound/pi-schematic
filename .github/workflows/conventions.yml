@@ -1,7 +1,8 @@
 # Conventions check for pull requests
 #
-# pi reviews the pull request's diff against docs/conventions.md as the base branch has it, and
-# every sentence the changes make false fails the check with an annotation at the offending line.
+# pi reviews the pull request's diff against docs/conventions.md as the base branch has it, one job per
+# convention, and every sentence the changes make false fails the check with an annotation at the
+# offending line. The Conventions job sums up the per-convention jobs under one stable name.
 
 name: Conventions
 
@@ -19,10 +20,49 @@ on:
 
 jobs:
   # Fork PRs get no secrets, so they skip.
-  conventions:
+  list:
+    name: List conventions
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
+    outputs:
+      conventions: ${{ steps.list.outputs.conventions }}
+    steps:
+      # The full history holds the base branch the conventions are read from.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.13.1"
+
+      - name: Check required secrets
+        env:
+          CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
+          CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
+        run: |
+          if [ -z "$CLIPROXYAPI_BASE_URL" ] || [ -z "$CLIPROXYAPI_API_KEY" ]; then
+            echo "CLIPROXYAPI_BASE_URL and CLIPROXYAPI_API_KEY must both be set."
+            exit 1
+          fi
+
+      # The list mode needs only node and git, so this job skips npm ci.
+      - id: list
+        name: List conventions
+        run: |
+          conventions="$(node ./scripts/check-conventions.mjs --list --base "origin/${{ github.base_ref }}")"
+          echo "conventions=$conventions" >> "$GITHUB_OUTPUT"
+
+  review:
+    needs: list
+    name: ${{ matrix.convention.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        convention: ${{ fromJSON(needs.list.outputs.conventions) }}
     steps:
       # The full history holds the base branch for the merge-base diff.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,27 +83,20 @@ jobs:
           path: ${{ runner.temp }}/pi-agent/tmp/extensions/npm
           key: pi-extensions-${{ runner.os }}-${{ hashFiles('scripts/check-conventions.mjs') }}
 
-      - name: Check required secrets
+      # The heading reaches the script through the environment, never interpolated into the script.
+      - name: Check convention
         env:
-          CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
-          CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
-        run: |
-          if [ -z "$CLIPROXYAPI_BASE_URL" ] || [ -z "$CLIPROXYAPI_API_KEY" ]; then
-            echo "CLIPROXYAPI_BASE_URL and CLIPROXYAPI_API_KEY must both be set."
-            exit 1
-          fi
-
-      - name: Check conventions
-        env:
+          CONVENTION: ${{ matrix.convention.name }}
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
           PI_TELEMETRY: "0"
           PI_SKIP_VERSION_CHECK: "1"
           CONVENTIONS_CHECK_MODEL: "cliproxyapi/deepseek-flash[1m]"
           CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
           CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
-        run: node ./scripts/check-conventions.mjs --base "origin/${{ github.base_ref }}" --events "${{ runner.temp }}/conventions-events.jsonl"
+        run: node ./scripts/check-conventions.mjs --base "origin/${{ github.base_ref }}" --convention "$CONVENTION" --events "${{ runner.temp }}/conventions-events.jsonl"
 
       # Saved even when the check fails, so a failing pull request does not reinstall the extensions on every run.
+      # The matrix jobs of one run miss the cache together; the saves that lose the race only warn.
       - if: always() && steps.extension-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -74,7 +107,24 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: conventions-events-attempt-${{ github.run_attempt }}
+          name: conventions-events-${{ matrix.convention.slug }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/conventions-events.jsonl
           retention-days: 7
           if-no-files-found: warn
+
+  conventions:
+    name: Conventions
+    needs: [list, review]
+    if: always() && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the convention jobs
+        env:
+          LIST_RESULT: ${{ needs.list.result }}
+          REVIEW_RESULT: ${{ needs.review.result }}
+        run: |
+          echo "list: $LIST_RESULT, review: $REVIEW_RESULT"
+          if [ "$LIST_RESULT" != "success" ] || [ "$REVIEW_RESULT" != "success" ]; then
+            exit 1
+          fi
