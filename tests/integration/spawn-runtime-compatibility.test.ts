@@ -160,7 +160,8 @@ test("concurrent real children both complete", async () => {
 
 test("a parent-transient selected model fails explicitly in the real child runtime without fallback", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-schematic-transient-"));
-	onTestFinished(() => rm(root, { recursive: true, force: true }));
+	// Pi takes lock directories in agent/; retry when one appears during removal.
+	onTestFinished(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 	const cwd = join(root, "project");
 	const agentDir = join(root, "agent");
 	await mkdir(cwd, { recursive: true });
@@ -320,7 +321,8 @@ test("real child records an aborted outcome when the parent aborts mid-prompt", 
 // 7. Usage parity: the usage spawn returns matches Pi's own session stats on a real child session.
 test("real child usage matches the session stats across assistant, tool result, usage, compaction and branch-summary entries", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-schematic-usage-parity-"));
-	onTestFinished(() => rm(root, { recursive: true, force: true }));
+	// Pi takes a lock directory next to auth.json; retry when one appears during removal.
+	onTestFinished(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 	const faux = fauxProvider();
 	const usageOf = (input: number, output: number, cacheRead: number, cacheWrite: number, total: number) => ({
 		input,
