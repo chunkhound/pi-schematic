@@ -114,7 +114,7 @@ export interface Status {
 	statusKey: string;
 	statusText: string | undefined;
 }
-export interface ToolResult {
+interface ToolResult {
 	isError: boolean;
 	text: string;
 }
@@ -125,7 +125,7 @@ interface RealHostSettings {
 	retry?: Record<string, unknown>;
 }
 
-export interface RealHostOptions {
+interface RealHostOptions {
 	settings?: RealHostSettings;
 }
 
