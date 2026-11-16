@@ -67,5 +67,10 @@ const BACKGROUND: Record<ThemeBg, string> = {
 	toolErrorBg: "#000007",
 };
 
+/** A pi `Theme` over the fixture's colour map with `foreground` replacing its tokens' colours, rendering truecolor escape sequences. */
+export function createRealTheme(foreground: Partial<Record<ThemeColor, string>> = {}): Theme {
+	return new Theme({ ...FOREGROUND, ...foreground }, BACKGROUND, "truecolor");
+}
+
 /** pi's `Theme` over the fixture's colour map, rendering truecolor escape sequences. */
-export const realTheme = new Theme(FOREGROUND, BACKGROUND, "truecolor");
+export const realTheme = createRealTheme();

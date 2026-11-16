@@ -11,9 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Pi 1.2.0 minimum**: the `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` peers now require 1.2.0 or later, up from 0.99.2. The `typebox` peer minimum stays 1.3.27.
 - **`buildChildToolNames` requires the available tools**: `buildChildToolNames` in `spawn/index.ts` now takes the available tools as a required third argument, and a call with two arguments fails. A caller passes the list `pi.getAllTools()` returns.
+- **Spawn results always carry stats**: the final result of every spawn carries the child's usage and `details.stats`, and `details.statsUnavailable` no longer exists. A child entry list that cannot be read or summed now makes the spawn reject, where it used to resolve with zero usage and `statsUnavailable: true`. Spawn results stored by earlier versions render as before.
 
 ### Fixed
 
+- **Plain-text user messages in the spawn view**: the expanded view of a child session shows a user message whose content is a plain string, as pi's own chat does. Before, it showed only user messages whose content was a list of blocks and left out the others.
+- **Text blocks of a user message in the spawn view**: the expanded view of a child session joins the text blocks of a user message without a separator, as pi's own chat does. Before, it put each block on its own line, so the blocks "hello " and "world" showed as two lines.
 - **Context percent rounded once**: the status bar tone, the high-context warning widget, the watchdog reminders and their thresholds, and the context note of the readonly-off message all use pi's context percent rounded to a whole number. Before, the warning widget, the watchdog thresholds and the readonly-off note compared the unrounded percent, so at 69.6% the status showed an error-tone 70% with no warning widget, and the same mismatch held just below 30% and 50%.
 
 ## [0.7.1] - 2026-11-08

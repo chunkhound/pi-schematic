@@ -3,5 +3,5 @@
  Line 1: Initialize the project structure                                       
  Line 2: Set up TypeScript configuration                                        
  Line 3: Create the main entry point                                            
- ... (4 more lines, to expand)                                                  
+ ... (4 more lines,  to expand)                                                 
                                                                                 

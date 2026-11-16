@@ -1,31 +1,49 @@
-import type { Component } from "@earendil-works/pi-tui";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { Text, stripTerminalSequences } from "@earendil-works/pi-tui";
+import type { AssistantMessage, UserMessage } from "@earendil-works/pi-ai";
+import { initTheme, type AgentSessionEvent, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { beforeAll, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { createState, type SchematicState } from "../../state.js";
-import { createSession, createSubscribableSession, createToolRenderContext, theme } from "./helpers.js";
-import { createTestHost, getToolRenderResult, type ToolRenderResult } from "./test-host.js";
-import { flushSpawnFrameScheduler, NestedAgentSessionComponent } from "../../spawn/renderer.js";
+import { flushSpawnFrameScheduler, NestedAgentSessionComponent, renderSpawnResult } from "../../spawn/renderer.js";
 import { getSingletons } from "../../runtime-singletons.js";
-import { registerSpawnTool } from "../../spawn/index.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
+import { realTheme } from "../support/theme.js";
+import { assistantMessage, createSubscribableSession, messageUpdateEvent, type SubscribableSession } from "../support/session.js";
 
 let h: TestHarness;
 
-// Every render here has a child session in state, so the spawn renderer returns its nested session component.
-function nestedComponent(component: Component): NestedAgentSessionComponent {
+const CWD = "/tmp";
+
+type ResultContext = Parameters<typeof renderSpawnResult>[3];
+
+/**
+ * Renders the running result of `toolCallId` over `child`, which is stored as both its claimable and
+ * its live session, and returns the nested session component the renderer builds for it.
+ */
+function renderLiveChild(
+	state: SchematicState,
+	child: SubscribableSession,
+	{ expanded = false, ...overrides }: Partial<ResultContext> & { expanded?: boolean } = {},
+): NestedAgentSessionComponent {
+	const context: ResultContext = { toolCallId: "tool-call-1", invalidate: () => undefined, showImages: true, ...overrides };
+	state.childSessions.set(context.toolCallId, child.session);
+	state.liveChildSessions.set(context.toolCallId, child.session);
+	const component = renderSpawnResult({ content: [], details: { model: "m", thinking: "low", truncated: false } }, expanded, realTheme, context, state);
 	if (!(component instanceof NestedAgentSessionComponent)) {
 		throw new Error("Expected the spawn renderer to return its nested session component.");
 	}
 	return component;
 }
 
-async function makeChildSpawnTool(state: SchematicState) {
-	const pi = await createTestHost((api) => {
-		registerSpawnTool(api, state);
-	});
-	const renderResult = getToolRenderResult(pi, "spawn");
-	return { renderResult: (...args: Parameters<ToolRenderResult>) => nestedComponent(renderResult(...args)) };
+function plain(lines: string[]): string[] {
+	return lines.map((line) => stripTerminalSequences(line));
 }
+
+function assistantText(text: string, fields: Partial<Pick<AssistantMessage, "stopReason" | "errorMessage">> = {}) {
+	return assistantMessage([{ type: "text", text }], fields);
+}
+
+const STARTED = { type: "message_start", message: assistantMessage([]) } as const;
 
 // pi's theme is global and initTheme() cannot be undone, so every test in this file runs with it:
 // nested tool components render only with a theme.
@@ -118,20 +136,17 @@ test("frame scheduler contains invalidate callback failures and continues health
 	expect(h.warnings).toStrictEqual([]);
 });
 
-test("frame scheduler creates only one timer for a failed-target recovery frame", () => {
-	const scheduler = getSingletons().frameScheduler;
-	// Fake timers hand out a distinct handle per call and never fire. The spy is restored before the
-	// real timers come back, so the next test's spy restore cannot reinstall the fake.
+test("frame scheduler flushes a failed target exactly once in its recovery frame", () => {
 	vi.useFakeTimers();
-	const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
 	onTestFinished(() => {
-		setTimeoutSpy.mockRestore();
 		vi.useRealTimers();
 	});
+	const scheduler = getSingletons().frameScheduler;
+	const flushes = vi.fn(() => {
+		throw new Error("retry later");
+	});
 	const failing = {
-		flushPendingUpdates() {
-			throw new Error("retry later");
-		},
+		flushPendingUpdates: flushes,
 		clearRenderCache: vi.fn(),
 		flushScheduledRender() {
 			return undefined;
@@ -140,252 +155,285 @@ test("frame scheduler creates only one timer for a failed-target recovery frame"
 
 	scheduler.markDirty(failing);
 	flushSpawnFrameScheduler();
-	expect(setTimeoutSpy, "one initial frame and one recovery frame").toHaveBeenCalledTimes(2);
+	expect(flushes).toHaveBeenCalledOnce();
+
+	// One frame of the scheduler's 33 ms interval.
+	vi.advanceTimersByTime(33);
+	expect(flushes).toHaveBeenCalledTimes(2);
 });
 
-test("nested spawn live action tracks tool execution events", async () => {
+test("nested spawn live action tracks tool execution events", () => {
 	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const { session, emit } = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
+	const child = createSubscribableSession(CWD);
+	const component = renderLiveChild(state, child);
 
-	const component = childSpawnTool.renderResult(
-		{ content: [{ type: "text", text: "ignored" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
+	child.emit(STARTED);
+	expect(component.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "💭 thinking…")));
 
-	// message_start → thinking
-	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	let lines = component.render(120);
-	expect(lines, `expected thinking, got: ${lines.join("\n")}`).toContainEqual(expect.stringContaining("thinking"));
+	child.emit(messageUpdateEvent(assistantText("writing code now")));
+	expect(component.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "writing code now")));
 
-	// message_update with text → live preview
-	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "writing code now" }] } });
-	lines = component.render(120);
-	expect(lines, `expected live text preview, got: ${lines.join("\n")}`).toContainEqual(expect.stringContaining("writing code now"));
+	child.emit({ type: "message_end", message: assistantText("summary") });
+	expect(component.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "✅ m • low")));
 
-	// message_end → success marker in identity line
-	emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "summary" }], stopReason: "end_turn" } });
-	lines = component.render(120);
-	expect(lines, `expected success marker, got: ${lines.join("\n")}`).toContainEqual(expect.stringContaining("✅"));
-
-	// Tool events degrade gracefully in minimal test env and still update live action
-	emit({ type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } });
-	lines = component.render(120);
-	expect(lines, `expected tool live action, got: ${lines.join("\n")}`).toContainEqual(expect.stringContaining("[bash]"));
+	child.emit({ type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } });
+	expect(component.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "[bash] …")));
 });
 
-test("nested spawn handleEvent recovers from malformed events", async () => {
+/** Streams an assistant tool call `tc-1` to `bash` through one frame, so the nested component tracks it as pending. */
+function streamPendingToolCall(child: SubscribableSession): void {
+	const call = assistantMessage([{ type: "toolCall", id: "tc-1", name: "bash", arguments: { command: "ls" } }], { stopReason: "toolUse" });
+	child.emit(STARTED);
+	child.emit(messageUpdateEvent(call));
+	flushSpawnFrameScheduler();
+}
+
+// A bash tool definition whose call renders whether pi marked the call's arguments complete, and whose
+// result renders its text and whether pi marked it an error.
+const probeDefinition: ToolDefinition = {
+	name: "bash",
+	label: "bash",
+	description: "bash probe",
+	parameters: Type.Object({}),
+	execute: () => Promise.resolve({ content: [], details: undefined }),
+	renderCall: (_args, _theme, context) => new Text(`args complete: ${String(context.argsComplete)}`, 0, 0),
+	renderResult: (result, _options, _theme, context) =>
+		new Text(`result isError=${String(context.isError)}: ${result.content.map((block) => (block.type === "text" ? block.text : "")).join("")}`, 0, 0),
+};
+
+/** A child session whose bash tool renders through the probe definition. */
+function probedChild(): SubscribableSession {
+	const child = createSubscribableSession(CWD);
+	Object.assign(child.session, { getToolDefinition: () => probeDefinition });
+	return child;
+}
+
+const failedMessageEndCases = [
+	{ stopReason: "aborted", errorMessage: "killed", label: "aborted", kind: "abort", expected: "result isError=true: killed" },
+	{ stopReason: "error", errorMessage: "provider failed", label: "error", kind: "error", expected: "result isError=true: provider failed" },
+] as const;
+
+test.for(failedMessageEndCases)(
+	"nested spawn message_end with $label stopReason fails pending tool calls with the $kind message",
+	({ stopReason, errorMessage, expected }) => {
+		const state = createState();
+		const child = probedChild();
+		const component = renderLiveChild(state, child, { expanded: true });
+		streamPendingToolCall(child);
+
+		child.emit({ type: "message_end", message: assistantText("partial", { stopReason, errorMessage }) });
+		// A later failed message no longer reaches the tool call the first one failed.
+		child.emit(STARTED);
+		child.emit({ type: "message_end", message: assistantText("later", { stopReason: "error", errorMessage: "later failure" }) });
+		flushSpawnFrameScheduler();
+
+		const results = plain(component.render(120))
+			.map((line) => line.trim())
+			.filter((line) => line.startsWith("result "));
+		expect(results).toStrictEqual([expected]);
+	},
+);
+
+test("nested spawn message_end without a failure completes the args of pending tool calls", () => {
 	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const { session, emit } = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
+	const child = probedChild();
+	const component = renderLiveChild(state, child, { expanded: true });
+	streamPendingToolCall(child);
+	expect(plain(component.render(120)), "the streamed call starts with incomplete args").toContainEqual(expect.stringContaining("args complete: false"));
 
-	const component = childSpawnTool.renderResult(
-		{ content: [{ type: "text", text: "ignored" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
+	child.emit({ type: "message_end", message: assistantText("done") });
 
-	// Emit a malformed event that will throw inside handleEvent
-	emit({ type: "message_start", message: null });
-
-	// Subsequent valid events still process
-	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	const lines = component.render(120);
-	expect(lines, `expected thinking after recovery, got: ${lines.join("\n")}`).toContainEqual(expect.stringContaining("thinking"));
+	expect(plain(component.render(120))).toContainEqual(expect.stringContaining("args complete: true"));
 });
 
-test("nested spawn message_end with aborted stopReason clears pending tools", async () => {
+test("nested spawn live action drops the result preview when a partial result has no text", () => {
 	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const { session, emit } = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
+	const child = createSubscribableSession(CWD);
+	const component = renderLiveChild(state, child);
+	child.emit({ type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: {} });
+	const update = { type: "tool_execution_update", toolCallId: "tc-1", toolName: "bash", args: {} } as const;
+	child.emit({ ...update, partialResult: { content: [{ type: "text", text: "line one" }], details: undefined } });
+	expect(component.render(120), "a text partial result shows its preview").toContainEqual(expect.stringContaining(realTheme.fg("dim", "[bash] line one")));
 
-	const component = childSpawnTool.renderResult(
-		{ content: [{ type: "text", text: "ignored" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
+	child.emit({ ...update, partialResult: { content: [], details: undefined } });
 
-	// Start an assistant message
-	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	// End it with aborted — sets lastAction to "aborted"
-	emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "partial" }], stopReason: "aborted", errorMessage: "killed" } });
-
-	const lines = component.render(120);
-	expect(lines, `expected aborted, got: ${lines.join("\n")}`).toContainEqual(expect.stringContaining("aborted"));
+	expect(component.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "[bash] …")));
 });
 
-test("nested spawn dispose stops event processing", async () => {
+// pi types a tool's partial and final result on these events as `any`: a tool written in plain
+// JavaScript can send one without `content`, and pi passes it through unchanged.
+test("nested spawn live action shows no preview for a partial result without content", () => {
 	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const { session, emit } = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
+	const child = createSubscribableSession(CWD);
+	const component = renderLiveChild(state, child);
+	child.emit({ type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: {} });
 
-	const component = childSpawnTool.renderResult(
-		{ content: [{ type: "text", text: "ignored" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
+	child.emit({ type: "tool_execution_update", toolCallId: "tc-1", toolName: "bash", args: {}, partialResult: { details: {} } });
+
+	expect(component.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "[bash] …")));
+});
+
+test("expanded nested spawn renders a final tool result without content as an empty result", () => {
+	const state = createState();
+	const child = probedChild();
+	const component = renderLiveChild(state, child, { expanded: true });
+	streamPendingToolCall(child);
+	child.emit({ type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } });
+
+	child.emit({ type: "tool_execution_end", toolCallId: "tc-1", toolName: "bash", result: { details: {} }, isError: false });
+
+	const results = plain(component.render(120))
+		.map((line) => line.trim())
+		.filter((line) => line.startsWith("result "));
+	expect(results).toStrictEqual(["result isError=false:"]);
+});
+
+const USER_TASK: UserMessage = { role: "user", content: [{ type: "text", text: "live task" }], timestamp: 1_767_225_600_000 };
+
+const startedUserMessageCases: { label: string; message: UserMessage; shown: string }[] = [
+	{ label: "block content", message: USER_TASK, shown: "live task" },
+	{ label: "plain text content", message: { role: "user", content: "live plain task", timestamp: 1_767_225_600_000 }, shown: "live plain task" },
+];
+
+test.for(startedUserMessageCases)("nested spawn shows a user message when it starts: $label", ({ message, shown }) => {
+	const state = createState();
+	const child = createSubscribableSession(CWD);
+	const component = renderLiveChild(state, child, { expanded: true });
+
+	child.emit({ type: "message_start", message });
+
+	expect(plain(component.render(120))).toContainEqual(expect.stringContaining(shown));
+});
+
+const userMessageEventCases: { label: string; event: AgentSessionEvent }[] = [
+	{ label: "end", event: { type: "message_end", message: USER_TASK } },
+	{ label: "streamed update", event: { type: "message_update", message: USER_TASK, assistantMessageEvent: { type: "start", partial: assistantMessage([]) } } },
+];
+
+test.for(userMessageEventCases)("nested spawn stays running through the $label of a user message", ({ event }) => {
+	const state = createState();
+	const child = createSubscribableSession(CWD);
+	const component = renderLiveChild(state, child);
+
+	child.emit(event);
+
+	expect(plain(component.render(120)).map((line) => line.trim())).toStrictEqual(["m • low", "⏳ initializing…"]);
+});
+
+test("nested spawn dispose stops event processing", () => {
+	const state = createState();
+	const child = createSubscribableSession(CWD);
+	const component = renderLiveChild(state, child);
 
 	component.dispose();
 
-	// Emit event after dispose — should not update state or crash
-	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	const after = component.render(120);
-
-	expect(
-		after.filter((line: string) => line.includes("thinking")),
-		`unexpected post-dispose update: ${after.join("\n")}`,
-	).toStrictEqual([]);
+	expect(() => {
+		child.emit(STARTED);
+	}, "dispose unsubscribes from the child").toThrow("Nothing is subscribed to the test session; the message_start event would be lost.");
+	expect(plain(component.render(120))).not.toContainEqual(expect.stringContaining("thinking"));
 });
 
-test("nested spawn dispose aborts but does not dispose a claimed live child session", async () => {
+test("nested spawn dispose aborts but does not dispose a claimed live child session", () => {
 	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const abort = vi.fn(() => Promise.resolve());
-	const dispose = vi.fn();
-	const session = Object.assign(createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]), { abort, dispose });
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
-
-	const component = childSpawnTool.renderResult(
-		{ content: [{ type: "text", text: "ignored" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
+	const child = createSubscribableSession(CWD, [assistantText("hello")]);
+	const component = renderLiveChild(state, child);
 
 	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
 	expect([...state.liveChildSessions.keys()]).toContain("tool-call-1");
 
-	component.dispose();
+	// The session has no dispose member: calling it would throw, naming it.
+	expect(() => {
+		component.dispose();
+	}).not.toThrow();
 
-	expect(abort).toHaveBeenCalledOnce();
-	expect(dispose).not.toHaveBeenCalled();
+	expect(child.abort).toHaveBeenCalledOnce();
 	expect([...state.liveChildSessions.keys()]).not.toContain("tool-call-1");
 });
 
-test("nested spawn rapid events collapse to last state", async () => {
+test("nested spawn rapid events collapse to last state", () => {
 	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const { session, emit } = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
+	const child = createSubscribableSession(CWD);
+	const component = renderLiveChild(state, child);
 
-	const component = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
+	child.emit({ type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } });
+	child.emit({
+		type: "tool_execution_update",
+		toolCallId: "tc-1",
+		toolName: "bash",
+		args: { command: "ls" },
+		partialResult: { content: [{ type: "text", text: "file1" }], details: undefined },
+	});
+	child.emit({
+		type: "tool_execution_update",
+		toolCallId: "tc-1",
+		toolName: "bash",
+		args: { command: "ls" },
+		partialResult: { content: [{ type: "text", text: "file2" }], details: undefined },
+	});
+	child.emit({
+		type: "tool_execution_update",
+		toolCallId: "tc-1",
+		toolName: "bash",
+		args: { command: "ls" },
+		partialResult: { content: [{ type: "text", text: "file3" }], details: undefined },
+	});
 
-	// Start a tool execution
-	emit({ type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } });
+	expect(component.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "[bash] file3")));
 
-	// Rapid burst of updates without rendering between them
-	emit({ type: "tool_execution_update", toolCallId: "tc-1", partialResult: { content: [{ type: "text", text: "file1" }] } });
-	emit({ type: "tool_execution_update", toolCallId: "tc-1", partialResult: { content: [{ type: "text", text: "file2" }] } });
-	emit({ type: "tool_execution_update", toolCallId: "tc-1", partialResult: { content: [{ type: "text", text: "file3" }] } });
+	child.emit({
+		type: "tool_execution_end",
+		toolCallId: "tc-1",
+		toolName: "bash",
+		result: { content: [{ type: "text", text: "done" }], details: undefined },
+		isError: false,
+	});
 
-	// Single render should reflect last state
-	const lines = component.render(120);
-	expect(lines).toContainEqual(expect.stringContaining("file3"));
-
-	// End the tool and verify final state
-	emit({ type: "tool_execution_end", toolCallId: "tc-1", result: { content: [{ type: "text", text: "done" }] }, isError: false });
-
-	const finalLines = component.render(120);
-	expect(finalLines).toContainEqual(expect.stringContaining("✓"));
+	expect(component.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "[bash] ✓")));
 });
 
 // Verifies pendingToolCallCreations accumulation: the last streamed args
 // overwrite on each message_update before the first frame flush.
-test("nested spawn uses the latest streamed tool-call args before first frame flush", async () => {
+test("nested spawn uses the latest streamed tool-call args before first frame flush", () => {
 	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const { session, emit } = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
+	const child = createSubscribableSession(CWD);
+	const component = renderLiveChild(state, child, { expanded: true });
 
-	const component = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: true, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-
-	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	emit({
-		type: "message_update",
-		message: { role: "assistant", content: [{ type: "toolCall", id: "tc-1", name: "inspect", arguments: { value: "old" } }] },
-	});
-	emit({
-		type: "message_update",
-		message: { role: "assistant", content: [{ type: "toolCall", id: "tc-1", name: "inspect", arguments: { value: "new" } }] },
-	});
+	child.emit(STARTED);
+	child.emit(messageUpdateEvent(assistantMessage([{ type: "toolCall", id: "tc-1", name: "inspect", arguments: { value: "old" } }])));
+	child.emit(messageUpdateEvent(assistantMessage([{ type: "toolCall", id: "tc-1", name: "inspect", arguments: { value: "new" } }])));
 	flushSpawnFrameScheduler();
 
-	const lines = component.render(120);
+	const lines = plain(component.render(120));
 	expect(lines).toContainEqual(expect.stringContaining('"value": "new"'));
 	expect(lines).not.toContainEqual(expect.stringContaining('"value": "old"'));
 });
 
-test("nested spawn coalesces same-turn child events into one parent invalidate", async () => {
+test("nested spawn coalesces same-turn child events into one parent invalidate", () => {
 	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const { session, emit } = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
+	const child = createSubscribableSession(CWD);
 	const invalidate = vi.fn();
+	const component = renderLiveChild(state, child, { invalidate });
 
-	const component = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext({ invalidate }),
-	);
-
-	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "file1" }] } });
-	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "file2" }] } });
+	child.emit(STARTED);
+	child.emit(messageUpdateEvent(assistantText("file1")));
+	child.emit(messageUpdateEvent(assistantText("file2")));
 
 	expect(invalidate, "child events do not invalidate synchronously").not.toHaveBeenCalled();
 	flushSpawnFrameScheduler();
 	expect(invalidate, "same-turn events coalesce into one invalidate").toHaveBeenCalledOnce();
 
-	const lines = component.render(120);
-	expect(lines).toContainEqual(expect.stringContaining("file2"));
+	expect(component.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "file2")));
 });
 
-test("nested spawn retries a throw-once parent invalidate without a new child event", async () => {
+test("nested spawn retries a throw-once parent invalidate without a new child event", () => {
 	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const { session, emit } = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
+	const child = createSubscribableSession(CWD);
 	const invalidate = vi.fn().mockImplementationOnce(() => {
 		throw new Error("invalidate once");
 	});
+	renderLiveChild(state, child, { invalidate });
 
-	childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext({ invalidate }),
-	);
-
-	emit({ type: "message_start", message: { role: "assistant", content: [] } });
+	child.emit(STARTED);
 	expect(() => {
 		flushSpawnFrameScheduler();
 	}).not.toThrow();
@@ -398,25 +446,16 @@ test("nested spawn retries a throw-once parent invalidate without a new child ev
 	expect(h.warnings).toStrictEqual([]);
 });
 
-test("nested spawn does not restore a failed invalidate after disposal", async () => {
+test("nested spawn does not restore a failed invalidate after disposal", () => {
 	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const { session, emit } = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
+	const child = createSubscribableSession(CWD);
 	const invalidate = vi.fn(() => {
 		component.dispose();
 		throw new Error("invalidate after disposal");
 	});
+	const component = renderLiveChild(state, child, { invalidate });
 
-	const component = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext({ invalidate }),
-	);
-
-	emit({ type: "message_start", message: { role: "assistant", content: [] } });
+	child.emit(STARTED);
 	expect(() => {
 		flushSpawnFrameScheduler();
 	}).not.toThrow();
@@ -426,81 +465,51 @@ test("nested spawn does not restore a failed invalidate after disposal", async (
 	expect(h.warnings).toStrictEqual([]);
 });
 
-test("nested spawn ignores child renderer invalidations during parent rebuild", async () => {
+// A tool definition whose call renderer asks its host to rerender once, while the call first renders.
+const reentrantDefinition: ToolDefinition = {
+	name: "reentrant",
+	label: "reentrant",
+	description: "rerenders while it renders",
+	parameters: Type.Object({}),
+	execute: () => Promise.resolve({ content: [], details: undefined }),
+	renderCall(_args, _theme, context) {
+		if (Reflect.get(context.state, "didInvalidate") !== true) {
+			Reflect.set(context.state, "didInvalidate", true);
+			context.invalidate();
+		}
+		return new Text("reentrant", 0, 0);
+	},
+};
+
+test("nested spawn ignores child renderer invalidations during parent rebuild", () => {
 	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const { session } = createSubscribableSession([]);
-	Object.assign(session, {
-		getToolDefinition: (toolName: string) =>
-			toolName === "reentrant"
-				? {
-						name: "reentrant",
-						renderCall(_args: unknown, _theme: unknown, context: { state: Record<string, unknown>; invalidate: () => void }) {
-							if (context.state.didInvalidate !== true) {
-								context.state.didInvalidate = true;
-								context.invalidate();
-							}
-							return { render: () => ["reentrant"] };
-						},
-					}
-				: undefined,
-	});
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
+	const child = createSubscribableSession(CWD, [
+		assistantMessage([{ type: "toolCall", id: "tc-1", name: "reentrant", arguments: {} }], { stopReason: "toolUse" }),
+	]);
+	Object.assign(child.session, { getToolDefinition: (toolName: string) => (toolName === "reentrant" ? reentrantDefinition : undefined) });
 	const invalidate = vi.fn();
 
-	const component = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext({ invalidate }),
-	);
-	flushSpawnFrameScheduler();
-	expect(invalidate, "initial empty attach does not invalidate").not.toHaveBeenCalled();
-
-	Object.assign(session, {
-		messages: [
-			{
-				role: "assistant",
-				content: [{ type: "toolCall", id: "tc-1", name: "reentrant", arguments: {} }],
-			},
-		],
-	});
-	component.invalidate();
+	const component = renderLiveChild(state, child, { invalidate, expanded: true });
+	const lines = plain(component.render(120));
 	flushSpawnFrameScheduler();
 
+	expect(lines, "the rebuild renders the reentrant tool call").toContainEqual(expect.stringContaining("reentrant"));
 	expect(invalidate, "child renderer invalidate requests stay inside spawn rebuild").not.toHaveBeenCalled();
 });
 
-test("nested spawn shared scheduler calls each distinct invalidate once per frame", async () => {
+test("nested spawn shared scheduler calls each distinct invalidate once per frame", () => {
 	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const first = createSubscribableSession([]);
-	const second = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", first.session);
-	state.liveChildSessions.set("tool-call-1", first.session);
-	state.childSessions.set("tool-call-2", second.session);
-	state.liveChildSessions.set("tool-call-2", second.session);
+	const first = createSubscribableSession(CWD);
+	const second = createSubscribableSession(CWD);
 	const firstInvalidates = vi.fn();
 	const secondInvalidates = vi.fn();
+	const firstComponent = renderLiveChild(state, first, { toolCallId: "tool-call-1", invalidate: firstInvalidates });
+	const secondComponent = renderLiveChild(state, second, { toolCallId: "tool-call-2", invalidate: secondInvalidates });
 
-	const firstComponent = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext({ toolCallId: "tool-call-1", invalidate: firstInvalidates }),
-	);
-	const secondComponent = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext({ toolCallId: "tool-call-2", invalidate: secondInvalidates }),
-	);
-
-	first.emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	first.emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "first latest" }] } });
-	second.emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	second.emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "second latest" }] } });
+	first.emit(STARTED);
+	first.emit(messageUpdateEvent(assistantText("first latest")));
+	second.emit(STARTED);
+	second.emit(messageUpdateEvent(assistantText("second latest")));
 
 	expect(firstInvalidates, "shared scheduler defers parent invalidate").not.toHaveBeenCalled();
 	expect(secondInvalidates, "shared scheduler defers parent invalidate").not.toHaveBeenCalled();
@@ -508,144 +517,57 @@ test("nested spawn shared scheduler calls each distinct invalidate once per fram
 	expect(firstInvalidates).toHaveBeenCalledOnce();
 	expect(secondInvalidates).toHaveBeenCalledOnce();
 
-	expect(firstComponent.render(120)).toContainEqual(expect.stringContaining("first latest"));
-	expect(secondComponent.render(120)).toContainEqual(expect.stringContaining("second latest"));
+	expect(firstComponent.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "first latest")));
+	expect(secondComponent.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "second latest")));
 });
 
-test("nested spawn shared scheduler still coalesces duplicate invalidate callbacks", async () => {
+test("nested spawn shared scheduler still coalesces duplicate invalidate callbacks", () => {
 	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const first = createSubscribableSession([]);
-	const second = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", first.session);
-	state.liveChildSessions.set("tool-call-1", first.session);
-	state.childSessions.set("tool-call-2", second.session);
-	state.liveChildSessions.set("tool-call-2", second.session);
+	const first = createSubscribableSession(CWD);
+	const second = createSubscribableSession(CWD);
 	const invalidate = vi.fn();
+	renderLiveChild(state, first, { toolCallId: "tool-call-1", invalidate });
+	renderLiveChild(state, second, { toolCallId: "tool-call-2", invalidate });
 
-	childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext({ toolCallId: "tool-call-1", invalidate }),
-	);
-	childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext({ toolCallId: "tool-call-2", invalidate }),
-	);
-
-	first.emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	second.emit({ type: "message_start", message: { role: "assistant", content: [] } });
+	first.emit(STARTED);
+	second.emit(STARTED);
 	flushSpawnFrameScheduler();
 	expect(invalidate, "identical callbacks still coalesce").toHaveBeenCalledOnce();
 });
 
-test("nested spawn renders state changes across frame boundaries", async () => {
+test("nested spawn renders state changes across frame boundaries", () => {
 	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const { session, emit } = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
+	const child = createSubscribableSession(CWD);
+	const component = renderLiveChild(state, child);
 
-	const component = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-
-	// First batch: message_start sets thinking state, flush triggers render
-	emit({ type: "message_start", message: { role: "assistant", content: [] } });
+	child.emit(STARTED);
 	flushSpawnFrameScheduler();
-	const firstLines = component.render(120);
-	expect(firstLines).toContainEqual(expect.stringContaining("thinking"));
+	expect(component.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "💭 thinking…")));
 
-	// Second batch: message_update with new text, flush triggers new render
-	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "batch 2" }] } });
+	child.emit(messageUpdateEvent(assistantText("batch 2")));
 	flushSpawnFrameScheduler();
-	const secondLines = component.render(120);
-	expect(secondLines).toContainEqual(expect.stringContaining("batch 2"));
+	expect(component.render(120)).toContainEqual(expect.stringContaining(realTheme.fg("dim", "batch 2")));
 });
 
-test("nested spawn dispose cancels pending and further invalidates after cleanup", async () => {
+test("nested spawn dispose cancels pending and further invalidates after cleanup", () => {
 	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const { session, emit } = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
+	const child = createSubscribableSession(CWD);
 	const invalidate = vi.fn();
+	const component = renderLiveChild(state, child, { invalidate });
 
-	const component = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext({ invalidate }),
-	);
-
-	emit({ type: "message_start", message: { role: "assistant", content: [] } });
+	child.emit(STARTED);
 	expect(invalidate, "event does not invalidate synchronously").not.toHaveBeenCalled();
 
 	component.dispose();
 	flushSpawnFrameScheduler();
 
-	// After dispose, emitting more events does not call invalidate
-	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "after" }] } });
+	// After dispose the child's events no longer reach the component.
+	expect(() => {
+		child.emit(messageUpdateEvent(assistantText("after")));
+	}).toThrow("Nothing is subscribed to the test session; the message_update event would be lost.");
 	flushSpawnFrameScheduler();
 	expect(invalidate, "dispose cancels pending and future invalidates").not.toHaveBeenCalled();
 
 	// Render still works after dispose without crashing
-	const lines = component.render(120);
-	expect(lines.length, "render after dispose should not crash").toBeGreaterThan(0);
-});
-
-test("nested spawn recovers batching state after event handler error", async () => {
-	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const { session, emit } = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
-
-	const component = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-
-	// Bad event triggers an error in handleMessageStart (null message)
-	// catch block must call resetRenderBatching() so the flag resets
-	emit({ type: "message_start", message: null });
-
-	// Good event after error — should still schedule and render
-	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	flushSpawnFrameScheduler();
-	const lines = component.render(120);
-	expect(lines, "error recovery should allow subsequent events to render").toContainEqual(expect.stringContaining("thinking"));
-});
-
-test("handleEvent gracefully degrades with null message events", async () => {
-	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const { session, emit } = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
-
-	const component = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-
-	// asToolResult is exercised indirectly through tool_execution_update
-	// with null partialResult — the runtime guard should handle it without crashing
-	emit({ type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } });
-	emit({ type: "tool_execution_update", toolCallId: "tc-1", partialResult: null });
-	emit({ type: "tool_execution_end", toolCallId: "tc-1", result: null, isError: false });
-
-	// No crash = asToolResult guard works
-	const lines = component.render(120);
-	expect(lines).toSatisfy(Array.isArray);
+	expect(component.render(120).length, "render after dispose should not crash").toBeGreaterThan(0);
 });

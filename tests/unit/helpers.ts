@@ -22,25 +22,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import os from "node:os";
 import { test as base, expect, vi } from "vitest";
-import { assertPresent, isRecord } from "../assertions.js";
+import { isRecord } from "../assertions.js";
 import { AGENT_DIR_ENV_KEY } from "../paths.js";
 import { createTestHost, loadTestKeybindings, type TestPI } from "./test-host.js";
 
 export const theme = createTheme({
 	fg: (_name: string, text: string) => text,
 	bold: (text: string) => text,
-	// No `bg`: renderers that find none skip the shell background.
-	bg: undefined,
 });
-
-export const EMPTY_CHILD_USAGE = {
-	input: 0,
-	output: 0,
-	cacheRead: 0,
-	cacheWrite: 0,
-	totalTokens: 0,
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-};
 
 /** `value` as a record; throws, naming `what`, unless it is an object. */
 export function recordOf(value: unknown, what: string): Record<string, unknown> {
@@ -94,12 +83,6 @@ export function assertErrorResult(result: unknown, text: string, usage: unknown)
 	expect(result.details.outcome).toBe("error");
 	expect(result.usage).toStrictEqual(usage);
 }
-
-export const ansiTheme = createTheme({
-	fg: (_name: string, text: string) => `\u001b[38;5;245m${text}\u001b[39m`,
-	bg: (_name: string, text: string) => `\u001b[48;5;236m${text}\u001b[49m`,
-	bold: (text: string) => text,
-});
 
 const HOME_ENV_KEYS = ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"] as const;
 
@@ -175,25 +158,6 @@ export function createSession(messages: unknown[]) {
 	} as unknown as import("@earendil-works/pi-coding-agent").AgentSession;
 }
 
-export function createSubscribableSession(messages: unknown[] = []) {
-	let handler: ((event: unknown) => void) | undefined;
-	return {
-		session: {
-			messages,
-			subscribe: (cb: (event: unknown) => void) => {
-				handler = cb;
-				return () => {
-					handler = undefined;
-				};
-			},
-			getToolDefinition: () => undefined,
-			sessionManager: { getCwd: () => process.cwd() },
-			abort: vi.fn(() => Promise.resolve()),
-		} as unknown as import("@earendil-works/pi-coding-agent").AgentSession,
-		emit: (event: unknown) => handler?.(event),
-	};
-}
-
 /** The entries of the first `turn_end` handler result that is not `undefined`; throws unless they are an array of objects. */
 export function boundaryEntries(results: unknown[]): Record<string, unknown>[] {
 	const { entries } = recordOf(
@@ -208,25 +172,6 @@ export function boundaryEntries(results: unknown[]): Record<string, unknown>[] {
 
 export function stripAnsi(text: string): string {
 	return stripTerminalSequences(text);
-}
-
-export function getRenderedLine(lines: string[], match: (plain: string) => boolean): string {
-	const line = lines.find((candidate) => match(stripAnsi(candidate)));
-	assertPresent(line);
-	expect(line).not.toBe("");
-	return line;
-}
-
-export function getLineContaining(lines: string[], text: string): string {
-	const line = lines.find((candidate) => candidate.includes(text));
-	assertPresent(line);
-	expect(line).not.toBe("");
-	return line;
-}
-
-export function assertShellBackgroundPreserved(line: string): void {
-	expect(line).not.toContain("\u001b[0m");
-	expect(line).toMatch(/\u001b\[48;/);
 }
 
 export function createDeferred() {
@@ -391,7 +336,7 @@ function guardedInstance<T extends object>(prototype: T, members: Partial<T>, un
 }
 
 /** A `Theme` whose members are `members`; reading any other `Theme` member throws, naming it. */
-export function createTheme(members: Partial<Theme>): Theme {
+function createTheme(members: Partial<Theme>): Theme {
 	return guardedInstance(Theme.prototype, members, (property) => new Error(`theme.${property} is not stubbed in this test theme; add it to the members.`));
 }
 

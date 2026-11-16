@@ -15,7 +15,7 @@
  *   rate, keeping the main thread responsive.
  */
 
-import type { StopReason, TextContent } from "@earendil-works/pi-ai";
+import type { StopReason, TextContent, UserMessage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import {
 	AssistantMessageComponent,
@@ -158,9 +158,6 @@ function normalizeSpawnResultDetails(value: unknown): SpawnResultDetails | undef
 			details.stats = stats;
 		}
 	}
-	if (typeof value.statsUnavailable === "boolean") {
-		details.statsUnavailable = value.statsUnavailable;
-	}
 	return details;
 }
 
@@ -208,19 +205,6 @@ function renderPromptPreview(prompt: string, expanded: boolean): { shown: string
 	};
 }
 
-/**
- * Safe wrapper around keyHint().
- * keyHint() may throw when the TUI keybinding registry isn't initialized
- * (e.g., during tests or headless mode). Returns the fallback in that case.
- */
-function safeKeyHint(action: string, fallback: string): string {
-	try {
-		return keyHint(action as keyof import("@earendil-works/pi-tui").Keybindings, fallback);
-	} catch {
-		return fallback;
-	}
-}
-
 function equalStats(a?: Record<string, number>, b?: Record<string, number>): boolean {
 	if (a === b) {
 		return true;
@@ -257,20 +241,16 @@ function padVisibleWidth(text: string, width: number): string {
 	return vw >= width ? text : text + " ".repeat(width - vw);
 }
 
-function getShellBackground(theme: Theme | undefined, outcome: SpawnOutcome): ((text: string) => string) | undefined {
-	if (!theme || typeof theme.bg !== "function") {
-		return undefined;
-	}
+function getShellBackground(theme: Theme, outcome: SpawnOutcome): (text: string) => string {
 	const bgName = outcome === "success" ? "toolSuccessBg" : outcome === "error" || outcome === "aborted" ? "toolErrorBg" : "toolPendingBg";
 	return (text: string) => theme.bg(bgName, text);
 }
 
-function wrapSpawnShell(lines: string[], width: number, theme: Theme | undefined, outcome: SpawnOutcome, expanded: boolean): string[] {
+function wrapSpawnShell(lines: string[], width: number, theme: Theme, outcome: SpawnOutcome, expanded: boolean): string[] {
 	const shellWidth = Math.max(1, width);
 	const innerWidth = Math.max(1, shellWidth - SPAWN_SHELL_PADDING_X * 2);
 	const paddingY = expanded ? SPAWN_SHELL_PADDING_Y : 0;
-	const bg = getShellBackground(theme, outcome);
-	const fill = (text: string) => (bg ? bg(text) : text);
+	const fill = getShellBackground(theme, outcome);
 	const blank = fill(" ".repeat(shellWidth));
 	const wrapped = lines.map((line) => fill(`${" ".repeat(SPAWN_SHELL_PADDING_X)}${padVisibleWidth(line, innerWidth)}${" ".repeat(SPAWN_SHELL_PADDING_X)}`));
 	return [...Array.from({ length: paddingY }, () => blank), ...(wrapped.length > 0 ? wrapped : [blank]), ...Array.from({ length: paddingY }, () => blank)];
@@ -297,9 +277,6 @@ function formatCollapsedStats(details: SpawnResultDetails): { text: string; colo
 			text: `tok ${s.inputTokens ?? "?"}/${s.outputTokens ?? "?"} · ${s.turns ?? "?"}t · $${costStr}${details.truncated ? " · trunc" : ""}`,
 			color: "dim",
 		};
-	}
-	if (details.statsUnavailable === true) {
-		return { text: "stats unavailable", color: "muted" };
 	}
 	return undefined;
 }
@@ -484,7 +461,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		},
 	};
 	private details?: SpawnResultDetails;
-	private nestTheme?: Theme;
+	private nestTheme: Theme;
 	private ownedToolCallId?: string;
 	private state?: SchematicState;
 	private attachedChildSessionEpoch?: number;
@@ -509,6 +486,11 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 	private renderQueued = false;
 	private renderScheduleToken = 0;
 	private queuedRenderToken?: number;
+
+	constructor(theme: Theme) {
+		super();
+		this.nestTheme = theme;
+	}
 
 	clearRenderCache(): void {
 		this.cachedWidth = undefined;
@@ -599,7 +581,14 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		}
 	}
 
-	setDetails(details: SpawnResultDetails, theme: Theme): void {
+	setTheme(theme: Theme): void {
+		if (this.nestTheme !== theme) {
+			this.nestTheme = theme;
+			this.clearRenderCache();
+		}
+	}
+
+	setDetails(details: SpawnResultDetails): void {
 		const prior = this.details;
 		const changed =
 			prior?.model !== details.model ||
@@ -607,22 +596,18 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			prior.truncated !== details.truncated ||
 			prior.outcome !== details.outcome ||
 			!equalRoute(prior.route, details.route) ||
-			!equalStats(prior.stats, details.stats) ||
-			prior.statsUnavailable !== details.statsUnavailable ||
-			this.nestTheme !== theme;
+			!equalStats(prior.stats, details.stats);
 		this.details = details;
-		this.nestTheme = theme;
 		this.liveOutcome = details.outcome;
 		if (changed) {
 			this.clearRenderCache();
 		}
 	}
 
-	setOutcome(outcome: SpawnOutcome, theme: Theme): void {
-		const changed = this.liveOutcome !== outcome || this.details?.outcome !== outcome || this.nestTheme !== theme;
+	setOutcome(outcome: SpawnOutcome): void {
+		const changed = this.liveOutcome !== outcome || this.details?.outcome !== outcome;
 		this.liveOutcome = outcome;
 		this.lastAction = getOutcomeStatusText(outcome) ?? this.lastAction;
-		this.nestTheme = theme;
 		if (this.details) {
 			this.details = { ...this.details, outcome };
 		}
@@ -648,16 +633,9 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		this.toolNames.clear();
 		this.clearRenderCache();
 		this.rebuildFromSession();
-		try {
-			this.unsubscribe =
-				typeof session.subscribe === "function"
-					? session.subscribe((event) => {
-							this.handleEvent(event);
-						})
-					: undefined;
-		} catch {
-			this.unsubscribe = undefined;
-		}
+		this.unsubscribe = session.subscribe((event) => {
+			this.handleEvent(event);
+		});
 	}
 
 	override invalidate(): void {
@@ -717,7 +695,6 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		};
 		this.clearRenderCache();
 		this.details = undefined;
-		this.nestTheme = undefined;
 		this.liveOutcome = "running";
 		this.toolNames.clear();
 		this.session = undefined;
@@ -758,13 +735,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 	flushPendingUpdates(): void {
 		// 1. Apply latest streaming message to the assistant component
 		if (this.pendingAssistantMessage && this.streamingComponent) {
-			try {
-				this.streamingComponent.updateContent(this.pendingAssistantMessage as unknown as import("@earendil-works/pi-ai").AssistantMessage);
-			} catch {
-				// updateContent reads the theme for error, abort and truncation notices, which throws before
-				// the theme is initialized; any other error is swallowed so one bad component cannot break the nested view.
-				this.resetStreamingComponent();
-			}
+			this.streamingComponent.updateContent(this.pendingAssistantMessage as unknown as import("@earendil-works/pi-ai").AssistantMessage);
 			this.pendingAssistantMessage = undefined;
 		}
 
@@ -779,11 +750,9 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 				}
 				const component = this.createToolComponent(info.name, info.id, info.args);
 				this.addToolComponent(component);
-				if (component) {
-					this.pendingTools.set(id, component);
-					if (streamingDone) {
-						component.setArgsComplete();
-					}
+				this.pendingTools.set(id, component);
+				if (streamingDone) {
+					component.setArgsComplete();
 				}
 			}
 			this.pendingToolCallCreations.clear();
@@ -803,32 +772,50 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 
 	// ── Component tree helpers ───────────────────────────────────────
 
-	private addToolComponent(component?: ToolExecutionComponent): void {
-		if (!component) {
-			return;
-		}
+	private addToolComponent(component: ToolExecutionComponent): void {
 		component.setExpanded(this.expanded);
 		component.setShowImages(this.showImages);
 		this.toolComponents.add(component);
 		this.addChild(component);
 	}
 
-	private createToolComponent(toolName: string, toolCallId: string, args: Record<string, unknown>): ToolExecutionComponent | undefined {
-		try {
-			return new ToolExecutionComponent(
-				toolName,
-				toolCallId,
-				args,
-				{ showImages: this.showImages },
-				this.session?.getToolDefinition(toolName),
-				this.fakeUi as unknown as TUI,
-				this.session?.sessionManager.getCwd() ?? process.cwd(),
-			);
-		} catch {
-			// The ToolExecutionComponent constructor reads the theme, which throws before the theme is
-			// initialized; a session whose getToolDefinition throws lands here too. Any other error is
-			// swallowed so one bad component cannot break the nested view.
-			return undefined;
+	private createToolComponent(toolName: string, toolCallId: string, args: Record<string, unknown>): ToolExecutionComponent {
+		return new ToolExecutionComponent(
+			toolName,
+			toolCallId,
+			args,
+			{ showImages: this.showImages },
+			this.session?.getToolDefinition(toolName),
+			this.fakeUi as unknown as TUI,
+			this.session?.sessionManager.getCwd() ?? process.cwd(),
+		);
+	}
+
+	private addUserMessage(content: UserMessage["content"]): void {
+		const text = (
+			typeof content === "string"
+				? content
+				: content
+						.filter((block): block is TextContent => block.type === "text")
+						.map((block) => block.text)
+						.join("")
+		).trim();
+		if (!text) {
+			return;
+		}
+		if (this.children.length > 0) {
+			this.addChild(new Spacer(1));
+		}
+		const skillBlock = parseSkillBlock(text);
+		if (skillBlock) {
+			const component = new SkillInvocationMessageComponent(skillBlock, this.markdownTheme);
+			component.setExpanded(this.expanded);
+			this.addChild(component);
+			if (skillBlock.userMessage !== undefined && skillBlock.userMessage !== "") {
+				this.addChild(new UserMessageComponent(skillBlock.userMessage, this.markdownTheme));
+			}
+		} else {
+			this.addChild(new UserMessageComponent(text, this.markdownTheme));
 		}
 	}
 
@@ -854,32 +841,6 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 					const component = new CustomMessageComponent(message as any, undefined, this.markdownTheme);
 					component.setExpanded(this.expanded);
 					this.addChild(component);
-				}
-				break;
-			}
-			case "user": {
-				const blocks = Array.isArray(message.content) ? message.content : [];
-				const text = blocks
-					.filter((block: { type: string; text?: string }) => block.type === "text" && typeof block.text === "string")
-					.map((block: { type: string; text?: string }) => block.text ?? "")
-					.join("\n")
-					.trim();
-				if (!text) {
-					break;
-				}
-				if (this.children.length > 0) {
-					this.addChild(new Spacer(1));
-				}
-				const skillBlock = parseSkillBlock(text);
-				if (skillBlock) {
-					const component = new SkillInvocationMessageComponent(skillBlock, this.markdownTheme);
-					component.setExpanded(this.expanded);
-					this.addChild(component);
-					if (skillBlock.userMessage !== undefined && skillBlock.userMessage !== "") {
-						this.addChild(new UserMessageComponent(skillBlock.userMessage, this.markdownTheme));
-					}
-				} else {
-					this.addChild(new UserMessageComponent(text, this.markdownTheme));
 				}
 				break;
 			}
@@ -913,7 +874,12 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		const finalOutcome = this.details?.outcome !== undefined && this.details.outcome !== "running";
 		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
 
-		for (const message of this.session.messages as SpawnChildMessage[]) {
+		for (const sessionMessage of this.session.messages) {
+			if (sessionMessage.role === "user") {
+				this.addUserMessage(sessionMessage.content);
+				continue;
+			}
+			const message = sessionMessage as SpawnChildMessage;
 			if (message.role === "assistant") {
 				const stopOutcome = getStopReasonOutcome(message.stopReason);
 				if (stopOutcome && !finalOutcome) {
@@ -927,9 +893,6 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 					}
 					const component = this.createToolComponent(content.name ?? "", content.id ?? "", content.arguments ?? {});
 					this.addToolComponent(component);
-					if (!component) {
-						continue;
-					}
 					if (stopOutcome) {
 						const errorMessage = getStopErrorText(stopOutcome, message.errorMessage);
 						component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
@@ -985,8 +948,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		const details = this.details;
 		const theme = this.nestTheme;
 		const outcome = this.liveOutcome;
-		// Theme may be undefined in tests or before setDetails — fall back to plain text
-		const color = (name: ThemeColor, text: string) => (theme ? theme.fg(name, text) : text);
+		const color = (name: ThemeColor, text: string) => theme.fg(name, text);
 
 		// Identity line — distinguishes nested spawns in collapsed view
 		if (details) {
@@ -1037,11 +999,10 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		const lines: string[] = [];
 
 		// Show identity header when expanded — anchors which nested session this is
-		const colorExpanded = (name: ThemeColor, text: string) => (this.nestTheme ? this.nestTheme.fg(name, text) : text);
 		// Expanded mode has no shell background — safe to color before truncation
 		if (this.details) {
 			const header = `${getOutcomeMarker(this.liveOutcome)}${formatSpawnIdentity(this.details)}`;
-			lines.push(leftPad + truncateToWidth(colorExpanded("dim", header), childWidth));
+			lines.push(leftPad + truncateToWidth(this.nestTheme.fg("dim", header), childWidth));
 		}
 
 		for (const child of this.children) {
@@ -1051,10 +1012,6 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			}
 		}
 		return lines;
-	}
-
-	private resetStreamingComponent(): void {
-		this.streamingComponent = undefined;
 	}
 
 	// ── Event handlers ───────────────────────────────────────────────
@@ -1076,22 +1033,20 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 	 */
 
 	private handleMessageStart(event: Extract<AgentSessionEvent, { type: "message_start" }>): void {
-		if (event.message.role === "custom" || event.message.role === "user") {
+		if (event.message.role === "user") {
+			this.addUserMessage(event.message.content);
+			return;
+		}
+		if (event.message.role === "custom") {
 			this.addMessageToChat(event.message as unknown as SpawnChildMessage);
 			return;
 		}
 		if (event.message.role === "assistant") {
 			this.liveOutcome = "running";
 			this.lastAction = "💭 thinking…";
-			try {
-				this.streamingComponent = new AssistantMessageComponent(undefined, false, this.markdownTheme, "Thinking...");
-				this.addChild(this.streamingComponent);
-				this.streamingComponent.updateContent(event.message);
-			} catch {
-				// updateContent reads the theme for error, abort and truncation notices, which throws before
-				// the theme is initialized; any other error is swallowed so one bad component cannot break the nested view.
-				this.resetStreamingComponent();
-			}
+			this.streamingComponent = new AssistantMessageComponent(undefined, false, this.markdownTheme, "Thinking...");
+			this.addChild(this.streamingComponent);
+			this.streamingComponent.updateContent(event.message);
 		}
 	}
 
@@ -1151,15 +1106,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		// Clear any pending streaming message (the end event is authoritative)
 		this.pendingAssistantMessage = undefined;
 
-		if (this.streamingComponent) {
-			try {
-				this.streamingComponent.updateContent(event.message);
-			} catch {
-				// updateContent reads the theme for error, abort and truncation notices, which throws before
-				// the theme is initialized; any other error is swallowed so one bad component cannot break the nested view.
-				this.resetStreamingComponent();
-			}
-		}
+		this.streamingComponent?.updateContent(event.message);
 		const stopOutcome = getStopReasonOutcome(event.message.stopReason);
 		if (stopOutcome) {
 			const errorMessage = getStopErrorText(stopOutcome, event.message.errorMessage);
@@ -1190,13 +1137,11 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		if (!component) {
 			component = this.createToolComponent(event.toolName, event.toolCallId, event.args ?? {});
 			this.addToolComponent(component);
-			if (component) {
-				this.pendingTools.set(event.toolCallId, component);
-			}
+			this.pendingTools.set(event.toolCallId, component);
 		}
 		this.toolNames.set(event.toolCallId, event.toolName);
 		this.lastAction = `[${event.toolName}] …`;
-		component?.markExecutionStarted();
+		component.markExecutionStarted();
 	}
 
 	/**
@@ -1252,61 +1197,54 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			return;
 		}
 
-		try {
-			switch (event.type) {
-				case "message_start":
-					this.handleMessageStart(event);
-					break;
-				case "message_update":
-					this.handleMessageUpdate(event);
-					break;
-				case "message_end":
-					this.handleMessageEnd(event);
-					break;
-				case "tool_execution_start":
-					this.handleToolExecutionStart(event);
-					break;
-				case "tool_execution_update":
-					this.handleToolExecutionUpdate(event);
-					break;
-				case "tool_execution_end":
-					this.handleToolExecutionEnd(event);
-					break;
-				// Of the session events, the component renders only message and
-				// tool-execution state, which these do not carry. Listing them keeps
-				// the switch exhaustive, so a new pi event type fails lint until it is
-				// handled or listed here.
-				case "agent_start":
-				case "agent_end":
-				case "agent_settled":
-				case "turn_start":
-				case "turn_end":
-				case "queue_update":
-				case "compaction_start":
-				case "compaction_end":
-				case "auto_retry_start":
-				case "auto_retry_end":
-				case "summarization_retry_scheduled":
-				case "summarization_retry_attempt_start":
-				case "summarization_retry_finished":
-				case "bash_execution_update":
-				case "entry_appended":
-				case "session_info_changed":
-				case "thinking_level_changed":
-					break;
-			}
-			// Per-event cache clear ensures render() returns fresh data if called
-			// between frame ticks. The frame scheduler also clears the cache during
-			// flush — this is intentionally redundant so the render cache is always
-			// correct for synchronous access (tests, in-between paints).
-			this.clearRenderCache();
-			this.scheduleRender();
-		} catch {
-			this.clearRenderCache();
-			this.resetRenderBatching();
-			// Prevent a single bad event from killing the subscription.
-			// The TUI degrades gracefully — stale content until next successful event.
+		switch (event.type) {
+			case "message_start":
+				this.handleMessageStart(event);
+				break;
+			case "message_update":
+				this.handleMessageUpdate(event);
+				break;
+			case "message_end":
+				this.handleMessageEnd(event);
+				break;
+			case "tool_execution_start":
+				this.handleToolExecutionStart(event);
+				break;
+			case "tool_execution_update":
+				this.handleToolExecutionUpdate(event);
+				break;
+			case "tool_execution_end":
+				this.handleToolExecutionEnd(event);
+				break;
+			// Of the session events, the component renders only message and
+			// tool-execution state, which these do not carry. Listing them keeps
+			// the switch exhaustive, so a new pi event type fails lint until it is
+			// handled or listed here.
+			case "agent_start":
+			case "agent_end":
+			case "agent_settled":
+			case "turn_start":
+			case "turn_end":
+			case "queue_update":
+			case "compaction_start":
+			case "compaction_end":
+			case "auto_retry_start":
+			case "auto_retry_end":
+			case "summarization_retry_scheduled":
+			case "summarization_retry_attempt_start":
+			case "summarization_retry_finished":
+			case "bash_execution_update":
+			case "entry_appended":
+			case "session_info_changed":
+			case "thinking_level_changed":
+				break;
 		}
+		// Per-event cache clear ensures render() returns fresh data if called
+		// between frame ticks. The frame scheduler also clears the cache during
+		// flush — this is intentionally redundant so the render cache is always
+		// correct for synchronous access (tests, in-between paints).
+		this.clearRenderCache();
+		this.scheduleRender();
 	}
 }
 
@@ -1333,7 +1271,7 @@ function renderSpawnCall(args: { prompt?: unknown; group?: unknown; thinking?: u
 	}
 	text += `\n${theme.fg("dim", shown)}`;
 	if (remaining > 0) {
-		text += theme.fg("muted", `\n... (${remaining} more lines, ${safeKeyHint("app.tools.expand", "to expand")})`);
+		text += theme.fg("muted", `\n... (${remaining} more lines, ${keyHint("app.tools.expand", "to expand")})`);
 	}
 	return new Text(text, SPAWN_SHELL_PADDING_X, SPAWN_SHELL_PADDING_Y, getShellBackground(theme, "running"));
 }
@@ -1358,25 +1296,26 @@ function renderSpawnResult(
 ): NestedAgentSessionComponent | Text {
 	const details = normalizeSpawnResultDetails(result.details);
 	const forcedError = context.isError === true && details?.outcome !== "aborted";
-	const component = context.lastComponent instanceof NestedAgentSessionComponent ? context.lastComponent : new NestedAgentSessionComponent();
+	const component = context.lastComponent instanceof NestedAgentSessionComponent ? context.lastComponent : new NestedAgentSessionComponent(theme);
+	component.setTheme(theme);
 	component.setRequestRender(context.invalidate);
 	component.setExpanded(expanded);
 	component.setShowImages(context.showImages);
 	if (details) {
-		component.setDetails(details, theme);
+		component.setDetails(details);
 	}
 	const child = state.childSessions.get(context.toolCallId);
 	if (child) {
 		component.attachSession(context.toolCallId, child, state);
 		if (forcedError) {
-			component.setOutcome("error", theme);
+			component.setOutcome("error");
 		}
 		state.childSessions.delete(context.toolCallId);
 		return component;
 	}
 	if (component.hasSession()) {
 		if (forcedError) {
-			component.setOutcome("error", theme);
+			component.setOutcome("error");
 		}
 		return component;
 	}
@@ -1407,9 +1346,9 @@ export { NestedAgentSessionComponent, renderSpawnCall, renderSpawnResult };
 // ── Test support ──────────────────────────────────────────────────────
 
 /**
- * Synchronously flush all pending spawn frame work.
- * Exported for tests.  Not needed in production — the frame timer handles
- * everything automatically.
+ * Synchronously flush all pending spawn frame work: the test hook that flushes the frame
+ * scheduler's debounce timer, so a test sees one frame's work without waiting for it.
+ * Production never calls it; the frame timer flushes on its own.
  *
  * Delegate through getSingletons() so that test harness swaps are respected.
  */

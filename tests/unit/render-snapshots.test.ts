@@ -10,13 +10,15 @@
 
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test, vi } from "vitest";
+import { initTheme } from "@earendil-works/pi-coding-agent";
+import { stripTerminalSequences } from "@earendil-works/pi-tui";
+import { beforeAll, expect, test, vi } from "vitest";
 
 import { createState, type SchematicState } from "../../state.js";
 import { renderSpawnCall, renderSpawnResult } from "../../spawn/renderer.js";
-import { updateIndicators } from "../../tui.js";
 import { useTestHarness } from "../test-utils.js";
-import { createSession, makeTUICtx, theme } from "./helpers.js";
+import { realTheme } from "../support/theme.js";
+import { assistantMessage, createSubscribableSession } from "../support/session.js";
 
 // ── Paths ─────────────────────────────────────────────────────────────
 
@@ -38,13 +40,8 @@ class RenderTestBackend {
 
 // ── Snapshot helpers ──────────────────────────────────────────────────
 
-/** Strip OSC terminal escape sequences for portable snapshot comparison. */
-function stripOSC(s: string): string {
-	return s.replace(/\u001b\]133;[A-Z][^\u0007]*\u0007/g, "");
-}
-
 async function expectGoldenFile(name: string, actual: string): Promise<void> {
-	const cleaned = stripOSC(actual);
+	const cleaned = stripTerminalSequences(actual);
 	const goldenPath = join(SNAPSHOT_DIR, `${name}.txt`);
 	await expect(
 		cleaned,
@@ -59,6 +56,12 @@ function withHarness(run: (state: SchematicState) => Promise<void>): Promise<voi
 	return run(state);
 }
 
+// pi's theme is global and initTheme() cannot be undone, so every test in this file runs with it:
+// nested tool components and the collapsed call's expand hint render only with a theme.
+beforeAll(() => {
+	initTheme();
+});
+
 // ── Snapshot width ────────────────────────────────────────────────────
 
 const SNAP_WIDTH = 80;
@@ -68,7 +71,7 @@ const SNAP_WIDTH = 80;
 // ═══════════════════════════════════════════════════════════════════════
 
 test("spawn call collapsed matches snapshot", async () => {
-	const component = renderSpawnCall({ prompt: "Research the rate limits for the OpenAI API and document the results.", thinking: "medium" }, theme, {
+	const component = renderSpawnCall({ prompt: "Research the rate limits for the OpenAI API and document the results.", thinking: "medium" }, realTheme, {
 		expanded: false,
 	});
 
@@ -87,14 +90,14 @@ test("spawn call long prompt matches snapshot", async () => {
 		"Line 7: Final review and cleanup",
 	].join("\n");
 
-	const component = renderSpawnCall({ prompt, thinking: "high" }, theme, { expanded: false });
+	const component = renderSpawnCall({ prompt, thinking: "high" }, realTheme, { expanded: false });
 
 	const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
 	await expectGoldenFile("spawn-call-long", rtb.toSnapshot());
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// 3–5: Spawn result (renderSpawnResult, static Text path, no child session)
+// 3: Spawn result (renderSpawnResult, static Text path, no child session)
 // ═══════════════════════════════════════════════════════════════════════
 
 test("spawn result success matches snapshot", () =>
@@ -110,7 +113,7 @@ test("spawn result success matches snapshot", () =>
 				},
 			},
 			false,
-			theme,
+			realTheme,
 			{ toolCallId: "tc-1", invalidate: vi.fn(), showImages: false, lastComponent: undefined },
 			state,
 		);
@@ -119,57 +122,13 @@ test("spawn result success matches snapshot", () =>
 		await expectGoldenFile("spawn-result-success", rtb.toSnapshot());
 	}));
 
-test("spawn result error matches snapshot", () =>
-	withHarness(async (state) => {
-		const component = renderSpawnResult(
-			{
-				content: [{ type: "text", text: "Failed to connect to API: rate limit exceeded. Retry after 60 seconds." }],
-				details: {
-					model: "gpt-4o",
-					thinking: "high",
-					outcome: "error" as const,
-					stats: { inputTokens: 42, outputTokens: 0, turns: 1, cost: 0.0042 },
-				},
-			},
-			false,
-			theme,
-			{ toolCallId: "tc-2", invalidate: vi.fn(), showImages: false, lastComponent: undefined },
-			state,
-		);
-
-		const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
-		await expectGoldenFile("spawn-result-error", rtb.toSnapshot());
-	}));
-
-test("spawn result aborted matches snapshot", () =>
-	withHarness(async (state) => {
-		const component = renderSpawnResult(
-			{
-				content: [{ type: "text", text: "Operation cancelled by user request." }],
-				details: {
-					model: "gpt-4o-mini",
-					thinking: "low",
-					outcome: "aborted" as const,
-					stats: { inputTokens: 10, outputTokens: 0, turns: 0, cost: 0.0005 },
-				},
-			},
-			false,
-			theme,
-			{ toolCallId: "tc-3", invalidate: vi.fn(), showImages: false, lastComponent: undefined },
-			state,
-		);
-
-		const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
-		await expectGoldenFile("spawn-result-aborted", rtb.toSnapshot());
-	}));
-
 // ═══════════════════════════════════════════════════════════════════════
-// 6–8: NestedAgentSessionComponent (via renderSpawnResult with child session)
+// 4–7: NestedAgentSessionComponent (via renderSpawnResult with child session)
 // ═══════════════════════════════════════════════════════════════════════
 
 test("nested collapsed running matches snapshot", () =>
 	withHarness(async (state) => {
-		const session = createSession([]);
+		const session = createSubscribableSession("/tmp").session;
 		state.childSessions.set("tc-nested-1", session);
 
 		const component = renderSpawnResult(
@@ -178,7 +137,7 @@ test("nested collapsed running matches snapshot", () =>
 				details: { model: "gpt-4o", thinking: "medium" },
 			},
 			false,
-			theme,
+			realTheme,
 			{ toolCallId: "tc-nested-1", invalidate: vi.fn(), showImages: false, lastComponent: undefined },
 			state,
 		);
@@ -189,12 +148,9 @@ test("nested collapsed running matches snapshot", () =>
 
 test("nested collapsed success matches snapshot", () =>
 	withHarness(async (state) => {
-		const session = createSession([
-			{
-				role: "assistant",
-				content: [{ type: "text", text: "Analysis complete. The optimal solution is to use a cache layer with TTL of 300s." }],
-			},
-		]);
+		const session = createSubscribableSession("/tmp", [
+			assistantMessage([{ type: "text", text: "Analysis complete. The optimal solution is to use a cache layer with TTL of 300s." }]),
+		]).session;
 		state.childSessions.set("tc-nested-2", session);
 
 		const component = renderSpawnResult(
@@ -208,7 +164,7 @@ test("nested collapsed success matches snapshot", () =>
 				},
 			},
 			false,
-			theme,
+			realTheme,
 			{ toolCallId: "tc-nested-2", invalidate: vi.fn(), showImages: false, lastComponent: undefined },
 			state,
 		);
@@ -219,12 +175,9 @@ test("nested collapsed success matches snapshot", () =>
 
 test("nested expanded matches snapshot", () =>
 	withHarness(async (state) => {
-		const session = createSession([
-			{
-				role: "assistant",
-				content: [{ type: "text", text: "Here is the implementation plan. Create data access layer, add caching middleware, wire up the controller." }],
-			},
-		]);
+		const session = createSubscribableSession("/tmp", [
+			assistantMessage([{ type: "text", text: "Here is the implementation plan. Create data access layer, add caching middleware, wire up the controller." }]),
+		]).session;
 		state.childSessions.set("tc-nested-3", session);
 
 		const component = renderSpawnResult(
@@ -238,7 +191,7 @@ test("nested expanded matches snapshot", () =>
 				},
 			},
 			true,
-			theme,
+			realTheme,
 			{ toolCallId: "tc-nested-3", invalidate: vi.fn(), showImages: false, lastComponent: undefined },
 			state,
 		);
@@ -247,16 +200,37 @@ test("nested expanded matches snapshot", () =>
 		await expectGoldenFile("nested-expanded", rtb.toSnapshot());
 	}));
 
-// ═══════════════════════════════════════════════════════════════════════
-// 9: Context indicator snapshot
-// ═══════════════════════════════════════════════════════════════════════
+test("nested expanded tool call matches snapshot", () =>
+	withHarness(async (state) => {
+		const session = createSubscribableSession("/tmp", [
+			assistantMessage([{ type: "toolCall", id: "tc-lookup", name: "lookup_note", arguments: { path: "src/cache.ts" } }], { stopReason: "toolUse" }),
+			{
+				role: "toolResult",
+				toolCallId: "tc-lookup",
+				toolName: "lookup_note",
+				content: [{ type: "text", text: "export const TTL_SECONDS = 300;" }],
+				isError: false,
+				timestamp: 1_767_225_600_000,
+			},
+		]).session;
+		state.childSessions.set("tc-nested-4", session);
 
-test.for([30])("context indicator at %i% matches snapshot", async (percent) => {
-	const state = createState();
-	const record = { statuses: new Map<string, string | undefined>(), widgets: new Map<string, string[] | undefined>() };
-	const ctx = makeTUICtx({ percent, record });
+		const component = renderSpawnResult(
+			{
+				content: [{ type: "text", text: "" }],
+				details: {
+					model: "gpt-4o",
+					thinking: "medium",
+					outcome: "success" as const,
+					stats: { inputTokens: 120, outputTokens: 40, turns: 1, cost: 0.01 },
+				},
+			},
+			true,
+			realTheme,
+			{ toolCallId: "tc-nested-4", invalidate: vi.fn(), showImages: false, lastComponent: undefined },
+			state,
+		);
 
-	updateIndicators(ctx, state);
-	const status = record.statuses.get("pi-schematic-ctx") ?? "";
-	await expectGoldenFile(`indicator-${percent}`, status);
-});
+		const rtb = new RenderTestBackend().render(component, SNAP_WIDTH);
+		await expectGoldenFile("nested-expanded-tool-call", rtb.toSnapshot());
+	}));

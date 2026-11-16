@@ -129,14 +129,8 @@
     }
   },
   "spawn/index.ts": {
-    "@typescript-eslint/no-unnecessary-condition": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 2
     },
     "no-unsafe-finally": {
       "count": 2
@@ -156,7 +150,7 @@
       "count": 3
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 9
+      "count": 8
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
@@ -234,9 +228,6 @@
       "count": 2
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 2
-    },
-    "no-control-regex": {
       "count": 1
     }
   },
@@ -349,11 +340,6 @@
       "count": 7
     }
   },
-  "tests/unit/render-snapshots.test.ts": {
-    "no-control-regex": {
-      "count": 1
-    }
-  },
   "tests/unit/resolve-path.test.ts": {
     "ban/wall-clock": {
       "count": 2
@@ -364,20 +350,12 @@
       "count": 6
     }
   },
-  "tests/unit/spawn-render.test.ts": {
-    "vitest/max-expects": {
-      "count": 1
-    }
-  },
   "tests/unit/spawn.test.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/only-throw-error": {
       "count": 1
     },
     "vitest/max-expects": {
-      "count": 40
+      "count": 35
     }
   },
   "tests/unit/state-invariants.test.ts": {

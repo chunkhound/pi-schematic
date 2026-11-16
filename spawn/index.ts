@@ -64,8 +64,7 @@ function notifyCleanupFailure(ctx: ExtensionContext, error: unknown): void {
 
 interface ChildAccounting {
 	usage: Usage;
-	/** Absent when the child's entries could not be read or summed. */
-	stats?: Record<string, number>;
+	stats: Record<string, number>;
 }
 
 function emptyChildUsage(): Usage {
@@ -117,36 +116,30 @@ function statsOf(usage: Usage, turns: number): Record<string, number> {
 	};
 }
 
+/**
+ * Neither this walk nor its callers catch: a throw here rejects the spawn, and the child's result is lost with it.
+ * Pi's types make `usage` required on assistant messages, and the child's in-memory session manager reads its entries
+ * without a failure path, so a throw marks a broken contract, which the spawn surfaces instead of hiding.
+ */
 function collectChildAccounting(session: Pick<AgentSession, "sessionManager">): ChildAccounting {
-	// Degraded on purpose: the child's answer or failure text is worth more than its
-	// accounting, so an entry list that cannot be read or summed counts as zero usage
-	// and the result reports statsUnavailable instead of losing that text.
-	try {
-		let usage = emptyChildUsage();
-		let assistantTurns = 0;
-		for (const entry of session.sessionManager.getEntries()) {
-			if (entry.type === "usage") {
-				if (entry.usage) {
-					usage = combineUsage(usage, entry.usage);
-				}
-			} else if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage) {
-				usage = combineUsage(usage, entry.usage);
-			} else if (entry.type === "message") {
-				const message = entry.message;
-				if (message.role === "assistant") {
-					assistantTurns++;
-					if (message.usage) {
-						usage = combineUsage(usage, message.usage);
-					}
-				} else if (message.role === "toolResult" && message.usage) {
-					usage = combineUsage(usage, message.usage);
-				}
+	let usage = emptyChildUsage();
+	let assistantTurns = 0;
+	for (const entry of session.sessionManager.getEntries()) {
+		if (entry.type === "usage") {
+			usage = combineUsage(usage, entry.usage);
+		} else if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage) {
+			usage = combineUsage(usage, entry.usage);
+		} else if (entry.type === "message") {
+			const message = entry.message;
+			if (message.role === "assistant") {
+				assistantTurns++;
+				usage = combineUsage(usage, message.usage);
+			} else if (message.role === "toolResult" && message.usage) {
+				usage = combineUsage(usage, message.usage);
 			}
 		}
-		return { usage, stats: statsOf(usage, assistantTurns) };
-	} catch {
-		return { usage: emptyChildUsage() };
 	}
+	return { usage, stats: statsOf(usage, assistantTurns) };
 }
 
 /**
@@ -534,7 +527,7 @@ export function executeSpawn(
 		});
 		const buildResultDetails = (truncated: boolean, outcome: SpawnOutcome, accounting: ChildAccounting): SpawnResultDetails => ({
 			...buildBaseDetails(truncated, outcome),
-			...(accounting.stats ? { stats: accounting.stats } : { statsUnavailable: true }),
+			stats: accounting.stats,
 		});
 		interface ChildRun {
 			content: TextContent[];

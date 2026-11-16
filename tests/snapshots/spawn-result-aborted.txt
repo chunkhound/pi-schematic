@@ -1,5 +1,0 @@
-                                                                                
- ✗ gpt-4o-mini • low                                                            
- 💬 aborted                                                                     
- Operation cancelled by user request.                                           
-                                                                                

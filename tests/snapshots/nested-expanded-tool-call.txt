@@ -1,0 +1,12 @@
+                                                                                
+     ✅ gpt-4o • medium                                                         
+                                                                                
+                                                                                
+      lookup_note                                                               
+                                                                                
+      {                                                                         
+        "path": "src/cache.ts"                                                  
+      }                                                                         
+      export const TTL_SECONDS = 300;                                           
+                                                                                
+                                                                                

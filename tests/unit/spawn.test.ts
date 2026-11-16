@@ -7,7 +7,6 @@ import {
 	type CreateAgentSessionOptions,
 	type CreateAgentSessionResult,
 	type ModelRegistry,
-	type SessionEntry,
 	type SessionManager,
 	type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
@@ -16,7 +15,6 @@ import { assertInstanceOf, assertPresent, expectPrefix, expectSuffix, isRecord }
 import { resolve } from "node:path";
 import { createState, resetState, type SchematicState } from "../../state.js";
 import { buildChildToolNames, createChildTools, executeSpawn, normalizeSpawnRequirements, registerSpawnTool, type SpawnParameters } from "../../spawn/index.js";
-import { NestedAgentSessionComponent, renderSpawnResult } from "../../spawn/renderer.js";
 import type { SpawnResultDetails, SpawnToolResult } from "../../spawn/shared.js";
 import { SpawnRouteError } from "../../model-groups/router.js";
 import { createConstraintRegistry, type ConstraintRegistry } from "../../model-groups/constraints/registry.js";
@@ -24,8 +22,7 @@ import { IsObject, type TObject, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { testMaxBudget, testMinContext } from "./model-groups-constraints-fixture.js";
 import { group } from "./model-groups-helpers.js";
-import { assertErrorResult, createSession, createToolRenderContext, theme, createDeferred, EMPTY_CHILD_USAGE } from "./helpers.js";
-import { createTestHost, getToolRenderCall, getToolRenderResult } from "./test-host.js";
+import { assertErrorResult, createDeferred } from "./helpers.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
 import { createRunner, toolInfo, type RunnerFixture } from "../support/runner.js";
 import { createModelRegistry } from "../support/model-registry.js";
@@ -199,25 +196,6 @@ function runExecuteSpawn(
 	);
 }
 
-/** The first transcript text block of `session`; throws when the first message is not an assistant text message. */
-function firstAssistantTextBlock(session: ReturnType<typeof createSession>) {
-	const message = session.messages[0];
-	if (message.role !== "assistant") {
-		throw new Error("Expected the first transcript message to be an assistant message.");
-	}
-	const block = message.content[0];
-	if (block.type !== "text") {
-		throw new Error("Expected the first assistant block to be text.");
-	}
-	return block;
-}
-
-function assertNestedAgentSessionComponent(component: unknown): asserts component is NestedAgentSessionComponent {
-	if (!(component instanceof NestedAgentSessionComponent)) {
-		throw new Error("Expected a nested agent session component.");
-	}
-}
-
 /** What the child-session factory resolves to for `session`, with no extensions loaded. */
 function sessionResult(session: AgentSession): CreateAgentSessionResult {
 	return { session, extensionsResult: { extensions: [], errors: [], runtime: createExtensionRuntime() } };
@@ -233,8 +211,6 @@ interface ChildOptions extends Partial<ChildSessionOptions> {
 	result?: AgentSession["messages"];
 	/** Records the child's entries in its session manager before spawn runs it. */
 	entries?: (manager: SessionManager) => void;
-	/** Replaces the manager's entry list; only the tests that feed entries outside pi's types use it. */
-	getEntries?: () => SessionEntry[];
 }
 
 type FactoryChild = ChildSession & { entryReads: MockInstance<SessionManager["getEntries"]> };
@@ -258,9 +234,6 @@ function childFactory(options: ChildOptions = {}) {
 		});
 		options.entries?.(child.sessionManager);
 		const entryReads = vi.spyOn(child.sessionManager, "getEntries");
-		if (options.getEntries !== undefined) {
-			entryReads.mockImplementation(options.getEntries);
-		}
 		children.push({ ...child, entryReads });
 		return Promise.resolve(sessionResult(child.session));
 	});
@@ -301,13 +274,6 @@ function thinkingWireSchema(host: RunnerFixture): Record<string, unknown> {
 		throw new Error("The spawn schema has no thinking property schema.");
 	}
 	return schema.properties.thinking;
-}
-
-async function makeChildSpawnTool(state: SchematicState) {
-	const pi = await createTestHost((api) => {
-		registerSpawnTool(api, state);
-	});
-	return { renderResult: getToolRenderResult(pi, "spawn") };
 }
 
 beforeEach(() => {
@@ -658,64 +624,6 @@ test.each([
 	expect(buildChildToolNames(parentToolNames, createChildTools(host.pi, state), availableTools)).toStrictEqual(expected);
 });
 
-// ── Render tests ─────────────────────────────────────────────────────
-
-test("spawn renderResult falls back to static text when no live session is stored", async () => {
-	const state = createState();
-
-	const pi = await createTestHost((api) => {
-		registerSpawnTool(api, state);
-	});
-
-	const result = getToolRenderResult(pi, "spawn")(
-		{
-			content: [{ type: "text", text: "fallback output" }],
-			details: { model: "m", thinking: "low", truncated: false },
-		},
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-
-	const lines = result.render(120);
-	expect(lines).toContainEqual(expect.stringContaining("m • low"));
-	expect(lines).toContainEqual(expect.stringContaining("fallback output"));
-});
-
-test("spawn renderResult distinguishes aborted and error outcomes", async () => {
-	const state = createState();
-
-	const pi = await createTestHost((api) => {
-		registerSpawnTool(api, state);
-	});
-
-	const aborted = getToolRenderResult(pi, "spawn")(
-		{
-			content: [{ type: "text", text: "stopped" }],
-			details: { model: "m", thinking: "low", truncated: false, outcome: "aborted" },
-		},
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-	const error = getToolRenderResult(pi, "spawn")(
-		{
-			content: [{ type: "text", text: "failed" }],
-			details: { model: "m", thinking: "low", truncated: false, outcome: "error" },
-		},
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-
-	const abortedLines = aborted.render(120);
-	const errorLines = error.render(120);
-	expect(abortedLines).toContainEqual(expect.stringContaining("✗ m • low"));
-	expect(abortedLines).toContainEqual(expect.stringContaining("aborted"));
-	expect(errorLines).toContainEqual(expect.stringContaining("⚠ m • low"));
-	expect(errorLines).toContainEqual(expect.stringContaining("error"));
-});
-
 test("spawn execute derives result stats from the child entries", async () => {
 	const state = createState();
 
@@ -762,7 +670,6 @@ test("spawn execute derives result stats from the child entries", async () => {
 		cost: 0.5,
 		turns: 1,
 	});
-	expect(result.details.statsUnavailable).toBeUndefined();
 });
 
 // ── Child usage ──────────────────────────────────────────────────────
@@ -771,11 +678,6 @@ test("spawn execute derives result stats from the child entries", async () => {
 function routeErrorOf(error: unknown, message?: string): SpawnRouteError {
 	assertInstanceOf(error, SpawnRouteError, message);
 	return error;
-}
-
-// Builds an entry outside pi's published types; only the tests of such entries use it.
-function messageEntry(id: string, message: Record<string, unknown>): SessionEntry {
-	return { type: "message", id, parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message } as unknown as SessionEntry;
 }
 
 /** Runs the registered spawn tool for a parent "mock-model" with a child built from `opts`. */
@@ -788,10 +690,6 @@ async function executeWithChild(opts: ChildOptions = {}) {
 		activeTools: ["read", "bash", "spawn"],
 	});
 	return executeSpawnTool(host, "spawn-usage", { prompt: "Do the task" });
-}
-
-async function executeWithEntries(getEntries: () => SessionEntry[], opts: ChildOptions = {}) {
-	return executeWithChild({ ...opts, getEntries });
 }
 
 /** A usage with these token counts and `cost`, without the optional splits. */
@@ -845,7 +743,6 @@ test("spawn execute returns the child usage summed over every counted entry kind
 		totalTokens: 111110,
 		cost: { input: 55555, output: 66666, cacheRead: 77777, cacheWrite: 88888, total: 288886 },
 	});
-	expect(result.details.statsUnavailable).toBeUndefined();
 });
 
 test("spawn execute omits cacheWrite1h and reasoning when no counted usage reports them", async () => {
@@ -891,45 +788,6 @@ test("an undefined optional child usage field is treated as absent", async () =>
 		totalTokens: 13,
 		cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 },
 	});
-	expect(result.details.statsUnavailable).toBeUndefined();
-});
-
-test("a completed spawn preserves its text when child entries cannot be read", async () => {
-	const entriesError = new Error("entries unavailable");
-	const dispose = vi.fn();
-	const result = await executeWithEntries(
-		() => {
-			throw entriesError;
-		},
-		{ dispose },
-	);
-
-	expect(result.content[0].text).toBe("child result");
-	expect(result.details.statsUnavailable).toBe(true);
-	expect(result.details.stats).toBeUndefined();
-	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
-	expect(dispose, "the child session is disposed when the entries cannot be read").toHaveBeenCalledOnce();
-});
-
-test("a completed spawn keeps its text with zero usage when a child usage cannot be summed", async () => {
-	const result = await executeWithEntries(() => [
-		messageEntry("assistant-counted", {
-			role: "assistant",
-			content: [{ type: "text", text: "child result" }],
-			usage: { input: 2, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 5, cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2 } },
-		}),
-		messageEntry("assistant-without-cost", {
-			role: "assistant",
-			content: [{ type: "text", text: "child result" }],
-			usage: { input: 11, output: 13, cacheRead: 0, cacheWrite: 0, totalTokens: 24 },
-		}),
-	]);
-
-	expect(result.content[0].text).toBe("child result");
-	expect(result.isError).toBeUndefined();
-	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
-	expect(result.details.stats).toBeUndefined();
-	expect(result.details.statsUnavailable).toBe(true);
 });
 
 test("child turns count assistants but not users or tool results", async () => {
@@ -971,60 +829,16 @@ test("spawn execute counts a compaction or branch summary only when it carries u
 	});
 });
 
-test("spawn execute skips an entry whose usage is null and sums the rest", async () => {
-	const result = await executeWithEntries(() => [
-		{
-			type: "usage",
-			id: "x1",
-			parentId: null,
-			timestamp: "2026-01-01T00:00:01.000Z",
-			kind: "cache_warm",
-			provider: "p",
-			model: "m",
-			usage: null,
-		} as unknown as SessionEntry,
-		messageEntry("a1", {
-			role: "assistant",
-			content: [{ type: "text", text: "child result" }],
-			stopReason: "stop",
-			usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 10, cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, total: 3 } },
-		}),
-	]);
-
-	expect(result.usage).toStrictEqual({
-		input: 7,
-		output: 3,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 10,
-		cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, total: 3 },
-	});
-	expect(result.details.statsUnavailable).toBeUndefined();
-});
-
-test("spawn execute counts an assistant turn without usage and sums the other entries", async () => {
-	const result: unknown = await executeWithEntries(() => [
-		messageEntry("a0", { role: "assistant", content: [{ type: "text", text: "thinking aloud" }], stopReason: "toolUse" }),
-		messageEntry("a1", {
-			role: "assistant",
-			content: [{ type: "text", text: "child result" }],
-			stopReason: "stop",
-			usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 10, cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, total: 3 } },
-		}),
-	]);
-
-	expect(result).toMatchObject({
-		usage: {
-			input: 7,
-			output: 3,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 10,
-			cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, total: 3 },
+test("a spawn whose child entries cannot be read rejects with the read error", async () => {
+	const execution = executeWithChild({
+		entries: (manager) => {
+			vi.spyOn(manager, "getEntries").mockImplementation(() => {
+				throw new Error("child entries unreadable");
+			});
 		},
-		details: { stats: { turns: 2 } },
 	});
-	expect(result).not.toHaveProperty("details.statsUnavailable");
+
+	await expect(execution).rejects.toThrow(new Error("child entries unreadable"));
 });
 
 test("aborted spawn returns the partial child usage", async () => {
@@ -1306,24 +1120,6 @@ test("a spawn invalidated by a reset after its prompt started returns an error r
 		isError: true,
 	});
 	assertChildRegistriesCleared(host.state);
-});
-
-test("a failed spawn whose child entries cannot be read returns its own error without stats", async () => {
-	const host = await hostWithFailedUsage({
-		prompt: () =>
-			new Promise<never>(() => {
-				throw new Error("prompt failed");
-			}),
-		getEntries: () => {
-			throw new Error("entries unavailable");
-		},
-	});
-
-	const result = await host.execute("spawn-unreadable");
-
-	assertErrorResult(result, "prompt failed", EMPTY_CHILD_USAGE);
-	expect(result.details.stats).toBeUndefined();
-	expect(result.details.statsUnavailable).toBe(true);
 });
 
 test("a parent abort between child creation and the prompt returns an aborted result", async () => {
@@ -1861,73 +1657,6 @@ test("executeSpawn reports the unknown-fallback route with the requested group a
 	});
 });
 
-test("spawn renderResult transfers session ownership out of shared state", async () => {
-	const state = createState();
-	const session = createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]);
-	state.childSessions.set("tool-call-1", session);
-
-	const pi = await createTestHost((api) => {
-		registerSpawnTool(api, state);
-	});
-
-	const component = getToolRenderResult(pi, "spawn")(
-		{ content: [{ type: "text", text: "hello" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-
-	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
-	const lines = component.render(120);
-	expect(lines).toContainEqual(expect.stringContaining("hello"));
-});
-
-test("spawn renderResult reuses lastComponent", async () => {
-	const state = createState();
-	const session = createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]);
-	state.childSessions.set("tool-call-1", session);
-
-	const pi = await createTestHost((api) => {
-		registerSpawnTool(api, state);
-	});
-
-	const first = getToolRenderResult(pi, "spawn")(
-		{ content: [{ type: "text", text: "hello" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-	const second = getToolRenderResult(pi, "spawn")(
-		{ content: [{ type: "text", text: "hello" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext({ lastComponent: first }),
-	);
-	expect(first).toBe(second);
-});
-
-test("spawn render shows success state when stats are unavailable", async () => {
-	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const session = createSession([{ role: "assistant", content: [{ type: "text", text: "final summary" }] }]);
-	state.childSessions.set("tool-call-1", session);
-
-	const component = childSpawnTool.renderResult(
-		{
-			content: [{ type: "text", text: "ignored" }],
-			details: { model: "mock-model", thinking: "medium", truncated: false, outcome: "success", statsUnavailable: true },
-		},
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-
-	const lines = component.render(120);
-	expect(lines).toContainEqual(expect.stringContaining("✅ mock-model • medium"));
-	expect(lines).toContainEqual(expect.stringContaining("stats unavailable"));
-	expect(lines).not.toContainEqual(expect.stringContaining("initializing"));
-});
-
 test("spawn execute aborts child session when signal fires during execution", async () => {
 	const state = createState();
 
@@ -2186,200 +1915,6 @@ test("a throwing notice for a failed reset abort does not emit an unhandled reje
 	}
 });
 
-test("spawn renderCall shows prompt preview and optional routing controls", async () => {
-	const state = createState();
-
-	const pi = await createTestHost((api) => {
-		registerSpawnTool(api, state);
-	});
-
-	const renderCall = getToolRenderCall(pi, "spawn");
-
-	// Collapsed: short prompt
-	const collapsed = renderCall({ prompt: "Do X" }, theme, createToolRenderContext());
-	const collapsedLines = collapsed.render(120);
-	expect(collapsedLines).toContainEqual(expect.stringContaining("spawn"));
-	expect(collapsedLines).toContainEqual(expect.stringContaining("Do X"));
-
-	// Collapsed: long prompt shows truncation hint
-	const longPrompt = Array.from({ length: 10 }, (_, i) => `Line ${i}`).join("\n");
-	const truncated = renderCall({ prompt: longPrompt }, theme, createToolRenderContext());
-	const truncatedLines = truncated.render(120);
-	expect(truncatedLines).toContainEqual(expect.stringContaining("more lines"));
-
-	// Explicit thinking is shown without a group; grouped calls show only the route.
-	const withThinking = renderCall({ prompt: "Do X", thinking: "high" }, theme, createToolRenderContext());
-	const thinkingLines = withThinking.render(120);
-	expect(thinkingLines).toContainEqual(expect.stringContaining("high"));
-	const withWhitespaceGroup = renderCall({ prompt: "Do X", group: " \t ", thinking: "high" }, theme, createToolRenderContext());
-	expect(withWhitespaceGroup.render(120)).toContainEqual(expect.stringContaining("high"));
-	const withRouting = renderCall({ prompt: "Do X", group: "review", thinking: "max" }, theme, createToolRenderContext());
-	const routingLines = withRouting.render(120);
-	expect(routingLines).toContainEqual(expect.stringContaining("review"));
-	expect(routingLines).not.toContainEqual(expect.stringContaining("max"));
-	const withEscapedGroup = renderCall({ prompt: "Do X", group: "review\n\u001b" }, theme, createToolRenderContext());
-	const escapedGroupLines = withEscapedGroup.render(120);
-	expect(escapedGroupLines).toContainEqual(expect.stringContaining("review\\n\\x1B"));
-	expect(escapedGroupLines).not.toContainEqual(expect.stringContaining("\u001b"));
-
-	// Expanded: shows full prompt
-	const expanded = renderCall({ prompt: longPrompt }, theme, createToolRenderContext({ expanded: true }));
-	const expandedLines = expanded.render(120);
-	expect(expandedLines).not.toContainEqual(expect.stringContaining("more lines"));
-});
-
-test("nested spawn invalidate rebuilds from the attached session transcript", async () => {
-	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const session = createSession([{ role: "assistant", content: [{ type: "text", text: "before" }] }]);
-	state.childSessions.set("tool-call-1", session);
-
-	const component = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-
-	const firstRender = component.render(120);
-	expect(firstRender).toContainEqual(expect.stringContaining("before"));
-
-	const block = firstAssistantTextBlock(session);
-	block.text = "after";
-	component.invalidate();
-
-	const secondRender = component.render(120);
-	expect(firstRender).not.toBe(secondRender);
-	expect(secondRender).toContainEqual(expect.stringContaining("after"));
-	expect(secondRender).not.toContainEqual(expect.stringContaining("before"));
-});
-
-test("nested spawn attachSession rebuilds after appended session messages", async () => {
-	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	state.childSessions.set("tool-call-1", createSession([{ role: "assistant", content: [{ type: "text", text: "before" }] }]));
-
-	const component = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-
-	const firstRender = component.render(120);
-	expect(firstRender).toContainEqual(expect.stringContaining("before"));
-
-	state.childSessions.set(
-		"tool-call-1",
-		createSession([
-			{ role: "assistant", content: [{ type: "text", text: "before" }] },
-			{ role: "assistant", content: [{ type: "text", text: "after" }] },
-		]),
-	);
-	const sameComponent = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext({ lastComponent: component }),
-	);
-
-	const secondRender = sameComponent.render(120);
-	expect(firstRender).not.toBe(secondRender);
-	expect(secondRender).toContainEqual(expect.stringContaining("after"));
-});
-
-test("nested spawn attachSession rebuilds after replacing session transcript structure", async () => {
-	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	state.childSessions.set("tool-call-1", createSession([{ role: "assistant", content: [{ type: "text", text: "before" }] }]));
-
-	const component = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-
-	const firstRender = component.render(120);
-	expect(firstRender).toContainEqual(expect.stringContaining("before"));
-
-	state.childSessions.set(
-		"tool-call-1",
-		createSession([
-			{ role: "user", content: [{ type: "text", text: "new task" }] },
-			{ role: "assistant", content: [{ type: "text", text: "replacement" }] },
-		]),
-	);
-	const sameComponent = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext({ lastComponent: component }),
-	);
-
-	const secondRender = sameComponent.render(120);
-	expect(firstRender).not.toBe(secondRender);
-	expect(secondRender).toContainEqual(expect.stringContaining("replacement"));
-	expect(secondRender).not.toContainEqual(expect.stringContaining("before"));
-});
-
-test("nested spawn rebuildFromSession quietly tolerates missing tool definitions", async () => {
-	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const session = Object.assign(
-		createSession([
-			{
-				role: "assistant",
-				content: [{ type: "toolCall", name: "bash", id: "tc-1", arguments: { command: "ls" } }],
-				stopReason: "error",
-				errorMessage: "boom",
-			},
-		]),
-		{
-			getToolDefinition: () => {
-				throw new Error("missing tool definition");
-			},
-		},
-	);
-	state.childSessions.set("tool-call-1", session);
-
-	const component = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false, outcome: "error" } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-
-	const lines = component.render(120);
-	expect(lines).toContainEqual(expect.stringContaining("⚠ m • low"));
-	expect(lines).toContainEqual(expect.stringContaining("error"));
-	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
-	expect(h.warnings).toHaveLength(0);
-});
-
-test("nested spawn attachSession recovers from subscribe throwing", async () => {
-	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-
-	const throwingSession = Object.assign(createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]), {
-		subscribe: () => {
-			throw new Error("subscribe failed");
-		},
-	});
-	state.childSessions.set("tool-call-1", throwingSession);
-
-	const component = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-
-	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
-	const lines = component.render(120);
-	expect(lines).toContainEqual(expect.stringContaining("hello"));
-});
-
 test("concurrent spawn executions produce independent results", async () => {
 	const state = createState();
 
@@ -2636,104 +2171,12 @@ test("executeSpawn suppresses a successful stale prompt that ignores reset abort
 	expect(state.liveChildSessions.size).toBe(0);
 });
 
-test("nested spawn setExpanded and setShowImages no-op when value matches", async () => {
-	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const session = createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]);
-	state.childSessions.set("tool-call-1", session);
-
-	const component = childSpawnTool.renderResult(
-		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-
-	assertNestedAgentSessionComponent(component);
-	component.setExpanded(false);
-	component.setExpanded(true);
-	component.setShowImages(true);
-	component.setShowImages(false);
-
-	const lines = component.render(120);
-	expect(lines).toContainEqual(expect.stringContaining("hello"));
-});
-
-// ── State management tests ───────────────────────────────────────────
-
-test("resetState aborts and clears child session registries", () => {
-	const state = createState();
-	const abort = vi.fn(() => Promise.resolve());
-	const session = Object.assign(createSession([]), { abort });
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
-	resetState(state);
-	expect(abort).toHaveBeenCalledOnce();
-	expect(state.childSessions.size).toBe(0);
-	expect(state.liveChildSessions.size).toBe(0);
-});
-
-test("resetState aborts a claimed child session after render ownership transfer", async () => {
-	const state = createState();
-	const childSpawnTool = await makeChildSpawnTool(state);
-	const abort = vi.fn(() => Promise.resolve());
-	const session = Object.assign(createSession([{ role: "assistant", content: [{ type: "text", text: "hello" }] }]), { abort });
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
-
-	childSpawnTool.renderResult(
-		{ content: [{ type: "text", text: "ignored" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false, isPartial: false },
-		theme,
-		createToolRenderContext(),
-	);
-
-	expect([...state.childSessions.keys()]).not.toContain("tool-call-1");
-	expect([...state.liveChildSessions.keys()]).toContain("tool-call-1");
-
-	resetState(state);
-
-	expect(abort).toHaveBeenCalledOnce();
-	expect(state.childSessions.size).toBe(0);
-	expect(state.liveChildSessions.size).toBe(0);
-});
-
-test("abortAndClearChildSessions deduplicates sessions across both maps", () => {
-	const state = createState();
-	const abort = vi.fn(() => Promise.resolve());
-	const mockSession = Object.assign(createSession([]), { abort });
-
-	state.childSessions.set("tc-1", mockSession);
-	state.liveChildSessions.set("tc-1", mockSession);
-
-	resetState(state);
-
-	expect(abort).toHaveBeenCalledOnce();
-	expect(state.childSessions.size).toBe(0);
-	expect(state.liveChildSessions.size).toBe(0);
-});
-
 // ── Tool registration tests ──────────────────────────────────────────
 
 test("registered spawn tool keeps pi's default execution mode and draws its own shell", async () => {
 	const definition = (await spawnRunner({ state: createState() })).registeredTool("spawn").definition;
 	expect(definition.executionMode, "spawn should not be sequential").toBeUndefined();
 	expect(definition.renderShell).toBe("self");
-});
-
-test("renderSpawnResult handles result with no details field", () => {
-	const state = createState();
-	const result = renderSpawnResult(
-		{ content: [{ type: "text", text: "hello" }] },
-		false,
-		theme,
-		{ toolCallId: "tc-1", invalidate: vi.fn(), showImages: false },
-		state,
-	);
-	assertPresent(result, "renderSpawnResult should return a component");
-	const lines = result.render(120);
-	expect(lines, "render should return an array of lines").toSatisfy(Array.isArray);
-	expect(lines, `expected 'hello' in output, got: ${lines.join("\n")}`).toContainEqual(expect.stringContaining("hello"));
 });
 
 // ── Abort cleanup and dispose failure coverage ───────────────────────
