@@ -123,7 +123,7 @@ test("updateIndicators shows a dim empty notebook count", async () => {
 
 test("updateIndicators shows active notebook topic when set", async () => {
 	const state = createState();
-	state.activeNotebookTopic = "oauth";
+	state.activeNotebookTopic = { name: "oauth", source: "agent" };
 
 	const ui = await indicatorsAt(30, state);
 
@@ -170,7 +170,7 @@ test("updateIndicators shows readonly-specific warning widget at 70%+ context", 
 
 test("updateIndicators shows the topic-fit warning widget at 85% with an active topic", async () => {
 	const state = createState();
-	state.activeNotebookTopic = "oauth";
+	state.activeNotebookTopic = { name: "oauth", source: "agent" };
 
 	const ui = await indicatorsAt(85, state);
 

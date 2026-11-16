@@ -8,10 +8,9 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ModelGroupsBootValidation, ResolvedModelGroup } from "./model-groups/types.js";
 import type { FrontmatterEntry, FrontmatterIssue } from "./frontmatter-cache.js";
-import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
+import type { NotebookTopicBoundaryHint, NotebookTopicSource } from "./notebook/topic.js";
 
-/** A handoff accepted by the tool, kept until its turn_end boundary is confirmed or failed. */
-export interface StagedHandoff {
+interface StagedHandoffBase {
 	/** Written to the cut's and the successor's details; identifies the cut on the branch. */
 	handoffId: string;
 	toolCallId: string;
@@ -25,10 +24,11 @@ export interface StagedHandoff {
 	 * and warns about every name still present. Empty until the boundary is submitted.
 	 */
 	discardedPages: string[];
-	phase: "staged" | "submitted" | "declined";
-	/** Non-null exactly when phase is "declined". */
-	declineReason: string | null;
 }
+
+/** A handoff accepted by the tool, kept until its turn_end boundary is confirmed or failed. */
+export type StagedHandoff =
+	(StagedHandoffBase & { phase: "staged" | "submitted"; declineReason: null }) | (StagedHandoffBase & { phase: "declined"; declineReason: string });
 
 /** A required handoff request; lifecycle on `SchematicState.pendingRequestedHandoff`. */
 export interface RequestedHandoff {
@@ -57,11 +57,8 @@ export interface SchematicState {
 	/** Notebook generation counter. 0 = no writes yet; 1 = first write; bumped on discard. */
 	epoch: number;
 
-	/** Current semantic frame for topic-aware spawn vs handoff decisions. */
-	activeNotebookTopic: string | null;
-
-	/** Whether the current topic came from the human or the agent. */
-	activeNotebookTopicSource: "human" | "agent" | null;
+	/** Current semantic frame for topic-aware spawn vs handoff decisions, and whether the human or the agent set it. */
+	activeNotebookTopic: { name: string; source: NotebookTopicSource } | null;
 
 	/**
 	 * Boundary cue consumed after a topic change. Human readonly boundaries remain
@@ -189,7 +186,6 @@ export function createState(): SchematicState {
 		clippedPages: new Set(),
 		epoch: 0,
 		activeNotebookTopic: null,
-		activeNotebookTopicSource: null,
 		pendingTopicBoundaryHint: null,
 		stagedHandoff: null,
 		handoffRefusals: new Map(),
@@ -244,7 +240,6 @@ export function resetState(state: SchematicState): void {
 	// fresh session has no staged epochs, so derivation on its empty branch is 0.
 	state.discardEpochWatermark = 0;
 	state.activeNotebookTopic = null;
-	state.activeNotebookTopicSource = null;
 	invalidateHandoffState(state);
 	state.modelGroups.groups = [];
 	state.modelGroups.validation = null;

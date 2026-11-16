@@ -930,12 +930,13 @@ export default function (pi: ExtensionAPI): void {
 		if (ctx.hasUI) {
 			for (const issue of validation.loadIssues) {
 				const sourcePath = escapeDisplayLabel(issue.sourcePath);
-				const backupPath = issue.backupPath !== undefined && issue.backupPath !== "" ? escapeDisplayLabel(issue.backupPath) : undefined;
 				const detail = escapeDisplayLabel(issue.message);
 				const backupNote =
-					issue.backupFailed === true
-						? `; backup failed${backupPath !== undefined && backupPath !== "" ? ` (${backupPath})` : ""}, original file left untouched`
-						: "";
+					issue.kind === "unsupported-version"
+						? "; no backup written, original file left untouched"
+						: issue.backupFailed === true
+							? `; backup failed (${escapeDisplayLabel(issue.backupPath)}), original file left untouched`
+							: "";
 				ctx.ui.notify(
 					`Model Groups config ${issue.kind} in ${issue.scope} scope (${sourcePath}); using empty config for that scope${backupNote}; ${detail}`,
 					"warning",

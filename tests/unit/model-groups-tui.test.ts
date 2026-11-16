@@ -8,6 +8,7 @@ import {
 	type ModelGroupModel,
 	type ModelGroupScope,
 	type ModelGroupsAccess,
+	type ModelGroupsLoadIssue,
 	type ResolvedModelGroup,
 } from "../../model-groups/types.js";
 import { assertPresent } from "../assertions.js";
@@ -1380,7 +1381,6 @@ test("model groups TUI persistence notifications escape each hostile dynamic fie
 					targetPath: `target${hostile}`,
 					phase: "rename",
 					message: `message${hostile}`,
-					cause: new Error(`cause${hostile}`),
 				});
 			},
 		}),
@@ -1391,11 +1391,30 @@ test("model groups TUI persistence notifications escape each hostile dynamic fie
 	expect(notifications[0]).toMatch(/source\\n\\x1B/);
 	expect(notifications[0]).toMatch(/target\\n\\x1B/);
 	expect(notifications[0]).toMatch(/message\\n\\x1B/);
-	expect(notifications[0]).toMatch(/cause\\n\\x1B/);
 	expect(notifications[0]).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/);
 });
 
-test("model groups TUI refresh notifies an escaped load-issue warning", async () => {
+test.for<{ label: string; issue: ModelGroupsLoadIssue; warning: string }>([
+	{
+		label: "a failed backup",
+		issue: {
+			scope: "project",
+			sourcePath: "source\n\u001b",
+			kind: "corrupt-json",
+			message: "message\n\u001b",
+			backupPath: "backup\n\u001b",
+			backupFailed: true,
+		},
+		warning:
+			"Model Groups config corrupt-json in project scope (source\\n\\x1B); using empty config for that scope; backup failed (backup\\n\\x1B), original file left untouched; message\\n\\x1B",
+	},
+	{
+		label: "an unsupported version",
+		issue: { scope: "project", sourcePath: "source\n\u001b", kind: "unsupported-version", message: "message\n\u001b", version: 3 },
+		warning:
+			"Model Groups config unsupported-version in project scope (source\\n\\x1B); using empty config for that scope; no backup written, original file left untouched; message\\n\\x1B",
+	},
+])("model groups TUI refresh notifies an escaped load-issue warning for $label", async ({ issue, warning }) => {
 	const notifications: [string, string | undefined][] = [];
 	const c = component({
 		registry: await tuiRegistry(),
@@ -1403,27 +1422,13 @@ test("model groups TUI refresh notifies an escaped load-issue warning", async ()
 		store: (memory) => ({
 			listResolvedModelGroups: (access, modelRegistry) => ({
 				groups: memory.listResolvedModelGroups(access, modelRegistry).groups,
-				loadIssues: [
-					{
-						scope: "project",
-						sourcePath: "source\n\u001b",
-						kind: "corrupt-json",
-						message: "message\n\u001b",
-						backupPath: "backup\n\u001b",
-						backupFailed: true,
-					},
-				],
+				loadIssues: [issue],
 			}),
 		}),
 		notify: (message, type) => notifications.push([message, type]),
 	}).c;
 	press(c, ENTER, DOWN, DOWN, ENTER, "x", ENTER); // a rename refreshes the groups
-	expect(notifications).toStrictEqual([
-		[
-			"Model Groups config corrupt-json in project scope (source\\n\\x1B); using empty config for that scope; backup failed (backup\\n\\x1B), original file left untouched; message\\n\\x1B",
-			"warning",
-		],
-	]);
+	expect(notifications).toStrictEqual([[warning, "warning"]]);
 });
 
 test("model groups TUI delete confirmation keeps the group on Keep group and on Esc", async () => {

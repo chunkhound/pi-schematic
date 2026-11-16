@@ -44,16 +44,26 @@ export interface ResolvedModelGroup extends ModelGroupsLoadedGroup {
 	validation: ModelGroupValidation;
 	/** Ordered descriptor evaluations; presentation consumers must iterate these. */ evaluations: readonly ErasedConstraintEvaluation[];
 }
-type ModelGroupsLoadIssueKind = "corrupt-json" | "schema-invalid" | "unsupported-version";
-export interface ModelGroupsLoadIssue {
+interface ModelGroupsLoadIssueBase {
 	scope: ModelGroupScope;
 	sourcePath: string;
-	kind: ModelGroupsLoadIssueKind;
 	message: string;
-	backupPath?: string;
-	backupFailed?: boolean;
-	version?: number;
 }
+/** A file that is copied to `backupPath` before its scope loads empty; `backupFailed` is set when the copy threw. */
+type ModelGroupsBackedUpLoadIssue = ModelGroupsLoadIssueBase & {
+	kind: "corrupt-json" | "schema-invalid";
+	backupPath: string;
+	backupFailed?: true;
+	version?: never;
+};
+/** A file from a newer version; it is neither copied nor changed. */
+type ModelGroupsUnsupportedVersionLoadIssue = ModelGroupsLoadIssueBase & {
+	kind: "unsupported-version";
+	version: number;
+	backupPath?: never;
+	backupFailed?: never;
+};
+export type ModelGroupsLoadIssue = ModelGroupsBackedUpLoadIssue | ModelGroupsUnsupportedVersionLoadIssue;
 export type ModelGroupsPersistenceOperation = "save" | "delete" | "move";
 export type ModelGroupsPersistencePhase = "config-validation" | "temp-write" | "rename" | "source-remove" | "load-recovery";
 export class ModelGroupsPersistenceError extends Error {

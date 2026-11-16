@@ -69,7 +69,7 @@ function buildDefaultNudge(pct: number, topic: string | null, eligible: boolean)
 				: `Context at ${pct}% — choose your next step by topic fit.`;
 	const pivotAdvice = eligible ? "prefer a deliberate handoff" : "continue working until handoff is available";
 
-	if (topic !== null && topic !== "") {
+	if (topic !== null) {
 		const urgency =
 			pct >= 70
 				? `If the work no longer fits this topic, ${pivotAdvice}. If it still fits and only a focused noisy branch is needed, spawn it instead of polluting the parent context.`
@@ -105,7 +105,7 @@ function selectNudge(state: NudgeState, pct: number | null, eligible: boolean): 
 	if (pct === null) {
 		throw new Error("The default watchdog nudge requires a context percent.");
 	}
-	return { text: buildDefaultNudge(pct, state.activeNotebookTopic, eligible), nudgedHandoff: null };
+	return { text: buildDefaultNudge(pct, state.activeNotebookTopic?.name ?? null, eligible), nudgedHandoff: null };
 }
 
 /**

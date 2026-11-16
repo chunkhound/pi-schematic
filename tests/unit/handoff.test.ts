@@ -526,8 +526,7 @@ test("turn_start with the cut on the branch completes the handoff", async () => 
 			s.epoch = 1;
 			s.notebookPages.set("stale", "obsolete");
 			s.notebookPages.set("keep", "durable");
-			s.activeNotebookTopic = "oauth";
-			s.activeNotebookTopicSource = "human";
+			s.activeNotebookTopic = { name: "oauth", source: "human" };
 			s.readonlyEnabled = true;
 		},
 	});

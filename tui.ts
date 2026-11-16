@@ -56,16 +56,13 @@ export function updateIndicators(ctx: ExtensionContext, state: SchematicState): 
 	ctx.ui.setStatus(STATUS_KEY_READONLY, state.readonlyEnabled ? theme.fg("warning", "\u{1F512} readonly") : undefined);
 
 	// Active notebook topic — show a dim placeholder when unset so the frame is discoverable
-	ctx.ui.setStatus(
-		STATUS_KEY_TOPIC,
-		state.activeNotebookTopic !== null && state.activeNotebookTopic !== "" ? `\u{1F9ED} ${state.activeNotebookTopic}` : theme.fg("dim", "\u{1F9ED} -"),
-	);
+	ctx.ui.setStatus(STATUS_KEY_TOPIC, state.activeNotebookTopic !== null ? `\u{1F9ED} ${state.activeNotebookTopic.name}` : theme.fg("dim", "\u{1F9ED} -"));
 
 	// High-context warning widget (above editor)
 	if (pct !== null && pct >= 70) {
 		const warning = state.readonlyEnabled
 			? `Context at ${pct}% — readonly: same topic → spawn; different topic → ${READONLY_HANDOFF_TRIGGER}`
-			: state.activeNotebookTopic !== null && state.activeNotebookTopic !== ""
+			: state.activeNotebookTopic !== null
 				? `Context at ${pct}% — use topic fit: same topic → spawn, different topic → handoff`
 				: `Context at ${pct}% — no active topic; handoff soon unless you can assign one cleanly`;
 		ctx.ui.setWidget(WIDGET_KEY_WARNING, [theme.fg("error", "\u26A0 ") + theme.fg("warning", warning)]);

@@ -224,18 +224,9 @@ function validateConfig(raw: unknown, registry: ConstraintRegistry): { ok: true;
 	const normalized = normalizeGroups(raw.groups, registry);
 	return normalized.ok ? { ok: true, config: { version: CURRENT_VERSION, groups: normalized.groups } } : normalized;
 }
-function backupAndIssue(
-	scope: ModelGroupScope,
-	sourcePath: string,
-	kind: ModelGroupsLoadIssue["kind"],
-	message: string,
-	version?: number,
-): ModelGroupsLoadIssue {
+function backupAndIssue(scope: ModelGroupScope, sourcePath: string, kind: "corrupt-json" | "schema-invalid", message: string): ModelGroupsLoadIssue {
 	const backupPath = `${sourcePath}.bak`;
-	const issue: ModelGroupsLoadIssue = { scope, sourcePath, kind, message, backupPath, version };
-	if (kind === "unsupported-version") {
-		return issue;
-	}
+	const issue: ModelGroupsLoadIssue = { scope, sourcePath, kind, message, backupPath };
 	try {
 		fsOps.copyFileSync(sourcePath, backupPath);
 	} catch (cause) {
@@ -267,7 +258,13 @@ function loadScope(
 	if (isPlainRecord(parsed) && typeof parsed.version === "number" && Number.isInteger(parsed.version) && parsed.version > CURRENT_VERSION) {
 		return {
 			config: emptyConfig(),
-			issue: backupAndIssue(scope, sourcePath, "unsupported-version", `unsupported version ${parsed.version}`, parsed.version),
+			issue: {
+				scope,
+				sourcePath,
+				kind: "unsupported-version",
+				message: `unsupported version ${parsed.version}`,
+				version: parsed.version,
+			},
 		};
 	}
 	const validated = validateConfig(parsed, registry);
@@ -376,13 +373,23 @@ export function saveModelGroups(
 }
 function loadScopeConfig(scope: ModelGroupScope, access: ModelGroupsAccess, registry: ConstraintRegistry = productionConstraintRegistry): ModelGroupsConfig {
 	const loaded = loadScope(scope, access, registry);
-	if (loaded.issue?.backupFailed === true || loaded.issue?.kind === "unsupported-version") {
+	if (loaded.issue?.kind === "unsupported-version") {
+		throw persistenceError({
+			operation: "save",
+			scope,
+			sourcePath: loaded.issue.sourcePath,
+			phase: "config-validation",
+			message: `Refusing to overwrite ${scope} model-groups config because ${loaded.issue.message}; no backup was written and the original file is left untouched`,
+			cause: loaded.issue,
+		});
+	}
+	if (loaded.issue?.backupFailed === true) {
 		throw persistenceError({
 			operation: "save",
 			scope,
 			sourcePath: loaded.issue.sourcePath,
 			targetPath: loaded.issue.backupPath,
-			phase: loaded.issue.kind === "unsupported-version" ? "config-validation" : "load-recovery",
+			phase: "load-recovery",
 			message: `Refusing to overwrite ${scope} model-groups config after ${loaded.issue.kind} recovery because ${loaded.issue.message}`,
 			cause: loaded.issue,
 		});

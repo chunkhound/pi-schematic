@@ -43,9 +43,6 @@
     }
   },
   "model-groups/tui.ts": {
-    "@typescript-eslint/no-base-to-string": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 6
     }
@@ -104,16 +101,16 @@
   },
   "spawn/renderer.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 2
+      "count": 1
     },
     "@typescript-eslint/no-unnecessary-condition": {
-      "count": 5
-    },
-    "@typescript-eslint/no-unsafe-argument": {
       "count": 3
     },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 2
+    },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 8
+      "count": 4
     },
     "@typescript-eslint/strict-boolean-expressions": {
       "count": 1
@@ -225,7 +222,7 @@
       "count": 2
     },
     "vitest/max-expects": {
-      "count": 140
+      "count": 139
     },
     "vitest/no-conditional-expect": {
       "count": 2
@@ -269,7 +266,7 @@
   },
   "tests/unit/state-invariants.test.ts": {
     "vitest/max-expects": {
-      "count": 5
+      "count": 4
     },
     "vitest/no-conditional-expect": {
       "count": 6
@@ -277,7 +274,7 @@
   },
   "tests/unit/topic.test.ts": {
     "vitest/max-expects": {
-      "count": 2
+      "count": 1
     }
   },
   "tests/unit/watchdog.test.ts": {

@@ -114,9 +114,9 @@ function toPersistenceMessage(error: unknown): string {
 			.filter(Boolean)
 			.join("; ");
 		const pathDetails = paths ? ` (${paths})` : "";
-		const cause = error.cause === undefined ? "" : `; cause: ${escapeDisplayLabel(error.cause instanceof Error ? error.cause.message : String(error.cause))}`;
+		// The cause is not printed: the store writes the cause's text into the message, so printing it would repeat it.
 		const partial = error.partialMove ? `; ${error.partialMove}` : "";
-		return `${error.operation} failed at ${error.phase}${scope}${pathDetails}: ${escapeDisplayLabel(error.message)}${cause}${partial}`;
+		return `${error.operation} failed at ${error.phase}${scope}${pathDetails}: ${escapeDisplayLabel(error.message)}${partial}`;
 	}
 	return escapeDisplayLabel(error instanceof Error ? error.message : String(error));
 }
@@ -177,8 +177,12 @@ export function createModelGroupsComponent(
 		state.groups = boot.groups;
 		options.onRefresh?.(boot);
 		for (const issue of boot.loadIssues) {
-			const backupPath = issue.backupPath !== undefined && issue.backupPath !== "" ? escapeDisplayLabel(issue.backupPath) : "";
-			const backup = issue.backupFailed === true ? `; backup failed${backupPath ? ` (${backupPath})` : ""}, original file left untouched` : "";
+			const backup =
+				issue.kind === "unsupported-version"
+					? "; no backup written, original file left untouched"
+					: issue.backupFailed === true
+						? `; backup failed (${escapeDisplayLabel(issue.backupPath)}), original file left untouched`
+						: "";
 			notify(
 				`Model Groups config ${issue.kind} in ${issue.scope} scope (${escapeDisplayLabel(issue.sourcePath)}); using empty config for that scope${backup}; ${escapeDisplayLabel(issue.message)}`,
 				"warning",
