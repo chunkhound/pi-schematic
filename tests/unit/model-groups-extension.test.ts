@@ -9,9 +9,7 @@ import { assertPresent } from "../assertions.js";
 import { createModelRegistry } from "../support/model-registry.js";
 import { createRunner, type CustomComponentDriver, type RunnerFixture, type RunnerOptions } from "../support/runner.js";
 import { realTheme } from "../support/theme.js";
-import { createExtensionContext, createModelRegistry as createHandModelRegistry, testModel } from "./helpers.js";
-import { createBeforeAgentStartEvent, createTestHost, getHandler } from "./test-host.js";
-import { testProvider, withTemp } from "./model-groups-helpers.js";
+import { testProvider } from "./model-groups-helpers.js";
 
 // Escape on the Model Groups list closes the component, which resolves ctx.ui.custom.
 const ESCAPE = "\u001b";
@@ -283,34 +281,6 @@ test("before_agent_start rewrites updated effective modalities after registry ch
 	expect(refreshedSection).toMatch(/review \(text, reasoning\)/);
 	expect(refreshedSection).not.toMatch(/review \(text, image\)/);
 });
-
-// The extension's model-group refresh skips loading when the context carries no model registry.
-// pi always supplies one, so only a hand-built context reaches that branch.
-test("before_agent_start clears stale Model Groups guidance when registry becomes unavailable", async () =>
-	withTemp(async ({ cwd }) => {
-		fs.mkdirSync(path.dirname(path.join(cwd, ".pi", "pi-schematic", "model-groups.json")), { recursive: true });
-		fs.writeFileSync(
-			path.join(cwd, ".pi", "pi-schematic", "model-groups.json"),
-			JSON.stringify({ version: 2, groups: { review: { models: [{ provider: "mg-openai", modelId: "gpt-5" }] } } }),
-			"utf8",
-		);
-		const models = [testModel({ provider: "mg-openai", id: "gpt-5", input: ["text", "image"], reasoning: true })];
-		const registry = createHandModelRegistry({
-			getAll: () => models,
-			getAvailable: () => models,
-			find: (provider, id) => models.find((m) => m.provider === provider && m.id === id),
-			hasConfiguredAuth: () => true,
-		});
-		const pi = await createTestHost();
-		const handler = getHandler(pi, "before_agent_start");
-		const loaded = createBeforeAgentStartEvent();
-		await handler(loaded, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: registry }));
-		expect(loaded.systemPromptOptions.sections.schematic_model_groups).toMatch(/Available Model Groups: review/);
-
-		const unavailable = createBeforeAgentStartEvent();
-		await handler(unavailable, createExtensionContext({ isProjectTrusted: () => true, cwd, modelRegistry: undefined }));
-		expect(unavailable.systemPromptOptions.sections.schematic_model_groups).toBeUndefined();
-	}));
 
 test("session_start registers Model Groups autocomplete provider when UI supports it", async () => {
 	const providers: AutocompleteProviderFactory[] = [];

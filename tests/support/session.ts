@@ -29,6 +29,16 @@ export function appendDrafts(session: SessionManager, drafts: readonly SessionBo
 // A fixed time for every message these helpers build.
 const MESSAGE_TIME = 1_767_225_600_000;
 
+/** The usage of a message that recorded none, for test messages to carry. */
+export const ZERO_USAGE: Usage = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
 /**
  * An assistant message with `content` from a fixed test provider and time, ending with `fields.stopReason`
  * (`"stop"` when omitted) and carrying `fields.usage` (zero usage when omitted).
@@ -65,11 +75,6 @@ export function messageUpdateEvent(message: AssistantMessage): AgentSessionEvent
 	return { type: "message_update", message, assistantMessageEvent: { type: "start", partial: message } };
 }
 
-/** Append an assistant text message with `usage`, from a fixed test provider and time. Returns its entry id. */
-export function appendAssistantMessage(session: SessionManager, text: string, usage: Usage): string {
-	return session.appendMessage(assistantMessage([{ type: "text", text }], { usage }));
-}
-
 // The fake child sessions below stay custom because a real AgentSession runs its own agent loop: it
 // emits only the events and produces only the transcripts its run produces, at its own timing
 // (`_emit` is private), so it cannot replay a scripted sequence or make a prompt, an abort or a
@@ -82,16 +87,15 @@ export interface SubscribableSession {
 	abort: Mock<() => Promise<void>>;
 }
 
-type SessionMembers = Pick<AgentSession, "messages" | "subscribe" | "sessionManager" | "getToolDefinition" | "abort">;
-
 // An AgentSession whose own members are `members`; reading any other member AgentSession declares,
-// or its instance fields `agent` and `settingsManager`, throws, naming it.
-function guardedSession(members: SessionMembers): AgentSession {
+// or its instance fields `agent`, `sessionManager` and `settingsManager`, throws, naming it and the
+// `fixture` it was read on.
+function guardedSession(members: Partial<AgentSession>, fixture: string): AgentSession {
 	return guardedInstance<AgentSession>(
 		AgentSession.prototype,
 		members,
-		["agent", "settingsManager"],
-		(member) => new Error(`session.${member} is not available on the subscribable test session.`),
+		["agent", "sessionManager", "settingsManager"],
+		(member) => new Error(`session.${member} is not available on the ${fixture}.`),
 	);
 }
 
@@ -105,18 +109,21 @@ function guardedSession(members: SessionMembers): AgentSession {
 export function createSubscribableSession(cwd: string, messages: AgentSession["messages"] = []): SubscribableSession {
 	const listeners = new Set<(event: AgentSessionEvent) => void>();
 	const abort = vi.fn(() => Promise.resolve());
-	const session = guardedSession({
-		messages,
-		subscribe: (listener) => {
-			listeners.add(listener);
-			return () => {
-				listeners.delete(listener);
-			};
+	const session = guardedSession(
+		{
+			messages,
+			subscribe: (listener) => {
+				listeners.add(listener);
+				return () => {
+					listeners.delete(listener);
+				};
+			},
+			sessionManager: SessionManager.inMemory(cwd),
+			getToolDefinition: () => undefined,
+			abort,
 		},
-		sessionManager: SessionManager.inMemory(cwd),
-		getToolDefinition: () => undefined,
-		abort,
-	});
+		"subscribable test session",
+	);
 	return {
 		session,
 		emit: (event) => {
@@ -129,6 +136,16 @@ export function createSubscribableSession(cwd: string, messages: AgentSession["m
 		},
 		abort,
 	};
+}
+
+/**
+ * A child session that only sits in the state's session registries: it has a resolving `abort`
+ * mock, and reading any other AgentSession member throws. It stays custom because a real
+ * AgentSession runs its own agent loop (see above); these tests only store it in the state's
+ * registries and let a reset abort it.
+ */
+export function createSession(): AgentSession {
+	return guardedSession({ abort: vi.fn(() => Promise.resolve()) }, "registry-only test session");
 }
 
 export interface ChildSessionOptions {

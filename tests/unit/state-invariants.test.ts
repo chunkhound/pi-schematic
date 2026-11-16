@@ -5,25 +5,36 @@
  * that must hold after every operation on a pure SchematicState.
  */
 
-import { afterEach, expect, test, vi } from "vitest";
+import { expect, test } from "vitest";
 import * as fc from "fast-check";
-import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_BYTES, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createState, resetState, abortAndClearChildSessions, invalidateHandoffState, newRequestedHandoff } from "../../state.js";
 import type { SchematicState } from "../../state.js";
 import { setActiveNotebookTopic, clearActiveNotebookTopic } from "../../notebook/topic.js";
 import { saveNotebookPage } from "../../notebook/store.js";
 import { useTestHarness } from "../test-utils.js";
-import { createSession } from "./helpers.js";
-import { createTestHost } from "./test-host.js";
+import { createRunner } from "../support/runner.js";
+import { createSession } from "../support/session.js";
 
 // ── Host API ──────────────────────────────────────────────────────────
 
-// A host with nothing registered; saveNotebookPage only appends entries to it.
-const mockPi = await createTestHost(vi.fn());
-// No test reads the entries; dropping them keeps the shared host from growing across tests.
-afterEach(() => {
-	mockPi.appendedEntries.length = 0;
-});
+/** The api pi passes an extension that registers nothing, on a headless runner; saveNotebookPage only appends entries through it. */
+async function notebookApi(): Promise<ExtensionAPI> {
+	let api: ExtensionAPI | undefined;
+	await createRunner({
+		cwd: process.cwd(),
+		mode: "print",
+		factories: [
+			(pi) => {
+				api = pi;
+			},
+		],
+	});
+	if (api === undefined) {
+		throw new Error("The extension factory did not run.");
+	}
+	return api;
+}
 
 /** First line fits, second line alone exceeds the byte cap: truncates to a clipped head. */
 const CLIPPED_BODY = "head\n" + "x".repeat(DEFAULT_MAX_BYTES + 1);
@@ -53,7 +64,7 @@ const arbSessionId = fc.stringMatching(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-
 
 // ── Apply ─────────────────────────────────────────────────────────────
 
-async function apply(state: SchematicState, action: StateAction): Promise<void> {
+async function apply(pi: ExtensionAPI, state: SchematicState, action: StateAction): Promise<void> {
 	switch (action.type) {
 		case "reset":
 			resetState(state);
@@ -65,14 +76,14 @@ async function apply(state: SchematicState, action: StateAction): Promise<void> 
 			clearActiveNotebookTopic(state);
 			break;
 		case "savePage":
-			await saveNotebookPage(mockPi, state, action.name, "content-" + action.name);
+			await saveNotebookPage(pi, state, action.name, "content-" + action.name);
 			break;
 		case "saveClippedPage":
-			await saveNotebookPage(mockPi, state, action.name, CLIPPED_BODY);
+			await saveNotebookPage(pi, state, action.name, CLIPPED_BODY);
 			break;
 		case "addChildSession":
-			state.childSessions.set(action.id, createSession([]));
-			state.liveChildSessions.set(action.id, createSession([]));
+			state.childSessions.set(action.id, createSession());
+			state.liveChildSessions.set(action.id, createSession());
 			break;
 		case "abortChildren":
 			abortAndClearChildSessions(state);
@@ -170,6 +181,7 @@ function assertResetClears(state: SchematicState): void {
 
 test("Property 1: Topic-source coupling invariant", async () => {
 	useTestHarness();
+	const pi = await notebookApi();
 	await fc.assert(
 		fc.asyncProperty(
 			fc.array(
@@ -184,7 +196,7 @@ test("Property 1: Topic-source coupling invariant", async () => {
 			async (actions) => {
 				const state = createState();
 				for (const action of actions) {
-					await apply(state, action);
+					await apply(pi, state, action);
 					assertTopicSourceCoupling(state);
 				}
 			},
@@ -195,6 +207,7 @@ test("Property 1: Topic-source coupling invariant", async () => {
 
 test("Property 2: Child session containment invariant", async () => {
 	useTestHarness();
+	const pi = await notebookApi();
 	await expect(
 		fc.assert(
 			fc.asyncProperty(
@@ -209,7 +222,7 @@ test("Property 2: Child session containment invariant", async () => {
 				async (actions) => {
 					const state = createState();
 					for (const action of actions) {
-						await apply(state, action);
+						await apply(pi, state, action);
 						assertChildSessionContainment(state);
 					}
 				},
@@ -221,6 +234,7 @@ test("Property 2: Child session containment invariant", async () => {
 
 test("Property 3: childSessionEpoch only changes on reset", async () => {
 	useTestHarness();
+	const pi = await notebookApi();
 	await fc.assert(
 		fc.asyncProperty(
 			fc.array(
@@ -238,7 +252,7 @@ test("Property 3: childSessionEpoch only changes on reset", async () => {
 
 				for (const action of actions) {
 					const prevChildEpoch = state.childSessionEpoch;
-					await apply(state, action);
+					await apply(pi, state, action);
 
 					// A reset increments childSessionEpoch by one; every other action leaves it unchanged.
 					expect(state.childSessionEpoch, `childSessionEpoch after ${action.type} (prev=${prevChildEpoch})`).toBe(
@@ -253,6 +267,7 @@ test("Property 3: childSessionEpoch only changes on reset", async () => {
 
 test("Property 4: Reset clears all state fields", async () => {
 	useTestHarness();
+	const pi = await notebookApi();
 	await fc.assert(
 		fc.asyncProperty(
 			fc.array(
@@ -270,7 +285,7 @@ test("Property 4: Reset clears all state fields", async () => {
 				const state = createState();
 
 				for (const action of actions) {
-					await apply(state, action);
+					await apply(pi, state, action);
 
 					// After every reset, assert full clear
 					if (action.type === "reset") {
@@ -285,6 +300,7 @@ test("Property 4: Reset clears all state fields", async () => {
 
 test("Property 5: Epoch counter — set to 1 on first savePage", async () => {
 	useTestHarness();
+	const pi = await notebookApi();
 	await fc.assert(
 		fc.asyncProperty(
 			fc.array(fc.oneof(fc.constant({ type: "reset" }), fc.record({ type: fc.constant("savePage"), name: arbPageName }), fc.constant({ type: "clearTopic" })), {
@@ -297,7 +313,7 @@ test("Property 5: Epoch counter — set to 1 on first savePage", async () => {
 
 				for (const action of actions) {
 					const prevEpoch: number = state.epoch;
-					await apply(state, action);
+					await apply(pi, state, action);
 
 					if (action.type === "savePage") {
 						// After first savePage, epoch transitions from 0 to 1
@@ -337,11 +353,12 @@ const STAGED_HANDOFF: NonNullable<SchematicState["stagedHandoff"]> = {
 
 test("resetState clears every field it owns", async () => {
 	useTestHarness();
+	const pi = await notebookApi();
 	const state = createState();
 	setActiveNotebookTopic(state, "test-topic", "agent");
 	setActiveNotebookTopic(state, "other-topic", "human");
-	await saveNotebookPage(mockPi, state, "my-page", "some content");
-	await saveNotebookPage(mockPi, state, "clipped-page", CLIPPED_BODY);
+	await saveNotebookPage(pi, state, "my-page", "some content");
+	await saveNotebookPage(pi, state, "clipped-page", CLIPPED_BODY);
 	state.discardEpochWatermark = 3;
 	state.stagedHandoff = { ...STAGED_HANDOFF };
 	state.handoffRefusals.set("call-2", "refused");
@@ -349,8 +366,8 @@ test("resetState clears every field it owns", async () => {
 	state.readonlyNudgeRearmAtSettle = true;
 	state.pendingRequestedHandoff = newRequestedHandoff("continue");
 	state.lastWatchdogBand = 1;
-	state.childSessions.set("child-1", createSession([]));
-	state.liveChildSessions.set("child-1", createSession([]));
+	state.childSessions.set("child-1", createSession());
+	state.liveChildSessions.set("child-1", createSession());
 	state.readonlyEnabled = true;
 	state.readonlyNudgePending = true;
 	state.frontmatterSkillCache.set("skill-a", {
@@ -442,8 +459,9 @@ test("invalidateHandoffState clears the staged handoff, the refusals and the pen
 });
 
 test("clipped page flags stay contained and reset clears them", async () => {
+	const pi = await notebookApi();
 	const state = createState();
-	await saveNotebookPage(mockPi, state, "clipped-page", CLIPPED_BODY);
+	await saveNotebookPage(pi, state, "clipped-page", CLIPPED_BODY);
 	assertClippedPagesContained(state);
 	expect([...state.clippedPages], "oversized write must flag the page clipped").toContain("clipped-page");
 
@@ -454,6 +472,7 @@ test("clipped page flags stay contained and reset clears them", async () => {
 
 test("Property 7: clipped pages are a subset of notebook pages", async () => {
 	useTestHarness();
+	const pi = await notebookApi();
 	await fc.assert(
 		fc.asyncProperty(
 			fc.array(
@@ -467,7 +486,7 @@ test("Property 7: clipped pages are a subset of notebook pages", async () => {
 			async (actions) => {
 				const state = createState();
 				for (const action of actions) {
-					await apply(state, action);
+					await apply(pi, state, action);
 					assertClippedPagesContained(state);
 					if (action.type === "saveClippedPage") {
 						expect([...state.clippedPages], `clipped write "${action.name}" must set the clipped flag`).toContain(action.name);

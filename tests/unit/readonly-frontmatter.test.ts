@@ -18,7 +18,7 @@ import {
 	type SlashCommandInfo,
 	type SlashCommandSource,
 } from "@earendil-works/pi-coding-agent";
-import { testWithDir, tmpDir, withTempHome } from "./helpers.js";
+import { testWithDir, tmpDir, withTempHome } from "../support/temp.js";
 import { assertPresent, isRecord } from "../assertions.js";
 import { createRunner, type AppendedEntry, type RunnerFixture } from "../support/runner.js";
 import { realTheme } from "../support/theme.js";

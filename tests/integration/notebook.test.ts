@@ -11,7 +11,7 @@ import { createModelRegistry } from "../support/model-registry.js";
 import { runRealChildInvocation } from "../support/real-child.js";
 import { ESCAPE, listDriver, press, writePage } from "../support/notebook.js";
 import { createRunner, type CustomComponentDriver, type RunnerFixture } from "../support/runner.js";
-import { appendDrafts } from "../support/session.js";
+import { appendDrafts, ZERO_USAGE } from "../support/session.js";
 import { realTheme } from "../support/theme.js";
 
 const ELIGIBLE_USAGE: ContextUsage = { tokens: 50_000, percent: 25, contextWindow: 200_000 };
@@ -326,8 +326,6 @@ test.skipIf(process.platform === "win32")("/notebook surfaces pager spawn errors
 
 	expect(fixture.ui.notifications).toStrictEqual([{ message: `pager failed: ${missing} not found`, type: "warning" }]);
 });
-
-const ZERO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 
 function assistantMessage(): AssistantMessage {
 	return {

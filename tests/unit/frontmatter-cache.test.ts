@@ -11,7 +11,7 @@ import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertPresent } from "../assertions.js";
-import { setTempHome, testWithDir, tmpDir, withTempAgentDir, withTempHome } from "./helpers.js";
+import { setTempHome, testWithDir, tmpDir, withTempAgentDir, withTempHome } from "../support/temp.js";
 import {
 	cacheLookupCommand,
 	cacheLookupCommandExplicitModel,

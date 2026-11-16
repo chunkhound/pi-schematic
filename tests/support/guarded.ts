@@ -1,4 +1,5 @@
-// A stand-in for a class instance that throws on every member the test did not provide.
+// Stand-ins for class instances: one that throws on every member the test did not provide, and
+// one that only carries the class's prototype.
 
 /**
  * An object whose prototype is `prototype` and whose own members are `members`. Reading any other
@@ -34,6 +35,19 @@ export function guardedInstance<T extends object>(prototype: T, members: Partial
 			return value;
 		},
 	});
+}
+
+/**
+ * An object whose prototype is `prototype`, with `members` as own properties, so it
+ * passes `instanceof` checks for the class. Every member left out is the class's own
+ * and usually fails, because the object never ran the constructor.
+ */
+export function stubInstance<T extends object>(prototype: T, members: Partial<T>): T {
+	const target: unknown = Object.create(prototype);
+	if (!hasPrototype(target, prototype)) {
+		throw new Error("Object.create did not produce an object with the given prototype.");
+	}
+	return Object.assign(target, members);
 }
 
 function hasPrototype<T extends object>(value: unknown, prototype: T): value is T {

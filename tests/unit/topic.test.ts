@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { createState, type SchematicState } from "../../state.js";
 import { clearActiveNotebookTopic, normalizeNotebookTopic, setActiveNotebookTopic } from "../../notebook/topic.js";
 import { registerNotebookTopicTool } from "../../notebook/topic-tool.js";
-import { detailsOf, firstText } from "./helpers.js";
+import { detailsOf, firstText } from "../support/tool-result.js";
 import { createRunner, type RunnerFixture } from "../support/runner.js";
 
 /** A headless runner with only the notebook_topic_set tool, registered over `state`. */

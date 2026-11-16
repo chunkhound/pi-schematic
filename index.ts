@@ -437,9 +437,6 @@ function blockStreamingFrontmatter(
 function refreshModelGroupsState(state: SchematicState, ctx: ExtensionContext) {
 	state.modelGroups.groups = [];
 	state.modelGroups.validation = null;
-	if (!ctx.cwd || !ctx.modelRegistry) {
-		return null;
-	}
 	const loadedModelGroups = loadModelGroups(createModelGroupsAccess(ctx.cwd, ctx.isProjectTrusted()));
 	const resolvedModelGroups = validateModelGroups(loadedModelGroups, ctx.modelRegistry);
 	state.modelGroups.groups = resolvedModelGroups;
@@ -930,7 +927,7 @@ export default function (pi: ExtensionAPI): void {
 
 		registerModelGroupAutocomplete(ctx, state);
 		const validation = refreshModelGroupsState(state, ctx);
-		if (validation && ctx.hasUI) {
+		if (ctx.hasUI) {
 			for (const issue of validation.loadIssues) {
 				const sourcePath = escapeDisplayLabel(issue.sourcePath);
 				const backupPath = issue.backupPath !== undefined && issue.backupPath !== "" ? escapeDisplayLabel(issue.backupPath) : undefined;

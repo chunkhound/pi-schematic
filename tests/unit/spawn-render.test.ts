@@ -15,7 +15,7 @@ import { assertPresent, expectPrefix } from "../assertions.js";
 import { createState, type SchematicState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
 import { renderSpawnCall, renderSpawnResult } from "../../spawn/renderer.js";
-import { createToolRenderContext } from "./helpers.js";
+import { createToolRenderContext } from "../support/render-context.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
 import { createRunner } from "../support/runner.js";
 import { createRealTheme, realTheme } from "../support/theme.js";

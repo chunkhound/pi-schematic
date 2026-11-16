@@ -60,20 +60,18 @@ Treat this as a strong task-boundary signal. ${action}
 Only continue inline if this was merely a rename rather than a real pivot.`;
 }
 
-function buildDefaultNudge(pct: number | null, topic: string | null, eligible: boolean): string {
+function buildDefaultNudge(pct: number, topic: string | null, eligible: boolean): string {
 	const contextLead =
-		pct === null
-			? "Topic-aware context reminder."
-			: pct >= 70
-				? `Context at ${pct}% — topic discipline is urgent.`
-				: pct >= 50
-					? `Context at ${pct}% — topic discipline matters now.`
-					: `Context at ${pct}% — choose your next step by topic fit.`;
+		pct >= 70
+			? `Context at ${pct}% — topic discipline is urgent.`
+			: pct >= 50
+				? `Context at ${pct}% — topic discipline matters now.`
+				: `Context at ${pct}% — choose your next step by topic fit.`;
 	const pivotAdvice = eligible ? "prefer a deliberate handoff" : "continue working until handoff is available";
 
 	if (topic !== null && topic !== "") {
 		const urgency =
-			pct !== null && pct >= 70
+			pct >= 70
 				? `If the work no longer fits this topic, ${pivotAdvice}. If it still fits and only a focused noisy branch is needed, spawn it instead of polluting the parent context.`
 				: `If the current work still fits this topic, prefer spawn for isolated noisy subtasks. If it no longer fits, ${pivotAdvice} instead of dragging stale context forward.`;
 		return `${contextLead}
@@ -83,7 +81,7 @@ Save durable findings to the notebook before handoff.`;
 	}
 
 	const noTopicUrgency =
-		pct !== null && pct >= 70
+		pct >= 70
 			? eligible
 				? "Assign a fresh topic in the next clean context after handoff."
 				: "Assign a fresh topic now; continue working until handoff is available."
@@ -104,12 +102,10 @@ function selectNudge(state: NudgeState, pct: number | null, eligible: boolean): 
 	if (state.pendingTopicBoundaryHint) {
 		return { text: buildBoundaryNudge(state.pendingTopicBoundaryHint, eligible), nudgedHandoff: null };
 	}
+	if (pct === null) {
+		throw new Error("The default watchdog nudge requires a context percent.");
+	}
 	return { text: buildDefaultNudge(pct, state.activeNotebookTopic, eligible), nudgedHandoff: null };
-}
-
-/** Build a watchdog message for the rounded context percent `pct` and the caller's current handoff eligibility. */
-export function buildNudge(state: NudgeState, pct: number | null, eligible: boolean): string {
-	return selectNudge(state, pct, eligible).text;
 }
 
 /**

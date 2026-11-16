@@ -7,17 +7,21 @@
 
 import {
 	createSyntheticSourceInfo,
+	DefaultResourceLoader,
 	ExtensionRunner,
 	ModelRegistry,
 	SessionManager,
+	SettingsManager,
 	Theme,
 	wrapRegisteredTool,
 	type BuildSystemPromptOptions,
+	type Extension,
 	type ExtensionActions,
 	type ExtensionCommandContextActions,
 	type ExtensionContextActions,
 	type ExtensionContext,
 	type ExtensionFactory,
+	type ExtensionRuntime,
 	type ExtensionUIContext,
 	type ExtensionWidgetOptions,
 	type KeybindingsManager,
@@ -26,6 +30,7 @@ import {
 	type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, TuiMainScreen, type Component, type TUI } from "@earendil-works/pi-tui";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -33,20 +38,80 @@ import { Type } from "typebox";
 import { onTestFinished } from "vitest";
 import registerSchematic from "../../index.js";
 import { AGENT_DIR_ENV_KEY } from "../paths.js";
-import { loadExtensions } from "../unit/test-host.js";
+import { guardedUIContext } from "./ui-context.js";
 import { guardedInstance } from "./guarded.js";
 
+let loaderAgentDir: string | undefined;
+
+// One empty agent directory per process for the loader: pi requires one, and a fresh path keeps
+// the real agent directory out of the load. Removed at exit; a run killed by a signal leaves it
+// behind.
+function testAgentDir(): string {
+	if (loaderAgentDir === undefined) {
+		const dir = mkdtempSync(join(tmpdir(), "pi-schematic-test-agent-"));
+		process.once("exit", () => {
+			try {
+				rmSync(dir, { recursive: true, force: true });
+			} catch {
+				// A throw here would fail a run whose tests passed; a directory left behind costs nothing.
+			}
+		});
+		loaderAgentDir = dir;
+	}
+	return loaderAgentDir;
+}
+
+/**
+ * Load `factories` through pi's `DefaultResourceLoader` as inline extensions, with `cwd` as the
+ * loader's working directory, an untrusted project, a process-wide temp agent directory and
+ * in-memory settings, so no installed or project resource loads. No host action is bound: the
+ * runtime's actions stay as pi's loader left them, and most throw pi's "Extension runtime not
+ * initialized" error until a caller binds them. `extensions[i]` belongs to `factories[i]`; the
+ * pairing relies on pi loading inline factories one after another, in order, and the count check
+ * below guards that pairing: it catches pi loading an extra discovered extension or dropping one.
+ * Throws one error listing the load errors, each starting a new line as `path: error`.
+ */
+async function loadExtensions(factories: ExtensionFactory[], cwd: string): Promise<{ extensions: Extension[]; runtime: ExtensionRuntime }> {
+	const loader = new DefaultResourceLoader({
+		cwd,
+		agentDir: testAgentDir(),
+		// An untrusted project keeps pi from scanning `<cwd>/.pi` and ancestor `.agents/skills` directories.
+		settingsManager: SettingsManager.inMemory({}, { projectTrusted: false }),
+		extensionFactories: factories,
+		noExtensions: true,
+		noSkills: true,
+		noPromptTemplates: true,
+		noThemes: true,
+		noContextFiles: true,
+		// Any set value, empty included, stops pi from looking for SYSTEM.md and APPEND_SYSTEM.md.
+		systemPrompt: "",
+		appendSystemPrompt: [],
+	});
+	await loader.reload();
+	const { extensions, errors, runtime } = loader.getExtensions();
+	// Tool and flag conflicts count too: pi's loader keeps both extensions, but the pi CLI exits on any load error.
+	// pi keeps only the message of a factory's error, and reports a thrown non-Error value as "failed to load
+	// extension". The original value is not captured: the message names the failing extension, which is enough.
+	if (errors.length > 0) {
+		throw new Error(`pi reported extension load errors:\n${errors.map((e) => `${e.path}: ${e.error}`).join("\n")}`);
+	}
+	if (extensions.length !== factories.length) {
+		throw new Error(`pi loaded ${extensions.length} extensions for ${factories.length} factories: ${extensions.map((e) => e.path).join(", ")}.`);
+	}
+	return { extensions, runtime };
+}
+
 /** The mode `ctx.mode` reports; pi's root entry does not export its name. */
-export type ExtensionMode = ExtensionContext["mode"];
+type ExtensionMode = ExtensionContext["mode"];
 
 /** A `pi.sendMessage` call the fixture recorded. */
-export interface SentMessage {
+interface SentMessage {
 	message: Parameters<ExtensionActions["sendMessage"]>[0];
 	options: Parameters<ExtensionActions["sendMessage"]>[1];
 }
 
 /** A `pi.sendUserMessage` call the fixture recorded. */
-export interface SentUserMessage {
+interface SentUserMessage {
 	content: Parameters<ExtensionActions["sendUserMessage"]>[0];
 	options: Parameters<ExtensionActions["sendUserMessage"]>[1];
 }
@@ -64,15 +129,15 @@ export interface Notification {
 }
 
 /** What a `ctx.ui.setWidget` call passed as the widget content. */
-export type WidgetContent = string[] | ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined;
+type WidgetContent = string[] | ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined;
 
 /** The context members production code reads, under pi's binding names. */
-export type ContextBindings = Pick<ExtensionContextActions, "getModel" | "isIdle" | "isProjectTrusted" | "getSignal" | "abort" | "getContextUsage"> & {
+type ContextBindings = Pick<ExtensionContextActions, "getModel" | "isIdle" | "isProjectTrusted" | "getSignal" | "abort" | "getContextUsage"> & {
 	executeTool: NonNullable<ExtensionContextActions["executeTool"]>;
 };
 
 /** The host actions a test may bind; the recording actions are always the fixture's own. */
-export type ActionBindings = Pick<ExtensionActions, "getAllTools" | "getCommands" | "setModel" | "getThinkingLevel" | "setThinkingLevel">;
+type ActionBindings = Pick<ExtensionActions, "getAllTools" | "getCommands" | "setModel" | "getThinkingLevel" | "setThinkingLevel">;
 
 /**
  * Runs once a `ctx.ui.custom` component is built, with the component and the TUI it got. The
@@ -82,7 +147,7 @@ export type ActionBindings = Pick<ExtensionActions, "getAllTools" | "getCommands
 export type CustomComponentDriver = (component: Component, tui: TUI) => void | Promise<void>;
 
 /** The UI a fixture binds: notifications, statuses and widgets are always recorded. */
-export interface UIBindings {
+interface UIBindings {
 	theme?: Theme;
 	custom?: CustomComponentDriver;
 	/** The TUI members a `ctx.ui.custom` component may call besides `requestRender`, which the fixture provides. */
@@ -116,7 +181,7 @@ export interface RunnerOptions {
 }
 
 /** What the extension sent and appended through the recording host actions. */
-export interface HostRecords {
+interface HostRecords {
 	readonly sentMessages: readonly SentMessage[];
 	readonly sentUserMessages: readonly SentUserMessage[];
 	readonly appendedEntries: readonly AppendedEntry[];
@@ -125,7 +190,7 @@ export interface HostRecords {
 }
 
 /** What the extension showed through the recording UI. */
-export interface UIRecords {
+interface UIRecords {
 	readonly notifications: readonly Notification[];
 	readonly statuses: ReadonlyMap<string, string | undefined>;
 	readonly widgets: ReadonlyMap<string, WidgetContent>;
@@ -202,7 +267,6 @@ interface UIState {
 }
 
 function createRecordingUI(bindings: UIBindings, state: UIState): ExtensionUIContext {
-	const ui = (member: string) => throwing(`ctx.ui.${member}`, "ui");
 	const theme = bindings.theme ?? guardedInstance(Theme.prototype, {}, THEME_FIELDS, (member) => unbound(`ctx.ui.theme.${member}`, "ui.theme"));
 	const tui = guardedInstance<TUI>(
 		TuiMainScreen.prototype,
@@ -219,127 +283,108 @@ function createRecordingUI(bindings: UIBindings, state: UIState): ExtensionUICon
 				: new Error(`tui.${member} is not available to a custom component in this runner fixture; only requestRender, stop and start are.`),
 	);
 	const driver = bindings.custom;
-	return {
-		select: ui("select"),
-		confirm: ui("confirm"),
-		input: ui("input"),
-		notify: (message, type) => {
-			state.notifications.push({ message, type });
-		},
-		onTerminalInput: ui("onTerminalInput"),
-		setStatus: (key, text) => {
-			state.statuses.set(key, text);
-		},
-		setWorkingMessage: ui("setWorkingMessage"),
-		setWorkingVisible: ui("setWorkingVisible"),
-		setWorkingIndicator: ui("setWorkingIndicator"),
-		setHiddenThinkingLabel: ui("setHiddenThinkingLabel"),
-		setWidget: (key: string, content: WidgetContent, _options?: ExtensionWidgetOptions) => {
-			state.widgets.set(key, content);
-		},
-		setFooter: ui("setFooter"),
-		setHeader: ui("setHeader"),
-		setTitle: ui("setTitle"),
-		async custom<T>(
-			factory: (tui: TUI, theme: Theme, keybindings: KeybindingsManager, done: (result: T) => void) => Component | Promise<Component>,
-		): Promise<T> {
-			if (driver === undefined) {
-				throw unbound("ctx.ui.custom", "ui.custom");
-			}
-			const results: T[] = [];
-			let built: Component | undefined;
-			let disposed = false;
-			const disposeOnce = (component: Component): void => {
-				if (!disposed) {
-					disposed = true;
-					disposeComponent(component);
+	return guardedUIContext(
+		{
+			notify: (message, type) => {
+				state.notifications.push({ message, type });
+			},
+			setStatus: (key, text) => {
+				state.statuses.set(key, text);
+			},
+			setWidget: (key: string, content: WidgetContent, _options?: ExtensionWidgetOptions) => {
+				state.widgets.set(key, content);
+			},
+			async custom<T>(
+				factory: (tui: TUI, theme: Theme, keybindings: KeybindingsManager, done: (result: T) => void) => Component | Promise<Component>,
+			): Promise<T> {
+				if (driver === undefined) {
+					throw unbound("ctx.ui.custom", "ui.custom");
 				}
-			};
-			let closeInFactory: () => void = () => undefined;
-			const closedInFactory = new Promise<undefined>((resolve) => {
-				closeInFactory = () => {
-					resolve(undefined);
+				const results: T[] = [];
+				let built: Component | undefined;
+				let disposed = false;
+				const disposeOnce = (component: Component): void => {
+					if (!disposed) {
+						disposed = true;
+						disposeComponent(component);
+					}
 				};
-			});
-			const done = (result: T): void => {
-				results.push(result);
-				if (results.length === 1) {
-					if (built === undefined) {
-						closeInFactory();
-					} else {
-						disposeOnce(built);
+				let closeInFactory: () => void = () => undefined;
+				const closedInFactory = new Promise<undefined>((resolve) => {
+					closeInFactory = () => {
+						resolve(undefined);
+					};
+				});
+				const done = (result: T): void => {
+					results.push(result);
+					if (results.length === 1) {
+						if (built === undefined) {
+							closeInFactory();
+						} else {
+							disposeOnce(built);
+						}
+					}
+				};
+				// The factory's type names pi-coding-agent's KeybindingsManager, a subclass the package root
+				// exports only as a type. The fixture passes pi-tui's global manager, which components read
+				// their keys from, so the call goes through Reflect.apply and the result is checked.
+				// A synchronous throw rejects factoryRun, as it rejects pi's host promise.
+				let returned: unknown;
+				const factoryRun = new Promise<unknown>((resolve) => {
+					returned = Reflect.apply(factory, undefined, [tui, theme, getKeybindings(), done]);
+					resolve(returned);
+				});
+				// pi's host takes the component in a `then` on `Promise.resolve` of what the factory returned,
+				// and from that turn on `done` disposes it. The fixture marks the component built in the same
+				// turn, so `done` disposes it for the same timings. A rejection reaches the call through
+				// factoryRun.
+				void Promise.resolve(returned).then(
+					(value) => {
+						if (results.length === 0 && isComponent(value)) {
+							built = value;
+						}
+					},
+					() => undefined,
+				);
+				// Like pi's host: once `done` fired inside the factory, the call resolves with its value at
+				// once, and what the factory still returns or throws is neither driven, disposed nor reported.
+				factoryRun.catch(() => undefined);
+				let component: unknown;
+				try {
+					component = await Promise.race([factoryRun, closedInFactory]);
+				} catch (error) {
+					if (results.length === 0) {
+						throw error;
 					}
 				}
-			};
-			// The factory's type names pi-coding-agent's KeybindingsManager, a subclass the package root
-			// exports only as a type. The fixture passes pi-tui's global manager, which components read
-			// their keys from, so the call goes through Reflect.apply and the result is checked.
-			// A synchronous throw rejects factoryRun, as it rejects pi's host promise.
-			let returned: unknown;
-			const factoryRun = new Promise<unknown>((resolve) => {
-				returned = Reflect.apply(factory, undefined, [tui, theme, getKeybindings(), done]);
-				resolve(returned);
-			});
-			// pi's host takes the component in a `then` on `Promise.resolve` of what the factory returned,
-			// and from that turn on `done` disposes it. The fixture marks the component built in the same
-			// turn, so `done` disposes it for the same timings. A rejection reaches the call through
-			// factoryRun.
-			void Promise.resolve(returned).then(
-				(value) => {
-					if (results.length === 0 && isComponent(value)) {
-						built = value;
+				if (results.length > 0) {
+					return results[0];
+				}
+				if (!isComponent(component)) {
+					throw new Error("The custom factory did not build a component with render and invalidate methods.");
+				}
+				built = component;
+				try {
+					await driver(component, tui);
+				} catch (error) {
+					// A driver that fails (a failed assertion) before the component called done still
+					// disposes it, and the test sees the driver's error.
+					if (results.length === 0) {
+						disposeOnce(component);
 					}
-				},
-				() => undefined,
-			);
-			// Like pi's host: once `done` fired inside the factory, the call resolves with its value at
-			// once, and what the factory still returns or throws is neither driven, disposed nor reported.
-			factoryRun.catch(() => undefined);
-			let component: unknown;
-			try {
-				component = await Promise.race([factoryRun, closedInFactory]);
-			} catch (error) {
-				if (results.length === 0) {
 					throw error;
 				}
-			}
-			if (results.length > 0) {
-				return results[0];
-			}
-			if (!isComponent(component)) {
-				throw new Error("The custom factory did not build a component with render and invalidate methods.");
-			}
-			built = component;
-			try {
-				await driver(component, tui);
-			} catch (error) {
-				// A driver that fails (a failed assertion) before the component called done still
-				// disposes it, and the test sees the driver's error.
 				if (results.length === 0) {
 					disposeOnce(component);
+					throw new Error("The custom component did not call done.");
 				}
-				throw error;
-			}
-			if (results.length === 0) {
-				disposeOnce(component);
-				throw new Error("The custom component did not call done.");
-			}
-			return results[0];
+				return results[0];
+			},
+			...(bindings.addAutocompleteProvider === undefined ? {} : { addAutocompleteProvider: bindings.addAutocompleteProvider }),
+			theme,
 		},
-		pasteToEditor: ui("pasteToEditor"),
-		setEditorText: ui("setEditorText"),
-		getEditorText: ui("getEditorText"),
-		editor: ui("editor"),
-		addAutocompleteProvider: bindings.addAutocompleteProvider ?? ui("addAutocompleteProvider"),
-		setEditorComponent: ui("setEditorComponent"),
-		getEditorComponent: ui("getEditorComponent"),
-		theme,
-		getAllThemes: ui("getAllThemes"),
-		getTheme: ui("getTheme"),
-		setTheme: ui("setTheme"),
-		getToolsExpanded: ui("getToolsExpanded"),
-		setToolsExpanded: ui("setToolsExpanded"),
-	};
+		(member) => unbound(`ctx.ui.${member}`, "ui"),
+	);
 }
 
 /**

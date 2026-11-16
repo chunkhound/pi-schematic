@@ -13,7 +13,7 @@ import {
 import { assertPresent } from "../assertions.js";
 import { createModelRegistry } from "../support/model-registry.js";
 import { realTheme } from "../support/theme.js";
-import { stubInstance } from "./helpers.js";
+import { stubInstance } from "../support/guarded.js";
 import { resolveGroups, testProvider, type ScopedGroupDefs, type TestChatModel } from "./model-groups-helpers.js";
 
 const GPT5_THINKING_OPTIONS = ["inherit", "off", "minimal", "low", "medium", "high", "xhigh", "max"];

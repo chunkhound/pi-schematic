@@ -8,7 +8,9 @@ import { createReadonlyChildBashTool } from "../../spawn/index.js";
 import { expectSuffix, isRecord } from "../assertions.js";
 import { applyReadonlyBashGuard } from "../../readonly-bash.js";
 import { canUseOsSandbox, quoteShellArgument } from "../../os-sandbox.js";
-import { SANDBOX_DENIAL_PHRASES, textOf, tmpDir } from "../unit/helpers.js";
+import { SANDBOX_DENIAL_PHRASES } from "../support/sandbox.js";
+import { tmpDir } from "../support/temp.js";
+import { textOf } from "../support/tool-result.js";
 import { createRunner } from "../support/runner.js";
 import { runRealChildInvocation } from "../support/real-child.js";
 

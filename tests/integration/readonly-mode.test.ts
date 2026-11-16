@@ -6,12 +6,13 @@ import { join } from "node:path";
 import { canUseOsSandbox } from "../../os-sandbox.js";
 import { assertPresent, expectSuffix } from "../assertions.js";
 import { createRunner, type RunnerFixture } from "../support/runner.js";
+import { SANDBOX_DENIAL_PHRASES } from "../support/sandbox.js";
 import { realTheme } from "../support/theme.js";
+import { textOf } from "../support/tool-result.js";
 
 const SANDBOX_BLOCK_NOTICE =
 	"[readonly mode] If this command failed on a write outside the OS temp dir, the OS sandbox blocked it.\nUse /readonly to disable, or write within the OS temp dir.";
 
-const SANDBOX_DENIAL_PHRASES: Partial<Record<NodeJS.Platform, string>> = { darwin: "Operation not permitted", linux: "Read-only file system" };
 const SANDBOX_DENIAL_PHRASE = SANDBOX_DENIAL_PHRASES[process.platform];
 const hasOsSandbox = canUseOsSandbox();
 
@@ -35,11 +36,6 @@ async function toggleReadonly(fixture: RunnerFixture): Promise<void> {
 /** A bash `tool_call` event for `command`. */
 function bashCall(command: string, toolCallId = "bash"): BashToolCallEvent {
 	return { type: "tool_call", toolCallId, toolName: "bash", input: { command } };
-}
-
-/** The text of every text block in `content`, joined. */
-function textOf(content: ToolResultEvent["content"]): string {
-	return content.map((block) => (block.type === "text" ? block.text : "")).join("");
 }
 
 test("readonly toggle on blocks a bash mutation outside temp and allows one inside temp", async () => {
@@ -156,7 +152,7 @@ test.skipIf(skipWithoutSandbox)("a failed sandboxed bash result gets the sandbox
 	const first = await bash.result("call-1");
 
 	assertPresent(first?.content);
-	expect(textOf(first.content)).toBe(`${bash.deniedOutput}\n\nCommand exited with code 1\n\n${SANDBOX_BLOCK_NOTICE}`);
+	expect(textOf({ content: first.content })).toBe(`${bash.deniedOutput}\n\nCommand exited with code 1\n\n${SANDBOX_BLOCK_NOTICE}`);
 	expect(first.structuredContent).toStrictEqual({
 		output: `${bash.deniedOutput}\n\n${SANDBOX_BLOCK_NOTICE}`,
 		truncated: false,
@@ -208,5 +204,5 @@ test.skipIf(skipWithoutSandbox)("a call sandboxed after a session start gets the
 	const result = await bash.result("after-start");
 
 	assertPresent(result?.content);
-	expectSuffix(textOf(result.content), SANDBOX_BLOCK_NOTICE);
+	expectSuffix(textOf({ content: result.content }), SANDBOX_BLOCK_NOTICE);
 });

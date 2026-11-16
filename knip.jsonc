@@ -9,9 +9,7 @@
     "scripts/coverage-comment.mjs",
     "test-loader.mjs",
     // TypeScript reads it for the types of pi-packages.mjs.
-    "pi-packages.d.mts",
-    // The shared test fixtures are entries until the tests that use them land.
-    "tests/support/**/*.ts"
+    "pi-packages.d.mts"
   ],
   // Platform sandbox binaries that os-sandbox.ts runs when the host has them.
   "ignoreBinaries": ["bwrap", "sandbox-exec"],

@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import registerSchematic from "../../index.js";
 import { assertPresent } from "../assertions.js";
 import { createRunner } from "../support/runner.js";
+import { SANDBOX_DENIAL_PHRASES } from "../support/sandbox.js";
 import { realTheme } from "../support/theme.js";
 
 type ContextMessage = Awaited<ReturnType<ExtensionRunner["emitContext"]>>[number];
@@ -185,7 +186,6 @@ test.for<{ label: string; command: unknown }>([
 
 // ── Sandbox block notice on failed bash results ────────────
 
-const SANDBOX_DENIAL_PHRASES: Partial<Record<NodeJS.Platform, string>> = { darwin: "Operation not permitted", linux: "Read-only file system" };
 const SANDBOX_DENIAL_PHRASE = SANDBOX_DENIAL_PHRASES[process.platform];
 
 test.skipIf(SANDBOX_DENIAL_PHRASE === undefined)("a failed bash result for an id that was never sandboxed gets no notice", async () => {

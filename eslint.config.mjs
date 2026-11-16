@@ -412,13 +412,12 @@ export default defineConfig([
 		plugins: { vitest },
 		rules: {
 			// @vitest/eslint-plugin recommended
-			// The suite's assertion helpers make a counted expect on every path; "expect" and "assert" are the rule's defaults.
+			// The suite's assertion helpers make a counted expect on every path; "expect" is listed because this option replaces the rule's default names.
 			"vitest/expect-expect": [
 				"error",
 				{
 					assertFunctionNames: [
 						"expect",
-						"assert",
 						"expectPrefix",
 						"expectSuffix",
 						"expectGoldenFile",
