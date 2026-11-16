@@ -69,7 +69,8 @@ const PROVIDER_CREDENTIAL_ENV = [
  * A `ModelRegistry` with the built-in catalog and the `providers` registered under their ids, each
  * with its own auth: a provider config with an `apiKey` is configured, one without is not. Each id
  * must be one no built-in provider uses. Throws when an id is taken, or when `getAvailable()` holds
- * a model of a provider the test did not pass.
+ * a model of a provider the test did not pass. The credential variables stay cleared for the
+ * creating test only, so build the registry inside the test that uses it.
  */
 export async function createModelRegistry(providers: Record<string, ProviderConfig>): Promise<ModelRegistry> {
 	for (const name of PROVIDER_CREDENTIAL_ENV) {
