@@ -64,6 +64,13 @@
         "notes": "undici: DoS via TLS 1.2 certificate-changing renegotiation. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.2.0 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.2.0 (devDependency).",
         "expiry": "2026-12-31"
       }
+    },
+    {
+      "GHSA-fc5q-39xc-vjpf": {
+        "active": true,
+        "notes": "picomatch: ReDoS through single-branch repeated extglobs (CVE-2026-112366). npm audit affected range: <=4.0.7, no patched release. Installed 4.0.7 as one deduped copy, required by knip@6.45.1, vite@8.3.7, vitest@5.1.0 and tinyglobby@0.2.17 under eslint-import-resolver-typescript@4.4.5 and typescript-eslint (npm ls). Transitive in the lint, test and dead-code tooling (devDependencies) only; the globs it compiles come from repository config, not untrusted input.",
+        "expiry": "2027-01-31"
+      }
     }
   ]
 }
