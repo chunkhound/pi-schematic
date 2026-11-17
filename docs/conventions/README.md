@@ -9,3 +9,21 @@ A CI check (`.github/workflows/conventions.yml`) reviews pull requests to main f
 Each convention is one file in this directory, named `<slug>.md`. It starts with frontmatter that holds `paths`, a list of double-quoted globs. Each glob is a git glob pathspec relative to the repository root: `*` does not cross `/`, `**/` matches any depth, and there is no brace alternation, so a glob holds no `{` or `}`. An item that starts with `!` excludes. A changed file matches when it matches an including glob and no excluding glob. The CI check reviews a pull request against a convention when at least one of its changed files matches; added, modified and deleted files count, and so does either side of a rename.
 
 The H1 after the frontmatter is the convention's name, and the paragraphs after it, up to the first `Why:` or `Tooling:` paragraph, are the statement. `Why:` and `Tooling:` paragraphs explain the convention and are not part of the statement. Each sentence of the statement is judged on its own, so it names what it speaks about. A sentence ends at a full stop followed by whitespace or the end of the statement; a full stop inside backticks does not end one. The CI check fails on a convention file without this format.
+
+A convention file has this shape, shown here with a sample rule that is not a convention of this repository.
+
+```markdown
+---
+paths:
+  - "**/*.ts"
+  - "!tests/**"
+---
+
+# Example: error messages
+
+An error message the extension throws names the file or setting it concerns. An error message the extension throws starts with a capital letter and does not end with a full stop.
+
+Why: a message without its subject leaves the user to guess what failed.
+
+Tooling: none; review covers it.
+```
