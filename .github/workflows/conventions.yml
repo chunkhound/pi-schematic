@@ -41,20 +41,22 @@ jobs:
           matrix='[]'
           for file in docs/conventions/*.md; do
             [ "$file" = docs/conventions/README.md ] && continue
-            # Frontmatter of only double-quoted paths items, closed by ---, and exactly one H1 after it.
+            # Frontmatter of only double-quoted paths items, closed by ---, and exactly one H1 after it outside code blocks.
+            # Git glob pathspecs have no brace alternation, so a paths item with a brace would match nothing.
             if ! awk '
               NR == 1 { if ($0 != "---") bad = 1; next }
               NR == 2 { if ($0 != "paths:") bad = 1; next }
-              !closed { if ($0 == "---") closed = 1; else if ($0 !~ /^  - "[^"]+"$/) bad = 1; next }
-              /^# / { h1++ }
+              !closed { if ($0 == "---") closed = 1; else if ($0 !~ /^  - "[^"]+"$/ || $0 ~ /[{}]/) bad = 1; next }
+              /^```/ { fence = !fence; next }
+              !fence && /^# / { h1++ }
               END { exit (bad || !closed || h1 != 1) }' "$file"; then
-              printf 'Convention file %q is malformed: it needs frontmatter holding only double-quoted paths items, and exactly one H1.\n' "$file"
+              printf 'Convention file %q is malformed: it needs frontmatter holding only double-quoted paths items without braces, and exactly one H1.\n' "$file"
               exit 1
             fi
             # The runner ends a line at a carriage return, so one in the name could start a workflow command.
             name="$(sed -n 's/^# //p' "$file" | head -n 1 | tr -d '\r')"
             # "glob" becomes ":(glob)glob" and "!glob" becomes ":(glob,exclude)glob".
-            mapfile -t specs < <(sed -n '/^---$/,/^---$/s/^  - "\(.*\)"$/\1/p' "$file" | sed -e 's/^!\(.*\)$/:(glob,exclude)\1/' -e t -e 's/^/:(glob)/')
+            mapfile -t specs < <(sed -n '2,/^---$/s/^  - "\(.*\)"$/\1/p' "$file" | sed -e 's/^!\(.*\)$/:(glob,exclude)\1/' -e t -e 's/^/:(glob)/')
             # With no including glob, git would match every changed file outside the excludes.
             if ! printf '%s\n' "${specs[@]}" | grep -q '^:(glob)'; then
               printf 'Convention file %q has no including glob in its paths.\n' "$file"
@@ -156,17 +158,64 @@ jobs:
       - name: Report violations
         env:
           NAME: ${{ matrix.convention.name }}
+          SLUG: ${{ matrix.convention.slug }}
         run: |
           verdict="$RUNNER_TEMP/verdict.json"
+          # A violation without a file, such as a missing entry, is reported at the convention it breaks.
           jq -r '
             def data: gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
             def property: data | gsub(":"; "%3A") | gsub(","; "%2C");
             .results[] | select(.verdict == "violation")
-            | [ (if .file then "file=\(.file | property)" else empty end),
+            | [ "file=\(.file // "docs/conventions/\(env.SLUG).md" | property)",
                 (if .file and .line then "line=\(.line)" else empty end),
                 "title=\(env.NAME | property)" ] as $properties
             | "::error \($properties | join(","))::\(.sentence + "\nReason: " + .reason + (if .quote then "\nQuote: " + .quote else "" end) | data)"
           ' "$verdict"
+          # The schema checks each verdict's shape, not that every statement sentence has one. The statement is the
+          # text after the H1 up to a Why: or Tooling: paragraph; a sentence ends at a full stop outside backticks
+          # that whitespace or the end of the statement follows.
+          node -e '
+            const fs = require("node:fs");
+            const [conventionFile, verdictFile] = process.argv.slice(1);
+            const lines = fs.readFileSync(conventionFile, "utf8").split("\n");
+            const statement = [];
+            let paragraphStart = true;
+            for (const line of lines.slice(lines.findIndex((line) => line.startsWith("# ")) + 1)) {
+              if (line.trim() === "") {
+                paragraphStart = true;
+                continue;
+              }
+              if (paragraphStart && /^(Why|Tooling):/.test(line)) break;
+              paragraphStart = false;
+              statement.push(line);
+            }
+            const text = statement.join(" ").replace(/\s+/g, " ").trim();
+            const sentences = [];
+            let start = 0;
+            let code = false;
+            for (let i = 0; i < text.length; i++) {
+              if (text[i] === "`") code = !code;
+              else if (text[i] === "." && !code && (i + 1 === text.length || text[i + 1] === " ")) {
+                sentences.push(text.slice(start, i + 1).trim());
+                start = i + 1;
+              }
+            }
+            if (text.slice(start).trim() !== "") sentences.push(text.slice(start).trim());
+            const given = JSON.parse(fs.readFileSync(verdictFile, "utf8")).results.map((result) => result.sentence.replace(/\s+/g, " ").trim());
+            const missing = sentences.filter((sentence) => !given.includes(sentence));
+            const unexpected = given.filter((sentence) => !sentences.includes(sentence));
+            if (sentences.length === 0 || given.length !== sentences.length || missing.length > 0 || unexpected.length > 0) {
+              const data = (value) => value.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+              const property = (value) => data(value).replaceAll(":", "%3A").replaceAll(",", "%2C");
+              const message = [
+                "The verdicts must cover each statement sentence once: " + sentences.length + " sentences, " + given.length + " verdicts.",
+                ...missing.map((sentence) => "Missing: " + sentence),
+                ...unexpected.map((sentence) => "Unexpected: " + sentence),
+              ].join("\n");
+              console.log("::error file=" + property(conventionFile) + ",title=" + property(process.env.NAME) + "::" + data(message));
+              process.exit(1);
+            }
+          ' "docs/conventions/$SLUG.md" "$verdict"
           jq -e 'all(.results[]; .verdict != "violation")' "$verdict" > /dev/null
 
       # Saved even when the check fails, so a failing pull request does not reinstall the extensions on every run.

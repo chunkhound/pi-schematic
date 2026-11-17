@@ -34,6 +34,12 @@
       ],
       "depNameTemplate": "node",
       "datasourceTemplate": "node-version"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/conventions\\.yml$/"],
+      "matchStrings": ["-e npm:(?<depName>@?[^@\\s]+)@(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "datasourceTemplate": "npm"
     }
   ],
   "packageRules": [
