@@ -2,7 +2,7 @@
 
 A convention is a statement about how this repository is kept that spans several files or describes a change. Each convention names the files it applies to. A statement about a single file is a comment in that file instead. Tools enforce parts of some conventions; review covers the rest.
 
-A CI check (`npm run check:conventions`, `scripts/check-conventions.mjs`) reviews pull requests to main from branches of this repository against the conventions in this directory as the base branch has them.
+A CI check (`.github/workflows/conventions.yml`) reviews pull requests to main from branches of this repository against the conventions in this directory as they read once the pull request is merged.
 
 ## File format
 

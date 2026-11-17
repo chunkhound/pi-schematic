@@ -1,9 +1,10 @@
 # Conventions check for pull requests
 #
-# pi reviews the pull request's diff against the conventions in docs/conventions/ as the base branch has
-# them, one job per convention whose paths match a changed file, and every sentence the changes make
-# false fails the check with an annotation at the offending line. The Conventions job sums up the
-# per-convention jobs under one stable name.
+# pi reviews the pull request's diff against the conventions in docs/conventions/ as they read once the
+# pull request is merged (the checkout is GitHub's merge commit for the pull request), one job per
+# convention whose paths match a changed file, and every sentence the changes make false fails the check
+# with an annotation at the offending line. The Conventions job sums up the per-convention jobs under
+# one stable name.
 
 name: Conventions
 
@@ -29,31 +30,34 @@ jobs:
     outputs:
       conventions: ${{ steps.list.outputs.conventions }}
     steps:
-      # The full history holds the base branch the conventions are read from.
+      # The full history holds the base branch for the merge-base diff.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "26.13.1"
-
-      - name: Check required secrets
-        env:
-          CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
-          CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
-        run: |
-          if [ -z "$CLIPROXYAPI_BASE_URL" ] || [ -z "$CLIPROXYAPI_API_KEY" ]; then
-            echo "CLIPROXYAPI_BASE_URL and CLIPROXYAPI_API_KEY must both be set."
-            exit 1
-          fi
-
-      # The list mode needs only node and git, so this job skips npm ci.
       - id: list
         name: List conventions
         run: |
-          conventions="$(node ./scripts/check-conventions.mjs --list --base "origin/${{ github.base_ref }}")"
-          echo "conventions=$conventions" >> "$GITHUB_OUTPUT"
+          matrix='[]'
+          for file in docs/conventions/*.md; do
+            [ "$file" = docs/conventions/README.md ] && continue
+            # The runner ends a line at a carriage return, so one in the name could start a workflow command.
+            name="$(sed -n 's/^# //p' "$file" | head -n 1 | tr -d '\r')"
+            # "glob" becomes ":(glob)glob" and "!glob" becomes ":(glob,exclude)glob".
+            mapfile -t specs < <(sed -n '/^---$/,/^---$/s/^  - "\(.*\)"$/\1/p' "$file" | sed -e 's/^!\(.*\)$/:(glob,exclude)\1/' -e t -e 's/^/:(glob)/')
+            # With no including glob, git would match every changed file outside the excludes.
+            if ! printf '%s\n' "${specs[@]}" | grep -q '^:(glob)'; then
+              printf 'Convention file %q has no including glob in its paths.\n' "$file"
+              exit 1
+            fi
+            changed="$(git diff --name-only "origin/$GITHUB_BASE_REF...HEAD" -- "${specs[@]}")"
+            if [ -n "$changed" ]; then
+              matrix="$(jq -c --arg name "$name" --arg slug "$(basename "$file" .md)" '. + [{name: $name, slug: $slug}]' <<< "$matrix")"
+            else
+              echo "::notice::Skipping convention $name: no changed file matches its paths"
+            fi
+          done
+          echo "conventions=$matrix" >> "$GITHUB_OUTPUT"
 
   # review skips when no convention's paths match a changed file.
   review:
@@ -79,24 +83,71 @@ jobs:
 
       - run: npm ci
 
-      # pi installs the extensions the script loads into the agent directory; the script pins their versions.
+      # pi installs the extensions the check loads into the agent directory; the pi command in this workflow pins their versions.
       - id: extension-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/pi-agent/tmp/extensions/npm
-          key: pi-extensions-${{ runner.os }}-${{ hashFiles('scripts/check-conventions.mjs') }}
+          key: pi-extensions-${{ runner.os }}-${{ hashFiles('.github/workflows/conventions.yml') }}
 
-      # The slug reaches the script through the environment, never interpolated into the script.
+      # The slug reaches the step through the environment, never interpolated into the script.
       - name: Check convention
         env:
           CONVENTION: ${{ matrix.convention.slug }}
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
           PI_TELEMETRY: "0"
-          PI_SKIP_VERSION_CHECK: "1"
-          CONVENTIONS_CHECK_MODEL: "cliproxyapi/deepseek-flash[1m]"
           CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
           CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
-        run: node ./scripts/check-conventions.mjs --base "origin/${{ github.base_ref }}" --convention "$CONVENTION" --events "${{ runner.temp }}/conventions-events.jsonl"
+        run: |
+          turns=30
+          git diff "origin/$GITHUB_BASE_REF...HEAD" > "$RUNNER_TEMP/pr.diff"
+          # pi expands the skill only at the start of the message; the space after its name is required.
+          prompt="$(
+            echo "/skill:checking-convention "
+            echo "Convention file: docs/conventions/$CONVENTION.md"
+            echo "Diff file: $RUNNER_TEMP/pr.diff"
+            echo "Turn limit: $turns"
+          )"
+          status=0
+          # --no-extensions also turns off pi's built-in extensions, MCP included; -e paths still load.
+          node_modules/.bin/pi -p --mode json --model "cliproxyapi/deepseek-flash[1m]" \
+            --no-extensions \
+            -e npm:@nqbao/pi-json-schema@0.1.1 \
+            -e npm:@aantenore/pi-budget@0.1.0 \
+            -e npm:@router-for-me/pi-cliproxyapi-provider@1.4.24 \
+            --skill .agents/skills/checking-convention \
+            --no-context-files \
+            --tools read,grep,find,ls,json_output \
+            --json-schema "$(jq -c . scripts/conventions-verdict.schema.json)" \
+            --json-output "$RUNNER_TEMP/verdict.json" \
+            --budget-turns "$turns" \
+            "$prompt" > "$RUNNER_TEMP/conventions-events.jsonl" 2> "$RUNNER_TEMP/pi-stderr.txt" || status=$?
+          if [ "$status" -ne 0 ] || [ ! -f "$RUNNER_TEMP/verdict.json" ]; then
+            echo "pi exited with status $status and wrote $([ -f "$RUNNER_TEMP/verdict.json" ] && echo a || echo no) verdict. stderr tail:"
+            # The tail can hold text from the pull request, so workflow commands in it are switched off.
+            token="$(openssl rand -hex 16)"
+            echo "::stop-commands::$token"
+            tail -c 8192 "$RUNNER_TEMP/pi-stderr.txt"
+            echo "::$token::"
+            exit 1
+          fi
+
+      # pi-json-schema checks the verdict against the schema before writing it.
+      - name: Report violations
+        env:
+          NAME: ${{ matrix.convention.name }}
+        run: |
+          verdict="$RUNNER_TEMP/verdict.json"
+          jq -r '
+            def data: gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
+            def property: data | gsub(":"; "%3A") | gsub(","; "%2C");
+            .results[] | select(.verdict == "violation")
+            | [ (if .file then "file=\(.file | property)" else empty end),
+                (if .file and .line then "line=\(.line)" else empty end),
+                "title=\(env.NAME | property)" ] as $properties
+            | "::error \($properties | join(","))::\(.sentence + "\nReason: " + .reason + (if .quote then "\nQuote: " + .quote else "" end) | data)"
+          ' "$verdict"
+          jq -e 'all(.results[]; .verdict != "violation")' "$verdict" > /dev/null
 
       # Saved even when the check fails, so a failing pull request does not reinstall the extensions on every run.
       # The matrix jobs of one run miss the cache together; the saves that lose the race only warn.
@@ -104,7 +155,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/pi-agent/tmp/extensions/npm
-          key: pi-extensions-${{ runner.os }}-${{ hashFiles('scripts/check-conventions.mjs') }}
+          key: pi-extensions-${{ runner.os }}-${{ hashFiles('.github/workflows/conventions.yml') }}
 
       - name: Upload pi events
         if: always()
