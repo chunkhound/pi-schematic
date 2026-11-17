@@ -475,6 +475,16 @@ export default defineConfig([
 					{ forDependencyTypes: ["peerDependencies"], forPackages: ["^@earendil-works/pi-", "^typebox$"], rangeType: ">=" },
 				],
 			],
+			// The extension only runs inside pi, so pi's own engines field sets the Node.js floor.
+			"package-json/restrict-top-level-properties": ["error", { ban: ["engines"] }],
+			"no-restricted-syntax": [
+				"error",
+				{
+					selector:
+						"JSONExpressionStatement > JSONObjectExpression > JSONProperty[key.value='peerDependencies'] > JSONObjectExpression > JSONProperty[key.value='@earendil-works/pi-agent-core']",
+					message: "peerDependencies must not list @earendil-works/pi-agent-core.",
+				},
+			],
 		},
 	},
 	{
