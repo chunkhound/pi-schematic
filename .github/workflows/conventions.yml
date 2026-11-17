@@ -90,6 +90,10 @@ jobs:
           path: ${{ runner.temp }}/pi-agent/tmp/extensions/npm
           key: pi-extensions-${{ runner.os }}-${{ hashFiles('.github/workflows/conventions.yml') }}
 
+      # pi downloads rg and fd from GitHub on first use when they are not on PATH, and grep fails when that download fails.
+      - name: Install ripgrep and fd
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep fd-find
+
       # The slug reaches the step through the environment, never interpolated into the script.
       - name: Check convention
         env:
@@ -100,7 +104,15 @@ jobs:
           CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
         run: |
           turns=30
-          git diff "origin/$GITHUB_BASE_REF...HEAD" > "$RUNNER_TEMP/pr.diff"
+          git diff "origin/$GITHUB_BASE_REF...HEAD" > "$RUNNER_TEMP/raw.diff"
+          # Each added or context line gets its line number in the head revision in front, so the reviewer need not look it up.
+          awk '
+            /^diff --git /{print; inhunk=0; next}
+            /^@@ /{split($3, head, ","); n=substr(head[1], 2)+0; inhunk=1; print; next}
+            !inhunk{print; next}
+            /^-/{printf "      %s\n", $0; next}
+            /^\\/{print; next}
+            {printf "%5d %s\n", n, $0; n++}' "$RUNNER_TEMP/raw.diff" > "$RUNNER_TEMP/pr.diff"
           # pi expands the skill only at the start of the message; the space after its name is required.
           prompt="$(
             echo "/skill:checking-convention "
