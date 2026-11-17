@@ -1,6 +1,6 @@
 # Agent guide
 
-- Before changing a file: [docs/conventions.md](docs/conventions.md), the conventions whose "Applies to" covers it.
+- Before changing a file: [docs/conventions/](docs/conventions/), the conventions whose `paths` match it.
 - To follow lifecycle hooks, state or package layout: [docs/architecture.md](docs/architecture.md).
 - To trace how a tool or hook is wired: start at `index.ts`.
 - To run tests, CI or a release: [CONTRIBUTING.md](CONTRIBUTING.md).

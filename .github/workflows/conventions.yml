@@ -1,8 +1,9 @@
 # Conventions check for pull requests
 #
-# pi reviews the pull request's diff against docs/conventions.md as the base branch has it, one job per
-# convention, and every sentence the changes make false fails the check with an annotation at the
-# offending line. The Conventions job sums up the per-convention jobs under one stable name.
+# pi reviews the pull request's diff against the conventions in docs/conventions/ as the base branch has
+# them, one job per convention whose paths match a changed file, and every sentence the changes make
+# false fails the check with an annotation at the offending line. The Conventions job sums up the
+# per-convention jobs under one stable name.
 
 name: Conventions
 
@@ -54,8 +55,10 @@ jobs:
           conventions="$(node ./scripts/check-conventions.mjs --list --base "origin/${{ github.base_ref }}")"
           echo "conventions=$conventions" >> "$GITHUB_OUTPUT"
 
+  # review skips when no convention's paths match a changed file.
   review:
     needs: list
+    if: needs.list.outputs.conventions != '[]'
     name: ${{ matrix.convention.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -83,10 +86,10 @@ jobs:
           path: ${{ runner.temp }}/pi-agent/tmp/extensions/npm
           key: pi-extensions-${{ runner.os }}-${{ hashFiles('scripts/check-conventions.mjs') }}
 
-      # The heading reaches the script through the environment, never interpolated into the script.
+      # The slug reaches the script through the environment, never interpolated into the script.
       - name: Check convention
         env:
-          CONVENTION: ${{ matrix.convention.name }}
+          CONVENTION: ${{ matrix.convention.slug }}
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
           PI_TELEMETRY: "0"
           PI_SKIP_VERSION_CHECK: "1"
@@ -125,6 +128,7 @@ jobs:
           REVIEW_RESULT: ${{ needs.review.result }}
         run: |
           echo "list: $LIST_RESULT, review: $REVIEW_RESULT"
-          if [ "$LIST_RESULT" != "success" ] || [ "$REVIEW_RESULT" != "success" ]; then
+          # review is skipped when no convention's paths match a changed file.
+          if [ "$LIST_RESULT" != "success" ] || { [ "$REVIEW_RESULT" != "success" ] && [ "$REVIEW_RESULT" != "skipped" ]; }; then
             exit 1
           fi

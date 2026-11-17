@@ -1,14 +1,18 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+// eslint-disable-next-line n/no-unsupported-features/node-builtins -- this script runs in CI on the current LTS, where matchesGlob is stable; below Node.js 22.20 it is experimental.
+import { join, matchesGlob, resolve } from "node:path";
 import { repoRootFromScript } from "./compat-process.mjs";
 
 // The extensions are pinned here; the workflow keys its extension cache on this file's hash.
 const EXTENSIONS = ["npm:@nqbao/pi-json-schema@0.1.1", "npm:@aantenore/pi-budget@0.1.0", "npm:@router-for-me/pi-cliproxyapi-provider@1.4.24"];
 const MAX_TURNS = 30;
-const CONVENTIONS_PATH = "docs/conventions.md";
+const CONVENTIONS_DIR = "docs/conventions";
+const SKILL_NAME = "checking-convention";
+const SKILL_PATH = `.agents/skills/${SKILL_NAME}/SKILL.md`;
+const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const VERDICTS = ["pass", "violation", "not_applicable"];
 const RESULT_KEYS = ["convention", "sentence", "verdict", "file", "line", "quote"];
 const OUTPUT_TAIL = 8192;
@@ -18,7 +22,7 @@ const BUDGET_NOTICE = "[pi-budget] Budget: reached turns limit (";
 const COMPLETED_STOP_REASONS = ["stop", "toolUse"];
 const USAGE = [
 	"Usage: node scripts/check-conventions.mjs --list --base <ref>",
-	"       CONVENTIONS_CHECK_MODEL=<provider/model> node scripts/check-conventions.mjs --base <ref> --convention <heading> --events <file>",
+	"       CONVENTIONS_CHECK_MODEL=<provider/model> node scripts/check-conventions.mjs --base <ref> --convention <slug> --events <file>",
 	"       CONVENTIONS_CHECK_MODEL=<provider/model> node scripts/check-conventions.mjs --base <ref> --events <directory>",
 ].join("\n");
 const commandToken = randomBytes(16).toString("hex");
@@ -77,7 +81,7 @@ function parseArgs(argv) {
 		return { mode: "list", base };
 	}
 	if (convention === "") {
-		throw new UsageError("--convention needs a heading");
+		throw new UsageError("--convention needs a slug");
 	}
 	if (events === undefined || events === "") {
 		throw new UsageError("--events is required: a file with --convention, a directory without it");
@@ -105,72 +109,135 @@ function resolveBase(root, base) {
 	return resolved.stdout.trim();
 }
 
-function readConventions(root, baseSha, base) {
-	const listed = gitChecked(root, ["ls-tree", "--name-only", baseSha, "--", CONVENTIONS_PATH]).trim();
-	if (listed === CONVENTIONS_PATH) {
-		return gitChecked(root, ["show", `${baseSha}:${CONVENTIONS_PATH}`]);
+// stderr keeps the --list output on stdout a single JSON value; the runner reads workflow commands from both streams.
+function notice(message) {
+	process.stderr.write(`::notice::${escapeData(message)}\n`);
+}
+
+// Returns [{ file, text }] for each convention file, in file-name order. The conventions come from the base revision,
+// so a pull request cannot change the conventions it is checked against.
+function readConventionFiles(root, baseSha, base) {
+	const listed = gitChecked(root, ["ls-tree", "-z", "--name-only", baseSha, "--", `${CONVENTIONS_DIR}/`])
+		.split("\0")
+		.filter((file) => file.endsWith(".md") && file !== `${CONVENTIONS_DIR}/README.md`)
+		.sort();
+	if (listed.length > 0) {
+		return listed.map((file) => ({ file, text: gitChecked(root, ["show", `${baseSha}:${file}`]) }));
 	}
-	// The pull request that adds the conventions file has no base copy to check against.
-	const local = join(root, CONVENTIONS_PATH);
+	// The pull request that adds the conventions has no base copy to check against.
+	const local = join(root, CONVENTIONS_DIR);
+	const files = existsSync(local)
+		? readdirSync(local)
+				.filter((name) => name.endsWith(".md") && name !== "README.md")
+				.sort()
+		: [];
+	if (files.length === 0) {
+		throw new Error(`neither ${base} nor the working tree has convention files in ${CONVENTIONS_DIR}/`);
+	}
+	notice(`${base} has no convention files in ${CONVENTIONS_DIR}/; checking against the working tree's copies`);
+	return files.map((name) => ({ file: `${CONVENTIONS_DIR}/${name}`, text: readFileSync(join(local, name), "utf8") }));
+}
+
+// The review instructions come from the base revision too, so a pull request cannot change its own reviewer's instructions.
+function readSkill(root, baseSha, base) {
+	const listed = gitChecked(root, ["ls-tree", "--name-only", baseSha, "--", SKILL_PATH]).trim();
+	if (listed === SKILL_PATH) {
+		return gitChecked(root, ["show", `${baseSha}:${SKILL_PATH}`]);
+	}
+	const local = join(root, SKILL_PATH);
 	if (!existsSync(local)) {
-		throw new Error(`neither ${base} nor the working tree has ${CONVENTIONS_PATH}`);
+		throw new Error(`neither ${base} nor the working tree has ${SKILL_PATH}`);
 	}
-	// stderr keeps the --list output on stdout a single JSON value; the runner reads workflow commands from both streams.
-	process.stderr.write(`::notice::${escapeData(`${base} has no ${CONVENTIONS_PATH}; checking against the working tree's copy`)}\n`);
+	notice(`${base} has no ${SKILL_PATH}; reviewing with the working tree's copy`);
 	return readFileSync(local, "utf8");
 }
 
-function slugify(heading) {
-	return heading
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-|-$/g, "");
+// A convention file is frontmatter holding only a `paths` list of double-quoted globs, then an H1 that names the convention.
+function parseConvention({ file, text }) {
+	const slug = file.slice(CONVENTIONS_DIR.length + 1, -".md".length);
+	if (!SLUG.test(slug)) {
+		throw new Error(`${file}: the file name must be a slug of lowercase letters, digits and single hyphens`);
+	}
+	const lines = text.split(/\r?\n/);
+	if (lines[0] !== "---") {
+		throw new Error(`${file}: the first line must be "---", the start of the frontmatter`);
+	}
+	if (lines[1] !== "paths:") {
+		throw new Error(`${file}: line 2 must be "paths:", the only frontmatter key`);
+	}
+	const include = [];
+	const exclude = [];
+	let index = 2;
+	for (; index < lines.length && lines[index] !== "---"; index++) {
+		const item = /^ {2}- (".*")$/.exec(lines[index]);
+		if (item === null) {
+			throw new Error(`${file}: line ${String(index + 1)} must be a paths item of the form '  - "<glob>"'`);
+		}
+		let glob;
+		try {
+			glob = JSON.parse(item[1]);
+		} catch (error) {
+			throw new Error(`${file}: line ${String(index + 1)} is not a valid JSON string: ${error instanceof Error ? error.message : String(error)}`, {
+				cause: error,
+			});
+		}
+		const pattern = glob.startsWith("!") ? glob.slice(1) : glob;
+		if (pattern === "") {
+			throw new Error(`${file}: line ${String(index + 1)} has an empty glob`);
+		}
+		if (pattern.startsWith("/") || pattern.split("/").some((segment) => segment === ".." || segment === ".")) {
+			throw new Error(`${file}: line ${String(index + 1)} has the glob ${JSON.stringify(glob)}, which must be relative and contain no "." or ".." segment`);
+		}
+		(glob.startsWith("!") ? exclude : include).push(pattern);
+	}
+	if (index === lines.length) {
+		throw new Error(`${file}: the frontmatter has no closing "---"`);
+	}
+	if (include.length === 0) {
+		throw new Error(`${file}: paths has no including glob`);
+	}
+	const heading = lines.slice(index + 1).find((line) => line.trim() !== "");
+	const name = heading === undefined ? null : /^# (.*\S)\s*$/.exec(heading)?.[1];
+	if (name === undefined || name === null) {
+		throw new Error(`${file}: the first non-empty line after the frontmatter must be an H1 "# <name>"`);
+	}
+	return { file, slug, name, include, exclude, text };
 }
 
-// A convention's section runs from its H2 heading to the next H2 heading or the end of the file.
-// A `## ` line inside a fenced code block is example text, not a heading.
-function parseConventions(conventions) {
-	const matches = [];
-	let fence = null;
-	for (const line of conventions.matchAll(/^.*$/gm)) {
-		// A fence closes on a run of the same character at least as long as the one that opened it.
-		const marker = /^(`{3,}|~{3,})/.exec(line[0])?.[1];
-		if (marker !== undefined && (fence === null || (marker[0] === fence[0] && marker.length >= fence.length))) {
-			fence = fence === null ? marker : null;
-			continue;
-		}
-		const heading = fence === null ? /^## (.+?)\r?$/.exec(line[0]) : null;
-		if (heading !== null) {
-			matches.push({ index: line.index, name: heading[1] });
-		}
-	}
-	if (fence !== null) {
-		throw new Error(`${CONVENTIONS_PATH} has an unclosed ${fence} code fence`);
-	}
-	if (matches.length === 0) {
-		throw new Error(`${CONVENTIONS_PATH} has no H2 headings`);
-	}
-	const sections = matches.map((match, index) => ({
-		name: match.name,
-		slug: slugify(match.name),
-		text: conventions.slice(match.index, matches[index + 1]?.index ?? conventions.length),
-	}));
+function parseConventions(files) {
+	const conventions = files.map(parseConvention);
 	const names = new Set();
-	const slugs = new Set();
-	for (const { name, slug } of sections) {
+	for (const { file, name } of conventions) {
 		if (names.has(name)) {
-			throw new Error(`${CONVENTIONS_PATH} has two conventions headed ${JSON.stringify(name)}`);
-		}
-		if (slug === "") {
-			throw new Error(`the heading ${JSON.stringify(name)} has no letters or digits to name it by`);
-		}
-		if (slugs.has(slug)) {
-			throw new Error(`${CONVENTIONS_PATH} has two headings with the slug ${JSON.stringify(slug)}`);
+			throw new Error(`${file}: another convention file is also named ${JSON.stringify(name)}`);
 		}
 		names.add(name);
-		slugs.add(slug);
 	}
-	return sections;
+	return conventions;
+}
+
+// The same range as the diff pi reviews. Without rename detection, a renamed file appears under both its names.
+function changedFiles(root, baseSha) {
+	return gitChecked(root, ["diff", "--name-only", "--no-renames", "-z", `${baseSha}...HEAD`])
+		.split("\0")
+		.filter((file) => file !== "");
+}
+
+function matchingFiles(convention, changed) {
+	return changed.filter((file) => convention.include.some((glob) => matchesGlob(file, glob)) && !convention.exclude.some((glob) => matchesGlob(file, glob)));
+}
+
+// A convention is selected when at least one changed file matches its paths.
+function selectConventions(conventions, changed) {
+	const selected = [];
+	for (const convention of conventions) {
+		if (matchingFiles(convention, changed).length > 0) {
+			selected.push(convention);
+		} else {
+			notice(`Skipping convention ${JSON.stringify(convention.name)}: no changed file matches its paths`);
+		}
+	}
+	return selected;
 }
 
 function isStringOrNull(value) {
@@ -308,14 +375,17 @@ function printTurns(turns, heading) {
 	}
 }
 
-function prompt(diffPath, conventionsPath, heading) {
+// pi expands a skill command only at the start of the message, and passes the text after the command's name on as its input.
+// The space after the name is required: pi takes the name up to the first space.
+function prompt(conventionPath, name, diffPath, files) {
 	return [
-		`Review the pull request diff in ${diffPath} against the convention ${JSON.stringify(heading)} in ${conventionsPath}; both files are attached above.`,
-		"Check every sentence of the convention.",
-		"The working directory is the pull request head; read its files with the tools when the diff alone does not settle a sentence.",
-		"A sentence is a violation only when the pull request's changes make it false. A sentence the changes do not touch is not_applicable; one they touch and keep true is pass.",
-		`Return one result per sentence: the convention's heading ${JSON.stringify(heading)}, the sentence verbatim, and as evidence the file path relative to the repository root, the line number in the pull request head and a verbatim quote of that line. Use null for evidence that does not exist.`,
-		"Call json_output exactly once with all results.",
+		`/skill:${SKILL_NAME} `,
+		`Convention file: ${conventionPath}`,
+		`Convention name: ${JSON.stringify(name)}`,
+		`Diff file: ${diffPath}`,
+		"Changed files matching the convention's paths (each name is a JSON string):",
+		...files.map((name) => JSON.stringify(name)),
+		`Turn limit: ${String(MAX_TURNS)}`,
 	].join("\n");
 }
 
@@ -343,12 +413,16 @@ function writeDiff(root, workDir, baseSha, base) {
 	return diffPath;
 }
 
-function review(root, workDir, diffPath, section, events, model) {
-	process.stdout.write(`Reviewing convention ${JSON.stringify(section.name)}.\n`);
-	const runDir = join(workDir, section.slug);
+function review(root, workDir, diffPath, skill, convention, files, events, model) {
+	process.stdout.write(`Reviewing convention ${JSON.stringify(convention.name)}.\n`);
+	const runDir = join(workDir, convention.slug);
 	mkdirSync(runDir);
-	const conventionsPath = join(runDir, "conventions.md");
-	writeFileSync(conventionsPath, section.text);
+	const conventionPath = join(runDir, `${convention.slug}.md`);
+	writeFileSync(conventionPath, convention.text);
+	// pi loads a skill directory that holds a SKILL.md; the frontmatter's name is the one the skill command uses.
+	const skillDir = join(runDir, SKILL_NAME);
+	mkdirSync(skillDir);
+	writeFileSync(join(skillDir, "SKILL.md"), skill);
 	const verdictPath = join(runDir, "verdict.json");
 	const schema = readFileSync(join(root, "scripts", "conventions-verdict.schema.json"), "utf8");
 
@@ -366,7 +440,10 @@ function review(root, workDir, diffPath, section, events, model) {
 				model,
 				"--no-extensions",
 				...EXTENSIONS.flatMap((extension) => ["-e", extension]),
+				// An explicit --skill path still loads under --no-skills.
 				"--no-skills",
+				"--skill",
+				skillDir,
 				"--no-prompt-templates",
 				"--no-context-files",
 				"--no-approve",
@@ -384,9 +461,7 @@ function review(root, workDir, diffPath, section, events, model) {
 				"none",
 				"--budget-turns",
 				String(MAX_TURNS),
-				`@${conventionsPath}`,
-				`@${diffPath}`,
-				prompt(diffPath, conventionsPath, section.name),
+				prompt(conventionPath, convention.name, diffPath, files),
 			],
 			{ cwd: root, encoding: "utf8", stdio: ["ignore", eventsFd, "pipe"], maxBuffer: 64 * 1024 * 1024 },
 		);
@@ -397,7 +472,7 @@ function review(root, workDir, diffPath, section, events, model) {
 		throw pi.error;
 	}
 	const { turns, lastMessage } = readTurns(events);
-	printTurns(turns, section.name);
+	printTurns(turns, convention.name);
 	// A budget stop fails even when a verdict was written before it.
 	if (pi.stderr.includes(BUDGET_NOTICE)) {
 		untrusted(
@@ -427,7 +502,7 @@ function review(root, workDir, diffPath, section, events, model) {
 		untrusted(process.stderr, process.env.GITHUB_ACTIONS === undefined ? message.replace(/[\r\n]/g, " ") : message);
 		return 1;
 	}
-	const invalid = validateVerdict(verdict, section.name);
+	const invalid = validateVerdict(verdict, convention.name);
 	if (invalid !== null) {
 		const message = `The verdict does not match the schema: ${invalid}`;
 		untrusted(process.stderr, process.env.GITHUB_ACTIONS === undefined ? message.replace(/[\r\n]/g, " ") : message);
@@ -444,33 +519,41 @@ function review(root, workDir, diffPath, section, events, model) {
 
 function check(root, workDir, { mode, base, convention, events, model }) {
 	const baseSha = resolveBase(root, base);
-	const sections = parseConventions(readConventions(root, baseSha, base));
-	const selected = mode === "convention" ? sections.find((section) => section.name === convention) : undefined;
-	if (mode === "convention" && selected === undefined) {
-		throw new UsageError(`${CONVENTIONS_PATH} has no convention headed ${JSON.stringify(convention)}`);
+	const conventions = parseConventions(readConventionFiles(root, baseSha, base));
+	// A named convention is reviewed whether or not the changed files select it.
+	const named = mode === "convention" ? conventions.find(({ slug }) => slug === convention) : undefined;
+	if (mode === "convention" && named === undefined) {
+		throw new UsageError(`${CONVENTIONS_DIR}/ has no convention with the slug ${JSON.stringify(convention)}`);
 	}
+	const skill = readSkill(root, baseSha, base);
 	const diffPath = writeDiff(root, workDir, baseSha, base);
 	if (diffPath === undefined) {
 		return 0;
 	}
-	if (selected !== undefined) {
-		return review(root, workDir, diffPath, selected, events, model);
+	const changed = changedFiles(root, baseSha);
+	if (named !== undefined) {
+		return review(root, workDir, diffPath, skill, named, matchingFiles(named, changed), events, model);
 	}
 
+	const selected = selectConventions(conventions, changed);
+	if (selected.length === 0) {
+		process.stdout.write("No changed file matches the paths of any convention; nothing to check.\n");
+		return 0;
+	}
 	mkdirSync(events, { recursive: true });
 	const failed = [];
-	for (const section of sections) {
-		if (review(root, workDir, diffPath, section, join(events, `${section.slug}.jsonl`), model) !== 0) {
-			failed.push(section.name);
+	for (const selection of selected) {
+		if (review(root, workDir, diffPath, skill, selection, matchingFiles(selection, changed), join(events, `${selection.slug}.jsonl`), model) !== 0) {
+			failed.push(selection.name);
 		}
 	}
 	if (failed.length > 0) {
 		process.stderr.write(
-			`${String(failed.length)} of ${String(sections.length)} conventions failed: ${failed.map((name) => JSON.stringify(name)).join(", ")}\n`,
+			`${String(failed.length)} of ${String(selected.length)} conventions failed: ${failed.map((name) => JSON.stringify(name)).join(", ")}\n`,
 		);
 		return 1;
 	}
-	process.stdout.write(`All ${String(sections.length)} conventions passed.\n`);
+	process.stdout.write(`All ${String(selected.length)} conventions passed.\n`);
 	return 0;
 }
 
@@ -479,8 +562,10 @@ function main() {
 		const options = parseArgs(process.argv.slice(2));
 		const root = repoRootFromScript(import.meta.url);
 		if (options.mode === "list") {
-			const sections = parseConventions(readConventions(root, resolveBase(root, options.base), options.base));
-			process.stdout.write(`${JSON.stringify(sections.map(({ name, slug }) => ({ name, slug })))}\n`);
+			const baseSha = resolveBase(root, options.base);
+			const conventions = parseConventions(readConventionFiles(root, baseSha, options.base));
+			const selected = selectConventions(conventions, changedFiles(root, baseSha));
+			process.stdout.write(`${JSON.stringify(selected.map(({ name, slug }) => ({ name, slug })))}\n`);
 			return 0;
 		}
 		const workDir = mkdtempSync(join(tmpdir(), "check-conventions-"));

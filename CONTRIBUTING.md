@@ -36,7 +36,7 @@ Before submitting, check that your change:
 - Does not introduce hidden context growth, unbounded output, or recursive child-agent spawning.
 - Handles reset, cancellation, and stale-session cases where relevant.
 - Keeps docs aligned with the package version and installed behavior.
-- Meets the conventions in [docs/conventions.md](docs/conventions.md) whose "Applies to" line covers it. CI reviews pull requests to main from branches of this repository against them.
+- Meets the conventions in [docs/conventions/](docs/conventions/) whose `paths` match a file it changes. CI reviews pull requests to main from branches of this repository against them.
 
 ## Tests
 
@@ -68,7 +68,7 @@ Pull requests are automatically tested via GitHub Actions. `.github/workflows/ci
 
 All tracked text is LF in the index and in the working tree, snapshot goldens included: one `.gitattributes` rule, `* text=auto eol=lf`, owns that contract for every text file, so tests do not depend on `core.autocrlf`. A stale clone can still hold CRLF and fail `npm test`; the `repository text has one LF line-ending contract` test in `tests/unit/config-invariants.test.ts` is the executable check, and its assertion message is the only copy of the recovery command. If you update snapshots, CI checks them on every lane of the test matrix.
 
-For maintainers: the conventions check needs the repository secrets `CLIPROXYAPI_BASE_URL` and `CLIPROXYAPI_API_KEY`, which point it at a CLIProxyAPI endpoint. It runs only for pull requests to main from branches of this repository. It runs one job per convention, and each job uploads pi's event stream as a `conventions-events-<slug>-attempt-<n>` artifact, kept for 7 days. The "Conventions" job fails unless every convention job succeeded; it is the job to make a required check.
+For maintainers: the conventions check needs the repository secrets `CLIPROXYAPI_BASE_URL` and `CLIPROXYAPI_API_KEY`, which point it at a CLIProxyAPI endpoint. It runs only for pull requests to main from branches of this repository. It runs one job per convention whose `paths` match a file the pull request changes, and each job uploads pi's event stream as a `conventions-events-<slug>-attempt-<n>` artifact, kept for 7 days, where `<slug>` is the convention's file name without `.md`. The "Conventions" job fails unless every convention job succeeded, and passes when no convention matched; it is the job to make a required check.
 
 ## Releasing
 
