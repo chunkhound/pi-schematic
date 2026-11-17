@@ -6,4 +6,4 @@ paths:
 
 # Public surface
 
-`pi.extensions` in `package.json` names only `./index.ts`, and `index.ts` has only a default export.
+`pi.extensions` in `package.json` names only `./index.ts`. `index.ts` has only a default export.

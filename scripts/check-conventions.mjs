@@ -196,12 +196,21 @@ function parseConvention({ file, text }) {
 	if (include.length === 0) {
 		throw new Error(`${file}: paths has no including glob`);
 	}
-	const heading = lines.slice(index + 1).find((line) => line.trim() !== "");
-	const name = heading === undefined ? null : /^# (.*\S)\s*$/.exec(heading)?.[1];
+	const headingIndex = lines.findIndex((line, i) => i > index && line.trim() !== "");
+	const name = headingIndex === -1 ? null : /^# (.*\S)\s*$/.exec(lines[headingIndex])?.[1];
 	if (name === undefined || name === null) {
 		throw new Error(`${file}: the first non-empty line after the frontmatter must be an H1 "# <name>"`);
 	}
-	return { file, slug, name, include, exclude, text };
+	// The statement is the paragraphs after the H1 up to the first paragraph that starts with "Why:" or "Tooling:".
+	const paragraphs = lines
+		.slice(headingIndex + 1)
+		.join("\n")
+		.split(/\n\s*\n/)
+		.map((paragraph) => paragraph.trim())
+		.filter((paragraph) => paragraph !== "");
+	const end = paragraphs.findIndex((paragraph) => paragraph.startsWith("Why:") || paragraph.startsWith("Tooling:"));
+	const statement = (end === -1 ? paragraphs : paragraphs.slice(0, end)).join("\n\n");
+	return { file, slug, name, statement, include, exclude, text };
 }
 
 function parseConventions(files) {
@@ -244,7 +253,12 @@ function isStringOrNull(value) {
 	return value === null || typeof value === "string";
 }
 
-function validateVerdict(verdict, heading) {
+function collapseWhitespace(text) {
+	return text.replace(/\s+/g, " ").trim();
+}
+
+function validateVerdict(verdict, heading, statement) {
+	const flatStatement = collapseWhitespace(statement);
 	if (typeof verdict !== "object" || verdict === null || Array.isArray(verdict)) {
 		return "the verdict is not an object";
 	}
@@ -272,6 +286,10 @@ function validateVerdict(verdict, heading) {
 		}
 		if (result.convention !== heading) {
 			return `${where}.convention is ${JSON.stringify(result.convention)}, expected ${JSON.stringify(heading)}`;
+		}
+		const sentence = collapseWhitespace(result.sentence);
+		if (sentence === "" || !flatStatement.includes(sentence)) {
+			return `${where}.sentence is not verbatim from the statement of ${JSON.stringify(heading)}: ${JSON.stringify(result.sentence)}`;
 		}
 		if (!VERDICTS.includes(result.verdict)) {
 			return `${where}.verdict is ${JSON.stringify(result.verdict)}, expected one of ${VERDICTS.join(", ")}`;
@@ -502,7 +520,7 @@ function review(root, workDir, diffPath, skill, convention, files, events, model
 		untrusted(process.stderr, process.env.GITHUB_ACTIONS === undefined ? message.replace(/[\r\n]/g, " ") : message);
 		return 1;
 	}
-	const invalid = validateVerdict(verdict, convention.name);
+	const invalid = validateVerdict(verdict, convention.name, convention.statement);
 	if (invalid !== null) {
 		const message = `The verdict does not match the schema: ${invalid}`;
 		untrusted(process.stderr, process.env.GITHUB_ACTIONS === undefined ? message.replace(/[\r\n]/g, " ") : message);
