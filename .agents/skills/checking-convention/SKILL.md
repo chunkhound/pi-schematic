@@ -1,6 +1,6 @@
 ---
 name: checking-convention
-description: Use when checking a pull request or branch diff against one convention in docs/conventions/.
+description: Use when checking a change (a diff) against one convention in docs/conventions/.
 ---
 
 # Checking a convention

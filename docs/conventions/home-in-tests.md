@@ -4,6 +4,9 @@ paths:
   - ".github/workflows/**"
   - "vitest.config.ts"
   - "scripts/**"
+  - ".husky/**"
+  - "*.mjs"
+  - "tests/**"
 ---
 
 # HOME in tests
