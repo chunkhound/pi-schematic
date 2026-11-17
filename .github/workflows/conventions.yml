@@ -110,8 +110,7 @@ jobs:
           CONVENTION: ${{ matrix.convention.slug }}
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
           PI_TELEMETRY: "0"
-          CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
-          CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           turns=30
           git diff "origin/$GITHUB_BASE_REF...HEAD" > "$RUNNER_TEMP/raw.diff"
@@ -132,11 +131,10 @@ jobs:
           )"
           status=0
           # --no-extensions also turns off pi's built-in extensions, MCP included; -e paths still load.
-          node_modules/.bin/pi -p --mode json --model "cliproxyapi/deepseek-flash[1m]" \
+          node_modules/.bin/pi -p --mode json --model deepseek/deepseek-flash \
             --no-extensions \
             -e npm:@nqbao/pi-json-schema@0.1.1 \
             -e npm:@aantenore/pi-budget@0.1.0 \
-            -e npm:@router-for-me/pi-cliproxyapi-provider@1.4.24 \
             --skill .agents/skills/checking-convention \
             --no-context-files \
             --tools read,grep,find,ls,json_output \
