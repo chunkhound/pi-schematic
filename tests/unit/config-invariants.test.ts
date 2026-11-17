@@ -51,8 +51,9 @@ const EXPECTED_TYPEBOX_VERSION = "1.3.27";
 const EXPECTED_PI_PEER = `>=${EXPECTED_PI_VERSION}`;
 const EXPECTED_TYPEBOX_PEER = `>=${EXPECTED_TYPEBOX_VERSION}`;
 // Transitive undici and minimatch advisories in the pinned test host
-// @earendil-works/pi-coding-agent@1.2.0 (devDependency). Remove an entry when a
-// pinned host ships a patched version; the expiry forces periodic re-review.
+// @earendil-works/pi-coding-agent@1.2.0 (devDependency), and the picomatch advisory
+// in the lint, test and dead-code tooling. Remove an entry when a patched version
+// is installed; the expiry forces periodic re-review.
 const EXPECTED_ALLOWLIST_KEYS = new Set<string>([
 	"GHSA-xjj6-f33q-929c",
 	"GHSA-4qv8-2p9j-2685",
@@ -63,6 +64,7 @@ const EXPECTED_ALLOWLIST_KEYS = new Set<string>([
 	"GHSA-9fm3-97px-rjf6",
 	"GHSA-55wc-3pg8-jfw6",
 	"GHSA-g3hv-75wg-m249",
+	"GHSA-fc5q-39xc-vjpf",
 ]);
 
 function readText(url: URL): string {
