@@ -10,6 +10,7 @@ import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-age
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
+import { asPromise } from "../as-promise.js";
 import type { SchematicState } from "../state.js";
 import { updateIndicators } from "../tui.js";
 import { formatByteCap, formatPageList, formatPagePreview, getPageNames, saveNotebookPage, type TruncationReport } from "./store.js";
@@ -28,8 +29,7 @@ function formatTruncationReport(report: TruncationReport): string {
 
 const notebookWriteParams = Type.Object({
 	name: Type.String({
-		description:
-			"Kebab-case notebook page identifier. Prefer stable subject-oriented names; using an existing name overwrites that page (refinement).",
+		description: "Kebab-case notebook page identifier. Prefer stable subject-oriented names; using an existing name overwrites that page (refinement).",
 	}),
 	content: Type.String({
 		description:
@@ -50,7 +50,6 @@ const notebookIndexParams = Type.Object({});
 
 type WriteArgs = Static<typeof notebookWriteParams>;
 type ReadArgs = Static<typeof notebookReadParams>;
-type IndexArgs = Static<typeof notebookIndexParams>;
 
 // ── Factory ───────────────────────────────────────────────────────────
 
@@ -68,7 +67,7 @@ export function createNotebookToolDefinitions(
 ): ToolDefinition[] {
 	const withHints = options?.withPromptHints ?? false;
 	const assertFresh = () => {
-		if (options?.isStale?.()) {
+		if (options?.isStale?.() === true) {
 			throw new Error("Spawn invalidated by reset.");
 		}
 	};
@@ -100,8 +99,7 @@ export function createNotebookToolDefinitions(
 		renderCall(args: WriteArgs, theme, _context) {
 			const preview = formatPagePreview(args.content).trim();
 
-			let text = theme.fg("toolTitle", theme.bold("notebook_write ")) +
-				theme.fg("accent", `"${args.name}"`);
+			let text = theme.fg("toolTitle", theme.bold("notebook_write ")) + theme.fg("accent", `"${args.name}"`);
 			if (preview) {
 				text += ": " + theme.fg("dim", preview);
 			}
@@ -135,19 +133,22 @@ export function createNotebookToolDefinitions(
 			};
 
 			onUpdate?.({
-				content: [{
-					type: "text" as const,
-					text: `Saved "${params.name}"` + (saved.preview ? `: ${saved.preview}` : "") + (report ? `\n\n${report}` : ""),
-				}],
+				content: [
+					{
+						type: "text" as const,
+						text: `Saved "${params.name}"` + (saved.preview ? `: ${saved.preview}` : "") + (report !== null ? `\n\n${report}` : ""),
+					},
+				],
 				details,
 			});
 			return {
 				content: [
 					{
 						type: "text" as const,
-						text: `Saved notebook page "${params.name}".` +
+						text:
+							`Saved notebook page "${params.name}".` +
 							(saved.preview ? `\n${saved.preview}` : "") +
-							(report ? `\n\n${report}` : "") +
+							(report !== null ? `\n\n${report}` : "") +
 							`\n\nNotebook Pages:\n${formatPageList(state) || "(empty)"}`,
 					},
 				],
@@ -177,53 +178,47 @@ export function createNotebookToolDefinitions(
 		renderResult(result, { expanded }, theme, context: { args: ReadArgs }) {
 			const details = result.details as { entries: string[]; found: boolean; body?: string };
 			if (!details.found) {
-				return new Text(
-					theme.fg("error", "\u2717 ") + theme.fg("muted", `"${context.args.name}" not found`),
-					0,
-					0,
-				);
+				return new Text(theme.fg("error", "\u2717 ") + theme.fg("muted", `"${context.args.name}" not found`), 0, 0);
 			}
 			let text = theme.fg("success", "\u2713 ") + theme.fg("accent", `"${context.args.name}"`);
-			if (expanded && details.body) {
+			if (expanded && details.body !== undefined && details.body !== "") {
 				text += "\n" + theme.fg("toolOutput", details.body.trim());
 			}
 			return new Text(text, 0, 0);
 		},
 
-		async execute(_toolCallId, params: ReadArgs, _signal, _onUpdate, _ctx) {
-			assertFresh();
-			const content = state.notebookPages.get(params.name);
-			const names = getPageNames(state);
+		execute(_toolCallId, params: ReadArgs, _signal, _onUpdate, _ctx) {
+			return asPromise(() => {
+				assertFresh();
+				const content = state.notebookPages.get(params.name);
+				const names = getPageNames(state);
 
-			if (content === undefined) {
+				if (content === undefined) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Notebook page "${params.name}" not found.` + `\n\nNotebook Pages:\n${formatPageList(state) || "(empty)"}`,
+							},
+						],
+						details: { entries: names, found: false },
+					};
+				}
+
+				const clipped = state.clippedPages.has(params.name);
 				return {
 					content: [
 						{
 							type: "text" as const,
 							text:
-								`Notebook page "${params.name}" not found.` +
-								`\n\nNotebook Pages:\n${formatPageList(state) || "(empty)"}`,
+								`--- ${params.name} ---\n${content}\n` +
+								`---\nNotebook Pages:\n${formatPageList(state) || "(empty)"}` +
+								(clipped ? `\n\nNotice: This page was clipped at write time; its stored body is incomplete.` : ""),
 						},
 					],
-					details: { entries: names, found: false },
+					details: { entries: names, found: true, body: content, clipped },
 				};
-			}
-
-			const clipped = state.clippedPages.has(params.name);
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text:
-							`--- ${params.name} ---\n${content}\n` +
-							`---\nNotebook Pages:\n${formatPageList(state) || "(empty)"}` +
-							(clipped
-								? `\n\nNotice: This page was clipped at write time; its stored body is incomplete.`
-								: ""),
-					},
-				],
-				details: { entries: names, found: true, body: content, clipped },
-			};
+			});
 		},
 	};
 
@@ -231,9 +226,7 @@ export function createNotebookToolDefinitions(
 		name: "notebook_index",
 		label: "Notebook Index",
 		description:
-			"Scan the notebook index as name + first-line preview. " +
-			"Use this like a pocket notebook index. " +
-			"Always returns the current notebook page names.",
+			"Scan the notebook index as name + first-line preview. " + "Use this like a pocket notebook index. " + "Always returns the current notebook page names.",
 		...(withHints
 			? {
 					promptSnippet: "List pages via notebook index",
@@ -256,18 +249,20 @@ export function createNotebookToolDefinitions(
 			return new Text(text, 0, 0);
 		},
 
-		async execute() {
-			assertFresh();
-			const names = getPageNames(state);
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: `Notebook Pages:\n${formatPageList(state) || "(empty)"}`,
-					},
-				],
-				details: { entries: names },
-			};
+		execute() {
+			return asPromise(() => {
+				assertFresh();
+				const names = getPageNames(state);
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `Notebook Pages:\n${formatPageList(state) || "(empty)"}`,
+						},
+					],
+					details: { entries: names },
+				};
+			});
 		},
 	};
 
@@ -276,10 +271,7 @@ export function createNotebookToolDefinitions(
 
 // ── Registration ──────────────────────────────────────────────────────
 
-export function registerNotebookTools(
-	pi: ExtensionAPI,
-	state: SchematicState,
-): void {
+export function registerNotebookTools(pi: ExtensionAPI, state: SchematicState): void {
 	const tools = createNotebookToolDefinitions(pi, state, { withPromptHints: true });
 	for (const tool of tools) {
 		pi.registerTool(tool);

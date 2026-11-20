@@ -1,25 +1,30 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { registerReadonlyPI, makeReadonlyUICtx } from "./helpers.js";
+import type { ToolCallEventResult } from "@earendil-works/pi-coding-agent";
+import { registerReadonlyPI, uiCommandContext } from "./helpers.js";
 import type { ToolCall } from "./helpers.js";
-import type { TestPI } from "./test-host.js";
+import { getCommand, type TestPI } from "./test-host.js";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
 async function enableReadonly(pi: TestPI) {
-	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
+	await getCommand(pi, "readonly").handler("", uiCommandContext());
+}
+
+/** The tool_call result for a bash `command`: the first blocking result or nothing. */
+function bashCall(toolCall: ToolCall, command: unknown, cwd = "/workspace"): Promise<ToolCallEventResult | undefined> {
+	return toolCall({ toolName: "bash", input: { command } }, { cwd });
 }
 
 async function assertBlocked(toolCall: ToolCall, command: string, cwd = "/workspace") {
-	const result = await toolCall({ toolName: "bash", input: { command } }, { cwd });
-	assert.equal(result.block, true, `expected block: ${command}`);
+	const result = await bashCall(toolCall, command, cwd);
+	expect(result?.block, `expected block: ${command}`).toBe(true);
 }
 
 async function assertAllowed(toolCall: ToolCall, command: string, cwd = "/workspace") {
-	assert.equal(await toolCall({ toolName: "bash", input: { command } }, { cwd }), undefined, `expected allow: ${command}`);
+	expect(await toolCall({ toolName: "bash", input: { command } }, { cwd }), `expected allow: ${command}`).toBeUndefined();
 }
 
 // ── Behavioral contract tests (via tool_call hook — real code path) ──
@@ -36,18 +41,24 @@ test("blocks bash writes outside temp dir", async () => {
 	await assertBlocked(toolCall, `echo "test" > ${outsideTemp}`);
 });
 
-test("blocks malformed bash input without throwing", async () => {
+test.each([
+	undefined,
+	null,
+	42,
+	false,
+	true,
+	Symbol("test"),
+	BigInt(42),
+	() => {
+		/* A function value is the malformed input. */
+	},
+])("blocks malformed bash input without throwing: %s", async (command) => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 
-	for (const command of [undefined, null, 42, false, true, Symbol("test"), BigInt(42), () => {}]) {
-		const result = await toolCall(
-			{ toolName: "bash", input: { command } } as any,
-			{ cwd: "/workspace" },
-		);
-		assert.equal(result?.block, true, `expected malformed input to block: ${String(command)}`);
-		assert.match(result?.reason ?? "", /bash command input must be a string/);
-	}
+	const result = await bashCall(toolCall, command);
+	expect(result?.block, `expected malformed input to block: ${String(command)}`).toBe(true);
+	expect(result?.reason ?? "").toMatch(/bash command input must be a string/);
 });
 
 test("allows bash reads and non-mutating commands", async () => {
@@ -133,9 +144,9 @@ test("names the blocked shell in the block reason", async () => {
 	const { pi, toolCall } = await registerReadonlyPI();
 	await enableReadonly(pi);
 
-	const result = await toolCall({ toolName: "bash", input: { command: "cmd.exe /c dir" } }, { cwd: "/workspace" });
-	assert.equal(result.block, true);
-	assert.match(result.reason, /cmd\.exe blocked/);
+	const result = await bashCall(toolCall, "cmd.exe /c dir");
+	expect(result?.block).toBe(true);
+	expect(result?.reason).toMatch(/cmd\.exe blocked/);
 });
 
 test("allows read commands that mention pwsh only as an argument", async () => {

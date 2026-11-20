@@ -5,57 +5,71 @@
     {
       "GHSA-xjj6-f33q-929c": {
         "active": true,
-        "notes": "undici: DoS via unhandled error on excessive content-encodings. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.0.4 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.0.4 (devDependency; the extension ships no runtime deps).",
+        "notes": "undici: DoS via unhandled error on excessive content-encodings. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.2.0 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.2.0 (devDependency).",
         "expiry": "2026-12-31"
       }
     },
     {
       "GHSA-4qv8-2p9j-2685": {
         "active": true,
-        "notes": "undici: DoS via unbounded memory in the EventSource parser. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.0.4 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.0.4 (devDependency; the extension ships no runtime deps).",
+        "notes": "undici: DoS via unbounded memory in the EventSource parser. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.2.0 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.2.0 (devDependency).",
         "expiry": "2026-12-31"
       }
     },
     {
       "GHSA-f72v-6w45-q472": {
         "active": true,
-        "notes": "undici: Subresource Integrity bypass via non-lowercase algorithm tokens. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.0.4 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.0.4 (devDependency; the extension ships no runtime deps).",
+        "notes": "undici: Subresource Integrity bypass via non-lowercase algorithm tokens. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.2.0 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.2.0 (devDependency).",
         "expiry": "2026-12-31"
       }
     },
     {
       "GHSA-2m5v-pch6-74hx": {
         "active": true,
-        "notes": "undici: TLS certificate validation bypass via dropped tls options in Agent. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.0.4 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.0.4 (devDependency; the extension ships no runtime deps).",
+        "notes": "undici: TLS certificate validation bypass via dropped tls options in Agent. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.2.0 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.2.0 (devDependency).",
         "expiry": "2026-12-31"
       }
     },
     {
       "GHSA-4w7w-5xrc-9h26": {
         "active": true,
-        "notes": "undici: cache poisoning and cross-user disclosure via cross-origin redirects. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.0.4 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.0.4 (devDependency; the extension ships no runtime deps).",
+        "notes": "undici: cache poisoning and cross-user disclosure via cross-origin redirects. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.2.0 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.2.0 (devDependency).",
         "expiry": "2026-12-31"
       }
     },
     {
       "GHSA-55wc-3pg8-jfw6": {
         "active": true,
-        "notes": "undici: DoS via unhandled exception in the decompress interceptor. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.0.4 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.0.4 (devDependency; the extension ships no runtime deps).",
+        "notes": "undici: DoS via unhandled exception in the decompress interceptor. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.2.0 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.2.0 (devDependency).",
         "expiry": "2026-12-31"
       }
     },
     {
       "GHSA-9fm3-97px-rjf6": {
         "active": true,
-        "notes": "undici WebSocket client: DoS via unbounded automatic PONG buffering. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.0.4 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.0.4 (devDependency; the extension ships no runtime deps).",
+        "notes": "undici WebSocket client: DoS via unbounded automatic PONG buffering. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.2.0 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.2.0 (devDependency).",
         "expiry": "2026-12-31"
+      }
+    },
+    {
+      "GHSA-g3hv-75wg-m249": {
+        "active": true,
+        "notes": "minimatch: DoS via globparts amplification (CVE-2026-118764). npm audit affected range: <11.0.1. Installed 10.2.6 as one deduped copy, under @earendil-works/pi-coding-agent@1.2.0 and also required by the lint toolchain: eslint@10.14.0 (^10.2.6), @eslint/config-array@0.23.5 (^10.2.4), @typescript-eslint/typescript-estree@8.72.2 (^10.2.2) and eslint-plugin-import-x@4.18.1 (^9.0.3 || ^10.1.2 || ^11.0.1) (npm ls). Transitive in the pinned test host and the lint toolchain (devDependencies); no fix within the pinned 1.2.0 host.",
+        "expiry": "2027-01-31"
       }
     },
     {
       "GHSA-qrxm-fqhp-jwvm": {
         "active": true,
-        "notes": "undici: DoS via TLS 1.2 certificate-changing renegotiation. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.0.4 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.0.4 (devDependency; the extension ships no runtime deps).",
+        "notes": "undici: DoS via TLS 1.2 certificate-changing renegotiation. npm audit affected range: >=8.0.0 <8.12.2. Installed 8.10.2 under @earendil-works/pi-coding-agent@1.2.0 (npm ls). Transitive in the pinned test host @earendil-works/pi-coding-agent@1.2.0 (devDependency).",
         "expiry": "2026-12-31"
+      }
+    },
+    {
+      "GHSA-fc5q-39xc-vjpf": {
+        "active": true,
+        "notes": "picomatch: ReDoS through single-branch repeated extglobs (CVE-2026-112366). npm audit affected range: <=4.0.7, no patched release. Installed 4.0.7 as one deduped copy, required by knip@6.45.1, vite@8.3.7, vitest@5.1.0 and tinyglobby@0.2.17 under eslint-import-resolver-typescript@4.4.5 and typescript-eslint (npm ls). Transitive in the lint, test and dead-code tooling (devDependencies) only; the globs it compiles come from repository config, not untrusted input.",
+        "expiry": "2027-01-31"
       }
     }
   ]

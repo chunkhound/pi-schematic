@@ -58,6 +58,7 @@ web_modules/
 !.pi/workflows/*.js
 # Hand-written declarations for committed .mjs helpers
 !/pi-packages.d.mts
+!/scripts/*.d.mts
 
 # Optional npm cache directory
 .npm

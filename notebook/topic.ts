@@ -3,7 +3,7 @@ import type { SchematicState } from "../state.js";
 export type NotebookTopicSource = "human" | "agent";
 
 export interface NotebookTopicBoundaryHint {
-	from: string | null;
+	from: string;
 	to: string;
 	source: NotebookTopicSource;
 	/** Prevent repeated advisory nudges while waiting for handoff eligibility. */
@@ -34,9 +34,7 @@ export function setActiveNotebookTopic(
 	state.activeNotebookTopic = normalized;
 	state.activeNotebookTopicSource = source;
 
-	const boundaryHint = changed && previous !== null
-		? { from: previous, to: normalized, source, advisoryDelivered: false }
-		: null;
+	const boundaryHint = changed && previous !== null ? { from: previous, to: normalized, source, advisoryDelivered: false } : null;
 	state.pendingTopicBoundaryHint = boundaryHint;
 
 	return {

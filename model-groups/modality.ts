@@ -29,7 +29,7 @@ export interface ModalityLetterRunOptions {
 	 */
 	hideTextWhenOtherMedia?: boolean;
 	/** Render one colored/letter token (e.g. a theme colorizer). Defaults to identity. */
-	render?(modality: ModelGroupModality, letter: string): string;
+	render?: (modality: ModelGroupModality, letter: string) => string;
 	/** Separator between colored letters. Default " ". */
 	separator?: string;
 }
@@ -39,11 +39,10 @@ export interface ModalityLetterRunOptions {
  * ordered per MODEL_GROUP_MODALITIES (text first). Reasoning is omitted unless
  * includeReasoning is set. Returns "" for an empty/absent set.
  */
-export function modalityLetterRun(
-	effective: readonly ModelGroupModality[] | null | undefined,
-	options: ModalityLetterRunOptions = {},
-): string {
-	if (!effective || effective.length === 0) return "";
+export function modalityLetterRun(effective: readonly ModelGroupModality[] | null | undefined, options: ModalityLetterRunOptions = {}): string {
+	if (!effective || effective.length === 0) {
+		return "";
+	}
 	const includeReasoning = options.includeReasoning ?? false;
 	const hideTextWhenOtherMedia = options.hideTextWhenOtherMedia ?? false;
 	const render = options.render ?? ((_modality: ModelGroupModality, letter: string) => letter);
@@ -52,16 +51,30 @@ export function modalityLetterRun(
 	const rendered: string[] = [];
 	let hasOtherMedia = false;
 	for (const modality of MODEL_GROUP_MODALITIES) {
-		if (!seen.has(modality)) continue;
-		if (!includeReasoning && modality === "reasoning") continue;
-		if (modality !== "text") hasOtherMedia = true;
+		if (!seen.has(modality)) {
+			continue;
+		}
+		if (!includeReasoning && modality === "reasoning") {
+			continue;
+		}
+		if (modality !== "text") {
+			hasOtherMedia = true;
+		}
 	}
 	for (const modality of MODEL_GROUP_MODALITIES) {
-		if (!seen.has(modality)) continue;
-		if (!includeReasoning && modality === "reasoning") continue;
-		if (hideTextWhenOtherMedia && modality === "text" && hasOtherMedia) continue;
+		if (!seen.has(modality)) {
+			continue;
+		}
+		if (!includeReasoning && modality === "reasoning") {
+			continue;
+		}
+		if (hideTextWhenOtherMedia && modality === "text" && hasOtherMedia) {
+			continue;
+		}
 		rendered.push(render(modality, MODALITY_LETTER[modality]));
 	}
-	if (rendered.length === 0) return "";
+	if (rendered.length === 0) {
+		return "";
+	}
 	return rendered.join(separator);
 }

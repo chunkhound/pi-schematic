@@ -3,17 +3,17 @@
  * (`real-host.ts`) and the probe extension the harness loads into pi
  * (`real-host-probe.ts`).
  *
- * Both sides import this module: the harness under the node:test loader, the
+ * Both sides import this module: the harness in a Vitest worker, the
  * probe inside the pi process under jiti. It imports no pi runtime code, only
  * types and the handoff message builder, so it loads in either environment.
  */
 
-import type { ToolCall, Usage } from "@earendil-works/pi-ai";
+import type { JsonObject, JsonValue, ToolCall, Usage } from "@earendil-works/pi-ai";
 import { buildNextUserMessage } from "../../handoff/format.js";
 
 /** Provider, API and model the probe registers and the harness selects. */
 export const PROBE_PROVIDER = "schematic-e2e";
-export const PROBE_API = "schematic-e2e-api";
+const PROBE_API = "schematic-e2e-api";
 export const PROBE_MODEL_ID = "schematic-e2e-model";
 /** Context window of the probe model, which pi's threshold compaction measures usage against. */
 export const PROBE_CONTEXT_WINDOW = 200000;
@@ -26,8 +26,12 @@ export const PROBE_PROVIDER_FIELDS = { api: PROBE_API, apiKey: "test-key", baseU
 
 /** Model fields both probes register; each probe adds its model `name`. */
 export const PROBE_MODEL_FIELDS = {
-	id: PROBE_MODEL_ID, reasoning: false, input: ["text" as const], cost: ZERO_COST,
-	contextWindow: PROBE_CONTEXT_WINDOW, maxTokens: 1024,
+	id: PROBE_MODEL_ID,
+	reasoning: false,
+	input: ["text" as const],
+	cost: ZERO_COST,
+	contextWindow: PROBE_CONTEXT_WINDOW,
+	maxTokens: 1024,
 };
 
 /** Text of every model reply in a spawned child session (`real-host-child-probe.ts`). */
@@ -41,7 +45,11 @@ export const CHILD_EMPTY_REPLY_MARKER = "[child-empty-reply]";
 
 /** Usage of every model reply in a spawned child session (`real-host-child-probe.ts`). */
 export const CHILD_USAGE: Usage = {
-	input: 1234, output: 56, cacheRead: 7, cacheWrite: 8, totalTokens: 1305,
+	input: 1234,
+	output: 56,
+	cacheRead: 7,
+	cacheWrite: 8,
+	totalTokens: 1305,
 	cost: { input: 0.25, output: 0.5, cacheRead: 0.125, cacheWrite: 0.0625, total: 0.9375 },
 };
 
@@ -69,16 +77,26 @@ export const PROBE_COMMAND = {
 export const NEXT_INSTRUCTION_PREFIX = buildNextUserMessage({ nextInstruction: "x" }).split("\n")[0];
 
 /** One scripted tool call. */
-export type ScriptedCall = { name: string; arguments: ToolCall["arguments"] };
+export interface ScriptedCall {
+	name: string;
+	arguments: ToolCall["arguments"];
+}
 
 /** A provider error the model call ends with; pi retries it when retry is enabled and `error` matches a retryable pattern. */
-export type ScriptedError = { error: string };
+interface ScriptedError {
+	error: string;
+}
 
 /** A text reply that reports `inputTokens` of context usage in place of the probe's default. */
-export type ScriptedReply = { text: string; inputTokens: number };
+interface ScriptedReply {
+	text: string;
+	inputTokens: number;
+}
 
 /** Several tool calls the model makes in one assistant message, in order. */
-export type ScriptedBatch = { calls: ScriptedCall[] };
+interface ScriptedBatch {
+	calls: ScriptedCall[];
+}
 
 /** One scripted model response: what `/e2e-script` arms, one per model call of the run, and what the log carries. */
 export type ScriptedStep = ScriptedCall | ScriptedBatch | ScriptedError | ScriptedReply;
@@ -88,21 +106,40 @@ export type ProbeRecord =
 	| { kind: "request"; step: number; calls: ScriptedStep[] | null; texts: string[] }
 	| { kind: "compact"; entryId: string }
 	| { kind: "cut"; handoffId: string; dropped: boolean }
-	| { kind: "tools"; names: string[] };
+	| { kind: "tools"; names: string[] }
+	| { kind: "bashResult"; toolCallId: string; isError: boolean; text: string; structuredOutput: string | null };
 
 /**
  * Outcome of `/e2e-barrier <id> <deadlineMs>`: `failure` is null once nothing is outstanding,
  * or the reason the barrier gave up, naming every outstanding item.
  */
-export type BarrierReport = { id: number; failure: string | null };
+export interface BarrierReport {
+	id: number;
+	failure: string | null;
+}
 
 /** Fail on a record the probe should never have written; `line` is the raw log line. */
 function malformed(line: string, reason: string): never {
 	throw new Error(`Probe log line is malformed (${reason}): ${line}`);
 }
 
-function isJsonObject(value: unknown): value is Record<string, unknown> {
+export function isJsonObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+	return (
+		value === null ||
+		typeof value === "boolean" ||
+		typeof value === "number" ||
+		typeof value === "string" ||
+		(Array.isArray(value) && value.every(isJsonValue)) ||
+		isJsonRecord(value)
+	);
+}
+
+function isJsonRecord(value: unknown): value is JsonObject {
+	return isJsonObject(value) && Object.values(value).every(isJsonValue);
 }
 
 function requireStep(record: Record<string, unknown>, field: string, line: string): number {
@@ -115,32 +152,43 @@ function requireStep(record: Record<string, unknown>, field: string, line: strin
 
 function requireString(record: Record<string, unknown>, field: string, line: string): string {
 	const value = record[field];
-	if (typeof value !== "string") malformed(line, `${field} is not a string: ${JSON.stringify(value)}`);
+	if (typeof value !== "string") {
+		malformed(line, `${field} is not a string: ${JSON.stringify(value)}`);
+	}
 	return value;
 }
 
 function requireBoolean(record: Record<string, unknown>, field: string, line: string): boolean {
 	const value = record[field];
-	if (typeof value !== "boolean") malformed(line, `${field} is not a boolean: ${JSON.stringify(value)}`);
+	if (typeof value !== "boolean") {
+		malformed(line, `${field} is not a boolean: ${JSON.stringify(value)}`);
+	}
 	return value;
 }
 
 function requireStringArray(record: Record<string, unknown>, field: string, line: string): string[] {
 	const value = record[field];
-	if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+	if (!Array.isArray(value) || !value.every((item): item is string => typeof item === "string")) {
 		malformed(line, `${field} is not a string array: ${JSON.stringify(value)}`);
 	}
 	return value;
 }
 
 function parseScriptedCall(value: unknown, fail: (reason: string) => never): ScriptedCall {
-	if (!isJsonObject(value)) fail(`not an object: ${JSON.stringify(value)}`);
+	if (!isJsonObject(value)) {
+		fail(`not an object: ${JSON.stringify(value)}`);
+	}
 	const { name, arguments: callArguments, ...rest } = value;
-	if (typeof name !== "string" || name === "") fail(`no name: ${JSON.stringify(value)}`);
-	if (!isJsonObject(callArguments)) fail(`no arguments object: ${JSON.stringify(value)}`);
-	if (Object.keys(rest).length > 0) fail(`a call step takes only name and arguments: ${JSON.stringify(value)}`);
-	// The value came out of JSON.parse, so the arguments are JSON.
-	return { name, arguments: callArguments as ToolCall["arguments"] };
+	if (typeof name !== "string" || name === "") {
+		fail(`no name: ${JSON.stringify(value)}`);
+	}
+	if (!isJsonRecord(callArguments)) {
+		fail(`no arguments object: ${JSON.stringify(value)}`);
+	}
+	if (Object.keys(rest).length > 0) {
+		fail(`a call step takes only name and arguments: ${JSON.stringify(value)}`);
+	}
+	return { name, arguments: callArguments };
 }
 
 /**
@@ -149,26 +197,40 @@ function parseScriptedCall(value: unknown, fail: (reason: string) => never): Scr
  * with the reason.
  */
 export function parseScriptedStep(value: unknown, fail: (reason: string) => never): ScriptedStep {
-	if (!isJsonObject(value)) fail(`not an object: ${JSON.stringify(value)}`);
+	if (!isJsonObject(value)) {
+		fail(`not an object: ${JSON.stringify(value)}`);
+	}
 	if ("error" in value) {
 		const { error, ...rest } = value;
-		if (typeof error !== "string" || error === "") fail(`error is not a non-empty string: ${JSON.stringify(value)}`);
-		if (Object.keys(rest).length > 0) fail(`an error step takes no other field: ${JSON.stringify(value)}`);
+		if (typeof error !== "string" || error === "") {
+			fail(`error is not a non-empty string: ${JSON.stringify(value)}`);
+		}
+		if (Object.keys(rest).length > 0) {
+			fail(`an error step takes no other field: ${JSON.stringify(value)}`);
+		}
 		return { error };
 	}
 	if ("text" in value) {
 		const { text, inputTokens, ...rest } = value;
-		if (typeof text !== "string") fail(`text is not a string: ${JSON.stringify(value)}`);
+		if (typeof text !== "string") {
+			fail(`text is not a string: ${JSON.stringify(value)}`);
+		}
 		if (typeof inputTokens !== "number" || !Number.isInteger(inputTokens) || inputTokens <= 0) {
 			fail(`inputTokens is not a positive integer: ${JSON.stringify(value)}`);
 		}
-		if (Object.keys(rest).length > 0) fail(`a reply step takes only text and inputTokens: ${JSON.stringify(value)}`);
+		if (Object.keys(rest).length > 0) {
+			fail(`a reply step takes only text and inputTokens: ${JSON.stringify(value)}`);
+		}
 		return { text, inputTokens };
 	}
 	if ("calls" in value) {
 		const { calls, ...rest } = value;
-		if (!Array.isArray(calls) || calls.length === 0) fail(`calls is not a non-empty array: ${JSON.stringify(value)}`);
-		if (Object.keys(rest).length > 0) fail(`a batch step takes only calls: ${JSON.stringify(value)}`);
+		if (!Array.isArray(calls) || calls.length === 0) {
+			fail(`calls is not a non-empty array: ${JSON.stringify(value)}`);
+		}
+		if (Object.keys(rest).length > 0) {
+			fail(`a batch step takes only calls: ${JSON.stringify(value)}`);
+		}
 		return { calls: calls.map((call: unknown, index) => parseScriptedCall(call, (reason) => fail(`calls[${index}]: ${reason}`))) };
 	}
 	return parseScriptedCall(value, fail);
@@ -176,8 +238,12 @@ export function parseScriptedStep(value: unknown, fail: (reason: string) => neve
 
 /** A request record's `calls`: the armed script, or null when no script was armed. */
 function requireScriptedCalls(value: unknown, line: string): ScriptedStep[] | null {
-	if (value === null) return null;
-	if (!Array.isArray(value)) malformed(line, `calls is neither an array nor null: ${JSON.stringify(value)}`);
+	if (value === null) {
+		return null;
+	}
+	if (!Array.isArray(value)) {
+		malformed(line, `calls is neither an array nor null: ${JSON.stringify(value)}`);
+	}
 	return value.map((step: unknown, index) => parseScriptedStep(step, (reason) => malformed(line, `calls[${index}]: ${reason}`)));
 }
 
@@ -188,9 +254,11 @@ export function parseProbeRecord(line: string): ProbeRecord {
 		parsed = JSON.parse(line);
 	} catch (error) {
 		const detail = error instanceof Error ? error.message : String(error);
-		throw new Error(`Probe log line is not JSON (${detail}): ${line}`);
+		throw new Error(`Probe log line is not JSON (${detail}): ${line}`, { cause: error });
 	}
-	if (!isJsonObject(parsed)) throw new Error(`Probe log line is not a record: ${line}`);
+	if (!isJsonObject(parsed)) {
+		throw new Error(`Probe log line is not a record: ${line}`);
+	}
 	switch (parsed.kind) {
 		case "request":
 			return {
@@ -209,6 +277,19 @@ export function parseProbeRecord(line: string): ProbeRecord {
 			};
 		case "tools":
 			return { kind: "tools", names: requireStringArray(parsed, "names", line) };
+		case "bashResult": {
+			const { structuredOutput } = parsed;
+			if (structuredOutput !== null && typeof structuredOutput !== "string") {
+				malformed(line, `structuredOutput is neither a string nor null: ${JSON.stringify(structuredOutput)}`);
+			}
+			return {
+				kind: "bashResult",
+				toolCallId: requireString(parsed, "toolCallId", line),
+				isError: requireBoolean(parsed, "isError", line),
+				text: requireString(parsed, "text", line),
+				structuredOutput,
+			};
+		}
 		default:
 			throw new Error(`Probe log line has an unknown kind ${JSON.stringify(parsed.kind)}: ${line}`);
 	}
@@ -221,9 +302,11 @@ export function parseBarrierReport(text: string): BarrierReport {
 		parsed = JSON.parse(text);
 	} catch (error) {
 		const detail = error instanceof Error ? error.message : String(error);
-		throw new Error(`Barrier report is not JSON (${detail}): ${text}`);
+		throw new Error(`Barrier report is not JSON (${detail}): ${text}`, { cause: error });
 	}
-	if (!isJsonObject(parsed)) throw new Error(`Barrier report is not a record: ${text}`);
+	if (!isJsonObject(parsed)) {
+		throw new Error(`Barrier report is not a record: ${text}`);
+	}
 	const { id, failure } = parsed;
 	if (typeof id !== "number" || !Number.isInteger(id) || id < 1) {
 		throw new Error(`Barrier report id is not a positive integer: ${text}`);
@@ -236,7 +319,9 @@ export function parseBarrierReport(text: string): BarrierReport {
 
 /** `handoffId` of a handoff cut written in a turn_end boundary, or null for any other entry or draft. */
 export function cutHandoffId(entry: { type: string; details?: unknown }): string | null {
-	if (entry.type !== "compaction" || typeof entry.details !== "object" || entry.details === null) return null;
-	const handoffId = (entry.details as Record<string, unknown>).handoffId;
+	if (entry.type !== "compaction" || !isJsonObject(entry.details)) {
+		return null;
+	}
+	const handoffId = entry.details.handoffId;
 	return typeof handoffId === "string" ? handoffId : null;
 }

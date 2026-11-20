@@ -1,28 +1,25 @@
-import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import test from "node:test";
+import { expect, test } from "vitest";
+import { assertSynchronizedPackageVersions } from "../../scripts/dependency-graph-assertions.mjs";
+import { REPO_ROOT_URL } from "../paths.js";
 
-const { assertSynchronizedPackageVersions } = await import(
-	new URL("../../scripts/dependency-graph-assertions.mjs", import.meta.url).href,
-);
+interface DependencyNode {
+	version: string;
+	dependencies: Record<string, DependencyNode>;
+}
 
-const PI_PACKAGES = [
-	"@earendil-works/pi-agent-core",
-	"@earendil-works/pi-ai",
-	"@earendil-works/pi-coding-agent",
-	"@earendil-works/pi-tui",
-];
+const PI_PACKAGES = ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"];
 
 test("latest compatibility lane guards every installed Pi package", () => {
-	const source = readFileSync(new URL("../../scripts/test-compat-current.mjs", import.meta.url), "utf8");
-	assert.match(source, /["']@earendil-works\/pi-agent-core["']/i);
+	const source = readFileSync(new URL("scripts/test-compat-current.mjs", REPO_ROOT_URL), "utf8");
+	expect(source).toMatch(/["']@earendil-works\/pi-agent-core["']/i);
 });
 
-function dependency(version: string, dependencies = {}): object {
+function dependency(version: string, dependencies: Record<string, DependencyNode> = {}): DependencyNode {
 	return { version, dependencies };
 }
 
-function graph(piVersion = "0.99.0", typeboxVersion = "2.0.0"): object {
+function graph(piVersion = "0.99.0", typeboxVersion = "2.0.0"): DependencyNode & { name: string } {
 	return {
 		name: "synthetic-install",
 		version: "1.0.0",
@@ -41,16 +38,16 @@ function graph(piVersion = "0.99.0", typeboxVersion = "2.0.0"): object {
 
 test("latest assertions accept recursively synchronized Pi and TypeBox versions", () => {
 	const current = graph();
-	assert.equal(assertSynchronizedPackageVersions(current, PI_PACKAGES), "0.99.0");
-	assert.equal(assertSynchronizedPackageVersions(current, ["typebox"]), "2.0.0");
+	expect(assertSynchronizedPackageVersions(current, PI_PACKAGES)).toBe("0.99.0");
+	expect(assertSynchronizedPackageVersions(current, ["typebox"])).toBe("2.0.0");
 });
 
 test("latest assertions reject mixed nested Pi and TypeBox versions", () => {
-	const mixedCore = graph() as any;
+	const mixedCore = graph();
 	mixedCore.dependencies["@earendil-works/pi-coding-agent"].dependencies["@earendil-works/pi-agent-core"].version = "0.98.0";
-	assert.throws(() => assertSynchronizedPackageVersions(mixedCore, PI_PACKAGES), /synchronized.*0\.98\.0.*0\.99\.0/i);
+	expect(() => assertSynchronizedPackageVersions(mixedCore, PI_PACKAGES)).toThrow(/synchronized.*0\.98\.0.*0\.99\.0/i);
 
-	const mixedTypebox = graph() as any;
+	const mixedTypebox = graph();
 	mixedTypebox.dependencies["@earendil-works/pi-ai"].dependencies.typebox.version = "1.9.0";
-	assert.throws(() => assertSynchronizedPackageVersions(mixedTypebox, ["typebox"]), /synchronized.*1\.9\.0.*2\.0\.0/i);
+	expect(() => assertSynchronizedPackageVersions(mixedTypebox, ["typebox"])).toThrow(/synchronized.*1\.9\.0.*2\.0\.0/i);
 });

@@ -1,0 +1,14 @@
+{
+  "useTabs": true,
+  "printWidth": 160,
+  "overrides": [
+    {
+      "files": ["*.json", "*.jsonc", "*.md", "*.yml", "*.yaml"],
+      "options": { "useTabs": false }
+    },
+    {
+      "files": ["*.jsonc"],
+      "options": { "trailingComma": "none" }
+    }
+  ]
+}

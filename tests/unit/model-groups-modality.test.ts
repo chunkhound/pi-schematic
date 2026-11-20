@@ -1,34 +1,33 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import { MODALITY_FG, MODALITY_LETTER, modalityLetterRun } from "../../model-groups/modality.js";
 import type { ModelGroupModality } from "../../model-groups/types.js";
 
 test("MODALITY_LETTER / MODALITY_FG cover the established single-letter lexicon", () => {
-	assert.deepEqual(MODALITY_LETTER, { text: "T", image: "I", reasoning: "R" });
-	assert.equal(MODALITY_FG.text, "syntaxKeyword");
-	assert.equal(MODALITY_FG.image, "success");
-	assert.equal(MODALITY_FG.reasoning, "thinkingHigh");
+	expect(MODALITY_LETTER).toStrictEqual({ text: "T", image: "I", reasoning: "R" });
+	expect(MODALITY_FG.text).toBe("syntaxKeyword");
+	expect(MODALITY_FG.image).toBe("success");
+	expect(MODALITY_FG.reasoning).toBe("thinkingHigh");
 });
 
 test("modalityLetterRun canonicalizes order and excludes reasoning by default", () => {
 	const effective = ["reasoning", "image", "text"] as readonly ModelGroupModality[];
-	assert.equal(modalityLetterRun(effective), "T I"); // reasoning dropped, text first
-	assert.equal(modalityLetterRun(effective, { includeReasoning: true }), "T I R");
-	assert.equal(modalityLetterRun(["reasoning"]), "");
-	assert.equal(modalityLetterRun([]), "");
-	assert.equal(modalityLetterRun(undefined), "");
-	assert.equal(modalityLetterRun(null), "");
+	expect(modalityLetterRun(effective)).toBe("T I"); // reasoning dropped, text first
+	expect(modalityLetterRun(effective, { includeReasoning: true })).toBe("T I R");
+	expect(modalityLetterRun(["reasoning"])).toBe("");
+	expect(modalityLetterRun([])).toBe("");
+	expect(modalityLetterRun(undefined)).toBe("");
+	expect(modalityLetterRun(null)).toBe("");
 });
 
 test("modalityLetterRun consolidates text away when another media modality is present", () => {
 	// Image implies text -> only the image letter shows (OpenRouter-style).
-	assert.equal(modalityLetterRun(["text", "image"], { hideTextWhenOtherMedia: true }), "I");
+	expect(modalityLetterRun(["text", "image"], { hideTextWhenOtherMedia: true })).toBe("I");
 	// Text-only keeps the T.
-	assert.equal(modalityLetterRun(["text"], { hideTextWhenOtherMedia: true }), "T");
+	expect(modalityLetterRun(["text"], { hideTextWhenOtherMedia: true })).toBe("T");
 	// Reasoning is not a media modality; consolidation still applies after it is excluded.
-	assert.equal(modalityLetterRun(["text", "image", "reasoning"], { hideTextWhenOtherMedia: true }), "I");
+	expect(modalityLetterRun(["text", "image", "reasoning"], { hideTextWhenOtherMedia: true })).toBe("I");
 	// Default leaves full letters (list rows keep text alongside image).
-	assert.equal(modalityLetterRun(["text", "image"]), "T I");
+	expect(modalityLetterRun(["text", "image"])).toBe("T I");
 });
 
 test("modalityLetterRun honors a renderer and separator", () => {
@@ -36,5 +35,5 @@ test("modalityLetterRun honors a renderer and separator", () => {
 		render: (modality, letter) => `${MODALITY_FG[modality]}(${letter})`,
 		separator: "·",
 	});
-	assert.equal(rendered, "syntaxKeyword(T)·success(I)");
+	expect(rendered).toBe("syntaxKeyword(T)·success(I)");
 });

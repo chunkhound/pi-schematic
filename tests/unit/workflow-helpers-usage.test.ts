@@ -1,7 +1,6 @@
 // Attribution and accumulation rules of the usage helpers, read through their public
 // outputs. Whole-branch totals are covered by usage.test.ts.
-import assert from "node:assert/strict";
-import test from "node:test";
+import { expect, test } from "vitest";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Usage } from "@earendil-works/pi-ai";
 import {
@@ -28,13 +27,14 @@ function usd(total: number): Usage {
 }
 
 function assistant(id: string, fields: Record<string, unknown>): SessionEntry {
+	// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- fixture literal matches SessionMessageEntry without carrying the SDK's full union
 	return {
 		type: "message",
 		id,
 		parentId: null,
 		timestamp: "2026-10-07T00:00:00.000Z",
 		message: { role: "assistant", content: [{ type: "text", text: "x" }], timestamp: 0, ...fields },
-	} as SessionEntry;
+	} as unknown as SessionEntry;
 }
 
 function userMessage(id: string): SessionEntry {
@@ -44,23 +44,23 @@ function userMessage(id: string): SessionEntry {
 		parentId: null,
 		timestamp: "2026-10-07T00:00:00.000Z",
 		message: { role: "user", content: "hi", timestamp: 0 },
-	} as SessionEntry;
+	};
 }
 
 test("addModelSpend keeps the provider-less and provider-scoped rows of one model apart", () => {
 	const map = new Map<string, ModelSpend>();
 	addModelSpend(map, null, "widget", usd(0.1));
 	addModelSpend(map, "acme", "widget", usd(0.2));
-	assert.equal(map.get("widget")?.costUsd, 0.1);
-	assert.equal(map.get("acme/widget")?.costUsd, 0.2);
-	assert.equal(map.get("acme/widget")?.provider, "acme");
+	expect(map.get("widget")?.costUsd).toBe(0.1);
+	expect(map.get("acme/widget")?.costUsd).toBe(0.2);
+	expect(map.get("acme/widget")?.provider).toBe("acme");
 });
 
 test("addModelSpend accumulates every field and counts one call per usage record", () => {
 	const map = new Map<string, ModelSpend>();
 	addModelSpend(map, "acme", "widget", usd(0.1));
 	addModelSpend(map, "acme", "widget", usd(0.2));
-	assert.deepEqual(map.get("acme/widget"), {
+	expect(map.get("acme/widget")).toStrictEqual({
 		key: "acme/widget",
 		provider: "acme",
 		model: "widget",
@@ -76,21 +76,22 @@ test("addModelSpend accumulates every field and counts one call per usage record
 
 test("usageByModel attributes an assistant turn without a model to the unattributed bucket", () => {
 	const spend = usageByModel([assistant("a1", { usage: usd(0.3) })]);
-	assert.equal(spend.get(UNATTRIBUTED_MODEL)?.costUsd, 0.3);
-	assert.equal(spend.get(UNATTRIBUTED_MODEL)?.provider, null);
+	expect(spend.get(UNATTRIBUTED_MODEL)?.costUsd).toBe(0.3);
+	expect(spend.get(UNATTRIBUTED_MODEL)?.provider).toBeNull();
 });
 
 test("usageByModel keys a provider-less assistant turn by its bare model name", () => {
 	const spend = usageByModel([assistant("a1", { model: "widget", usage: usd(0.3) })]);
-	assert.deepEqual([...spend.keys()], ["widget"]);
+	expect([...spend.keys()]).toStrictEqual(["widget"]);
 });
 
 test("usageByModel ignores turns without usage and entries of other types", () => {
 	const spend = usageByModel([assistant("a1", { provider: "acme", model: "widget" }), userMessage("u1")]);
-	assert.equal(spend.size, 0);
+	expect(spend.size).toBe(0);
 });
 
 test("usageByModel attributes a tool result without a child model to the unattributed bucket", () => {
+	// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- fixture literal matches SessionMessageEntry without carrying the SDK's full union
 	const toolResult = {
 		type: "message",
 		id: "t1",
@@ -98,7 +99,7 @@ test("usageByModel attributes a tool result without a child model to the unattri
 		timestamp: "2026-10-07T00:00:00.000Z",
 		message: { role: "toolResult", toolName: "bash", toolCallId: "c1", content: "ok", timestamp: 0, usage: usd(0.4) },
 	} as unknown as SessionEntry;
-	assert.equal(usageByModel([toolResult]).get(UNATTRIBUTED_MODEL)?.costUsd, 0.4);
+	expect(usageByModel([toolResult]).get(UNATTRIBUTED_MODEL)?.costUsd).toBe(0.4);
 });
 
 test("assistantCount counts every assistant message, with or without usage, and nothing else", () => {
@@ -115,38 +116,40 @@ test("assistantCount counts every assistant message, with or without usage, and 
 			provider: "acme",
 			model: "widget",
 			usage: usd(0.1),
-		} as SessionEntry,
+		},
 	];
-	assert.equal(assistantCount(entries), 2);
-	assert.equal(assistantCount([]), 0);
+	expect(assistantCount(entries)).toBe(2);
+	expect(assistantCount([])).toBe(0);
 });
 
 test("mergeModelSpend with no sources yields an empty map", () => {
-	assert.equal(mergeModelSpend().size, 0);
+	expect(mergeModelSpend().size).toBe(0);
 });
 
 test("mergeModelSpend returns row copies so mutating the result leaves its sources untouched", () => {
 	const source = usageByModel([assistant("a1", { provider: "acme", model: "widget", usage: usd(0.5) })]);
 	const merged = mergeModelSpend(source);
-	merged.get("acme/widget")!.costUsd = 99;
-	assert.equal(source.get("acme/widget")?.costUsd, 0.5);
+	for (const row of merged.values()) {
+		row.costUsd = 99;
+	}
+	expect(source.get("acme/widget")?.costUsd).toBe(0.5);
 });
 
 test("addUsage returns a new record and leaves both operands unchanged", () => {
 	const left = usd(0.1);
 	const right = usd(0.2);
 	const sum = addUsage(left, right);
-	assert.notEqual(sum, left);
-	assert.equal(left.cost.total, 0.1);
-	assert.equal(right.cost.total, 0.2);
-	assert.equal(sum.cacheWrite, 4);
+	expect(sum).not.toBe(left);
+	expect(left.cost.total).toBe(0.1);
+	expect(right.cost.total).toBe(0.2);
+	expect(sum.cacheWrite).toBe(4);
 });
 
 test("ZERO_USAGE is frozen so a shared zero cannot be corrupted by a caller", () => {
-	assert.equal(Object.isFrozen(ZERO_USAGE), true);
-	assert.equal(Object.isFrozen(ZERO_USAGE.cost), true);
+	expect(Object.isFrozen(ZERO_USAGE)).toBe(true);
+	expect(Object.isFrozen(ZERO_USAGE.cost)).toBe(true);
 });
 
 test("collectUsage over an empty branch equals the zero record", () => {
-	assert.deepEqual(collectUsage([]), ZERO_USAGE);
+	expect(collectUsage([])).toStrictEqual(ZERO_USAGE);
 });

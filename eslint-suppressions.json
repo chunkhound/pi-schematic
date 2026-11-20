@@ -1,0 +1,493 @@
+{
+  "eslint.config.mjs": {
+    "n/no-unsupported-features/node-builtins": {
+      "count": 1
+    }
+  },
+  "handoff/boundary.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 1
+    }
+  },
+  "handoff/command.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 1
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 1
+    }
+  },
+  "handoff/tool.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 1
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 1
+    }
+  },
+  "index.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 8
+    },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 2
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 2
+    }
+  },
+  "model-groups/autocomplete.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 1
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 1
+    }
+  },
+  "model-groups/command.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 1
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 1
+    }
+  },
+  "model-groups/constraints/engine.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 1
+    }
+  },
+  "model-groups/constraints/modalities.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 4
+    }
+  },
+  "model-groups/constraints/presentation.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 1
+    }
+  },
+  "model-groups/modalities.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    }
+  },
+  "model-groups/router.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 3
+    }
+  },
+  "model-groups/store.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 5
+    }
+  },
+  "model-groups/tui.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 6
+    }
+  },
+  "notebook/pager.ts": {
+    "ban/exec-sync-import": {
+      "count": 1
+    },
+    "ban/shell-option": {
+      "count": 1
+    }
+  },
+  "notebook/rehydration.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 3
+    }
+  },
+  "notebook/store.ts": {
+    "ban/set-singletons-import": {
+      "count": 1
+    }
+  },
+  "notebook/tools.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 3
+    }
+  },
+  "os-sandbox.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 1
+    },
+    "ban/exec-sync-import": {
+      "count": 1
+    }
+  },
+  "pi-packages.mjs": {
+    "n/no-unsupported-features/node-builtins": {
+      "count": 1
+    }
+  },
+  "readonly-bash.ts": {
+    "n/no-unsupported-features/node-builtins": {
+      "count": 1
+    }
+  },
+  "readonly-boundary.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 1
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 1
+    }
+  },
+  "readonly-rehydration.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    }
+  },
+  "register-loader.mjs": {
+    "n/no-unsupported-features/node-builtins": {
+      "count": 1
+    }
+  },
+  "spawn/index.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 1
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 2
+    },
+    "no-unsafe-finally": {
+      "count": 2
+    },
+    "preserve-caught-error": {
+      "count": 1
+    }
+  },
+  "spawn/renderer.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 5
+    },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 9
+    },
+    "@typescript-eslint/strict-boolean-expressions": {
+      "count": 1
+    },
+    "ban/module-level-set-singletons": {
+      "count": 1
+    }
+  },
+  "tests/e2e/real-host-child-probe.ts": {
+    "ban/wall-clock": {
+      "count": 1
+    }
+  },
+  "tests/e2e/real-host-probe.ts": {
+    "@typescript-eslint/no-unnecessary-condition": {
+      "count": 1
+    },
+    "ban/wall-clock": {
+      "count": 1
+    }
+  },
+  "tests/e2e/real-host.test.ts": {
+    "@typescript-eslint/unbound-method": {
+      "count": 2
+    },
+    "ban/zero-delay-timeout": {
+      "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 31
+    }
+  },
+  "tests/e2e/real-host.ts": {
+    "@typescript-eslint/prefer-promise-reject-errors": {
+      "count": 1
+    },
+    "preserve-caught-error": {
+      "count": 1
+    }
+  },
+  "tests/unit/config-invariants.test.ts": {
+    "ban/wall-clock": {
+      "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 7
+    }
+  },
+  "tests/unit/frontmatter-cache.test.ts": {
+    "vitest/max-expects": {
+      "count": 112
+    }
+  },
+  "tests/unit/handoff-boundary-session.test.ts": {
+    "vitest/max-expects": {
+      "count": 48
+    }
+  },
+  "tests/unit/handoff-eligibility.test.ts": {
+    "vitest/max-expects": {
+      "count": 1
+    }
+  },
+  "tests/unit/handoff.test.ts": {
+    "vitest/max-expects": {
+      "count": 38
+    },
+    "vitest/no-conditional-expect": {
+      "count": 3
+    },
+    "vitest/no-conditional-in-test": {
+      "count": 1
+    }
+  },
+  "tests/unit/helpers.test.ts": {
+    "@typescript-eslint/no-dynamic-delete": {
+      "count": 2
+    }
+  },
+  "tests/unit/helpers.ts": {
+    "@typescript-eslint/no-dynamic-delete": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    },
+    "ban/wall-clock": {
+      "count": 1
+    },
+    "no-control-regex": {
+      "count": 1
+    }
+  },
+  "tests/unit/model-group-frontmatter.test.ts": {
+    "vitest/max-expects": {
+      "count": 9
+    }
+  },
+  "tests/unit/model-groups-autocomplete.test.ts": {
+    "vitest/max-expects": {
+      "count": 5
+    }
+  },
+  "tests/unit/model-groups-constraints.test.ts": {
+    "vitest/max-expects": {
+      "count": 7
+    }
+  },
+  "tests/unit/model-groups-crud.test.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 48
+    },
+    "vitest/no-conditional-expect": {
+      "count": 2
+    }
+  },
+  "tests/unit/model-groups-integration.test.ts": {
+    "no-control-regex": {
+      "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 3
+    }
+  },
+  "tests/unit/model-groups-modality.test.ts": {
+    "vitest/max-expects": {
+      "count": 1
+    }
+  },
+  "tests/unit/model-groups-tui.test.ts": {
+    "no-control-regex": {
+      "count": 3
+    },
+    "vitest/max-expects": {
+      "count": 156
+    },
+    "vitest/no-conditional-expect": {
+      "count": 2
+    }
+  },
+  "tests/unit/notebook.test.ts": {
+    "vitest/max-expects": {
+      "count": 54
+    }
+  },
+  "tests/unit/notifications.test.ts": {
+    "vitest/max-expects": {
+      "count": 17
+    },
+    "vitest/no-conditional-expect": {
+      "count": 2
+    },
+    "vitest/no-conditional-in-test": {
+      "count": 1
+    }
+  },
+  "tests/unit/os-sandbox.test.ts": {
+    "ban/wall-clock": {
+      "count": 3
+    },
+    "vitest/no-conditional-expect": {
+      "count": 1
+    }
+  },
+  "tests/unit/pi-module-identity.test.ts": {
+    "ban/find-package-json-import": {
+      "count": 1
+    },
+    "n/no-unsupported-features/node-builtins": {
+      "count": 1
+    }
+  },
+  "tests/unit/readonly-frontmatter.test.ts": {
+    "vitest/max-expects": {
+      "count": 69
+    }
+  },
+  "tests/unit/readonly-handoff.test.ts": {
+    "ban/wall-clock": {
+      "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 2
+    }
+  },
+  "tests/unit/readonly-mode.test.ts": {
+    "vitest/max-expects": {
+      "count": 3
+    }
+  },
+  "tests/unit/readonly-spawn.test.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    },
+    "ban/wall-clock": {
+      "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 7
+    }
+  },
+  "tests/unit/register-loader.test.ts": {
+    "ban/find-package-json-import": {
+      "count": 1
+    },
+    "n/no-unsupported-features/node-builtins": {
+      "count": 1
+    }
+  },
+  "tests/unit/render-snapshots.test.ts": {
+    "no-control-regex": {
+      "count": 1
+    }
+  },
+  "tests/unit/resolve-path.test.ts": {
+    "ban/wall-clock": {
+      "count": 2
+    }
+  },
+  "tests/unit/runtime-singletons.test.ts": {
+    "vitest/max-expects": {
+      "count": 7
+    }
+  },
+  "tests/unit/spawn-event.test.ts": {
+    "vitest/max-expects": {
+      "count": 6
+    }
+  },
+  "tests/unit/spawn-render.test.ts": {
+    "vitest/max-expects": {
+      "count": 1
+    }
+  },
+  "tests/unit/spawn-runtime-compatibility.test.ts": {
+    "vitest/max-expects": {
+      "count": 7
+    }
+  },
+  "tests/unit/spawn.test.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    },
+    "@typescript-eslint/only-throw-error": {
+      "count": 1
+    },
+    "vitest/max-expects": {
+      "count": 56
+    }
+  },
+  "tests/unit/state-invariants.test.ts": {
+    "vitest/max-expects": {
+      "count": 24
+    },
+    "vitest/no-conditional-expect": {
+      "count": 8
+    }
+  },
+  "tests/unit/system-prompt.test.ts": {
+    "vitest/max-expects": {
+      "count": 31
+    }
+  },
+  "tests/unit/test-host.ts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "count": 2
+    }
+  },
+  "tests/unit/time-format.test.ts": {
+    "vitest/max-expects": {
+      "count": 3
+    }
+  },
+  "tests/unit/topic.test.ts": {
+    "vitest/max-expects": {
+      "count": 3
+    }
+  },
+  "tests/unit/watchdog.test.ts": {
+    "vitest/max-expects": {
+      "count": 15
+    },
+    "vitest/no-conditional-expect": {
+      "count": 4
+    }
+  },
+  "thinking-levels.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  }
+}

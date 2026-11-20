@@ -9,7 +9,7 @@
  * notebook_index remain available after rehydration.
  */
 
-import type { CustomEntry, ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { SchematicState } from "../state.js";
 import { NOTEBOOK_ENTRY_VERSION } from "./store.js";
 
@@ -61,26 +61,30 @@ function isKnownNotebookVersion(value: unknown): boolean {
  * (or a retry on a restarted process) therefore cannot reuse that staged epoch
  * and resurrect orphaned survivors; the next discard pass moves past it.
  */
-export function reconstructNotebook(state: SchematicState, branch: readonly SessionEntry[]): void {
+export function reconstructNotebook(state: SchematicState, branch: readonly (SessionEntry | null | undefined)[]): void {
 	// A generation is visible only after its marker is appended. Staged
 	// survivor entries from an interrupted discard therefore cannot eclipse
 	// the last durable notebook generation.
 	let committedEpoch: number | null = null;
 	let maxObservedEpoch = 0;
 	for (const entry of branch) {
-		if (entry?.type !== "custom") continue;
-		const customEntry = entry as CustomEntry;
+		if (entry?.type !== "custom") {
+			continue;
+		}
+		const customEntry = entry;
 		if (customEntry.customType === GENERATION_ENTRY_TYPE) {
-			const data = customEntry.data as NotebookGenerationData;
+			const data = customEntry.data as NotebookGenerationData | undefined;
 			if (isKnownNotebookVersion(data?.version) && isNotebookEpoch(data?.epoch)) {
 				committedEpoch = Math.max(committedEpoch ?? 0, data.epoch);
 				maxObservedEpoch = Math.max(maxObservedEpoch, data.epoch);
 			}
 			continue;
 		}
-		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) continue;
-		const data = customEntry.data as NotebookEntryData;
-		if (isKnownNotebookVersion(data?.version) && data?.name && typeof data.content === "string") {
+		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) {
+			continue;
+		}
+		const data = customEntry.data as NotebookEntryData | undefined;
+		if (isKnownNotebookVersion(data?.version) && (data?.name ?? "") && typeof data?.content === "string") {
 			if (isNotebookEpoch(data.epoch)) {
 				maxObservedEpoch = Math.max(maxObservedEpoch, data.epoch);
 			}
@@ -96,12 +100,24 @@ export function reconstructNotebook(state: SchematicState, branch: readonly Sess
 	const candidates = new Map<string, NotebookCandidate>();
 	for (let i = branch.length - 1; i >= 0; i--) {
 		const entry = branch[i];
-		if (entry?.type !== "custom") continue;
-		const customEntry = entry as CustomEntry;
-		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) continue;
-		const data = customEntry.data as NotebookEntryData;
+		if (entry?.type !== "custom") {
+			continue;
+		}
+		const customEntry = entry;
+		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) {
+			continue;
+		}
+		const data = customEntry.data as NotebookEntryData | undefined;
 		const epoch = isNotebookEpoch(data?.epoch) ? data.epoch : 0;
-		if (!isKnownNotebookVersion(data?.version) || !data?.name || typeof data.content !== "string" || epoch !== currentEpoch || candidates.has(data.name)) continue;
+		if (
+			!isKnownNotebookVersion(data?.version) ||
+			!(data?.name ?? "") ||
+			typeof data?.content !== "string" ||
+			epoch !== currentEpoch ||
+			candidates.has(data.name)
+		) {
+			continue;
+		}
 		candidates.set(data.name, { epoch, content: data.content, clipped: data.clipped === true });
 	}
 
@@ -109,7 +125,9 @@ export function reconstructNotebook(state: SchematicState, branch: readonly Sess
 	state.clippedPages.clear();
 	for (const [name, candidate] of candidates) {
 		state.notebookPages.set(name, candidate.content);
-		if (candidate.clipped) state.clippedPages.add(name);
+		if (candidate.clipped) {
+			state.clippedPages.add(name);
+		}
 	}
 }
 
@@ -125,16 +143,15 @@ export function ensureNotebookToolsActive(pi: ExtensionAPI): void {
 		active.push("notebook_index");
 		changed = true;
 	}
-	if (changed) pi.setActiveTools(active);
+	if (changed) {
+		pi.setActiveTools(active);
+	}
 }
 
 // ── Registration ──────────────────────────────────────────────────────
 
-export function registerNotebookRehydration(
-	pi: ExtensionAPI,
-	state: SchematicState,
-): void {
-	pi.on("session_start", async (_event, ctx) => {
+export function registerNotebookRehydration(pi: ExtensionAPI, state: SchematicState): void {
+	pi.on("session_start", (_event, ctx) => {
 		reconstructNotebook(state, ctx.sessionManager.getBranch());
 		ensureNotebookToolsActive(pi);
 	});

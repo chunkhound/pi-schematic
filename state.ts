@@ -17,7 +17,7 @@ import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
  * Null outside a workflow run; only host dispose uninstalls it, never resetState, because
  * a run survives `workflow.new`.
  */
-export type ChildUsageSink = (toolCallId: string, provider: string | null, model: string, usage: Usage) => void;
+type ChildUsageSink = (toolCallId: string, provider: string | null, model: string, usage: Usage) => void;
 
 /** A handoff accepted by the tool, kept until its turn_end boundary is confirmed or failed. */
 export interface StagedHandoff {
@@ -178,7 +178,7 @@ export interface SchematicState {
 	 * Enqueued in `input`, drained in `before_agent_start` until the first real
 	 * readonly decision, cleared on session reset.
 	 */
-	pendingReadonlyCommands: Array<{ type: "skill" | "command"; name: string }>;
+	pendingReadonlyCommands: { type: "skill" | "command"; name: string }[];
 
 	/**
 	 * Last context-percentage band at which the watchdog nudge was delivered.
@@ -187,6 +187,11 @@ export interface SchematicState {
 	 */
 	lastWatchdogBand: number | null;
 
+	/**
+	 * Bash calls tool_call sandboxed, removed on their tool_result. An id whose
+	 * result never arrives lasts until the next session_start clears the set.
+	 */
+	sandboxedBashCallIds: Set<string>;
 }
 
 /** Create a fresh state instance. Call reset() on /new. */
@@ -226,19 +231,24 @@ export function createState(): SchematicState {
 		frontmatterPromptIssues,
 		pendingReadonlyCommands: [],
 		lastWatchdogBand: null,
+		sandboxedBashCallIds: new Set(),
 	};
 	// Prevent replacement — spawn lifecycle code and renderer ownership checks
 	// depend on stable map identity. Only .clear() and .delete() are valid —
 	// assigning a new Map would silently break child-session invalidation.
-	Object.defineProperty(state, 'childSessions', {
+	Object.defineProperty(state, "childSessions", {
 		get: () => childSessions,
-		set: () => { throw new Error('childSessions cannot be replaced — use .clear() instead'); },
+		set: () => {
+			throw new Error("childSessions cannot be replaced — use .clear() instead");
+		},
 		enumerable: true,
 		configurable: false,
 	});
-	Object.defineProperty(state, 'liveChildSessions', {
+	Object.defineProperty(state, "liveChildSessions", {
 		get: () => liveChildSessions,
-		set: () => { throw new Error('liveChildSessions cannot be replaced — use .clear() instead'); },
+		set: () => {
+			throw new Error("liveChildSessions cannot be replaced — use .clear() instead");
+		},
 		enumerable: true,
 		configurable: false,
 	});
@@ -267,6 +277,7 @@ export function resetState(state: SchematicState): void {
 	state.frontmatterSkillIssues.clear();
 	state.frontmatterPromptIssues.clear();
 	state.pendingReadonlyCommands.length = 0;
+	state.sandboxedBashCallIds.clear();
 	abortAndClearChildSessions(state);
 }
 
@@ -288,7 +299,9 @@ export function invalidateHandoffState(state: SchematicState): void {
 /** Return the session's single shared abort operation, starting it if necessary. */
 export function abortChildSession(state: SchematicState, session: AgentSession): Promise<void> {
 	const existing = state.childAbortPromises.get(session);
-	if (existing) return existing;
+	if (existing) {
+		return existing;
+	}
 
 	let resolve!: () => void;
 	let reject!: (error: unknown) => void;
@@ -311,6 +324,8 @@ export function abortAndClearChildSessions(state: SchematicState): void {
 	state.childSessions.clear();
 	state.liveChildSessions.clear();
 	for (const session of sessions) {
-		void abortChildSession(state, session).catch(() => {});
+		void abortChildSession(state, session).catch(() => {
+			/* Reset proceeds regardless. The spawn running this child reports a failure of this shared abort at its next reset check; while the child's prompt runs, that check waits until session.prompt settles, so an abort that fails and leaves the prompt running stays unreported until then unless the tool signal aborts. */
+		});
 	}
 }

@@ -1,5 +1,4 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, test } from "vitest";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
@@ -13,10 +12,7 @@ test("resolveRealPath: non-existent path inside temp dir preserves full path", (
 	const result = resolveRealPath(nonExistent);
 	// Use path.join for platform-native separators (\ vs /)
 	const expectedSuffix = path.join(...DEEP_PATH_PARTS);
-	assert.ok(
-		result.includes(expectedSuffix),
-		`should preserve all path components — expected "${expectedSuffix}" in "${result}"`,
-	);
+	expect(result, `should preserve all path components — expected "${expectedSuffix}" in "${result}"`).toContain(expectedSuffix);
 });
 
 test("resolveRealPath follows symlinks", () => {
@@ -28,7 +24,7 @@ test("resolveRealPath follows symlinks", () => {
 		fs.symlinkSync(target, link);
 		const resolved = resolveRealPath(link);
 		// Use resolveRealPath on target too to handle macOS /var → /private/var
-		assert.equal(resolved, resolveRealPath(target));
+		expect(resolved).toBe(resolveRealPath(target));
 	} finally {
 		fs.rmSync(link, { force: true });
 		fs.rmSync(target, { force: true, recursive: true });

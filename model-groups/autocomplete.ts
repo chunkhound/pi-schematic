@@ -5,14 +5,16 @@ import { getEffectiveModelGroups } from "./router.js";
 import { MODALITY_FG, modalityLetterRun } from "./modality.js";
 import type { ModelGroupModel, ResolvedModelGroup } from "./types.js";
 
-const registeredUis = new WeakSet<object>();
+const registeredUis = new WeakSet();
 
 function isUnavailable(group: ResolvedModelGroup, entry: ModelGroupModel): boolean {
 	return group.validation.unavailableRefs.some((ref) => ref.provider === entry.provider && ref.modelId === entry.modelId);
 }
 
 function formatModelGroupRouteDetails(group: ResolvedModelGroup): string {
-	if (group.models.length === 0) return "No models configured";
+	if (group.models.length === 0) {
+		return "No models configured";
+	}
 	return group.models
 		.map((entry) => {
 			const thinking = entry.thinkingLevel ?? "inherit";
@@ -30,7 +32,7 @@ export type DescriptionColorizer = (color: ThemeColor, text: string) => string;
  * Handles an edge case where the group has no effective media modalities.
  */
 function buildCapsLetters(group: ResolvedModelGroup, colorize: DescriptionColorizer): string {
-	return modalityLetterRun(group.modalities?.effective, {
+	return modalityLetterRun(group.modalities.effective, {
 		render: (modality, letter) => colorize(MODALITY_FG[modality], letter),
 		separator: colorize("muted", " "),
 		// OpenRouter-style: text is the implied base, so only show I when image is
@@ -51,13 +53,15 @@ function buildCapsLetters(group: ResolvedModelGroup, colorize: DescriptionColori
  * unchanged (rows are inherently aligned to the left edge).
  */
 function buildSuggestionDescription(route: string, letters: string, capsWidth: number, colorize?: DescriptionColorizer): string {
-	if (!colorize) return route;
+	if (!colorize) {
+		return route;
+	}
 	const gap = colorize("muted", "  ");
-	if (capsWidth === 0) return colorize("muted", route);
+	if (capsWidth === 0) {
+		return colorize("muted", route);
+	}
 	const pad = Math.max(0, capsWidth - visibleWidth(letters));
-	const padded = letters
-		? `${letters}${colorize("muted", " ".repeat(pad))}`
-		: colorize("muted", " ".repeat(capsWidth));
+	const padded = letters ? `${letters}${colorize("muted", " ".repeat(pad))}` : colorize("muted", " ".repeat(capsWidth));
 	return `${padded}${gap}${colorize("muted", route)}`;
 }
 
@@ -66,12 +70,12 @@ export function createModelGroupAutocompleteProvider(state: SchematicState, colo
 		async getSuggestions(lines, cursorLine, cursorCol, options) {
 			const line = lines[cursorLine] ?? "";
 			const beforeCursor = line.slice(0, cursorCol);
-			const match = beforeCursor.match(/(?:^|[\t ])#([^\s#]*)$/);
+			const match = /(?:^|[\t ])#([^\s#]*)$/.exec(beforeCursor);
 			if (!match) {
 				return current.getSuggestions(lines, cursorLine, cursorCol, options);
 			}
 
-			const partial = (match[1] ?? "").toLowerCase();
+			const partial = match[1].toLowerCase();
 			const groups = getEffectiveModelGroups(state.modelGroups.groups);
 			const matched = groups.filter((group) => group.name.toLowerCase().startsWith(partial));
 			const rows = matched.map((group) => ({
@@ -87,7 +91,7 @@ export function createModelGroupAutocompleteProvider(state: SchematicState, colo
 				label: row.label,
 				description: buildSuggestionDescription(row.route, row.letters, capsWidth, colorize),
 			}));
-			return { prefix: `#${match[1] ?? ""}`, items };
+			return { prefix: `#${match[1]}`, items };
 		},
 
 		applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
@@ -101,18 +105,18 @@ export function createModelGroupAutocompleteProvider(state: SchematicState, colo
 }
 
 export function registerModelGroupAutocomplete(ctx: ExtensionContext, state: SchematicState): void {
-	if (!ctx.hasUI) return;
-	const ui = ctx.ui as unknown as {
-		addAutocompleteProvider?: (factory: ReturnType<typeof createModelGroupAutocompleteProvider>) => void;
-		theme?: { fg: (color: ThemeColor, text: string) => string };
-	};
-	if (typeof ui.addAutocompleteProvider !== "function") return;
-	const key = ui as object;
-	if (registeredUis.has(key)) return;
-	registeredUis.add(key);
+	if (!ctx.hasUI) {
+		return;
+	}
+	const ui = ctx.ui;
+	if (typeof ui.addAutocompleteProvider !== "function") {
+		return;
+	}
+	if (registeredUis.has(ui)) {
+		return;
+	}
+	registeredUis.add(ui);
 	// Lazy adapter so the colorizer reflects the live theme (not a snapshot).
-	const colorize: DescriptionColorizer | undefined = ui.theme
-		? (color, text) => ui.theme!.fg(color, text)
-		: undefined;
+	const colorize: DescriptionColorizer | undefined = ui.theme ? (color, text) => ui.theme.fg(color, text) : undefined;
 	ui.addAutocompleteProvider(createModelGroupAutocompleteProvider(state, colorize));
 }

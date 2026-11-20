@@ -10,20 +10,9 @@
  * extensions of the parent and inherit parent authority by design.
  */
 
-import type {
-	AgentSession,
-	AgentToolUpdateCallback,
-	ExtensionAPI,
-	ExtensionContext,
-	ToolDefinition,
-	ToolInfo,
-} from "@earendil-works/pi-coding-agent";
-import { StringEnum, type AssistantMessage, type ModelThinkingLevel, type TextContent, type Usage } from "@earendil-works/pi-ai";
-import {
-	READONLY_CHILD_AUTHORITY_NOTE,
-	READONLY_NO_SHELL_SUMMARY,
-	READONLY_WRITE_EDIT_SUMMARY,
-} from "../notifications.js";
+import type { AgentSession, AgentToolUpdateCallback, ExtensionAPI, ExtensionContext, ToolDefinition, ToolInfo } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage, ModelThinkingLevel, TextContent, Usage } from "@earendil-works/pi-ai";
+import { READONLY_CHILD_AUTHORITY_NOTE, READONLY_NO_SHELL_SUMMARY, READONLY_WRITE_EDIT_SUMMARY } from "../notifications.js";
 import {
 	createAgentSession,
 	createBashToolDefinition,
@@ -40,26 +29,20 @@ import { resolveSpawnModelRoute } from "../model-groups/router.js";
 import { productionConstraintRegistry, type ConstraintRegistry } from "../model-groups/constraints/registry.js";
 import { MODEL_GROUP_MODALITY_PROSE } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
+import { appendSandboxBlockNotice, appendSandboxBlockNoticeToResult } from "../os-sandbox.js";
 import { HANDOFF_TOOL_NAME } from "../handoff/tool.js";
 import { THINKING_LEVELS } from "../thinking-levels.js";
-import {
-	renderSpawnCall,
-	renderSpawnResult,
-} from "./renderer.js";
-import {
-	getLastAssistantText,
-	getStopReasonOutcome,
-	type SpawnOutcome,
-	type SpawnResultDetails,
-	type SpawnToolResult,
-} from "./shared.js";
+import { renderSpawnCall, renderSpawnResult } from "./renderer.js";
+import { getLastAssistantText, getStopReasonOutcome, type SpawnOutcome, type SpawnResultDetails, type SpawnToolResult } from "./shared.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
 function getLastAssistantMessage(messages: AgentSession["messages"]): AssistantMessage | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
-		if (msg.role === "assistant") return msg;
+		if (msg.role === "assistant") {
+			return msg;
+		}
 	}
 	return undefined;
 }
@@ -73,23 +56,29 @@ function describeAbort(reason: unknown): string {
 }
 
 function notifyCleanupFailure(ctx: ExtensionContext, error: unknown): void {
-	if (!ctx.hasUI) return;
+	if (!ctx.hasUI) {
+		return;
+	}
 	ctx.ui.notify(`Spawn cleanup failed: ${failureMessage(error)}`, "error");
 }
 
 /** Ignore Pi's AbortError only when the current child was cancelled without a reset. */
 function shouldSwallowPromptError(error: unknown, isStale: () => boolean, wasAborted: boolean): boolean {
-	if (isStale()) return false;
-	if (!wasAborted) return false;
+	if (isStale()) {
+		return false;
+	}
+	if (!wasAborted) {
+		return false;
+	}
 	// Pi contracts AbortError via AbortSignal standard
-	return (error as Error)?.name === "AbortError";
+	return (error as Error | null | undefined)?.name === "AbortError";
 }
 
-type ChildAccounting = {
+interface ChildAccounting {
 	usage: Usage;
 	/** Absent when the child's entries could not be read or summed. */
 	stats?: Record<string, number>;
-};
+}
 
 function emptyChildUsage(): Usage {
 	return {
@@ -114,12 +103,8 @@ function combineUsage(first: Usage, second: Usage): Usage {
 		output: first.output + second.output,
 		cacheRead: first.cacheRead + second.cacheRead,
 		cacheWrite: first.cacheWrite + second.cacheWrite,
-		...(first.cacheWrite1h !== undefined || second.cacheWrite1h !== undefined
-			? { cacheWrite1h: (first.cacheWrite1h ?? 0) + (second.cacheWrite1h ?? 0) }
-			: {}),
-		...(first.reasoning !== undefined || second.reasoning !== undefined
-			? { reasoning: (first.reasoning ?? 0) + (second.reasoning ?? 0) }
-			: {}),
+		...(first.cacheWrite1h !== undefined || second.cacheWrite1h !== undefined ? { cacheWrite1h: (first.cacheWrite1h ?? 0) + (second.cacheWrite1h ?? 0) } : {}),
+		...(first.reasoning !== undefined || second.reasoning !== undefined ? { reasoning: (first.reasoning ?? 0) + (second.reasoning ?? 0) } : {}),
 		totalTokens: first.totalTokens + second.totalTokens,
 		cost: {
 			input: first.cost.input + second.cost.input,
@@ -153,14 +138,18 @@ function collectChildAccounting(session: Pick<AgentSession, "sessionManager">): 
 		let assistantTurns = 0;
 		for (const entry of session.sessionManager.getEntries()) {
 			if (entry.type === "usage") {
-				if (entry.usage) usage = combineUsage(usage, entry.usage);
+				if (entry.usage) {
+					usage = combineUsage(usage, entry.usage);
+				}
 			} else if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage) {
 				usage = combineUsage(usage, entry.usage);
 			} else if (entry.type === "message") {
 				const message = entry.message;
 				if (message.role === "assistant") {
 					assistantTurns++;
-					if (message.usage) usage = combineUsage(usage, message.usage);
+					if (message.usage) {
+						usage = combineUsage(usage, message.usage);
+					}
 				} else if (message.role === "toolResult" && message.usage) {
 					usage = combineUsage(usage, message.usage);
 				}
@@ -180,7 +169,9 @@ function collectChildAccounting(session: Pick<AgentSession, "sessionManager">): 
 function cutToUtf8Bytes(text: string, maxBytes: number): string {
 	const bytes = Buffer.from(text, "utf8");
 	let end = Math.min(maxBytes, bytes.length);
-	while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+	while (end > 0 && (bytes[end] & 0xc0) === 0x80) {
+		end--;
+	}
 	return bytes.subarray(0, end).toString("utf8");
 }
 
@@ -188,23 +179,31 @@ function limitResultText(text: string): { text: string; truncated: boolean } {
 	const lines = text.split("\n");
 	const lineLimited = lines.length > DEFAULT_MAX_LINES ? lines.slice(0, DEFAULT_MAX_LINES).join("\n") : text;
 	const truncated = lineLimited !== text || Buffer.byteLength(lineLimited, "utf8") > DEFAULT_MAX_BYTES;
-	if (!truncated) return { text, truncated: false };
+	if (!truncated) {
+		return { text, truncated: false };
+	}
 	const limitedText = cutToUtf8Bytes(lineLimited, DEFAULT_MAX_BYTES);
-	const marker = `[Result truncated to ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. ` +
-		`Spawn a new child with a narrower request if more is needed.]`;
+	const marker =
+		`[Result truncated to ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}. ` + `Spawn a new child with a narrower request if more is needed.]`;
 	return { text: `${limitedText}\n\n${marker}`, truncated: true };
 }
 
 function clearSpawnSession(state: SchematicState, toolCallId: string, session: AgentSession): void {
-	if (state.childSessions.get(toolCallId) === session) state.childSessions.delete(toolCallId);
-	if (state.liveChildSessions.get(toolCallId) === session) state.liveChildSessions.delete(toolCallId);
+	if (state.childSessions.get(toolCallId) === session) {
+		state.childSessions.delete(toolCallId);
+	}
+	if (state.liveChildSessions.get(toolCallId) === session) {
+		state.liveChildSessions.delete(toolCallId);
+	}
 }
 
 function createSpawnAbortContext(state: SchematicState, session: AgentSession, ctx: ExtensionContext, toolCallId: string) {
 	const invalidatedError = new Error("Spawn invalidated by reset.");
 	let wasAborted = false;
 	let reported: Promise<void> | undefined;
-	const clearChildSession = () => clearSpawnSession(state, toolCallId, session);
+	const clearChildSession = () => {
+		clearSpawnSession(state, toolCallId, session);
+	};
 	const abortChild = () => {
 		wasAborted = true;
 		const p = abortChildSession(state, session);
@@ -212,8 +211,12 @@ function createSpawnAbortContext(state: SchematicState, session: AgentSession, c
 			reported = p;
 			// Report abort failures via UI. Guard against notify itself throwing
 			// so the detached promise never emits unhandledRejection.
-			void p.catch((e) => {
-				try { notifyCleanupFailure(ctx, e); } catch { /* reporting must never reject */ }
+			void p.catch((e: unknown) => {
+				try {
+					notifyCleanupFailure(ctx, e);
+				} catch {
+					/* reporting must never reject */
+				}
 			});
 		}
 		return p;
@@ -228,14 +231,20 @@ function createSpawnAbortContext(state: SchematicState, session: AgentSession, c
 		}
 		throw invalidatedError;
 	};
-	return { get wasAborted() { return wasAborted; }, invalidatedError, abortChild, clearChildSession, abortAndInvalidate };
+	return {
+		get wasAborted() {
+			return wasAborted;
+		},
+		invalidatedError,
+		abortChild,
+		clearChildSession,
+		abortAndInvalidate,
+	};
 }
 
 function getInheritableParentToolNames(parentToolNames: string[], availableTools: Pick<ToolInfo, "name" | "sourceInfo">[]): string[] {
 	const activeToolNames = new Set(parentToolNames);
-	return availableTools
-		.filter((tool) => activeToolNames.has(tool.name))
-		.map((tool) => tool.name);
+	return availableTools.filter((tool) => activeToolNames.has(tool.name)).map((tool) => tool.name);
 }
 
 /**
@@ -253,9 +262,7 @@ export function buildChildToolNames(
 	childTools: ToolDefinition[],
 	availableTools?: Pick<ToolInfo, "name" | "sourceInfo">[],
 ): string[] {
-	const inheritableParentToolNames = availableTools
-		? getInheritableParentToolNames(parentToolNames, availableTools)
-		: parentToolNames;
+	const inheritableParentToolNames = availableTools ? getInheritableParentToolNames(parentToolNames, availableTools) : parentToolNames;
 	const inheritedTools = inheritableParentToolNames.filter((name) => name !== "spawn" && name !== HANDOFF_TOOL_NAME);
 	return [...new Set([...inheritedTools, ...childTools.map((tool) => tool.name)])];
 }
@@ -266,9 +273,7 @@ export function buildChildToolNames(
  * with a fresh context, so there is no cache to preserve.
  */
 export function filterReadonlyToolNames(toolNames: string[], readonlyEnabled: boolean): string[] {
-	return readonlyEnabled
-		? toolNames.filter((name) => name !== "write" && name !== "edit" && name !== "powershell")
-		: toolNames;
+	return readonlyEnabled ? toolNames.filter((name) => name !== "write" && name !== "edit" && name !== "powershell") : toolNames;
 }
 
 /**
@@ -278,26 +283,52 @@ export function filterReadonlyToolNames(toolNames: string[], readonlyEnabled: bo
  * Falls back to classifyBashCommand command-pattern inspection when no OS sandbox
  * is available (Windows). The fallback blocks filesystem writes/deletions outside
  * the OS temp dir using the same logic as the parent's tool_call hook.
+ *
+ * Appends the readonly block notice to a sandboxed call's failed result or
+ * error message when it carries the platform's sandbox denial phrase.
  */
-function createReadonlyChildBashTool(
-	cwd: string,
-) {
-	const bashTool = createBashToolDefinition(cwd, {
-		spawnHook: (spawnContext) => {
-			const result = applyReadonlyBashGuard(spawnContext.command, cwd);
-			if (result.action === "block") {
-				throw new Error(result.reason);
+export function createReadonlyChildBashTool(cwd: string) {
+	const buildBashTool = (record: { sandboxed: boolean }) =>
+		createBashToolDefinition(cwd, {
+			spawnHook: (spawnContext) => {
+				const result = applyReadonlyBashGuard(spawnContext.command, spawnContext.cwd);
+				if (result.action === "block") {
+					throw new Error(result.reason);
+				}
+				if (result.action === "sandbox") {
+					spawnContext.command = result.sandboxedCommand;
+					record.sandboxed = true;
+				}
+				return spawnContext;
+			},
+		});
+	const bashTool = createBashToolDefinition(cwd);
+	return defineTool({
+		...bashTool,
+		// A definition per execution: parallel child bash calls would otherwise
+		// share one `sandboxed` flag.
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const record = { sandboxed: false };
+			let result: Awaited<ReturnType<typeof bashTool.execute>>;
+			try {
+				result = await buildBashTool(record).execute(toolCallId, params, signal, onUpdate, ctx);
+			} catch (error) {
+				if (record.sandboxed && error instanceof Error) {
+					const message = appendSandboxBlockNotice(error.message);
+					if (message !== undefined) {
+						error.message = message;
+					}
+				}
+				throw error;
 			}
-			if (result.action === "sandbox") {
-				spawnContext.command = result.sandboxedCommand;
+			if (!record.sandboxed) {
+				return result;
 			}
-			return spawnContext;
+			const noticed = appendSandboxBlockNoticeToResult(result);
+			return noticed === undefined ? result : { ...result, ...noticed };
 		},
 	});
-	return defineTool(bashTool);
 }
-
-
 
 // ── Spawn tool metadata ──
 
@@ -316,33 +347,37 @@ function spawnPromptGuidelines(constraintRegistry: ConstraintRegistry): string[]
 		`Declare constraints when the delegated task needs ${MODEL_GROUP_MODALITY_PROSE} capability; do not work around a missing required modality with third-party tools.`,
 		`A constraint is keyed by its exact name (${constraintKeys.join(", ")}); values must match the key's schema — unknown keys or invalid values are rejected before any child is created.`,
 		"A specified group is binding: if the operator asks for a specific group and it lacks a needed capability, do NOT substitute a different group or inherit the parent model. Stop and report to the operator that the named group cannot satisfy the task, and ask how to proceed.",
-		`Pass modality requirements as constraints: { modalities: { required: [\"text\", ...] } } — modalities is an object whose only key is \"required\" (an array of modality names), not a bare array, and constraints itself is a JSON object, not a JSON string. Valid entries are exactly text, image, or reasoning — do not invent capability names (e.g. \"code\"). Invalid shapes are rejected before any child is created.`,
+		`Pass modality requirements as constraints: { modalities: { required: ["text", ...] } } — modalities is an object whose only key is "required" (an array of modality names), not a bare array, and constraints itself is a JSON object, not a JSON string. Valid entries are exactly text, image, or reasoning — do not invent capability names (e.g. "code"). Invalid shapes are rejected before any child is created.`,
 	];
 }
 
-export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
+function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
 	return Type.Object({
 		prompt: Type.String({
-			description:
-				"Self-contained task description. Reference notebook pages by name — " +
-				"child will notebook_read them on demand.",
+			description: "Self-contained task description. Reference notebook pages by name — " + "child will notebook_read them on demand.",
 		}),
-		group: Type.Optional(Type.String({
-			description: "Optional exact Model Group name for child model routing. Omit to inherit the parent model/thinking.",
-		})),
-		constraints: Type.Optional(Type.Object(Object.fromEntries(constraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])) as any, {
-			description: `Capability requirements for the delegated task — a JSON object keyed by constraint name, not a JSON string and not an array. Keys: ${constraintRegistry.descriptors.map((descriptor) => descriptor.key).join(", ")} — each value must match its key's schema; unknown keys or invalid values are rejected before a child is created.`,
-		})),
-		thinking: Type.Optional(StringEnum(
-			THINKING_LEVELS,
-			{
-				description:
-					"Override child thinking level. A routed Model Group entry may override it.",
-			},
-		)),
+		group: Type.Optional(
+			Type.String({
+				description: "Optional exact Model Group name for child model routing. Omit to inherit the parent model/thinking.",
+			}),
+		),
+		constraints: Type.Optional(
+			Type.Object(Object.fromEntries(constraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])), {
+				description: `Capability requirements for the delegated task — a JSON object keyed by constraint name, not a JSON string and not an array. Keys: ${constraintRegistry.descriptors.map((descriptor) => descriptor.key).join(", ")} — each value must match its key's schema; unknown keys or invalid values are rejected before a child is created.`,
+			}),
+		),
+		// pi-ai >=1.5.0 StringEnum returns a pi-schema schema, which typebox cannot
+		// infer: `thinking` became unknown and the tool contract broke. Type.Unsafe
+		// restores the exact type; the wire shape stays a Google-safe string enum.
+		thinking: Type.Optional(
+			Type.Unsafe<ModelThinkingLevel>({
+				type: "string",
+				enum: THINKING_LEVELS,
+				description: "Override child thinking level. A routed Model Group entry may override it.",
+			}),
+		),
 	});
 }
-
 
 /**
  * Build the custom tool set for child agent sessions.
@@ -353,30 +388,39 @@ export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
  * All tools read/write the shared parent state so notebook pages are visible
  * across parent and child contexts.
  */
-export function createChildTools(
-	pi: ExtensionAPI,
-	state: SchematicState,
-	options?: { isStale?: () => boolean },
-): ToolDefinition[] {
+export function createChildTools(pi: ExtensionAPI, state: SchematicState, options?: { isStale?: () => boolean }): ToolDefinition[] {
 	return createNotebookToolDefinitions(pi, state, { isStale: options?.isStale });
 }
-
 
 // ── Shared spawn execution logic ──────────────────────────────────────
 
 export type SpawnConstraintRequirements = Record<string, unknown>;
-export interface SpawnParameters { prompt: string; group?: string; constraints?: SpawnConstraintRequirements; thinking?: ModelThinkingLevel }
+export interface SpawnParameters {
+	prompt: string;
+	group?: string;
+	constraints?: SpawnConstraintRequirements;
+	thinking?: ModelThinkingLevel;
+}
 
 /** Validate the public constraint envelope once, rejecting unknown keys before routing. */
-export function normalizeSpawnRequirements(params: Pick<SpawnParameters, "constraints">, registry: ConstraintRegistry = productionConstraintRegistry): SpawnConstraintRequirements {
-	const raw = params.constraints;
-	if (raw !== undefined && (!raw || typeof raw !== "object" || Array.isArray(raw))) throw new Error("Spawn constraints must be an object.");
+export function normalizeSpawnRequirements(
+	params: Pick<SpawnParameters, "constraints">,
+	registry: ConstraintRegistry = productionConstraintRegistry,
+): SpawnConstraintRequirements {
+	const raw: unknown = params.constraints;
+	if (raw !== undefined && (raw === null || typeof raw !== "object" || Array.isArray(raw))) {
+		throw new Error("Spawn constraints must be an object.");
+	}
 	const normalized: SpawnConstraintRequirements = {};
 	for (const [key, value] of Object.entries(raw ?? {})) {
 		const descriptor = registry.get(key);
-		if (!descriptor) throw new Error(`Unknown spawn constraint requirement '${key}'.`);
+		if (!descriptor) {
+			throw new Error(`Unknown spawn constraint requirement '${key}'.`);
+		}
 		const decoded = descriptor.requirement.decode(value, `constraints.${key}`);
-		if (!decoded.ok) throw new Error(decoded.message);
+		if (!decoded.ok) {
+			throw new Error(decoded.message);
+		}
 		// Keep the envelope shape: resolveSpawnModelRoute is the single decoder of
 		// requirement values (schema-shaped envelope in, engine value out), so the
 		// router never sees raw/partial shapes that could bypass descriptor validation.
@@ -406,8 +450,7 @@ export function executeSpawn(
 	sessionFactory: typeof createAgentSession = createAgentSession,
 	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
 ): Promise<SpawnToolResult> {
-	let execution!: Promise<SpawnToolResult>;
-	execution = (async () => {
+	const execution: Promise<SpawnToolResult> = (async () => {
 		const parentModel = ctx.model;
 		if (!parentModel) {
 			throw new Error("No model configured. Cannot spawn child agent.");
@@ -426,281 +469,288 @@ export function executeSpawn(
 		});
 		const childModel = route.model;
 		const requestedChildThinking: ModelThinkingLevel = route.thinking;
-		const routeDetails: SpawnResultDetails["route"] = route.status === "routed"
-			? {
-					status: "routed",
-					group: route.groupName ?? route.requestedGroup ?? params.group?.trim() ?? "",
-					provider: route.provider,
-					modelId: route.modelId,
-				}
-			: route.status === "unknown-fallback"
+		const routeDetails: SpawnResultDetails["route"] =
+			route.status === "routed"
 				? {
-						status: "unknown-fallback",
-						requestedGroup: route.requestedGroup ?? params.group?.trim() ?? "",
+						status: "routed",
+						group: route.groupName ?? route.requestedGroup ?? params.group?.trim() ?? "",
 						provider: route.provider,
 						modelId: route.modelId,
 					}
-				: { status: "inherited", provider: route.provider, modelId: route.modelId };
+				: route.status === "unknown-fallback"
+					? {
+							status: "unknown-fallback",
+							requestedGroup: route.requestedGroup ?? params.group?.trim() ?? "",
+							provider: route.provider,
+							modelId: route.modelId,
+						}
+					: { status: "inherited", provider: route.provider, modelId: route.modelId };
 
-	// WHY: capture the run-owned sink before any await. A late flush after this run ends
-	// must write to the run that spawned the child, never the next run's sink.
-	const childUsageSink = state.childUsageSink;
-	const childProvider = route.provider;
+		// WHY: capture the run-owned sink before any await. A late flush after this run ends
+		// must write to the run that spawned the child, never the next run's sink.
+		const childUsageSink = state.childUsageSink;
+		const childProvider = route.provider;
 
-	const childSessionEpoch = state.childSessionEpoch;
-	const isStale = () => state.childSessionEpoch !== childSessionEpoch;
-	const childTools = createChildTools(pi, state, { isStale });
-	const parentToolNames = pi.getActiveTools();
-	const childToolNames = buildChildToolNames(parentToolNames, childTools, pi.getAllTools());
-	// Children: readonly vs non-readonly tool strategy differs from the parent.
-	// Parent keeps write/edit/powershell in the tool list and blocks at call
-	// time to avoid context-cache misses (index.ts). Children start with a
-	// fresh context — no cache to preserve — so we remove write/edit/powershell
-	// from the tool list entirely (cleaner than advertising tools that always
-	// error). The readonly bash guard (sandbox-exec/bwrap or classifyBashCommand
-	// fallback) still propagates to children via createReadonlyChildBashTool
-	// below.
-	//
-	// This is a guardrail for a coding agent, not a security boundary.
-	const effectiveChildTools = [
-		...childTools,
-		...(state.readonlyEnabled && childToolNames.includes("bash")
-			? [createReadonlyChildBashTool(ctx.cwd)]
-			: []),
-	];
+		const childSessionEpoch = state.childSessionEpoch;
+		const isStale = () => state.childSessionEpoch !== childSessionEpoch;
+		const childTools = createChildTools(pi, state, { isStale });
+		const parentToolNames = pi.getActiveTools();
+		const childToolNames = buildChildToolNames(parentToolNames, childTools, pi.getAllTools());
+		// Children: readonly vs non-readonly tool strategy differs from the parent.
+		// Parent keeps write/edit/powershell in the tool list and blocks at call
+		// time to avoid context-cache misses (index.ts). Children start with a
+		// fresh context — no cache to preserve — so we remove write/edit/powershell
+		// from the tool list entirely (cleaner than advertising tools that always
+		// error). The readonly bash guard (sandbox-exec/bwrap or classifyBashCommand
+		// fallback) still propagates to children via createReadonlyChildBashTool
+		// below.
+		//
+		// This is a guardrail for a coding agent, not a security boundary.
+		const effectiveChildTools = [...childTools, ...(state.readonlyEnabled && childToolNames.includes("bash") ? [createReadonlyChildBashTool(ctx.cwd)] : [])];
 
-	const effectiveToolNames = filterReadonlyToolNames(childToolNames, state.readonlyEnabled);
+		const effectiveToolNames = filterReadonlyToolNames(childToolNames, state.readonlyEnabled);
 
-	const listing = formatPageList(state);
-	const notebookListing = listing
-		? "Available notebook pages:\n" + listing
-		: "No notebook pages.";
-	const readonlySummary = effectiveToolNames.includes("bash")
-		? `${READONLY_WRITE_EDIT_SUMMARY}.`
-		: READONLY_NO_SHELL_SUMMARY;
-	const readonlyNotice = state.readonlyEnabled
-		? `\n\n${readonlySummary}`
-		: "";
-	const authorityNote = state.readonlyEnabled
-		? READONLY_CHILD_AUTHORITY_NOTE
-		: "You have the same authority as the parent.";
-	// Constraint descriptors own child-facing orientation for explicit group
-	// ceilings; spawn only presents the generic notes supplied by the route.
-	const capabilityNotice =
-		route.status === "routed" && route.groupCapabilityCeilings?.length
-			? `\n\n## Model Group capability ceiling\n${route.groupCapabilityCeilings.join("\n")}\n\n`
-			: "";
-	const fullPrompt =
-		`You are a focused child agent spawned by a parent agent. ` +
-		`${authorityNote} ` +
-		`Children cannot spawn further children. ` +
-		`Your result will be read by the parent, so be concise and complete.\n\n` +
-		`${notebookListing}\n\n` +
-		`If you write notebook pages, store only durable shared memory for the parent and future contexts. ` +
-		`Keep transient task state in your final reply to the parent.\n\n` +
-		`${capabilityNotice}` +
-		`## Task\n\n${params.prompt}${readonlyNotice}\n\n` +
-		`When complete, provide a concise summary of findings. ` +
-		`Keep the result under ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}.`;
+		const listing = formatPageList(state);
+		const notebookListing = listing ? "Available notebook pages:\n" + listing : "No notebook pages.";
+		const readonlySummary = effectiveToolNames.includes("bash") ? `${READONLY_WRITE_EDIT_SUMMARY}.` : READONLY_NO_SHELL_SUMMARY;
+		const readonlyNotice = state.readonlyEnabled ? `\n\n${readonlySummary}` : "";
+		const authorityNote = state.readonlyEnabled ? READONLY_CHILD_AUTHORITY_NOTE : "You have the same authority as the parent.";
+		// Constraint descriptors own child-facing orientation for explicit group
+		// ceilings; spawn only presents the generic notes supplied by the route.
+		const capabilityNotice =
+			route.status === "routed" && route.groupCapabilityCeilings !== undefined && route.groupCapabilityCeilings.length > 0
+				? `\n\n## Model Group capability ceiling\n${route.groupCapabilityCeilings.join("\n")}\n\n`
+				: "";
+		const fullPrompt =
+			`You are a focused child agent spawned by a parent agent. ` +
+			`${authorityNote} ` +
+			`Children cannot spawn further children. ` +
+			`Your result will be read by the parent, so be concise and complete.\n\n` +
+			`${notebookListing}\n\n` +
+			`If you write notebook pages, store only durable shared memory for the parent and future contexts. ` +
+			`Keep transient task state in your final reply to the parent.\n\n` +
+			capabilityNotice +
+			`## Task\n\n${params.prompt}${readonlyNotice}\n\n` +
+			`When complete, provide a concise summary of findings. ` +
+			`Keep the result under ${DEFAULT_MAX_LINES} lines / ${formatByteCap(DEFAULT_MAX_BYTES)}.`;
 
-	const { session } = await sessionFactory({
-		sessionManager: SessionManager.inMemory(ctx.cwd),
-		model: childModel,
-		thinkingLevel: requestedChildThinking,
-		cwd: ctx.cwd,
-		tools: effectiveToolNames,
-		customTools: effectiveChildTools,
-	});
-	// Pi clamps unsupported requested levels during session creation. Report the
-	// public session value so child details describe what actually runs. The
-	// fallback keeps intentionally partial session test doubles compatible.
-	const effectiveChildThinking = () => session.thinkingLevel ?? requestedChildThinking;
-	// Child spend belongs to the run ledger from the moment it is incurred. Flushing
-	// cumulative usage on every message_end keeps live cost attributed to the child's
-	// model, so an aborted run cannot leave a model-less residual; cumulative (not
-	// delta) makes the settle flush idempotent.
-	const flushChildSpend = () => {
-		if (!childUsageSink) return;
-		childUsageSink(toolCallId, childProvider, childModel.id, collectChildAccounting(session).usage);
-	};
-	let unsubscribeChildEvents: (() => void) | undefined;
-	const buildBaseDetails = (truncated: boolean, outcome: SpawnOutcome): SpawnResultDetails => ({
-		model: childModel.id,
-		thinking: effectiveChildThinking(),
-		truncated,
-		outcome,
-		route: routeDetails,
-	});
-	const buildResultDetails = (truncated: boolean, outcome: SpawnOutcome, accounting: ChildAccounting): SpawnResultDetails => ({
-		...buildBaseDetails(truncated, outcome),
-		...(accounting.stats ? { stats: accounting.stats } : { statsUnavailable: true }),
-	});
-	type ChildRun = { content: TextContent[]; truncated: boolean; outcome: SpawnOutcome };
-
-	const abortContext = createSpawnAbortContext(state, session, ctx, toolCallId);
-	const { invalidatedError, abortChild, clearChildSession, abortAndInvalidate } = abortContext;
-	// Node's EventTarget raises a listener's rejected promise as an uncaught exception;
-	// abortChild already reports the rejection through the UI notice.
-	const onSignalAbort = () => { void abortChild(); };
-	const abortBeforePrompt = async (abortedSignal: AbortSignal): Promise<never> => {
-		await abortChild();
-		throw new Error(describeAbort(abortedSignal.reason));
-	};
-
-	const runChild = async (): Promise<ChildRun> => {
-		let primary: { error: unknown } | undefined;
-		try {
-			if (isStale()) {
-				await abortAndInvalidate();
+		const { session } = await sessionFactory({
+			sessionManager: SessionManager.inMemory(ctx.cwd),
+			model: childModel,
+			thinkingLevel: requestedChildThinking,
+			cwd: ctx.cwd,
+			tools: effectiveToolNames,
+			customTools: effectiveChildTools,
+		});
+		// Pi clamps unsupported requested levels during session creation. Report the
+		// public session value so child details describe what actually runs. The
+		// fallback keeps intentionally partial session test doubles compatible.
+		const effectiveChildThinking = () => session.thinkingLevel ?? requestedChildThinking;
+		// Child spend belongs to the run ledger from the moment it is incurred. Flushing
+		// cumulative usage on every message_end keeps live cost attributed to the child's
+		// model, so an aborted run cannot leave a model-less residual; cumulative (not
+		// delta) makes the settle flush idempotent.
+		const flushChildSpend = () => {
+			if (!childUsageSink) {
+				return;
 			}
+			childUsageSink(toolCallId, childProvider, childModel.id, collectChildAccounting(session).usage);
+		};
+		let unsubscribeChildEvents: (() => void) | undefined;
+		const buildBaseDetails = (truncated: boolean, outcome: SpawnOutcome): SpawnResultDetails => ({
+			model: childModel.id,
+			thinking: effectiveChildThinking(),
+			truncated,
+			outcome,
+			route: routeDetails,
+		});
+		const buildResultDetails = (truncated: boolean, outcome: SpawnOutcome, accounting: ChildAccounting): SpawnResultDetails => ({
+			...buildBaseDetails(truncated, outcome),
+			...(accounting.stats ? { stats: accounting.stats } : { statsUnavailable: true }),
+		});
+		interface ChildRun {
+			content: TextContent[];
+			truncated: boolean;
+			outcome: SpawnOutcome;
+		}
 
-			// liveChildSessions must be set before childSessions so the renderer can
-			// attach with a fully-published live ownership record.
-			state.liveChildSessions.set(toolCallId, session);
-			state.childSessions.set(toolCallId, session);
+		const abortContext = createSpawnAbortContext(state, session, ctx, toolCallId);
+		const { invalidatedError, abortChild, clearChildSession, abortAndInvalidate } = abortContext;
+		// Node's EventTarget raises a listener's rejected promise as an uncaught exception;
+		// abortChild already reports the rejection through the UI notice.
+		const onSignalAbort = () => {
+			void abortChild();
+		};
+		const abortBeforePrompt = async (abortedSignal: AbortSignal): Promise<never> => {
+			await abortChild();
+			throw new Error(describeAbort(abortedSignal.reason));
+		};
 
-			// The subscription is UI-independent; a failure loses live flushes only, and
-			// the settle flush below still runs, so it never fails the spawn.
-			if (typeof session.subscribe === "function") {
-				try {
-					unsubscribeChildEvents = session.subscribe((event) => {
-						if (event.type === "message_end") flushChildSpend();
-					});
-				} catch (error) {
-					const issue = `Spawn event subscription failed: ${failureMessage(error)}`;
-					if (ctx.hasUI) ctx.ui.notify(issue, "warning");
-				}
-			}
-
+		// The subscription is UI-independent; a failure loses live flushes only, and
+		// the settle flush below still runs, so it never fails the spawn.
+		if (typeof session.subscribe === "function") {
 			try {
-				if (signal?.aborted) {
-					await abortBeforePrompt(signal);
-				}
-
-				if (isStale()) {
-					await abortAndInvalidate();
-				}
-
-				// Register before publishing the running update: onUpdate is component code
-				// and may synchronously abort or reset this child.
-				signal?.addEventListener("abort", onSignalAbort, { once: true });
-				onUpdate?.({
-					content: [],
-					details: buildBaseDetails(false, "running"),
-				});
-
-				if (signal?.aborted) {
-					await abortBeforePrompt(signal);
-				}
-				if (isStale()) {
-					await abortAndInvalidate();
-				}
-
-				try {
-					await session.prompt(fullPrompt);
-				} catch (error) {
-					if (!shouldSwallowPromptError(error, isStale, abortContext.wasAborted)) throw error;
-				}
-			} catch (error) {
-				clearChildSession();
-				if (isStale()) {
-					await abortAndInvalidate();
-				}
-				throw error;
-			} finally {
-				signal?.removeEventListener("abort", onSignalAbort);
-			}
-
-			if (isStale()) {
-				await abortAndInvalidate();
-			}
-
-			const lastAssistant = getLastAssistantMessage(session.messages);
-			const outcome = abortContext.wasAborted ? "aborted" : getStopReasonOutcome(lastAssistant?.stopReason) ?? "success";
-			const resultText = getLastAssistantText(session.messages);
-			if (!resultText && outcome === "success") {
-				throw new Error("Child agent produced no output.");
-			}
-			const errorMessage = lastAssistant?.errorMessage;
-			const failureLine = outcome === "error"
-				? `Child agent failed: ${errorMessage || "no error message"}`
-				: outcome === "aborted"
-					? describeAbort(signal?.aborted ? signal.reason : errorMessage || undefined)
-					: undefined;
-			const fullText = failureLine === undefined ? resultText : `${failureLine}${resultText ? `\n\n${resultText}` : ""}`;
-			const { text: finalText, truncated } = limitResultText(fullText);
-
-			// Execution should not retain live children after completion. If the TUI
-			// already rendered the child, it still owns the session object itself.
-			// Clearing here intentionally makes the component's dispose() a no-op for
-			// liveChildSessions — the child already completed so there's nothing to abort.
-			clearChildSession();
-
-			if (isStale()) {
-				// This late reset has no live child to abort; earlier resets report abort failures.
-				throw invalidatedError;
-			}
-
-			return {
-				content: [{ type: "text" as const, text: finalText }] as TextContent[],
-				truncated,
-				outcome,
-			};
-		} catch (error) {
-			primary = { error };
-			throw error;
-		} finally {
-			unsubscribeChildEvents?.();
-			// Last flush before dispose: covers headless runs, missed message_end events
-			// and abort paths.
-			flushChildSpend();
-			clearChildSession();
-			try {
-				// AgentSession always provides dispose(); the guard keeps intentionally
-				// partial test doubles compatible with the public session boundary.
-				if (typeof session.dispose === "function") session.dispose();
-			} catch (cleanupError) {
-				if (!primary) {
-					throw cleanupError;
-				}
-				let notified = false;
-				if (ctx.hasUI) {
-					try {
-						notifyCleanupFailure(ctx, cleanupError);
-						notified = true;
-					} catch {
-						// A throwing notice falls through to the combined text, which keeps both failures.
+				unsubscribeChildEvents = session.subscribe((event) => {
+					if (event.type === "message_end") {
+						flushChildSpend();
 					}
-				}
-				if (!notified) {
-					// Without a cleanup notice the result names both failures.
-					throw new Error(`Spawn failed and cleanup failed: ${failureMessage(primary.error)}; ${failureMessage(cleanupError)}`);
+				});
+			} catch (error) {
+				const issue = `Spawn event subscription failed: ${failureMessage(error)}`;
+				if (ctx.hasUI) {
+					ctx.ui.notify(issue, "warning");
 				}
 			}
 		}
-	};
 
-	let completed: ChildRun;
-	try {
-		completed = await runChild();
-	} catch (error) {
-		const accounting = collectChildAccounting(session);
-		const { text, truncated } = limitResultText(failureMessage(error));
-		const outcome = signal?.aborted && !isStale() ? "aborted" : "error";
-		return {
-			content: [{ type: "text" as const, text }] as TextContent[],
-			details: buildResultDetails(truncated, outcome, accounting),
-			usage: accounting.usage,
-			isError: true as const,
+		const runChild = async (): Promise<ChildRun> => {
+			let primary: { error: unknown } | undefined;
+
+			try {
+				if (isStale()) {
+					await abortAndInvalidate();
+				}
+
+				// liveChildSessions must be set before childSessions so the renderer can
+				// attach with a fully-published live ownership record.
+				state.liveChildSessions.set(toolCallId, session);
+				state.childSessions.set(toolCallId, session);
+
+				try {
+					if (signal?.aborted === true) {
+						await abortBeforePrompt(signal);
+					}
+
+					if (isStale()) {
+						await abortAndInvalidate();
+					}
+
+					// Register before publishing the running update: onUpdate is component code
+					// and may synchronously abort or reset this child.
+					signal?.addEventListener("abort", onSignalAbort, { once: true });
+					onUpdate?.({
+						content: [],
+						details: buildBaseDetails(false, "running"),
+					});
+
+					if (signal?.aborted === true) {
+						await abortBeforePrompt(signal);
+					}
+					if (isStale()) {
+						await abortAndInvalidate();
+					}
+
+					try {
+						await session.prompt(fullPrompt);
+					} catch (error) {
+						if (!shouldSwallowPromptError(error, isStale, abortContext.wasAborted)) {
+							throw error;
+						}
+					}
+				} catch (error) {
+					clearChildSession();
+					if (isStale()) {
+						await abortAndInvalidate();
+					}
+					throw error;
+				} finally {
+					signal?.removeEventListener("abort", onSignalAbort);
+				}
+
+				if (isStale()) {
+					await abortAndInvalidate();
+				}
+
+				const lastAssistant = getLastAssistantMessage(session.messages);
+				const outcome = abortContext.wasAborted ? "aborted" : (getStopReasonOutcome(lastAssistant?.stopReason) ?? "success");
+				const resultText = getLastAssistantText(session.messages);
+				if (!resultText && outcome === "success") {
+					throw new Error("Child agent produced no output.");
+				}
+				const errorMessage = lastAssistant?.errorMessage;
+				const nonEmptyErrorMessage = errorMessage === "" ? undefined : errorMessage;
+				const failureLine =
+					outcome === "error"
+						? `Child agent failed: ${nonEmptyErrorMessage ?? "no error message"}`
+						: outcome === "aborted"
+							? describeAbort(signal?.aborted === true ? signal.reason : nonEmptyErrorMessage)
+							: undefined;
+				const fullText = failureLine === undefined ? resultText : `${failureLine}${resultText ? `\n\n${resultText}` : ""}`;
+				const { text: finalText, truncated } = limitResultText(fullText);
+
+				// Execution should not retain live children after completion. If the TUI
+				// already rendered the child, it still owns the session object itself.
+				// Clearing here intentionally makes the component's dispose() a no-op for
+				// liveChildSessions — the child already completed so there's nothing to abort.
+				clearChildSession();
+
+				if (isStale()) {
+					// This late reset has no live child to abort; earlier resets report abort failures.
+					throw invalidatedError;
+				}
+
+				return {
+					content: [{ type: "text" as const, text: finalText }] as TextContent[],
+					truncated,
+					outcome,
+				};
+			} catch (error) {
+				primary = { error };
+				throw error;
+			} finally {
+				unsubscribeChildEvents?.();
+				// Last flush before dispose: covers headless runs, missed message_end events
+				// and abort paths.
+				flushChildSpend();
+				clearChildSession();
+				try {
+					// AgentSession always provides dispose(); the guard keeps intentionally
+					// partial test doubles compatible with the public session boundary.
+					if (typeof session.dispose === "function") {
+						session.dispose();
+					}
+				} catch (cleanupError) {
+					if (!primary) {
+						throw cleanupError;
+					}
+					let notified = false;
+					if (ctx.hasUI) {
+						try {
+							notifyCleanupFailure(ctx, cleanupError);
+							notified = true;
+						} catch {
+							// A throwing notice falls through to the combined text, which keeps both failures.
+						}
+					}
+					if (!notified) {
+						// Without a cleanup notice the result names both failures.
+						throw new Error(`Spawn failed and cleanup failed: ${failureMessage(primary.error)}; ${failureMessage(cleanupError)}`);
+					}
+				}
+			}
 		};
-	}
-	const accounting = collectChildAccounting(session);
-	return {
-		content: completed.content,
-		details: buildResultDetails(completed.truncated, completed.outcome, accounting),
-		usage: accounting.usage,
-		...(completed.outcome !== "success" ? { isError: true as const } : {}),
-	};
+
+		let completed: ChildRun;
+		try {
+			completed = await runChild();
+		} catch (error) {
+			const accounting = collectChildAccounting(session);
+			const { text, truncated } = limitResultText(failureMessage(error));
+			const outcome = signal?.aborted === true && !isStale() ? "aborted" : "error";
+			return {
+				content: [{ type: "text" as const, text }] as TextContent[],
+				details: buildResultDetails(truncated, outcome, accounting),
+				usage: accounting.usage,
+				isError: true as const,
+			};
+		}
+		const accounting = collectChildAccounting(session);
+		return {
+			content: completed.content,
+			details: buildResultDetails(completed.truncated, completed.outcome, accounting),
+			usage: accounting.usage,
+			...(completed.outcome !== "success" ? { isError: true as const } : {}),
+		};
 	})();
 	return execution;
 }
@@ -738,18 +788,7 @@ export function registerSpawnTool(
 			ctx: ExtensionContext,
 		) {
 			const parentThinking: ModelThinkingLevel = pi.getThinkingLevel();
-			return executeSpawn(
-				_toolCallId,
-				pi,
-				ctx,
-				state,
-				params,
-				signal,
-				onUpdate,
-				parentThinking,
-				sessionFactory,
-				constraintRegistry,
-			);
+			return executeSpawn(_toolCallId, pi, ctx, state, params, signal, onUpdate, parentThinking, sessionFactory, constraintRegistry);
 		},
 
 		renderCall: renderSpawnCall,

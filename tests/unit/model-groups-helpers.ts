@@ -5,9 +5,7 @@ import type { ResolvedModelGroup } from "../../model-groups/types.js";
 import { __setModelGroupsFsForTests } from "../../model-groups/store.js";
 import { setTempHome } from "./helpers.js";
 
-export async function withTemp(
-	fn: (ctx: { cwd: string; home: string }) => Promise<void> | void,
-): Promise<void> {
+export async function withTemp(fn: (ctx: { cwd: string; home: string }) => Promise<void> | void): Promise<void> {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "model-groups-"));
 	const home = path.join(root, "home");
 	const cwd = path.join(root, "project");
@@ -19,6 +17,10 @@ export async function withTemp(
 		__setModelGroupsFsForTests(null);
 		fs.rmSync(root, { recursive: true, force: true });
 	}
+}
+
+function isArray(value: unknown): value is unknown[] {
+	return Array.isArray(value);
 }
 
 export function group(
@@ -37,7 +39,9 @@ export function group(
 		scope,
 		sourcePath: `<${scope}>`,
 		models: opts.models ?? [],
-		...(opts.constraints === undefined ? {} : { constraints: { ...opts.constraints, ...(Array.isArray(opts.constraints.modalities) ? { modalities: [...opts.constraints.modalities] } : {}) } }),
+		...(opts.constraints === undefined
+			? {}
+			: { constraints: { ...opts.constraints, ...(isArray(opts.constraints.modalities) ? { modalities: [...opts.constraints.modalities] } : {}) } }),
 		validation: {
 			unavailableRefs: opts.unavailableRefs ?? [],
 			shadowedByProject: opts.shadowedByProject ?? false,

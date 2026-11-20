@@ -1,7 +1,6 @@
 // SSOT contract: one cost derivation feeds every surface, and the run's child ledger
 // owns each child's spend exactly once.
-import assert from "node:assert/strict";
-import test from "node:test";
+import { expect, test } from "vitest";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Usage } from "@earendil-works/pi-ai";
 import {
@@ -26,21 +25,11 @@ const usd = (total: number): Usage => ({
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total },
 });
 
-function assistant(id: string, total: number): SessionEntry {
-	return {
-		type: "message",
-		id,
-		parentId: null,
-		timestamp: "2026-10-07T00:00:00.000Z",
-		message: { role: "assistant", content: [{ type: "text", text: "x" }], timestamp: 0, usage: usd(total) },
-	} as SessionEntry;
-}
-
 test("addUsage sums every usage field including cost", () => {
 	const total = addUsage(ZERO_USAGE, usd(0.5));
-	assert.equal(total.input, 10);
-	assert.equal(total.cost.total, 0.5);
-	assert.deepEqual(addUsage(total, usd(0.25)).cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.75 });
+	expect(total.input).toBe(10);
+	expect(total.cost.total).toBe(0.5);
+	expect(addUsage(total, usd(0.25)).cost).toStrictEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.75 });
 });
 
 test("collectUsage reads usage entries, assistant messages, and tool results", () => {
@@ -54,7 +43,7 @@ test("collectUsage reads usage entries, assistant messages, and tool results", (
 			provider: "p",
 			model: "m",
 			usage: usd(0.1),
-		} as SessionEntry,
+		},
 		modelAssistant("a1", "p", "m", 0.2),
 		childToolResult("t1", "c1", 0.3),
 		{
@@ -63,9 +52,9 @@ test("collectUsage reads usage entries, assistant messages, and tool results", (
 			parentId: null,
 			timestamp: "2026-10-07T00:00:02.000Z",
 			message: { role: "user", content: "no usage", timestamp: 0 },
-		} as SessionEntry,
+		},
 	];
-	assert.ok(Math.abs(collectUsage(entries).cost.total - 0.6) < 1e-9);
+	expect(Math.abs(collectUsage(entries).cost.total - 0.6) < 1e-9).toBe(true);
 });
 
 test("sessionStatsToUsage reads token totals and the authoritative session cost", () => {
@@ -73,27 +62,37 @@ test("sessionStatsToUsage reads token totals and the authoritative session cost"
 		tokens: { input: 3, output: 4, cacheRead: 5, cacheWrite: 6, total: 18 },
 		cost: 0.42,
 	});
-	assert.equal(usage.totalTokens, 18);
-	assert.equal(usage.cost.total, 0.42);
+	expect(usage.totalTokens).toBe(18);
+	expect(usage.cost.total).toBe(0.42);
 });
 
 function modelAssistant(id: string, provider: string, model: string, total: number): SessionEntry {
+	// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- fixture literal matches SessionMessageEntry without carrying the SDK's full union
 	return {
 		type: "message",
 		id,
 		parentId: null,
 		timestamp: "2026-10-07T00:00:00.000Z",
 		message: { role: "assistant", provider, model, content: [{ type: "text", text: "x" }], timestamp: 0, usage: usd(total) },
-	} as SessionEntry;
+	} as unknown as SessionEntry;
 }
 
 function childToolResult(id: string, toolCallId: string, total: number): SessionEntry {
+	// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- fixture literal matches SessionMessageEntry without carrying the SDK's full union
 	return {
 		type: "message",
 		id,
 		parentId: null,
 		timestamp: "2026-10-07T00:00:00.000Z",
-		message: { role: "toolResult", toolName: "spawn", toolCallId, content: "done", timestamp: 0, usage: usd(total), details: { model: "haiku", route: { provider: "anthropic" } } },
+		message: {
+			role: "toolResult",
+			toolName: "spawn",
+			toolCallId,
+			content: "done",
+			timestamp: 0,
+			usage: usd(total),
+			details: { model: "haiku", route: { provider: "anthropic" } },
+		},
 	} as unknown as SessionEntry;
 }
 
@@ -111,7 +110,7 @@ test("usageByModel attributes assistant, usage-entry, spawned-child, and model-l
 			provider: "typesafe",
 			model: "jev",
 			usage: usd(0.1),
-		} as SessionEntry,
+		},
 		childToolResult("t1", "c1", 0.2),
 		{
 			type: "compaction",
@@ -122,16 +121,16 @@ test("usageByModel attributes assistant, usage-entry, spawned-child, and model-l
 			firstKeptEntryId: "a1",
 			tokensBefore: 1,
 			usage: usd(0.05),
-		} as SessionEntry,
+		},
 	];
 	const spend = usageByModel(entries);
-	assert.equal(spend.get("anthropic/opus")?.costUsd, 0.5);
-	assert.equal(spend.get("typesafe/jev")?.costUsd, 0.1);
-	assert.equal(spend.get("anthropic/haiku")?.costUsd, 0.2);
-	assert.equal(spend.get(UNATTRIBUTED_MODEL)?.costUsd, 0.05);
+	expect(spend.get("anthropic/opus")?.costUsd).toBe(0.5);
+	expect(spend.get("typesafe/jev")?.costUsd).toBe(0.1);
+	expect(spend.get("anthropic/haiku")?.costUsd).toBe(0.2);
+	expect(spend.get(UNATTRIBUTED_MODEL)?.costUsd).toBe(0.05);
 	// The rows partition the branch's usage exactly.
 	const sum = [...spend.values()].reduce((total, row) => total + row.costUsd, 0);
-	assert.ok(Math.abs(sum - collectUsage(entries).cost.total) < 1e-9, "rows sum to collected usage");
+	expect(Math.abs(sum - collectUsage(entries).cost.total) < 1e-9, "rows sum to collected usage").toBe(true);
 });
 
 // SSOT contract: the child ledger is the single owner of child-owned tool results, so
@@ -139,48 +138,45 @@ test("usageByModel attributes assistant, usage-entry, spawned-child, and model-l
 test("usageByModel skips a child-owned tool result when claimed, and counts it otherwise", () => {
 	const entries: SessionEntry[] = [childToolResult("t1", "c1", 0.2)];
 	const claimed = usageByModel(entries, { skip: new Set(["c1"]) });
-	assert.equal(claimed.size, 0, "claimed child tool result is excluded");
+	expect(claimed.size, "claimed child tool result is excluded").toBe(0);
 
 	const unclaimed = usageByModel(entries);
-	assert.equal(unclaimed.get("anthropic/haiku")?.costUsd, 0.2, "unclaimed tool result is attributed");
+	expect(unclaimed.get("anthropic/haiku")?.costUsd, "unclaimed tool result is attributed").toBe(0.2);
 });
 
 // SSOT contract: an empty entry id is never matched against `skip` (only a non-empty id
 // or the tool-call id can claim an entry), preserving spendIdentity's fallback.
 test("usageByModel ignores an empty entry id and skips by tool-call id only", () => {
 	const entries: SessionEntry[] = [childToolResult("", "c1", 0.2)];
-	assert.equal(usageByModel(entries, { skip: new Set(["c1"]) }).size, 0, "empty-id entry skipped via tool-call id");
-	assert.equal(usageByModel(entries, { skip: new Set([""]) }).get("anthropic/haiku")?.costUsd, 0.2, "empty id is never matched");
-	assert.equal(usageByModel(entries).get("anthropic/haiku")?.costUsd, 0.2, "unclaimed empty-id entry attributed");
+	expect(usageByModel(entries, { skip: new Set(["c1"]) }).size, "empty-id entry skipped via tool-call id").toBe(0);
+	expect(usageByModel(entries, { skip: new Set([""]) }).get("anthropic/haiku")?.costUsd, "empty id is never matched").toBe(0.2);
+	expect(usageByModel(entries).get("anthropic/haiku")?.costUsd, "unclaimed empty-id entry attributed").toBe(0.2);
 });
 
 // SSOT contract: the run-scoped spend scan drops the conversation that predates the run,
 // so only entries kept by the run's id-exclusion set reach the cost rows.
 test("usageByModel omits every entry whose id is excluded", () => {
-	const entries: SessionEntry[] = [
-		modelAssistant("a1", "anthropic", "opus", 0.5),
-		modelAssistant("a2", "anthropic", "opus", 0.25),
-	];
+	const entries: SessionEntry[] = [modelAssistant("a1", "anthropic", "opus", 0.5), modelAssistant("a2", "anthropic", "opus", 0.25)];
 	const kept = usageByModel(entries, { skip: new Set(["a1"]) });
-	assert.equal(kept.get("anthropic/opus")?.costUsd, 0.25, "excluded entry is omitted");
-	assert.equal(kept.get("anthropic/opus")?.calls, 1);
-	assert.equal(usageByModel(entries).get("anthropic/opus")?.costUsd, 0.75, "omitting the option keeps every entry");
+	expect(kept.get("anthropic/opus")?.costUsd, "excluded entry is omitted").toBe(0.25);
+	expect(kept.get("anthropic/opus")?.calls).toBe(1);
+	expect(usageByModel(entries).get("anthropic/opus")?.costUsd, "omitting the option keeps every entry").toBe(0.75);
 });
 
 test("spendRowsTotal equals the exact row sum", () => {
 	const rows = new Map<string, ModelSpend>();
 	addModelSpend(rows, "anthropic", "opus", usd(0.5));
 	addModelSpend(rows, null, "widget", usd(0.4));
-	assert.ok(Math.abs(spendRowsTotal(rows) - 0.9) < 1e-9);
-	assert.equal(spendRowsTotal(new Map()), 0);
+	expect(Math.abs(spendRowsTotal(rows) - 0.9) < 1e-9).toBe(true);
+	expect(spendRowsTotal(new Map())).toBe(0);
 });
 
 test("mergeModelSpend sums rows from every source without mutating its inputs", () => {
 	const baseline = usageByModel([modelAssistant("a1", "anthropic", "opus", 0.5)]);
 	const current = usageByModel([modelAssistant("a2", "anthropic", "opus", 0.25), modelAssistant("a3", "typesafe", "jev", 0.1)]);
 	const merged = mergeModelSpend(baseline, current);
-	assert.equal(merged.get("anthropic/opus")?.costUsd, 0.75);
-	assert.equal(merged.get("anthropic/opus")?.calls, 2);
-	assert.equal(merged.get("typesafe/jev")?.costUsd, 0.1);
-	assert.equal(baseline.get("anthropic/opus")?.costUsd, 0.5, "input map untouched");
+	expect(merged.get("anthropic/opus")?.costUsd).toBe(0.75);
+	expect(merged.get("anthropic/opus")?.calls).toBe(2);
+	expect(merged.get("typesafe/jev")?.costUsd).toBe(0.1);
+	expect(baseline.get("anthropic/opus")?.costUsd, "input map untouched").toBe(0.5);
 });

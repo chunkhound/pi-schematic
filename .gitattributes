@@ -1,1 +1,3 @@
-tests/snapshots/**/*.txt text eol=lf
+# All text is LF in the index and in every working tree. This keeps tests,
+# scripts, and snapshots independent of core.autocrlf (true on Windows).
+* text=auto eol=lf

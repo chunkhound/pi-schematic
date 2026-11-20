@@ -6,16 +6,29 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { SpawnRouteDetails } from "./spawn/shared.js";
 
 /** AgentMessage widens to custom roles; usage reads only these optional fields. */
-type AnyMessage = {
+interface AnyMessage {
 	usage?: Usage;
 	role?: string;
 	provider?: string;
 	model?: string;
-	/** Identifies a tool result so child-owned spend can be skipped (see `spendIdentity`). */
+	/** Identifies a tool result so child-owned spend can be skipped via the tool-call id. */
 	toolCallId?: string;
 	/** Tool-result details; the spawn tool records the child model and its route here. */
 	details?: { model?: string; route?: SpawnRouteDetails };
-};
+}
+
+/** Narrow a session message to the optional usage-bearing fields without a type assertion. */
+function isAnyMessage(message: unknown): message is AnyMessage {
+	return typeof message === "object" && message !== null;
+}
+
+/** The usage-bearing view of a message entry, or undefined for non-message entries. */
+function messageOf(entry: SessionEntry): AnyMessage | undefined {
+	if (entry.type !== "message") {
+		return undefined;
+	}
+	return isAnyMessage(entry.message) ? entry.message : undefined;
+}
 
 /** Bucket for usage pi records without a model: compaction and branch summaries. */
 export const UNATTRIBUTED_MODEL = "unattributed";
@@ -37,7 +50,10 @@ export interface ModelSpend {
 }
 
 function spendKey(provider: string | null, model: string): string {
-	return provider ? `${provider}/${model}` : model;
+	if (provider !== null && provider !== "") {
+		return `${provider}/${model}`;
+	}
+	return model;
 }
 
 /** Additive fields of one spend row; the single accumulator both usage paths share. */
@@ -76,20 +92,14 @@ export function addModelSpend(map: Map<string, ModelSpend>, provider: string | n
 	map.set(key, { key, provider, model, ...usageDelta(usage) });
 }
 
-/** Single de-dup identity for a usage-bearing entry: the entry id when pi assigned one, else
- * the tool-call id a tool result carries. Sources that do not hold the entry (the child
- * ledger) key by tool-call id, so both sides address the same spend. */
-export function spendIdentity(entry: SessionEntry): string | null {
-	if (entry.id) return entry.id;
-	return entry.type === "message" ? (entry.message as AnyMessage).toolCallId ?? null : null;
-}
-
 /** Whether `skip` already owns this entry. Checks the entry id and the tool-call id: the
  * child ledger is keyed by the latter, and a tool result may carry a distinct pi id. An
  * empty entry id is never matched, preserving the fallback to the tool-call id. */
 function isClaimed(entry: SessionEntry, skip: ReadonlySet<string>): boolean {
-	const toolCallId = entry.type === "message" ? (entry.message as AnyMessage).toolCallId : undefined;
-	if (entry.id && skip.has(entry.id)) return true;
+	const toolCallId = messageOf(entry)?.toolCallId;
+	if (entry.id && skip.has(entry.id)) {
+		return true;
+	}
 	return toolCallId !== undefined && skip.has(toolCallId);
 }
 
@@ -103,18 +113,22 @@ function isClaimed(entry: SessionEntry, skip: ReadonlySet<string>): boolean {
  * in `skip` are omitted entirely. The run-scoped scan drops pre-run and already-committed
  * entries, and the child ledger claims its tool results, so no entry is counted twice.
  */
-export function usageByModel(
-	entries: readonly SessionEntry[],
-	options?: { skip?: ReadonlySet<string> },
-): Map<string, ModelSpend> {
+export function usageByModel(entries: readonly SessionEntry[], options?: { skip?: ReadonlySet<string> }): Map<string, ModelSpend> {
 	const map = new Map<string, ModelSpend>();
 	const skip = options?.skip;
 	for (const entry of entries) {
-		if (skip && isClaimed(entry, skip)) continue;
+		if (skip && isClaimed(entry, skip)) {
+			continue;
+		}
 		if (entry.type === "message") {
-			const message = entry.message as AnyMessage;
+			const message = messageOf(entry);
+			if (!message) {
+				continue;
+			}
 			const usage = message.usage;
-			if (!usage) continue;
+			if (!usage) {
+				continue;
+			}
 			if (message.role === "assistant") {
 				addModelSpend(map, message.provider ?? null, message.model ?? UNATTRIBUTED_MODEL, usage);
 			} else {
@@ -128,7 +142,9 @@ export function usageByModel(
 			continue;
 		}
 		if (entry.type === "compaction" || entry.type === "branch_summary") {
-			if (entry.usage) addModelSpend(map, null, UNATTRIBUTED_MODEL, entry.usage);
+			if (entry.usage) {
+				addModelSpend(map, null, UNATTRIBUTED_MODEL, entry.usage);
+			}
 		}
 	}
 	return map;
@@ -139,7 +155,9 @@ export function usageByModel(
 export function assistantCount(entries: readonly SessionEntry[]): number {
 	let count = 0;
 	for (const entry of entries) {
-		if (entry.type === "message" && (entry.message as AnyMessage).role === "assistant") count += 1;
+		if (entry.type === "message" && messageOf(entry)?.role === "assistant") {
+			count += 1;
+		}
 	}
 	return count;
 }
@@ -160,18 +178,12 @@ export function mergeModelSpend(...maps: ReadonlyMap<string, ModelSpend>[]): Map
 	return merged;
 }
 
-/** One child's cumulative spend, owned by the run ledger. Cumulative (not delta) so a
- * repeated message_end flush and the settle flush overwrite, never double-count. */
-export interface ChildSpend {
-	provider: string | null;
-	model: string;
-	usage: Usage;
-}
-
 /** Total USD of a spend map. The run's cost is always this sum, never a parallel snapshot. */
 export function spendRowsTotal(rows: ReadonlyMap<string, ModelSpend>): number {
 	let total = 0;
-	for (const row of rows.values()) total += row.costUsd;
+	for (const row of rows.values()) {
+		total += row.costUsd;
+	}
 	return total;
 }
 
@@ -210,9 +222,15 @@ export function addUsage(a: Usage, b: Usage): Usage {
 
 /** Usage carried by one entry: usage entries, summaries, and assistant/tool messages. */
 function usageFromEntry(entry: SessionEntry): Usage | null {
-	if (entry.type === "usage") return entry.usage;
-	if (entry.type === "compaction" || entry.type === "branch_summary") return entry.usage ?? null;
-	if (entry.type === "message") return (entry.message as AnyMessage).usage ?? null;
+	if (entry.type === "usage") {
+		return entry.usage;
+	}
+	if (entry.type === "compaction" || entry.type === "branch_summary") {
+		return entry.usage ?? null;
+	}
+	if (entry.type === "message") {
+		return messageOf(entry)?.usage ?? null;
+	}
 	return null;
 }
 

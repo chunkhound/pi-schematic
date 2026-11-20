@@ -14,18 +14,10 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
-import {
-	HANDOFF_ALREADY_STAGED,
-	HANDOFF_IN_PROGRESS_STATUS,
-	HANDOFF_STAGED_RESULT,
-} from "./copy.js";
+import { HANDOFF_ALREADY_STAGED, HANDOFF_IN_PROGRESS_STATUS, HANDOFF_STAGED_RESULT } from "./copy.js";
 import { formatHandoffFailure } from "./format.js";
-import {
-	MIN_HANDOFF_TOKENS,
-	estimateHandoffContextTokens,
-	formatHandoffContextUsage,
-	normalizeContextPercent,
-} from "./eligibility.js";
+import { asPromise } from "../as-promise.js";
+import { MIN_HANDOFF_TOKENS, estimateHandoffContextTokens, formatHandoffContextUsage, normalizeContextPercent } from "./eligibility.js";
 import type { SchematicState } from "../state.js";
 import { STATUS_KEY_HANDOFF } from "../tui.js";
 
@@ -37,23 +29,19 @@ function validateHandoffRequest(nextInstruction: string, ctx: ExtensionContext):
 	if (!nextInstruction) {
 		const pct = normalizeContextPercent(usage?.percent);
 		throw new Error(
-			`Context at ${pct === null ? "?" : Math.round(pct) + "%"}. Empty handoff nextInstruction rejected. Save findings to notebook, then call handoff with the instruction the successor must execute.`,
+			`Context at ${pct === null ? "?" : String(Math.round(pct)) + "%"}. Empty handoff nextInstruction rejected. Save findings to notebook, then call handoff with the instruction the successor must execute.`,
 		);
 	}
 
 	const approximateTokens = estimateHandoffContextTokens(usage);
 	if (approximateTokens === null) {
-		throw new Error(
-			"Context usage unavailable; handoff rejected. Continue working and retry.",
-		);
+		throw new Error("Context usage unavailable; handoff rejected. Continue working and retry.");
 	}
 	if (approximateTokens < MIN_HANDOFF_TOKENS) {
 		const tokenLabel = formatHandoffContextUsage(usage);
 		const percent = normalizeContextPercent(usage?.percent);
 		const pctLabel = percent === null ? "?" : `~${Math.round(percent)}%`;
-		throw new Error(
-			`Context at ${pctLabel} (${tokenLabel}); handoff unavailable yet. Continue working and retry.`,
-		);
+		throw new Error(`Context at ${pctLabel} (${tokenLabel}); handoff unavailable yet. Continue working and retry.`);
 	}
 }
 
@@ -64,10 +52,7 @@ function validateHandoffRequest(nextInstruction: string, ctx: ExtensionContext):
  * normalized here (like `context`), inner bytes preserved, and `buildNextUserMessage`
  * owns context normalization.
  */
-function resolveHandoffRequest(
-	state: SchematicState,
-	params: { nextInstruction?: string; context?: string },
-): { nextInstruction: string; context: string } {
+function resolveHandoffRequest(state: SchematicState, params: { nextInstruction?: string; context?: string }): { nextInstruction: string; context: string } {
 	const humanDirection = state.pendingRequestedHandoff?.nextInstruction ?? null;
 	return {
 		nextInstruction: (humanDirection ?? params.nextInstruction ?? "").trim(),
@@ -75,10 +60,7 @@ function resolveHandoffRequest(
 	};
 }
 
-export function registerHandoffTool(
-	pi: ExtensionAPI,
-	state: SchematicState,
-): void {
+export function registerHandoffTool(pi: ExtensionAPI, state: SchematicState): void {
 	pi.registerTool({
 		name: HANDOFF_TOOL_NAME,
 		label: "Handoff",
@@ -109,63 +91,79 @@ export function registerHandoffTool(
 		executionMode: "sequential",
 
 		parameters: Type.Object({
-			nextInstruction: Type.Optional(Type.String({
-				description:
-					"The instruction the successor must execute, verbatim.\n" +
-					"Required only when no human `/handoff <direction>` direction is pending; when one is pending " +
-					"the stored direction wins and this is ignored.\n" +
-					"Never perform it here — this context is discarded at compaction.",
-			})),
-			context: Type.Optional(Type.String({
-				description:
-					"Situational context still missing from the notebook: current state, blockers, unresolved " +
-					"questions, failed paths worth avoiding, and the concrete next step. Do not repeat the instruction.\n" +
-					"The notebook holds reusable knowledge for this stream: user guidance, decisions, design, " +
-					"constraints — plus code facts that are recoverable and discardable.",
-			})),
-			discardPages: Type.Optional(Type.Array(Type.String({
-				description: "A notebook page name to discard.",
-			}), {
-				description:
-					"Notebook page names to discard during this handoff. " +
-					"Discard pages holding only recoverable code facts; keep non-recoverable knowledge (user guidance, decisions, design, task scope) unless superseded.",
-			})),
+			nextInstruction: Type.Optional(
+				Type.String({
+					description:
+						"The instruction the successor must execute, verbatim.\n" +
+						"Required only when no human `/handoff <direction>` direction is pending; when one is pending " +
+						"the stored direction wins and this is ignored.\n" +
+						"Never perform it here — this context is discarded at compaction.",
+				}),
+			),
+			context: Type.Optional(
+				Type.String({
+					description:
+						"Situational context still missing from the notebook: current state, blockers, unresolved " +
+						"questions, failed paths worth avoiding, and the concrete next step. Do not repeat the instruction.\n" +
+						"The notebook holds reusable knowledge for this stream: user guidance, decisions, design, " +
+						"constraints — plus code facts that are recoverable and discardable.",
+				}),
+			),
+			discardPages: Type.Optional(
+				Type.Array(
+					Type.String({
+						description: "A notebook page name to discard.",
+					}),
+					{
+						description:
+							"Notebook page names to discard during this handoff. " +
+							"Discard pages holding only recoverable code facts; keep non-recoverable knowledge (user guidance, decisions, design, task scope) unless superseded.",
+					},
+				),
+			),
 		}),
 
-		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-			if (state.stagedHandoff) throw new Error(HANDOFF_ALREADY_STAGED);
-			const { nextInstruction, context } = resolveHandoffRequest(state, params);
-			// The error result is the only report of a rejected call: a queued follow-up
-			// would outlive this run and reach a later successor.
-			try {
-				validateHandoffRequest(nextInstruction, ctx);
-			} catch (error) {
-				if (!state.pendingRequestedHandoff || !(error instanceof Error)) throw error;
-				throw new Error(formatHandoffFailure(error.message, true));
-			}
-			// Status first: a throwing UI call must leave no staged handoff behind.
-			if (ctx.hasUI && ctx.ui.theme) {
-				ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_IN_PROGRESS_STATUS));
-			}
-			const discardPages = [...new Set(params.discardPages ?? [])];
-			state.stagedHandoff = {
-				handoffId: randomUUID(),
-				toolCallId,
-				nextInstruction,
-				context,
-				discardPages,
-				discardedPages: [],
-				phase: "staged",
-				declineReason: null,
-			};
-			if (state.pendingRequestedHandoff) state.pendingRequestedHandoff.toolCalled = true;
+		execute(toolCallId, params, _signal, _onUpdate, ctx) {
+			return asPromise(() => {
+				if (state.stagedHandoff) {
+					throw new Error(HANDOFF_ALREADY_STAGED);
+				}
+				const { nextInstruction, context } = resolveHandoffRequest(state, params);
+				// The error result is the only report of a rejected call: a queued follow-up
+				// would outlive this run and reach a later successor.
+				try {
+					validateHandoffRequest(nextInstruction, ctx);
+				} catch (error) {
+					if (!state.pendingRequestedHandoff || !(error instanceof Error)) {
+						throw error;
+					}
+					throw new Error(formatHandoffFailure(error.message, true), { cause: error });
+				}
+				// Status first: a throwing UI call must leave no staged handoff behind.
+				if (ctx.hasUI && ctx.ui.theme) {
+					ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_IN_PROGRESS_STATUS));
+				}
+				const discardPages = [...new Set(params.discardPages ?? [])];
+				state.stagedHandoff = {
+					handoffId: randomUUID(),
+					toolCallId,
+					nextInstruction,
+					context,
+					discardPages,
+					discardedPages: [],
+					phase: "staged",
+					declineReason: null,
+				};
+				if (state.pendingRequestedHandoff) {
+					state.pendingRequestedHandoff.toolCalled = true;
+				}
 
-			return {
-				content: [{ type: "text", text: HANDOFF_STAGED_RESULT }],
-				details: {},
-				terminate: true,
-			};
+				return {
+					content: [{ type: "text", text: HANDOFF_STAGED_RESULT }],
+					details: {},
+					terminate: true,
+				};
+			});
 		},
-
 	});
 }

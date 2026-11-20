@@ -16,10 +16,7 @@ import { newRequestedHandoff, type SchematicState } from "./state.js";
 import { STATUS_KEY_HANDOFF } from "./tui.js";
 
 /** Can the queued human-set topic boundary be promoted to a handoff bypass right now? */
-export function canPromoteBoundary(
-	state: SchematicState,
-	usage: ReturnType<ExtensionContext["getContextUsage"]>,
-): boolean {
+export function canPromoteBoundary(state: SchematicState, usage: ReturnType<ExtensionContext["getContextUsage"]>): boolean {
 	const boundary = state.pendingTopicBoundaryHint;
 	return boundary !== null && boundary.source === "human" && isHandoffEligible(usage);
 }
@@ -27,7 +24,9 @@ export function canPromoteBoundary(
 /** Consume a boundary that cannot authorize a readonly handoff. */
 export function discardNonHumanBoundary(state: SchematicState): boolean {
 	const boundary = state.pendingTopicBoundaryHint;
-	if (!boundary || boundary.source === "human") return false;
+	if (!boundary || boundary.source === "human") {
+		return false;
+	}
 	state.pendingTopicBoundaryHint = null;
 	return true;
 }
@@ -38,10 +37,7 @@ export function promoteBoundary(state: SchematicState, ctx: ExtensionContext): v
 	state.pendingRequestedHandoff = newRequestedHandoff(null);
 	if (ctx.hasUI) {
 		if (ctx.ui.theme) {
-			ctx.ui.setStatus(
-				STATUS_KEY_HANDOFF,
-				ctx.ui.theme.fg("accent", HANDOFF_REQUIRED_STATUS),
-			);
+			ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_REQUIRED_STATUS));
 		}
 		ctx.ui.notify(buildReadonlyBoundaryPromotionNotification(), "warning");
 	}
@@ -54,8 +50,12 @@ export function promoteBoundary(state: SchematicState, ctx: ExtensionContext): v
  */
 export function markBoundaryAdvisory(state: SchematicState): boolean {
 	const boundary = state.pendingTopicBoundaryHint;
-	if (!boundary || boundary.source !== "human") return false;
-	if (boundary.advisoryDelivered) return false;
+	if (boundary?.source !== "human") {
+		return false;
+	}
+	if (boundary.advisoryDelivered === true) {
+		return false;
+	}
 	boundary.advisoryDelivered = true;
 	return true;
 }
