@@ -224,14 +224,27 @@
       "count": 1
     }
   },
+  "tests/integration/handoff-boundary-session.test.ts": {
+    "vitest/max-expects": {
+      "count": 48
+    }
+  },
+  "tests/integration/pi-module-identity.test.ts": {
+    "ban/find-package-json-import": {
+      "count": 1
+    },
+    "n/no-unsupported-features/node-builtins": {
+      "count": 1
+    }
+  },
+  "tests/support/real-child.ts": {
+    "ban/wall-clock": {
+      "count": 1
+    }
+  },
   "tests/unit/frontmatter-cache.test.ts": {
     "vitest/max-expects": {
       "count": 112
-    }
-  },
-  "tests/unit/handoff-boundary-session.test.ts": {
-    "vitest/max-expects": {
-      "count": 48
     }
   },
   "tests/unit/handoff-eligibility.test.ts": {
@@ -256,9 +269,6 @@
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 2
-    },
-    "ban/wall-clock": {
-      "count": 1
     },
     "no-control-regex": {
       "count": 1
@@ -341,14 +351,6 @@
       "count": 3
     },
     "vitest/no-conditional-expect": {
-      "count": 1
-    }
-  },
-  "tests/unit/pi-module-identity.test.ts": {
-    "ban/find-package-json-import": {
-      "count": 1
-    },
-    "n/no-unsupported-features/node-builtins": {
       "count": 1
     }
   },
@@ -447,10 +449,7 @@
   },
   "tests/unit/watchdog.test.ts": {
     "vitest/max-expects": {
-      "count": 15
-    },
-    "vitest/no-conditional-expect": {
-      "count": 4
+      "count": 5
     }
   },
   "thinking-levels.ts": {

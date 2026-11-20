@@ -1,6 +1,6 @@
 # Cross-platform CI for pi-schematic
 #
-# Runs the full unit suite on Linux, macOS, and Windows, each on the minimum
+# Runs the unit and integration tests on Linux, macOS, and Windows, each on the minimum
 # Node.js version required by pi coding agent and on the current Node.js LTS. Snapshot tests verify TUI render output against golden files.
 
 name: CI
@@ -84,17 +84,17 @@ jobs:
       - name: Security audit
         run: npx audit-ci --config audit-ci.jsonc
 
-      # Unit suite (unit tests + snapshot tests + property-based tests). The ubuntu newest lane
-      # also collects V8 coverage and uploads the report.
-      - name: Unit tests
+      # Unit and integration tests (including snapshot and property-based tests). The ubuntu newest
+      # lane also collects V8 coverage and uploads the report.
+      - name: Tests
         if: ${{ !(matrix.os == 'ubuntu-latest' && matrix.track == 'newest') }}
         run: npm test
 
-      - name: Unit tests with coverage
+      - name: Tests with coverage
         if: matrix.os == 'ubuntu-latest' && matrix.track == 'newest'
         run: npm run test:coverage
 
-      # The coverage comment compares the totals with the PR's base commit, measured by the same unit run.
+      # The coverage comment compares the totals with the PR's base commit, measured by the same test run.
       - name: Check out the base commit
         if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest' && matrix.track == 'newest'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -106,7 +106,7 @@ jobs:
       # Writes coverage/base-coverage-summary.json, or coverage/base-coverage-status.txt with the
       # reason the base commit has no coverage. The base's reports go to a separate directory because
       # Vitest clears its reports directory before a run.
-      - name: Unit test coverage of the base commit
+      - name: Test coverage of the base commit
         if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest' && matrix.track == 'newest'
         working-directory: base-src
         shell: bash
@@ -120,9 +120,9 @@ jobs:
           fi
           npm ci
           status=0
-          npx vitest run --project unit --coverage --coverage.reporter=json-summary "--coverage.reportsDirectory=$BASE_REPORTS_DIR" || status=$?
+          npx vitest run --project unit --project integration --coverage --coverage.reporter=json-summary "--coverage.reportsDirectory=$BASE_REPORTS_DIR" || status=$?
           if [ "$status" -ne 0 ]; then
-            echo "the base commit's unit run failed" > "$GITHUB_WORKSPACE/coverage/base-coverage-status.txt"
+            echo "the base commit's test run failed" > "$GITHUB_WORKSPACE/coverage/base-coverage-status.txt"
             exit 0
           fi
           cp "$BASE_REPORTS_DIR/coverage-summary.json" "$GITHUB_WORKSPACE/coverage/base-coverage-summary.json"

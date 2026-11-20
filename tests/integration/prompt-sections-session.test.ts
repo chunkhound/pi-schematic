@@ -21,7 +21,7 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFact
 import registerSchematic from "../../index.js";
 import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
 import { buildNudge } from "../../watchdog.js";
-import { createDeferred, setTempHome } from "./helpers.js";
+import { createDeferred, setTempHome } from "../unit/helpers.js";
 
 let sandboxDir: string;
 
@@ -30,7 +30,8 @@ beforeAll(async () => {
 	const restoreHome = setTempHome(sandboxDir);
 	return async () => {
 		restoreHome();
-		await rm(sandboxDir, { recursive: true, force: true });
+		// Pi takes a lock directory next to auth.json; retry when one appears during removal.
+		await rm(sandboxDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 	};
 });
 

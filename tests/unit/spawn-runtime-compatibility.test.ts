@@ -10,7 +10,8 @@ import { createState } from "../../state.js";
 import { THINKING_LEVELS } from "../../thinking-levels.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
 import { createTestHost, getTool } from "./test-host.js";
-import { assertErrorResult, createExtensionContext, EMPTY_CHILD_USAGE, recordOf, runRealChildInvocation } from "./helpers.js";
+import { assertErrorResult, createExtensionContext, EMPTY_CHILD_USAGE, recordOf } from "./helpers.js";
+import { runRealChildInvocation } from "../support/real-child.js";
 
 // The fields isSpawnToolResult checks; everything else stays unknown.
 interface CheckedSpawnResult {
@@ -169,7 +170,8 @@ test("executeSpawn rejects immediately when no model is configured", async () =>
 
 test("a parent-transient selected model fails explicitly in the real child runtime without fallback", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-schematic-transient-"));
-	onTestFinished(() => rm(root, { recursive: true, force: true }));
+	// Pi takes lock directories in agent/; retry when one appears during removal.
+	onTestFinished(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 	const cwd = join(root, "project");
 	const agentDir = join(root, "agent");
 	await mkdir(cwd, { recursive: true });
@@ -276,6 +278,7 @@ test("real child publishes the session stats contract shape", async () => {
 // 8. Usage parity: the usage spawn returns matches Pi's own session stats on a real child session.
 test("real child usage matches the session stats across assistant, tool result, usage, compaction and branch-summary entries", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-schematic-usage-parity-"));
+	// With modelsPath null, Pi takes no lock after create, so nothing writes into root during removal.
 	onTestFinished(() => rm(root, { recursive: true, force: true }));
 	const faux = fauxProvider();
 	const usageOf = (input: number, output: number, cacheRead: number, cacheWrite: number, total: number) => ({

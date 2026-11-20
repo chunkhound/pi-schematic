@@ -113,7 +113,7 @@ export function buildCoverageComment({ summary, base, root, runUrl, sha, runAtte
 		}
 		return [
 			marker,
-			"## Unit test coverage",
+			"## Test coverage",
 			"",
 			"This run produced no coverage report.",
 			"",
@@ -143,7 +143,7 @@ export function buildCoverageComment({ summary, base, root, runUrl, sha, runAtte
 
 	return [
 		marker,
-		"## Unit test coverage",
+		"## Test coverage",
 		"",
 		...tableHead(""),
 		metricRow("Total", headTotal),

@@ -38,8 +38,10 @@
   },
   "scripts": {
     "prepare": "husky",
-    "test": "vitest run --project unit",
-    "test:coverage": "vitest run --project unit --coverage",
+    "test": "vitest run --project unit --project integration",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:coverage": "vitest run --project unit --project integration --coverage",
     "test:e2e": "vitest run --project e2e",
     "test:all": "npm run test && npm run test:e2e",
     "test:snapshots:check": "vitest run --project unit --update=none tests/unit/render-snapshots.test.ts",

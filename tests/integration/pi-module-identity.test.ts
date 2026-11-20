@@ -17,7 +17,7 @@ import { Type } from "typebox";
 import { piManifestPath } from "../../pi-packages.mjs";
 import { AGENT_DIR_ENV_KEY, REGISTER_LOADER_URL, REPO_ROOT } from "../paths.js";
 import { applySharedModuleProbe, PROBE_KEY, PROBE_SUMMARY, readSharedModuleProbe } from "./fixtures/shared-module-probe.js";
-import { spawnNode } from "./spawn-node.js";
+import { spawnNode } from "../support/spawn-node.js";
 
 const PROBE_URL = new URL("fixtures/shared-module-probe.ts", import.meta.url).href;
 const PROBE_EXTENSION_PATH = fileURLToPath(new URL("fixtures/shared-module-probe-extension.ts", import.meta.url));
