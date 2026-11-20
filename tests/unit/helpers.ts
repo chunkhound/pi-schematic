@@ -214,14 +214,14 @@ export function stripAnsi(text: string): string {
 	return stripTerminalSequences(text);
 }
 
-export function getRenderedLine(lines: string[], match: (plain: string) => boolean): string {
+export function getRenderedLine(lines: readonly string[], match: (plain: string) => boolean): string {
 	const line = lines.find((candidate) => match(stripAnsi(candidate)));
 	assertPresent(line);
 	expect(line).not.toBe("");
 	return line;
 }
 
-export function getLineContaining(lines: string[], text: string): string {
+export function getLineContaining(lines: readonly string[], text: string): string {
 	const line = lines.find((candidate) => candidate.includes(text));
 	assertPresent(line);
 	expect(line).not.toBe("");

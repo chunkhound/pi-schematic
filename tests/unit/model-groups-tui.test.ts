@@ -137,7 +137,7 @@ const LEFT = "\u001b[D";
 const BACKSPACE = "\u007f";
 const LEFT_SS3 = "\u001bOD";
 
-function press(c: { handleInput?: (data: string) => void; render?: (width: number) => string[] }, ...inputs: string[]): void {
+function press(c: { handleInput?: (data: string) => void; render?: (width: number) => readonly string[] }, ...inputs: string[]): void {
 	for (const input of inputs) {
 		c.render?.(100);
 		c.handleInput?.(input);
@@ -153,23 +153,23 @@ if (FAKE_CURSOR_PARTS.length !== 2 || FAKE_CURSOR_PARTS[0] === "") {
 }
 const FAKE_CURSOR_START = FAKE_CURSOR_PARTS[0];
 
-function rendered(c: { render: (width: number) => string[] }, width = 100): string {
+function rendered(c: { render: (width: number) => readonly string[] }, width = 100): string {
 	return c.render(width).join("\n");
 }
 
-function findSelectedRow(c: { render: (width: number) => string[] }): string | undefined {
+function findSelectedRow(c: { render: (width: number) => readonly string[] }): string | undefined {
 	return stripAnsi(rendered(c))
 		.split("\n")
 		.find((line) => line.includes("→"));
 }
 
-function selectedRow(c: { render: (width: number) => string[] }): string {
+function selectedRow(c: { render: (width: number) => readonly string[] }): string {
 	const row = findSelectedRow(c);
 	assertPresent(row, "the rendered screen has a selected row marked →");
 	return row;
 }
 
-function selectRenderedLabel(c: { handleInput?: (data: string) => void; render: (width: number) => string[] }, label: string): void {
+function selectRenderedLabel(c: { handleInput?: (data: string) => void; render: (width: number) => readonly string[] }, label: string): void {
 	for (let i = 0; i < 32; i++) {
 		// A screen without a selected row is not this label yet: keep pressing DOWN.
 		if (findSelectedRow(c)?.includes(label) === true) {
@@ -192,7 +192,7 @@ function openAddModelWizard(c: Parameters<typeof selectRenderedLabel>[0]): void 
 	press(c, ENTER); // EDITOR → WIZARD_PROVIDER
 }
 
-function pressAndRender(c: { handleInput?: (data: string) => void; render: (width: number) => string[] }, ...inputs: string[]): void {
+function pressAndRender(c: { handleInput?: (data: string) => void; render: (width: number) => readonly string[] }, ...inputs: string[]): void {
 	for (const input of inputs) {
 		c.render(100);
 		c.handleInput?.(input);

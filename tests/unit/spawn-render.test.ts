@@ -184,7 +184,7 @@ test("collapsed nested spawn render keeps all text blocks from the last assistan
 	expect(lines).toContainEqual(expect.stringContaining("second"));
 });
 
-async function renderCollapsedPreview(text: string, width: number): Promise<string[]> {
+async function renderCollapsedPreview(text: string, width: number): Promise<readonly string[]> {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
 	state.childSessions.set("tool-call-1", createSession([{ role: "assistant", content: [{ type: "text", text }] }]));

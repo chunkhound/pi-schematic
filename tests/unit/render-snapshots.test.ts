@@ -26,8 +26,8 @@ const SNAPSHOT_DIR = join(__dirname, "..", "snapshots");
 // ── Render test backend ───────────────────────────────────────────────
 
 class RenderTestBackend {
-	lines: string[] = [];
-	render(component: { render(w: number): string[] }, width = 80): this {
+	lines: readonly string[] = [];
+	render(component: { render(w: number): readonly string[] }, width = 80): this {
 		this.lines = component.render(width);
 		return this;
 	}
