@@ -74,7 +74,7 @@ Think step-by-step through each aspect below, focusing solely on the changes in 
 2. **Code Quality**
    - Code must be self-explanatory and readable
      - Verify high quality comments for non-obvious patterns
-     - Complete docs comments for public APIs
+     - Complete doc comments for the extension's default export in `index.ts`
    - Style must match surrounding code style. Check related files and verify continuity and consistency
    - Changes must be minimal - nothing unneeded
    - Follow KISS principle

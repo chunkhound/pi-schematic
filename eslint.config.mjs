@@ -383,6 +383,8 @@ export default defineConfig([
 			],
 		},
 	},
+	// The extension's public surface is the default export of index.ts.
+	{ files: ["index.ts"], rules: { "import-x/no-named-export": "error" } },
 	{
 		files: ["tests/**"],
 		ignores: [SPAWN_NODE],

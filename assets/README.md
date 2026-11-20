@@ -16,7 +16,7 @@ Every mark shares Pi's 5x5 grid (origin `106.6125`, unit `117.355`) and palette 
 
 ## Regenerating the GIF
 
-The animated SVG is canonical; the GIF is a 360x360 transparent raster export with a 6 s loop (any SVG rasterizer works, e.g. `resvg` or `rsvg-convert`). After regenerating, keep the `pi.image` URL and README hero pointing at the committed file.
+The animated SVG is canonical; the GIF is a 360x360 transparent raster export with a 6 s loop (any SVG rasterizer works, e.g. `resvg` or `rsvg-convert`). See the [Brand asset references convention](../docs/conventions/brand-asset-references.md).
 
 ## Social preview
 
