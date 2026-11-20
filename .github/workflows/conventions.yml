@@ -37,7 +37,7 @@ jobs:
 
       - id: list
         name: List conventions
-        run: bash .github/scripts/conventions-list.sh "$GITHUB_BASE_REF"
+        run: bash .github/scripts/conventions-list.bash "$GITHUB_BASE_REF"
 
   # review skips when no convention's paths match a changed file.
   review:
@@ -83,7 +83,7 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           turns=30
-          bash .github/scripts/conventions-diff.sh "$GITHUB_BASE_REF" > "$RUNNER_TEMP/pr.diff"
+          bash .github/scripts/conventions-diff.bash "$GITHUB_BASE_REF" > "$RUNNER_TEMP/pr.diff"
           # pi expands the skill only at the start of the message; the space after its name is required.
           prompt="$(
             echo "/skill:checking-convention "
@@ -119,7 +119,7 @@ jobs:
         env:
           NAME: ${{ matrix.convention.name }}
           SLUG: ${{ matrix.convention.slug }}
-        run: bash .github/scripts/conventions-report.sh "$SLUG" "$NAME" "$RUNNER_TEMP/verdict.json"
+        run: bash .github/scripts/conventions-report.bash "$SLUG" "$NAME" "$RUNNER_TEMP/verdict.json"
 
       # Saved even when the check fails, so a failing pull request does not reinstall the extensions on every run.
       # The matrix jobs of one run miss the cache together; the saves that lose the race only warn.

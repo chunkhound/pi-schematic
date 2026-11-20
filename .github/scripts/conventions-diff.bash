@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Prints the pull request's diff with line numbers for the reviewer.
 #
-# Usage: conventions-diff.sh <base branch>
+# Usage: conventions-diff.bash <base branch>
 # Each added or context line gets its line number in the head revision in front, so the reviewer need not look it up.
 set -euo pipefail
 
 if [ "$#" -ne 1 ] || [ -z "$1" ]; then
-  echo "Usage: conventions-diff.sh <base branch>" >&2
+  echo "Usage: conventions-diff.bash <base branch>" >&2
   exit 2
 fi
 

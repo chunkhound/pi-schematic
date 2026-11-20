@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Lists the conventions in docs/conventions/ whose paths match a file the pull request changes.
 #
-# Usage: conventions-list.sh <base branch>
+# Usage: conventions-list.bash <base branch>
 # Writes conventions=<JSON array of {name, slug}> to $GITHUB_OUTPUT and fails on a malformed convention file.
 set -euo pipefail
 
 if [ "$#" -ne 1 ] || [ -z "$1" ]; then
-  echo "Usage: conventions-list.sh <base branch>" >&2
+  echo "Usage: conventions-list.bash <base branch>" >&2
   exit 2
 fi
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT must name the file the conventions output is appended to}"

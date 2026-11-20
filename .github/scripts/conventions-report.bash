@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Reports a convention's verdicts as error annotations and fails unless they are complete and free of violations.
 #
-# Usage: conventions-report.sh <slug> <name> <verdict file>
+# Usage: conventions-report.bash <slug> <name> <verdict file>
 set -euo pipefail
 
 if [ "$#" -ne 3 ]; then
-  echo "Usage: conventions-report.sh <slug> <name> <verdict file>" >&2
+  echo "Usage: conventions-report.bash <slug> <name> <verdict file>" >&2
   exit 2
 fi
 slug="$1"
@@ -14,7 +14,7 @@ verdict="$3"
 convention="docs/conventions/$slug.md"
 for file in "$convention" "$verdict"; do
   if [ ! -r "$file" ]; then
-    echo "conventions-report.sh: cannot read $file" >&2
+    echo "conventions-report.bash: cannot read $file" >&2
     exit 2
   fi
 done
