@@ -346,7 +346,7 @@ test("spawn forwards requested thinking and reports the session effective thinki
 	expect(seenConfig?.thinkingLevel, "requested thinking is forwarded unchanged").toBe("max");
 	expect(runningDetails.thinking, "running details report Pi's effective thinking").toBe("off");
 	expect(result.details.thinking, "final details report Pi's effective thinking").toBe("off");
-	expect(result.details.route).toStrictEqual({ status: "inherited" });
+	expect(result.details.route).toStrictEqual({ status: "inherited", provider: "test", modelId: "non-reasoning-model" });
 });
 
 test("spawn execute composes Model Group routing with readonly child guards", async () => {
@@ -871,7 +871,13 @@ test("spawn execute derives result stats from the child entries", async () => {
 	expect(updates).toStrictEqual([
 		{
 			content: [],
-			details: { model: "mock-model", thinking: "high", truncated: false, outcome: "running", route: { status: "inherited" } },
+			details: {
+				model: "mock-model",
+				thinking: "high",
+				truncated: false,
+				outcome: "running",
+				route: { status: "inherited", provider: "test", modelId: "mock-model" },
+			},
 		},
 	]);
 	expect(result.content[0].text).toBe("child result");
@@ -1434,7 +1440,7 @@ function failedSpawnResult(text: string) {
 			thinking: "high",
 			truncated: false,
 			outcome: "error",
-			route: { status: "inherited" },
+			route: { status: "inherited", provider: "test", modelId: "mock-model" },
 			stats: { inputTokens: 80, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 1, totalTokens: 95, cost: 13, turns: 2 },
 		},
 		usage: FAILED_CHILD_USAGE,
@@ -1570,7 +1576,7 @@ test("a parent abort between child creation and the prompt returns an aborted re
 		thinking: "high",
 		truncated: false,
 		outcome: "aborted",
-		route: { status: "inherited" },
+		route: { status: "inherited", provider: "test", modelId: "mock-model" },
 		stats: { inputTokens: 80, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 1, totalTokens: 95, cost: 13, turns: 2 },
 	});
 	expect(result.content[0].text).toBe("Child agent aborted: aborted before start");
@@ -2195,7 +2201,7 @@ test("executeSpawn forwards inherited constraints to routing and succeeds when s
 		sessionFactory,
 	);
 	expect(result.details.outcome).toBe("success");
-	expect(result.details.route).toStrictEqual({ status: "inherited" });
+	expect(result.details.route).toStrictEqual({ status: "inherited", provider: "openai", modelId: "parent" });
 	expect(sessionFactory, "inherited route with satisfied requirements creates one child").toHaveBeenCalledOnce();
 });
 
