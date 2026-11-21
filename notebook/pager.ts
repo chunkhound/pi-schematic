@@ -110,6 +110,8 @@ export function spawnPager(body: string, pager: ResolvedPager): Promise<void> {
 	return new Promise((resolve, reject) => {
 		// cmd.exe parses one joined line on Windows. Join it here as Node would
 		// (unquoted): passing args with shell: true makes Node 24+ print DEP0190 to stderr.
+		// stdout and stderr are inherited on purpose: the pager draws on the terminal itself, and
+		// openInPager stops pi's TUI before the spawn and restarts it after the pager closes.
 		const stdio: StdioOptions = ["pipe", "inherit", "inherit"];
 		const child = process.platform === "win32" ? spawn([pager.cmd, ...pager.args].join(" "), { stdio, shell: true }) : spawn(pager.cmd, pager.args, { stdio });
 		child.on("error", (err) => {

@@ -1,0 +1,157 @@
+# Conventions check for pull requests
+#
+# pi reviews the pull request's diff against the conventions in docs/conventions/ as they read once the
+# pull request is merged (the checkout is GitHub's merge commit for the pull request), one job per
+# convention whose paths match a changed file, and every sentence the changes make false fails the check
+# with an annotation at the offending line. The Conventions job sums up the per-convention jobs under
+# one stable name.
+
+name: Conventions
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+
+jobs:
+  # Fork PRs get no secrets, so they skip.
+  list:
+    name: List conventions
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      conventions: ${{ steps.list.outputs.conventions }}
+    steps:
+      # The full history holds the base branch for the merge-base diff.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - id: list
+        name: List conventions
+        run: bash .github/scripts/conventions-list.bash "$GITHUB_BASE_REF"
+
+  # review skips when no convention's paths match a changed file.
+  review:
+    needs: list
+    if: needs.list.outputs.conventions != '[]'
+    name: ${{ matrix.convention.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        convention: ${{ fromJSON(needs.list.outputs.conventions) }}
+    steps:
+      # The full history holds the base branch for the merge-base diff.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.13.1"
+          cache: "npm"
+
+      - run: npm ci
+
+      # pi installs the extensions the check loads into the agent directory; the pi command in this workflow pins their versions.
+      - id: extension-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pi-agent/tmp/extensions/npm
+          key: pi-extensions-${{ runner.os }}-${{ hashFiles('.github/workflows/conventions.yml') }}
+
+      # pi downloads rg and fd from GitHub on first use when they are not on PATH, and grep fails when that download fails.
+      - name: Install ripgrep and fd
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep fd-find
+
+      # The slug reaches the step through the environment, never interpolated into the script.
+      - name: Check convention
+        env:
+          CONVENTION: ${{ matrix.convention.slug }}
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
+          PI_TELEMETRY: "0"
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          turns=30
+          bash .github/scripts/conventions-diff.bash "$GITHUB_BASE_REF" > "$RUNNER_TEMP/pr.diff"
+          # pi expands the skill only at the start of the message; the space after its name is required.
+          prompt="$(
+            echo "/skill:checking-convention "
+            echo "Convention file: docs/conventions/$CONVENTION.md"
+            echo "Diff file: $RUNNER_TEMP/pr.diff"
+            echo "Turn limit: $turns"
+          )"
+          status=0
+          # --no-extensions also turns off pi's built-in extensions, MCP included; -e paths still load.
+          node_modules/.bin/pi -p --mode json --model deepseek/deepseek-flash \
+            --no-extensions \
+            -e npm:@nqbao/pi-json-schema@0.1.1 \
+            -e npm:@aantenore/pi-budget@0.1.0 \
+            --skill .agents/skills/checking-convention \
+            --no-context-files \
+            --tools read,grep,find,ls,json_output \
+            --json-schema "$(jq -c . scripts/conventions-verdict.schema.json)" \
+            --json-output "$RUNNER_TEMP/verdict.json" \
+            --budget-turns "$turns" \
+            "$prompt" > "$RUNNER_TEMP/conventions-events.jsonl" 2> "$RUNNER_TEMP/pi-stderr.txt" || status=$?
+          if [ "$status" -ne 0 ] || [ ! -f "$RUNNER_TEMP/verdict.json" ]; then
+            echo "pi exited with status $status and wrote $([ -f "$RUNNER_TEMP/verdict.json" ] && echo a || echo no) verdict. stderr tail:"
+            # The tail can hold text from the pull request, so workflow commands in it are switched off.
+            token="$(openssl rand -hex 16)"
+            echo "::stop-commands::$token"
+            tail -c 8192 "$RUNNER_TEMP/pi-stderr.txt"
+            echo "::$token::"
+            exit 1
+          fi
+
+      # pi-json-schema checks the verdict against the schema before writing it.
+      - name: Report violations
+        env:
+          NAME: ${{ matrix.convention.name }}
+          SLUG: ${{ matrix.convention.slug }}
+        run: bash .github/scripts/conventions-report.bash "$SLUG" "$NAME" "$RUNNER_TEMP/verdict.json"
+
+      # Saved even when the check fails, so a failing pull request does not reinstall the extensions on every run.
+      # The matrix jobs of one run miss the cache together; the saves that lose the race only warn.
+      - if: always() && steps.extension-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pi-agent/tmp/extensions/npm
+          key: pi-extensions-${{ runner.os }}-${{ hashFiles('.github/workflows/conventions.yml') }}
+
+      - name: Upload pi events
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: conventions-events-${{ matrix.convention.slug }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/conventions-events.jsonl
+          retention-days: 7
+          if-no-files-found: warn
+
+  conventions:
+    name: Conventions
+    needs: [list, review]
+    if: always() && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the convention jobs
+        env:
+          LIST_RESULT: ${{ needs.list.result }}
+          REVIEW_RESULT: ${{ needs.review.result }}
+        run: |
+          echo "list: $LIST_RESULT, review: $REVIEW_RESULT"
+          # review is skipped when no convention's paths match a changed file.
+          if [ "$LIST_RESULT" != "success" ] || { [ "$REVIEW_RESULT" != "success" ] && [ "$REVIEW_RESULT" != "skipped" ]; }; then
+            exit 1
+          fi

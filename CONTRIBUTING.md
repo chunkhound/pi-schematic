@@ -21,7 +21,6 @@ Welcome! This project welcomes focused, well-validated contributions. Use coding
    - Avoid adding dependencies unless the change clearly needs them.
 
 3. **Implement with tests or validation**
-   - Add or update tests for behavior changes.
    - For documentation-only changes, review rendered links and examples.
 
 4. **Submit a focused PR**
@@ -37,6 +36,7 @@ Before submitting, check that your change:
 - Does not introduce hidden context growth, unbounded output, or recursive child-agent spawning.
 - Handles reset, cancellation, and stale-session cases where relevant.
 - Keeps docs aligned with the package version and installed behavior.
+- Meets the conventions in [docs/conventions/](docs/conventions/) whose `paths` match a file it changes. CI reviews pull requests to main from branches of this repository against them.
 
 ## Tests
 
@@ -64,15 +64,13 @@ The suites leave these behaviours unpinned:
 
 ## CI
 
-Pull requests are automatically tested via GitHub Actions. `.github/workflows/ci.yml` defines which OS and Node lanes run and which checks each lane runs.
-
-The floor is the minimum Node.js version Pi requires (the `engines.node` of `@earendil-works/pi-coding-agent`). This package declares no `engines` of its own, because it only runs inside Pi. Both the floor and the current Node.js LTS are tested on Linux, macOS and Windows, because platform-specific code paths can also depend on the Node version. The exact current LTS is written in the CI matrix, the current-Pi job, the lint jobs and the publish workflow, and Renovate bumps all of them together: patch and minor releases in a "Node.js" PR, a new LTS major in a separate "major Node.js" PR. Local development runs on the floor: `.node-version` holds it for version managers such as fnm and nodenv, because code that works on the floor almost always works on newer releases, while the reverse is where breakage comes from. When Pi raises its floor, Renovate updates `.node-version`, the floor entry of the CI matrix and the `@types/node` version cap, which keeps the Node types on the floor's major, in one PR.
+Pull requests are automatically tested via GitHub Actions. `.github/workflows/ci.yml` defines which OS and Node lanes run and which checks each lane runs. Local development runs on the Node.js floor: `.node-version` holds it for version managers such as fnm and nodenv.
 
 All tracked text is LF in the index and in the working tree, snapshot goldens included: one `.gitattributes` rule, `* text=auto eol=lf`, owns that contract for every text file, so tests do not depend on `core.autocrlf`. A stale clone can still hold CRLF and fail `npm test`; the `repository text has one LF line-ending contract` test in `tests/unit/config-invariants.test.ts` is the executable check, and its assertion message is the only copy of the recovery command. If you update snapshots, CI checks them on every lane of the test matrix.
 
-## Releasing
+For maintainers: the conventions check needs the repository secret `DEEPSEEK_API_KEY`, a DeepSeek API key. It runs only for pull requests to main from branches of this repository. It runs one job per convention whose `paths` match a file the pull request changes, and each job uploads pi's event stream as a `conventions-events-<slug>-attempt-<n>` artifact, kept for 7 days, where `<slug>` is the convention's file name without `.md`. The "Conventions" job fails unless every convention job succeeded, and passes when no convention matched; it is the job to make a required check.
 
-Feature PRs add changelog entries under [Unreleased] and do not change the version.
+## Releasing
 
 A release PR titled `release: X.Y.Z` sets the version in `package.json` and `package-lock.json` by hand. Rename `[Unreleased]` to `[X.Y.Z] - <date>`, add a fresh `[Unreleased]` heading above it, and update the compare links. After merge, tag the merge commit `vX.Y.Z` and push the tag, or create a GitHub release with that tag. The tag push runs `.github/workflows/npm-publish.yml`, which fails unless the tagged commit is on main, checks the tag against `package.json`, runs the gates, and publishes through npm trusted publishing.
 

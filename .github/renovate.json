@@ -27,26 +27,29 @@
     },
     {
       "customType": "regex",
-      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/", "/^\\.github/workflows/npm-publish\\.yml$/"],
+      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/", "/^\\.github/workflows/npm-publish\\.yml$/", "/^\\.github/workflows/conventions\\.yml$/"],
       "matchStrings": [
         "track: newest\\s+node-version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
         "uses: actions/setup-node@[^\\n]+\\n\\s+with:\\n\\s+node-version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],
       "depNameTemplate": "node",
       "datasourceTemplate": "node-version"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/conventions\\.yml$/"],
+      "matchStrings": ["-e npm:(?<depName>@?[^@\\s]+)@(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "datasourceTemplate": "npm"
     }
   ],
   "packageRules": [
     {
-      "matchPackageNames": [
-        "@earendil-works/pi-agent-core",
-        "@earendil-works/pi-ai",
-        "@earendil-works/pi-coding-agent",
-        "@earendil-works/pi-tui",
-        "typebox",
-        "pi-node-floor"
-      ],
-      "groupName": "Pi compatibility floor",
+      "matchPackageNames": ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"],
+      "enabled": false
+    },
+    {
+      "matchPackageNames": ["pi-node-floor"],
+      "groupName": "Node.js floor",
       "dependencyDashboardApproval": true
     },
     {

@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["results"],
+  "properties": {
+    "results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sentence", "verdict", "reason", "file", "line", "quote"],
+        "properties": {
+          "sentence": { "type": "string" },
+          "verdict": { "type": "string", "enum": ["pass", "violation", "not_applicable"] },
+          "reason": { "type": ["string", "null"] },
+          "file": { "type": ["string", "null"] },
+          "line": { "type": ["integer", "null"], "minimum": 1 },
+          "quote": { "type": ["string", "null"] }
+        },
+        "if": { "properties": { "verdict": { "const": "violation" } } },
+        "then": { "properties": { "reason": { "type": "string", "minLength": 1 } } }
+      }
+    }
+  }
+}
