@@ -8,9 +8,11 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { Type } from "typebox";
 import { expect, test } from "vitest";
 import { assertPresent } from "../assertions.js";
 import { REPO_ROOT_URL } from "../paths.js";
+import { parseJson } from "./parse-json.js";
 
 const PACKAGE_JSON_URL = new URL("package.json", REPO_ROOT_URL);
 const README_URL = new URL("README.md", REPO_ROOT_URL);
@@ -39,17 +41,21 @@ function assetText(asset: string): string {
 
 function pathFills(svg: string): string[] {
 	return [...svg.matchAll(/<path\b[^>]*>/g)].map(([path]) => {
-		const fill = path.match(/\bfill="([^"]+)"/)?.[1];
+		const fill = /\bfill="([^"]+)"/.exec(path)?.[1];
 		assertPresent(fill, `path missing fill: ${path}`);
 		return fill;
 	});
 }
 
 function piImage(): { url: string; repoPath: string } {
-	const packageJson = JSON.parse(readText(PACKAGE_JSON_URL)) as { pi?: { image?: string } };
+	const packageJson = parseJson(
+		Type.Object({ pi: Type.Optional(Type.Object({ image: Type.Optional(Type.String()) })) }),
+		readText(PACKAGE_JSON_URL),
+		"package.json",
+	);
 	const url = packageJson.pi?.image;
 	assertPresent(url, "pi.image must be set for the pi.dev gallery");
-	const path = url.match(PI_IMAGE_PATTERN)?.groups?.path;
+	const path = PI_IMAGE_PATTERN.exec(url)?.groups?.path;
 	assertPresent(path, `pi.image must be a raw main-branch brand asset URL: ${url}`);
 	return { url, repoPath: path };
 }
@@ -67,7 +73,9 @@ function cellIndex(value: string): number {
 function markCells(svg: string): Set<string> {
 	const cells = new Set<string>();
 	for (const [, fill = "", d = ""] of svg.matchAll(/<path\b[^>]*fill="([^"]+)"[^>]*\bd="([^"]+)"/g)) {
-		if (fill.toLowerCase() !== "currentcolor" && !PALETTE.includes(fill.toUpperCase())) continue;
+		if (fill.toLowerCase() !== "currentcolor" && !PALETTE.includes(fill.toUpperCase())) {
+			continue;
+		}
 		for (const [, x = "", y = ""] of d.matchAll(/M([\d.]+) ([\d.]+)h[\d.]+v[\d.]+h-[\d.]+Z/gi)) {
 			cells.add(`${cellIndex(x)},${cellIndex(y)}`);
 		}
@@ -77,7 +85,7 @@ function markCells(svg: string): Set<string> {
 
 test("pi.image resolves to an existing brand asset", () => {
 	const { repoPath: target } = piImage();
-	expect(existsSync(repoPath(target)), `missing pi.image target: ${target}`).toBeTruthy();
+	expect(existsSync(repoPath(target)), `missing pi.image target: ${target}`).toBe(true);
 });
 
 test("the gallery image is a 360x360 GIF89a", () => {
@@ -104,7 +112,7 @@ test("every local asset referenced by README exists", () => {
 	].map((match) => match[1]);
 	expect(refs.length, "README references no assets").toBeGreaterThan(0);
 	for (const ref of refs) {
-		expect(existsSync(repoPath(ref)), `missing README asset: ${ref}`).toBeTruthy();
+		expect(existsSync(repoPath(ref)), `missing README asset: ${ref}`).toBe(true);
 	}
 });
 

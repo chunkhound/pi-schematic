@@ -34,7 +34,13 @@ export interface FrontmatterEntry {
 }
 
 export interface FrontmatterIssue {
-	kind: "invalid-readonly-value" | "invalid-model-group-value" | "invalid-explicit-model-value" | "invalid-thinking-value" | "malformed-frontmatter" | "unreadable-file";
+	kind:
+		| "invalid-readonly-value"
+		| "invalid-model-group-value"
+		| "invalid-explicit-model-value"
+		| "invalid-thinking-value"
+		| "malformed-frontmatter"
+		| "unreadable-file";
 	filePath: string;
 }
 
@@ -51,35 +57,36 @@ interface CacheReadResult {
 }
 
 function parseExplicitModel(raw: unknown): string | null {
-	if (typeof raw !== "string" || raw.trim().length === 0) return null;
+	if (typeof raw !== "string" || raw.trim().length === 0) {
+		return null;
+	}
 	const trimmed = raw.trim();
 	// The first slash separates provider; the model ID may contain slashes.
 	const slashIdx = trimmed.indexOf("/");
-	if (slashIdx === -1 || slashIdx === 0 || slashIdx === trimmed.length - 1) return null;
+	if (slashIdx === -1 || slashIdx === 0 || slashIdx === trimmed.length - 1) {
+		return null;
+	}
 	return trimmed;
 }
 
 function parseExplicitThinking(raw: unknown): ModelThinkingLevel | null {
-	if (typeof raw !== "string") return null;
+	if (typeof raw !== "string") {
+		return null;
+	}
 	const trimmed = raw.trim().toLowerCase();
 	return isThinkingLevel(trimmed) ? trimmed : null;
 }
 
-function readCacheEntry(
-	filePath: string,
-	previous?: FrontmatterEntry,
-	previousIssue?: FrontmatterIssue,
-): CacheReadResult {
+function readCacheEntry(filePath: string, previous?: FrontmatterEntry, previousIssue?: FrontmatterIssue): CacheReadResult {
 	let st;
 	try {
 		st = statSync(filePath);
-	} catch (error: any) {
-		return error?.code === "ENOENT" || error?.code === "ENOTDIR"
-			? { entry: null, issue: null }
-			: { entry: null, issue: { kind: "unreadable-file", filePath } };
+	} catch (error: unknown) {
+		const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+		return code === "ENOENT" || code === "ENOTDIR" ? { entry: null, issue: null } : { entry: null, issue: { kind: "unreadable-file", filePath } };
 	}
 
-	if (previous && previous.filePath === filePath && st.mtimeMs === previous.mtimeMs) {
+	if (previous?.filePath === filePath && st.mtimeMs === previous.mtimeMs) {
 		return { entry: previous, issue: previousIssue ?? null };
 	}
 
@@ -91,11 +98,11 @@ function readCacheEntry(
 	}
 
 	try {
-		const { frontmatter } = parseFrontmatter<Record<string, unknown>>(content);
-		const readonly = frontmatter["readonly"];
+		const { frontmatter } = parseFrontmatter(content);
+		const readonly = frontmatter.readonly;
 		const modelGroupRaw = frontmatter["model-group"];
-		const modelRaw = frontmatter["model"];
-		const thinkingRaw = frontmatter["thinking"];
+		const modelRaw = frontmatter.model;
+		const thinkingRaw = frontmatter.thinking;
 
 		const validReadonly = readonly === undefined || typeof readonly === "boolean";
 		const validModelGroup = modelGroupRaw === undefined || (typeof modelGroupRaw === "string" && modelGroupRaw.trim().length > 0);
@@ -113,7 +120,7 @@ function readCacheEntry(
 
 		return {
 			entry: {
-				readonly: validReadonly ? readonly ?? null : null,
+				readonly: validReadonly ? (readonly ?? null) : null,
 				modelGroup: validModelGroup && typeof modelGroupRaw === "string" ? modelGroupRaw.trim() : null,
 				explicitModel,
 				explicitThinking,
@@ -132,22 +139,25 @@ function readCacheEntry(
 
 function replaceCache(target: Map<string, FrontmatterEntry>, next: Map<string, FrontmatterEntry>): void {
 	target.clear();
-	for (const [name, entry] of next) target.set(name, entry);
+	for (const [name, entry] of next) {
+		target.set(name, entry);
+	}
 }
 
 function replaceIssues(target: Map<string, FrontmatterIssue>, next: Map<string, FrontmatterIssue>): void {
 	target.clear();
-	for (const [name, issue] of next) target.set(name, issue);
+	for (const [name, issue] of next) {
+		target.set(name, issue);
+	}
 }
 
-function setEntry(
-	nextCache: Map<string, FrontmatterEntry>,
-	nextIssues: Map<string, FrontmatterIssue>,
-	name: string,
-	result: CacheReadResult,
-): void {
-	if (result.entry) nextCache.set(name, result.entry);
-	if (result.issue) nextIssues.set(name, result.issue);
+function setEntry(nextCache: Map<string, FrontmatterEntry>, nextIssues: Map<string, FrontmatterIssue>, name: string, result: CacheReadResult): void {
+	if (result.entry) {
+		nextCache.set(name, result.entry);
+	}
+	if (result.issue) {
+		nextIssues.set(name, result.issue);
+	}
 }
 
 export function cacheLookupSkill(store: FrontmatterCache, name: string): boolean | null {
@@ -200,29 +210,26 @@ export function cacheLookupCommandIssue(store: FrontmatterCache, name: string): 
  * malformed YAML, and unreadable source files. Missing fields are normal no-ops.
  */
 export function formatFrontmatterIssue(commandRef: string, issue: FrontmatterIssue): string {
-	const detail = issue.kind === "invalid-readonly-value"
-		? "`readonly` frontmatter must be `true` or `false`"
-		: issue.kind === "invalid-model-group-value"
-			? "`model-group` frontmatter must be a non-empty string"
-		: issue.kind === "invalid-explicit-model-value"
-			? "`model` frontmatter must be in `<provider>/<model-id>` format"
-		: issue.kind === "invalid-thinking-value"
-			? `\`thinking\` frontmatter must be one of: ${THINKING_LEVELS.join(", ")}`
-		: issue.kind === "malformed-frontmatter"
-			? "frontmatter could not be parsed"
-			: "prompt/skill file could not be read";
+	const detail =
+		issue.kind === "invalid-readonly-value"
+			? "`readonly` frontmatter must be `true` or `false`"
+			: issue.kind === "invalid-model-group-value"
+				? "`model-group` frontmatter must be a non-empty string"
+				: issue.kind === "invalid-explicit-model-value"
+					? "`model` frontmatter must be in `<provider>/<model-id>` format"
+					: issue.kind === "invalid-thinking-value"
+						? `\`thinking\` frontmatter must be one of: ${THINKING_LEVELS.join(", ")}`
+						: issue.kind === "malformed-frontmatter"
+							? "frontmatter could not be parsed"
+							: "prompt/skill file could not be read";
 	return `Frontmatter ignored for \`${commandRef}\`: ${detail} at \`${issue.filePath}\`.`;
 }
 
-export function populateFromSkills(store: FrontmatterCache, skills: Array<Pick<Skill, "name" | "filePath">>): void {
+export function populateFromSkills(store: FrontmatterCache, skills: Pick<Skill, "name" | "filePath">[]): void {
 	const nextCache = new Map<string, FrontmatterEntry>();
 	const nextIssues = new Map<string, FrontmatterIssue>();
 	for (const skill of skills) {
-		const result = readCacheEntry(
-			skill.filePath,
-			store.frontmatterSkillCache.get(skill.name),
-			store.frontmatterSkillIssues.get(skill.name),
-		);
+		const result = readCacheEntry(skill.filePath, store.frontmatterSkillCache.get(skill.name), store.frontmatterSkillIssues.get(skill.name));
 		setEntry(nextCache, nextIssues, skill.name, result);
 	}
 	replaceCache(store.frontmatterSkillCache, nextCache);
@@ -231,10 +238,15 @@ export function populateFromSkills(store: FrontmatterCache, skills: Array<Pick<S
 
 /** Populate skill frontmatter before command expansion from Pi's command registry. */
 export function populateSkillCacheFromResolvedCommands(store: FrontmatterCache, commands: SlashCommandInfo[]): void {
-	populateFromSkills(store, commands.flatMap((command) => {
-		if (command.source !== "skill" || !command.name.startsWith("skill:")) return [];
-		return [{ name: command.name.slice("skill:".length), filePath: command.sourceInfo.path }];
-	}));
+	populateFromSkills(
+		store,
+		commands.flatMap((command) => {
+			if (command.source !== "skill" || !command.name.startsWith("skill:")) {
+				return [];
+			}
+			return [{ name: command.name.slice("skill:".length), filePath: command.sourceInfo.path }];
+		}),
+	);
 }
 
 function collectPromptFilesFromDir(
@@ -251,14 +263,14 @@ function collectPromptFilesFromDir(
 		return;
 	}
 	for (const file of files) {
-		if (extname(file) !== ".md") continue;
+		if (extname(file) !== ".md") {
+			continue;
+		}
 		const name = basename(file, ".md");
-		if (!name || blockedNames.has(name) || nextCache.has(name) || nextIssues.has(name)) continue;
-		const result = readCacheEntry(
-			join(dir, file),
-			store.frontmatterPromptCache.get(name),
-			store.frontmatterPromptIssues.get(name),
-		);
+		if (!name || blockedNames.has(name) || nextCache.has(name) || nextIssues.has(name)) {
+			continue;
+		}
+		const result = readCacheEntry(join(dir, file), store.frontmatterPromptCache.get(name), store.frontmatterPromptIssues.get(name));
 		setEntry(nextCache, nextIssues, name, result);
 	}
 }
@@ -286,17 +298,17 @@ export function populatePromptCacheFromResolvedCommandsAndDirs(
 	const blockedNames = new Set<string>();
 
 	for (const command of commands) {
-		if (!command.name) continue;
+		if (!command.name) {
+			continue;
+		}
 		if (command.source !== "prompt") {
 			blockedNames.add(command.name);
 			continue;
 		}
-		if (nextCache.has(command.name) || nextIssues.has(command.name)) continue;
-		const result = readCacheEntry(
-			command.sourceInfo.path,
-			store.frontmatterPromptCache.get(command.name),
-			store.frontmatterPromptIssues.get(command.name),
-		);
+		if (nextCache.has(command.name) || nextIssues.has(command.name)) {
+			continue;
+		}
+		const result = readCacheEntry(command.sourceInfo.path, store.frontmatterPromptCache.get(command.name), store.frontmatterPromptIssues.get(command.name));
 		setEntry(nextCache, nextIssues, command.name, result);
 	}
 

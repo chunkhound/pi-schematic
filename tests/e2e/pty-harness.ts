@@ -14,21 +14,18 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..", "..");
 const LOADER = pathToFileURL(resolve(ROOT, "register-loader.mjs")).href;
 
-export const DEFAULT_SCRIPT = resolve(HERE, "test-host.ts");
+const DEFAULT_SCRIPT = resolve(HERE, "test-host.ts");
 const DEFAULT_TIMEOUT_MS = 5000;
 const TIMEOUT_MS = parseInt(process.env.E2E_TIMEOUT_MS ?? "", 10) || DEFAULT_TIMEOUT_MS;
 
 export class ProcessHarness {
-	private child: ChildProcessWithoutNullStreams;
+	private readonly child: ChildProcessWithoutNullStreams;
 	private output = "";
 	private readOffset = 0;
-	private timeoutMs: number;
-	private waiters = new Set<() => void>();
+	private readonly timeoutMs: number;
+	private readonly waiters = new Set<() => void>();
 
-	constructor(
-		scriptPath = DEFAULT_SCRIPT,
-		options?: { timeoutMs?: number },
-	) {
+	constructor(scriptPath = DEFAULT_SCRIPT, options?: { timeoutMs?: number }) {
 		this.timeoutMs = options?.timeoutMs ?? TIMEOUT_MS;
 
 		const entry = isAbsolute(scriptPath) ? scriptPath : resolve(ROOT, scriptPath);
@@ -47,11 +44,15 @@ export class ProcessHarness {
 		// considers this by-design OS behavior, not a bug. Without a
 		// listener the error crashes the process (delivered async via
 		// IOCP on Windows, potentially after the test promise settles).
-		this.child.stdin.on("error", () => {});
+		this.child.stdin.on("error", () => {
+			/* Expected EPIPE: see above. */
+		});
 
 		const append = (chunk: string | Buffer) => {
 			this.output += chunk.toString();
-			for (const wake of this.waiters) wake();
+			for (const wake of this.waiters) {
+				wake();
+			}
 			this.waiters.clear();
 		};
 
@@ -60,7 +61,9 @@ export class ProcessHarness {
 	}
 
 	private async waitForOutput(ms: number): Promise<void> {
-		if (ms <= 0) return;
+		if (ms <= 0) {
+			return;
+		}
 		await new Promise<void>((resolve) => {
 			const wake = () => {
 				clearTimeout(timer);
@@ -74,19 +77,16 @@ export class ProcessHarness {
 
 	/** Wait for a fresh substring to appear after the prior match. */
 	async waitForText(text: string): Promise<void> {
-		const deadline = Date.now() + this.timeoutMs;
-		while (Date.now() < deadline) {
+		const deadline = performance.now() + this.timeoutMs;
+		while (performance.now() < deadline) {
 			const index = this.output.indexOf(text, this.readOffset);
 			if (index !== -1) {
 				this.readOffset = index + text.length;
 				return;
 			}
-			await this.waitForOutput(deadline - Date.now());
+			await this.waitForOutput(deadline - performance.now());
 		}
-		throw new Error(
-			`waitForText timeout after ${this.timeoutMs}ms looking for fresh \"${text}\".\n` +
-				`Output so far:\n${this.output}`,
-		);
+		throw new Error(`waitForText timeout after ${this.timeoutMs}ms looking for fresh "${text}".\n` + `Output so far:\n${this.output}`);
 	}
 
 	/** Write a line of input to the child process. */
@@ -108,6 +108,8 @@ export class ProcessHarness {
 	/** Kill the child process. */
 	close(): void {
 		this.child.stdin.end();
-		if (!this.child.killed) this.child.kill();
+		if (!this.child.killed) {
+			this.child.kill();
+		}
 	}
 }

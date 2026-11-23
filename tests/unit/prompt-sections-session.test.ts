@@ -7,60 +7,40 @@
  * before_agent_start handler reads global model groups from
  * `pi-schematic/model-groups.json` under pi's `getAgentDir()`, whose default
  * is `join(homedir(), CONFIG_DIR_NAME, "agent")`; HOME isolates that default
- * while PI_CODING_AGENT_DIR is unset, which setTempHome ensures. PI_OFFLINE=1 keeps
- * ModelRuntime from fetching over the network. The faux provider needs no
+ * while PI_CODING_AGENT_DIR is unset, which setTempHome ensures. vitest.config.ts sets
+ * PI_OFFLINE=1, which keeps ModelRuntime from fetching over the network. The faux provider needs no
  * credentials.
  */
 
-import { describe, it, before, after } from "node:test";
-import { strict as assert } from "node:assert";
+import { beforeAll, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import os from "node:os";
-import {
-	createAgentSession,
-	DefaultResourceLoader,
-	ModelRuntime,
-	SessionManager,
-} from "@earendil-works/pi-coding-agent";
-import {
-	fauxAssistantMessage,
-	fauxProvider,
-	fauxToolCall,
-	type FauxResponseFactory,
-	type Message,
-	type SystemMessage,
-} from "@earendil-works/pi-ai";
+import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFactory, type Message, type SystemMessage } from "@earendil-works/pi-ai";
 import registerSchematic from "../../index.js";
 import { MIN_HANDOFF_TOKENS } from "../../handoff/eligibility.js";
 import { buildNudge } from "../../watchdog.js";
 import { createDeferred, setTempHome } from "./helpers.js";
 
 let sandboxDir: string;
-let restoreHome: () => void;
-const previousPiOffline = process.env.PI_OFFLINE;
 
-before(async () => {
+beforeAll(async () => {
 	sandboxDir = await mkdtemp(join(os.tmpdir(), "pi-schematic-prompt-sections-"));
-	restoreHome = setTempHome(sandboxDir);
-	process.env.PI_OFFLINE = "1";
-});
-
-after(async () => {
-	restoreHome();
-	if (previousPiOffline === undefined) delete process.env.PI_OFFLINE;
-	else process.env.PI_OFFLINE = previousPiOffline;
-	await rm(sandboxDir, { recursive: true, force: true });
+	const restoreHome = setTempHome(sandboxDir);
+	return async () => {
+		restoreHome();
+		await rm(sandboxDir, { recursive: true, force: true });
+	};
 });
 
 describe("prompt sections in a real agent session", () => {
 	it("re-sends only the changed section when the topic changes between prompts", async () => {
 		const systemMessagesPerRequest: SystemMessage[][] = [];
-		const recording = (respond: () => ReturnType<typeof fauxAssistantMessage>): FauxResponseFactory =>
+		const recording =
+			(respond: () => ReturnType<typeof fauxAssistantMessage>): FauxResponseFactory =>
 			(context) => {
-				systemMessagesPerRequest.push(
-					context.messages.filter((message): message is SystemMessage => message.role === "system"),
-				);
+				systemMessagesPerRequest.push(context.messages.filter((message): message is SystemMessage => message.role === "system"));
 				return respond();
 			};
 		const callTopic = recording(() => fauxAssistantMessage(fauxToolCall("notebook_topic_set", { topic: "oauth" })));
@@ -100,21 +80,22 @@ describe("prompt sections in a real agent session", () => {
 			session.dispose();
 		}
 
-		assert.equal(systemMessagesPerRequest.length, 3);
+		expect(systemMessagesPerRequest).toHaveLength(3);
 		const firstRequestSectionNames = systemMessagesPerRequest[0].flatMap((message) => Object.keys(message.sections ?? {}));
-		assert.ok(firstRequestSectionNames.includes("schematic"), `first request sections: ${firstRequestSectionNames.join(", ")}`);
+		expect(firstRequestSectionNames, `first request sections: ${firstRequestSectionNames.join(", ")}`).toContain("schematic");
 		const secondRunPatches = systemMessagesPerRequest[2].slice(systemMessagesPerRequest[1].length);
-		assert.ok(secondRunPatches.length > 0, "request 3 carried no new system messages");
+		expect(secondRunPatches.length, "request 3 carried no new system messages").toBeGreaterThan(0);
 		for (const message of secondRunPatches) {
-			assert.deepEqual(Object.keys(message.sections ?? {}), ["schematic_topic"]);
+			expect(Object.keys(message.sections ?? {})).toStrictEqual(["schematic_topic"]);
 			const topicBody = message.sections?.schematic_topic;
-			assert.ok(typeof topicBody === "string" && topicBody.includes("oauth"), `schematic_topic patch: ${String(topicBody)}`);
+			expect(topicBody, `schematic_topic patch: ${String(topicBody)}`).toEqual(expect.stringContaining("oauth"));
 		}
 	});
 
 	it("sends the eligible handoff nudge in the same request as the schematic sections", async () => {
 		const requests: Message[][] = [];
-		const recording = (respond: () => ReturnType<typeof fauxAssistantMessage>): FauxResponseFactory =>
+		const recording =
+			(respond: () => ReturnType<typeof fauxAssistantMessage>): FauxResponseFactory =>
 			(context) => {
 				requests.push(context.messages);
 				return respond();
@@ -161,34 +142,45 @@ describe("prompt sections in a real agent session", () => {
 			await session.prompt("/handoff finish the report");
 			await Promise.race([
 				handoffRunRequested.promise,
-				new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the /handoff run sent no provider request")), 5_000).unref()),
+				new Promise<never>((_, reject) =>
+					setTimeout(() => {
+						reject(new Error("the /handoff run sent no provider request"));
+					}, 5_000).unref(),
+				),
 			]);
 			await session.waitForIdle();
 		} finally {
 			session.dispose();
 		}
 
-		assert.equal(requests.length, 3);
+		expect(requests).toHaveLength(3);
 		const handoffRunRequest = requests[2];
-		const nudgeFirstLine = buildNudge({
-			activeNotebookTopic: null,
-			pendingTopicBoundaryHint: null,
-			readonlyEnabled: false,
-			pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: "x" },
-		}, null, true).split("\n")[0];
+		const nudgeFirstLine = buildNudge(
+			{
+				activeNotebookTopic: null,
+				pendingTopicBoundaryHint: null,
+				readonlyEnabled: false,
+				pendingRequestedHandoff: { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction: "x" },
+			},
+			null,
+			true,
+		).split("\n")[0];
 		const nonSystemText = handoffRunRequest
 			.filter((message) => message.role !== "system")
 			.map((message) => JSON.stringify(message.content))
 			.join("\n");
-		assert.ok(nonSystemText.includes(JSON.stringify(nudgeFirstLine).slice(1, -1)), "the handoff run's request carries the eligible handoff nudge");
-		const sections: Record<string, string> = {};
+		expect(nonSystemText, "the handoff run's request carries the eligible handoff nudge").toContain(JSON.stringify(nudgeFirstLine).slice(1, -1));
+		const sections = new Map<string, string>();
 		for (const message of handoffRunRequest.filter((candidate): candidate is SystemMessage => candidate.role === "system")) {
 			for (const [name, body] of Object.entries(message.sections ?? {})) {
-				if (body === null) delete sections[name];
-				else sections[name] = body;
+				if (body === null) {
+					sections.delete(name);
+				} else {
+					sections.set(name, body);
+				}
 			}
 		}
-		assert.ok(sections.schematic !== undefined, `schematic section missing; sections: ${Object.keys(sections).join(", ")}`);
-		assert.ok(sections.schematic_topic?.includes("Current topic: `oauth`"), `schematic_topic: ${String(sections.schematic_topic)}`);
+		expect(sections.get("schematic"), `schematic section missing; sections: ${[...sections.keys()].join(", ")}`).toBeDefined();
+		expect(sections.get("schematic_topic"), `schematic_topic: ${String(sections.get("schematic_topic"))}`).toContain("Current topic: `oauth`");
 	});
 });

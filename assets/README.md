@@ -2,13 +2,13 @@
 
 Canonical sources for the pi-schematic mark. Edit here, then regenerate derived files.
 
-| File | Role |
-|---|---|
-| `logo.svg` | Tri-colour primary mark (static). |
-| `logo-mono.svg` | Single-silhouette mark; `currentColor` inherits the surrounding text colour when the SVG is inlined (not when loaded via `<img>`). |
-| `logo-animated.svg` | Animated "Tetris" intro. **Canonical source** for the GIF. |
-| `logo-animated.gif` | Rendered animation used as the README hero and the pi.dev gallery preview (`pi.image` in `package.json`). |
-| `social-preview.png` | GitHub repository social preview. Uploaded manually via repository Settings; not consumed by the build. |
+| File                 | Role                                                                                                                               |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `logo.svg`           | Tri-colour primary mark (static).                                                                                                  |
+| `logo-mono.svg`      | Single-silhouette mark; `currentColor` inherits the surrounding text colour when the SVG is inlined (not when loaded via `<img>`). |
+| `logo-animated.svg`  | Animated "Tetris" intro. **Canonical source** for the GIF.                                                                         |
+| `logo-animated.gif`  | Rendered animation used as the README hero and the pi.dev gallery preview (`pi.image` in `package.json`).                          |
+| `social-preview.png` | GitHub repository social preview. Uploaded manually via repository Settings; not consumed by the build.                            |
 
 ## Geometry
 

@@ -5,11 +5,7 @@
  */
 
 import type { CustomEntryDraft, ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-	DEFAULT_MAX_BYTES,
-	DEFAULT_MAX_LINES,
-	truncateHead,
-} from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateHead } from "@earendil-works/pi-coding-agent";
 import type { SchematicState } from "../state.js";
 import { createWriteLock, __setSingletons, getSingletons } from "../runtime-singletons.js";
 
@@ -18,25 +14,23 @@ export const NOTEBOOK_ENTRY_VERSION = 1;
 
 /** Reset write lock state. Only for test cleanup after concurrent runs. */
 export function resetNotebookWriteLock(): void {
-	__setSingletons(
-		{ ...getSingletons(), writeLock: createWriteLock() },
-		{ forceWriteLock: true },
-	);
+	__setSingletons({ ...getSingletons(), writeLock: createWriteLock() }, { forceWriteLock: true });
 }
 
 async function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
 	const s = getSingletons();
 	const lock = s.writeLock;
 	if (s.writeContext.getStore()) {
-		throw new Error(
-			"Notebook write lock is not reentrant — saveNotebookPage called from within its own critical section.",
-		);
+		throw new Error("Notebook write lock is not reentrant — saveNotebookPage called from within its own critical section.");
 	}
-	let release: () => void;
+	let release: (() => void) | undefined;
 	const prev = lock.tail;
 	const next = new Promise<void>((resolve) => {
 		release = resolve;
 	});
+	if (release === undefined) {
+		throw new Error("The Promise executor did not hand out the write-lock release.");
+	}
 	lock.pending += 1;
 	lock.tail = next;
 	await prev;
@@ -44,7 +38,7 @@ async function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
 		return await s.writeContext.run(true, fn);
 	} finally {
 		lock.pending -= 1;
-		release!();
+		release();
 	}
 }
 
@@ -52,26 +46,22 @@ export function getPageNames(state: SchematicState): string[] {
 	return Array.from(state.notebookPages.keys()).sort();
 }
 
-export const PREVIEW_MAX_CHARS = 80;
+const PREVIEW_MAX_CHARS = 80;
 const ELLIPSIS_LENGTH = 3;
 
 export function formatPagePreview(content: string): string {
 	const firstLine = content.split("\n")[0] ?? "";
-	return firstLine.length > PREVIEW_MAX_CHARS
-		? firstLine.slice(0, PREVIEW_MAX_CHARS - ELLIPSIS_LENGTH) + "..."
-		: firstLine;
+	return firstLine.length > PREVIEW_MAX_CHARS ? firstLine.slice(0, PREVIEW_MAX_CHARS - ELLIPSIS_LENGTH) + "..." : firstLine;
 }
 
 export function formatPageList(state: SchematicState): string {
-	const names = getPageNames(state);
-	if (names.length === 0) return "";
+	// Same code-unit order as the default sort in getPageNames; keys are unique, so no ties.
+	const entries = Array.from(state.notebookPages).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+	if (entries.length === 0) {
+		return "";
+	}
 
-	return names
-		.map((name) => {
-			const content = state.notebookPages.get(name)!;
-			return `  ${name}: ${formatPagePreview(content)}`;
-		})
-		.join("\n");
+	return entries.map(([name, content]) => `  ${name}: ${formatPagePreview(content)}`).join("\n");
 }
 
 /**
@@ -81,7 +71,9 @@ export function formatPageList(state: SchematicState): string {
  */
 export function formatPageTuiPreview(content: string, clipped: boolean): string {
 	const preview = formatPagePreview(content);
-	if (!clipped) return preview;
+	if (!clipped) {
+		return preview;
+	}
 	return preview ? `${preview} [truncated]` : "[truncated]";
 }
 
@@ -95,7 +87,9 @@ export function formatByteCap(bytes: number): string {
 		["MiB", 1024 * 1024],
 		["KiB", 1024],
 	] as const) {
-		if (bytes % size === 0) return `${bytes / size} ${unit} (${bytes} bytes)`;
+		if (bytes % size === 0) {
+			return `${bytes / size} ${unit} (${bytes} bytes)`;
+		}
 	}
 	return `${bytes} bytes`;
 }
@@ -157,8 +151,11 @@ export async function saveNotebookPage(
 		}
 
 		state.notebookPages.set(name, truncated.content);
-		if (clipped) state.clippedPages.add(name);
-		else state.clippedPages.delete(name);
+		if (clipped) {
+			state.clippedPages.add(name);
+		} else {
+			state.clippedPages.delete(name);
+		}
 		pi.appendEntry("notebook-entry", {
 			version: NOTEBOOK_ENTRY_VERSION,
 			epoch: state.epoch,
@@ -185,19 +182,18 @@ export async function saveNotebookPage(
  * keeps the branch on the prior generation; the next-epoch marker comes last.
  * The next epoch lies above `state.discardEpochWatermark` (see rehydration.ts).
  */
-export function buildNotebookDiscardDrafts(
-	state: SchematicState,
-	names: readonly string[],
-): { drafts: CustomEntryDraft[]; discarded: number } {
+export function buildNotebookDiscardDrafts(state: SchematicState, names: readonly string[]): { drafts: CustomEntryDraft[]; discarded: number } {
 	const deleted = new Set(names.filter((name) => state.notebookPages.has(name)));
-	if (deleted.size === 0) return { drafts: [], discarded: 0 };
+	if (deleted.size === 0) {
+		return { drafts: [], discarded: 0 };
+	}
 
 	const nextEpoch = Math.max(state.epoch, state.discardEpochWatermark) + 1;
-	const drafts: CustomEntryDraft[] = [
-		{ type: "custom", customType: "notebook-generation", data: { version: NOTEBOOK_ENTRY_VERSION, epoch: state.epoch } },
-	];
+	const drafts: CustomEntryDraft[] = [{ type: "custom", customType: "notebook-generation", data: { version: NOTEBOOK_ENTRY_VERSION, epoch: state.epoch } }];
 	for (const [name, content] of state.notebookPages) {
-		if (deleted.has(name)) continue;
+		if (deleted.has(name)) {
+			continue;
+		}
 		drafts.push({
 			type: "custom",
 			customType: "notebook-entry",

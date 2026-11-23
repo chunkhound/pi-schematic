@@ -7,10 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Pi 1.2.0 minimum**: the `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` peers now require 1.2.0 or later, up from 0.99.2. The `typebox` peer minimum stays 1.3.27.
+
+### Changed
+
+- **TypeScript dual-compiler toolchain** — `@typescript/native` (TypeScript 7.x compiler) and the `typescript` alias resolving to `@typescript/typescript6` are pinned to exact versions for reproducible installs, and the TypeScript 6 engine typescript-eslint loads is pinned via an npm override on the shim's inner `@typescript/old` alias. The lockfile materializes the alias as `@typescript/typescript6@6.0.2` with its `@typescript/old` engine pinned via the npm override, and the `assertAliasMaterialized` guard in `tests/unit/config-invariants.test.ts` fails on any future silent drift. `package.json` overrides `@typescript/native` with `$@typescript/native`, so every transitive and optional-peer resolution of the native compiler dedupes to the root `7.0.2` pin, and a future `npm install` or Renovate `:maintainLockFilesMonthly` cannot re-introduce a nested nightly `7.1.0-dev` copy. Renovate groups all three names, pins their updates, and caps the `typescript` alias and `@typescript/old` below the `6.1.0` peer ceiling sourced from the installed manifest; `security:minimumReleaseAgeNpm` plus `@typescript/native` in the Renovate TypeScript group keep nightly builds out of the tree.
+
+## [0.7.1] - 2026-11-08
+
+### Changed
+
+- **Published through npm trusted publishing** — this version is published by the tag workflow with npm trusted publishing instead of by hand. The package contents are unchanged from 0.7.0.
+
+## [0.7.0] - 2026-11-06
+
 ### Added
 
 - **Date anchor** — the `schematic_date` prompt section holds a `## Current date` block (ISO date, weekday, IANA zone, UTC offset, plus a resolve-relative-references directive). `before_agent_start` renders it once per user prompt, and it is byte-stable within a calendar day, so while the host zone stays fixed it changes at most once per day; on a DST transition day the offset adds one more change. When it changes, Pi appends a section-update message and the leading system message stays unchanged. A zone Intl cannot render falls back to `UTC` rather than throwing.
 - **Notebook pages open in a pager** — Enter in the interactive `/notebook` picker opens the selected page in `$PI_PAGER`, else `$PAGER`, else `less` if installed (not on Windows); with no pager or a `cat` or `more` pager it shows the inline preview instead. Quitting either returns to the list on the same page. See [Compatibility and limits](README.md#compatibility-and-limits).
+- **npm package** — Published on npm as `@chunkhound/pi-schematic`; install with `pi install npm:@chunkhound/pi-schematic`.
 
 ### Breaking Changes
 
@@ -41,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Spawn preview strips terminal sequences** — the collapsed spawn preview now removes OSC (including OSC 8 links), APC, and erase and cursor-position sequences from child assistant text, not only SGR styling (#83).
 - **Global files follow `PI_CODING_AGENT_DIR`** — the global `model-groups.json` and the global prompt scan resolve inside pi's agent directory, so with `PI_CODING_AGENT_DIR` set both move with it, as pi's own global files do. With the variable unset, both stay at their previous locations.
 - **Type-checks against Pi 1.5** — the `spawn` tool builds its `thinking` parameter schema with typebox instead of pi-ai's `StringEnum`, which returns a non-typebox schema from Pi 1.5 on. The schema sent to the model is unchanged.
+- **Readonly sandbox passes commands through and reports blocks on Linux** — readonly bash commands under `sandbox-exec` or `bwrap` now get the same stdin, exit code and output as unsandboxed commands, except for the differences listed in [Architecture](docs/architecture.md#behavioral-notes); commands that read stdin no longer swallow part of the sandbox wrapper, and output is no longer buffered until exit. The sandboxed command runs under the shell pi started instead of always under `/bin/bash`. The readonly block notice now appears on Linux (`Read-only file system`) and for lowercase errors such as node's `EPERM`/`EROFS`, and no longer appears for `Permission denied` failures the sandbox does not cause. The notice is appended to the failed tool result and says the block applies if the failure was a write outside the OS temp dir.
 
 ## [0.6.0] - 2026-09-26
 
@@ -212,7 +230,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Comprehensive test suite** — 50+ tests covering spawn execution and rendering (concurrency, cancellation, truncation, stale detection, ownership lifecycle, microtask batching), ledger tools (add/get/list, staleness, rehydration, empty states, prompt hints), handoff (tool, command, compaction), watchdog (nudge injection, enforcement), and extension lifecycle.
 - **MIT licensed** — open-source permissive license.
 
-[Unreleased]: https://github.com/chunkhound/pi-schematic/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/chunkhound/pi-schematic/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/chunkhound/pi-schematic/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/chunkhound/pi-schematic/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/chunkhound/pi-schematic/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/chunkhound/pi-schematic/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/chunkhound/pi-schematic/compare/v0.3.0...v0.4.0

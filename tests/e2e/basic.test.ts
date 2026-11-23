@@ -5,19 +5,14 @@
  * means no shared singletons and no console races between test cases.
  */
 
-import { describe, it } from "node:test";
+import { describe, expect, it } from "vitest";
 import { ProcessHarness } from "./pty-harness.js";
 
-/** Create a fresh host, wait for READY, and return the harness. */
-async function start(): Promise<ProcessHarness> {
-	const h = new ProcessHarness();
-	await h.waitForText("READY");
-	return h;
-}
-
+/** Start a fresh host, wait for READY, and run `run` against it; the host is closed in every case. */
 async function withHarness(run: (h: ProcessHarness) => Promise<void>): Promise<void> {
-	const h = await start();
+	const h = new ProcessHarness();
 	try {
+		await expect(h.waitForText("READY")).resolves.toBeUndefined();
 		await run(h);
 	} finally {
 		try {
@@ -30,39 +25,43 @@ async function withHarness(run: (h: ProcessHarness) => Promise<void>): Promise<v
 }
 
 describe("pi-schematic E2E", () => {
-	it("handoff tool rejects when context usage is unavailable", async () => withHarness(async (h) => {
-		h.write('tool handoff {"nextInstruction":"test handoff task"}');
-		await h.waitForText("ERR:Context usage unavailable");
-	}));
+	it("handoff tool rejects when context usage is unavailable", async () =>
+		withHarness(async (h) => {
+			h.write('tool handoff {"nextInstruction":"test handoff task"}');
+			await expect(h.waitForText("ERR:Context usage unavailable")).resolves.toBeUndefined();
+		}));
 
-	it("spawn tool refuses when the host has no model", async () => withHarness(async (h) => {
-		h.write('tool spawn {"prompt":"any task"}');
-		await h.waitForText("ERR:No model configured. Cannot spawn child agent.");
-	}));
+	it("spawn tool refuses when the host has no model", async () =>
+		withHarness(async (h) => {
+			h.write('tool spawn {"prompt":"any task"}');
+			await expect(h.waitForText("ERR:No model configured. Cannot spawn child agent.")).resolves.toBeUndefined();
+		}));
 
-	it("headless mode keeps readonly command a no-op", async () => withHarness(async (h) => {
-		h.write("headless");
-		await h.waitForText("OK");
-		h.write("cmd readonly");
-		await h.waitForText("OK");
-		h.write('toolcall write {"path":"/tmp/x","content":"x"}');
-		await h.waitForText("OK:null");
-	}));
+	it("headless mode keeps readonly command a no-op", async () =>
+		withHarness(async (h) => {
+			h.write("headless");
+			await expect(h.waitForText("OK")).resolves.toBeUndefined();
+			h.write("cmd readonly");
+			await expect(h.waitForText("OK")).resolves.toBeUndefined();
+			h.write('toolcall write {"path":"/tmp/x","content":"x"}');
+			await expect(h.waitForText("OK:null")).resolves.toBeUndefined();
+		}));
 
-	it("handles errors gracefully", async () => withHarness(async (h) => {
-		// Unknown tool
-		h.write("tool nonexistent {}");
-		await h.waitForText("ERR:unknown tool");
+	it("handles errors gracefully", async () =>
+		withHarness(async (h) => {
+			// Unknown tool
+			h.write("tool nonexistent {}");
+			await expect(h.waitForText("ERR:unknown tool")).resolves.toBeUndefined();
 
-		// Invalid JSON
-		h.write("tool notebook_write {bad json}");
-		await h.waitForText("ERR:invalid json");
+			// Invalid JSON
+			h.write("tool notebook_write {bad json}");
+			await expect(h.waitForText("ERR:invalid json")).resolves.toBeUndefined();
 
-		h.write("context {bad json}");
-		await h.waitForText("ERR:invalid json");
+			h.write("context {bad json}");
+			await expect(h.waitForText("ERR:invalid json")).resolves.toBeUndefined();
 
-		// Unknown command
-		h.write("cmd nonexistent");
-		await h.waitForText("ERR:unknown command");
-	}));
+			// Unknown command
+			h.write("cmd nonexistent");
+			await expect(h.waitForText("ERR:unknown command")).resolves.toBeUndefined();
+		}));
 });

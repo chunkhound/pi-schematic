@@ -17,10 +17,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { TestContext } from "node:test";
 import { RpcClient, type RpcClientOptions, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
+import { asPromise } from "../../as-promise.js";
+import { piManifestPath } from "../../pi-packages.mjs";
 import {
+	isJsonObject,
 	parseBarrierReport,
 	parseProbeRecord,
 	PROBE_BARRIER_STATUS_KEY,
@@ -37,22 +39,30 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const SCHEMATIC_ENTRY = resolve(HERE, "..", "..", "index.ts");
 const PROBE_ENTRY = resolve(HERE, "real-host-probe.ts");
 const CHILD_PROBE_ENTRY = resolve(HERE, "real-host-child-probe.ts");
-const CLI_PATH = join(dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"))), "cli.js");
+// The CLI is the file pi's manifest declares as `bin.pi`, the one the `pi` command runs.
+const PI_MANIFEST: unknown = JSON.parse(readFileSync(piManifestPath, "utf8"));
+const PI_BIN = isJsonObject(PI_MANIFEST) && isJsonObject(PI_MANIFEST.bin) ? PI_MANIFEST.bin.pi : undefined;
+if (typeof PI_BIN !== "string") {
+	throw new Error(`No string bin.pi in pi's manifest at ${piManifestPath}.`);
+}
+const CLI_PATH = resolve(dirname(piManifestPath), PI_BIN);
 const REQUIRED_COMMANDS = ["handoff", "notebook", "readonly", PROBE_COMMAND.barrier];
 
 /** Barrier waits one host may make, its `close()` included; a test that needs more fails. */
 const REAL_HOST_MAX_BARRIERS_PER_TEST = 4;
 /** How much longer than the probe's own deadline the harness waits for a barrier report. */
 const BARRIER_REPORT_MARGIN_MS = 5_000;
-/** Largest `timeout` node:test accepts; a larger one throws ERR_OUT_OF_RANGE when the test registers. */
-const NODE_TEST_MAX_TIMEOUT_MS = 2_147_483_647;
+/** Largest `timeout` Vitest can apply: it hands the value to `setTimeout`, and Node turns a delay above this into 1 ms. */
+const MAX_TEST_TIMEOUT_MS = 2_147_483_647;
 
 /**
- * `node:test` timeout for a real-host test whose barriers each wait `waitMs`: every barrier
- * a test may make running to its harness deadline, plus a minute for start, commands and
- * close, so a slow test fails with the harness's message, not node:test's. A step that
- * barriers again spends that same deadline and can stretch its phase by one report backstop,
- * which that minute absorbs.
+ * Vitest timeout for a real-host test whose barriers each wait `waitMs`: every barrier
+ * a host may make running to its harness deadline, plus a minute for start and commands,
+ * so a slow test fails with the harness's message, not Vitest's. The timeout covers the test
+ * body: start, commands and the barriers of its steps. The close runs afterwards in the finish
+ * callback, bounded by its own waits; its barrier still claims one of the
+ * REAL_HOST_MAX_BARRIERS_PER_TEST phases. A step that barriers again spends that same deadline
+ * and can stretch its phase by one report backstop, which that minute absorbs.
  */
 function testTimeoutFor(waitMs: number): number {
 	return REAL_HOST_MAX_BARRIERS_PER_TEST * (waitMs + BARRIER_REPORT_MARGIN_MS) + 60_000;
@@ -60,23 +70,25 @@ function testTimeoutFor(waitMs: number): number {
 
 function readTimeout(): number {
 	const raw = process.env.E2E_REAL_HOST_TIMEOUT_MS;
-	if (raw === undefined) return 20_000;
+	if (raw === undefined) {
+		return 20_000;
+	}
 	const value = Number(raw);
 	if (!Number.isInteger(value) || value <= 0) {
 		throw new Error(`E2E_REAL_HOST_TIMEOUT_MS must be a positive integer, got: ${raw}`);
 	}
-	if (testTimeoutFor(value) > NODE_TEST_MAX_TIMEOUT_MS) {
-		const max = Math.floor((NODE_TEST_MAX_TIMEOUT_MS - 60_000) / REAL_HOST_MAX_BARRIERS_PER_TEST) - BARRIER_REPORT_MARGIN_MS;
+	if (testTimeoutFor(value) > MAX_TEST_TIMEOUT_MS) {
+		const max = Math.floor((MAX_TEST_TIMEOUT_MS - 60_000) / REAL_HOST_MAX_BARRIERS_PER_TEST) - BARRIER_REPORT_MARGIN_MS;
 		throw new Error(
 			`E2E_REAL_HOST_TIMEOUT_MS=${raw} makes the per-test timeout ${testTimeoutFor(value)} ms, ` +
-			`above node:test's limit of ${NODE_TEST_MAX_TIMEOUT_MS} ms; use at most ${max}`,
+				`above Vitest's limit of ${MAX_TEST_TIMEOUT_MS} ms; use at most ${max}`,
 		);
 	}
 	return value;
 }
 
 /** How long one barrier waits for outstanding work before it fails. */
-export const REAL_HOST_TIMEOUT_MS = readTimeout();
+const REAL_HOST_TIMEOUT_MS = readTimeout();
 
 export const REAL_HOST_TEST_TIMEOUT_MS = testTimeoutFor(REAL_HOST_TIMEOUT_MS);
 
@@ -87,21 +99,29 @@ export const REAL_HOST_TEST_TIMEOUT_MS = testTimeoutFor(REAL_HOST_TIMEOUT_MS);
  * A round takes what is left of that deadline as its probe deadline, so the rounds together spend
  * one barrier's probe budget, and the harness waits the backstop on top of the last one. A step's
  * phase can therefore outlast its deadline by that backstop, which stays inside the minute
- * `testTimeoutFor` leaves for start, commands and close.
+ * `testTimeoutFor` leaves for start and commands.
  */
 const STEP_BUDGET_MS = REAL_HOST_TIMEOUT_MS + BARRIER_REPORT_MARGIN_MS;
 
-export function stripAnsi(text: string): string {
-	return stripTerminalSequences(text);
+export interface RpcEvent {
+	type: string;
+	[key: string]: unknown;
+}
+export interface Notification {
+	message: string;
+	notifyType: string | undefined;
+}
+export interface Status {
+	statusKey: string;
+	statusText: string | undefined;
+}
+export interface ToolResult {
+	isError: boolean;
+	text: string;
 }
 
-export type RpcEvent = { type: string; [key: string]: unknown };
-export type Notification = { message: string; notifyType: string | undefined };
-export type Status = { statusKey: string; statusText: string | undefined };
-export type ToolResult = { isError: boolean; text: string };
-
 /** pi settings a test sets; each section is merged over the harness default for it. */
-export interface RealHostSettings {
+interface RealHostSettings {
 	compaction?: Record<string, unknown>;
 	retry?: Record<string, unknown>;
 }
@@ -112,14 +132,18 @@ export interface RealHostOptions {
 
 function pathEnv(): Record<string, string> {
 	const key = Object.keys(process.env).find((name) => name.toUpperCase() === "PATH");
-	if (!key) throw new Error("No PATH variable in the test environment");
+	if (key === undefined) {
+		throw new Error("No PATH variable in the test environment");
+	}
 	const current = process.env[key];
-	return { [key]: current ? `${dirname(process.execPath)}${delimiter}${current}` : dirname(process.execPath) };
+	return { [key]: current !== undefined && current !== "" ? `${dirname(process.execPath)}${delimiter}${current}` : dirname(process.execPath) };
 }
 
 function requireString(event: RpcEvent, field: string): string {
 	const value = event[field];
-	if (typeof value !== "string") throw new Error(`${event.type} field ${field} is not a string: ${JSON.stringify(event)}`);
+	if (typeof value !== "string") {
+		throw new Error(`${event.type} field ${field} is not a string: ${JSON.stringify(event)}`);
+	}
 	return value;
 }
 
@@ -150,17 +174,14 @@ function describeError(error: unknown): string {
  * Run `body`; when it throws, run `cleanup` and rethrow the body's error. A cleanup
  * error never hides it: both are thrown together as an AggregateError.
  */
-async function cleanupOnFailure<T>(body: () => Promise<T>, cleanup: () => unknown): Promise<T> {
+export async function cleanupOnFailure<T>(body: () => T | Promise<T>, cleanup: () => unknown): Promise<T> {
 	try {
 		return await body();
 	} catch (failure) {
 		try {
 			await cleanup();
 		} catch (cleanupError) {
-			throw new AggregateError(
-				[failure, cleanupError],
-				`${describeError(failure)}; cleanup also failed: ${describeError(cleanupError)}`,
-			);
+			throw new AggregateError([failure, cleanupError], `${describeError(failure)}; cleanup also failed: ${describeError(cleanupError)}`);
 		}
 		throw failure;
 	}
@@ -179,16 +200,21 @@ export function projectStatuses(events: RpcEvent[]): Status[] {
 		.filter((event) => event.type === "extension_ui_request" && event.method === "setStatus")
 		.map((event) => ({
 			statusKey: requireString(event, "statusKey"),
-			statusText: event.statusText === undefined ? undefined : stripAnsi(requireString(event, "statusText")),
+			statusText: event.statusText === undefined ? undefined : stripTerminalSequences(requireString(event, "statusText")),
 		}));
 }
 
 /** Text of a message's content: string content as is, text blocks joined by newlines. */
 export function messageText(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) throw new Error(`Unexpected message content: ${JSON.stringify(content)}`);
-	return content
-		.filter((block): block is { type: "text"; text: string } => block?.type === "text" && typeof block.text === "string")
+	if (typeof content === "string") {
+		return content;
+	}
+	if (!Array.isArray(content)) {
+		throw new Error(`Unexpected message content: ${JSON.stringify(content)}`);
+	}
+	const blocks: unknown[] = content;
+	return blocks
+		.filter((block): block is { type: "text"; text: string } => isJsonObject(block) && block.type === "text" && typeof block.text === "string")
 		.map((block) => block.text)
 		.join("\n");
 }
@@ -196,85 +222,101 @@ export function messageText(content: unknown): string {
 /** Tool results named `name` in an `entries()` snapshot, in session order. */
 export function toolResults(entries: SessionEntry[], name: string): ToolResult[] {
 	return entries.flatMap((entry) => {
-		if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== name) return [];
+		if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== name) {
+			return [];
+		}
 		return [{ isError: entry.message.isError, text: messageText(entry.message.content) }];
 	});
 }
 
 export class RealHost {
-	client: RpcClient;
-	events: RpcEvent[];
+	readonly client: RpcClient;
+	readonly events: RpcEvent[];
 	readonly projectDir: string;
 	private readonly root: string;
 	private readonly logPath: string;
-	private options: RpcClientOptions;
 	private closing: Promise<void> | null = null;
 	/** Barrier phases begun — one per step, one for `close()`; the rounds of a step share its phase. */
 	private barrierPhases = 0;
 	/** `/e2e-barrier` commands sent; every round reports under its own id. */
 	private barrierRounds = 0;
-	/** Runs counted inside step windows, and runs of clients replaced by restart(). */
+	/** Runs counted inside step windows. */
 	private stepRuns = 0;
-	private runsBeforeRestart = 0;
 
-	private constructor(root: string, logPath: string, options: RpcClientOptions, client: RpcClient, events: RpcEvent[]) {
+	private constructor(root: string, logPath: string, client: RpcClient, events: RpcEvent[]) {
 		this.root = root;
 		this.logPath = logPath;
 		this.projectDir = join(root, "project");
-		this.options = options;
 		this.client = client;
 		this.events = events;
 	}
 
 	static async start(options: RealHostOptions = {}): Promise<RealHost> {
-		if (!existsSync(CLI_PATH)) throw new Error(`pi CLI not found at ${CLI_PATH}`);
+		if (!existsSync(CLI_PATH)) {
+			throw new Error(`pi CLI not found at ${CLI_PATH}`);
+		}
 		const root = mkdtempSync(join(os.tmpdir(), "pi-schematic-e2e-"));
-		return cleanupOnFailure(async () => {
-			const agentDir = join(root, "agent");
-			const homeDir = join(root, "home");
-			const projectDir = join(root, "project");
-			const sessionsDir = join(root, "sessions");
-			const logPath = join(root, "probe.jsonl");
-			for (const dir of [agentDir, homeDir, projectDir, sessionsDir]) mkdirSync(dir);
-			writeFileSync(logPath, "");
-			// Spawned child sessions discover extensions in the agent directory; the parent
-			// runs with --no-extensions and loads only the -e entries below.
-			mkdirSync(join(agentDir, "extensions"));
-			writeFileSync(
-				join(agentDir, "extensions", "child-probe.ts"),
-				`export { default } from ${JSON.stringify(pathToFileURL(CHILD_PROBE_ENTRY).href)};\n`,
-			);
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({
-				compaction: { enabled: false, keepRecentTokens: 1, ...options.settings?.compaction },
-				retry: { enabled: false, ...options.settings?.retry },
-			}));
-			const args = [
-				"--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
-				"--no-context-files", "--no-approve", "--offline",
-				"--session-dir", sessionsDir,
-				"-e", SCHEMATIC_ENTRY,
-				"-e", PROBE_ENTRY,
-			];
-			const clientOptions: RpcClientOptions = {
-				cliPath: CLI_PATH,
-				cwd: projectDir,
-				provider: PROBE_PROVIDER,
-				model: PROBE_MODEL_ID,
-				env: {
-					PI_CODING_AGENT_DIR: agentDir,
-					PI_OFFLINE: "1",
-					HOME: homeDir,
-					USERPROFILE: homeDir,
-					[PROBE_LOG_ENV_VAR]: logPath,
-					FORCE_COLOR: "0",
-					NODE_OPTIONS: "",
-					...pathEnv(),
-				},
-				args,
-			};
-			const { client, events } = await startClient(clientOptions);
-			return new RealHost(root, logPath, clientOptions, client, events);
-		}, () => removeRoot(root));
+		return cleanupOnFailure(
+			async () => {
+				const agentDir = join(root, "agent");
+				const homeDir = join(root, "home");
+				const projectDir = join(root, "project");
+				const sessionsDir = join(root, "sessions");
+				const logPath = join(root, "probe.jsonl");
+				for (const dir of [agentDir, homeDir, projectDir, sessionsDir]) {
+					mkdirSync(dir);
+				}
+				writeFileSync(logPath, "");
+				// Spawned child sessions discover extensions in the agent directory; the parent
+				// runs with --no-extensions and loads only the -e entries below.
+				mkdirSync(join(agentDir, "extensions"));
+				writeFileSync(join(agentDir, "extensions", "child-probe.ts"), `export { default } from ${JSON.stringify(pathToFileURL(CHILD_PROBE_ENTRY).href)};\n`);
+				writeFileSync(
+					join(agentDir, "settings.json"),
+					JSON.stringify({
+						compaction: { enabled: false, keepRecentTokens: 1, ...options.settings?.compaction },
+						retry: { enabled: false, ...options.settings?.retry },
+					}),
+				);
+				const args = [
+					"--no-extensions",
+					"--no-skills",
+					"--no-prompt-templates",
+					"--no-themes",
+					"--no-context-files",
+					"--no-approve",
+					"--offline",
+					"--session-dir",
+					sessionsDir,
+					"-e",
+					SCHEMATIC_ENTRY,
+					"-e",
+					PROBE_ENTRY,
+				];
+				const clientOptions: RpcClientOptions = {
+					cliPath: CLI_PATH,
+					cwd: projectDir,
+					provider: PROBE_PROVIDER,
+					model: PROBE_MODEL_ID,
+					env: {
+						PI_CODING_AGENT_DIR: agentDir,
+						PI_OFFLINE: "1",
+						HOME: homeDir,
+						USERPROFILE: homeDir,
+						[PROBE_LOG_ENV_VAR]: logPath,
+						FORCE_COLOR: "0",
+						NODE_OPTIONS: "",
+						...pathEnv(),
+					},
+					args,
+				};
+				const { client, events } = await startClient(clientOptions);
+				return new RealHost(root, logPath, client, events);
+			},
+			() => {
+				removeRoot(root);
+			},
+		);
 	}
 
 	get notifications(): Notification[] {
@@ -292,10 +334,14 @@ export class RealHost {
 
 	/** Run an extension command; it must report "handled" without an extension_error, from the command or from any handler it triggers. */
 	async command(text: string): Promise<void> {
-		if (!text.startsWith("/")) throw new Error(`command() needs a slash command, got: ${text}`);
+		if (!text.startsWith("/")) {
+			throw new Error(`command() needs a slash command, got: ${text}`);
+		}
 		const mark = this.events.length;
 		const disposition = await this.client.prompt(text);
-		if (disposition !== "handled") throw new Error(`${text} reported "${disposition}", expected "handled"`);
+		if (disposition !== "handled") {
+			throw new Error(`${text} reported "${disposition}", expected "handled"`);
+		}
 		const spaceIndex = text.indexOf(" ");
 		const name = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
 		this.assertNoExtensionErrors(mark, text, `command:${name}`);
@@ -305,7 +351,9 @@ export class RealHost {
 	async say(text: string, runs: number): Promise<void> {
 		const mark = this.events.length;
 		const disposition = await this.client.prompt(text);
-		if (disposition !== "started") throw new Error(`"${text}" reported "${disposition}", expected "started"`);
+		if (disposition !== "started") {
+			throw new Error(`"${text}" reported "${disposition}", expected "started"`);
+		}
 		await this.step(mark, `"${text}"`, runs);
 	}
 
@@ -343,7 +391,7 @@ export class RealHost {
 	}
 
 	/** Handoff cuts the probe saw in turn_end boundaries, in order, with whether it dropped each one. */
-	cuts(): Array<Extract<ProbeRecord, { kind: "cut" }>> {
+	cuts(): Extract<ProbeRecord, { kind: "cut" }>[] {
 		return this.probeLog().filter((record): record is Extract<ProbeRecord, { kind: "cut" }> => record.kind === "cut");
 	}
 
@@ -354,40 +402,20 @@ export class RealHost {
 		await this.step(mark, `navigate to ${entryId}`, runs);
 	}
 
-	/** Stop the CLI and start a new one on the same session file, temp root and probe log. */
-	async restart(): Promise<void> {
-		const { sessionFile } = await this.client.getState();
-		if (!sessionFile || !existsSync(sessionFile)) {
-			throw new Error(`restart() needs a session file on disk (${sessionFile}); pi writes it only after a user or assistant message`);
-		}
-		await this.client.stop();
-		const args = [...(this.options.args ?? [])];
-		const sessionIndex = args.indexOf("--session");
-		if (sessionIndex !== -1) args.splice(sessionIndex, 2);
-		args.push("--session", sessionFile);
-		this.options = { ...this.options, args };
-		// A timed-out test body keeps running after its after-hook closed the host; whatever the
-		// new CLI wrote into the removed root, and the CLI itself when it started, is cleared here.
-		const { client, events } = await cleanupOnFailure(() => startClient(this.options), () => {
-			if (this.closing) removeRoot(this.root);
-		});
-		if (this.closing) {
-			await withCleanup(() => client.stop(), () => removeRoot(this.root));
-			throw new Error("restart() finished after close(); the new CLI was stopped");
-		}
-		this.runsBeforeRestart += countRuns(this.events);
-		this.client = client;
-		this.events = events;
-	}
-
 	/**
 	 * Wait for outstanding work and fail on any run no step expected, then stop the CLI and
 	 * remove the temp root. Runs once: every call returns the first call's outcome.
 	 */
 	close(): Promise<void> {
 		this.closing ??= withCleanup(
-			() => withCleanup(() => this.assertNoUnexpectedRuns(), () => this.client.stop()),
-			() => removeRoot(this.root),
+			() =>
+				withCleanup(
+					() => this.assertNoUnexpectedRuns(),
+					() => this.client.stop(),
+				),
+			() => {
+				removeRoot(this.root);
+			},
 		);
 		return this.closing;
 	}
@@ -395,8 +423,10 @@ export class RealHost {
 	private async assertNoUnexpectedRuns(): Promise<void> {
 		this.startBarrierPhase();
 		await this.barrier(REAL_HOST_TIMEOUT_MS);
-		const unexpected = this.runsBeforeRestart + countRuns(this.events) - this.stepRuns;
-		if (unexpected !== 0) throw new Error(`${unexpected} run(s) started outside every step; no step expected them`);
+		const unexpected = countRuns(this.events) - this.stepRuns;
+		if (unexpected !== 0) {
+			throw new Error(`${unexpected} run(s) started outside every step; no step expected them`);
+		}
 	}
 
 	/**
@@ -406,12 +436,16 @@ export class RealHost {
 	private assertNoExtensionErrors(mark: number, action: string, commandPath?: string): void {
 		const failures = this.events.slice(mark).filter((event) => event.type === "extension_error");
 		const own = commandPath === undefined ? undefined : failures.find((event) => event.extensionPath === commandPath);
-		if (own) throw new Error(`${action} failed: ${requireString(own, "error")}`);
-		const failure = failures[0];
-		if (!failure) return;
+		if (own) {
+			throw new Error(`${action} failed: ${requireString(own, "error")}`);
+		}
+		const failure = failures.at(0);
+		if (!failure) {
+			return;
+		}
 		throw new Error(
 			`${action} raised an extension error in ${requireString(failure, "extensionPath")} ` +
-			`(event ${requireString(failure, "event")}): ${requireString(failure, "error")}`,
+				`(event ${requireString(failure, "event")}): ${requireString(failure, "error")}`,
 		);
 	}
 
@@ -429,37 +463,45 @@ export class RealHost {
 	 */
 	private async step(mark: number, action: string, runs: number): Promise<void> {
 		this.startBarrierPhase();
-		const deadline = Date.now() + STEP_BUDGET_MS;
+		const deadline = performance.now() + STEP_BUDGET_MS;
 		let rounds = 0;
 		let started = 0;
 		for (;;) {
-			const remaining = deadline - Date.now();
-			if (remaining <= 0) break;
+			// Whole milliseconds: the probe takes the barrier deadline as a positive integer.
+			const remaining = Math.floor(deadline - performance.now());
+			if (remaining <= 0) {
+				break;
+			}
 			rounds++;
 			await this.barrier(remaining);
 			this.assertNoExtensionErrors(mark, action);
 			started = countRuns(this.events.slice(mark));
-			if (started >= runs) break;
+			if (started >= runs) {
+				break;
+			}
 			// Wait for the event the missing run shows up as; the checks at the top of the
 			// loop then decide whether the step has another round left.
 			await this.waitForEvent(this.events.length, deadline);
 		}
 		this.stepRuns += started;
-		if (started === runs) return;
-		if (started > runs) throw new Error(`${action} started ${started} run(s), expected ${runs}`);
+		if (started === runs) {
+			return;
+		}
+		if (started > runs) {
+			throw new Error(`${action} started ${started} run(s), expected ${runs}`);
+		}
 		throw new Error(
-			`${action} started ${started} run(s), expected ${runs}; ` +
-			`the ${STEP_BUDGET_MS} ms step budget expired after ${rounds} barrier round(s)`,
+			`${action} started ${started} run(s), expected ${runs}; ` + `the ${STEP_BUDGET_MS} ms step budget expired after ${rounds} barrier round(s)`,
 		);
 	}
 
-	/** Claim a barrier phase; `testTimeoutFor` covers REAL_HOST_MAX_BARRIERS_PER_TEST of them. */
+	/** Claim a barrier phase; the test timeout from `testTimeoutFor` bounds the body's phases, while the close's phase runs in the finish callback outside it and still counts toward REAL_HOST_MAX_BARRIERS_PER_TEST, so a body that used every phase fails the close with this error before its unexpected-run check runs. */
 	private startBarrierPhase(): void {
 		const phase = ++this.barrierPhases;
 		if (phase > REAL_HOST_MAX_BARRIERS_PER_TEST) {
 			throw new Error(
 				`Barrier phase ${phase} exceeds REAL_HOST_MAX_BARRIERS_PER_TEST (${REAL_HOST_MAX_BARRIERS_PER_TEST}), ` +
-				"which sizes REAL_HOST_TEST_TIMEOUT_MS; raise it for this test",
+					"which sizes REAL_HOST_TEST_TIMEOUT_MS; raise it for this test",
 			);
 		}
 	}
@@ -471,15 +513,21 @@ export class RealHost {
 	 * found nothing outstanding never spins.
 	 */
 	private async waitForEvent(seen: number, deadline: number): Promise<void> {
-		if (this.events.length > seen) return;
-		const { client, events } = this;
+		if (this.events.length > seen) {
+			return;
+		}
 		await new Promise<void>((resolve) => {
-			const timer = setTimeout(() => {
-				unsubscribe();
-				resolve();
-			}, Math.max(deadline - Date.now(), 0));
-			const unsubscribe = client.onEvent(() => {
-				if (events.length <= seen) return;
+			const timer = setTimeout(
+				() => {
+					unsubscribe();
+					resolve();
+				},
+				Math.max(deadline - performance.now(), 0),
+			);
+			const unsubscribe = this.client.onEvent(() => {
+				if (this.events.length <= seen) {
+					return;
+				}
 				clearTimeout(timer);
 				unsubscribe();
 				resolve();
@@ -490,41 +538,49 @@ export class RealHost {
 	/** Run `/e2e-barrier <id> <probeDeadlineMs>` and wait for its report; throws with the probe's outstanding items when it failed. */
 	private async barrier(probeDeadlineMs: number): Promise<void> {
 		const id = ++this.barrierRounds;
-		const client = this.client;
-		const events = this.events;
-		const mark = events.length;
+		const mark = this.events.length;
 		const findReport = (): BarrierReport | undefined => {
-			for (const event of events.slice(mark)) {
-				if (event.type !== "extension_ui_request" || event.method !== "setStatus" || event.statusKey !== PROBE_BARRIER_STATUS_KEY) continue;
+			for (const event of this.events.slice(mark)) {
+				if (event.type !== "extension_ui_request" || event.method !== "setStatus" || event.statusKey !== PROBE_BARRIER_STATUS_KEY) {
+					continue;
+				}
 				const report = parseBarrierReport(requireString(event, "statusText"));
-				if (report.id === id) return report;
+				if (report.id === id) {
+					return report;
+				}
 			}
 			return undefined;
 		};
 		await this.command(`/${PROBE_COMMAND.barrier} ${id} ${probeDeadlineMs}`);
 		const waitMs = probeDeadlineMs + BARRIER_REPORT_MARGIN_MS;
-		const report = findReport() ?? await new Promise<BarrierReport>((resolveWait, rejectWait) => {
-			const timer = setTimeout(() => {
-				unsubscribe();
-				rejectWait(new Error(`Timed out after ${waitMs} ms waiting for barrier ${id} to report. Stderr: ${client.getStderr()}`));
-			}, waitMs);
-			const unsubscribe = client.onEvent(() => {
-				let found: BarrierReport | undefined;
-				try {
-					found = findReport();
-				} catch (error) {
+		const report =
+			findReport() ??
+			(await new Promise<BarrierReport>((resolveWait, rejectWait) => {
+				const timer = setTimeout(() => {
+					unsubscribe();
+					rejectWait(new Error(`Timed out after ${waitMs} ms waiting for barrier ${id} to report. Stderr: ${this.client.getStderr()}`));
+				}, waitMs);
+				const unsubscribe = this.client.onEvent(() => {
+					let found: BarrierReport | undefined;
+					try {
+						found = findReport();
+					} catch (error) {
+						clearTimeout(timer);
+						unsubscribe();
+						rejectWait(error);
+						return;
+					}
+					if (!found) {
+						return;
+					}
 					clearTimeout(timer);
 					unsubscribe();
-					rejectWait(error);
-					return;
-				}
-				if (!found) return;
-				clearTimeout(timer);
-				unsubscribe();
-				resolveWait(found);
-			});
-		});
-		if (report.failure !== null) throw new Error(`Barrier ${id} failed: ${report.failure}`);
+					resolveWait(found);
+				});
+			}));
+		if (report.failure !== null) {
+			throw new Error(`Barrier ${id} failed: ${report.failure}`);
+		}
 	}
 }
 
@@ -532,17 +588,20 @@ async function startClient(options: RpcClientOptions): Promise<{ client: RpcClie
 	const client = new RpcClient(options);
 	const events: RpcEvent[] = [];
 	client.onEvent((event) => {
-		events.push(event as unknown as RpcEvent);
+		events.push(event);
 	});
-	await cleanupOnFailure(async () => {
-		await client.start();
-		const commands = await client.getCommands();
-		const names = new Set(commands.filter((command) => command.source === "extension").map((command) => command.name));
-		const missing = REQUIRED_COMMANDS.filter((name) => !names.has(name));
-		if (missing.length > 0) {
-			throw new Error(`pi started without extension commands ${missing.join(", ")}. Stderr: ${client.getStderr()}`);
-		}
-	}, () => client.stop());
+	await cleanupOnFailure(
+		async () => {
+			await client.start();
+			const commands = await client.getCommands();
+			const names = new Set(commands.filter((command) => command.source === "extension").map((command) => command.name));
+			const missing = REQUIRED_COMMANDS.filter((name) => !names.has(name));
+			if (missing.length > 0) {
+				throw new Error(`pi started without extension commands ${missing.join(", ")}. Stderr: ${client.getStderr()}`);
+			}
+		},
+		() => client.stop(),
+	);
 	return { client, events };
 }
 
@@ -550,22 +609,49 @@ function removeRoot(root: string): void {
 	rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
 
-export function startRealHost(options?: RealHostOptions): Promise<RealHost> {
-	return RealHost.start(options);
+/** The members of a Vitest test context `withRealHost` uses. */
+export interface HostTestContext {
+	signal: AbortSignal;
+	onTestFinished(fn: () => Promise<void>, timeout?: number): void;
 }
 
 /**
- * Start a host and run `run` against it, then close it. The close also hangs off an after-hook
- * on `t`: node:test does not cancel a timed-out test body, so only a hook still runs then.
- * `close()` runs once however many of these paths reach it. The inline close keeps a cleanup
- * error visible next to a body failure; node:test ignores an after-hook error once the test
- * has failed (timeout included), so the hook also records it as a diagnostic.
+ * Start a host and run `run` against it. The host closes once, from `t`'s finish callback,
+ * whether the test passed, failed or timed out, a timeout during start included; a close error
+ * is reported among the test's errors once. A body whose test timed out during start is not run.
+ * The callback waits for the body to settle before it closes the host, so a timed-out body
+ * finishes its step against a live host, bounded by its own deadlines, and does not run into the
+ * next test.
  */
-export async function withRealHost(t: TestContext, run: (host: RealHost) => Promise<void>, options?: RealHostOptions): Promise<void> {
-	const host = await startRealHost(options);
-	t.after(() => host.close().catch((error: unknown) => {
-		t.diagnostic(`cleanup failed: ${describeError(error)}`);
-		throw error;
-	}));
-	await withCleanup(() => run(host), () => host.close());
+export async function withRealHost(t: HostTestContext, run: (host: RealHost) => void | Promise<void>, options?: RealHostOptions): Promise<void> {
+	const starting = RealHost.start(options);
+	let body: Promise<void> | undefined;
+	// The explicit 0 keeps the close independent of the project's hookTimeout. Under a nonzero
+	// hookTimeout (a global --hookTimeout, or another project) Vitest would fail the test with a hook
+	// timeout while the close is still running and stop waiting, so the close would run on into the
+	// next test.
+	t.onTestFinished(async () => {
+		let host: RealHost;
+		try {
+			host = await starting;
+		} catch (error) {
+			// A test that timed out cannot report the start error through the body any more.
+			if (t.signal.aborted) {
+				throw error;
+			}
+			return; // the start error already reached the test through the body
+		}
+		// No timeout on this wait, on purpose: every wait the harness gives a body has a deadline,
+		// so a timed-out body settles on its own. Closing earlier would run the close's barrier while
+		// the body is still in a step and report that step's runs as unexpected. A body that awaits
+		// something without a deadline must bound that wait itself.
+		await body?.catch(() => {
+			/* The test already failed: through `await body`, or by its timeout while that await was pending. */
+		});
+		await host.close();
+	}, 0);
+	const host = await starting;
+	t.signal.throwIfAborted();
+	body = asPromise(() => run(host));
+	await body;
 }

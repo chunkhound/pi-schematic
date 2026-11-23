@@ -1,0 +1,287 @@
+# Cross-platform CI for pi-schematic
+#
+# Runs the full unit suite on Linux, macOS, and Windows, each on the minimum
+# Node.js version required by pi coding agent and on the current Node.js LTS. Snapshot tests verify TUI render output against golden files.
+
+name: CI
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**/docs/**"]
+  pull_request:
+    branches: [main]
+    paths-ignore: ["**/docs/**"]
+  workflow_dispatch:
+
+jobs:
+  # Lint runs once: the n/ rules take the Node.js range from .node-version, not from the runtime.
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.13.1"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format
+        run: npm run format:check
+
+      # A knip finding warns without failing the lint job; the pre-commit hook runs knip locally
+      # on every commit.
+      - name: Knip
+        continue-on-error: true
+        run: npm run knip
+
+  # ── Cross-platform test matrix ──────────────────────────────────────
+  # Every platform runs two tracks: the floor (Pi's minimum Node.js version) and the
+  # current Node.js LTS, both as exact versions. Platform-specific code paths
+  # (Windows shell spawning, path handling) can depend on the Node version too.
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false # report every combination, don't cancel
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        track: [floor, newest]
+        include:
+          - track: floor
+            node-version: "22.19.0"
+          - track: newest
+            node-version: "26.13.1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+
+      - run: npm ci
+
+      # Uniform pre-flight checks: type errors and security issues on every platform.
+      # audit-ci fails on moderate-or-higher advisories; reviewed exceptions, if ever
+      # needed, must be explicit and expiry-tracked in audit-ci.jsonc.
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Security audit
+        run: npx audit-ci --config audit-ci.jsonc
+
+      # Unit suite (unit tests + snapshot tests + property-based tests). The ubuntu newest lane
+      # also collects V8 coverage and uploads the report.
+      - name: Unit tests
+        if: ${{ !(matrix.os == 'ubuntu-latest' && matrix.track == 'newest') }}
+        run: npm test
+
+      - name: Unit tests with coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.track == 'newest'
+        run: npm run test:coverage
+
+      # The coverage comment compares the totals with the PR's base commit, measured by the same unit run.
+      - name: Check out the base commit
+        if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest' && matrix.track == 'newest'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base-src
+          persist-credentials: false
+
+      # Writes coverage/base-coverage-summary.json, or coverage/base-coverage-status.txt with the
+      # reason the base commit has no coverage. The base's reports go to a separate directory because
+      # Vitest clears its reports directory before a run.
+      - name: Unit test coverage of the base commit
+        if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest' && matrix.track == 'newest'
+        working-directory: base-src
+        shell: bash
+        env:
+          BASE_REPORTS_DIR: ${{ runner.temp }}/base-coverage
+        run: |
+          has_provider=$(node -p 'JSON.parse(require("node:fs").readFileSync("package.json", "utf8")).devDependencies?.["@vitest/coverage-v8"] !== undefined')
+          if [ "$has_provider" = false ]; then
+            echo 'the base commit has no `@vitest/coverage-v8` devDependency' > "$GITHUB_WORKSPACE/coverage/base-coverage-status.txt"
+            exit 0
+          fi
+          npm ci
+          status=0
+          npx vitest run --project unit --coverage --coverage.reporter=json-summary "--coverage.reportsDirectory=$BASE_REPORTS_DIR" || status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "the base commit's unit run failed" > "$GITHUB_WORKSPACE/coverage/base-coverage-status.txt"
+            exit 0
+          fi
+          cp "$BASE_REPORTS_DIR/coverage-summary.json" "$GITHUB_WORKSPACE/coverage/base-coverage-summary.json"
+
+      - name: Upload coverage report
+        if: always() && matrix.os == 'ubuntu-latest' && matrix.track == 'newest'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-${{ matrix.os }}-${{ matrix.track }}-attempt-${{ github.run_attempt }}
+          path: coverage/
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 30
+
+      # E2E tests — two suites: the real-host suite runs the pi CLI in RPC mode, and the
+      # line-host harness runs a child process over stdin/stdout (no PTY).
+      # Issue #12 concerns the line-host harness's cross-platform run only, not the real-host suite:
+      # https://github.com/chunkhound/pi-schematic/issues/12
+      - name: E2E tests
+        run: npm run test:e2e
+
+      # The packed extension is exercised from a foreign cwd with the latest host.
+      - name: Packed latest Pi host contract
+        if: (matrix.os == 'ubuntu-latest' && matrix.track == 'floor') || matrix.os == 'windows-latest'
+        working-directory: ${{ runner.temp }}
+        env:
+          COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/packed-host-diagnostics-${{ matrix.os }}-${{ matrix.track }}
+        run: node "${{ github.workspace }}/scripts/test-package-host.mjs"
+
+      - name: Upload packed host diagnostics
+        if: always() && ((matrix.os == 'ubuntu-latest' && matrix.track == 'floor') || matrix.os == 'windows-latest')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packed-host-diagnostics-${{ matrix.os }}-${{ matrix.track }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/packed-host-diagnostics-${{ matrix.os }}-${{ matrix.track }}
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 30
+
+      # Runs even when the packed-host contract step fails on Windows, so compat
+      # diagnostics are captured for both the packed and current-Pi paths. !cancelled()
+      # (not always()) avoids running on explicit workflow cancellation.
+      - name: Synchronized current Pi compatibility on Windows
+        if: matrix.os == 'windows-latest' && !cancelled() && matrix.track == 'newest'
+        working-directory: ${{ runner.temp }}
+        env:
+          COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/current-pi-diagnostics-windows-newest
+        run: node "${{ github.workspace }}/scripts/test-compat-current.mjs"
+
+      - name: Upload current Pi diagnostics on Windows
+        if: always() && matrix.os == 'windows-latest' && matrix.track == 'newest'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: current-pi-diagnostics-windows-newest-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/current-pi-diagnostics-windows-newest
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 30
+
+      # Upload test results for debugging — artifacts available for 30 days.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results-${{ matrix.os }}-${{ matrix.track }}
+          path: |
+            tests/snapshots/
+          retention-days: 30
+
+  # A separate job because it is the only one with PR write access, and it runs no installs or tests.
+  # Fork PRs get a read-only token, so they skip; pushes and dispatches have no PR.
+  coverage-comment:
+    needs: test
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # A pattern that matches no artifact downloads nothing and succeeds, where `name` would fail.
+      # The next step decides whether a missing report is expected.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-ubuntu-latest-newest-attempt-${{ github.run_attempt }}
+          merge-multiple: true
+          path: coverage/
+
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          TEST_RESULT: ${{ needs.test.result }}
+        with:
+          script: |
+            const { existsSync, readFileSync } = await import("node:fs");
+            const { buildCoverageComment, decideCoverageComment, findCoverageComment, parseCoverageCommentSha, upsertCoverageComment } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/coverage-comment.mjs`);
+            const summaryPath = `${process.env.GITHUB_WORKSPACE}/coverage/coverage-summary.json`;
+            const summary = existsSync(summaryPath) ? JSON.parse(readFileSync(summaryPath, "utf8")) : null;
+            const baseSummaryPath = `${process.env.GITHUB_WORKSPACE}/coverage/base-coverage-summary.json`;
+            const baseStatusPath = `${process.env.GITHUB_WORKSPACE}/coverage/base-coverage-status.txt`;
+            const baseSha = context.payload.pull_request.base.sha;
+            let base = null;
+            if (summary !== null) {
+              const hasBaseSummary = existsSync(baseSummaryPath);
+              if (hasBaseSummary === existsSync(baseStatusPath)) {
+                throw new Error(`the coverage report holds ${hasBaseSummary ? "both" : "neither"} of base-coverage-summary.json and base-coverage-status.txt`);
+              }
+              base = hasBaseSummary
+                ? { sha: baseSha, total: JSON.parse(readFileSync(baseSummaryPath, "utf8")).total }
+                : { sha: baseSha, reason: readFileSync(baseStatusPath, "utf8").trim() };
+            }
+            const sha = context.payload.pull_request.head.sha;
+            const target = { github, owner: context.repo.owner, repo: context.repo.repo, issueNumber: context.issue.number };
+            const existing = await findCoverageComment(target);
+            const decision = decideCoverageComment({
+              summary,
+              testResult: process.env.TEST_RESULT,
+              runAttempt: process.env.RUN_ATTEMPT,
+              existingSha: existing === null ? null : parseCoverageCommentSha(existing.body),
+              sha,
+            });
+            if (decision.kind === "keep") {
+              core.notice(`Kept the coverage comment for commit ${sha}: attempt ${process.env.RUN_ATTEMPT} produced no coverage report of its own`);
+            } else {
+              const body = buildCoverageComment({
+                summary,
+                base,
+                root: process.env.GITHUB_WORKSPACE,
+                runUrl: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                sha,
+                runAttempt: process.env.RUN_ATTEMPT,
+              });
+              const action = await upsertCoverageComment({ ...target, existing, body });
+              core.info(`Coverage comment ${action}`);
+            }
+
+  current-pi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.13.1"
+          cache: "npm"
+      - run: npm ci
+      - name: Synchronized current Pi compatibility
+        working-directory: ${{ runner.temp }}
+        env:
+          COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/current-pi-diagnostics-ubuntu-newest
+        run: node "${{ github.workspace }}/scripts/test-compat-current.mjs"
+      - name: Upload current Pi diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: current-pi-diagnostics-ubuntu-newest-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/current-pi-diagnostics-ubuntu-newest
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 30
