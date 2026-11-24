@@ -1,11 +1,10 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
-import type { AutocompleteProviderFactory, ExtensionContext, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteProviderFactory, ExtensionContext, ExtensionUIContext, ThemeColor } from "@earendil-works/pi-coding-agent";
 import type { SchematicState } from "../state.js";
 import { getEffectiveModelGroups } from "./router.js";
 import { MODALITY_FG, modalityLetterRun } from "./modality.js";
 import type { ModelGroupModel, ResolvedModelGroup } from "./types.js";
-
-const registeredUis = new WeakSet();
+import { installAutocompleteProviderOnce } from "../autocomplete-install.js";
 
 function isUnavailable(group: ResolvedModelGroup, entry: ModelGroupModel): boolean {
 	return group.validation.unavailableRefs.some((ref) => ref.provider === entry.provider && ref.modelId === entry.modelId);
@@ -66,8 +65,8 @@ function buildSuggestionDescription(route: string, letters: string, capsWidth: n
 }
 
 export function createModelGroupAutocompleteProvider(state: SchematicState, colorize?: DescriptionColorizer): AutocompleteProviderFactory {
-	return (current) => ({
-		async getSuggestions(lines, cursorLine, cursorCol, options) {
+	return (current: any) => ({
+		async getSuggestions(lines: string[], cursorLine: number, cursorCol: number, options: unknown) {
 			const line = lines[cursorLine] ?? "";
 			const beforeCursor = line.slice(0, cursorCol);
 			const match = /(?:^|[\t ])#([^\s#]*)$/.exec(beforeCursor);
@@ -94,29 +93,21 @@ export function createModelGroupAutocompleteProvider(state: SchematicState, colo
 			return { prefix: `#${match[1]}`, items };
 		},
 
-		applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+		applyCompletion(lines: string[], cursorLine: number, cursorCol: number, item: unknown, prefix: string) {
 			return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
 		},
 
-		shouldTriggerFileCompletion(lines, cursorLine, cursorCol) {
+		shouldTriggerFileCompletion(lines: string[], cursorLine: number, cursorCol: number) {
 			return current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true;
 		},
 	});
 }
 
 export function registerModelGroupAutocomplete(ctx: ExtensionContext, state: SchematicState): void {
-	if (!ctx.hasUI) {
-		return;
-	}
-	const ui = ctx.ui;
-	if (typeof ui.addAutocompleteProvider !== "function") {
-		return;
-	}
-	if (registeredUis.has(ui)) {
-		return;
-	}
-	registeredUis.add(ui);
-	// Lazy adapter so the colorizer reflects the live theme (not a snapshot).
-	const colorize: DescriptionColorizer | undefined = ui.theme ? (color, text) => ui.theme.fg(color, text) : undefined;
-	ui.addAutocompleteProvider(createModelGroupAutocompleteProvider(state, colorize));
+	installAutocompleteProviderOnce(ctx, "model-groups", () => createModelGroupAutocompleteProvider(state, liveColorizer(ctx.ui)));
+}
+
+/** Holds the UI, not the ctx: the provider outlives a stale ctx but reads the live theme. */
+function liveColorizer(ui: ExtensionUIContext): DescriptionColorizer {
+	return (color, text) => ui.theme.fg(color, text);
 }

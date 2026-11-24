@@ -18,7 +18,9 @@ export const MAX_TIME_BUDGET_MS = Math.floor(MAX_TIMEOUT_MS / HARD_DEADLINE_FACT
 
 /** Finite positive values clamp to Node's timer range; anything else is an explicit no-limit. */
 export function clampTimeoutMs(ms: number): number {
-	if (!Number.isFinite(ms) || ms <= 0) return Number.POSITIVE_INFINITY;
+	if (!Number.isFinite(ms) || ms <= 0) {
+		return Number.POSITIVE_INFINITY;
+	}
 	return Math.min(ms, MAX_TIMEOUT_MS);
 }
 
@@ -26,15 +28,21 @@ export function clampTimeoutMs(ms: number): number {
  * otherwise the deadline derives from twice the soft budget. No valid input disables it. */
 export function hardDeadlineMs(limits: Pick<WorkflowLimits, "timeBudgetMs" | "hardDeadlineMs">): number {
 	const explicit = limits.hardDeadlineMs;
-	if (explicit !== null && explicit !== undefined && Number.isFinite(explicit) && explicit > 0) return clampTimeoutMs(explicit);
+	if (explicit !== null && explicit !== undefined && Number.isFinite(explicit) && explicit > 0) {
+		return clampTimeoutMs(explicit);
+	}
 	const budget = limits.timeBudgetMs;
-	if (budget === null || !Number.isFinite(budget) || budget <= 0) return Number.POSITIVE_INFINITY;
+	if (budget === null || !Number.isFinite(budget) || budget <= 0) {
+		return Number.POSITIVE_INFINITY;
+	}
 	return clampTimeoutMs(budget * HARD_DEADLINE_FACTOR);
 }
 
 /** Clamp only an explicit deadline; `undefined` keeps pi-codemode's default. */
 function withClampedTimeout(options: CodemodeSandboxOptions): CodemodeSandboxOptions {
-	if (typeof options.timeoutMs !== "number") return options;
+	if (typeof options.timeoutMs !== "number") {
+		return options;
+	}
 	return { ...options, timeoutMs: clampTimeoutMs(options.timeoutMs) };
 }
 

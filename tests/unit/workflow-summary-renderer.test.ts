@@ -2,7 +2,7 @@
 // These guard the visible contract without depending on golden snapshots: tone
 // mapping, the detail-label set, and the collapsed model cap.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { UNATTRIBUTED_MODEL } from "../../usage.js";
 import type { ModelSpend } from "../../usage.js";
@@ -99,7 +99,7 @@ test("DETAIL_LABELS maps only counted handles that appear in the detail ledger",
 	// Inspectors and technical handles are absent from the detail ledger: they
 	// live on the headline counts row, not the expanded detail row.
 	for (const name of ["run", "checkpoint", "exit", "classify", "budget", "state", "notebookIndex", "notebookRead", "notebookTopic"] as WorkflowHandleName[]) {
-		assert.equal(DETAIL_LABELS[name as keyof typeof DETAIL_LABELS], undefined, `${name} is not a detail label`);
+		assert.equal(DETAIL_LABELS[name], undefined, `${name} is not a detail label`);
 	}
 });
 
@@ -113,7 +113,10 @@ test("collapsed rendering truncates models to MAX_MODELS_COLLAPSED and shows a m
 	const data = makeData({ spend, costUsd: spend.reduce((sum, r) => sum + r.costUsd, 0) });
 	const lines = renderWorkflowSummary(data, false, identityTheme).render(80);
 	assert.equal(modelLines(lines).length, MAX_MODELS_COLLAPSED, "collapsed caps at MAX_MODELS_COLLAPSED");
-	assert.ok(lines.some((line) => line.includes("more")), "collapsed shows a 'more' line past the cap");
+	assert.ok(
+		lines.some((line) => line.includes("more")),
+		"collapsed shows a 'more' line past the cap",
+	);
 });
 
 test("expanded rendering shows every model with no truncation", () => {
@@ -134,7 +137,10 @@ test("collapsed rendering shows all models when spend fits within the cap", () =
 
 test("counts row labels checkpoints instead of a bare glyph", () => {
 	const lines = renderWorkflowSummary(makeData({ checkpoints: 3 }), false, identityTheme).render(80);
-	assert.ok(lines.some((line) => line.includes("checkpoints 3")), "checkpoints count is labelled");
+	assert.ok(
+		lines.some((line) => line.includes("checkpoints 3")),
+		"checkpoints count is labelled",
+	);
 	assert.ok(!lines.some((line) => line.includes("\u{1F6A9}")), "no bare flag glyph");
 });
 
@@ -143,7 +149,11 @@ test("an unbounded run renders the limits row and no target row", () => {
 	const unbounded = lines.find((line) => line.includes("unbounded \u2014 no checkpoint declared")) ?? "";
 	assert.ok(unbounded, "the unbounded limits row is present");
 	assert.ok(unbounded.includes("limits"), "the row is keyed under limits");
-	assert.equal(lines.some((line) => line.includes("target ")), false, "an unbounded run carries no soft-target row");
+	assert.equal(
+		lines.some((line) => line.includes("target ")),
+		false,
+		"an unbounded run carries no soft-target row",
+	);
 	const checkpoints = lines.find((line) => line.includes("checkpoints ")) ?? "";
 	assert.equal(checkpoints.includes("\u221E"), false, "the counts row never carries the unbounded glyph");
 });
@@ -172,7 +182,10 @@ test("no stopped row for an absent or null payload", () => {
 
 test("error reason renders with the error tone", () => {
 	const lines = renderWorkflowSummary(makeData({ reason: "error", error: "boom" }), false, toneTheme).render(80);
-	assert.ok(lines.some((line) => line.includes("[error]")), "exit row surfaces the error tone");
+	assert.ok(
+		lines.some((line) => line.includes("[error]")),
+		"exit row surfaces the error tone",
+	);
 });
 
 test("a soft cost stop explains the overshoot against its target", () => {
@@ -185,7 +198,12 @@ test("a soft cost stop explains the overshoot against its target", () => {
 });
 
 test("a soft time stop explains the overshoot against its target", () => {
-	const data = makeData({ reason: "time-limit", elapsedMs: 4_320_000, limits: { costLimit: null, timeBudgetMs: 3_600_000 }, crossedAt: { costUsd: 1, elapsedMs: 3_600_000 } });
+	const data = makeData({
+		reason: "time-limit",
+		elapsedMs: 4_320_000,
+		limits: { costLimit: null, timeBudgetMs: 3_600_000 },
+		crossedAt: { costUsd: 1, elapsedMs: 3_600_000 },
+	});
 	const lines = renderWorkflowSummary(data, false, identityTheme).render(80);
 	const target = lines.find((line) => line.includes("1:00:00"));
 	assert.ok(target, "target row rendered for a crossed soft time stop");
@@ -201,5 +219,8 @@ test("a soft stop renders its human reason, never the reserved token", () => {
 
 test("cost-limit reason renders with the warning tone", () => {
 	const lines = renderWorkflowSummary(makeData({ reason: "cost-limit" }), false, toneTheme).render(80);
-	assert.ok(lines.some((line) => line.includes("[warning]")), "exit row surfaces the warning tone");
+	assert.ok(
+		lines.some((line) => line.includes("[warning]")),
+		"exit row surfaces the warning tone",
+	);
 });

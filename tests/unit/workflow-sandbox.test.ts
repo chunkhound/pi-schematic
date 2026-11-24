@@ -2,7 +2,7 @@
 // node:test custom loader, and the host's own timeout clamp must prevent Node's
 // timer overflow. This is the only test that touches the real sandbox.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import { createWorkflowSandbox, clampTimeoutMs, hardDeadlineMs, MAX_TIMEOUT_MS } from "../../workflow/sandbox.js";
 import { compileWorkflow, WorkflowCompileError } from "../../workflow/compile.js";
 import { composeWorkflow } from "../../workflow/driver.js";
@@ -30,7 +30,9 @@ test("sandbox loads wasm+worker under node:test and runs host globals", async ()
 	});
 	await sandbox.close();
 	assert.equal(result.ok, true);
-	if (result.ok) assert.deepEqual(result.value, ["x", 2]);
+	if (result.ok) {
+		assert.deepEqual(result.value, ["x", 2]);
+	}
 	assert.equal(calls, 1);
 });
 
@@ -39,16 +41,18 @@ test("sandbox reports a timeout kind when the deadline expires", async () => {
 	const result = await sandbox.execute(`while (true) {}`);
 	await sandbox.close();
 	assert.equal(result.ok, false);
-	if (!result.ok) assert.equal(result.error.kind, "timeout");
+	if (!result.ok) {
+		assert.equal(result.error.kind, "timeout");
+	}
 });
 
 test("createWorkflowSandbox clamps an overflowing explicit deadline to the timer max", () => {
-	const captured: Array<{ timeoutMs?: number }> = [];
+	const captured: { timeoutMs?: number }[] = [];
 	const factory = (options: { timeoutMs?: number }) => {
 		captured.push(options);
 		return {} as never;
 	};
-	createWorkflowSandbox({ timeoutMs: MAX_TIMEOUT_MS + 1 }, factory as never);
+	createWorkflowSandbox({ timeoutMs: MAX_TIMEOUT_MS + 1 }, factory);
 	assert.equal(captured[0].timeoutMs, MAX_TIMEOUT_MS);
 });
 
@@ -77,17 +81,22 @@ test("hardDeadlineMs prefers an explicit deadline, else doubles the budget; unli
 
 test("a memory-limit OOM maps to error and surfaces its message", async () => {
 	const oomResult = { ok: false as const, error: { kind: "memory", message: "oom" } };
-	const sandbox = createWorkflowSandbox({
-		timeoutMs: Infinity,
-		memoryLimitBytes: 1,
-	}, (() => ({
-		execute: async () => oomResult,
-		close: async () => {},
-	})) as unknown as WorkflowSandboxFactory);
+	const sandbox = createWorkflowSandbox(
+		{
+			timeoutMs: Infinity,
+			memoryLimitBytes: 1,
+		},
+		(() => ({
+			execute: async () => oomResult,
+			close: async () => {},
+		})) as unknown as WorkflowSandboxFactory,
+	);
 	const result = await sandbox.execute("code");
 	await sandbox.close();
 	assert.equal(result.ok, false);
-	if (!result.ok) assert.deepEqual(result.error, oomResult.error);
+	if (!result.ok) {
+		assert.deepEqual(result.error, oomResult.error);
+	}
 	assert.equal(mapSandboxError(result.error, null), "error");
 });
 
@@ -148,7 +157,14 @@ test("a returned workflow runs every effect through the wrapper; a bare statemen
 	let calls = 0;
 	const sandbox = createWorkflowSandbox({
 		globals: [
-			{ name: "workflow.run", spread: true, execute: async () => { calls += 1; return "ok"; } },
+			{
+				name: "workflow.run",
+				spread: true,
+				execute: async () => {
+					calls += 1;
+					return "ok";
+				},
+			},
 			{ name: "workflow.checkpoint", spread: false, execute: async () => null },
 		],
 		timeoutMs: 30_000,
@@ -160,5 +176,8 @@ test("a returned workflow runs every effect through the wrapper; a bare statemen
 	assert.equal(result.ok, true, "a returned workflow settles the wrapper only after the workflow completes");
 	assert.equal(calls, 2, "both effects observe through the wrapper");
 	// The bare (non-return) form must be rejected at compile time, never silently truncated.
-	assert.throws(() => compileWorkflow('defineWorkflow((workflow) => {\n  workflow.checkpoint(null);\n});\n'), (error) => error instanceof WorkflowCompileError);
+	assert.throws(
+		() => compileWorkflow("defineWorkflow((workflow) => {\n  workflow.checkpoint(null);\n});\n"),
+		(error) => error instanceof WorkflowCompileError,
+	);
 });

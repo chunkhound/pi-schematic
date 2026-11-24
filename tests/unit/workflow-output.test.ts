@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { validateToolCall } from "@earendil-works/pi-ai";
 import { armStructuredOutput, OUTPUT_NUDGE, STRUCTURED_OUTPUT_TOOL } from "../../workflow/output.js";
@@ -108,17 +108,20 @@ test("an invalid submission is rejected before execute; a corrected call capture
 	const env = fakePi();
 	const { armed, tool } = armedTool(env, { schema });
 	// Untyped handle, like the registered-tool tests above: execute's ctx param is irrelevant here.
-	const handle = tool as unknown as Record<string, any>;
+	const handle = tool;
 	const tools = [{ name: handle.name, parameters: handle.parameters }];
 	let executed = 0;
 	// pi's pipeline: validate the model call, then execute with the validated arguments.
 	const submit = async (args: Record<string, unknown>) => {
-		const validated = validateToolCall(tools as never, {
-			type: "toolCall",
-			id: `call-${executed}`,
-			name: STRUCTURED_OUTPUT_TOOL,
-			arguments: args,
-		} as never);
+		const validated = validateToolCall(
+			tools as never,
+			{
+				type: "toolCall",
+				id: `call-${executed}`,
+				name: STRUCTURED_OUTPUT_TOOL,
+				arguments: args,
+			} as never,
+		);
 		executed += 1;
 		return handle.execute(`call-${executed}`, validated, undefined, undefined, undefined);
 	};

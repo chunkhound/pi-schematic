@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
-import test from "node:test";
+import { test } from "vitest";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
@@ -54,15 +54,24 @@ function fakeDeps(): WorkflowHostDeps {
 		prepareRunFrontmatter: async () => {},
 		handoff: async () => {},
 		newSession: async () => {},
-		shellRun: async () => ({ content: [{ type: "text", text: "ok" }], isError: false, structuredContent: { output: "ok", truncated: false, exit_code: 0, wall_time_seconds: 0 } }),
+		shellRun: async () => ({
+			content: [{ type: "text", text: "ok" }],
+			isError: false,
+			structuredContent: { output: "ok", truncated: false, exit_code: 0, wall_time_seconds: 0 },
+		}),
 	};
 }
 
 test("globals expose exactly the two-level workflow.<member> surface", () => {
 	const globals = createWorkflowHost(fakeDeps()).globals();
-	assert.deepEqual(globals.map((tool) => tool.name), EXPECTED);
+	assert.deepEqual(
+		globals.map((tool) => tool.name),
+		EXPECTED,
+	);
 	assert.equal(new Set(globals.map((tool) => tool.name)).size, EXPECTED.length);
-	for (const tool of globals) assert.match(tool.name, /^workflow\.[A-Za-z]+$/);
+	for (const tool of globals) {
+		assert.match(tool.name, /^workflow\.[A-Za-z]+$/);
+	}
 });
 
 test("only workflow.run and workflow.shell spread their arguments", () => {
@@ -81,9 +90,16 @@ test("a real CodemodeSandbox accepts the handle names", async () => {
 test("recordExit aborts on append failure and leaves the exit unset", () => {
 	const deps = fakeDeps();
 	let exitAppends = 0;
-	deps.pi.appendEntry = (type: string) => { if (type === "workflow-exit") exitAppends++; throw new Error("disk full"); };
+	deps.pi.appendEntry = (type: string) => {
+		if (type === "workflow-exit") {
+			exitAppends++;
+		}
+		throw new Error("disk full");
+	};
 	const host = createWorkflowHost(deps);
-	assert.throws(() => host.recordExit({ reason: "error" }, "error"), /disk full/);
+	assert.throws(() => {
+		host.recordExit({ reason: "error" }, "error");
+	}, /disk full/);
 	assert.equal(host.abortedReason(), "error");
 	assert.equal(host.exitRecord(), null);
 	assert.equal(exitAppends, 1);
@@ -92,7 +108,9 @@ test("recordExit aborts on append failure and leaves the exit unset", () => {
 test("recordExit appends once and ignores later outcomes", () => {
 	const deps = fakeDeps();
 	let appended = 0;
-	deps.pi.appendEntry = () => { appended++; };
+	deps.pi.appendEntry = () => {
+		appended++;
+	};
 	const host = createWorkflowHost(deps);
 	host.recordExit({ reason: "done", metadata: { ok: true } }, "error");
 	host.recordExit({ reason: "changed" }, "error");
@@ -148,7 +166,12 @@ const HANDLE_CONTRACT = (Object.keys(HANDLE_POLICY) as WorkflowHandleName[]).map
 	counted: isCountedHandle(HANDLE_POLICY[name]),
 }));
 
-type TableEntry = { type: string; id: string; parentId: null; message: { role: string } };
+interface TableEntry {
+	type: string;
+	id: string;
+	parentId: null;
+	message: { role: string };
+}
 
 /** Fake env with a working run round-trip: every send settles with one assistant entry. */
 function fakeRunDeps(): { deps: WorkflowHostDeps; branch: TableEntry[] } {
@@ -160,16 +183,20 @@ function fakeRunDeps(): { deps: WorkflowHostDeps; branch: TableEntry[] } {
 	let seq = 0;
 	const nextId = () => `e${++seq}`;
 	(deps.pi as unknown as { on: unknown }).on = (event: string, handler: () => void) => {
-		if (event === "agent_settled") settled.add(handler);
-		return () => { settled.delete(handler); };
+		if (event === "agent_settled") {
+			settled.add(handler);
+		}
+		return () => {
+			settled.delete(handler);
+		};
 	};
-	(deps.pi as unknown as { getCommands: unknown }).getCommands = () => [
-		{ name: "review", source: "prompt", sourceInfo: {} },
-	];
+	(deps.pi as unknown as { getCommands: unknown }).getCommands = () => [{ name: "review", source: "prompt", sourceInfo: {} }];
 	(deps.pi as unknown as { sendUserMessage: unknown }).sendUserMessage = () => {
 		branch.push({ type: "message", id: nextId(), parentId: null, message: { role: "user" } });
 		branch.push({ type: "message", id: nextId(), parentId: null, message: { role: "assistant" } });
-		for (const handler of [...settled]) handler();
+		for (const handler of [...settled]) {
+			handler();
+		}
 	};
 	const classifierModel = { id: "jev", provider: "typesafe" };
 	const ctx = deps.getCtx() as unknown as {
@@ -187,28 +214,41 @@ function fakeRunDeps(): { deps: WorkflowHostDeps; branch: TableEntry[] } {
 
 function tableArgs(name: WorkflowHandleName): unknown {
 	switch (name) {
-		case "run": return ["/review"];
-		case "handoff": return "next: review";
-		case "classify": return { model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} };
-		case "shell": return ["echo hi"];
-		case "entries": return {};
-		case "notebookRead": return "notes";
-		case "notebookWrite": return { name: "n", content: "c" };
-		case "readonly": return false;
-		case "checkpoint": return { round: 1 };
-		case "exit": return { reason: "done" };
-		default: return undefined;
+		case "run":
+			return ["/review"];
+		case "handoff":
+			return "next: review";
+		case "classify":
+			return { model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} };
+		case "shell":
+			return ["echo hi"];
+		case "entries":
+			return {};
+		case "notebookRead":
+			return "notes";
+		case "notebookWrite":
+			return { name: "n", content: "c" };
+		case "readonly":
+			return false;
+		case "checkpoint":
+			return { round: 1 };
+		case "exit":
+			return { reason: "done" };
+		default:
+			return undefined;
 	}
 }
 
 async function callHandle(host: WorkflowHost, name: WorkflowHandleName): Promise<unknown> {
 	const tool = host.globals().find((candidate) => candidate.name === `workflow.${name}`);
 	assert.ok(tool, `missing handle workflow.${name}`);
-	return tool.execute(tableArgs(name), { signal: host.signal } as never);
+	return tool.execute(tableArgs(name), { signal: host.signal });
 }
 
 test("every handle matches the guarded/counted contract", async () => {
-	const globals = createWorkflowHost(fakeDeps()).globals().map((tool) => tool.name);
+	const globals = createWorkflowHost(fakeDeps())
+		.globals()
+		.map((tool) => tool.name);
 	assert.deepEqual(
 		HANDLE_CONTRACT.map((row) => `workflow.${row.name}`),
 		globals,
@@ -218,7 +258,7 @@ test("every handle matches the guarded/counted contract", async () => {
 		// Counted probe: one call on a fresh unlimited host feeds the activity ledger.
 		const countedHost = createWorkflowHost(fakeRunDeps().deps);
 		await callHandle(countedHost, row.name);
-		const activity = countedHost.metrics().activity as Partial<Record<WorkflowHandleName, number>>;
+		const activity = countedHost.metrics().activity;
 		assert.equal(activity[row.name] ?? 0, row.counted ? 1 : 0, `${row.name}: counted=${row.counted}`);
 		// Guarded probe: past the cost limit, guarded effects hard-abort after the
 		// deferred budget while inspectors stay reachable (exit/checkpoint end the run
@@ -227,7 +267,11 @@ test("every handle matches the guarded/counted contract", async () => {
 		deps.limits = { costLimit: 0, timeBudgetMs: null };
 		const guardedHost = createWorkflowHost(deps);
 		for (let i = 0; i < 20; i++) {
-			try { await callHandle(guardedHost, row.name); } catch { /* terminal states reject; the abort reason is the signal */ }
+			try {
+				await callHandle(guardedHost, row.name);
+			} catch {
+				/* terminal states reject; the abort reason is the signal */
+			}
 		}
 		assert.equal(guardedHost.abortedReason(), row.guarded ? "cost-limit" : null, `${row.name}: guarded=${row.guarded}`);
 	}
@@ -236,7 +280,11 @@ test("every handle matches the guarded/counted contract", async () => {
 test("unguarded budget/state/notebookRead/exit stay reachable past the cost limit", async () => {
 	const deps = fakeDeps();
 	deps.limits = { costLimit: 0, timeBudgetMs: null };
-	const byName = new Map(createWorkflowHost(deps).globals().map((tool) => [tool.name, tool]));
+	const byName = new Map(
+		createWorkflowHost(deps)
+			.globals()
+			.map((tool) => [tool.name, tool]),
+	);
 	const context = { signal: new AbortController().signal } as never;
 	deps.state.notebookPages.set("notes", "body");
 	await byName.get("workflow.budget")!.execute(null, context);
@@ -252,7 +300,9 @@ test("workflow.exit rejects reserved reasons and derives the record reason", asy
 	const context = { signal: new AbortController().signal } as never;
 	const exitOf = (host: WorkflowHost) => new Map(host.globals().map((tool) => [tool.name, tool])).get("workflow.exit")!;
 	const rejecting = createWorkflowHost(fakeDeps());
-	await assert.rejects(async () => { await exitOf(rejecting).execute("cost-limit", context); }, /reserved abort reason/);
+	await assert.rejects(async () => {
+		await exitOf(rejecting).execute("cost-limit", context);
+	}, /reserved abort reason/);
 	assert.equal(rejecting.exitRecord(), null, "a rejected exit records nothing");
 	const approved = createWorkflowHost(fakeDeps());
 	await exitOf(approved).execute({ reason: "approved" }, context);
@@ -269,23 +319,33 @@ test("a dispatch failure keeps buffered previews for the next run", async () => 
 	const sent: string[] = [];
 	const settled = new Set<() => void>();
 	(deps.pi as unknown as { on: unknown }).on = (event: string, handler: () => void) => {
-		if (event === "agent_settled") settled.add(handler);
-		return () => { settled.delete(handler); };
+		if (event === "agent_settled") {
+			settled.add(handler);
+		}
+		return () => {
+			settled.delete(handler);
+		};
 	};
 	let failDispatch = true;
 	let seq = 0;
 	(deps.pi as unknown as { sendUserMessage: unknown }).sendUserMessage = (text: string) => {
 		sent.push(text);
-		if (failDispatch) throw new Error("dispatch down");
+		if (failDispatch) {
+			throw new Error("dispatch down");
+		}
 		branch.push({ type: "message", id: `u${++seq}`, parentId: null, message: { role: "user" } });
 		branch.push({ type: "message", id: `a${seq}`, parentId: null, message: { role: "assistant" } });
-		for (const handler of [...settled]) handler();
+		for (const handler of [...settled]) {
+			handler();
+		}
 	};
 	const host = createWorkflowHost(deps);
 	const byName = new Map(host.globals().map((tool) => [tool.name, tool]));
 	const context = { signal: new AbortController().signal } as never;
 	await byName.get("workflow.notebookWrite")!.execute({ name: "perf", content: "body" }, context);
-	await assert.rejects(async () => { await byName.get("workflow.run")!.execute(["/review"], context); }, /dispatch down/);
+	await assert.rejects(async () => {
+		await byName.get("workflow.run")!.execute(["/review"], context);
+	}, /dispatch down/);
 	failDispatch = false;
 	await byName.get("workflow.run")!.execute(["/review"], context);
 	assert.equal(sent.length, 2);
@@ -298,12 +358,20 @@ test("an abort between the first settle and the nudge sends no second message", 
 	const { deps, branch } = fakeRunDeps();
 	const settled = new Set<() => void>();
 	(deps.pi as unknown as { on: unknown }).on = (event: string, handler: () => void) => {
-		if (event === "agent_settled") settled.add(handler);
-		return () => { settled.delete(handler); };
+		if (event === "agent_settled") {
+			settled.add(handler);
+		}
+		return () => {
+			settled.delete(handler);
+		};
 	};
 	const sent: string[] = [];
 	let seq = 0;
-	const settle = () => { for (const handler of [...settled]) handler(); };
+	const settle = () => {
+		for (const handler of [...settled]) {
+			handler();
+		}
+	};
 	(deps.pi as unknown as { sendUserMessage: unknown }).sendUserMessage = (text: string) => {
 		sent.push(text);
 		branch.push({ type: "message", id: `u${++seq}`, parentId: null, message: { role: "user" } });
@@ -319,16 +387,22 @@ test("an abort between the first settle and the nudge sends no second message", 
 	const host = createWorkflowHost(deps);
 	const runTool = host.globals().find((tool) => tool.name === "workflow.run");
 	assert.ok(runTool, "workflow.run is registered");
-	const run = runTool.execute(["/review", { output: {} }], { signal: host.signal } as never) as Promise<unknown>;
-	for (let i = 0; i < 20 && sent.length === 0; i++) await Promise.resolve();
+	const run = runTool.execute(["/review", { output: {} }], { signal: host.signal }) as Promise<unknown>;
+	for (let i = 0; i < 20 && sent.length === 0; i++) {
+		await Promise.resolve();
+	}
 	assert.equal(sent.length, 1, "the first dispatch is in flight");
 	// Flush past the dispatch await so the first correlation is already pending when it settles.
-	for (let i = 0; i < 5; i++) await Promise.resolve();
+	for (let i = 0; i < 5; i++) {
+		await Promise.resolve();
+	}
 	branch.push({ type: "message", id: "a1", parentId: null, message: { role: "assistant" } });
 	settle();
 	// The settle queues sendCorrelated's continuation first; this abort then lands after it clears
 	// `activeRun`, leaving only the nudge guard between the cancellation and a second send.
-	queueMicrotask(() => host.abort("cancelled"));
+	queueMicrotask(() => {
+		host.abort("cancelled");
+	});
 	await assert.rejects(run, /did not call workflow_output/);
 	assert.equal(sent.length, 1, "a cancelled run gets no nudge");
 	assert.equal(host.abortedReason(), "cancelled");
@@ -339,7 +413,9 @@ test("an abort between the first settle and the nudge sends no second message", 
 test("the docs Handles table lists exactly the runtime handle surface", () => {
 	const doc = readFileSync(new URL("../../docs/workflows.md", import.meta.url), "utf8");
 	const docHandles = [...doc.matchAll(/^\| `workflow\.([A-Za-z]+)` \|/gm)].map((m) => m[1]);
-	const runtimeHandles = createWorkflowHost(fakeDeps()).globals().map((tool) => tool.name.replace(/^workflow\./, ""));
+	const runtimeHandles = createWorkflowHost(fakeDeps())
+		.globals()
+		.map((tool) => tool.name.replace(/^workflow\./, ""));
 	assert.deepEqual([...docHandles].sort(), [...runtimeHandles].sort());
 	assert.equal(docHandles.length, EXPECTED.length, "a 16th handle must also edit the docs table");
 });
@@ -349,8 +425,15 @@ test("the docs Handles table lists exactly the runtime handle surface", () => {
 test("workflow.readonly accepts only a boolean and leaves the posture unchanged otherwise", async () => {
 	const deps = fakeDeps();
 	let posture = false;
-	deps.setReadonly = (enabled) => { posture = deps.state.readonlyEnabled = enabled; return enabled; };
-	const readonly = new Map(createWorkflowHost(deps).globals().map((tool) => [tool.name, tool])).get("workflow.readonly")!;
+	deps.setReadonly = (enabled) => {
+		posture = deps.state.readonlyEnabled = enabled;
+		return enabled;
+	};
+	const readonly = new Map(
+		createWorkflowHost(deps)
+			.globals()
+			.map((tool) => [tool.name, tool]),
+	).get("workflow.readonly")!;
 	const context = { signal: new AbortController().signal } as never;
 	for (const bad of [undefined, "false", 1]) {
 		await assert.rejects(async () => readonly.execute(bad, context), /workflow\.readonly takes a boolean/, `argument ${String(bad)}`);
@@ -365,9 +448,18 @@ test("workflow.readonly accepts only a boolean and leaves the posture unchanged 
 test("workflow.readonly notifies only when the posture changes", async () => {
 	const deps = fakeDeps();
 	const toggles: boolean[] = [];
-	deps.setReadonly = (enabled) => { deps.state.readonlyEnabled = enabled; return enabled; };
-	deps.onReadonlyToggled = (enabled) => { toggles.push(enabled); };
-	const readonly = new Map(createWorkflowHost(deps).globals().map((tool) => [tool.name, tool])).get("workflow.readonly")!;
+	deps.setReadonly = (enabled) => {
+		deps.state.readonlyEnabled = enabled;
+		return enabled;
+	};
+	deps.onReadonlyToggled = (enabled) => {
+		toggles.push(enabled);
+	};
+	const readonly = new Map(
+		createWorkflowHost(deps)
+			.globals()
+			.map((tool) => [tool.name, tool]),
+	).get("workflow.readonly")!;
 	const context = { signal: new AbortController().signal } as never;
 
 	await readonly.execute(false, context);
@@ -385,12 +477,16 @@ test("workflow.run rejects a malformed options object before dispatch and keeps 
 	const dispatch = (deps.pi as unknown as { sendUserMessage: (...args: unknown[]) => void }).sendUserMessage;
 	(deps.pi as unknown as { sendUserMessage: unknown }).sendUserMessage = (...args: unknown[]) => {
 		sent.push(args[0] as string);
-		return dispatch(...args);
+		dispatch(...args);
 	};
-	const tools = new Map(createWorkflowHost(deps).globals().map((tool) => [tool.name, tool]));
+	const tools = new Map(
+		createWorkflowHost(deps)
+			.globals()
+			.map((tool) => [tool.name, tool]),
+	);
 	const context = { signal: new AbortController().signal } as never;
 	await tools.get("workflow.notebookWrite")!.execute({ name: "perf", content: "body" }, context);
-	const rejected: Array<[unknown, RegExp]> = [
+	const rejected: [unknown, RegExp][] = [
 		[{ model: "p/m" }, /options\.model must be \{ provider: string, id: string \}/],
 		[{ model: { provider: "p" } }, /options\.model must be/],
 		[{ thinking: "turbo" }, /options\.thinking must be one of minimal, low, medium, high, xhigh, max/],
@@ -410,11 +506,21 @@ test("workflow.run rejects a malformed options object before dispatch and keeps 
 test("a host error notice names a transcript record that could not be persisted", async () => {
 	const deps = fakeDeps();
 	const notices: string[] = [];
-	deps.notify = (message) => { notices.push(message); };
-	deps.onProgress = () => { throw new Error("ui down"); };
-	const shell = new Map(createWorkflowHost(deps).globals().map((tool) => [tool.name, tool])).get("workflow.shell")!;
+	deps.notify = (message) => {
+		notices.push(message);
+	};
+	deps.onProgress = () => {
+		throw new Error("ui down");
+	};
+	const shell = new Map(
+		createWorkflowHost(deps)
+			.globals()
+			.map((tool) => [tool.name, tool]),
+	).get("workflow.shell")!;
 	const context = { signal: new AbortController().signal } as never;
-	deps.pi.appendEntry = () => { throw new Error("append down"); };
+	deps.pi.appendEntry = () => {
+		throw new Error("append down");
+	};
 	await shell.execute(["echo hi"], context);
 	assert.equal(notices[0], "workflow progress failed: ui down (transcript record not persisted)");
 	deps.pi.appendEntry = () => {};
@@ -441,14 +547,16 @@ test("the handle count and partition stated in docs/workflows.md stay in sync", 
 	assert.match(doc, /The surface is 15 handles/, "docs/workflows.md states the handle count; update both together");
 	const names = (line: string) => [...line.matchAll(/`([A-Za-z]+)`/g)].map((match) => match[1]).sort();
 	const bullet = (label: string): string[] => {
-		const match = doc.match(new RegExp(`^- \\*\\*${label}:\\*\\* ?(.+)$`, "m"));
+		const match = new RegExp(`^- \\*\\*${label}:\\*\\* ?(.+)$`, "m").exec(doc);
 		assert.ok(match, `docs/workflows.md lost the ${label} bullet`);
 		return names(match[1]);
 	};
-	const terminalMatch = doc.match(/^- `([A-Za-z]+)` and `([A-Za-z]+)` stay reachable too;/m);
+	const terminalMatch = /^- `([A-Za-z]+)` and `([A-Za-z]+)` stay reachable too;/m.exec(doc);
 	assert.ok(terminalMatch, "docs/workflows.md lost the terminal-handle bullet");
 	const terminal = [terminalMatch[1], terminalMatch[2]].sort();
-	const contractGuarded = HANDLE_CONTRACT.filter((row) => row.guarded).map((row) => row.name).sort();
+	const contractGuarded = HANDLE_CONTRACT.filter((row) => row.guarded)
+		.map((row) => row.name)
+		.sort();
 	const handleNames = Object.keys(HANDLE_POLICY) as WorkflowHandleName[];
 	const byKind = (kind: WorkflowHandleKind) => handleNames.filter((name) => HANDLE_POLICY[name].kind === kind).sort();
 	const guarded = bullet("Guarded");
@@ -468,9 +576,13 @@ test("workflow.notebookWrite surfaces truncation in the next run's buffered prev
 	const dispatch = (deps.pi as unknown as { sendUserMessage: (...args: unknown[]) => void }).sendUserMessage;
 	(deps.pi as unknown as { sendUserMessage: unknown }).sendUserMessage = (...args: unknown[]) => {
 		sent.push(args[0] as string);
-		return dispatch(...args);
+		dispatch(...args);
 	};
-	const tools = new Map(createWorkflowHost(deps).globals().map((tool) => [tool.name, tool]));
+	const tools = new Map(
+		createWorkflowHost(deps)
+			.globals()
+			.map((tool) => [tool.name, tool]),
+	);
 	const context = { signal: new AbortController().signal } as never;
 	const long = Array.from({ length: 2001 }, (_, i) => `line ${i}`).join("\n");
 
@@ -487,25 +599,32 @@ test("a throwing model restore still restores the run's thinking level", async (
 	const { deps } = fakeRunDeps();
 	const previousModel = { provider: "prev", id: "m" };
 	const requestedModel = { provider: "next", id: "m" };
-	const thinking: Array<string | undefined> = [];
+	const thinking: (string | undefined)[] = [];
 	let setModelCalls = 0;
 	(deps.pi as unknown as { setModel: unknown }).setModel = async () => {
 		setModelCalls += 1;
-		if (setModelCalls === 2) throw new Error("restore down");
+		if (setModelCalls === 2) {
+			throw new Error("restore down");
+		}
 		return true;
 	};
-	(deps.pi as unknown as { setThinkingLevel: unknown }).setThinkingLevel = (level: string | undefined) => { thinking.push(level); };
+	(deps.pi as unknown as { setThinkingLevel: unknown }).setThinkingLevel = (level: string | undefined) => {
+		thinking.push(level);
+	};
 	(deps.pi as unknown as { getThinkingLevel: unknown }).getThinkingLevel = () => "medium";
 	const ctx = deps.getCtx() as unknown as { model: unknown; modelRegistry: { getModelOfType: unknown } };
 	ctx.model = previousModel;
 	ctx.modelRegistry.getModelOfType = () => requestedModel;
-	const tools = new Map(createWorkflowHost(deps).globals().map((tool) => [tool.name, tool]));
+	const tools = new Map(
+		createWorkflowHost(deps)
+			.globals()
+			.map((tool) => [tool.name, tool]),
+	);
 	const context = { signal: new AbortController().signal } as never;
 
-	await assert.rejects(
-		async () => { await tools.get("workflow.run")!.execute(["/review", { model: requestedModel, thinking: "high" }], context); },
-		/override restore failed/,
-	);
+	await assert.rejects(async () => {
+		await tools.get("workflow.run")!.execute(["/review", { model: requestedModel, thinking: "high" }], context);
+	}, /override restore failed/);
 	assert.deepEqual(thinking, ["high", "medium"], "the thinking restore runs even though setModel threw");
 });
 
@@ -515,14 +634,20 @@ test("a model-only override still restores the captured thinking level", async (
 	const { deps } = fakeRunDeps();
 	const previousModel = { provider: "prev", id: "m" };
 	const requestedModel = { provider: "next", id: "m" };
-	const thinking: Array<string | undefined> = [];
+	const thinking: (string | undefined)[] = [];
 	(deps.pi as unknown as { setModel: unknown }).setModel = async () => true;
-	(deps.pi as unknown as { setThinkingLevel: unknown }).setThinkingLevel = (level: string | undefined) => { thinking.push(level); };
+	(deps.pi as unknown as { setThinkingLevel: unknown }).setThinkingLevel = (level: string | undefined) => {
+		thinking.push(level);
+	};
 	(deps.pi as unknown as { getThinkingLevel: unknown }).getThinkingLevel = () => "medium";
 	const ctx = deps.getCtx() as unknown as { model: unknown; modelRegistry: { getModelOfType: unknown } };
 	ctx.model = previousModel;
 	ctx.modelRegistry.getModelOfType = () => requestedModel;
-	const tools = new Map(createWorkflowHost(deps).globals().map((tool) => [tool.name, tool]));
+	const tools = new Map(
+		createWorkflowHost(deps)
+			.globals()
+			.map((tool) => [tool.name, tool]),
+	);
 	const context = { signal: new AbortController().signal } as never;
 
 	await tools.get("workflow.run")!.execute(["/review", { model: requestedModel }], context);
@@ -536,22 +661,32 @@ test("a throwing output-tool arming still restores the run's model and thinking"
 	const previousModel = { provider: "prev", id: "m" };
 	const requestedModel = { provider: "next", id: "m" };
 	const models: unknown[] = [];
-	const thinking: Array<string | undefined> = [];
-	(deps.pi as unknown as { setModel: unknown }).setModel = async (model: unknown) => { models.push(model); return true; };
-	(deps.pi as unknown as { setThinkingLevel: unknown }).setThinkingLevel = (level: string | undefined) => { thinking.push(level); };
+	const thinking: (string | undefined)[] = [];
+	(deps.pi as unknown as { setModel: unknown }).setModel = async (model: unknown) => {
+		models.push(model);
+		return true;
+	};
+	(deps.pi as unknown as { setThinkingLevel: unknown }).setThinkingLevel = (level: string | undefined) => {
+		thinking.push(level);
+	};
 	(deps.pi as unknown as { getThinkingLevel: unknown }).getThinkingLevel = () => "medium";
 	(deps.pi as unknown as { getActiveTools: unknown }).getActiveTools = () => ["bash"];
-	(deps.pi as unknown as { registerTool: unknown }).registerTool = () => { throw new Error("bad schema"); };
+	(deps.pi as unknown as { registerTool: unknown }).registerTool = () => {
+		throw new Error("bad schema");
+	};
 	const ctx = deps.getCtx() as unknown as { model: unknown; modelRegistry: { getModelOfType: unknown } };
 	ctx.model = previousModel;
 	ctx.modelRegistry.getModelOfType = () => requestedModel;
-	const tools = new Map(createWorkflowHost(deps).globals().map((tool) => [tool.name, tool]));
+	const tools = new Map(
+		createWorkflowHost(deps)
+			.globals()
+			.map((tool) => [tool.name, tool]),
+	);
 	const context = { signal: new AbortController().signal } as never;
 
-	await assert.rejects(
-		async () => { await tools.get("workflow.run")!.execute(["/review", { model: requestedModel, thinking: "high", output: {} }], context); },
-		/bad schema/,
-	);
+	await assert.rejects(async () => {
+		await tools.get("workflow.run")!.execute(["/review", { model: requestedModel, thinking: "high", output: {} }], context);
+	}, /bad schema/);
 	assert.deepEqual(models, [requestedModel, previousModel], "the override restore runs after the arming failure");
 	assert.deepEqual(thinking, ["high", "medium"]);
 });

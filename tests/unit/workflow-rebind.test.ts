@@ -1,10 +1,10 @@
 // WHY: a handoff the model never completes must not hang the run; these tests pin
 // the deadline, the abort path, and the replacement rebind through the public seams.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { publishWorkflowRuntime } from "../../workflow/coordinator.js";
-import { type RunRegistry } from "../../workflow/run-registry.js";
+import type { RunRegistry } from "../../workflow/run-registry.js";
 import { performHandoff, performNewSession, rebindRun, type RebindableDeps, type RebindBundle, type RebindHooks, type RunCtl } from "../../workflow/rebind.js";
 
 /** ExtensionAPI stub plus `emit`, so a test can fire the events a real runtime would. */
@@ -15,12 +15,18 @@ function fakePi(): EmittingPi {
 	return {
 		on(event: string, cb: (event: never) => void) {
 			let set = listeners.get(event);
-			if (!set) listeners.set(event, (set = new Set()));
+			if (!set) {
+				listeners.set(event, (set = new Set()));
+			}
 			set.add(cb);
-			return () => { set.delete(cb); };
+			return () => {
+				set.delete(cb);
+			};
 		},
 		emit(event: string, payload: unknown) {
-			for (const cb of listeners.get(event) ?? []) cb(payload as never);
+			for (const cb of listeners.get(event) ?? []) {
+				cb(payload as never);
+			}
 		},
 		count(event: string) {
 			return listeners.get(event)?.size ?? 0;
@@ -34,13 +40,23 @@ function ctxWith(branch: unknown[] = [], idle = true): { ctx: ExtensionCommandCo
 		sessionManager: { getBranch: () => branch },
 		isIdle: () => box.idle,
 	} as unknown as ExtensionCommandContext;
-	return { ctx, setIdle: (value: boolean) => { box.idle = value; } };
+	return {
+		ctx,
+		setIdle: (value: boolean) => {
+			box.idle = value;
+		},
+	};
 }
 
-function ctlWith(ctx: ExtensionCommandContext | null, signal: AbortSignal, aborts: Array<[string, string | undefined]> = []): RunCtl {
+function ctlWith(ctx: ExtensionCommandContext | null, signal: AbortSignal, aborts: [string, string | undefined][] = []): RunCtl {
 	return {
-		ctx, host: { signal, abort: (reason: string, message?: string) => aborts.push([reason, message]) }, name: "w", progress: null,
-		unsubscribeInput: () => {}, unsubscribeCancel: () => {}, unsubscribeTurnEnd: () => {},
+		ctx,
+		host: { signal, abort: (reason: string, message?: string) => aborts.push([reason, message]) },
+		name: "w",
+		progress: null,
+		unsubscribeInput: () => {},
+		unsubscribeCancel: () => {},
+		unsubscribeTurnEnd: () => {},
 	} as unknown as RunCtl;
 }
 
@@ -49,7 +65,11 @@ function noopRegistry(): RunRegistry {
 	return { correlate: () => ({ promise: Promise.reject(new Error("not correlated")), reject: () => {} }), dispose: () => {} };
 }
 
-type Settlement = { status: "complete" | "failed"; handoffId: string | null; reason: string | null };
+interface Settlement {
+	status: "complete" | "failed";
+	handoffId: string | null;
+	reason: string | null;
+}
 
 function bundleWith(
 	pi: ExtensionAPI,
@@ -66,7 +86,9 @@ function bundleWith(
 			requestHandoff,
 			watchHandoffSettlement: () => ({
 				done: settlement ?? new Promise<Settlement>(() => {}),
-				dispose: () => { disposed?.(); },
+				dispose: () => {
+					disposed?.();
+				},
 			}),
 			prepareRunFrontmatter: async () => {},
 			handoffTimeoutMs,
@@ -79,12 +101,9 @@ function bundleWith(
 // settlement that never arrives must abort the run before the rejection surfaces.
 test("a handoff settlement timeout aborts the host with error before rejecting", async () => {
 	const pi = fakePi();
-	const aborts: Array<[string, string | undefined]> = [];
+	const aborts: [string, string | undefined][] = [];
 	const { ctx } = ctxWith();
-	await assert.rejects(
-		performHandoff(bundleWith(pi, 30), ctlWith(ctx, new AbortController().signal, aborts), "next"),
-		/handoff did not complete/,
-	);
+	await assert.rejects(performHandoff(bundleWith(pi, 30), ctlWith(ctx, new AbortController().signal, aborts), "next"), /handoff did not complete/);
 	assert.equal(aborts.length, 1, "the host is aborted exactly once");
 	assert.equal(aborts[0][0], "error", "the abort reason is error");
 	assert.match(aborts[0][1] ?? "", /handoff did not complete/, "the abort message names the timeout");
@@ -103,11 +122,15 @@ test("abort during the wait rejects as cancelled", async () => {
 // workflow must see it as an error, and it must not abort a host that is already settled.
 test("a failed settlement rejects with the boundary's reason", async () => {
 	const pi = fakePi();
-	const aborts: Array<[string, string | undefined]> = [];
+	const aborts: [string, string | undefined][] = [];
 	const settlement = Promise.resolve<Settlement>({ status: "failed", handoffId: null, reason: "successor-not-persisted" });
 	const { ctx } = ctxWith();
 	await assert.rejects(
-		performHandoff(bundleWith(pi, 500, async () => {}, settlement), ctlWith(ctx, new AbortController().signal, aborts), "next"),
+		performHandoff(
+			bundleWith(pi, 500, async () => {}, settlement),
+			ctlWith(ctx, new AbortController().signal, aborts),
+			"next",
+		),
 		/workflow\.handoff failed: successor-not-persisted/,
 	);
 	assert.deepEqual(aborts, [], "a boundary failure is not a timeout: nothing is aborted");
@@ -117,7 +140,11 @@ test("a completed settlement resolves at once when the run is already idle", asy
 	const pi = fakePi();
 	const settlement = Promise.resolve<Settlement>({ status: "complete", handoffId: "h1", reason: null });
 	const { ctx } = ctxWith([], true);
-	await performHandoff(bundleWith(pi, 500, async () => {}, settlement), ctlWith(ctx, new AbortController().signal), "next");
+	await performHandoff(
+		bundleWith(pi, 500, async () => {}, settlement),
+		ctlWith(ctx, new AbortController().signal),
+		"next",
+	);
 });
 
 // WHY: the successor turn continues the same run, so completion at turn_start still has a
@@ -127,8 +154,13 @@ test("a completed settlement waits for the live run to settle", async () => {
 	const settlement = Promise.resolve<Settlement>({ status: "complete", handoffId: "h1", reason: null });
 	const { ctx, setIdle } = ctxWith([], false);
 	let settled = false;
-	const pending = performHandoff(bundleWith(pi, 500, async () => {}, settlement), ctlWith(ctx, new AbortController().signal), "next")
-		.then(() => { settled = true; });
+	const pending = performHandoff(
+		bundleWith(pi, 500, async () => {}, settlement),
+		ctlWith(ctx, new AbortController().signal),
+		"next",
+	).then(() => {
+		settled = true;
+	});
 	await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(settled, false, "a live run keeps the handoff open");
 	pi.emit("agent_settled", {});
@@ -141,11 +173,15 @@ test("a completed settlement waits for the live run to settle", async () => {
 
 test("an idle wait that outlives the deadline aborts the host", async () => {
 	const pi = fakePi();
-	const aborts: Array<[string, string | undefined]> = [];
+	const aborts: [string, string | undefined][] = [];
 	const settlement = Promise.resolve<Settlement>({ status: "complete", handoffId: "h1", reason: null });
 	const { ctx } = ctxWith([], false);
 	await assert.rejects(
-		performHandoff(bundleWith(pi, 30, async () => {}, settlement), ctlWith(ctx, new AbortController().signal, aborts), "next"),
+		performHandoff(
+			bundleWith(pi, 30, async () => {}, settlement),
+			ctlWith(ctx, new AbortController().signal, aborts),
+			"next",
+		),
 		/handoff successor did not settle/,
 	);
 	assert.equal(aborts.length, 1);
@@ -161,7 +197,19 @@ test("a cancelled handoff disposes its settlement watch", async () => {
 	let disposed = 0;
 	const settlement = Promise.resolve<Settlement>({ status: "complete", handoffId: "h1", reason: null });
 	const { ctx } = ctxWith([], false);
-	const pending = performHandoff(bundleWith(pi, 60_000, async () => {}, settlement, () => { disposed += 1; }), ctlWith(ctx, controller.signal), "next");
+	const pending = performHandoff(
+		bundleWith(
+			pi,
+			60_000,
+			async () => {},
+			settlement,
+			() => {
+				disposed += 1;
+			},
+		),
+		ctlWith(ctx, controller.signal),
+		"next",
+	);
 	await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(pi.count("agent_settled"), 1, "the idle gate is armed");
 	controller.abort(new Error("stop"));
@@ -175,7 +223,19 @@ test("a completed handoff disposes its settlement watch", async () => {
 	let disposed = 0;
 	const settlement = Promise.resolve<Settlement>({ status: "complete", handoffId: "h1", reason: null });
 	const { ctx } = ctxWith([], true);
-	await performHandoff(bundleWith(pi, 500, async () => {}, settlement, () => { disposed += 1; }), ctlWith(ctx, new AbortController().signal), "next");
+	await performHandoff(
+		bundleWith(
+			pi,
+			500,
+			async () => {},
+			settlement,
+			() => {
+				disposed += 1;
+			},
+		),
+		ctlWith(ctx, new AbortController().signal),
+		"next",
+	);
 	assert.equal(disposed, 1);
 });
 
@@ -191,7 +251,18 @@ test("rebindRun swaps bundle pi/state/deps and republishes progress", () => {
 	const ctl = ctlWith(null, new AbortController().signal);
 	let rebound = 0;
 	const next = { sessionManager: { getSessionId: () => "sess-rebind" } } as unknown as ExtensionCommandContext;
-	rebindRun(bundle, ctl, next, { onRebound: () => { rebound += 1; }, registry: noopRegistry() }, false);
+	rebindRun(
+		bundle,
+		ctl,
+		next,
+		{
+			onRebound: () => {
+				rebound += 1;
+			},
+			registry: noopRegistry(),
+		},
+		false,
+	);
 	assert.equal(bundle.pi, fresh.pi);
 	assert.equal(bundle.state, fresh.state as never);
 	assert.equal(bundle.deps.setReadonly, fns.setReadonly);
@@ -203,7 +274,9 @@ test("rebindRun throws when no runtime was published", () => {
 	const bundle = bundleWith(fakePi());
 	const ctl = ctlWith(null, new AbortController().signal);
 	const next = { sessionManager: { getSessionId: () => "sess-missing" } } as unknown as ExtensionCommandContext;
-	assert.throws(() => rebindRun(bundle, ctl, next, { onRebound: () => {}, registry: noopRegistry() }, false), /no runtime was published/);
+	assert.throws(() => {
+		rebindRun(bundle, ctl, next, { onRebound: () => {}, registry: noopRegistry() }, false);
+	}, /no runtime was published/);
 });
 
 /** A ctx that replaces the session the way pi does: `withSession` runs, and its failure rejects the call. */
@@ -213,7 +286,9 @@ function ctxThatReplaces(next: ExtensionCommandContext, settleMs = 0) {
 		calls: () => calls,
 		newSession: async (init?: { withSession?: (ctx: ExtensionCommandContext) => Promise<void> }) => {
 			calls += 1;
-			if (settleMs) await new Promise((resolve) => setTimeout(resolve, settleMs));
+			if (settleMs) {
+				await new Promise((resolve) => setTimeout(resolve, settleMs));
+			}
 			await init?.withSession?.(next);
 			return { cancelled: false };
 		},
@@ -243,7 +318,12 @@ test("a cancelled replacement restores the pre-replacement runtime and keeps its
 	// WHY: teardown drops the run's input-suppression/cancel subscriptions, so the
 	// failure path re-arms them on the restored session (onRebound is idempotent).
 	let reboundWith: unknown = null;
-	const hooks: RebindHooks<RebindBundle> = { onRebound: (_bundle, _ctl, ctx) => { reboundWith = ctx; }, registry: noopRegistry() };
+	const hooks: RebindHooks<RebindBundle> = {
+		onRebound: (_bundle, _ctl, ctx) => {
+			reboundWith = ctx;
+		},
+		registry: noopRegistry(),
+	};
 
 	await assert.rejects(performNewSession(bundle, ctl, hooks), /new session was cancelled/);
 	assert.equal(bundle.pi, previous.pi, "the runtime the run was actually using survives");
@@ -264,7 +344,15 @@ test("a rebind that fails inside withSession aborts the run with its own error",
 	const ctl = ctlWith(from as unknown as ExtensionCommandContext, new AbortController().signal);
 	const boom = new Error("workflow.new rebind failed");
 
-	await assert.rejects(performNewSession(bundle, ctl, { onRebound: () => { throw boom; }, registry: noopRegistry() }), (error: unknown) => error === boom);
+	await assert.rejects(
+		performNewSession(bundle, ctl, {
+			onRebound: () => {
+				throw boom;
+			},
+			registry: noopRegistry(),
+		}),
+		(error: unknown) => error === boom,
+	);
 	assert.equal(bundle.pi, fresh.pi, "the run keeps the live replacement runtime");
 	assert.equal(ctl.ctx, next, "the run keeps the live replacement context");
 });
@@ -277,7 +365,12 @@ test("a failed rebind leaves no live context and arms no subscriptions", async (
 	const bundle = bundleWith(fakePi());
 	const ctl = ctlWith(from as unknown as ExtensionCommandContext, new AbortController().signal);
 	let reboundWith: unknown = null;
-	const hooks: RebindHooks<RebindBundle> = { onRebound: (_bundle, _ctl, ctx) => { reboundWith = ctx; }, registry: noopRegistry() };
+	const hooks: RebindHooks<RebindBundle> = {
+		onRebound: (_bundle, _ctl, ctx) => {
+			reboundWith = ctx;
+		},
+		registry: noopRegistry(),
+	};
 
 	// No runtime is published for the replacement, so the rebind fails inside withSession.
 	await assert.rejects(performNewSession(bundle, ctl, hooks), /no runtime was published/);
@@ -292,13 +385,16 @@ test("a failed publication preserves its error, arms no suppression, and clears 
 	const from = ctxThatReplaces(next);
 	const bundle = bundleWith(fakePi());
 	bundle.state.childUsageSink = () => {};
-	const aborts: Array<[string, string | undefined]> = [];
+	const aborts: [string, string | undefined][] = [];
 	const ctl = ctlWith(from as unknown as ExtensionCommandContext, new AbortController().signal, aborts);
 	let rebounds = 0;
 
 	await assert.rejects(
 		performNewSession(bundle, ctl, {
-			onRebound: () => { rebounds += 1; throw new Error("stale context"); },
+			onRebound: () => {
+				rebounds += 1;
+				throw new Error("stale context");
+			},
 			registry: noopRegistry(),
 		}),
 		(error: unknown) => {
@@ -316,7 +412,9 @@ test("a failed publication preserves its error, arms no suppression, and clears 
 test("the rebound run's next turn runs the replacement's prepareRunFrontmatter", async () => {
 	const sessionId = "sess-rebind-frontmatter";
 	const boom = new Error("model group unavailable");
-	publishReplacement(sessionId, async () => { throw boom; });
+	publishReplacement(sessionId, async () => {
+		throw boom;
+	});
 	const next = { sessionManager: { getSessionId: () => sessionId } } as unknown as ExtensionCommandContext;
 	const bundle = bundleWith(fakePi());
 	const ctl = ctlWith(ctxThatReplaces(next) as unknown as ExtensionCommandContext, new AbortController().signal);
@@ -349,7 +447,10 @@ test("a concurrent workflow.new fails fast instead of starting a second replacem
 // captured value through the binding setter BEFORE onRebound republishes progress.
 test("rebindRun re-applies the previous readonly posture before republishing progress", () => {
 	const log: string[] = [];
-	const setReadonly = (enabled: boolean) => { log.push("setReadonly"); return enabled; };
+	const setReadonly = (enabled: boolean) => {
+		log.push("setReadonly");
+		return enabled;
+	};
 	publishWorkflowRuntime("sess-readonly", {
 		pi: fakePi(),
 		state: { marker: "fresh" },
@@ -358,7 +459,18 @@ test("rebindRun re-applies the previous readonly posture before republishing pro
 	const bundle = bundleWith(fakePi());
 	const ctl = ctlWith(null, new AbortController().signal);
 	const next = { sessionManager: { getSessionId: () => "sess-readonly" } } as unknown as ExtensionCommandContext;
-	rebindRun(bundle, ctl, next, { onRebound: () => { log.push("onRebound"); }, registry: noopRegistry() }, true);
+	rebindRun(
+		bundle,
+		ctl,
+		next,
+		{
+			onRebound: () => {
+				log.push("onRebound");
+			},
+			registry: noopRegistry(),
+		},
+		true,
+	);
 	assert.deepEqual(log, ["setReadonly", "onRebound"], "readonly is carried via the binding setter before progress republish");
 	assert.equal(bundle.deps.setReadonly, setReadonly, "the binding setter is the live replacement setter");
 });
@@ -368,7 +480,10 @@ test("rebindRun re-applies the previous readonly posture before republishing pro
 test("workflow.new carries the previous readonly posture into the replacement session", async () => {
 	const sessionId = "sess-new-readonly";
 	const log: string[] = [];
-	const setReadonly = (enabled: boolean) => { log.push(String(enabled)); return enabled; };
+	const setReadonly = (enabled: boolean) => {
+		log.push(String(enabled));
+		return enabled;
+	};
 	publishWorkflowRuntime(sessionId, {
 		pi: fakePi(),
 		state: { marker: "fresh", readonlyEnabled: false },

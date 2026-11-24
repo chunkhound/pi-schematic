@@ -20,10 +20,7 @@ const OUTPUT_GUIDELINES = [
 /** Host text sent once when a structured run settles without a submission. The tool cannot
  * send it: `execute` runs only when the model calls the tool. The lead states the failure
  * only; the rules are OUTPUT_GUIDELINES verbatim, so the contract never has a second wording. */
-export const OUTPUT_NUDGE = [
-	"Your result was not submitted through workflow_output.",
-	...OUTPUT_GUIDELINES,
-].join("\n");
+export const OUTPUT_NUDGE = ["Your result was not submitted through workflow_output.", ...OUTPUT_GUIDELINES].join("\n");
 
 /** Live capture for one structured run; `execute` writes `value`, the handle reads it after settle. */
 interface OutputCapture {
@@ -92,6 +89,8 @@ export function armStructuredOutput(pi: ExtensionAPI, request: StructuredOutputR
 	pi.setActiveTools([...previous.filter((name) => name !== STRUCTURED_OUTPUT_TOOL), STRUCTURED_OUTPUT_TOOL]);
 	return {
 		value: () => capture.value,
-		release: () => pi.setActiveTools([...previous]),
+		release: () => {
+			pi.setActiveTools([...previous]);
+		},
 	};
 }

@@ -1,6 +1,6 @@
 // Pure notebook-write helpers: argument parsing and the preview a run later consumes.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import { buildNotebookWritePreview, parseNotebookWrite } from "../../workflow/notebook.js";
 
 test("parseNotebookWrite returns exactly the name and content strings", () => {

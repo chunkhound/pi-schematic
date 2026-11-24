@@ -34,10 +34,7 @@ import { HANDOFF_TOOL_NAME } from "../handoff/tool.js";
 import { THINKING_LEVELS } from "../thinking-levels.js";
 import { safeAppendEntry } from "../workflow/errors.js";
 import { STRUCTURED_OUTPUT_TOOL } from "../workflow/output.js";
-import {
-	renderSpawnCall,
-	renderSpawnResult,
-} from "./renderer.js";
+import { renderSpawnCall, renderSpawnResult } from "./renderer.js";
 import {
 	getLastAssistantText,
 	getStopReasonOutcome,

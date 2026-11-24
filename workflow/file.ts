@@ -15,7 +15,9 @@ export interface ParsedWorkflowArgs {
 export function parseWorkflowArgs(raw: string): ParsedWorkflowArgs {
 	const start = raw.replace(/^\s+/, "");
 	const split = start.search(/\s/);
-	if (split === -1) return { name: start, args: "" };
+	if (split === -1) {
+		return { name: start, args: "" };
+	}
 	return { name: start.slice(0, split), args: start.slice(split + 1) };
 }
 
@@ -43,7 +45,7 @@ export function workflowRoots(cwd: string, agentDir: string) {
 }
 
 /** Every discovery root's source. A new root widens this union and forces label coverage above. */
-export type WorkflowRootSource = (ReturnType<typeof workflowRoots>)[number]["source"];
+type WorkflowRootSource = ReturnType<typeof workflowRoots>[number]["source"];
 
 /**
  * Resolve a workflow name to a file. Path-like names resolve against `cwd`;
@@ -57,7 +59,9 @@ export function resolveWorkflowPath(name: string, cwd: string, agentDir: string)
 	}
 	for (const root of workflowRoots(cwd, agentDir)) {
 		const candidate = join(root.dir, withJs(name));
-		if (isFile(candidate)) return candidate;
+		if (isFile(candidate)) {
+			return candidate;
+		}
 	}
 	return null;
 }
@@ -87,7 +91,11 @@ export async function listWorkflows(cwd: string, agentDir: string): Promise<Work
 	const layers = await Promise.all(workflowRoots(cwd, agentDir).map((root) => listWorkflowDir(root.dir, root.source, root.label)));
 	// First-wins dedupe across precedence-ordered layers (project before global), then sort by name.
 	const byName = new Map<string, WorkflowFileEntry>();
-	for (const entry of layers.flat()) if (!byName.has(entry.name)) byName.set(entry.name, entry);
+	for (const entry of layers.flat()) {
+		if (!byName.has(entry.name)) {
+			byName.set(entry.name, entry);
+		}
+	}
 	return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -97,7 +105,9 @@ async function listWorkflowDir(dir: string, source: WorkflowFileEntry["source"],
 		dirents = await readdir(dir, { withFileTypes: true });
 	} catch (error) {
 		// A missing directory means "no workflows here"; any other failure stays loud.
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+			return [];
+		}
 		throw error;
 	}
 	return dirents

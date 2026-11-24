@@ -13,11 +13,7 @@ export const CLASSIFIER_STOP_REASONS = ["stop", "error", "aborted"] as const sat
 
 export interface ClassifierDeps {
 	getModels: () => readonly ClassifierModel<ClassifierApi>[];
-	classify: (
-		model: ClassifierModel<ClassifierApi>,
-		context: ClassifierContext,
-		options: { signal?: AbortSignal },
-	) => Promise<ClassifierResult>;
+	classify: (model: ClassifierModel<ClassifierApi>, context: ClassifierContext, options: { signal?: AbortSignal }) => Promise<ClassifierResult>;
 }
 
 export function findClassifierModel(
@@ -39,17 +35,18 @@ export function classifierErrorResult(ref: { provider: string; id: string }, mes
 	};
 }
 
-export async function classifyRequest(
-	deps: ClassifierDeps,
-	request: ClassifierRequest,
-	signal?: AbortSignal,
-): Promise<ClassifierResult> {
+export async function classifyRequest(deps: ClassifierDeps, request: ClassifierRequest, signal?: AbortSignal): Promise<ClassifierResult> {
 	const ref = modelRef(request?.model);
-	if (!ref) return classifierErrorResult({ provider: "unknown", id: "unknown" }, "classify request requires model.provider and model.id");
-	if (!request.questions || typeof request.questions !== "object")
+	if (!ref) {
+		return classifierErrorResult({ provider: "unknown", id: "unknown" }, "classify request requires model.provider and model.id");
+	}
+	if (!request.questions || typeof request.questions !== "object") {
 		return classifierErrorResult(ref, "classify request requires a questions object");
+	}
 	const model = findClassifierModel(deps.getModels(), ref);
-	if (!model) return classifierErrorResult(ref, `classifier model not found: ${ref.provider}/${ref.id}`);
+	if (!model) {
+		return classifierErrorResult(ref, `classifier model not found: ${ref.provider}/${ref.id}`);
+	}
 	return runClassifier(deps, ref, model, request, signal);
 }
 
@@ -65,13 +62,11 @@ async function runClassifier(
 	request: ClassifierRequest,
 	signal?: AbortSignal,
 ): Promise<ClassifierResult> {
-	if (signal?.aborted) return classifierAbortedResult(ref, "classify aborted before start");
+	if (signal?.aborted) {
+		return classifierAbortedResult(ref, "classify aborted before start");
+	}
 	try {
-		return await deps.classify(
-			model,
-			{ state: request.state as ClassifierContext["state"], questions: request.questions },
-			{ signal },
-		);
+		return await deps.classify(model, { state: request.state as ClassifierContext["state"], questions: request.questions }, { signal });
 	} catch (error) {
 		const message = messageOf(error);
 		return signal?.aborted ? classifierAbortedResult(ref, message) : classifierErrorResult(ref, message);
@@ -86,6 +81,8 @@ export function classifierAbortedResult(ref: { provider: string; id: string }, m
 /** Parse the untrusted JSON model reference the workflow supplied. */
 function modelRef(value: unknown): { provider: string; id: string } | null {
 	const ref = value as { provider?: unknown; id?: unknown } | null | undefined;
-	if (!ref || typeof ref.provider !== "string" || typeof ref.id !== "string") return null;
+	if (!ref || typeof ref.provider !== "string" || typeof ref.id !== "string") {
+		return null;
+	}
 	return { provider: ref.provider, id: ref.id };
 }

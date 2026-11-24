@@ -31,15 +31,20 @@ export const RESERVED_REASONS = ["cost-limit", "time-limit", "cancelled", "error
 // Compile guard: adding a ReservedReason member without updating RESERVED_REASONS fails here.
 type ReservedReasonsExhaustive = Exclude<ReservedReason, (typeof RESERVED_REASONS)[number]> extends never ? true : never;
 const RESERVED_REASONS_EXHAUSTIVE: ReservedReasonsExhaustive = true;
-void RESERVED_REASONS_EXHAUSTIVE;
+RESERVED_REASONS_EXHAUSTIVE;
 
 /** Single exit-reason source: host + command derive the record reason here so a
  * controlled exit without a usable reason string is never reported as "returned". */
 export function deriveExitReason(metadata: unknown): string {
-	if (typeof metadata === "string") return metadata;
-	if (metadata !== null && typeof metadata === "object" && typeof (metadata as { reason?: unknown }).reason === "string")
+	if (typeof metadata === "string") {
+		return metadata;
+	}
+	if (metadata !== null && typeof metadata === "object" && typeof (metadata as { reason?: unknown }).reason === "string") {
 		return (metadata as { reason: string }).reason;
-	if (metadata === null || metadata === undefined) return "returned";
+	}
+	if (metadata === null || metadata === undefined) {
+		return "returned";
+	}
 	return JSON.stringify(metadata);
 }
 
@@ -55,7 +60,9 @@ export const WORKFLOW_ENTRY_VERSION = 1;
 
 /** Read the persisted schema version; null means the entry predates the envelope. */
 export function workflowEntryVersion(data: unknown): number | null {
-	if (!data || typeof data !== "object") return null;
+	if (!data || typeof data !== "object") {
+		return null;
+	}
 	const version = (data as { v?: unknown }).v;
 	return typeof version === "number" && Number.isInteger(version) && version >= 0 ? version : null;
 }
@@ -87,9 +94,13 @@ export interface WorkflowExitEntry {
 /** Read a persisted `workflow-exit` entry, accepting the legacy shape without `v`.
  * Returns null for malformed or newer entries so external consumers can branch safely. */
 export function readWorkflowExitEntry(data: unknown): WorkflowExitEntry | null {
-	if (!data || typeof data !== "object" || isNewerWorkflowEntry(data)) return null;
+	if (!data || typeof data !== "object" || isNewerWorkflowEntry(data)) {
+		return null;
+	}
 	const entry = data as Partial<WorkflowExitEntry>;
-	if (entry.reason !== null && typeof entry.reason !== "string") return null;
+	if (entry.reason !== null && typeof entry.reason !== "string") {
+		return null;
+	}
 	return {
 		v: workflowEntryVersion(data) ?? WORKFLOW_ENTRY_VERSION,
 		reason: entry.reason ?? null,
@@ -102,22 +113,23 @@ export function readWorkflowExitEntry(data: unknown): WorkflowExitEntry | null {
 /** Structured diagnostic phase of a `workflow-error` entry; the single source for every
  * `phase` literal written into that entry. Run-scoped phases come from the command and the
  * limits dialog; `abort`/`effect`/`progress` come from the host's advisory reporters. */
-export type WorkflowErrorPhase =
-	| "start"
-	| "reserve"
-	| "exit-record"
-	| "summary"
-	| "cleanup"
-	| "abort"
-	| "effect"
-	| "progress";
+export type WorkflowErrorPhase = "start" | "reserve" | "exit-record" | "summary" | "cleanup" | "abort" | "effect" | "progress";
 /** Ordered runtime form of the union. Nothing reads it yet; it exists so the compile guard
  * below fails when a member is added without updating this list. */
-export const WORKFLOW_ERROR_PHASES = ["start", "reserve", "exit-record", "summary", "cleanup", "abort", "effect", "progress"] as const satisfies readonly WorkflowErrorPhase[];
+const WORKFLOW_ERROR_PHASES = [
+	"start",
+	"reserve",
+	"exit-record",
+	"summary",
+	"cleanup",
+	"abort",
+	"effect",
+	"progress",
+] as const satisfies readonly WorkflowErrorPhase[];
 // Compile guard: adding a WorkflowErrorPhase member without updating WORKFLOW_ERROR_PHASES fails here.
 type WorkflowErrorPhasesExhaustive = Exclude<WorkflowErrorPhase, (typeof WORKFLOW_ERROR_PHASES)[number]> extends never ? true : never;
 const WORKFLOW_ERROR_PHASES_EXHAUSTIVE: WorkflowErrorPhasesExhaustive = true;
-void WORKFLOW_ERROR_PHASES_EXHAUSTIVE;
+WORKFLOW_ERROR_PHASES_EXHAUSTIVE;
 
 /**
  * Final exit outcome of one workflow run.
@@ -349,7 +361,7 @@ export const WORKFLOW_HANDLE_NAMES = [
 // Compile guard: a new WorkflowHandleName member without a WORKFLOW_HANDLE_NAMES entry fails here.
 type WorkflowHandleNamesExhaustive = Exclude<WorkflowHandleName, (typeof WORKFLOW_HANDLE_NAMES)[number]> extends never ? true : never;
 const WORKFLOW_HANDLE_NAMES_EXHAUSTIVE: WorkflowHandleNamesExhaustive = true;
-void WORKFLOW_HANDLE_NAMES_EXHAUSTIVE;
+WORKFLOW_HANDLE_NAMES_EXHAUSTIVE;
 
 /** Live progress of one workflow run, read by the command's status ticker. */
 export interface WorkflowProgress {
@@ -418,7 +430,7 @@ export interface WorkflowEffect {
 	output?: string;
 }
 
-export type WorkflowEffectPhase = "start" | "update" | "end";
+type WorkflowEffectPhase = "start" | "update" | "end";
 
 /** Pushed while an effect runs; the host never formats UI text. */
 export interface WorkflowEffectEvent {

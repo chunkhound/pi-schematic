@@ -2,15 +2,10 @@
 // v1 shape; a newer version must render a safe fallback, never throw inside a process-wide
 // renderer or an external consumer.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { CustomEntry, Theme } from "@earendil-works/pi-coding-agent";
 import { renderWorkflowShellEntry } from "../../workflow/activity.js";
-import {
-	WORKFLOW_ENTRY_VERSION,
-	WORKFLOW_EXIT_ENTRY_TYPE,
-	readWorkflowExitEntry,
-	type WorkflowExitEntry,
-} from "../../workflow/types.js";
+import { WORKFLOW_ENTRY_VERSION, WORKFLOW_EXIT_ENTRY_TYPE, readWorkflowExitEntry, type WorkflowExitEntry } from "../../workflow/types.js";
 import { buildWorkflowSummary, readWorkflowSummaryData, type WorkflowRunSummaryData } from "../../workflow/summary.js";
 import { renderWorkflowSummary } from "../../workflow/summary-renderer.js";
 
@@ -22,26 +17,21 @@ const identityTheme = {
 } as unknown as Theme;
 
 function summaryData(): WorkflowRunSummaryData {
-	return buildWorkflowSummary(
-		"wf",
-		"approved",
-		undefined,
-		{
-			startedAt: Date.UTC(2026, 0, 2, 3, 4, 5),
-			elapsedMs: 65_000,
-			checkpoints: 1,
-			steps: 2,
-			turns: 3,
-			classifySteps: 0,
-			activity: { run: 2, checkpoint: 1 },
-			costUsd: 1,
-			spend: [],
-			limits: { costLimit: null, timeBudgetMs: null },
-			unbounded: false,
-			crossedAt: null,
-			effects: [],
-		},
-	);
+	return buildWorkflowSummary("wf", "approved", undefined, {
+		startedAt: Date.UTC(2026, 0, 2, 3, 4, 5),
+		elapsedMs: 65_000,
+		checkpoints: 1,
+		steps: 2,
+		turns: 3,
+		classifySteps: 0,
+		activity: { run: 2, checkpoint: 1 },
+		costUsd: 1,
+		spend: [],
+		limits: { costLimit: null, timeBudgetMs: null },
+		unbounded: false,
+		crossedAt: null,
+		effects: [],
+	});
 }
 
 test("workflow-exit reads the legacy shape and the current shape", () => {
@@ -86,7 +76,7 @@ test("shell renderer shows a safe fallback for a newer entry", () => {
 		timestamp: "",
 		customType: "workflow-shell",
 		data: { v: WORKFLOW_ENTRY_VERSION + 1, id: 1, name: "shell", detail: "echo hi", ok: true, durationMs: 2 },
-	} as unknown as CustomEntry<unknown>;
+	} as unknown as CustomEntry;
 	const text = renderWorkflowShellEntry(entry, false, identityTheme).render(80).join("\n");
 	assert.match(text, /newer schematic version/);
 });

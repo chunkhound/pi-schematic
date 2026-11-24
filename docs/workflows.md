@@ -24,16 +24,16 @@ Review is the first use case. Review is not the engine's subject. No engine file
 
 ## Terms
 
-| Term | Meaning |
-|---|---|
-| Workflow run | One `/workflow` execution. |
-| Effect | One host call that a `workflow.*` handle triggers. |
-| Step | One `workflow.run` call. It covers one settled agent run. |
-| Settled run | One agent run that reached `agent_settled`, after retries, compaction, and queued continuations. One step can contain many turns and tool calls. |
-| Turn | One assistant message inside a settled run. |
-| Checkpoint | A safe exit point declared by `workflow.checkpoint`. |
-| Target | A soft cost or time limit. |
-| Exit record | The single `workflow-exit` entry written at run end. |
+| Term         | Meaning                                                                                                                                          |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Workflow run | One `/workflow` execution.                                                                                                                       |
+| Effect       | One host call that a `workflow.*` handle triggers.                                                                                               |
+| Step         | One `workflow.run` call. It covers one settled agent run.                                                                                        |
+| Settled run  | One agent run that reached `agent_settled`, after retries, compaction, and queued continuations. One step can contain many turns and tool calls. |
+| Turn         | One assistant message inside a settled run.                                                                                                      |
+| Checkpoint   | A safe exit point declared by `workflow.checkpoint`.                                                                                             |
+| Target       | A soft cost or time limit.                                                                                                                       |
+| Exit record  | The single `workflow-exit` entry written at run end.                                                                                             |
 
 ## File and entry point
 
@@ -55,7 +55,7 @@ const review = workflow.run("/review-worktree", { args: load("intent") });
 const ok = workflow.shell("npm test").ok;
 
 // As executed.
-const review = (await workflow.run("/review-worktree", { args: load("intent") }));
+const review = await workflow.run("/review-worktree", { args: load("intent") });
 const ok = (await workflow.shell("npm test")).ok;
 ```
 
@@ -99,7 +99,7 @@ The compiler rejects a `workflow` reference that is not a direct member call. It
 - any `defineWorkflow` reference other than the single top-level entry call (an alias, a bare reference, or a nested entry point);
 - `workflow.*` inside nested functions, methods, getters, setters, parameter defaults, class fields, static blocks, and constructors.
 
-Calls reach the host only as `workflow.<member>(...)` or `workflow['<member>'](...)`, optionally with `?.`. A constant template key (`` workflow[`run`](...) ``) is rejected too: the rewrite recognizes only dot and string-literal forms.
+Calls reach the host only as `workflow.<member>(...)` or `workflow['<member>'](...)`, optionally with `?.`. A constant template key (``workflow[`run`](...)``) is rejected too: the rewrite recognizes only dot and string-literal forms.
 
 The whole file MUST be exactly one top-level `return defineWorkflow(<arrow>)` statement. A bare top-level `workflow.*` call is rejected. It would escape the serial contract.
 </details>
@@ -110,23 +110,23 @@ The workflow sees one namespace, `workflow`. Every member is a function. A snaps
 
 Handles are **two-level only**. A global name has at most one dot. A `workflow.<member>` form is valid only for a declared handle; an unknown member is a compile error. A deeper name such as `workflow.notebook.read` is invalid. A signature shown as `→ void` resolves to `null` across the JSON round trip. The surface is 15 handles with `WorkflowHandleName` in `workflow/types.ts` as the single source; the run-scoped `workflow_output` tool (`workflow/output.ts`) is not a handle.
 
-| Handle | Signature | Contract |
-|---|---|---|
-| `workflow.run` | `(prompt, options?) → RunResult` | Run one step from a prompt template or skill. |
-| `workflow.handoff` | `(direction) → void` | Run `/handoff <direction>` exactly like the human command; resolves after the boundary cut completes and the successor run goes idle. |
-| `workflow.classify` | `(request) → ClassifierResult` | Answer typed questions about JSON state with a classifier model. |
-| `workflow.shell` | `(command, options?) → ShellResult` | Run a shell command through pi's bash tool. |
-| `workflow.state` | `() → StateDigest` | Read a JSON digest of the active conversation. |
-| `workflow.entries` | `({ after?, limit? }?) → Entry[]` | Read compact entries after an entry id. Each entry is `{ id, role, type, text, toolNames }`. |
-| `workflow.notebookIndex` | `() → Page[]` | List pages as `{ name, preview }`. |
-| `workflow.notebookRead` | `(name) → string` | Read one page body. An invalid name or a missing page throws. |
-| `workflow.notebookWrite` | `({ name, content }) → void` | Write one page durably. |
-| `workflow.notebookTopic` | `() → { topic, source }` | Read the active notebook topic. |
-| `workflow.budget` | `() → Budget` | Read `{ cost, costRemaining, timeRemainingMs }` against the targets. A remainder is `null` when no target is set. Both remainders measure to a target, so either can read zero while the run continues to its next checkpoint. Null-check a remainder before any `<= 0` comparison: `null <= 0` is true in JS, so an unset target reads as exhausted. |
-| `workflow.readonly` | `(enabled) → { readonly }` | Toggle the readonly posture through the same path as `/readonly`. Return the new value. |
-| `workflow.new` | `() → void` | Clear the context and start a new session. |
-| `workflow.checkpoint` | `(metadata) → unknown` | Declare a safe exit point. |
-| `workflow.exit` | `(metadata) → unknown` | Record the exit and stop the run immediately. Resolves with the metadata argument. A string `metadata.error` is the run's error in the exit record and summary. |
+| Handle                   | Signature                           | Contract                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------ | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workflow.run`           | `(prompt, options?) → RunResult`    | Run one step from a prompt template or skill.                                                                                                                                                                                                                                                                                                         |
+| `workflow.handoff`       | `(direction) → void`                | Run `/handoff <direction>` exactly like the human command; resolves after the boundary cut completes and the successor run goes idle.                                                                                                                                                                                                                 |
+| `workflow.classify`      | `(request) → ClassifierResult`      | Answer typed questions about JSON state with a classifier model.                                                                                                                                                                                                                                                                                      |
+| `workflow.shell`         | `(command, options?) → ShellResult` | Run a shell command through pi's bash tool.                                                                                                                                                                                                                                                                                                           |
+| `workflow.state`         | `() → StateDigest`                  | Read a JSON digest of the active conversation.                                                                                                                                                                                                                                                                                                        |
+| `workflow.entries`       | `({ after?, limit? }?) → Entry[]`   | Read compact entries after an entry id. Each entry is `{ id, role, type, text, toolNames }`.                                                                                                                                                                                                                                                          |
+| `workflow.notebookIndex` | `() → Page[]`                       | List pages as `{ name, preview }`.                                                                                                                                                                                                                                                                                                                    |
+| `workflow.notebookRead`  | `(name) → string`                   | Read one page body. An invalid name or a missing page throws.                                                                                                                                                                                                                                                                                         |
+| `workflow.notebookWrite` | `({ name, content }) → void`        | Write one page durably.                                                                                                                                                                                                                                                                                                                               |
+| `workflow.notebookTopic` | `() → { topic, source }`            | Read the active notebook topic.                                                                                                                                                                                                                                                                                                                       |
+| `workflow.budget`        | `() → Budget`                       | Read `{ cost, costRemaining, timeRemainingMs }` against the targets. A remainder is `null` when no target is set. Both remainders measure to a target, so either can read zero while the run continues to its next checkpoint. Null-check a remainder before any `<= 0` comparison: `null <= 0` is true in JS, so an unset target reads as exhausted. |
+| `workflow.readonly`      | `(enabled) → { readonly }`          | Toggle the readonly posture through the same path as `/readonly`. Return the new value.                                                                                                                                                                                                                                                               |
+| `workflow.new`           | `() → void`                         | Clear the context and start a new session.                                                                                                                                                                                                                                                                                                            |
+| `workflow.checkpoint`    | `(metadata) → unknown`              | Declare a safe exit point.                                                                                                                                                                                                                                                                                                                            |
+| `workflow.exit`          | `(metadata) → unknown`              | Record the exit and stop the run immediately. Resolves with the metadata argument. A string `metadata.error` is the run's error in the exit record and summary.                                                                                                                                                                                       |
 
 ### workflow.run
 
@@ -216,6 +216,7 @@ type ClassifierResult = {
   timestamp: number;
 };
 ```
+
 </details>
 
 A workflow MUST check `stopReason` before it reads answers. The host charges classifier usage to the run cost total when the provider returns it. When `usage` is absent, the host cannot charge the call and the total under-counts it.
@@ -335,7 +336,7 @@ While a run is live in the interactive TUI, the workflow replaces the built-in f
   1. conversation cells: other extensions' statuses, notebook, readonly, topic, then `ctx`;
   2. run cells: the `currentEffect` cell, cost, elapsed, then checkpoints;
   3. the run name. With a stop pill on the bar, the name drops out first. Without one, the name shrinks with `…`.
-  The stop pill shrinks last.
+     The stop pill shrinks last.
 - A dim second line preserves the built-in cwd/branch, session token/cost totals, and model/context-window detail. The bar shows the run cost (`runSpendRows` in `workflow/spend.ts`); the dim line shows the session cost (`collectUsage` in `usage.ts`, called by `tui.ts`).
 
 </details>
@@ -429,7 +430,9 @@ try {
     },
   });
   cmd = typeof detected.output?.command === "string" ? detected.output.command.trim() : null;
-} catch { cmd = null; }
+} catch {
+  cmd = null;
+}
 workflow.readonly(false);
 if (!cmd) return workflow.exit({ reason: "test-command-unknown" });
 ```
@@ -453,9 +456,9 @@ for (let round = 0; round < MAX_ROUNDS; round++) {
 **Readonly is posture, not a hint.** Detect in readonly. Drop it before a shell command that may write caches or artifacts.
 
 ```js
-workflow.readonly(true);   // detect the command, no side effects
+workflow.readonly(true); // detect the command, no side effects
 // ...structured detection...
-workflow.readonly(false);  // the suite may write
+workflow.readonly(false); // the suite may write
 const baseline = workflow.shell(cmd);
 ```
 

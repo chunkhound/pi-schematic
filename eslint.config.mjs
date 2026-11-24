@@ -88,7 +88,7 @@ const ban = {
 const CHILD_PROCESS_CALLS = "/^(spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)$/";
 
 export default defineConfig([
-	{ ignores: ["node_modules/**", ".claude/**", "coverage/**", "dist/**"] },
+	{ ignores: ["node_modules/**", ".claude/**", "coverage/**", "dist/**", "examples/workflows/**", "tests/e2e/fixtures/**"] },
 	{ linterOptions: { reportUnusedDisableDirectives: "error" } },
 	{
 		files: ["**/*.ts", "**/*.mjs", "**/*.js"],

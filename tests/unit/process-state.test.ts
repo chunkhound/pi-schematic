@@ -3,7 +3,7 @@
  * under a `Symbol.for` key on globalThis (process-state.ts), so every fresh
  * lookup — including one made by a second module copy — returns the SAME object.
  */
-import test from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { registeredState } from "../../process-state.js";
 

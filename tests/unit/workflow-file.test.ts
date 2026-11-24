@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpDir } from "./helpers.js";
@@ -110,7 +110,10 @@ test("workflowRoots resolves to expected directories", () => {
 	const roots = workflowRoots(cwd, agentDir);
 	assert.deepEqual(roots[0].dir, join(cwd, ".pi", "workflows"));
 	assert.deepEqual(roots[1].dir, join(agentDir, "workflows"));
-	assert.deepEqual(roots.map((root) => root.source), ["project", "global"]);
+	assert.deepEqual(
+		roots.map((root) => root.source),
+		["project", "global"],
+	);
 });
 
 // WHY: the listing reads `dirent.isFile()` (symlinks excluded) while resolution follows the
@@ -125,7 +128,10 @@ test("a symlinked workflow resolves but is not listed", { skip: process.platform
 		await writeFile(join(root, "real.js"), "x");
 		await symlink(join(root, "real.js"), join(cwd, ".pi", "workflows", "link.js"));
 		assert.equal(resolveWorkflowPath("link", cwd, agent), join(cwd, ".pi", "workflows", "link.js"));
-		assert.equal((await listWorkflows(cwd, agent)).find((entry) => entry.name === "link"), undefined);
+		assert.equal(
+			(await listWorkflows(cwd, agent)).find((entry) => entry.name === "link"),
+			undefined,
+		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

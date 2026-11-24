@@ -26,15 +26,16 @@ export const DETAIL_LABELS: Partial<Record<WorkflowHandleName, string>> = {
 export const HEADLINE_HANDLES = ["run", "classify", "checkpoint"] as const satisfies readonly WorkflowHandleName[];
 /** Every handle the overview reports. A new counted handle must join one side; the test
  * pins this union so a new handle cannot disappear from both rows silently. */
-export const COUNTED_HANDLES: readonly WorkflowHandleName[] = [
-	...HEADLINE_HANDLES,
-	...(Object.keys(DETAIL_LABELS) as WorkflowHandleName[]),
-];
+export const COUNTED_HANDLES: readonly WorkflowHandleName[] = [...HEADLINE_HANDLES, ...(Object.keys(DETAIL_LABELS) as WorkflowHandleName[])];
 
 /** Map a free-form or reserved exit reason to a semantic tone. Reserved aborts stand out. */
 export function reasonTone(reason: string): "error" | "warning" | "accent" {
-	if (reason === "error") return "error";
-	if ((RESERVED_REASONS as readonly string[]).includes(reason)) return "warning";
+	if (reason === "error") {
+		return "error";
+	}
+	if ((RESERVED_REASONS as readonly string[]).includes(reason)) {
+		return "warning";
+	}
 	return "accent";
 }
 
@@ -63,7 +64,9 @@ function headlineRows(data: WorkflowRunSummaryData, theme: Theme): string[] {
 // `partial` is the payload of the checkpoint where a limit/abort stopped the run; a null
 // payload carries nothing, so the row appears only for a real value.
 function stoppedRow(data: WorkflowRunSummaryData, theme: Theme): string | null {
-	if (data.partial === undefined || data.partial === null) return null;
+	if (data.partial === undefined || data.partial === null) {
+		return null;
+	}
 	return `${theme.fg("dim", "stopped")} ${theme.fg("muted", `at checkpoint ${formatPartial(data.partial)}`)}`;
 }
 
@@ -78,13 +81,23 @@ function expandedRows(data: WorkflowRunSummaryData, theme: Theme): string[] {
 function summaryRows(data: WorkflowRunSummaryData, expanded: boolean, theme: Theme): string[] {
 	const rows = [...headlineRows(data, theme)];
 	const target = targetRow(data, theme);
-	if (target) rows.push(target);
+	if (target) {
+		rows.push(target);
+	}
 	// Unbounded is expected, not a failure: an informative row, never a warning tone.
-	if (data.unbounded) rows.push(`${theme.fg("dim", "limits ")}${theme.fg("muted", "unbounded \u2014 no checkpoint declared")}`);
-	if (data.error) rows.push(`${theme.fg("dim", "error  ")}${theme.fg("error", data.error)}`);
+	if (data.unbounded) {
+		rows.push(`${theme.fg("dim", "limits ")}${theme.fg("muted", "unbounded \u2014 no checkpoint declared")}`);
+	}
+	if (data.error) {
+		rows.push(`${theme.fg("dim", "error  ")}${theme.fg("error", data.error)}`);
+	}
 	const stopped = stoppedRow(data, theme);
-	if (stopped) rows.push(stopped);
-	if (expanded) rows.push(...expandedRows(data, theme));
+	if (stopped) {
+		rows.push(stopped);
+	}
+	if (expanded) {
+		rows.push(...expandedRows(data, theme));
+	}
 	return rows;
 }
 
@@ -93,7 +106,9 @@ export const MAX_EFFECT_ROWS = 10;
 
 function effectRows(data: WorkflowRunSummaryData, theme: Theme): string[] {
 	const effects = data.effects ?? [];
-	if (effects.length === 0) return [];
+	if (effects.length === 0) {
+		return [];
+	}
 	const shown = effects.slice(-MAX_EFFECT_ROWS);
 	const rows = shown.map((effect) => {
 		const detail = effect.detail.length > 56 ? `${effect.detail.slice(0, 53)}...` : effect.detail;
@@ -102,7 +117,9 @@ function effectRows(data: WorkflowRunSummaryData, theme: Theme): string[] {
 		return `  ${theme.fg("accent", "$ ")}${theme.fg("muted", detail)} ${status} ${theme.fg("dim", `${effect.durationMs}ms`)}${truncated}`;
 	});
 	const hidden = effects.length - shown.length;
-	if (hidden > 0) rows.unshift(theme.fg("dim", `  \u2026 ${hidden} earlier`));
+	if (hidden > 0) {
+		rows.unshift(theme.fg("dim", `  \u2026 ${hidden} earlier`));
+	}
 	return [theme.fg("dim", "effects"), ...rows];
 }
 
@@ -111,7 +128,9 @@ function effectRows(data: WorkflowRunSummaryData, theme: Theme): string[] {
  * much. Rendered only when a target was actually crossed, so other exits gain no noise.
  */
 function targetRow(data: WorkflowRunSummaryData, theme: Theme): string | null {
-	if (!data.crossedAt) return null;
+	if (!data.crossedAt) {
+		return null;
+	}
 	if (data.reason === ("cost-limit" satisfies ReservedReason) && data.limits.costLimit !== null) {
 		return overshootRow(theme, formatCost, data.limits.costLimit, data.costUsd);
 	}
@@ -133,15 +152,19 @@ function overshootRow(theme: Theme, format: (value: number) => string, target: n
 /** Expanded ledger of the remaining counted handles; null when none were invoked. */
 function detailRow(data: WorkflowRunSummaryData, theme: Theme): string | null {
 	const parts: string[] = [];
-	for (const [name, label] of Object.entries(DETAIL_LABELS) as Array<[WorkflowHandleName, string]>) {
+	for (const [name, label] of Object.entries(DETAIL_LABELS) as [WorkflowHandleName, string][]) {
 		const count = data.activity[name] ?? 0;
-		if (count > 0) parts.push(theme.fg("dim", `${label} ${count}`));
+		if (count > 0) {
+			parts.push(theme.fg("dim", `${label} ${count}`));
+		}
 	}
 	return parts.length > 0 ? `${theme.fg("dim", "detail ")}${parts.join(theme.fg("dim", " \u00B7 "))}` : null;
 }
 
 function modelRows(data: WorkflowRunSummaryData, expanded: boolean, theme: Theme): string[] {
-	if (data.spend.length === 0) return [];
+	if (data.spend.length === 0) {
+		return [];
+	}
 	const shown = expanded ? data.spend : data.spend.slice(0, MAX_MODELS_COLLAPSED);
 	const width = Math.max(...shown.map((row) => row.key.length));
 	const rows = shown.map((row) => {
@@ -149,7 +172,9 @@ function modelRows(data: WorkflowRunSummaryData, expanded: boolean, theme: Theme
 		const label = theme.fg(attributed ? "muted" : "dim", row.key.padEnd(width));
 		const tokens = theme.fg("dim", `${formatCompactTokens(row.inputTokens)} in \u00B7 ${formatCompactTokens(row.outputTokens)} out`);
 		const line = `  ${label}   ${theme.fg("accent", formatCost(row.costUsd))}   ${tokens}`;
-		if (!expanded) return line;
+		if (!expanded) {
+			return line;
+		}
 		const parts = [
 			`cache ${formatCompactTokens(row.cacheReadTokens)}/${formatCompactTokens(row.cacheWriteTokens)}`,
 			`${row.calls} ${row.calls === 1 ? "call" : "calls"}`,
@@ -157,31 +182,29 @@ function modelRows(data: WorkflowRunSummaryData, expanded: boolean, theme: Theme
 		return `${line}\n     ${theme.fg("dim", parts.join("  \u00B7  "))}`;
 	});
 	const hidden = data.spend.length - shown.length;
-	if (hidden > 0) rows.push(theme.fg("dim", `  \u2026 ${hidden} more`));
+	if (hidden > 0) {
+		rows.push(theme.fg("dim", `  \u2026 ${hidden} more`));
+	}
 	return rows;
 }
 
-export function renderWorkflowSummary(
-	raw: unknown,
-	expanded: boolean,
-	theme: Theme,
-): Component {
-	const rawName = raw && typeof raw === "object" && typeof (raw as { workflow?: unknown }).workflow === "string"
-		? (raw as { workflow: string }).workflow
-		: "";
+export function renderWorkflowSummary(raw: unknown, expanded: boolean, theme: Theme): Component {
+	const rawName = raw && typeof raw === "object" && typeof (raw as { workflow?: unknown }).workflow === "string" ? (raw as { workflow: string }).workflow : "";
 	const title = theme.fg("accent", theme.bold(`\u{1F6E0}\u{FE0F} workflow ${rawName}`));
-	if (!raw) return workflowCard(theme, title, []);
-	if (isNewerWorkflowEntry(raw))
+	if (!raw) {
+		return workflowCard(theme, title, []);
+	}
+	if (isNewerWorkflowEntry(raw)) {
 		return workflowCard(theme, title, [theme.fg("warning", "This workflow summary was written by a newer schematic version and cannot be read here.")]);
+	}
 	const data = readWorkflowSummaryData(raw);
-	if (!data) return workflowCard(theme, title, [theme.fg("warning", "This workflow summary is unreadable and was skipped.")]);
+	if (!data) {
+		return workflowCard(theme, title, [theme.fg("warning", "This workflow summary is unreadable and was skipped.")]);
+	}
 	const modelHeading = data.spend.length > 0 ? [theme.fg("dim", "by model")] : [];
 	return workflowCard(theme, title, [...summaryRows(data, expanded, theme), ...modelHeading, ...modelRows(data, expanded, theme)]);
 }
 
 export function registerWorkflowSummaryRenderer(pi: ExtensionAPI): void {
-	pi.registerEntryRenderer<unknown>(
-		WORKFLOW_SUMMARY_ENTRY_TYPE,
-		(entry: CustomEntry<unknown>, { expanded }, theme) => renderWorkflowSummary(entry.data, expanded, theme),
-	);
+	pi.registerEntryRenderer(WORKFLOW_SUMMARY_ENTRY_TYPE, (entry: CustomEntry, { expanded }, theme) => renderWorkflowSummary(entry.data, expanded, theme));
 }

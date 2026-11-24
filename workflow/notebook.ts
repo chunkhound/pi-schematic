@@ -27,9 +27,13 @@ export function notebookIndex(state: SchematicState): NotebookPageInfo[] {
  * missing page is a visible error, not a silent read that hides the miss from the run.
  */
 export function notebookRead(state: SchematicState, name: unknown): string {
-	if (typeof name !== "string") throw new Error("workflow.notebookRead requires a string page name");
+	if (typeof name !== "string") {
+		throw new Error("workflow.notebookRead requires a string page name");
+	}
 	const page = state.notebookPages.get(name);
-	if (page === undefined) throw new Error(`workflow.notebookRead: no page named "${name}"`);
+	if (page === undefined) {
+		throw new Error(`workflow.notebookRead: no page named "${name}"`);
+	}
 	// Mirror the notebook_read tool: a write-truncated page must never read back silently clipped.
 	return state.clippedPages.has(name) ? `${page}\n\n${CLIPPED_PAGE_NOTICE}` : page;
 }
@@ -40,8 +44,9 @@ export function buildNotebookWritePreview(name: string, preview: string): string
 
 export function parseNotebookWrite(args: unknown): { name: string; content: string } {
 	const value = args as { name?: unknown; content?: unknown } | null;
-	if (!value || typeof value.name !== "string" || typeof value.content !== "string")
+	if (!value || typeof value.name !== "string" || typeof value.content !== "string") {
 		throw new Error("workflow.notebookWrite requires { name, content } as strings");
+	}
 	return { name: value.name, content: value.content };
 }
 

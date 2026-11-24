@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { ExtensionCommandContext, SessionEntry, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import { createState, type SchematicState } from "../../state.js";
 import { createWorkflowHost } from "../../workflow/host.js";
@@ -80,7 +80,9 @@ test("pending correlation resolves when the branch settles", async () => {
 test("registry disposal rejects pending correlations and removes the settled listener", async () => {
 	let removed = 0;
 	const registry = createRunRegistry({
-		onSettled: () => () => { removed += 1; },
+		onSettled: () => () => {
+			removed += 1;
+		},
 		getBranch: () => [],
 	});
 	const pending = registry.correlate(null);
@@ -118,22 +120,32 @@ function lifecycleDeps(pi: TestPI, state: SchematicState, branch: SessionEntry[]
 }
 
 /** Live `agent_settled` subscribers on pi's real bus, and the way to drive one. */
-function settleListeners(pi: TestPI): Array<() => void> {
+function settleListeners(pi: TestPI): (() => void)[] {
 	return pi.handlers.get("agent_settled") ?? [];
 }
 
 function settle(pi: TestPI): void {
-	for (const handler of [...settleListeners(pi)]) handler();
+	for (const handler of [...settleListeners(pi)]) {
+		handler();
+	}
 }
 
 // WHY: a missing `state.registry.dispose()` leaves the pending correlation promise
 // unrejected, so the assertion below would hang forever without a timeout. 5 s is
 // far above the normal ~1 ms dispose path and short enough to fail fast in CI.
 function rejectsWithin(promise: Promise<unknown>, pattern: RegExp, message?: string): Promise<void> {
-	return assert.rejects(Promise.race([
-		promise,
-		new Promise((_, reject) => setTimeout(() => reject(new Error("timed out waiting for rejection")), 5000)),
-	]), pattern, message);
+	return assert.rejects(
+		Promise.race([
+			promise,
+			new Promise((_, reject) =>
+				setTimeout(() => {
+					reject(new Error("timed out waiting for rejection"));
+				}, 5000),
+			),
+		]),
+		pattern,
+		message,
+	);
 }
 
 test("host disposal disposes its registry and the next host correlates on a fresh one", async () => {

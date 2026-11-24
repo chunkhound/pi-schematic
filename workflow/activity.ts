@@ -28,7 +28,9 @@ const MAX_ENTRY_OUTPUT_LINES = 20;
 const MAX_ENTRY_OUTPUT_CHARS = 8 * 1024;
 
 function boundedOutput(output: string | undefined): string | undefined {
-	if (!output || output.length <= MAX_ENTRY_OUTPUT_CHARS) return output;
+	if (!output || output.length <= MAX_ENTRY_OUTPUT_CHARS) {
+		return output;
+	}
 	return `\u2026\n${output.slice(-MAX_ENTRY_OUTPUT_CHARS)}`;
 }
 
@@ -70,7 +72,9 @@ export function createShellActivity(deps: ShellActivityDeps): ShellActivity {
 
 	const mount = (command: string, initial: string): void => {
 		const ctx = tuiCtx();
-		if (!ctx) return;
+		if (!ctx) {
+			return;
+		}
 		mountedCtx = ctx;
 		fed = "";
 		try {
@@ -96,7 +100,9 @@ export function createShellActivity(deps: ShellActivityDeps): ShellActivity {
 	};
 
 	const append = (display: string): void => {
-		if (!component) return;
+		if (!component) {
+			return;
+		}
 		const complete = completePrefix(display);
 		if (fed && !complete.startsWith(fed)) {
 			// pi's display truncates from the head once it overflows: remount with the full snapshot.
@@ -104,24 +110,38 @@ export function createShellActivity(deps: ShellActivityDeps): ShellActivity {
 			return;
 		}
 		const delta = complete.slice(fed.length);
-		if (delta) component.appendOutput(delta);
+		if (delta) {
+			component.appendOutput(delta);
+		}
 		fed = complete;
 	};
 
 	/** Final feed: no further updates follow, so the trailing partial line can land too. */
 	const flush = (display: string): void => {
-		if (!component) return;
-		if (!display.startsWith(fed)) mount(component.getCommand(), display);
-		if (!component) return; // remount hit a stale context; the audit entry below still lands
+		if (!component) {
+			return;
+		}
+		if (!display.startsWith(fed)) {
+			mount(component.getCommand(), display);
+		}
+		if (!component) {
+			return;
+		} // remount hit a stale context; the audit entry below still lands
 		const tail = display.slice(fed.length);
-		if (tail) component.appendOutput(tail);
+		if (tail) {
+			component.appendOutput(tail);
+		}
 		fed = display;
 	};
 
 	const onEffect = (event: WorkflowEffectEvent): void => {
 		// A shell that outlives the run must not paint or persist after release: the run closed.
-		if (disposed) return;
-		if (event.effect.name !== "shell") return;
+		if (disposed) {
+			return;
+		}
+		if (event.effect.name !== "shell") {
+			return;
+		}
 		if (event.phase === "start") {
 			mount(event.effect.detail, "");
 			return;
@@ -164,19 +184,21 @@ export function createShellActivity(deps: ShellActivityDeps): ShellActivity {
 
 /** Read a persisted shell audit entry, accepting legacy entries without `v`. */
 function readWorkflowShellEntry(data: unknown): WorkflowEffect | null {
-	if (!data || typeof data !== "object" || isNewerWorkflowEntry(data)) return null;
+	if (!data || typeof data !== "object" || isNewerWorkflowEntry(data)) {
+		return null;
+	}
 	const effect = data as Partial<WorkflowEffect>;
-	if (effect.name !== "shell" || typeof effect.detail !== "string") return null;
-	if (typeof effect.id !== "number" || typeof effect.ok !== "boolean" || typeof effect.durationMs !== "number") return null;
+	if (effect.name !== "shell" || typeof effect.detail !== "string") {
+		return null;
+	}
+	if (typeof effect.id !== "number" || typeof effect.ok !== "boolean" || typeof effect.durationMs !== "number") {
+		return null;
+	}
 	return effect as WorkflowEffect;
 }
 
 /** Transcript card for one persisted shell effect; expanded reveals the output tail. */
-export function renderWorkflowShellEntry(
-	entry: CustomEntry<unknown>,
-	expanded: boolean,
-	theme: Theme,
-): Component {
+export function renderWorkflowShellEntry(entry: CustomEntry, expanded: boolean, theme: Theme): Component {
 	const effect = readWorkflowShellEntry(entry.data);
 	if (!effect) {
 		const fallback = isNewerWorkflowEntry(entry.data)
@@ -184,35 +206,27 @@ export function renderWorkflowShellEntry(
 			: "This shell entry is unreadable and was skipped.";
 		return workflowCard(theme, theme.fg("accent", "$ workflow"), [theme.fg("warning", fallback)]);
 	}
-	const status = effect.ok
-		? theme.fg("success", "ok")
-		: theme.fg("error", effect.killed ? "killed" : `exit ${effect.exitCode ?? "?"}`);
+	const status = effect.ok ? theme.fg("success", "ok") : theme.fg("error", effect.killed ? "killed" : `exit ${effect.exitCode ?? "?"}`);
 	const header = `${theme.fg("accent", "$ ")}${theme.fg("text", effect.detail)}  ${status}  ${theme.fg("dim", `${effect.durationMs}ms`)}`;
 	const rows: string[] = [];
 	if (expanded && effect.output) {
 		const lines = effect.output.split("\n").slice(-MAX_ENTRY_OUTPUT_LINES);
 		rows.push(theme.fg("dim", lines.map((line) => `  ${line}`).join("\n")));
 	}
-	if (effect.truncated && effect.fullOutputPath) rows.push(theme.fg("warning", `  truncated; full output: ${effect.fullOutputPath}`));
+	if (effect.truncated && effect.fullOutputPath) {
+		rows.push(theme.fg("warning", `  truncated; full output: ${effect.fullOutputPath}`));
+	}
 	return workflowCard(theme, header, rows);
 }
 
 /** Text card for the workflow script's own console output; LLM-invisible. */
-export function renderWorkflowLogEntry(
-	entry: CustomEntry<{ text: string }>,
-	expanded: boolean,
-	theme: Theme,
-): Component {
+export function renderWorkflowLogEntry(entry: CustomEntry<{ text: string }>, expanded: boolean, theme: Theme): Component {
 	const lines = ((entry.data as { text?: string } | undefined)?.text ?? "").split("\n");
 	const shown = expanded ? lines : lines.slice(-MAX_ENTRY_OUTPUT_LINES);
 	return workflowCard(theme, theme.fg("accent", "workflow log"), [theme.fg("dim", shown.map((line) => `  ${line}`).join("\n"))]);
 }
 
 export function registerWorkflowShellRenderer(pi: ExtensionAPI): void {
-	pi.registerEntryRenderer<unknown>(WORKFLOW_SHELL_ENTRY_TYPE, (entry, { expanded }, theme) =>
-		renderWorkflowShellEntry(entry, expanded, theme),
-	);
-	pi.registerEntryRenderer<{ text: string }>(WORKFLOW_LOG_ENTRY_TYPE, (entry, { expanded }, theme) =>
-		renderWorkflowLogEntry(entry, expanded, theme),
-	);
+	pi.registerEntryRenderer(WORKFLOW_SHELL_ENTRY_TYPE, (entry, { expanded }, theme) => renderWorkflowShellEntry(entry, expanded, theme));
+	pi.registerEntryRenderer<{ text: string }>(WORKFLOW_LOG_ENTRY_TYPE, (entry, { expanded }, theme) => renderWorkflowLogEntry(entry, expanded, theme));
 }

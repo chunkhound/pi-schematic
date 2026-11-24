@@ -1,15 +1,9 @@
 // Pure classifier helpers. `classifyRequest` takes its provider boundary as injected
 // deps, so these tests supply plain functions at that seam and never reach a real model.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { ClassifierApi, ClassifierModel, ClassifierResult } from "@earendil-works/pi-ai";
-import {
-	classifierAbortedResult,
-	classifierErrorResult,
-	classifyRequest,
-	findClassifierModel,
-	type ClassifierDeps,
-} from "../../workflow/classify.js";
+import { classifierAbortedResult, classifierErrorResult, classifyRequest, findClassifierModel, type ClassifierDeps } from "../../workflow/classify.js";
 import type { ClassifierRequest } from "../../workflow/types.js";
 
 const ref = { provider: "typesafe", id: "jev" };

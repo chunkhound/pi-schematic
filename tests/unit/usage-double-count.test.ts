@@ -2,7 +2,7 @@
 // excluded, child-owned tool results skipped) + the child ledger + classifier spend sum
 // exactly once in the run metrics, and a cancelled workflow.new never double-counts.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { createState, type SchematicState } from "../../state.js";
@@ -35,7 +35,15 @@ function childToolResult(id: string, toolCallId: string, provider: string, model
 		id,
 		parentId: null,
 		timestamp: "2026-10-07T00:00:00.000Z",
-		message: { role: "toolResult", toolName: "spawn", toolCallId, content: "child done", timestamp: 0, usage: usd(total), details: { model, route: { provider } } },
+		message: {
+			role: "toolResult",
+			toolName: "spawn",
+			toolCallId,
+			content: "child done",
+			timestamp: 0,
+			usage: usd(total),
+			details: { model, route: { provider } },
+		},
 	} as unknown as SessionEntry;
 }
 
@@ -98,7 +106,9 @@ function createEnv(limits: WorkflowLimits = { costLimit: null, timeBudgetMs: nul
 		handoff: async () => {},
 		// Replacement clears the settled branch; a cancelled replacement throws instead.
 		newSession: async () => {
-			if (env.failNew) throw new Error("new session was cancelled");
+			if (env.failNew) {
+				throw new Error("new session was cancelled");
+			}
 			branch.length = 0;
 		},
 	};
@@ -129,7 +139,10 @@ test("baseline + branch + child ledger + classifier spend sums exactly once", as
 	const metrics = host.metrics();
 	assert.ok(Math.abs(metrics.costUsd - 1.05) < 1e-9, "baseline 0.5 + child 0.3 + classifier 0.25");
 	assert.ok(Math.abs(spendSum(host) - metrics.costUsd) < 1e-9, "spend rows sum to the total once");
-	assert.equal(metrics.costUsd, metrics.spend.reduce((total, row) => total + row.costUsd, 0));
+	assert.equal(
+		metrics.costUsd,
+		metrics.spend.reduce((total, row) => total + row.costUsd, 0),
+	);
 	const byKey = Object.fromEntries(metrics.spend.map((row) => [row.key, row.costUsd]));
 	assert.equal(byKey["anthropic/opus"], 0.5);
 	assert.equal(byKey["anthropic/widget"], 0.3, "child ledger owns the child's spend");
@@ -148,7 +161,10 @@ test("a cancelled workflow.new counts the unchanged branch and child once", asyn
 	const metrics = host.metrics();
 	assert.ok(Math.abs(metrics.costUsd - 1.05) < 1e-9, "no baseline committed on top of the unchanged branch");
 	assert.ok(Math.abs(spendSum(host) - metrics.costUsd) < 1e-9, "spend rows sum to the total once");
-	assert.equal(metrics.costUsd, metrics.spend.reduce((total, row) => total + row.costUsd, 0));
+	assert.equal(
+		metrics.costUsd,
+		metrics.spend.reduce((total, row) => total + row.costUsd, 0),
+	);
 	assert.deepEqual(metrics.spend.map((row) => row.key).sort(), ["anthropic/opus", "anthropic/widget", "typesafe/jev"].sort());
 });
 

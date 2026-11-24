@@ -2,7 +2,7 @@
 // workflows are async, so two handles can interleave across an await; the second
 // overlapping call must reject with the guard message while the first still completes.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
 import { createWorkflowHost } from "../../workflow/host.js";
@@ -48,12 +48,16 @@ function fakeDeps(shellRun: NonNullable<WorkflowHostDeps["shellRun"]>): Workflow
 
 test("a second overlapping handle call rejects while the first still completes", async () => {
 	let openGate!: () => void;
-	const gate = new Promise<void>((resolve) => { openGate = resolve; });
+	const gate = new Promise<void>((resolve) => {
+		openGate = resolve;
+	});
 	const deps = fakeDeps(async () => {
 		await gate;
 		return SHELL_OK;
 	});
-	const shell = createWorkflowHost(deps).globals().find((tool) => tool.name === "workflow.shell");
+	const shell = createWorkflowHost(deps)
+		.globals()
+		.find((tool) => tool.name === "workflow.shell");
 	assert.ok(shell, "workflow.shell is registered");
 	const context = { signal: new AbortController().signal } as never;
 	const first = shell.execute(["echo one"], context) as Promise<unknown>;

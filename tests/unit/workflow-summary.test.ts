@@ -1,7 +1,7 @@
 // Contract: the persisted overview carries the run's identity, exit reason, elapsed
 // time, and the spend rows exactly as the host derived them.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { WorkflowRunMetrics } from "../../workflow/types.js";
 import { WORKFLOW_SUMMARY_ENTRY_TYPE, buildWorkflowSummary } from "../../workflow/summary.js";
 

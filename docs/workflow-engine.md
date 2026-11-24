@@ -6,52 +6,52 @@ Reference for agents and maintainers who modify the `/workflow` engine. The auth
 
 One `/workflow <file> [args]` run. Each step names its owner module.
 
-| # | Step | Owner | Detail |
-|---|---|---|---|
-| 1 | Reserve | `workflow/coordinator.ts` | `reserveWorkflow` claims a process-global slot before any await; `workflow/command.ts` releases it in `finally`. |
-| 2 | Parse argument | `workflow/file.ts` | `parseWorkflowArgs` splits the first token (name) from the verbatim remainder (args). |
-| 3 | Resolve / list | `workflow/file.ts` | `resolveWorkflowPath` resolves path-like names against cwd and bare names against `<cwd>/.pi/workflows` then `<agentDir>/workflows`. A miss lists `listWorkflows` names. |
-| 4 | Read | `workflow/file.ts` | `readWorkflow` reads the source; `workflow/command.ts` (`readAndCompile`) wraps the failure. |
-| 5 | Compile | `workflow/compile.ts` | `compileWorkflow` parses, validates the synchronous contract, and rewrites calls. |
-| 6 | Compose driver | `workflow/driver.ts` | `composeWorkflow` prepends `WORKFLOW_DRIVER`, which defines `defineWorkflow`. |
-| 7 | Resolve limits | `workflow/limits-dialog.ts` | `resolveLimits` receives `hasCheckpoint`; without one it skips the dialog, ignores `--workflow-cost`, and turns a valid `--workflow-time` into the sandbox hard deadline. A checkpoint-less run is a supported unbounded mode, not a gap (rule in [workflows.md](workflows.md)). |
-| 8 | Build host | `workflow/host.ts` | `createWorkflowHost` via `command.ts` (`buildHost`): run registry, child-usage sink, exit state, and metrics. `host.globals()` supplies the handle list. |
-| 9 | Suppress input, arm cancel | `workflow/command.ts` | Installs the `input` handler and the arm-then-confirm cancellation funnel. |
-| 10 | Build sandbox | `workflow/sandbox.ts` | `createWorkflowSandbox` clamps the deadline; `command.ts` (`runSandbox`) supplies `MEMORY_LIMIT_BYTES` and `hardDeadlineMs(limits)`. |
-| 11 | Seed store | `workflow/command.ts` | `sandbox.execute(compiled, { store: { intent, args }, signal })`; the script reads it with `load`. |
-| 12 | Execute | `@earendil-works/pi-codemode` | The QuickJS worker runs the composed script body. |
-| 13 | Dispatch handles | `workflow/host.ts` | `executeGuarded` gates, counts, and runs each `workflow.<member>` effect. |
-| 14 | Deferred stop / checkpoint | `workflow/host.ts` | `guardDeferredStop` arms a pending stop; `handleCheckpoint` stops there and salvages. |
-| 15 | Exit record | `workflow/host.ts` | The single writer is `WorkflowHost.recordExit`: `handleExit`, `handleCheckpoint`, and `recordHardAbortExit` call it directly; `command.ts` calls it once for a returned or infra-failed run. |
-| 16 | Summary | `workflow/summary.ts` | `buildWorkflowSummary`; `command.ts` (`finalizeRun`) appends it. |
+| #   | Step                       | Owner                         | Detail                                                                                                                                                                                                                                                                           |
+| --- | -------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Reserve                    | `workflow/coordinator.ts`     | `reserveWorkflow` claims a process-global slot before any await; `workflow/command.ts` releases it in `finally`.                                                                                                                                                                 |
+| 2   | Parse argument             | `workflow/file.ts`            | `parseWorkflowArgs` splits the first token (name) from the verbatim remainder (args).                                                                                                                                                                                            |
+| 3   | Resolve / list             | `workflow/file.ts`            | `resolveWorkflowPath` resolves path-like names against cwd and bare names against `<cwd>/.pi/workflows` then `<agentDir>/workflows`. A miss lists `listWorkflows` names.                                                                                                         |
+| 4   | Read                       | `workflow/file.ts`            | `readWorkflow` reads the source; `workflow/command.ts` (`readAndCompile`) wraps the failure.                                                                                                                                                                                     |
+| 5   | Compile                    | `workflow/compile.ts`         | `compileWorkflow` parses, validates the synchronous contract, and rewrites calls.                                                                                                                                                                                                |
+| 6   | Compose driver             | `workflow/driver.ts`          | `composeWorkflow` prepends `WORKFLOW_DRIVER`, which defines `defineWorkflow`.                                                                                                                                                                                                    |
+| 7   | Resolve limits             | `workflow/limits-dialog.ts`   | `resolveLimits` receives `hasCheckpoint`; without one it skips the dialog, ignores `--workflow-cost`, and turns a valid `--workflow-time` into the sandbox hard deadline. A checkpoint-less run is a supported unbounded mode, not a gap (rule in [workflows.md](workflows.md)). |
+| 8   | Build host                 | `workflow/host.ts`            | `createWorkflowHost` via `command.ts` (`buildHost`): run registry, child-usage sink, exit state, and metrics. `host.globals()` supplies the handle list.                                                                                                                         |
+| 9   | Suppress input, arm cancel | `workflow/command.ts`         | Installs the `input` handler and the arm-then-confirm cancellation funnel.                                                                                                                                                                                                       |
+| 10  | Build sandbox              | `workflow/sandbox.ts`         | `createWorkflowSandbox` clamps the deadline; `command.ts` (`runSandbox`) supplies `MEMORY_LIMIT_BYTES` and `hardDeadlineMs(limits)`.                                                                                                                                             |
+| 11  | Seed store                 | `workflow/command.ts`         | `sandbox.execute(compiled, { store: { intent, args }, signal })`; the script reads it with `load`.                                                                                                                                                                               |
+| 12  | Execute                    | `@earendil-works/pi-codemode` | The QuickJS worker runs the composed script body.                                                                                                                                                                                                                                |
+| 13  | Dispatch handles           | `workflow/host.ts`            | `executeGuarded` gates, counts, and runs each `workflow.<member>` effect.                                                                                                                                                                                                        |
+| 14  | Deferred stop / checkpoint | `workflow/host.ts`            | `guardDeferredStop` arms a pending stop; `handleCheckpoint` stops there and salvages.                                                                                                                                                                                            |
+| 15  | Exit record                | `workflow/host.ts`            | The single writer is `WorkflowHost.recordExit`: `handleExit`, `handleCheckpoint`, and `recordHardAbortExit` call it directly; `command.ts` calls it once for a returned or infra-failed run.                                                                                     |
+| 16  | Summary                    | `workflow/summary.ts`         | `buildWorkflowSummary`; `command.ts` (`finalizeRun`) appends it.                                                                                                                                                                                                                 |
 
 ## Module map
 
-| File | Responsibility |
-|---|---|
-| `workflow/activity.ts` | Live shell widget (`workflow-activity`) plus `workflow-shell`/`workflow-log` entry types and renderers. |
-| `workflow/autocomplete.ts` | Filesystem-backed `/workflow` name completion provider. |
-| `workflow/classify.ts` | `workflow.classify` request handling; never rejects. |
-| `workflow/command.ts` | `/workflow` orchestration: budget dialogs, input suppression, cancellation, `new`/`handoff`, exit finalization. |
-| `workflow/compile.ts` | acorn parse, synchronous-contract validation, magic-string await rewrite. |
-| `workflow/coordinator.ts` | Process-global run reservation and per-session runtime registry. |
-| `workflow/driver.ts` | Prepends the injected `defineWorkflow` driver to compiled source. |
-| `workflow/card.ts` | Shared bordered-card layout for the activity widget and the summary card. |
-| `workflow/errors.ts` | Shared error mapping (`messageOf`) and `safeAppendEntry`, the advisory append. |
-| `workflow/file.ts` | Argument parse, path resolution, discovery, source read. |
-| `workflow/host.ts` | Host effects: handle dispatch, limits, exit record, run correlation, metrics. |
-| `workflow/limits-dialog.ts` | Soft-target resolution: flag bypass, interactive budget/time dialogs, headless no-target fallback; emits the `workflow-limits` entry. |
-| `workflow/notebook.ts` | `workflow.notebook*` inspectors and writer. |
-| `workflow/output.ts` | Run-scoped structured-output tool (`workflow_output`) and the single call-contract wording shared by its primer and the one-shot nudge. |
-| `workflow/rebind.ts` | `performNewSession`, `performHandoff`, `rebindRun` + `RebindBundle`/`RebindableDeps`; `performHandoff` arms the boundary settlement watch, then waits for the successor run to go idle; the per-wait handoff deadline (`HANDOFF_TIMEOUT_MS`). |
-| `workflow/run-registry.ts` | Correlates sent runs with `agent_settled` boundaries; resolves run targets. |
-| `workflow/sandbox.ts` | Sandbox construction, timeout clamp, hard-deadline factor. |
-| `workflow/shell.ts` | `workflow.shell` through pi's bash tool plus the readonly guard. |
-| `workflow/spend.ts` | `SpendState`, `armPendingStop`, `branchSpend`, `runSpendRows`, `computeCurrentCost`, `limitReason`; live cost budget and the target→final overrun projection. |
-| `workflow/state-digest.ts` | Derives `workflow.state`/`workflow.entries` digests from branch entries. |
-| `workflow/summary-renderer.ts` | Renders the `workflow-summary` entry as a transcript card. |
-| `workflow/summary.ts` | `workflow-summary` entry type and pure builder. |
-| `workflow/types.ts` | Boundary types; the handle-name union. |
+| File                           | Responsibility                                                                                                                                                                                                                                |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workflow/activity.ts`         | Live shell widget (`workflow-activity`) plus `workflow-shell`/`workflow-log` entry types and renderers.                                                                                                                                       |
+| `workflow/autocomplete.ts`     | Filesystem-backed `/workflow` name completion provider.                                                                                                                                                                                       |
+| `workflow/classify.ts`         | `workflow.classify` request handling; never rejects.                                                                                                                                                                                          |
+| `workflow/command.ts`          | `/workflow` orchestration: budget dialogs, input suppression, cancellation, `new`/`handoff`, exit finalization.                                                                                                                               |
+| `workflow/compile.ts`          | acorn parse, synchronous-contract validation, magic-string await rewrite.                                                                                                                                                                     |
+| `workflow/coordinator.ts`      | Process-global run reservation and per-session runtime registry.                                                                                                                                                                              |
+| `workflow/driver.ts`           | Prepends the injected `defineWorkflow` driver to compiled source.                                                                                                                                                                             |
+| `workflow/card.ts`             | Shared bordered-card layout for the activity widget and the summary card.                                                                                                                                                                     |
+| `workflow/errors.ts`           | Shared error mapping (`messageOf`) and `safeAppendEntry`, the advisory append.                                                                                                                                                                |
+| `workflow/file.ts`             | Argument parse, path resolution, discovery, source read.                                                                                                                                                                                      |
+| `workflow/host.ts`             | Host effects: handle dispatch, limits, exit record, run correlation, metrics.                                                                                                                                                                 |
+| `workflow/limits-dialog.ts`    | Soft-target resolution: flag bypass, interactive budget/time dialogs, headless no-target fallback; emits the `workflow-limits` entry.                                                                                                         |
+| `workflow/notebook.ts`         | `workflow.notebook*` inspectors and writer.                                                                                                                                                                                                   |
+| `workflow/output.ts`           | Run-scoped structured-output tool (`workflow_output`) and the single call-contract wording shared by its primer and the one-shot nudge.                                                                                                       |
+| `workflow/rebind.ts`           | `performNewSession`, `performHandoff`, `rebindRun` + `RebindBundle`/`RebindableDeps`; `performHandoff` arms the boundary settlement watch, then waits for the successor run to go idle; the per-wait handoff deadline (`HANDOFF_TIMEOUT_MS`). |
+| `workflow/run-registry.ts`     | Correlates sent runs with `agent_settled` boundaries; resolves run targets.                                                                                                                                                                   |
+| `workflow/sandbox.ts`          | Sandbox construction, timeout clamp, hard-deadline factor.                                                                                                                                                                                    |
+| `workflow/shell.ts`            | `workflow.shell` through pi's bash tool plus the readonly guard.                                                                                                                                                                              |
+| `workflow/spend.ts`            | `SpendState`, `armPendingStop`, `branchSpend`, `runSpendRows`, `computeCurrentCost`, `limitReason`; live cost budget and the target→final overrun projection.                                                                                 |
+| `workflow/state-digest.ts`     | Derives `workflow.state`/`workflow.entries` digests from branch entries.                                                                                                                                                                      |
+| `workflow/summary-renderer.ts` | Renders the `workflow-summary` entry as a transcript card.                                                                                                                                                                                    |
+| `workflow/summary.ts`          | `workflow-summary` entry type and pure builder.                                                                                                                                                                                               |
+| `workflow/types.ts`            | Boundary types; the handle-name union.                                                                                                                                                                                                        |
 
 ## Compile pipeline
 
@@ -105,15 +105,15 @@ Soft targets and author semantics live in [workflows.md](workflows.md). Engine m
 
 All surfaces are CustomEntry or UI only. None enter the LLM context.
 
-| Surface | Owner | Content |
-|---|---|---|
-| `workflow-exit` entry | `workflow/host.ts` | One exit record, always `{ v, reason, ... }`: workflow metadata as `metadata`, a string `metadata.error`, a checkpoint stop, or a hard abort adds `error` (a stop also adds `partial`), and a script that ends without `workflow.exit` records `returned`. No registered renderer. |
-| `workflow-summary` entry | `workflow/summary.ts`, rendered by `workflow/summary-renderer.ts` | Versioned run overview: reason, elapsed, counts, spend rows, effect log. |
-| `workflow-shell` entry | `workflow/activity.ts` | Versioned one shell call: exit status, duration, bounded output tail. |
-| `workflow-log` entry | `workflow/command.ts` | The script's `console`/`text()` output. |
-| `workflow-error` entry | `workflow/command.ts`, `workflow/limits-dialog.ts`, `workflow/host.ts` | Diagnostic `{ phase, error }`. |
-| `workflow-limits` entry | `workflow/limits-dialog.ts` | Headless no-target, unbounded, or checkpoint-less hard-deadline start. Unbounded runs include `unbounded: true` and `ignoredFlags` when the operator supplied an ignored flag; a checkpoint-less `--workflow-time` records `hardDeadlineMs`. UI/transcript-only; never enters LLM context. |
-| `workflow-activity` widget | `workflow/activity.ts` | Live shell progress above the editor. TUI only. |
+| Surface                    | Owner                                                                  | Content                                                                                                                                                                                                                                                                                    |
+| -------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `workflow-exit` entry      | `workflow/host.ts`                                                     | One exit record, always `{ v, reason, ... }`: workflow metadata as `metadata`, a string `metadata.error`, a checkpoint stop, or a hard abort adds `error` (a stop also adds `partial`), and a script that ends without `workflow.exit` records `returned`. No registered renderer.         |
+| `workflow-summary` entry   | `workflow/summary.ts`, rendered by `workflow/summary-renderer.ts`      | Versioned run overview: reason, elapsed, counts, spend rows, effect log.                                                                                                                                                                                                                   |
+| `workflow-shell` entry     | `workflow/activity.ts`                                                 | Versioned one shell call: exit status, duration, bounded output tail.                                                                                                                                                                                                                      |
+| `workflow-log` entry       | `workflow/command.ts`                                                  | The script's `console`/`text()` output.                                                                                                                                                                                                                                                    |
+| `workflow-error` entry     | `workflow/command.ts`, `workflow/limits-dialog.ts`, `workflow/host.ts` | Diagnostic `{ phase, error }`.                                                                                                                                                                                                                                                             |
+| `workflow-limits` entry    | `workflow/limits-dialog.ts`                                            | Headless no-target, unbounded, or checkpoint-less hard-deadline start. Unbounded runs include `unbounded: true` and `ignoredFlags` when the operator supplied an ignored flag; a checkpoint-less `--workflow-time` records `hardDeadlineMs`. UI/transcript-only; never enters LLM context. |
+| `workflow-activity` widget | `workflow/activity.ts`                                                 | Live shell progress above the editor. TUI only.                                                                                                                                                                                                                                            |
 
 `workflow-error` phases: `command.ts` writes `reserve`, `start`, `exit-record`, `summary`, `cleanup`; `limits-dialog.ts` writes `start`; `host.ts` writes `abort`, `effect`, `progress`.
 
@@ -135,27 +135,27 @@ Every persisted workflow entry carries `v` (`WORKFLOW_ENTRY_VERSION`). Readers a
 
 Contract-visible knobs shape behavior the author contract states:
 
-| Constant | Owner | Rule |
-|---|---|---|
-| `CANCEL_CONFIRM_MS` | `workflow/command.ts` | [Targets, exit, cancellation, salvage](workflows.md#targets-exit-cancellation-salvage) |
-| `HANDOFF_TIMEOUT_MS` | `workflow/rebind.ts` | [workflow.handoff](workflows.md#workflowhandoff) |
-| `MAX_DEFERRED_EFFECTS` | `workflow/host.ts` | [Targets, exit, cancellation, salvage](workflows.md#targets-exit-cancellation-salvage) |
+| Constant               | Owner                 | Rule                                                                                   |
+| ---------------------- | --------------------- | -------------------------------------------------------------------------------------- |
+| `CANCEL_CONFIRM_MS`    | `workflow/command.ts` | [Targets, exit, cancellation, salvage](workflows.md#targets-exit-cancellation-salvage) |
+| `HANDOFF_TIMEOUT_MS`   | `workflow/rebind.ts`  | [workflow.handoff](workflows.md#workflowhandoff)                                       |
+| `MAX_DEFERRED_EFFECTS` | `workflow/host.ts`    | [Targets, exit, cancellation, salvage](workflows.md#targets-exit-cancellation-salvage) |
 | `HARD_DEADLINE_FACTOR` | `workflow/sandbox.ts` | [Targets, exit, cancellation, salvage](workflows.md#targets-exit-cancellation-salvage) |
 
 Internal knobs stay invisible to the author contract; none is part of it.
 
-| Constant | Owner |
-|---|---|
-| `MEMORY_LIMIT_BYTES` | `workflow/command.ts` |
-| `WORKFLOW_PROGRESS_TICK_MS` | `workflow/command.ts` |
-| `MAX_EFFECTS` | `workflow/host.ts` |
-| `MAX_TIMEOUT_MS` | `workflow/sandbox.ts` |
-| `STRUCTURED_OUTPUT_TOOL` | `workflow/output.ts` |
-| `MAX_EFFECT_ROWS` | `workflow/summary-renderer.ts` |
-| `MAX_MODELS_COLLAPSED` | `workflow/summary-renderer.ts` |
-| `MAX_ENTRY_OUTPUT_LINES` | `workflow/activity.ts` |
-| `MAX_ENTRY_OUTPUT_CHARS` | `workflow/activity.ts` |
-| `MAX_SUGGESTIONS` | `workflow/autocomplete.ts` |
+| Constant                    | Owner                          |
+| --------------------------- | ------------------------------ |
+| `MEMORY_LIMIT_BYTES`        | `workflow/command.ts`          |
+| `WORKFLOW_PROGRESS_TICK_MS` | `workflow/command.ts`          |
+| `MAX_EFFECTS`               | `workflow/host.ts`             |
+| `MAX_TIMEOUT_MS`            | `workflow/sandbox.ts`          |
+| `STRUCTURED_OUTPUT_TOOL`    | `workflow/output.ts`           |
+| `MAX_EFFECT_ROWS`           | `workflow/summary-renderer.ts` |
+| `MAX_MODELS_COLLAPSED`      | `workflow/summary-renderer.ts` |
+| `MAX_ENTRY_OUTPUT_LINES`    | `workflow/activity.ts`         |
+| `MAX_ENTRY_OUTPUT_CHARS`    | `workflow/activity.ts`         |
+| `MAX_SUGGESTIONS`           | `workflow/autocomplete.ts`     |
 
 Entry-type strings are named exports: `WORKFLOW_SUMMARY_ENTRY_TYPE` (`summary.ts`), `WORKFLOW_SHELL_ENTRY_TYPE` and `WORKFLOW_LOG_ENTRY_TYPE` (`activity.ts`), `WORKFLOW_EXIT_ENTRY_TYPE` and `WORKFLOW_ERROR_ENTRY_TYPE` (`types.ts`), `SPAWN_NOTICE_ENTRY_TYPE` (`spawn/shared.ts`). `workflow-limits` stays an inline literal.
 
