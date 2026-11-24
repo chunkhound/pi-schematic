@@ -17,7 +17,7 @@ import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
  * Null outside a workflow run; only host dispose uninstalls it, never resetState, because
  * a run survives `workflow.new`.
  */
-type ChildUsageSink = (toolCallId: string, provider: string | null, model: string, usage: Usage) => void;
+export type ChildUsageSink = (toolCallId: string, provider: string | null, model: string, usage: Usage) => void;
 
 /** A handoff accepted by the tool, kept until its turn_end boundary is confirmed or failed. */
 export interface StagedHandoff {
