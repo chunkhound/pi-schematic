@@ -32,8 +32,20 @@ import { applyReadonlyBashGuard } from "../readonly-bash.js";
 import { appendSandboxBlockNotice, appendSandboxBlockNoticeToResult } from "../os-sandbox.js";
 import { HANDOFF_TOOL_NAME } from "../handoff/tool.js";
 import { THINKING_LEVELS } from "../thinking-levels.js";
-import { renderSpawnCall, renderSpawnResult } from "./renderer.js";
-import { getLastAssistantText, getStopReasonOutcome, type SpawnOutcome, type SpawnResultDetails, type SpawnToolResult } from "./shared.js";
+import { safeAppendEntry } from "../workflow/errors.js";
+import { STRUCTURED_OUTPUT_TOOL } from "../workflow/output.js";
+import {
+	renderSpawnCall,
+	renderSpawnResult,
+} from "./renderer.js";
+import {
+	getLastAssistantText,
+	getStopReasonOutcome,
+	SPAWN_NOTICE_ENTRY_TYPE,
+	type SpawnOutcome,
+	type SpawnResultDetails,
+	type SpawnToolResult,
+} from "./shared.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -263,7 +275,8 @@ export function buildChildToolNames(
 	availableTools?: Pick<ToolInfo, "name" | "sourceInfo">[],
 ): string[] {
 	const inheritableParentToolNames = availableTools ? getInheritableParentToolNames(parentToolNames, availableTools) : parentToolNames;
-	const inheritedTools = inheritableParentToolNames.filter((name) => name !== "spawn" && name !== HANDOFF_TOOL_NAME);
+	const excluded = new Set(["spawn", HANDOFF_TOOL_NAME, STRUCTURED_OUTPUT_TOOL]);
+	const inheritedTools = inheritableParentToolNames.filter((name) => !excluded.has(name));
 	return [...new Set([...inheritedTools, ...childTools.map((tool) => tool.name)])];
 }
 
@@ -612,6 +625,7 @@ export function executeSpawn(
 						if (ctx.hasUI) {
 							ctx.ui.notify(issue, "warning");
 						}
+						safeAppendEntry(pi, SPAWN_NOTICE_ENTRY_TYPE, { phase: "spawn-event-subscribe-failed", message: issue });
 					}
 				}
 

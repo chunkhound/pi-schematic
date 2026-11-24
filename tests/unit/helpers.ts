@@ -6,6 +6,7 @@ import {
 	CONFIG_DIR_NAME,
 	ModelRegistry,
 	SessionManager,
+	type SessionEntry,
 	Theme,
 	type AgentToolResult,
 	type ExtensionCommandContext,
@@ -795,6 +796,10 @@ export async function runRealChildInvocation(params: {
 	resetDuringPrompt?: boolean;
 	/** Inside the FIRST stream call, abort the parent controller — spawn rejects with /mid-prompt abort/. */
 	abortMidPrompt?: boolean;
+	/** Run the child against a caller-owned state, so a live workflow host's child-usage sink is the one the real spawn tool flushes. */
+	state?: ReturnType<typeof createState>;
+	/** USD cost the deterministic turn reports. Non-zero makes child attribution observable through real session stats. */
+	childCostUsd?: number;
 }): Promise<RealChildInvocationResult> {
 	const tempRoot = await mkdtemp(join(os.tmpdir(), "pi-schematic-runtime-"));
 	const cwd = join(tempRoot, "project");
@@ -810,6 +815,16 @@ export async function runRealChildInvocation(params: {
 	const provider = "agentic-e2e";
 	const modelId = "agentic-e2e-model";
 	const resultText = params.resultText ?? `${provider}/${modelId}:${sentinel}`;
+	// Zero by default, so the fixture stays free unless a test asks for cost.
+	const childCostUsd = params.childCostUsd ?? 0;
+	const childUsage = {
+		input: childCostUsd ? 1_000 : 0,
+		output: childCostUsd ? 500 : 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: childCostUsd ? 1_500 : 0,
+		cost: { input: childCostUsd, output: 0, cacheRead: 0, cacheWrite: 0, total: childCostUsd },
+	};
 	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 	const previousOpenAiApiKey = process.env.OPENAI_API_KEY;
 	const previousFetch = globalThis.fetch;
@@ -828,6 +843,9 @@ const usage = {
 	input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
+// WHY separate: the model's price table stays zero while the turn can report real usage,
+// which is what session stats aggregate and the workflow ledger then attributes.
+const childUsage = ${JSON.stringify(childUsage)};
 export default function(pi) {
 	pi.registerProvider("${provider}", {
 		api: "agentic-e2e-api", apiKey: "test-key", baseUrl: "http://localhost.invalid",
@@ -876,7 +894,7 @@ export default function(pi) {
 							: [{ type: "toolCall", id: "probe-call-1", name: "agentic_e2e_probe", arguments: {} }];
 			const message = {
 				role: "assistant", content, api: model.api, provider: model.provider, model: model.id,
-				usage, stopReason: noOutput || bashResult || probeResult ? "stop" : "toolUse", timestamp: Date.now(),
+				usage: childUsage, stopReason: noOutput || bashResult || probeResult ? "stop" : "toolUse", timestamp: Date.now(),
 			};
 			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
@@ -928,7 +946,7 @@ export default function(pi) {
 			maxTokens: 1024,
 		};
 		const activeTools = params.activeTools ?? ["read", "agentic_e2e_probe", "spawn"];
-		const state = createState();
+		const state = params.state ?? createState();
 		state.readonlyEnabled = params.readonly ?? false;
 		if (params.notebookPages) {
 			for (const [pageName, pageContent] of Object.entries(params.notebookPages)) {
@@ -1031,58 +1049,87 @@ export default function(pi) {
 
 // ── TUI context factory ───────────────────────────────────────────────
 
-// The theme of `makeTUICtx`: `fg` marks the color as `[name:text]`; reading any other `Theme` member throws, naming it.
-const tuiTheme = guardedInstance(
-	Theme.prototype,
-	{ fg: (name: string, text: string) => `[${name}:${text}]` },
-	(property) => new Error(`theme.${property} is not stubbed in the makeTUICtx theme; it stubs only fg.`),
-);
-
-function isOptionalStringArray(value: unknown): value is string[] | undefined {
-	return value === undefined || isStringArray(value);
+export interface TUIRecord {
+	statuses: Map<string, string | undefined>;
+	widgets: Map<string, string[] | undefined>;
+	workingMessages?: (string | undefined)[];
+	/** Last footer factory passed to \`setFooter\`; undefined after a restore. */
+	footer?: unknown;
+	/** Count of non-undefined \`setFooter\` calls, so idempotency is observable. */
+	footerInstalls?: number;
+	/** Count of \`setFooter(undefined)\` restores. */
+	footerRestores?: number;
 }
 
-/**
- * A TUI command and tool context: UI on (mode `tui`) unless `hasUI` is false (mode
- * `print`), `tuiTheme` as the theme, `setStatus` and `setWidget` recorded into
- * `record`, `notify` a no-op, every other UI member as `createUIContext` builds it,
- * `ui` over those, and context usage at `percent` (none when `percent` is null, the
- * default). It has no model registry, so code that refreshes model groups skips
- * them. `setWidget` throws for a component widget, which `record` cannot hold.
- */
+/** Test theme: semantic tokens become \`[token:text]\` so assertions read the tone. */
+export const TEST_TUI_THEME = { fg: (name: string, text: string) => `[${name}:${text}]` };
+
+/** Render the footer factory a record holds, as pi would, so tests can read its lines. */
+export function renderFooterAt(record: TUIRecord, width: number): string[] | undefined {
+	if (!record.footer) {
+		return undefined;
+	}
+	const factory = record.footer as (tui: unknown, theme: unknown, data: unknown) => { render(w: number): string[] };
+	const footerData = {
+		getGitBranch: () => null,
+		getExtensionStatuses: () => record.statuses,
+		getAvailableProviderCount: () => 1,
+		onBranchChange: () => () => {},
+	};
+	return factory({ requestRender: () => {} }, TEST_TUI_THEME, footerData).render(width);
+}
 export function makeTUICtx(
 	overrides: Partial<{
 		percent: number | null;
 		hasUI: boolean;
-		record: { statuses: Map<string, string | undefined>; widgets: Map<string, string[] | undefined> };
-		ui: Partial<ExtensionUIContext>;
+		mode: string;
+		record: TUIRecord;
+		branch: SessionEntry[];
+		notify: (message: string, level: string) => void;
+		custom: (build: any) => Promise<unknown>;
+		ui?: Partial<ExtensionUIContext>;
 	}> = {},
-): ExtensionCommandContext & ExtensionToolContext {
-	const record = overrides.record ?? { statuses: new Map(), widgets: new Map() };
+): any {
+	const record: TUIRecord = overrides.record ?? { statuses: new Map(), widgets: new Map() };
+	record.workingMessages ??= [];
 	const hasUI = overrides.hasUI ?? true;
 	const percent = overrides.percent !== undefined ? overrides.percent : null;
-	const ui = createUIContext({
-		theme: tuiTheme,
-		notify: vi.fn(),
-		setStatus: (key, status) => {
-			record.statuses.set(key, status);
+	const branch = overrides.branch ?? [];
+	return {
+		hasUI,
+		mode: overrides.mode ?? "tui",
+		ui: {
+			theme: TEST_TUI_THEME,
+			notify: overrides.notify ?? (() => {}),
+			setStatus: (key: string, status: string | undefined) => {
+				record.statuses.set(key, status);
+			},
+			setWorkingMessage: (message?: string) => {
+				(record.workingMessages ??= []).push(message);
+			},
+			setWidget: (key: string, content: string[] | undefined) => {
+				record.widgets.set(key, content);
+			},
+			addAutocompleteProvider: () => {},
+			setFooter: (factory: unknown) => {
+				record.footer = factory;
+				if (factory) {
+					record.footerInstalls = (record.footerInstalls ?? 0) + 1;
+				} else {
+					record.footerRestores = (record.footerRestores ?? 0) + 1;
+				}
+			},
+			...(overrides.custom !== undefined ? { custom: overrides.custom } : {}),
+			...(overrides.ui ?? {}),
 		},
-		setWidget: (key: string, content: unknown) => {
-			if (!isOptionalStringArray(content)) {
-				throw new Error(`makeTUICtx records only string widgets; "${key}" got a component.`);
-			}
-			record.widgets.set(key, content);
+		sessionManager: {
+			getBranch: () => branch,
+			getEntries: () => branch,
+			getSessionId: () => "test-session",
+			getLeafId: () => branch.at(-1)?.id ?? null,
+			getSessionName: () => undefined,
 		},
-		...definedOverrides(overrides.ui ?? {}),
-	});
-	return Object.assign(
-		createCommandContext({
-			hasUI,
-			mode: hasUI ? "tui" : "print",
-			ui,
-			modelRegistry: undefined,
-			getContextUsage: () => (percent !== null ? { tokens: null, contextWindow: 0, percent } : undefined),
-		}),
-		{ tools: [], executeTool: unstubbedAsync("ctx.executeTool") },
-	);
+		cwd: process.cwd(),
+		getContextUsage: () => (percent !== null ? { percent } : null),
+	};
 }

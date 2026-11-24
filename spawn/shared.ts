@@ -1,6 +1,10 @@
 import { contentText, type ModelThinkingLevel, type StopReason, type TextContent, type Usage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
+/** Advisory spawn notice type (event-subscription failure). Informational, never a run
+ * error, so it must not reuse the workflow error entry type. */
+export const SPAWN_NOTICE_ENTRY_TYPE = "spawn-notice";
+
 export type SpawnOutcome = "running" | "success" | "aborted" | "error";
 
 export type SpawnRouteDetails =

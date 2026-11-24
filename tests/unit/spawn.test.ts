@@ -14,7 +14,7 @@ import {
 	type SessionEntry,
 	type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, Usage } from "@earendil-works/pi-ai";
 import { assertInstanceOf, assertPresent, assertString, expectPrefix, expectSuffix, isRecord } from "../assertions.js";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -22,7 +22,8 @@ import { createState, resetState, type SchematicState } from "../../state.js";
 import { READONLY_BASH_SCOPE, READONLY_NO_SHELL_SUMMARY, READONLY_WRITE_EDIT_SUMMARY } from "../../notifications.js";
 import { buildChildToolNames, createChildTools, executeSpawn, normalizeSpawnRequirements, registerSpawnTool, type SpawnParameters } from "../../spawn/index.js";
 import { NestedAgentSessionComponent, renderSpawnResult } from "../../spawn/renderer.js";
-import type { SpawnResultDetails, SpawnToolResult } from "../../spawn/shared.js";
+import { SPAWN_NOTICE_ENTRY_TYPE, type SpawnResultDetails, type SpawnToolResult } from "../../spawn/shared.js";
+import { STRUCTURED_OUTPUT_TOOL } from "../../workflow/output.js";
 import { formatByteCap } from "../../notebook/store.js";
 import { SpawnRouteError } from "../../model-groups/router.js";
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
@@ -167,6 +168,7 @@ interface MockChildSession {
 	abort: () => Promise<unknown>;
 	dispose: () => void;
 	sessionManager: { getEntries: () => SessionEntry[] };
+	subscribe?: (handler: (event: unknown) => void) => (() => void) | void;
 }
 
 function mockSessionFactory(
@@ -177,6 +179,7 @@ function mockSessionFactory(
 		result?: unknown[];
 		thinkingLevel?: string;
 		getEntries?: () => SessionEntry[];
+		subscribe?: (handler: (event: unknown) => void) => (() => void) | void;
 	} = {},
 ): AgentSession {
 	const defaultResult = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
@@ -194,6 +197,9 @@ function mockSessionFactory(
 		abort: opts.abort ?? (() => Promise.resolve()),
 		dispose: opts.dispose ?? vi.fn(),
 		sessionManager: { getEntries: opts.getEntries ?? (() => []) },
+		// Absent by default: the production guard `typeof session.subscribe === "function"`
+		// then skips live flushes, so only the settle flush runs.
+		...(opts.subscribe ? { subscribe: opts.subscribe } : {}),
 	};
 	assertChildSession(session);
 	return session;
@@ -291,8 +297,8 @@ test("spawn execute passes broad active registered tool formula to child session
 		},
 		{
 			toolSources: { project_search: "project", inactive_registered: "extension" },
-			activeTools: ["read", "bash", "spawn", "handoff", "project_search", "phantom_tool"],
-			allTools: ["read", "bash", "spawn", "handoff", "project_search", "inactive_registered"],
+			activeTools: ["read", "bash", "spawn", "handoff", STRUCTURED_OUTPUT_TOOL, "project_search", "phantom_tool"],
+			allTools: ["read", "bash", "spawn", "handoff", STRUCTURED_OUTPUT_TOOL, "project_search", "inactive_registered"],
 		},
 	);
 
@@ -316,6 +322,7 @@ test("spawn execute passes broad active registered tool formula to child session
 	expect(seenConfig.sessionManager.getEntries(), "child transcript starts independently empty").toStrictEqual([]);
 	expect(new Set(seenConfig.tools)).toStrictEqual(new Set(["read", "bash", "project_search", "notebook_write", "notebook_read", "notebook_index"]));
 	expect(seenConfig.customTools?.map((tool) => tool.name)).toStrictEqual(["notebook_write", "notebook_read", "notebook_index"]);
+	expect(seenConfig.tools, "the run-scoped workflow_output never reaches a child").not.toContain(STRUCTURED_OUTPUT_TOOL);
 });
 
 test("spawn forwards requested thinking and reports the session effective thinking", async () => {
@@ -667,21 +674,23 @@ test("spawn emits no capability notice when the routed group has no explicit ove
 
 // ── Build child tool names ─────────────────────────────────────────
 
-test("child tool names inherit active registered builtins and exclude recursive controls", async () => {
+test("child tool names inherit active registered builtins and exclude recursive controls and the run-scoped output tool", async () => {
 	const state = createState();
 	const childTools = createChildTools(await createTestHost(), state);
 	expect(childTools.map((t) => t.name)).not.toContain("spawn");
-	const childToolNames = buildChildToolNames(["read", "bash", "spawn", "handoff", "future_tool"], childTools, [
+	const childToolNames = buildChildToolNames(["read", "bash", "spawn", "handoff", STRUCTURED_OUTPUT_TOOL, "future_tool"], childTools, [
 		toolInfo("read", "builtin"),
 		toolInfo("bash", "builtin"),
 		toolInfo("spawn", "builtin"),
 		toolInfo("handoff", "builtin"),
+		toolInfo(STRUCTURED_OUTPUT_TOOL, "extension"),
 		toolInfo("future_tool", "project"),
 	]);
 	expect(childToolNames).toContain("read");
 	expect(childToolNames).toContain("bash");
 	expect(childToolNames).not.toContain("spawn");
 	expect(childToolNames).not.toContain("handoff");
+	expect(childToolNames).not.toContain(STRUCTURED_OUTPUT_TOOL);
 });
 
 test("child tool names inherit active registered MCP extension tools", async () => {
@@ -723,10 +732,11 @@ test("child tool names exclude inactive registered and active phantom tools", as
 	expect(toolNames).not.toContain("spawn");
 });
 
-test("buildChildToolNames (2-arg fallback) removes spawn and handoff from inherited tools", () => {
-	const result = buildChildToolNames(["read", "bash", "spawn", "handoff"], []);
+test("buildChildToolNames (2-arg fallback) removes spawn, handoff and the run-scoped output tool from inherited tools", () => {
+	const result = buildChildToolNames(["read", "bash", "spawn", "handoff", STRUCTURED_OUTPUT_TOOL], []);
 	expect(result, "spawn must be filtered out").not.toContain("spawn");
 	expect(result, "handoff must be filtered out").not.toContain("handoff");
+	expect(result, "workflow_output must be filtered out").not.toContain(STRUCTURED_OUTPUT_TOOL);
 	expect(result, "read must be preserved").toContain("read");
 	expect(result, "bash must be preserved").toContain("bash");
 });
@@ -3506,4 +3516,209 @@ test("a completed UI spawn whose dispose fails returns the dispose error without
 	expect(result).toStrictEqual(failedSpawnResult("dispose failed"));
 	expect(notifications).toStrictEqual([]);
 	assertChildRegistriesCleared(host.state);
+});
+
+
+// ── Run-scoped child spend (state.childUsageSink) ────────────────────
+
+/** One child turn of spend; `turns` turns sum to `cumulativeChildUsage(turns)`. */
+const CHILD_TURN_USAGE: Usage = {
+	input: 10, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 11,
+	cost: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
+};
+
+function cumulativeChildUsage(turns: number): Usage {
+	return {
+		input: 10 * turns,
+		output: turns,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 11 * turns,
+		cost: { input: turns, output: 0, cacheRead: 0, cacheWrite: 0, total: turns },
+	};
+}
+
+type SpendFlush = { toolCallId: string; provider: string | null; model: string; usage: Usage };
+
+const SUBSCRIBE_BOOM = "subscribe boom";
+const subscriptionNotice = `Spawn event subscription failed: ${SUBSCRIBE_BOOM}`;
+
+/**
+ * Spawns a child that pays one assistant turn per loop and raises `message_end` right after it,
+ * so the live flushes and the settle flush are separately observable. No `sink` keeps
+ * `state.childUsageSink` null, which is the no-active-run case.
+ */
+async function runPayingSpawn(opts: {
+	turns?: number;
+	sink?: SpendFlush[];
+	replaceSinkAfterTurn?: { turn: number; lateFlushes: SpendFlush[] };
+	subscribeThrows?: boolean;
+	promptFails?: unknown;
+	hangsAfterTurns?: boolean;
+	hasUI?: boolean;
+} = {}) {
+	const turns = opts.turns ?? 2;
+	const state = createState();
+	const bookInto = (target: SpendFlush[]) => (toolCallId: string, provider: string | null, model: string, usage: Usage) => {
+		target.push({ toolCallId, provider, model, usage });
+	};
+	if (opts.sink) state.childUsageSink = bookInto(opts.sink);
+	let entries: SessionEntry[] = [];
+	let raiseMessageEnd: ((event: any) => void) | undefined;
+	let rejectPrompt!: (error: unknown) => void;
+	let paid!: () => void;
+	const promptReached = new Promise<void>((resolve) => { paid = resolve; });
+	const session = mockSessionFactory({
+		getEntries: () => entries,
+		subscribe: opts.subscribeThrows
+			? () => { throw new Error(SUBSCRIBE_BOOM); }
+			: (handler) => { raiseMessageEnd = handler; return () => { raiseMessageEnd = undefined; }; },
+		abort: async () => { rejectPrompt(Object.assign(new Error("child aborted"), { name: "AbortError" })); },
+		prompt: async () => {
+			for (let turn = 1; turn <= turns; turn++) {
+				entries = [...entries, messageEntry(`a${turn}`, {
+					role: "assistant", content: [{ type: "text", text: `answer ${turn}` }], stopReason: "stop",
+					usage: CHILD_TURN_USAGE,
+				})];
+				raiseMessageEnd?.({ type: "message_end" });
+				// A workflow swap mid-run must not re-point this run's ledger.
+				if (opts.replaceSinkAfterTurn?.turn === turn) {
+					state.childUsageSink = bookInto(opts.replaceSinkAfterTurn.lateFlushes);
+				}
+			}
+			paid();
+			if (opts.hangsAfterTurns) await new Promise<void>((_, reject) => { rejectPrompt = reject; });
+			if (opts.promptFails !== undefined) throw opts.promptFails;
+		},
+	});
+	const notifications: Array<[string, string]> = [];
+	const pi = await createTestHost(
+		(api) => registerSpawnTool(api, state, () => Promise.resolve(sessionResult(session))),
+		{ activeTools: ["read", "bash", "spawn"] },
+	);
+	const controller = new AbortController();
+	const execution = getTool(pi, "spawn").execute(
+		"spawn-spend",
+		{ prompt: "Do the task" },
+		controller.signal,
+		undefined,
+		spawnContext({
+			model: { id: "parent-model", provider: "anthropic" },
+			cwd: "/tmp",
+			...(opts.hasUI
+				? {
+						notify: (message: string, level?: "error" | "info" | "warning") => {
+							notifications.push([message, level ?? "info"]);
+						},
+					}
+				: {}),
+		}),
+	);
+	return { pi, state, execution, promptReached, controller, notifications };
+}
+
+test("the run's child-usage sink gets cumulative spend on message_end and again at settle", async () => {
+	const flushes: SpendFlush[] = [];
+	const { execution, promptReached } = await runPayingSpawn({ turns: 2, sink: flushes });
+	await promptReached;
+
+	const result = await execution;
+	assertSpawnToolResult(result);
+
+	expect(result.details.outcome).toBe("success");
+	// Every flush names the model that incurred the spend, so the run ledger never loses it.
+	expect(flushes.map((f) => [f.toolCallId, f.provider, f.model])).toStrictEqual([
+		["spawn-spend", "anthropic", "parent-model"],
+		["spawn-spend", "anthropic", "parent-model"],
+		["spawn-spend", "anthropic", "parent-model"],
+	]);
+	// Cumulative totals, not deltas: the settle flush repeats the sum, so it books nothing twice.
+	expect(flushes.map((f) => f.usage.totalTokens)).toStrictEqual([11, 22, 22]);
+	expect(flushes[flushes.length - 1]!.usage, "the ledger sees exactly the usage the result reports").toStrictEqual(result.usage);
+});
+
+test("a spawn books spend to the sink its own run captured, never a later one", async () => {
+	const owned: SpendFlush[] = [];
+	const late: SpendFlush[] = [];
+	const { execution, promptReached } = await runPayingSpawn({ turns: 2, sink: owned, replaceSinkAfterTurn: { turn: 1, lateFlushes: late } });
+	await promptReached;
+
+	await execution;
+
+	expect(owned.map((f) => f.usage.totalTokens), "the run keeps the sink it read before its first await").toStrictEqual([11, 22, 22]);
+	expect(late, "a sink installed by a newer run never carries this run's spend").toStrictEqual([]);
+});
+
+test("an aborted child still settles its spend in the sink", async () => {
+	const flushes: SpendFlush[] = [];
+	const { execution, promptReached, controller } = await runPayingSpawn({ turns: 1, sink: flushes, hangsAfterTurns: true });
+	await promptReached;
+	controller.abort(new Error("parent cancelled"));
+
+	const result = await execution;
+	assertSpawnToolResult(result);
+
+	expect(result.details.outcome).toBe("aborted");
+	expect(result.isError).toBe(true);
+	expect(flushes.map((f) => f.usage.totalTokens), "the settle flush books the partial spend an abort would otherwise drop").toStrictEqual([11, 11]);
+	expect(result.usage).toStrictEqual(cumulativeChildUsage(1));
+});
+
+test("a child whose prompt throws still settles its spend in the sink", async () => {
+	const flushes: SpendFlush[] = [];
+	const { execution } = await runPayingSpawn({ turns: 2, sink: flushes, promptFails: new Error("prompt failed") });
+
+	const result = await execution;
+
+	assertErrorResult(result, "prompt failed", cumulativeChildUsage(2));
+	expect(flushes.map((f) => f.usage.totalTokens), "failure text is not the only thing a failed child leaves behind").toStrictEqual([11, 22, 22]);
+});
+
+test("a spawn with no sink stays out of the ledger a later run installs", async () => {
+	const late: SpendFlush[] = [];
+	const { execution, promptReached } = await runPayingSpawn({ turns: 2, replaceSinkAfterTurn: { turn: 1, lateFlushes: late } });
+	await promptReached;
+
+	const result = await execution;
+	assertSpawnToolResult(result);
+
+	// The run captured a null sink, so neither the post-swap live flush nor the settle flush reads it.
+	expect(late, "a sink installed mid-run never carries a run that started without one").toStrictEqual([]);
+	expect(result.details.outcome).toBe("success");
+	expect(result.usage, "the child still reports its own usage").toStrictEqual(cumulativeChildUsage(2));
+});
+
+// ── Child event subscription failure ─────────────────────────────────
+
+test("a throwing child event subscription never fails the spawn and is reported by UI and transcript", async () => {
+	const flushes: SpendFlush[] = [];
+	const { pi, execution, promptReached, notifications } = await runPayingSpawn({ turns: 2, sink: flushes, subscribeThrows: true, hasUI: true });
+	await promptReached;
+
+	const result = await execution;
+	assertSpawnToolResult(result);
+
+	expect(result.details.outcome, "losing live flushes is not losing the child").toBe("success");
+	expect(result.content[0].text).toBe("child result");
+	expect(flushes.map((f) => f.usage.totalTokens), "the settle flush still books the child spend").toStrictEqual([22]);
+	expect(notifications).toStrictEqual([[subscriptionNotice, "warning"]]);
+	expect(pi.appendedEntries).toStrictEqual([{
+		customType: SPAWN_NOTICE_ENTRY_TYPE,
+		data: { phase: "spawn-event-subscribe-failed", message: subscriptionNotice },
+	}]);
+});
+
+test("a headless spawn records the subscription failure in the transcript only", async () => {
+	const { pi, execution, promptReached, notifications } = await runPayingSpawn({ turns: 1, subscribeThrows: true });
+	await promptReached;
+
+	const result = await execution;
+	assertSpawnToolResult(result);
+
+	expect(result.details.outcome).toBe("success");
+	expect(notifications, "headless runs have no UI to notify").toStrictEqual([]);
+	expect(pi.appendedEntries).toStrictEqual([{
+		customType: SPAWN_NOTICE_ENTRY_TYPE,
+		data: { phase: "spawn-event-subscribe-failed", message: subscriptionNotice },
+	}]);
 });
