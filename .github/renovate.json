@@ -58,8 +58,13 @@
       "groupName": "Node.js"
     },
     {
-      "matchPackageNames": ["typescript", "@typescript/typescript6"],
-      "groupName": "TypeScript"
+      "matchDepNames": ["typescript", "@typescript/native", "@typescript/old"],
+      "groupName": "TypeScript",
+      "rangeStrategy": "pin"
+    },
+    {
+      "matchDepNames": ["typescript", "@typescript/old"],
+      "allowedVersions": "<6.1.0"
     },
     {
       "matchPackageNames": ["@types/node"],

@@ -233,9 +233,6 @@
   "tests/unit/config-invariants.test.ts": {
     "ban/wall-clock": {
       "count": 1
-    },
-    "vitest/max-expects": {
-      "count": 7
     }
   },
   "tests/unit/frontmatter-cache.test.ts": {
