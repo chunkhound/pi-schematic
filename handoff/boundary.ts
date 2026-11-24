@@ -46,6 +46,67 @@ import { settleExhaustsHandoffBudget } from "../watchdog.js";
  * Drafts that write `staged` as one boundary: notebook discard, cut, successor,
  * note. Pure — reads state and mutates nothing.
  */
+/**
+ * Outcome of one handoff request, as the boundary saw it. An extension-sourced
+ * caller (the workflow host) cannot observe the commit itself: pi publishes no
+ * extension event for boundary drafts, so only these handlers know the result.
+ */
+interface HandoffSettlement {
+	status: "complete" | "failed";
+	/** Set when a cut was staged (complete, or lost successor); null when none landed. */
+	handoffId: string | null;
+	/** Failure reason; null on success. */
+	reason: string | null;
+}
+
+export interface HandoffWatch {
+	/** Resolves once, never rejects; the caller owns the deadline. */
+	done: Promise<HandoffSettlement>;
+	/** Unhook the listener. Settlement stays pending if nothing arrives. */
+	dispose(): void;
+}
+
+type SettlementListener = (settlement: HandoffSettlement) => void;
+const handoffWatchers = new WeakMap<SchematicState, Set<SettlementListener>>();
+
+/**
+ * Watch the next handoff settlement for this session. Arm before requesting the
+ * handoff; the listener set is keyed by state, so one arming covers every request
+ * the session stages afterwards.
+ */
+export function watchHandoffSettlement(state: SchematicState): HandoffWatch {
+	let watchers = handoffWatchers.get(state);
+	if (!watchers) {
+		watchers = new Set();
+		handoffWatchers.set(state, watchers);
+	}
+	const set = watchers;
+	let listener: SettlementListener | undefined;
+	const done = new Promise<HandoffSettlement>((resolve) => {
+		listener = resolve;
+		set.add(listener);
+	});
+	return {
+		done,
+		dispose: () => {
+			if (listener) {
+				set.delete(listener);
+			}
+		},
+	};
+}
+
+function publishHandoffSettlement(state: SchematicState, settlement: HandoffSettlement): void {
+	const watchers = handoffWatchers.get(state);
+	if (!watchers) {
+		return;
+	}
+	for (const listener of [...watchers]) {
+		listener(settlement);
+	}
+	watchers.clear();
+}
+
 function buildHandoffBoundaryDrafts(state: SchematicState, staged: StagedHandoff): { drafts: SessionBoundaryDraft[]; discardedPages: string[] } {
 	const notebook = buildNotebookDiscardDrafts(state, staged.discardPages);
 	const drafts: SessionBoundaryDraft[] = [
@@ -137,6 +198,7 @@ function finalizeHandoffState(state: SchematicState): void {
 }
 
 function completeHandoff(state: SchematicState, ctx: ExtensionContext, staged: StagedHandoff, branch: readonly SessionEntry[], successorRan: boolean): void {
+	publishHandoffSettlement(state, { status: "complete", handoffId: staged.handoffId, reason: null });
 	// Pages, epoch and watermark follow what pi actually persisted.
 	reconstructNotebook(state, branch);
 	// A later turn_end handler can keep the cut but drop the notebook rewrite, and
@@ -177,6 +239,7 @@ function notifyHandoffFailure(ctx: ExtensionContext, reason: string, pendingRequ
 }
 
 function failStagedHandoff(pi: ExtensionAPI, state: SchematicState, ctx: ExtensionContext, reason: string): void {
+	publishHandoffSettlement(state, { status: "failed", handoffId: null, reason });
 	state.stagedHandoff = null;
 	state.handoffFailedInRun = true;
 	const request = state.pendingRequestedHandoff;
@@ -211,6 +274,7 @@ function failLostSuccessor(
 	branch: readonly SessionEntry[],
 	at: "turn_start" | "agent_settled",
 ): void {
+	publishHandoffSettlement(state, { status: "failed", handoffId: staged.handoffId, reason: REASON_SUCCESSOR_NOT_PERSISTED });
 	reconstructNotebook(state, branch);
 	finalizeHandoffState(state);
 	state.stagedHandoff = null;
