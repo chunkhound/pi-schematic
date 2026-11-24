@@ -203,14 +203,13 @@ async function parkRun(replacementSpec?: { competingResume?: boolean }): Promise
 /** Run one guard test with a parked run. `t.after` finishes the run even when an assertion fails,
  * so a guard regression cannot leak the run ticker and hang the test process. */
 function parkedRunTest(name: string, body: (run: ParkedRun) => Promise<void>, replacementSpec?: { competingResume?: boolean }): void {
-	test(name, async () => {
+	test(name, async (t) => {
 		const run = await parkRun(replacementSpec);
-		try {
-			await body(run);
-		} finally {
+		t.onTestFinished(async () => {
 			run.release();
 			await run.finished;
-		}
+		});
+		await body(run);
 	});
 }
 
