@@ -121,6 +121,8 @@ interface TestAccessors {
 	appendedEntries: AppendedEntry[];
 	activeTools: string[];
 	setCommands(commands: SlashCommandInfo[]): void;
+	/** Test-only flag writer; production pi only exposes getFlag/registerFlag. Backed by runtime.flagValues so the real getFlag reader sees the value. */
+	setFlag(name: string, value: boolean | string): void;
 }
 
 export type TestPI = ExtensionAPI & TestAccessors;
@@ -195,6 +197,8 @@ export interface TestHostSeed {
 	allTools?: string[];
 	toolSources?: Record<string, string>;
 	thinkingLevel?: ThinkingLevel;
+	/** pi's configured shell, returned by getSettings(); the workflow shell reads shellPath. */
+	shellPath?: string;
 }
 
 interface HostState {
@@ -206,6 +210,7 @@ interface HostState {
 	sentUserMessages: SentUserMessage[];
 	sentMessages: SentMessage[];
 	appendedEntries: AppendedEntry[];
+	shellPath: string | undefined;
 }
 
 function defaultToolSource(): string {
@@ -258,6 +263,7 @@ function createHostState(seed: TestHostSeed): HostState {
 		toolSources: new Map(),
 		commands: [],
 		thinkingLevel: seed.thinkingLevel ?? "medium",
+		shellPath: seed.shellPath,
 		sentUserMessages: [],
 		sentMessages: [],
 		appendedEntries: [],
@@ -315,6 +321,11 @@ function bindToolAndModelActions(runtime: ExtensionRuntime, state: HostState): v
 			applyActiveTools(state, names);
 		},
 		getCommands: () => [...state.commands],
+		// The workflow shell reads shellPath from getSettings() before any await; an
+		// unbound handler is the notInitialized sentinel and kills every shell effect.
+		// Every Settings field is optional, so this is a valid full value; a future
+		// required field will fail this annotation without a cast hiding it.
+		getSettings: (): ReturnType<ExtensionAPI["getSettings"]> => ({ shellPath: state.shellPath }),
 		setModel: () => Promise.resolve(true),
 		getThinkingLevel: () => state.thinkingLevel,
 		setThinkingLevel: (level: ThinkingLevel) => {
@@ -334,7 +345,7 @@ function deriveTools(extension: Extension): TestToolMap {
 // The extension and host state behind each host `createTestHost` returned, for the typed getters below.
 const hosts = new WeakMap<ExtensionAPI, { extension: Extension; state: HostState }>();
 
-function stampAccessors(api: ExtensionAPI, extension: Extension, state: HostState): TestPI {
+function stampAccessors(api: ExtensionAPI, extension: Extension, state: HostState, runtime: ExtensionRuntime): TestPI {
 	hosts.set(api, { extension, state });
 	// `tools` and `activeTools` start as values so the stamped object is typed as a TestPI; the
 	// non-enumerable accessors below replace them.
@@ -349,6 +360,10 @@ function stampAccessors(api: ExtensionAPI, extension: Extension, state: HostStat
 		activeTools: state.activeTools,
 		setCommands: (commands: SlashCommandInfo[]) => {
 			state.commands = [...commands];
+		},
+		// Write through the real flagValues map so pi.getFlag (which reads it) observes the value.
+		setFlag: (name: string, value: boolean | string) => {
+			runtime.flagValues.set(name, value);
 		},
 		exec: () => {
 			return Promise.reject(new Error("pi.exec is not available in the test host; override pi.exec in the test if needed."));
@@ -444,8 +459,8 @@ async function loadExtensions(
 export async function createTestHost(factory: ExtensionFactory = registerSchematic, seed: TestHostSeed = {}): Promise<TestPI> {
 	const cwd = seed.cwd ?? process.cwd();
 	const state = createHostState(seed);
-	const { apis, extensions } = await loadExtensions([factory], state, cwd);
-	return stampAccessors(apis[0], extensions[0], state);
+	const { apis, extensions, runtime } = await loadExtensions([factory], state, cwd);
+	return stampAccessors(apis[0], extensions[0], state, runtime);
 }
 
 /**
