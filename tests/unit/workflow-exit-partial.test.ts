@@ -1,8 +1,7 @@
 // WHY: a command-recorded sandbox abort once folded the checkpoint salvage into
 // `ExitRecord.metadata`, so the summary (which reads `partial`) lost it. The exit
 // record now carries `partial` as its own field; this pins both directions.
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
 import { createWorkflowHost } from "../../workflow/host.js";
@@ -36,16 +35,16 @@ test("checkpoint then sandbox abort: the command-recorded exit keeps the salvage
 	const context = { signal: new AbortController().signal } as never;
 	// The workflow reaches a safe exit point before the sandbox dies.
 	await byName.get("workflow.checkpoint")!.execute({ round: 3 }, context);
-	assert.equal(host.exitRecord(), null, "a checkpoint alone records no exit");
+	expect(host.exitRecord(), "a checkpoint alone records no exit").toBeNull();
 	// Mirror workflow/command.ts reportResult: abort on the sandbox failure, then the
 	// run's single write salvages the last checkpoint.
 	host.abort("cancelled", "sandbox aborted");
 	host.recordExit({ reason: "cancelled", error: "sandbox aborted", partial: host.checkpointRecord()?.metadata }, "error");
 	const exit = host.exitRecord();
-	assert.deepEqual(exit?.partial, { round: 3 }, "the salvage survives on its own field");
+	expect(exit?.partial, "the salvage survives on its own field").toStrictEqual({ round: 3 });
 	// Mirror workflow/command.ts finalizeRun: the summary reads `partial` directly.
 	const summary = buildWorkflowSummary("review", exit?.reason ?? "returned", exit?.error, host.metrics(), exit?.partial);
-	assert.deepEqual(summary.partial, { round: 3 }, "the summary card carries the salvaged checkpoint");
+	expect(summary.partial, "the summary card carries the salvaged checkpoint").toStrictEqual({ round: 3 });
 });
 
 test("workflow.exit keeps user metadata in `metadata` with no `partial`", async () => {
@@ -54,8 +53,8 @@ test("workflow.exit keeps user metadata in `metadata` with no `partial`", async 
 	const context = { signal: new AbortController().signal } as never;
 	await byName.get("workflow.exit")!.execute({ reason: "done" }, context);
 	const exit = host.exitRecord();
-	assert.deepEqual(exit?.metadata, { reason: "done" });
-	assert.equal(exit?.partial, undefined, "a plain exit salvages nothing");
+	expect(exit?.metadata).toStrictEqual({ reason: "done" });
+	expect(exit?.partial, "a plain exit salvages nothing").toBeUndefined();
 });
 
 test("a non-string metadata.error stays metadata-only", async () => {
@@ -64,6 +63,6 @@ test("a non-string metadata.error stays metadata-only", async () => {
 	const context = { signal: new AbortController().signal } as never;
 	await byName.get("workflow.exit")!.execute({ reason: "done", error: { code: 1 } }, context);
 	const exit = host.exitRecord();
-	assert.equal(exit?.error, undefined, "only a string is the run error");
-	assert.deepEqual(exit?.metadata, { reason: "done", error: { code: 1 } }, "the raw payload keeps the value");
+	expect(exit?.error, "only a string is the run error").toBeUndefined();
+	expect(exit?.metadata, "the raw payload keeps the value").toStrictEqual({ reason: "done", error: { code: 1 } });
 });

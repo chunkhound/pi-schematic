@@ -1,7 +1,6 @@
 // WHY: one spend projection feeds the cost limit and the run overview, so these
 // tests pin the merge, the exact-threshold crossing, and the overshoot snapshot.
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { ChildSpend, ModelSpend } from "../../usage.js";
@@ -50,32 +49,32 @@ function stateWith(
 
 test("runSpendRows merges baseline+branch+child+classifier to one total", () => {
 	const { deps, state } = stateWith([branchEntry("live", 2)]);
-	assert.equal(computeCurrentCost(deps, state), 10);
+	expect(computeCurrentCost(deps, state)).toBe(10);
 });
 
 test("limitReason fires exactly at the cost threshold, not below", () => {
 	const below = stateWith([branchEntry("live", 1.99)], 10);
-	assert.equal(limitReason(below.deps, below.state), null);
+	expect(limitReason(below.deps, below.state)).toBeNull();
 	const exact = stateWith([branchEntry("live", 2)], 10);
-	assert.equal(limitReason(exact.deps, exact.state), "cost-limit");
+	expect(limitReason(exact.deps, exact.state)).toBe("cost-limit");
 });
 
 test("runSpendRows drops pre-run branch entries by id", () => {
 	const branch = [branchEntry("pre", 50, "pre-1"), branchEntry("run", 2, "run-1")];
 	const { deps, state } = stateWith(branch, null, null, new Set(["pre-1"]));
-	assert.equal(computeCurrentCost(deps, state), 10, "prior conversation spend is excluded");
+	expect(computeCurrentCost(deps, state), "prior conversation spend is excluded").toBe(10);
 
 	const { deps: unfilteredDeps, state: unfiltered } = stateWith(branch);
-	assert.equal(computeCurrentCost(unfilteredDeps, unfiltered), 60, "without exclusion the prior spend counts");
+	expect(computeCurrentCost(unfilteredDeps, unfiltered), "without exclusion the prior spend counts").toBe(60);
 });
 
 test("a pre-run spend does not trip the run cost limit", () => {
 	const branch = [branchEntry("pre", 50, "pre-1"), branchEntry("run", 1, "run-1")];
 	const { deps, state } = stateWith(branch, 10, null, new Set(["pre-1"]));
-	assert.equal(limitReason(deps, state), null, "prior conversation spend stays outside the run limit");
+	expect(limitReason(deps, state), "prior conversation spend stays outside the run limit").toBeNull();
 
 	const { deps: unfilteredDeps, state: unfiltered } = stateWith(branch, 10);
-	assert.equal(limitReason(unfilteredDeps, unfiltered), "cost-limit", "without exclusion the limit trips");
+	expect(limitReason(unfilteredDeps, unfiltered), "without exclusion the limit trips").toBe("cost-limit");
 });
 
 test("limitReason fires exactly at the time threshold, not below", () => {
@@ -91,16 +90,16 @@ test("limitReason fires exactly at the time threshold, not below", () => {
 		pendingStop: null,
 		crossedAt: null,
 	};
-	assert.equal(limitReason(stubDeps([], null, 1_000), at), "time-limit");
+	expect(limitReason(stubDeps([], null, 1_000), at)).toBe("time-limit");
 	const fresh: SpendState = { ...at, startedAt: now };
-	assert.equal(limitReason(stubDeps([], null, 60_000), fresh), null);
+	expect(limitReason(stubDeps([], null, 60_000), fresh)).toBeNull();
 });
 
 test("armPendingStop snapshots crossing values", () => {
 	const { deps, state } = stateWith([branchEntry("live", 2)], 10);
 	state.startedAt = Date.now() - 500;
 	armPendingStop(deps, state, "cost-limit");
-	assert.equal(state.pendingStop, "cost-limit");
-	assert.equal(state.crossedAt?.costUsd, 10);
-	assert.ok((state.crossedAt?.elapsedMs ?? -1) >= 0);
+	expect(state.pendingStop).toBe("cost-limit");
+	expect(state.crossedAt?.costUsd).toBe(10);
+	expect((state.crossedAt?.elapsedMs ?? -1) >= 0).toBe(true);
 });

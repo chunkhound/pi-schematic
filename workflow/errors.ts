@@ -1,7 +1,7 @@
 // WHY: shared low-level reporting helpers for command, host, and limits-dialog — a leaf
 // module so all three use them without an import cycle (command imports host).
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { WORKFLOW_ERROR_ENTRY_TYPE, type WorkflowErrorPhase } from "./types.js";
+import { WORKFLOW_ERROR_ENTRY_TYPE, WORKFLOW_ERROR_PHASES, type WorkflowErrorPhase } from "./types.js";
 
 /** One shared error-to-message mapping. */
 export function messageOf(error: unknown): string {
@@ -35,8 +35,16 @@ export function notify(ctx: ExtensionCommandContext, message: string, level: "in
 
 /** Single-owner rejection: exactly one interactive notice + exactly one headless transcript
  * entry. Collapses the rejectSecondRun / reportStartFailure branches. */
+/** Reject a phase a writer did not declare; keeps the phase list the single source. */
+function assertKnownPhaseError(phase: string): asserts phase is WorkflowErrorPhase {
+	if (!(WORKFLOW_ERROR_PHASES as readonly string[]).includes(phase)) {
+		throw new Error(`unknown workflow error phase: ${phase}`);
+	}
+}
+
 export function reportRejectedStart(pi: ExtensionAPI, ctx: ExtensionCommandContext, message: string, phase: WorkflowErrorPhase): void {
 	notify(ctx, message, "error");
+	assertKnownPhaseError(phase);
 	// Visibility-only: the rejected start never owns run resources, so a failed transcript
 	// append (the only headless surface) must not turn a clean rejection into a crash.
 	if (!ctx.hasUI) {

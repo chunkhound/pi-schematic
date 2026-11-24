@@ -1,0 +1,305 @@
+{
+  "numTotalTestSuites": 1,
+  "numPassedTestSuites": 0,
+  "numFailedTestSuites": 1,
+  "numPendingTestSuites": 0,
+  "numTotalTests": 23,
+  "numPassedTests": 17,
+  "numFailedTests": 6,
+  "numPendingTests": 0,
+  "numTodoTests": 0,
+  "snapshot": {
+    "added": 0,
+    "failure": false,
+    "filesAdded": 0,
+    "filesRemoved": 0,
+    "filesRemovedList": [],
+    "filesUnmatched": 0,
+    "filesUpdated": 0,
+    "matched": 0,
+    "total": 0,
+    "unchecked": 0,
+    "uncheckedKeysByFile": [],
+    "unmatched": 0,
+    "updated": 0,
+    "didUpdate": false
+  },
+  "startTime": 1795453811036,
+  "success": false,
+  "testResults": [
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [],
+          "fullName": "globals expose exactly the two-level workflow.<member> surface",
+          "status": "passed",
+          "title": "globals expose exactly the two-level workflow.<member> surface",
+          "duration": 1.520791000000031,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "only workflow.run and workflow.shell spread their arguments",
+          "status": "passed",
+          "title": "only workflow.run and workflow.shell spread their arguments",
+          "duration": 0.18004200000001447,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "a real CodemodeSandbox accepts the handle names",
+          "status": "passed",
+          "title": "a real CodemodeSandbox accepts the handle names",
+          "duration": 0.23245800000000827,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "recordExit aborts on append failure and leaves the exit unset",
+          "status": "passed",
+          "title": "recordExit aborts on append failure and leaves the exit unset",
+          "duration": 0.5324999999999704,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "recordExit appends once and ignores later outcomes",
+          "status": "passed",
+          "title": "recordExit appends once and ignores later outcomes",
+          "duration": 0.14645799999999554,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "recordExit maps metadata, partial salvage, and checkpoint flags",
+          "status": "passed",
+          "title": "recordExit maps metadata, partial salvage, and checkpoint flags",
+          "duration": 0.22462500000000318,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "a guarded call past the cost limit defers the stop to the next checkpoint",
+          "status": "passed",
+          "title": "a guarded call past the cost limit defers the stop to the next checkpoint",
+          "duration": 0.6097090000000094,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "every handle matches the guarded/counted contract",
+          "status": "failed",
+          "title": "every handle matches the guarded/counted contract",
+          "duration": 2.672207999999955,
+          "failureMessages": [
+            "TypeError: Cannot read properties of undefined (reading 'cost')\n    at usageDelta (/private/tmp/pi-rebase-chain/usage.ts:50:18)\n    at addModelSpend (/private/tmp/pi-rebase-chain/usage.ts:68:42)\n    at usageByModel (/private/tmp/pi-rebase-chain/usage.ts:116:5)\n    at branchSpend (/private/tmp/pi-rebase-chain/workflow/spend.ts:54:9)\n    at projectRunSpend (/private/tmp/pi-rebase-chain/workflow/spend.ts:91:52)\n    at runSpendRows (/private/tmp/pi-rebase-chain/workflow/spend.ts:81:15)\n    at computeCurrentCost (/private/tmp/pi-rebase-chain/workflow/spend.ts:99:24)\n    at buildDigest (/private/tmp/pi-rebase-chain/workflow/host.ts:261:9)\n    at runWithStructuredOutput (/private/tmp/pi-rebase-chain/workflow/host.ts:1019:23)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)"
+          ],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "unguarded budget/state/notebookRead/exit stay reachable past the cost limit",
+          "status": "passed",
+          "title": "unguarded budget/state/notebookRead/exit stay reachable past the cost limit",
+          "duration": 0.24737500000003365,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "workflow.exit rejects reserved reasons and derives the record reason",
+          "status": "passed",
+          "title": "workflow.exit rejects reserved reasons and derives the record reason",
+          "duration": 0.43987499999997226,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "a dispatch failure keeps buffered previews for the next run",
+          "status": "failed",
+          "title": "a dispatch failure keeps buffered previews for the next run",
+          "duration": 0.6295829999999683,
+          "failureMessages": [
+            "TypeError: Cannot read properties of undefined (reading 'cost')\n    at usageDelta (/private/tmp/pi-rebase-chain/usage.ts:50:18)\n    at addModelSpend (/private/tmp/pi-rebase-chain/usage.ts:68:42)\n    at usageByModel (/private/tmp/pi-rebase-chain/usage.ts:116:5)\n    at branchSpend (/private/tmp/pi-rebase-chain/workflow/spend.ts:54:9)\n    at projectRunSpend (/private/tmp/pi-rebase-chain/workflow/spend.ts:91:52)\n    at runSpendRows (/private/tmp/pi-rebase-chain/workflow/spend.ts:81:15)\n    at computeCurrentCost (/private/tmp/pi-rebase-chain/workflow/spend.ts:99:24)\n    at buildDigest (/private/tmp/pi-rebase-chain/workflow/host.ts:261:9)\n    at runWithStructuredOutput (/private/tmp/pi-rebase-chain/workflow/host.ts:1019:23)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)"
+          ],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "an abort between the first settle and the nudge sends no second message",
+          "status": "passed",
+          "title": "an abort between the first settle and the nudge sends no second message",
+          "duration": 0.2789579999999887,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "the docs Handles table lists exactly the runtime handle surface",
+          "status": "failed",
+          "title": "the docs Handles table lists exactly the runtime handle surface",
+          "duration": 2.759541000000013,
+          "failureMessages": [
+            "AssertionError: expected [ 'notebookIndex', …(2) ] to strictly equal [ 'budget', 'checkpoint', …(13) ]\n    at /private/tmp/pi-rebase-chain/tests/unit/workflow-handles.test.ts:435:33\n    at file:///private/tmp/pi-rebase-chain/node_modules/vitest/dist/chunks/run.CjdgFZiW.js:1632:35\n    at file:///private/tmp/pi-rebase-chain/node_modules/vitest/dist/chunks/run.CjdgFZiW.js:2801:26\n    at file:///private/tmp/pi-rebase-chain/node_modules/vitest/dist/chunks/run.CjdgFZiW.js:3338:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///private/tmp/pi-rebase-chain/node_modules/vitest/dist/chunks/run.CjdgFZiW.js:3333:10)\n    at file:///private/tmp/pi-rebase-chain/node_modules/vitest/dist/chunks/run.CjdgFZiW.js:3318:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///private/tmp/pi-rebase-chain/node_modules/vitest/dist/chunks/run.CjdgFZiW.js:3276:10)\n    at file:///private/tmp/pi-rebase-chain/node_modules/vitest/dist/chunks/run.CjdgFZiW.js:3922:64"
+          ],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "workflow.readonly accepts only a boolean and leaves the posture unchanged otherwise",
+          "status": "passed",
+          "title": "workflow.readonly accepts only a boolean and leaves the posture unchanged otherwise",
+          "duration": 0.29587500000002365,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "workflow.readonly notifies only when the posture changes",
+          "status": "passed",
+          "title": "workflow.readonly notifies only when the posture changes",
+          "duration": 0.09387499999996862,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "workflow.run rejects a malformed options object before dispatch and keeps buffered previews",
+          "status": "failed",
+          "title": "workflow.run rejects a malformed options object before dispatch and keeps buffered previews",
+          "duration": 0.446042000000034,
+          "failureMessages": [
+            "TypeError: Cannot read properties of undefined (reading 'cost')\n    at usageDelta (/private/tmp/pi-rebase-chain/usage.ts:50:18)\n    at addModelSpend (/private/tmp/pi-rebase-chain/usage.ts:68:42)\n    at usageByModel (/private/tmp/pi-rebase-chain/usage.ts:116:5)\n    at branchSpend (/private/tmp/pi-rebase-chain/workflow/spend.ts:54:9)\n    at projectRunSpend (/private/tmp/pi-rebase-chain/workflow/spend.ts:91:52)\n    at runSpendRows (/private/tmp/pi-rebase-chain/workflow/spend.ts:81:15)\n    at computeCurrentCost (/private/tmp/pi-rebase-chain/workflow/spend.ts:99:24)\n    at buildDigest (/private/tmp/pi-rebase-chain/workflow/host.ts:261:9)\n    at runWithStructuredOutput (/private/tmp/pi-rebase-chain/workflow/host.ts:1019:23)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)"
+          ],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "a host error notice names a transcript record that could not be persisted",
+          "status": "passed",
+          "title": "a host error notice names a transcript record that could not be persisted",
+          "duration": 0.18262500000003,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "the workflow-exit record has exactly one writer file",
+          "status": "passed",
+          "title": "the workflow-exit record has exactly one writer file",
+          "duration": 0.6543330000000083,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "the handle count and partition stated in docs/workflows.md stay in sync",
+          "status": "passed",
+          "title": "the handle count and partition stated in docs/workflows.md stay in sync",
+          "duration": 0.3651659999999879,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "workflow.notebookWrite surfaces truncation in the next run's buffered preview",
+          "status": "failed",
+          "title": "workflow.notebookWrite surfaces truncation in the next run's buffered preview",
+          "duration": 0.6655420000000163,
+          "failureMessages": [
+            "TypeError: Cannot read properties of undefined (reading 'cost')\n    at usageDelta (/private/tmp/pi-rebase-chain/usage.ts:50:18)\n    at addModelSpend (/private/tmp/pi-rebase-chain/usage.ts:68:42)\n    at usageByModel (/private/tmp/pi-rebase-chain/usage.ts:116:5)\n    at branchSpend (/private/tmp/pi-rebase-chain/workflow/spend.ts:54:9)\n    at projectRunSpend (/private/tmp/pi-rebase-chain/workflow/spend.ts:91:52)\n    at runSpendRows (/private/tmp/pi-rebase-chain/workflow/spend.ts:81:15)\n    at computeCurrentCost (/private/tmp/pi-rebase-chain/workflow/spend.ts:99:24)\n    at buildDigest (/private/tmp/pi-rebase-chain/workflow/host.ts:261:9)\n    at runWithStructuredOutput (/private/tmp/pi-rebase-chain/workflow/host.ts:1019:23)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)"
+          ],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "a throwing model restore still restores the run's thinking level",
+          "status": "passed",
+          "title": "a throwing model restore still restores the run's thinking level",
+          "duration": 0.1918749999999818,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "a model-only override still restores the captured thinking level",
+          "status": "failed",
+          "title": "a model-only override still restores the captured thinking level",
+          "duration": 0.16920900000002348,
+          "failureMessages": [
+            "TypeError: Cannot read properties of undefined (reading 'cost')\n    at usageDelta (/private/tmp/pi-rebase-chain/usage.ts:50:18)\n    at addModelSpend (/private/tmp/pi-rebase-chain/usage.ts:68:42)\n    at usageByModel (/private/tmp/pi-rebase-chain/usage.ts:116:5)\n    at branchSpend (/private/tmp/pi-rebase-chain/workflow/spend.ts:54:9)\n    at projectRunSpend (/private/tmp/pi-rebase-chain/workflow/spend.ts:91:52)\n    at runSpendRows (/private/tmp/pi-rebase-chain/workflow/spend.ts:81:15)\n    at computeCurrentCost (/private/tmp/pi-rebase-chain/workflow/spend.ts:99:24)\n    at buildDigest (/private/tmp/pi-rebase-chain/workflow/host.ts:261:9)\n    at runWithStructuredOutput (/private/tmp/pi-rebase-chain/workflow/host.ts:1019:23)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)"
+          ],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "a throwing output-tool arming still restores the run's model and thinking",
+          "status": "passed",
+          "title": "a throwing output-tool arming still restores the run's model and thinking",
+          "duration": 0.1550420000000372,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        }
+      ],
+      "startTime": 1795453811342,
+      "endTime": 1795453811356.192,
+      "status": "failed",
+      "message": "",
+      "name": "/private/tmp/pi-rebase-chain/tests/unit/workflow-handles.test.ts"
+    }
+  ]
+}

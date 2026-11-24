@@ -1,17 +1,16 @@
 // Pure notebook-write helpers: argument parsing and the preview a run later consumes.
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import { buildNotebookWritePreview, parseNotebookWrite } from "../../workflow/notebook.js";
 
 test("parseNotebookWrite returns exactly the name and content strings", () => {
-	assert.deepEqual(parseNotebookWrite({ name: "findings", content: "line one\nline two" }), {
+	expect(parseNotebookWrite({ name: "findings", content: "line one\nline two" })).toStrictEqual({
 		name: "findings",
 		content: "line one\nline two",
 	});
 });
 
 test("parseNotebookWrite drops fields the workflow did not declare", () => {
-	assert.deepEqual(parseNotebookWrite({ name: "findings", content: "body", extra: 1 }), {
+	expect(parseNotebookWrite({ name: "findings", content: "body", extra: 1 })).toStrictEqual({
 		name: "findings",
 		content: "body",
 	});
@@ -30,15 +29,15 @@ test("parseNotebookWrite rejects arguments that are not an object with string na
 		{ name: "findings", content: ["body"] },
 	];
 	for (const args of malformed) {
-		assert.throws(() => parseNotebookWrite(args), /requires \{ name, content \} as strings/, JSON.stringify(args));
+		expect(() => parseNotebookWrite(args)).toThrow(/requires \{ name, content \} as strings/);
 	}
 });
 
 test("buildNotebookWritePreview names the page and carries the preview verbatim", () => {
-	assert.equal(buildNotebookWritePreview("findings", "first line"), 'Notebook page "findings" written: first line');
+	expect(buildNotebookWritePreview("findings", "first line")).toBe('Notebook page "findings" written: first line');
 });
 
 test("buildNotebookWritePreview keeps an ellipsis-clipped preview unchanged", () => {
 	const clipped = "x".repeat(20) + "...";
-	assert.equal(buildNotebookWritePreview("p", clipped), `Notebook page "p" written: ${clipped}`);
+	expect(buildNotebookWritePreview("p", clipped)).toBe(`Notebook page "p" written: ${clipped}`);
 });

@@ -1,7 +1,6 @@
 // WHY: the shell audit entries are the user's post-run view. They are pure renderers
 // over a persisted WorkflowEffect, so assert their visible contract without a terminal.
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import type { CustomEntry, Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
@@ -56,23 +55,23 @@ test("a throwing UI render never loses the shell audit row", () => {
 	};
 	const activity = createShellActivity({ getPi: () => pi as never, getCtx: () => ctx as never });
 	activity.onEffect({ phase: "start", effect: { id: 1, name: "shell", detail: "echo hi", ok: true, durationMs: 0 } });
-	assert.throws(() => {
+	expect(() => {
 		activity.onEffect({ phase: "end", effect: { id: 1, name: "shell", detail: "echo hi", ok: true, durationMs: 1, output: "hi" } });
-	}, /render failed/);
-	assert.equal(appended.length, 1, "the audit row lands before the throwing render");
-	assert.equal(appended[0].type, WORKFLOW_SHELL_ENTRY_TYPE);
+	}).toThrow(/render failed/);
+	expect(appended.length, "the audit row lands before the throwing render").toBe(1);
+	expect(appended[0].type).toBe(WORKFLOW_SHELL_ENTRY_TYPE);
 	activity.dispose();
 });
 
 test("collapsed shell entry shows the command, status, and duration but not output", () => {
 	const lines = renderWorkflowShellEntry(shellEntry({ output: "line1\nline2" }), false, identityTheme).render(80);
 	const joined = lines.join("\n");
-	assert.ok(joined.includes("$ echo hi"), joined);
-	assert.ok(joined.includes("ok"), joined);
-	assert.ok(joined.includes("120ms"), joined);
-	assert.ok(!joined.includes("line1"), "collapsed entry hides output");
+	expect(joined).toContain("$ echo hi");
+	expect(joined).toContain("ok");
+	expect(joined).toContain("120ms");
+	expect(!joined.includes("line1"), "collapsed entry hides output").toBe(true);
 	for (const line of lines) {
-		assert.ok(visibleWidth(line) <= 80, line);
+		expect(visibleWidth(line) <= 80).toBe(true);
 	}
 });
 
@@ -83,11 +82,11 @@ test("expanded shell entry reveals output and the truncation path", () => {
 		identityTheme,
 	).render(80);
 	const joined = lines.join("\n");
-	assert.ok(joined.includes("killed"), joined);
-	assert.ok(joined.includes("out1"), joined);
-	assert.ok(joined.includes("/tmp/full.txt"), joined);
+	expect(joined).toContain("killed");
+	expect(joined).toContain("out1");
+	expect(joined).toContain("/tmp/full.txt");
 	for (const line of lines) {
-		assert.ok(visibleWidth(line) <= 80, line);
+		expect(visibleWidth(line) <= 80).toBe(true);
 	}
 });
 
@@ -101,11 +100,8 @@ test("log entry shows the script console text", () => {
 		data: { text: "hello log" },
 	} as unknown as CustomEntry<{ text: string }>;
 	const lines = renderWorkflowLogEntry(entry, false, identityTheme).render(80);
-	assert.ok(
-		lines.some((line) => line.includes("hello log")),
-		lines.join("\n"),
-	);
+	expect(lines.some((line) => line.includes("hello log"))).toBe(true);
 	for (const line of lines) {
-		assert.ok(visibleWidth(line) <= 80, line);
+		expect(visibleWidth(line) <= 80).toBe(true);
 	}
 });

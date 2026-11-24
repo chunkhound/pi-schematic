@@ -1,9 +1,8 @@
 // WHY: input suppression and cancellation are one lifecycle: the run raises the input
 // flag, arms the two-press cancel funnel, and bridges aborted turns to the host. Keeping
 // them together leaves command.ts as the start/execute/finalize owner.
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { isKeyRelease, isKeyRepeat, matchesKey } from "@earendil-works/pi-tui";
-import type { SchematicState } from "../state.js";
 import type { RebindableDeps, RebindBundle, RunCtl } from "./rebind.js";
 import { notify } from "./errors.js";
 
@@ -45,7 +44,9 @@ export function suppressInput(bundle: CancelBundle): () => void {
  * their own extension runner, so a child's abort never fires this parent handler. */
 export function subscribeTurnEnd(bundle: CancelBundle, ctl: RunCtl): () => void {
 	return bundle.pi.on("turn_end", (event) => {
-		if (event.outcome === "aborted") {ctl.host?.abort("cancelled");}
+		if (event.outcome === "aborted") {
+			ctl.host?.abort("cancelled");
+		}
 	});
 }
 
@@ -59,14 +60,21 @@ export function subscribeCancellation(bundle: CancelBundle, ctl: RunCtl, ctx: Ex
  * key inside the window aborts. This mirrors pi's double-press interrupt guard so a single
  * stray keypress cannot kill a long run. Terminal input is TUI-only. */
 function registerCancellation(ctx: ExtensionCommandContext, confirmMs: number, onCancel: () => void): () => void {
-	if (ctx.mode !== "tui") {return () => {};}
+	if (ctx.mode !== "tui") {
+		return () => undefined;
+	}
 	const armedAt = new Map<CancelKey, number>();
 	return ctx.ui.onTerminalInput((data) => {
 		const press = cancelPressOf(data);
-		if (!press) {return undefined;}
+		if (!press) {
+			return undefined;
+		}
 		// A coalesced pair is two physical presses: it already satisfies the guard.
-		if (press.confirmed || confirmCancel(armedAt, press.key, Date.now(), confirmMs)) {onCancel();}
-		else {notify(ctx, `Press ${CANCEL_LABEL[press.key]} again within ${confirmMs}ms to cancel the workflow`, "warning");}
+		if (press.confirmed || confirmCancel(armedAt, press.key, Date.now(), confirmMs)) {
+			onCancel();
+		} else {
+			notify(ctx, `Press ${CANCEL_LABEL[press.key]} again within ${confirmMs}ms to cancel the workflow`, "warning");
+		}
 		return { consume: true };
 	});
 }
@@ -78,8 +86,12 @@ function registerCancellation(ctx: ExtensionCommandContext, confirmMs: number, o
  * read as an already-confirmed Escape. Kitty flag 2 also emits a press then a release for one
  * physical key; `isKeyRelease`/`isKeyRepeat` drop those non-press events. */
 export function cancelPressOf(data: string): { key: CancelKey; confirmed: boolean } | null {
-	if (data === "\x1b\x1b") {return { key: "escape", confirmed: true };}
-	if (isKeyRelease(data) || isKeyRepeat(data)) {return null;}
+	if (data === "\x1b\x1b") {
+		return { key: "escape", confirmed: true };
+	}
+	if (isKeyRelease(data) || isKeyRepeat(data)) {
+		return null;
+	}
 	// Only the funnel's cancel keys are consumed: every other keypress must still reach the
 	// editor while a run is active, instead of being swallowed wholesale.
 	const key = CANCEL_KEYS.find((candidate) => matchesKey(data, candidate));
@@ -91,7 +103,9 @@ export function cancelPressOf(data: string): { key: CancelKey; confirmed: boolea
 function confirmCancel(armedAt: Map<CancelKey, number>, key: CancelKey, now: number, windowMs: number): boolean {
 	const at = armedAt.get(key);
 	armedAt.delete(key);
-	if (at !== undefined && now - at < windowMs) {return true;}
+	if (at !== undefined && now - at < windowMs) {
+		return true;
+	}
 	armedAt.set(key, now);
 	return false;
 }

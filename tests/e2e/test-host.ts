@@ -71,7 +71,19 @@
  */
 
 import { createInterface } from "node:readline";
-import { ExtensionRunner, createExtensionRuntime, type Extension, type ExtensionToolContext, type ExtensionUIContext, type InputSource, type ModelRegistry, type SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+	ExtensionRunner,
+	SessionManager,
+	createExtensionRuntime,
+	type Extension,
+	type ExtensionCommandContext,
+	type ExtensionToolContext,
+	type ExtensionUIContext,
+	type InputSource,
+	type ModelRegistry,
+	type SlashCommandInfo,
+	type TerminalInputHandler,
+} from "@earendil-works/pi-coding-agent";
 import { CodemodeSandbox, type CodemodeResult, type CodemodeSandboxOptions } from "@earendil-works/pi-codemode";
 import { createTestHost } from "../unit/test-host.js";
 import { setShellRunForTests, type ShellToolResult } from "../../workflow/shell.js";
@@ -109,6 +121,15 @@ function handlersFor(event: string): Callable[] {
 	});
 }
 
+/** A string field of `value`, or "" when absent/non-string. */
+function strOf(value: unknown, field: string): string {
+	if (!isRecord(value)) {
+		return "";
+	}
+	const v = value[field];
+	return typeof v === "string" ? v : "";
+}
+
 // The text blocks of a tool result, one per line, without empty ones.
 function resultText(result: unknown): string {
 	if (!isRecord(result)) {
@@ -126,7 +147,7 @@ function resultText(result: unknown): string {
 			if (!isRecord(block)) {
 				throw new Error("a tool result content block is not an object");
 			}
-			return block.text;
+			return strOf(block, "text");
 		})
 		.filter(Boolean)
 		.join("\n");
@@ -135,10 +156,12 @@ function resultText(result: unknown): string {
 // Capture the override call sequence: a run must apply the explicit model/thinking for the
 // turn and restore the previous pair afterwards. Pi exposes these as writable api methods.
 const originalSetModel = pi.setModel.bind(pi);
-pi.setModel = async (model: unknown) => {
+pi.setModel = async (model: Parameters<typeof pi.setModel>[0]) => {
 	modelCalls.push(model);
-	if (modelRestoreThrows && model === mockCtx.model) throw new Error("e2e model restore failed");
-	return originalSetModel(model as never);
+	if (modelRestoreThrows && model === mockCtx.model) {
+		throw new Error("e2e model restore failed");
+	}
+	return originalSetModel(model);
 };
 const initialThinkingLevel = pi.getThinkingLevel();
 const originalSetThinkingLevel = pi.setThinkingLevel.bind(pi);
@@ -148,13 +171,15 @@ pi.setThinkingLevel = (level: Parameters<typeof originalSetThinkingLevel>[0]) =>
 		thinkingThrows -= 1;
 		throw new Error("e2e thinking failed");
 	}
-	if (thinkingRestoreThrows && level === initialThinkingLevel) throw new Error("e2e thinking restore failed");
+	if (thinkingRestoreThrows && level === initialThinkingLevel) {
+		throw new Error("e2e thinking restore failed");
+	}
 	originalSetThinkingLevel(level);
 };
 
 // ── Mock ExtensionContext for tool/command execution ──────────────
 
-type MockContextUsage = { tokens?: number | null; percent?: number | null; contextWindow?: number | null } | null;
+type MockContextUsage = { tokens: number | null; percent: number | null; contextWindow: number } | null;
 
 /** One scripted `workflow.run` reply, consumed in queue order by scriptTurn. */
 interface ScriptedTurn {
@@ -167,9 +192,9 @@ interface ScriptedTurn {
 	/** When present, the host executes the armed workflow_output tool with this value. */
 	output?: unknown;
 	/** Tool-result entries appended between the user and assistant turns (spawned-child usage). */
-	toolResults?: Array<{ toolName?: string; cost?: number; text?: string }>;
+	toolResults?: { toolName?: string; cost?: number; text?: string }[];
 	/** Multiple assistant entries (a tool-use loop) with per-entry usage; overrides `text`/`cost`/`stopReason`. */
-	assistants?: Array<{ text?: string; cost?: number; stopReason?: string; provider?: string; model?: string }>;
+	assistants?: { text?: string; cost?: number; stopReason?: string; provider?: string; model?: string }[];
 	/** Fire `agent_settled` this many times before the assistant entry lands (correlation must wait). */
 	prematureSettles?: number;
 }
@@ -213,26 +238,37 @@ let thinkingThrows = 0;
 // Boxed so TS control-flow does not narrow the closure-assigned value to null at the read site.
 const sandboxCapture: { options: CodemodeSandboxOptions | null } = { options: null };
 // Picker answers consumed in order (empty queue uses the suite defaults); scripted run turns.
-const pickerSelect: Array<string | undefined> = [];
-const pickerInput: Array<string | undefined> = [];
+const pickerSelect: (string | undefined)[] = [];
+const pickerInput: (string | undefined)[] = [];
 const scriptedTurns: ScriptedTurn[] = [];
 let footer: unknown = null;
 let workflowMocksEnabled = false;
 const queuedFollowUps: string[] = [];
 const statuses = new Map<string, string | undefined>();
-const notifications: Array<{ message: string; level: string }> = [];
+const notifications: { message: string; level: string }[] = [];
 // `branch` models the active path while `entries` preserves the session history.
 // Pi moves a selected user turn into the editor by moving the active leaf to its
 // parent, but the delivered turn remains in session history as recovery evidence.
-const branch: any[] = [];
-const entries: any[] = [];
+const branch: Record<string, unknown>[] = [];
+const entries: Record<string, unknown>[] = [];
 let entrySeq = 0;
+// Deterministic timestamps: wall clocks are banned in tests and no fixture reads them.
+const FIXED_NOW = 1_700_000_000_000;
 
-function appendEntry(entry: any): void {
+function appendEntry(entry: Record<string, unknown>): void {
 	// Mirror pi: each entry is a child of the current leaf, and the leaf advances.
 	entry.parentId = branch.at(-1)?.id ?? null;
 	branch.push(entry);
 	entries.push(entry);
+}
+
+/** Parse JSON from a REPL payload; returns the error message on failure. */
+function tryParse(text: string): { value?: unknown; error?: string } {
+	try {
+		return { value: JSON.parse(text) };
+	} catch (e: unknown) {
+		return { error: e instanceof Error ? e.message : String(e) };
+	}
 }
 
 // Model Pi's follow-up queue centrally: every extension send with
@@ -241,45 +277,54 @@ function appendEntry(entry: any): void {
 // A run dispatch (expandPromptTemplates) settles through the next scripted turn:
 // the real agent loop's only observable edges are the appended branch entries and
 // the agent_settled boundary, so the turn reproduces exactly those.
-const originalSendUserMessage = pi.sendUserMessage;
-pi.sendUserMessage = (content: any, options?: any) => {
+const originalSendUserMessage = pi.sendUserMessage.bind(pi);
+pi.sendUserMessage = (content: Parameters<typeof pi.sendUserMessage>[0], options?: Parameters<typeof pi.sendUserMessage>[1]) => {
 	if (faults.send > 0) {
 		faults.send -= 1;
 		throw new Error("e2e send fault");
 	}
-	originalSendUserMessage.call(pi, content, options);
-	const text = typeof content === "string" ? content : content.map((part: any) => part.text ?? "").join("\n");
+	originalSendUserMessage(content, options);
+	const text = typeof content === "string" ? content : content.map((part) => strOf(part, "text")).join("\n");
 	if (options?.deliverAs === "followUp") {
 		queuedFollowUps.push(text);
 		return;
 	}
-	if (options?.expandPromptTemplates) return scriptTurn(text);
+	if (options?.expandPromptTemplates === true) {
+		void scriptTurn(text);
+	}
 };
 // A faulted append must be visible: production's safeAppendEntry paths rely on the throw.
-const originalAppendEntry = pi.appendEntry;
+const originalAppendEntry = pi.appendEntry.bind(pi);
 pi.appendEntry = (customType: string, data?: unknown) => {
 	// appendSkip lets the first appends of a run land, so a later append can be the one that fails.
-	if (faults.appendSkip > 0) faults.appendSkip -= 1;
-	else if (faults.append > 0) {
+	if (faults.appendSkip > 0) {
+		faults.appendSkip -= 1;
+	} else if (faults.append > 0) {
 		faults.append -= 1;
 		throw new Error("e2e append fault");
 	}
-	originalAppendEntry.call(pi, customType, data);
+	originalAppendEntry(customType, data);
 };
 // Deterministic shell for /workflow workflows: NO real process is spawned in E2E.
 // The process-isolated host cannot inject host deps, so it uses the shell module's
 // test seam. A held gate parks the run mid-flight so tests can dispatch input while
 // it is live (the workflow now runs through pi's bash tool, not `pi.exec`).
 function enableWorkflowMocks(): void {
-	if (workflowMocksEnabled) return; // idempotent
+	if (workflowMocksEnabled) {
+		return;
+	} // idempotent
 	workflowMocksEnabled = true;
 	setShellRunForTests(async () => {
 		if (execGate) {
 			process.stdout.write("EXEC-HELD\n"); // unsolicited marker: the run is now provably mid-flight
 			await execGate;
 		}
-		if (shellDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, shellDelayMs));
-		if (faults.shell === "throws") throw new Error("e2e shell fault");
+		if (shellDelayMs > 0) {
+			await new Promise((resolve) => setTimeout(resolve, shellDelayMs));
+		}
+		if (faults.shell === "throws") {
+			throw new Error("e2e shell fault");
+		}
 		if (faults.shell === "error") {
 			return {
 				content: [{ type: "text", text: "fault-output\n" }],
@@ -313,27 +358,45 @@ function usageOf(cost: number): Record<string, unknown> {
 }
 
 /** Append one raw branch entry so a run starts with pre-existing spend or a model-attributed turn. */
-function seedBranchEntry(spec: any): void {
-	const id = spec.id ?? `message-${++entrySeq}`;
-	const usage = spec.cost !== undefined ? usageOf(spec.cost) : undefined;
+function seedBranchEntry(spec: Record<string, unknown>): void {
+	const id = typeof spec.id === "string" ? spec.id : `message-${++entrySeq}`;
+	const usage = typeof spec.cost === "number" ? usageOf(spec.cost) : undefined;
+	const text = typeof spec.text === "string" ? spec.text : "seed";
 	let message: Record<string, unknown> | null = null;
 	if (spec.role === "assistant") {
-		message = { role: "assistant", provider: spec.provider, model: spec.model, content: [{ type: "text", text: spec.text ?? "seed" }], timestamp: Date.now(), ...(usage ? { usage } : {}) };
+		message = {
+			role: "assistant",
+			provider: spec.provider,
+			model: spec.model,
+			content: [{ type: "text", text }],
+			timestamp: FIXED_NOW,
+			...(usage ? { usage } : {}),
+		};
 	} else if (spec.role === "toolResult") {
-		message = { role: "toolResult", toolName: spec.toolName ?? "spawn", toolCallId: spec.toolCallId, content: spec.text ?? "child", timestamp: Date.now(), ...(usage ? { usage } : {}), ...(spec.details ? { details: spec.details } : {}) };
+		message = {
+			role: "toolResult",
+			toolName: typeof spec.toolName === "string" ? spec.toolName : "spawn",
+			toolCallId: spec.toolCallId,
+			content: typeof spec.text === "string" ? spec.text : "child",
+			timestamp: FIXED_NOW,
+			...(usage ? { usage } : {}),
+			...(isRecord(spec.details) ? { details: spec.details } : {}),
+		};
 	} else if (spec.role === "user") {
-		message = { role: "user", content: spec.text ?? "seed", timestamp: Date.now() };
+		message = { role: "user", content: typeof spec.text === "string" ? spec.text : "seed", timestamp: FIXED_NOW };
 	}
 	if (message) {
 		appendEntry({ type: "message", id, message });
 		return;
 	}
-	if (spec.type === "usage") appendEntry({ type: "usage", id, usage: usageOf(spec.cost ?? 0) });
+	if (spec.type === "usage") {
+		appendEntry({ type: "usage", id, usage: usageOf(typeof spec.cost === "number" ? spec.cost : 0) });
+	}
 }
 
 /** Settle one `workflow.run` dispatch from the next queued turn; the default is a plain reply. */
 async function scriptTurn(promptText: string): Promise<void> {
-	appendMessage({ role: "user", content: promptText, timestamp: Date.now() });
+	appendMessage({ role: "user", content: promptText, timestamp: FIXED_NOW });
 	// Hold before the assistant entry: the run is provably awaiting this turn.
 	if (turnGate) {
 		process.stdout.write("TURN-HELD\n");
@@ -341,18 +404,23 @@ async function scriptTurn(promptText: string): Promise<void> {
 	}
 	const turn = scriptedTurns.shift() ?? {};
 	// A premature settle proves correlation waits for an assistant entry past the marker.
-	for (let i = 0; i < (turn.prematureSettles ?? 0); i++) void fireSettled();
+	for (let i = 0; i < (turn.prematureSettles ?? 0); i++) {
+		void fireSettled();
+	}
 	if (turn.output !== undefined) {
 		// Re-read the tool map: armStructuredOutput registers workflow_output mid-run.
 		const tool = pi.tools.get("workflow_output");
-		if (tool) void tool.execute("e2e-output", turn.output, undefined, undefined, mockCtx as unknown as ExtensionToolContext);
+		if (tool) {
+			const toolCtx = buildToolCtx();
+			void tool.execute("e2e-output", turn.output, undefined, undefined, toolCtx);
+		}
 	}
 	for (const result of turn.toolResults ?? []) {
 		appendMessage({
 			role: "toolResult",
 			toolName: result.toolName ?? "spawn",
 			content: result.text ?? "child done",
-			timestamp: Date.now(),
+			timestamp: FIXED_NOW,
 			...(result.cost !== undefined ? { usage: usageOf(result.cost) } : {}),
 		});
 	}
@@ -362,7 +430,7 @@ async function scriptTurn(promptText: string): Promise<void> {
 			role: "assistant",
 			content: [{ type: "text", text: assistant.text ?? "ok" }],
 			stopReason: assistant.stopReason ?? "stop",
-			timestamp: Date.now(),
+			timestamp: FIXED_NOW,
 			...(assistant.provider !== undefined ? { provider: assistant.provider } : {}),
 			...(assistant.model !== undefined ? { model: assistant.model } : {}),
 			...(assistant.cost !== undefined ? { usage: usageOf(assistant.cost) } : {}),
@@ -373,7 +441,9 @@ async function scriptTurn(promptText: string): Promise<void> {
 
 /** Fire every live agent_settled subscriber (the run registry's correlate listener). */
 async function fireSettled(): Promise<void> {
-	for (const handler of pi.handlers.get("agent_settled") ?? []) await handler({ type: "agent_settled" }, mockCtx);
+	for (const handler of pi.handlers.get("agent_settled") ?? []) {
+		await handler({ type: "agent_settled" }, mockCtx);
+	}
 }
 
 // ── Fault seams ──────────────────────────────────────────────────
@@ -387,17 +457,23 @@ function throwProgressFault(): void {
 
 /** One fake sandbox returning a canned result; `closeThrows` exercises the cleanup path. */
 function makeFakeSandbox(result: CodemodeResult, closeThrows: boolean): CodemodeSandbox {
-	return {
-		execute: async () => result,
-		close: async () => {
-			if (closeThrows) throw new Error("e2e sandbox close fault");
-		},
-	} as unknown as CodemodeSandbox;
+	const box = new CodemodeSandbox({});
+	box.execute = () => Promise.resolve(result);
+	box.close = () => {
+		if (closeThrows) {
+			throw new Error("e2e sandbox close fault");
+		}
+		return Promise.resolve();
+	};
+	return box;
 }
 
 /** `real` clears the seam; every other mode installs a canned result or a throwing factory. */
 function installSandboxFault(mode: string): void {
-	if (mode === "real") return setSandboxFactoryForTests(null);
+	if (mode === "real") {
+		setSandboxFactoryForTests(null);
+		return;
+	}
 	if (mode === "factory-error") {
 		setSandboxFactoryForTests(() => {
 			throw new Error("e2e sandbox factory fault");
@@ -410,21 +486,31 @@ function installSandboxFault(mode: string): void {
 		setSandboxFactoryForTests((options) => new CodemodeSandbox({ ...options, timeoutMs: Number.POSITIVE_INFINITY }));
 		return;
 	}
-	const aborted = { ok: false, error: { kind: "aborted", message: "e2e sandbox aborted" }, output: [], calls: [] } as unknown as CodemodeResult;
-	const timeout = { ok: false, error: { kind: "timeout", message: "e2e sandbox timeout" }, output: [], calls: [] } as unknown as CodemodeResult;
-	const oom = { ok: false, error: { kind: "memory-limit", message: "e2e sandbox OOM" }, output: [], calls: [] } as unknown as CodemodeResult;
-	const ok = { ok: true, value: undefined, output: [], calls: [], storeWrites: { set: {}, delete: [] } } as CodemodeResult;
+	const aborted = { ok: false, error: { kind: "aborted", message: "e2e sandbox aborted" }, output: [], calls: [] } satisfies CodemodeResult;
+	const timeout = { ok: false, error: { kind: "timeout", message: "e2e sandbox timeout" }, output: [], calls: [] } satisfies CodemodeResult;
+	const oom = { ok: false, error: { kind: "sandbox", message: "e2e sandbox OOM" }, output: [], calls: [] } satisfies CodemodeResult;
+	const ok = { ok: true, value: undefined, output: [], calls: [], storeWrites: { set: {}, delete: [] } } satisfies CodemodeResult;
 	const result = mode === "aborted" ? aborted : mode === "timeout" ? timeout : mode === "oom" ? oom : ok;
 	setSandboxFactoryForTests((options: CodemodeSandboxOptions) => {
 		sandboxCapture.options = options;
-		if (mode === "execute-throws") return { execute: async () => { throw new Error("vm blew up"); }, close: async () => {} } as unknown as CodemodeSandbox;
+		if (mode === "execute-throws") {
+			const box = new CodemodeSandbox({});
+			box.execute = () => {
+				throw new Error("vm blew up");
+			};
+			box.close = () => Promise.resolve();
+			return box;
+		}
 		return makeFakeSandbox(result, mode === "close-throws");
 	});
 }
 
 /** Parse `fault <kind> [n]`; invalid input writes the usage ERR and returns. */
 function handleFault(rest: string): void {
-	const [kind, arg, skipArg] = rest.split(/\s+/);
+	const parts = rest.split(/\s+/);
+	const kind = parts[0] ?? "";
+	const arg = parts.at(1);
+	const skipArg = parts.at(2);
 	const count = arg === undefined ? 1 : Number(arg);
 	if (kind === "shell") {
 		if (arg !== "result" && arg !== "throws" && arg !== "error") {
@@ -468,71 +554,196 @@ function handleFault(rest: string): void {
 		faults.append = count;
 		faults.appendSkip = skip;
 	}
-	if (kind === "send-throws") faults.send = count;
-	if (kind === "progress-throws") faults.progress = count;
+	if (kind === "send-throws") {
+		faults.send = count;
+	}
+	if (kind === "progress-throws") {
+		faults.progress = count;
+	}
 	process.stdout.write("OK\n");
 }
 
-const ignore = () => {
-	/* The line host renders no TUI and has no run to abort. */
+/** The footer factory installed by `setFooter`, rendered once when the `footer` verb asks. */
+type FooterFactory = (tui: unknown, theme: unknown, data: unknown) => { render(w: number): string[] };
+
+function isFooterFactory(value: unknown): value is FooterFactory {
+	return typeof value === "function";
+}
+
+/** Whether `value` is an array of command-registration records. */
+function isSlashCommandArray(value: unknown): value is SlashCommandInfo[] {
+	return Array.isArray(value) && value.every(isRecord);
+}
+
+const ignore = () => undefined;
+
+/** Narrow an unknown to a model registry, throwing when it is not an object. */
+function requireModelRegistry(value: unknown): asserts value is ModelRegistry {
+	if (!isRecord(value)) {
+		throw new Error("expected a model registry");
+	}
+}
+
+/** Narrow an unknown to an extension UI context, throwing when it is not an object. */
+function requireUI(value: unknown): asserts value is ExtensionUIContext {
+	if (!isRecord(value)) {
+		throw new Error("expected an extension UI context");
+	}
+}
+
+/** Narrow an unknown to an extension command context, throwing when it is not an object. */
+function requireCommandContext(value: unknown): asserts value is ExtensionCommandContext {
+	if (!isRecord(value)) {
+		throw new Error("expected an extension command context");
+	}
+}
+
+/** Narrow an unknown to an extension tool context, throwing when it is not an object. */
+function requireToolContext(value: unknown): asserts value is ExtensionToolContext {
+	if (!isRecord(value)) {
+		throw new Error("expected an extension tool context");
+	}
+}
+
+const modelRegistryMembers: Record<string, unknown> = {
+	getModelsOfType: () => classifierModels,
+	getModelOfType: () => resolvedModel,
+	// Model-groups boot validation reads find/hasConfiguredAuth on session_start.
+	find: () => undefined,
+	hasConfiguredAuth: () => false,
+	classify: () => Promise.resolve(classifyResult ?? { api: "e2e", provider: "e2e", model: "e2e", answers: {}, stopReason: "stop", timestamp: 0 }),
 };
 
-const mockCtx = {
+function buildModelRegistry(): ModelRegistry {
+	const candidate = new Proxy(
+		{},
+		{
+			get(_target, property, receiver) {
+				if (typeof property === "string" && Object.hasOwn(modelRegistryMembers, property)) {
+					return Reflect.get(modelRegistryMembers, property, receiver);
+				}
+				if (typeof property === "string") {
+					return () => {
+						throw new Error(`modelRegistry.${property} is not stubbed in this host context.`);
+					};
+				}
+				return undefined;
+			},
+		},
+	);
+	requireModelRegistry(candidate);
+	return candidate;
+}
+const modelRegistry = buildModelRegistry();
+
+const sessionManager = Object.assign(SessionManager.inMemory(process.cwd()), {
+	getBranch: () => branch,
+	getEntries: () => entries,
+	getSessionId: () => "e2e-session",
+	getLeafId: () => branch.at(-1)?.id ?? null,
+	getSessionName: () => undefined,
+});
+
+const uiMembers: Record<string, unknown> = {
+	notify: (message: string, type?: "info" | "warning" | "error") => {
+		notifications.push({ message, level: type ?? "" });
+	},
+	setStatus: (key: string, value: string | undefined) => {
+		throwProgressFault();
+		statuses.set(key, value);
+	},
+	setWidget: (key: string, value: unknown) => {
+		throwProgressFault();
+		if (value === undefined) {
+			widgets.delete(key);
+		} else {
+			widgets.add(key);
+		}
+	},
+	theme: { fg: (_name: string, text: string) => text },
+	select: () => Promise.reject(new Error("workflow mocks not enabled; send workflow-mocks first")),
+	confirm: () => Promise.reject(new Error("workflow mocks not enabled; send workflow-mocks first")),
+	input: () => Promise.reject(new Error("workflow mocks not enabled; send workflow-mocks first")),
+	onTerminalInput: () => () => undefined,
+	setWorkingMessage: ignore,
+	setWorkingVisible: ignore,
+	setWorkingIndicator: ignore,
+	setHiddenThinkingLabel: ignore,
+	setFooter: (factory: unknown) => {
+		throwProgressFault();
+		footer = factory;
+	},
+	setHeader: ignore,
+	setTitle: ignore,
+	custom: () => Promise.reject(new Error("custom UI is not implemented in the line host")),
+	pasteToEditor: ignore,
+	setEditorText: ignore,
+	getEditorText: () => "",
+	editor: () => Promise.resolve(""),
+	addAutocompleteProvider: ignore,
+	getTheme: () => undefined,
+	setTheme: () => ({ success: true }),
+};
+
+function buildUI(): ExtensionUIContext {
+	const candidate = new Proxy(
+		{},
+		{
+			get(_target, property, receiver) {
+				if (typeof property === "string" && Object.hasOwn(uiMembers, property)) {
+					return Reflect.get(uiMembers, property, receiver);
+				}
+				if (typeof property === "string") {
+					return () => {
+						throw new Error(`ctx.ui.${property} is not stubbed in this host context.`);
+					};
+				}
+				return undefined;
+			},
+			set(_target, property, value) {
+				if (typeof property === "string" && Object.hasOwn(uiMembers, property)) {
+					Reflect.set(uiMembers, property, value);
+					return true;
+				}
+				return Reflect.set(_target, property, value);
+			},
+		},
+	);
+	requireUI(candidate);
+	return candidate;
+}
+
+let ctxModel: unknown = undefined;
+const ctxMembers: Record<string, unknown> = {
 	hasUI: true,
-	mode: "non-interactive",
+	mode: "print",
 	cwd: process.cwd(),
-	ui: {
-		notify: (message: string, level: string) => { notifications.push({ message, level }); },
-		setStatus: (key: string, value: string | undefined) => { throwProgressFault(); statuses.set(key, value); },
-		setWidget: (key: string, value: unknown) => { throwProgressFault(); if (value === undefined) widgets.delete(key); else widgets.add(key); },
-		theme: { fg: (_name: string, text: string) => text },
-		select: (_options?: unknown): Promise<string | undefined> => Promise.reject(new Error("workflow mocks not enabled; send workflow-mocks first")),
-		confirm: (_options?: unknown): Promise<boolean> => Promise.reject(new Error("workflow mocks not enabled; send workflow-mocks first")),
-		input: (_options?: unknown): Promise<string | undefined> => Promise.reject(new Error("workflow mocks not enabled; send workflow-mocks first")),
-		onTerminalInput: () => () => {},
-		setWorkingMessage: () => {},
-		setWorkingVisible: () => {},
-		setWorkingIndicator: () => {},
-		setHiddenThinkingLabel: () => {},
-		setFooter: (factory: unknown) => { throwProgressFault(); footer = factory; },
-		setHeader: () => {},
-		setTitle: () => {},
-		custom: () => Promise.resolve(undefined),
-		pasteToEditor: ignore,
-		setEditorText: ignore,
-		getEditorText: () => "",
-		editor: () => Promise.resolve(""),
-		addAutocompleteProvider: ignore,
-		themes: [],
-		getTheme: () => undefined,
-		setTheme: () => ({ ok: true }),
+	ui: buildUI(),
+	getContextUsage: () => {
+		if (currentUsage === null) {
+			return undefined;
+		}
+		return { tokens: currentUsage.tokens ?? null, percent: currentUsage.percent ?? null, contextWindow: currentUsage.contextWindow };
 	},
-	getContextUsage: () => currentUsage,
-	sessionManager: {
-		getBranch: () => branch,
-		getEntries: () => entries,
-		getSessionId: () => "e2e-session",
-		getLeafId: () => branch.at(-1)?.id ?? null,
-		getSessionName: () => undefined,
-	},
-	modelRegistry: {
-		getModelsOfType: (type: string) => (type === "classifier" ? classifierModels : []),
-		getModelOfType: () => resolvedModel,
-		// Model-groups boot validation reads find/hasConfiguredAuth on session_start.
-		find: () => undefined,
-		hasConfiguredAuth: () => false,
-		getAvailable: () => [],
-		classify: async () => (classifyResult ?? { api: "e2e", provider: "e2e", model: "e2e", answers: {}, stopReason: "stop", timestamp: 0 }),
-	},
-	newSession: async (options?: { withSession?: (ctx: any) => Promise<void> }) => {
+	sessionManager,
+	modelRegistry,
+	newSession: async (options?: { withSession?: (ctx: ExtensionCommandContext) => Promise<void> }) => {
 		// pi invalidates the replaced ctx the moment teardown starts.
-		if (staleOnNewSession) ctxStale = true;
-		if (newSessionMode === "fail") throw new Error("e2e new session failed");
-		if (newSessionMode === "cancel") return { cancelled: true };
-		const replacement = { ...mockCtx } as any;
+		if (staleOnNewSession) {
+			ctxStale = true;
+		}
+		if (newSessionMode === "fail") {
+			throw new Error("e2e new session failed");
+		}
+		if (newSessionMode === "cancel") {
+			return { cancelled: true };
+		}
+		const replacement = buildCtx();
 		// Real pi starts a fresh session with an empty branch; a clear mode emulates that for
 		// the baseline-fold cost tests without a second process.
-		if (newSessionMode === "clear") branch.length = 0;
+		if (newSessionMode === "clear") {
+			branch.length = 0;
+		}
 		// Real pi builds a fresh runtime and emits session_start before withSession; the
 		// extension's workflow coordinator publishes its live bindings from that event, so the
 		// mock must emit it too or a rebinding workflow finds no runtime.
@@ -541,30 +752,93 @@ const mockCtx = {
 				await handler({ type: "session_start", reason: "new" }, replacement);
 			}
 			// Hold the teardown window open so a production tick can land inside it.
-			if (newSessionDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, newSessionDelayMs));
+			if (newSessionDelayMs > 0) {
+				await new Promise((resolve) => setTimeout(resolve, newSessionDelayMs));
+			}
 		}
-		if (options?.withSession) await options.withSession(replacement);
+		if (options?.withSession) {
+			await options.withSession(replacement);
+		}
 		return { cancelled: false };
 	},
 	isProjectTrusted: () => true,
-	// Required by spawn tool which checks ctx.model existence before using it
-	model: undefined,
 	isIdle: () => true,
 	signal: new AbortController().signal,
 	abort: () => {
-		if (abortThrows) throw new Error("e2e model abort failed");
+		if (abortThrows) {
+			throw new Error("e2e model abort failed");
+		}
 	},
 	hasPendingMessages: () => queuedFollowUps.length > 0,
 	shutdown: () => process.exit(0),
 	getSystemPrompt: () => "",
+	// A replacement ctx has no sendUserMessage of its own; the host falls back to pi's.
+	sendUserMessage: undefined,
 };
+
+function buildCtx(): ExtensionCommandContext {
+	const candidate = new Proxy(
+		{},
+		{
+			get(_target, property, receiver) {
+				if (property === "model") {
+					return ctxModel;
+				}
+				if (typeof property === "string" && Object.hasOwn(ctxMembers, property)) {
+					return Reflect.get(ctxMembers, property, receiver);
+				}
+				if (typeof property === "string") {
+					return () => {
+						throw new Error(`ctx.${property} is not stubbed in this host context.`);
+					};
+				}
+				return undefined;
+			},
+			set(_target, property, value) {
+				if (property === "model") {
+					ctxModel = value;
+					return true;
+				}
+				if (typeof property === "string" && Object.hasOwn(ctxMembers, property)) {
+					Reflect.set(ctxMembers, property, value);
+					return true;
+				}
+				return Reflect.set(_target, property, value);
+			},
+		},
+	);
+	requireCommandContext(candidate);
+	return candidate;
+}
+const mockCtx = buildCtx();
+
+/** A tool context over the command ctx, with an inert tool map and executeTool seam. */
+function buildToolCtx(): ExtensionToolContext {
+	const candidate = new Proxy(mockCtx, {
+		get(target, property, receiver) {
+			if (property === "tools") {
+				return [];
+			}
+			if (property === "executeTool") {
+				return () => Promise.reject(new Error("no nested tool execution from the e2e host"));
+			}
+			const value: unknown = Reflect.get(target, property, receiver);
+			return value;
+		},
+	});
+	requireToolContext(candidate);
+	return candidate;
+}
 
 // The command receives a proxy so a replaced ctx fails loudly: a run that keeps reading
 // the old ctx after `workflow.new` throws instead of silently using a dead session.
-const commandCtx: any = new Proxy(mockCtx, {
+const commandCtx = new Proxy(mockCtx, {
 	get(target, prop, receiver) {
-		if (ctxStale) throw new Error("This extension ctx is stale after session replacement or reload.");
-		return Reflect.get(target, prop, receiver);
+		if (ctxStale) {
+			throw new Error("This extension ctx is stale after session replacement or reload.");
+		}
+		const value: unknown = Reflect.get(target, prop, receiver);
+		return value;
 	},
 });
 
@@ -573,15 +847,20 @@ const commandCtx: any = new Proxy(mockCtx, {
 // pi's own chain over the extension's live handler map. emitInput only reads `handlers`;
 // `path` just labels errors. onError surfaces handler failures that emitInput would
 // otherwise swallow through emitError.
-const inputRunner = new ExtensionRunner(
-	[{ handlers: pi.handlers, path: "e2e" }] as unknown as Extension[],
-	createExtensionRuntime(),
-	process.cwd(),
-	mockCtx.sessionManager as unknown as SessionManager,
-	mockCtx.modelRegistry as unknown as ModelRegistry,
-);
+const inputExtension: Extension = {
+	path: "e2e",
+	resolvedPath: "e2e",
+	sourceInfo: { path: "e2e", source: "extension", scope: "temporary", origin: "top-level" },
+	handlers: pi.handlers,
+	tools: new Map(),
+	messageRenderers: new Map(),
+	commands: pi.commands,
+	flags: new Map(),
+	shortcuts: pi.shortcuts,
+};
+const inputRunner = new ExtensionRunner([inputExtension], createExtensionRuntime(), process.cwd(), sessionManager, modelRegistry);
 inputRunner.onError((error) => process.stdout.write("ERR:input-handler:" + error.error + "\n"));
-inputRunner.setUIContext(mockCtx.ui as unknown as ExtensionUIContext);
+inputRunner.setUIContext(mockCtx.ui);
 
 /** Dispatch one submission through the real input chain; print the final action. */
 async function dispatchInput(text: string, source: InputSource): Promise<void> {
@@ -615,7 +894,9 @@ async function reportCommandOutcome(command: Promise<void>): Promise<void> {
 
 /** Open a held exec gate so parked runs resume; false when no gate is held. */
 function releaseExec(): boolean {
-	if (!execOpened) return false;
+	if (!execOpened) {
+		return false;
+	}
 	const release = execOpened;
 	execGate = null;
 	execOpened = null;
@@ -625,7 +906,9 @@ function releaseExec(): boolean {
 
 /** Open a held turn gate so a parked `workflow.run` turn settles; false when no gate is held. */
 function releaseTurn(): boolean {
-	if (!turnOpened) return false;
+	if (!turnOpened) {
+		return false;
+	}
 	const release = turnOpened;
 	turnGate = null;
 	turnOpened = null;
@@ -634,18 +917,18 @@ function releaseTurn(): boolean {
 }
 
 // ── Terminal-input capture (workflow cancellation) ──
-let terminalInput: ((data: string) => { consume: boolean }) | null = null;
+let terminalInput: TerminalInputHandler | null = null;
 
 function enableTuiInput(): void {
 	// registerCancellation arms only on ctx.mode "tui", and the captured handler must live
 	// on the same ui object the command receives, so both are set before the run starts.
 	mockCtx.mode = "tui";
-	mockCtx.ui.onTerminalInput = ((handler: (data: string) => { consume: boolean }) => {
+	mockCtx.ui.onTerminalInput = (handler: TerminalInputHandler) => {
 		terminalInput = handler;
 		return () => {
 			terminalInput = null;
 		};
-	}) as never;
+	};
 }
 
 const KEY_DATA: Record<string, string> = { escape: "\u001b", "ctrl+c": "\u0003" };
@@ -687,11 +970,21 @@ for await (const line of rl) {
 		process.stdout.write("OK:" + JSON.stringify({ statuses: Object.fromEntries(statuses), notifications }) + "\n");
 	} else if (trimmed.startsWith("usage ")) {
 		const jsonArg = trimmed.slice(6).trim();
-		try {
-			currentUsage = JSON.parse(jsonArg);
+		const parsed = tryParse(jsonArg);
+		if (parsed.error !== undefined) {
+			process.stdout.write("ERR:invalid json: " + parsed.error + "\n");
+		} else if (parsed.value === null) {
+			currentUsage = null;
 			process.stdout.write("OK\n");
-		} catch (e: unknown) {
-			process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n");
+		} else if (isRecord(parsed.value)) {
+			currentUsage = {
+				tokens: typeof parsed.value.tokens === "number" ? parsed.value.tokens : null,
+				percent: typeof parsed.value.percent === "number" ? parsed.value.percent : null,
+				contextWindow: typeof parsed.value.contextWindow === "number" ? parsed.value.contextWindow : 0,
+			};
+			process.stdout.write("OK\n");
+		} else {
+			process.stdout.write("ERR:invalid json: usage must be an object or null\n");
 		}
 	} else if (trimmed === "turn-end" || trimmed === "turn-end fail") {
 		// Mirror pi's turn_end boundary: every handler sees the submitted tool result; the
@@ -705,16 +998,24 @@ for await (const line of rl) {
 		let continued = false;
 		let drafted = 0;
 		for (const handler of pi.handlers.get("turn_end") ?? []) {
-			const result = await handler(event, mockCtx) as { entries?: any[]; continue?: boolean } | undefined;
-			for (const draft of result?.entries ?? []) {
-				appendEntry({ ...draft, id: draft.id ?? `draft-${++entrySeq}` });
+			const raw = await handler(event, mockCtx);
+			const result = raw !== null && raw !== undefined && isRecord(raw) ? raw : undefined;
+			const drafts = result !== undefined && Array.isArray(result.entries) ? result.entries : [];
+			for (const draft of drafts) {
+				const draftRecord = isRecord(draft) ? draft : {};
+				const idField = draftRecord.id;
+				appendEntry({ ...draftRecord, id: typeof idField === "string" ? idField : `draft-${++entrySeq}` });
 				drafted += 1;
 			}
-			if (result?.continue) continued = true;
+			if (result?.continue === true) {
+				continued = true;
+			}
 		}
 		process.stdout.write("OK:" + JSON.stringify({ continue: continued, entries: drafted }) + "\n");
 	} else if (trimmed === "turn-start") {
-		for (const handler of pi.handlers.get("turn_start") ?? []) await handler({ type: "turn_start" }, mockCtx);
+		for (const handler of pi.handlers.get("turn_start") ?? []) {
+			await handler({ type: "turn_start" }, mockCtx);
+		}
 		process.stdout.write("OK\n");
 	} else if (trimmed.startsWith("user-turn ")) {
 		const content = trimmed.slice("user-turn ".length).trim();
@@ -729,30 +1030,34 @@ for await (const line of rl) {
 		});
 		process.stdout.write("OK\n");
 	} else if (trimmed === "agent-end") {
-		const [agentEnd] = pi.handlers.get("agent_end") ?? [];
-		if (!agentEnd) {
+		const agentEndHandlers = pi.handlers.get("agent_end") ?? [];
+		if (agentEndHandlers.length === 0) {
 			process.stdout.write("ERR:no agent_end handler\n");
 			continue;
 		}
+		const agentEnd = agentEndHandlers[0];
 		await agentEnd({}, mockCtx);
 		process.stdout.write("OK\n");
 	} else if (trimmed === "agent-settled") {
-		const [agentSettled] = pi.handlers.get("agent_settled") ?? [];
-		if (!agentSettled) {
+		const settledHandlers = pi.handlers.get("agent_settled") ?? [];
+		if (settledHandlers.length === 0) {
 			process.stdout.write("ERR:no agent_settled handler\n");
 			continue;
 		}
+		const agentSettled = settledHandlers[0];
 		await agentSettled({}, mockCtx);
 		process.stdout.write("OK\n");
 	} else if (trimmed === "agent-settled-all") {
 		// Run every agent_settled handler: late subscribers (e.g. a workflow.handoff
 		// settle gate armed mid-run) must observe the boundary, not just the first.
 		const settledHandlers = pi.handlers.get("agent_settled") ?? [];
-		if (!settledHandlers.length) {
+		if (settledHandlers.length === 0) {
 			process.stdout.write("ERR:no agent_settled handler\n");
 			continue;
 		}
-		for (const handler of settledHandlers) await handler({}, mockCtx);
+		for (const handler of settledHandlers) {
+			await handler({}, mockCtx);
+		}
 		process.stdout.write("OK\n");
 	} else if (trimmed === "sent-messages") {
 		process.stdout.write("OK:" + JSON.stringify(pi.sentUserMessages) + "\n");
@@ -779,14 +1084,16 @@ for await (const line of rl) {
 		});
 		process.stdout.write("OK\n");
 	} else if (trimmed === "session-tree" || trimmed === "tree-edit-last-user") {
-		const [sessionTree] = pi.handlers.get("session_tree") ?? [];
-		if (!sessionTree) {
+		const sessionTreeHandlers = pi.handlers.get("session_tree") ?? [];
+		if (sessionTreeHandlers.length === 0) {
 			process.stdout.write("ERR:no session_tree handler\n");
 			continue;
 		}
+		const sessionTree = sessionTreeHandlers[0];
 		const oldLeafId = branch.at(-1)?.id ?? "old-leaf";
 		if (trimmed === "tree-edit-last-user") {
-			const index = branch.map((entry) => entry.message?.role).lastIndexOf("user");
+			const roles = branch.map((entry) => entry.message).map((message) => strOf(message, "role"));
+			const index = roles.lastIndexOf("user");
 			if (index === -1) {
 				process.stdout.write("ERR:no user turn to edit\n");
 				continue;
@@ -810,16 +1117,20 @@ for await (const line of rl) {
 		}
 		const toolName = rest.slice(0, spaceIdx);
 		const jsonArgs = rest.slice(spaceIdx + 1);
-		let input: unknown;
-		try {
-			input = JSON.parse(jsonArgs);
-		} catch (e: unknown) {
-			process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n");
+		const parsed = tryParse(jsonArgs);
+		if (parsed.error !== undefined) {
+			process.stdout.write("ERR:invalid json: " + parsed.error + "\n");
 			continue;
 		}
 		try {
-			const [handler] = pi.handlers.get("tool_call") ?? [];
-			const result = await handler({ toolName, input }, { cwd: mockCtx.cwd });
+			const toolCallHandlers = pi.handlers.get("tool_call") ?? [];
+			if (toolCallHandlers.length === 0) {
+				process.stdout.write("ERR:no tool_call handler\n");
+				continue;
+			}
+			const handler = toolCallHandlers[0];
+			assertCallable(handler, "the tool_call handler");
+			const result: unknown = await handler({ toolName, input: parsed.value }, { cwd: mockCtx.cwd });
 			process.stdout.write("OK:" + JSON.stringify(result ?? null) + "\n");
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
@@ -827,11 +1138,15 @@ for await (const line of rl) {
 		}
 	} else if (trimmed.startsWith("context")) {
 		let payload: unknown;
-		try {
-			payload = trimmed === "context" ? { messages: [{ role: "user", content: "e2e", timestamp: Date.UTC(2026, 0, 1) }] } : JSON.parse(trimmed.slice(7).trim());
-		} catch (e: unknown) {
-			process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n");
-			continue;
+		if (trimmed === "context") {
+			payload = { messages: [{ role: "user", content: "e2e", timestamp: Date.UTC(2026, 0, 1) }] };
+		} else {
+			const parsed = tryParse(trimmed.slice(7).trim());
+			if (parsed.error !== undefined) {
+				process.stdout.write("ERR:invalid json: " + parsed.error + "\n");
+				continue;
+			}
+			payload = parsed.value;
 		}
 		try {
 			const handlers = handlersFor("context");
@@ -855,20 +1170,18 @@ for await (const line of rl) {
 		const toolName = rest.slice(0, spaceIdx);
 		const jsonArgs = rest.slice(spaceIdx + 1);
 		const toolDef = tools.get(toolName);
-		if (!isRecord(toolDef)) {
+		if (toolDef === undefined) {
 			process.stdout.write("ERR:unknown tool " + toolName + "\n");
 			continue;
 		}
-		let params: unknown;
-		try {
-			params = JSON.parse(jsonArgs);
-		} catch (e: unknown) {
-			process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n");
+		const parsed = tryParse(jsonArgs);
+		if (parsed.error !== undefined) {
+			process.stdout.write("ERR:invalid json: " + parsed.error + "\n");
 			continue;
 		}
 		try {
-			assertCallable(toolDef.execute, `tool ${toolName} execute`);
-			const result = await toolDef.execute("e2e-" + toolName, params, undefined, undefined, mockCtx as unknown as ExtensionToolContext);
+			const toolCtx = buildToolCtx();
+			const result = await toolDef.execute("e2e-" + toolName, parsed.value, undefined, undefined, toolCtx);
 			process.stdout.write("OK:" + resultText(result) + "\n");
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
@@ -880,17 +1193,24 @@ for await (const line of rl) {
 			continue;
 		}
 		backgroundCommand = startCommand(trimmed.slice(7).trim());
-		if (!backgroundCommand) continue; // unknown-command ERR already written
-		backgroundCommand.catch(() => {}); // outcome is reported at cmd-wait; silence the early rejection
+		if (!backgroundCommand) {
+			continue;
+		} // unknown-command ERR already written
+		backgroundCommand.catch(() => undefined); // outcome is reported at cmd-wait; silence the early rejection
 		process.stdout.write("OK:started\n");
 	} else if (trimmed === "cmd-wait") {
 		const command = backgroundCommand;
 		backgroundCommand = null;
-		if (!command) process.stdout.write("ERR:no background command\n");
-		else await reportCommandOutcome(command);
+		if (!command) {
+			process.stdout.write("ERR:no background command\n");
+		} else {
+			await reportCommandOutcome(command);
+		}
 	} else if (trimmed.startsWith("cmd ")) {
 		const command = startCommand(trimmed.slice(4).trim());
-		if (command) await reportCommandOutcome(command);
+		if (command) {
+			await reportCommandOutcome(command);
+		}
 	} else if (trimmed.startsWith("input-ext ")) {
 		await dispatchInput(trimmed.slice("input-ext ".length), "extension");
 	} else if (trimmed.startsWith("input ")) {
@@ -899,43 +1219,61 @@ for await (const line of rl) {
 		enableWorkflowMocks();
 		process.stdout.write("OK\n");
 	} else if (trimmed === "hold-exec") {
-		execGate = new Promise((resolve) => { execOpened = () => resolve(); });
+		execGate = new Promise((resolve) => {
+			execOpened = () => {
+				resolve();
+			};
+		});
 		process.stdout.write("OK\n");
 	} else if (trimmed === "release-exec") {
 		process.stdout.write(releaseExec() ? "OK\n" : "ERR:no held exec\n");
 	} else if (trimmed === "hold-turn") {
-		turnGate = new Promise((resolve) => { turnOpened = () => resolve(); });
+		turnGate = new Promise((resolve) => {
+			turnOpened = () => {
+				resolve();
+			};
+		});
 		process.stdout.write("OK\n");
 	} else if (trimmed === "release-turn") {
 		process.stdout.write(releaseTurn() ? "OK\n" : "ERR:no held turn\n");
 	} else if (trimmed.startsWith("turn-end ")) {
 		const outcome = trimmed.slice("turn-end ".length).trim();
 		const handlers = pi.handlers.get("turn_end") ?? [];
-		if (!handlers.length) {
+		if (handlers.length === 0) {
 			process.stdout.write("ERR:no turn_end handler\n");
 			continue;
 		}
-		for (const handler of handlers) await handler({ type: "turn_end", outcome }, mockCtx);
+		for (const handler of handlers) {
+			await handler({ type: "turn_end", outcome }, mockCtx);
+		}
 		process.stdout.write("OK\n");
 	} else if (trimmed === "tui") {
 		enableTuiInput();
 		process.stdout.write("OK\n");
 	} else if (trimmed.startsWith("key-raw ")) {
-		try {
-			dispatchTerminal(JSON.parse(trimmed.slice("key-raw ".length)) as string);
-		} catch (e: unknown) {
-			process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n");
+		const parsed = tryParse(trimmed.slice("key-raw ".length));
+		if (parsed.error !== undefined) {
+			process.stdout.write("ERR:invalid json: " + parsed.error + "\n");
+		} else if (typeof parsed.value !== "string") {
+			process.stdout.write("ERR:invalid json: key data must be a string\n");
+		} else {
+			dispatchTerminal(parsed.value);
 		}
 	} else if (trimmed.startsWith("key ")) {
 		sendKey(trimmed.slice(4).trim());
 	} else if (trimmed.startsWith("mode ")) {
-		mockCtx.mode = trimmed.slice(5).trim();
+		const mode = trimmed.slice(5).trim();
+		if (mode !== "tui" && mode !== "rpc" && mode !== "json" && mode !== "print") {
+			process.stdout.write("ERR:usage mode <tui|rpc|json|print>\n");
+			continue;
+		}
+		mockCtx.mode = mode;
 		process.stdout.write("OK\n");
 	} else if (trimmed.startsWith("cwd ")) {
 		mockCtx.cwd = trimmed.slice(4).trim();
 		process.stdout.write("OK\n");
 	} else if (trimmed === "terminal") {
-		process.stdout.write("OK:" + JSON.stringify({ registered: terminalInput !== null }) + "\n");
+		process.stdout.write("OK:" + JSON.stringify({ registered: Boolean(terminalInput) }) + "\n");
 	} else if (trimmed === "widgets") {
 		process.stdout.write("OK:" + JSON.stringify([...widgets]) + "\n");
 	} else if (trimmed.startsWith("shell-delay ")) {
@@ -959,35 +1297,78 @@ for await (const line of rl) {
 		process.stdout.write("OK\n");
 	} else if (trimmed === "mock-model" || trimmed.startsWith("mock-model ")) {
 		const arg = trimmed.slice("mock-model".length).trim();
-		let spec: any = {};
-		try { if (arg) spec = JSON.parse(arg); }
-		catch (e: unknown) { process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n"); continue; }
-		mockCtx.model = spec.current ?? undefined;
+		const parsed = tryParse(arg === "" ? "{}" : arg);
+		if (parsed.error !== undefined) {
+			process.stdout.write("ERR:invalid json: " + parsed.error + "\n");
+			continue;
+		}
+		if (!isRecord(parsed.value)) {
+			process.stdout.write("ERR:invalid json: mock-model must be an object\n");
+			continue;
+		}
+		const spec = parsed.value;
+		const currentSpec = spec.current;
+		if (isRecord(currentSpec)) {
+			ctxModel = {
+				provider: typeof currentSpec.provider === "string" ? currentSpec.provider : "agentic-e2e",
+				id: typeof currentSpec.id === "string" ? currentSpec.id : "agentic-e2e-model",
+			};
+		} else {
+			ctxModel = undefined;
+		}
 		resolvedModel = spec.resolve ?? undefined;
 		process.stdout.write("OK\n");
 	} else if (trimmed === "model-calls") {
-		process.stdout.write("OK:" + JSON.stringify({ model: modelCalls, thinking: thinkingCalls, current: mockCtx.model ?? null, thinkingLevel: pi.getThinkingLevel() }) + "\n");
+		process.stdout.write(
+			"OK:" + JSON.stringify({ model: modelCalls, thinking: thinkingCalls, current: mockCtx.model ?? null, thinkingLevel: pi.getThinkingLevel() }) + "\n",
+		);
 	} else if (trimmed.startsWith("mock-commands ")) {
-		let commands: any;
-		try { commands = JSON.parse(trimmed.slice("mock-commands ".length)); }
-		catch (e: unknown) { process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n"); continue; }
-		pi.setCommands(commands);
+		const parsed = tryParse(trimmed.slice("mock-commands ".length));
+		if (parsed.error !== undefined) {
+			process.stdout.write("ERR:invalid json: " + parsed.error + "\n");
+			continue;
+		}
+		if (!isSlashCommandArray(parsed.value)) {
+			process.stdout.write("ERR:invalid json: mock-commands must be an array of objects\n");
+			continue;
+		}
+		pi.setCommands(parsed.value);
 		process.stdout.write("OK\n");
 	} else if (trimmed.startsWith("seed-entry ")) {
-		let spec: any;
-		try { spec = JSON.parse(trimmed.slice("seed-entry ".length)); }
-		catch (e: unknown) { process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n"); continue; }
-		seedBranchEntry(spec);
+		const parsed = tryParse(trimmed.slice("seed-entry ".length));
+		if (parsed.error !== undefined) {
+			process.stdout.write("ERR:invalid json: " + parsed.error + "\n");
+			continue;
+		}
+		if (!isRecord(parsed.value)) {
+			process.stdout.write("ERR:invalid json: seed-entry must be an object\n");
+			continue;
+		}
+		seedBranchEntry(parsed.value);
 		process.stdout.write("OK\n");
 	} else if (trimmed.startsWith("mock-classify ")) {
-		let spec: any = {};
-		try { spec = JSON.parse(trimmed.slice("mock-classify ".length)); }
-		catch (e: unknown) { process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n"); continue; }
-		if (spec.models) classifierModels = spec.models;
+		const parsed = tryParse(trimmed.slice("mock-classify ".length));
+		if (parsed.error !== undefined) {
+			process.stdout.write("ERR:invalid json: " + parsed.error + "\n");
+			continue;
+		}
+		if (!isRecord(parsed.value)) {
+			process.stdout.write("ERR:invalid json: mock-classify must be an object\n");
+			continue;
+		}
+		const spec = parsed.value;
+		if (Array.isArray(spec.models)) {
+			classifierModels = spec.models.filter(isRecord);
+		}
 		classifyResult = spec.result ?? null;
 		process.stdout.write("OK\n");
 	} else if (trimmed === "sandbox-options") {
-		const options = sandboxCapture.options ? { timeoutMs: Number.isFinite(sandboxCapture.options.timeoutMs) ? sandboxCapture.options.timeoutMs : String(sandboxCapture.options.timeoutMs), memoryLimitBytes: sandboxCapture.options.memoryLimitBytes } : null;
+		const options = sandboxCapture.options
+			? {
+					timeoutMs: Number.isFinite(sandboxCapture.options.timeoutMs) ? sandboxCapture.options.timeoutMs : String(sandboxCapture.options.timeoutMs),
+					memoryLimitBytes: sandboxCapture.options.memoryLimitBytes,
+				}
+			: null;
 		process.stdout.write("OK:" + JSON.stringify(options) + "\n");
 	} else if (trimmed === "active-tools") {
 		process.stdout.write("OK:" + JSON.stringify(pi.activeTools) + "\n");
@@ -1024,14 +1405,16 @@ for await (const line of rl) {
 		newSessionMode = mode;
 		process.stdout.write("OK\n");
 	} else if (trimmed.startsWith("turn ")) {
-		let turn: ScriptedTurn;
-		try {
-			turn = JSON.parse(trimmed.slice(5).trim());
-		} catch (e: unknown) {
-			process.stdout.write("ERR:invalid json: " + (e instanceof Error ? e.message : String(e)) + "\n");
+		const parsed = tryParse(trimmed.slice(5).trim());
+		if (parsed.error !== undefined) {
+			process.stdout.write("ERR:invalid json: " + parsed.error + "\n");
 			continue;
 		}
-		scriptedTurns.push(turn);
+		if (!isRecord(parsed.value)) {
+			process.stdout.write("ERR:invalid json: turn must be an object\n");
+			continue;
+		}
+		scriptedTurns.push(parsed.value);
 		process.stdout.write("OK\n");
 	} else if (trimmed.startsWith("fault ")) {
 		handleFault(trimmed.slice(6).trim());
@@ -1046,17 +1429,18 @@ for await (const line of rl) {
 		}
 		// Rehydrate through the production branch scan so the posture follows real state.
 		appendEntry({ type: "custom", id: `readonly-${++entrySeq}`, customType: "pi-schematic-readonly", data: { enabled: value === "on" } });
-		for (const handler of pi.handlers.get("session_start") ?? []) await handler({ type: "session_start", reason: "startup" }, mockCtx);
+		for (const handler of pi.handlers.get("session_start") ?? []) {
+			await handler({ type: "session_start", reason: "startup" }, mockCtx);
+		}
 		process.stdout.write("OK\n");
 	} else if (trimmed === "footer") {
-		if (!footer) {
+		if (!isFooterFactory(footer)) {
 			process.stdout.write("OK:null\n");
 			continue;
 		}
-		const factory = footer as (tui: unknown, theme: unknown, data: unknown) => { render(w: number): string[] };
-		const data = { getGitBranch: () => null, getExtensionStatuses: () => statuses, getAvailableProviderCount: () => 1, onBranchChange: () => () => {} };
-		const line = factory({ requestRender: () => {} }, { fg: (_name: string, text: string) => text }, data).render(200)[0];
-		process.stdout.write("OK:" + JSON.stringify(line ?? null) + "\n");
+		const data = { getGitBranch: () => null, getExtensionStatuses: () => statuses, getAvailableProviderCount: () => 1, onBranchChange: () => () => undefined };
+		const line = footer({ requestRender: () => undefined }, { fg: (_name: string, text: string) => text }, data).render(200)[0];
+		process.stdout.write("OK:" + JSON.stringify(line) + "\n");
 	} else {
 		process.stdout.write("ERR:unknown input\n");
 	}

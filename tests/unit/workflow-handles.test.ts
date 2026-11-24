@@ -1,8 +1,9 @@
-import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type ExtensionAPI, type ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { assertPresent, isRecord } from "../assertions.js";
+import { createCommandContext, testModel } from "./helpers.js";
 import { createState } from "../../state.js";
 import { createWorkflowHost, HANDLE_POLICY, isCountedHandle, type WorkflowHandleKind } from "../../workflow/host.js";
 import type { WorkflowHandleName, WorkflowHost, WorkflowHostDeps } from "../../workflow/types.js";
@@ -25,25 +26,88 @@ const EXPECTED = [
 	"workflow.exit",
 ];
 
+/** `value` as a non-null; throws `message` when it is null or undefined. */
+function requirePresent<T>(value: T | null | undefined, message: string): asserts value is T {
+	if (value === null || value === undefined) {
+		throw new Error(message);
+	}
+}
+
+/** Affirm a plain object as the extension API surface the host reads. */
+function requireExtensionAPI(value: unknown): asserts value is ExtensionAPI {
+	if (!isRecord(value)) {
+		throw new Error("expected the extension API surface");
+	}
+}
+
+/** Affirm a plain object as a model registry stub. */
+function requireModelRegistry(value: unknown): asserts value is ModelRegistry {
+	if (!isRecord(value)) {
+		throw new Error("expected a model registry");
+	}
+}
+
+/** A model registry whose `members` are its own; any other method throws naming it. */
+function stubRegistry(members: Record<string, unknown>): ModelRegistry {
+	const candidate: unknown = new Proxy(
+		{},
+		{
+			get(_target, property, receiver) {
+				if (typeof property === "string" && Object.hasOwn(members, property)) {
+					return Reflect.get(members, property, receiver);
+				}
+				if (typeof property === "string") {
+					return () => {
+						throw new Error(`modelRegistry.${property} is not stubbed in this test context.`);
+					};
+				}
+				return undefined;
+			},
+		},
+	);
+	requireModelRegistry(candidate);
+	return candidate;
+}
+
+/** A session manager whose session seams read `getBranch`; anything else delegates to `SessionManager.inMemory`. */
+function stubSessionManager(getBranch: () => unknown[], sessionId = "s"): SessionManager {
+	return new Proxy(SessionManager.inMemory(), {
+		get(_manager, property, receiver) {
+			if (property === "getSessionId") {
+				return () => sessionId;
+			}
+			if (property === "getLeafId") {
+				return () => null;
+			}
+			if (property === "getBranch") {
+				return getBranch;
+			}
+			const value: unknown = Reflect.get(SessionManager.inMemory(), property, receiver);
+			return value;
+		},
+	});
+}
+
 function fakeDeps(): WorkflowHostDeps {
-	const pi = {
-		on: () => () => {},
+	const pi: unknown = {
+		on: () => () => undefined,
 		getCommands: () => [],
 		getActiveTools: () => [],
 		getThinkingLevel: () => "medium",
-		setThinkingLevel: () => {},
-		setModel: async () => true,
+		setThinkingLevel: () => undefined,
+		setModel: () => Promise.resolve(true),
 		getSettings: () => ({}),
-		appendEntry: () => {},
-		sendUserMessage: () => {},
-	} as unknown as ExtensionAPI;
-	const ctx = {
+		appendEntry: () => undefined,
+		sendUserMessage: () => undefined,
+	};
+	requireExtensionAPI(pi);
+	const ctx = createCommandContext({
 		cwd: "/workspace",
-		sessionManager: { getSessionId: () => "s", getLeafId: () => null, getBranch: () => [] },
+		sessionManager: stubSessionManager(() => []),
+		modelRegistry: stubRegistry({ getModelsOfType: () => [], classify: () => Promise.resolve({}) }),
 		getContextUsage: () => undefined,
-		modelRegistry: { getModelsOfType: () => [], classify: async () => ({}) },
 		isIdle: () => true,
-	} as unknown as ExtensionCommandContext;
+	});
 	return {
 		pi,
 		state: createState(),
@@ -64,13 +128,10 @@ function fakeDeps(): WorkflowHostDeps {
 
 test("globals expose exactly the two-level workflow.<member> surface", () => {
 	const globals = createWorkflowHost(fakeDeps()).globals();
-	assert.deepEqual(
-		globals.map((tool) => tool.name),
-		EXPECTED,
-	);
-	assert.equal(new Set(globals.map((tool) => tool.name)).size, EXPECTED.length);
+	expect(globals.map((tool) => tool.name)).toStrictEqual(EXPECTED);
+	expect(new Set(globals.map((tool) => tool.name)).size).toBe(EXPECTED.length);
 	for (const tool of globals) {
-		assert.match(tool.name, /^workflow\.[A-Za-z]+$/);
+		expect(tool.name).toMatch(/^workflow\.[A-Za-z]+$/);
 	}
 });
 
@@ -78,12 +139,13 @@ test("only workflow.run and workflow.shell spread their arguments", () => {
 	const globals = createWorkflowHost(fakeDeps()).globals();
 	for (const tool of globals) {
 		const spread = tool.spread === true;
-		assert.equal(spread, tool.name === "workflow.run" || tool.name === "workflow.shell", tool.name);
+		expect(spread).toBe(tool.name === "workflow.run" || tool.name === "workflow.shell");
 	}
 });
 
 test("a real CodemodeSandbox accepts the handle names", async () => {
 	const sandbox = new CodemodeSandbox({ globals: createWorkflowHost(fakeDeps()).globals() });
+	expect(sandbox).toBeDefined();
 	await sandbox.close();
 });
 
@@ -97,12 +159,12 @@ test("recordExit aborts on append failure and leaves the exit unset", () => {
 		throw new Error("disk full");
 	};
 	const host = createWorkflowHost(deps);
-	assert.throws(() => {
+	expect(() => {
 		host.recordExit({ reason: "error" }, "error");
-	}, /disk full/);
-	assert.equal(host.abortedReason(), "error");
-	assert.equal(host.exitRecord(), null);
-	assert.equal(exitAppends, 1);
+	}).toThrow(/disk full/);
+	expect(host.abortedReason()).toBe("error");
+	expect(host.exitRecord()).toBeNull();
+	expect(exitAppends).toBe(1);
 });
 
 test("recordExit appends once and ignores later outcomes", () => {
@@ -114,28 +176,32 @@ test("recordExit appends once and ignores later outcomes", () => {
 	const host = createWorkflowHost(deps);
 	host.recordExit({ reason: "done", metadata: { ok: true } }, "error");
 	host.recordExit({ reason: "changed" }, "error");
-	assert.equal(appended, 1);
-	assert.deepEqual(host.exitRecord(), { reason: "done", metadata: { ok: true } });
+	expect(appended).toBe(1);
+	expect(host.exitRecord()).toStrictEqual({ reason: "done", metadata: { ok: true } });
 });
 
-test("recordExit maps metadata, partial salvage, and checkpoint flags", () => {
+test("recordExit maps metadata and checkpoint salvage", () => {
 	const makeHost = () => createWorkflowHost(fakeDeps());
 	const workflowExit = makeHost();
 	workflowExit.recordExit({ reason: "done", metadata: { result: 1 } }, "error");
-	assert.deepEqual(workflowExit.exitRecord(), { reason: "done", metadata: { result: 1 } });
+	expect(workflowExit.exitRecord()).toStrictEqual({ reason: "done", metadata: { result: 1 } });
 	const checkpoint = makeHost();
 	checkpoint.recordExit({ reason: "cost-limit", partial: { phase: 2 }, checkpoint: true }, "cost-limit");
-	assert.equal(checkpoint.exitRecord()?.reason, "cost-limit");
-	assert.equal(checkpoint.exitRecord()?.checkpoint, true);
-	assert.deepEqual(checkpoint.exitRecord()?.partial, { phase: 2 });
+	expect(checkpoint.exitRecord()?.reason).toBe("cost-limit");
+	expect(checkpoint.exitRecord()?.checkpoint).toBe(true);
+	expect(checkpoint.exitRecord()?.partial).toStrictEqual({ phase: 2 });
+});
+
+test("recordExit keeps error exits and partial-only runs uncheckpointed", () => {
+	const makeHost = () => createWorkflowHost(fakeDeps());
 	const hardAbort = makeHost();
 	hardAbort.recordExit({ reason: "error", partial: null, error: "stopped" }, "error");
-	assert.equal(hardAbort.exitRecord()?.reason, "error");
-	assert.equal(hardAbort.exitRecord()?.error, "stopped");
-	assert.equal(hardAbort.exitRecord()?.partial, null);
+	expect(hardAbort.exitRecord()?.reason).toBe("error");
+	expect(hardAbort.exitRecord()?.error).toBe("stopped");
+	expect(hardAbort.exitRecord()?.partial).toBeNull();
 	const commandExit = makeHost();
 	commandExit.recordExit({ reason: "error", partial: { phase: 3 } }, "error");
-	assert.equal(commandExit.exitRecord()?.checkpoint, undefined, "partial data alone does not mark a checkpoint stop");
+	expect(commandExit.exitRecord()?.checkpoint, "partial data alone does not mark a checkpoint stop").toBeUndefined();
 });
 
 test("a guarded call past the cost limit defers the stop to the next checkpoint", async () => {
@@ -146,13 +212,13 @@ test("a guarded call past the cost limit defers the stop to the next checkpoint"
 	const context = { signal: new AbortController().signal } as never;
 	// The crossing call runs; the run is not aborted mid-effect.
 	const shell = (await byName.get("workflow.shell")!.execute(["echo hi"], context)) as { ok: boolean };
-	assert.equal(shell.ok, true);
-	assert.equal(host.exitRecord(), null);
+	expect(shell.ok).toBe(true);
+	expect(host.exitRecord()).toBeNull();
 	// The next checkpoint stops the run and salvages its metadata.
 	await byName.get("workflow.checkpoint")!.execute({ round: 1 }, context);
-	assert.equal(host.exitRecord()?.reason, "cost-limit");
-	assert.equal(host.exitRecord()?.checkpoint, true);
-	assert.deepEqual(host.checkpointRecord()?.metadata, { round: 1 });
+	expect(host.exitRecord()?.reason).toBe("cost-limit");
+	expect(host.exitRecord()?.checkpoint).toBe(true);
+	expect(host.checkpointRecord()?.metadata).toStrictEqual({ round: 1 });
 });
 
 /**
@@ -160,11 +226,13 @@ test("a guarded call past the cost limit defers the stop to the next checkpoint"
  * handles arm the deferred cost/time stop, counted handles feed the run metrics. Deriving it
  * keeps the test from drifting from the shipped Guarded/Inspectors/terminal partition.
  */
-const HANDLE_CONTRACT = (Object.keys(HANDLE_POLICY) as WorkflowHandleName[]).map((name) => ({
-	name,
-	guarded: HANDLE_POLICY[name].kind === "guarded",
-	counted: isCountedHandle(HANDLE_POLICY[name]),
-}));
+const HANDLE_CONTRACT = Object.keys(HANDLE_POLICY)
+	.filter((name): name is WorkflowHandleName => name in HANDLE_POLICY)
+	.map((name) => ({
+		name,
+		guarded: HANDLE_POLICY[name].kind === "guarded",
+		counted: isCountedHandle(HANDLE_POLICY[name]),
+	}));
 
 interface TableEntry {
 	type: string;
@@ -182,33 +250,37 @@ function fakeRunDeps(): { deps: WorkflowHostDeps; branch: TableEntry[] } {
 	const settled = new Set<() => void>();
 	let seq = 0;
 	const nextId = () => `e${++seq}`;
-	(deps.pi as unknown as { on: unknown }).on = (event: string, handler: () => void) => {
-		if (event === "agent_settled") {
-			settled.add(handler);
-		}
-		return () => {
-			settled.delete(handler);
-		};
-	};
-	(deps.pi as unknown as { getCommands: unknown }).getCommands = () => [{ name: "review", source: "prompt", sourceInfo: {} }];
-	(deps.pi as unknown as { sendUserMessage: unknown }).sendUserMessage = () => {
+	Object.defineProperty(deps.pi, "on", {
+		value: (event: string, handler: () => void) => {
+			if (event === "agent_settled") {
+				settled.add(handler);
+			}
+			return () => {
+				settled.delete(handler);
+			};
+		},
+		writable: true,
+		configurable: true,
+	});
+	deps.pi.getCommands = () => [
+		{ name: "review", source: "prompt", sourceInfo: { path: "/workspace/review", source: "prompt", scope: "project", origin: "top-level" } },
+	];
+	deps.pi.sendUserMessage = () => {
 		branch.push({ type: "message", id: nextId(), parentId: null, message: { role: "user" } });
 		branch.push({ type: "message", id: nextId(), parentId: null, message: { role: "assistant" } });
 		for (const handler of [...settled]) {
 			handler();
 		}
 	};
-	const classifierModel = { id: "jev", provider: "typesafe" };
-	const ctx = deps.getCtx() as unknown as {
-		sessionManager: { getBranch: unknown };
-		modelRegistry: unknown;
-	};
-	ctx.sessionManager.getBranch = () => branch;
-	ctx.modelRegistry = {
+	const classifierModel = testModel({ provider: "typesafe", id: "jev", input: ["text"], reasoning: false });
+	const ctx = deps.getCtx();
+	requirePresent(ctx, "expected a command context");
+	ctx.sessionManager = stubSessionManager(() => branch);
+	ctx.modelRegistry = stubRegistry({
 		getModelsOfType: () => [classifierModel],
 		getModelOfType: () => undefined,
-		classify: async () => ({ api: "x", provider: "typesafe", model: "jev", answers: {}, stopReason: "stop", timestamp: 0 }),
-	};
+		classify: () => Promise.resolve({ api: "x", provider: "typesafe", model: "jev", answers: {}, stopReason: "stop", timestamp: 0 }),
+	});
 	return { deps, branch };
 }
 
@@ -241,7 +313,7 @@ function tableArgs(name: WorkflowHandleName): unknown {
 
 async function callHandle(host: WorkflowHost, name: WorkflowHandleName): Promise<unknown> {
 	const tool = host.globals().find((candidate) => candidate.name === `workflow.${name}`);
-	assert.ok(tool, `missing handle workflow.${name}`);
+	assertPresent(tool, `missing handle workflow.${name}`);
 	return tool.execute(tableArgs(name), { signal: host.signal });
 }
 
@@ -249,17 +321,16 @@ test("every handle matches the guarded/counted contract", async () => {
 	const globals = createWorkflowHost(fakeDeps())
 		.globals()
 		.map((tool) => tool.name);
-	assert.deepEqual(
+	expect(
 		HANDLE_CONTRACT.map((row) => `workflow.${row.name}`),
-		globals,
 		"the contract table covers exactly the 15 registered handles",
-	);
+	).toStrictEqual(globals);
 	for (const row of HANDLE_CONTRACT) {
 		// Counted probe: one call on a fresh unlimited host feeds the activity ledger.
 		const countedHost = createWorkflowHost(fakeRunDeps().deps);
 		await callHandle(countedHost, row.name);
 		const activity = countedHost.metrics().activity;
-		assert.equal(activity[row.name] ?? 0, row.counted ? 1 : 0, `${row.name}: counted=${row.counted}`);
+		expect(activity[row.name] ?? 0, `${row.name}: counted=${row.counted}`).toBe(row.counted ? 1 : 0);
 		// Guarded probe: past the cost limit, guarded effects hard-abort after the
 		// deferred budget while inspectors stay reachable (exit/checkpoint end the run
 		// through their own terminal path, never via the guard's abort reason).
@@ -273,7 +344,7 @@ test("every handle matches the guarded/counted contract", async () => {
 				/* terminal states reject; the abort reason is the signal */
 			}
 		}
-		assert.equal(guardedHost.abortedReason(), row.guarded ? "cost-limit" : null, `${row.name}: guarded=${row.guarded}`);
+		expect(guardedHost.abortedReason(), `${row.name}: guarded=${row.guarded}`).toBe(row.guarded ? "cost-limit" : null);
 	}
 });
 
@@ -290,7 +361,7 @@ test("unguarded budget/state/notebookRead/exit stay reachable past the cost limi
 	await byName.get("workflow.budget")!.execute(null, context);
 	await byName.get("workflow.state")!.execute(null, context);
 	// A missing page throws (documented contract); a real page still reads past the limit.
-	assert.equal(await byName.get("workflow.notebookRead")!.execute("notes", context), "body");
+	expect(await byName.get("workflow.notebookRead")!.execute("notes", context)).toBe("body");
 	await byName.get("workflow.exit")!.execute(null, context);
 });
 
@@ -300,16 +371,14 @@ test("workflow.exit rejects reserved reasons and derives the record reason", asy
 	const context = { signal: new AbortController().signal } as never;
 	const exitOf = (host: WorkflowHost) => new Map(host.globals().map((tool) => [tool.name, tool])).get("workflow.exit")!;
 	const rejecting = createWorkflowHost(fakeDeps());
-	await assert.rejects(async () => {
-		await exitOf(rejecting).execute("cost-limit", context);
-	}, /reserved abort reason/);
-	assert.equal(rejecting.exitRecord(), null, "a rejected exit records nothing");
+	await expect(exitOf(rejecting).execute("cost-limit", context)).rejects.toThrow(/reserved abort reason/);
+	expect(rejecting.exitRecord(), "a rejected exit records nothing").toBeNull();
 	const approved = createWorkflowHost(fakeDeps());
 	await exitOf(approved).execute({ reason: "approved" }, context);
-	assert.equal(approved.exitRecord()?.reason, "approved");
+	expect(approved.exitRecord()?.reason).toBe("approved");
 	const bare = createWorkflowHost(fakeDeps());
 	await exitOf(bare).execute(undefined, context);
-	assert.equal(bare.exitRecord()?.reason, "returned");
+	expect(bare.exitRecord()?.reason).toBe("returned");
 });
 
 // WHY: previews buffer until the send happens; a dispatch failure must restore them for
@@ -343,13 +412,11 @@ test("a dispatch failure keeps buffered previews for the next run", async () => 
 	const byName = new Map(host.globals().map((tool) => [tool.name, tool]));
 	const context = { signal: new AbortController().signal } as never;
 	await byName.get("workflow.notebookWrite")!.execute({ name: "perf", content: "body" }, context);
-	await assert.rejects(async () => {
-		await byName.get("workflow.run")!.execute(["/review"], context);
-	}, /dispatch down/);
+	await expect(byName.get("workflow.run")!.execute(["/review"], context)).rejects.toThrow(/dispatch down/);
 	failDispatch = false;
 	await byName.get("workflow.run")!.execute(["/review"], context);
-	assert.equal(sent.length, 2);
-	assert.match(sent[1], /Notebook page "perf" written/);
+	expect(sent.length).toBe(2);
+	expect(sent[1]).toMatch(/Notebook page "perf" written/);
 });
 
 // WHY: the abort guard is only reachable in the settle-to-nudge gap: every earlier abort path
@@ -386,12 +453,12 @@ test("an abort between the first settle and the nudge sends no second message", 
 	(deps.getCtx() as unknown as { abort: () => void }).abort = () => {};
 	const host = createWorkflowHost(deps);
 	const runTool = host.globals().find((tool) => tool.name === "workflow.run");
-	assert.ok(runTool, "workflow.run is registered");
+	assertPresent(runTool, "workflow.run is registered");
 	const run = runTool.execute(["/review", { output: {} }], { signal: host.signal }) as Promise<unknown>;
 	for (let i = 0; i < 20 && sent.length === 0; i++) {
 		await Promise.resolve();
 	}
-	assert.equal(sent.length, 1, "the first dispatch is in flight");
+	expect(sent.length, "the first dispatch is in flight").toBe(1);
 	// Flush past the dispatch await so the first correlation is already pending when it settles.
 	for (let i = 0; i < 5; i++) {
 		await Promise.resolve();
@@ -403,21 +470,21 @@ test("an abort between the first settle and the nudge sends no second message", 
 	queueMicrotask(() => {
 		host.abort("cancelled");
 	});
-	await assert.rejects(run, /did not call workflow_output/);
-	assert.equal(sent.length, 1, "a cancelled run gets no nudge");
-	assert.equal(host.abortedReason(), "cancelled");
+	await expect(run).rejects.toThrow(/did not call workflow_output/);
+	expect(sent.length, "a cancelled run gets no nudge").toBe(1);
+	expect(host.abortedReason()).toBe("cancelled");
 });
 
 // WHY: docs/workflows.md's Handles table is the user-facing contract for the handle union;
 // this pins it to the runtime surface so a handle added or removed forces a docs edit.
 test("the docs Handles table lists exactly the runtime handle surface", () => {
 	const doc = readFileSync(new URL("../../docs/workflows.md", import.meta.url), "utf8");
-	const docHandles = [...doc.matchAll(/^\| `workflow\.([A-Za-z]+)` \|/gm)].map((m) => m[1]);
+	const docHandles = [...doc.matchAll(/^\| `workflow\.([A-Za-z]+)`\s+\|/gm)].map((m) => m[1]);
 	const runtimeHandles = createWorkflowHost(fakeDeps())
 		.globals()
 		.map((tool) => tool.name.replace(/^workflow\./, ""));
-	assert.deepEqual([...docHandles].sort(), [...runtimeHandles].sort());
-	assert.equal(docHandles.length, EXPECTED.length, "a 16th handle must also edit the docs table");
+	expect([...docHandles].sort()).toStrictEqual([...runtimeHandles].sort());
+	expect(docHandles.length, "a 16th handle must also edit the docs table").toBe(EXPECTED.length);
 });
 
 // WHY: readonly is a posture switch, so a coerced argument ("false" → true) would flip it
@@ -436,11 +503,11 @@ test("workflow.readonly accepts only a boolean and leaves the posture unchanged 
 	).get("workflow.readonly")!;
 	const context = { signal: new AbortController().signal } as never;
 	for (const bad of [undefined, "false", 1]) {
-		await assert.rejects(async () => readonly.execute(bad, context), /workflow\.readonly takes a boolean/, `argument ${String(bad)}`);
-		assert.equal(posture, false, `posture after ${String(bad)}`);
+		await expect(async () => readonly.execute(bad, context)).rejects.toThrow(/workflow\.readonly takes a boolean/);
+		expect(posture, `posture after ${String(bad)}`).toBe(false);
 	}
-	assert.deepEqual(await readonly.execute(true, context), { readonly: true });
-	assert.equal(posture, true);
+	expect(await readonly.execute(true, context)).toStrictEqual({ readonly: true });
+	expect(posture).toBe(true);
 });
 
 // WHY: a redundant `workflow.readonly(x)` must not re-notify or queue a stale hidden message;
@@ -463,10 +530,10 @@ test("workflow.readonly notifies only when the posture changes", async () => {
 	const context = { signal: new AbortController().signal } as never;
 
 	await readonly.execute(false, context);
-	assert.deepEqual(toggles, [], "a redundant readwrite call emits no notice");
+	expect(toggles, "a redundant readwrite call emits no notice").toStrictEqual([]);
 	await readonly.execute(true, context);
 	await readonly.execute(true, context);
-	assert.deepEqual(toggles, [true], "only the first enable emits a notice");
+	expect(toggles, "only the first enable emits a notice").toStrictEqual([true]);
 });
 
 // WHY: run options arrive untyped from workflow JS. A malformed field must fail by name
@@ -493,12 +560,12 @@ test("workflow.run rejects a malformed options object before dispatch and keeps 
 		[["high"], /options must be an object/],
 	];
 	for (const [options, pattern] of rejected) {
-		await assert.rejects(async () => tools.get("workflow.run")!.execute(["/review", options], context), pattern, JSON.stringify(options));
+		await expect(async () => tools.get("workflow.run")!.execute(["/review", options], context)).rejects.toThrow(pattern);
 	}
-	assert.equal(sent.length, 0, "a rejected options object never dispatches");
+	expect(sent.length, "a rejected options object never dispatches").toBe(0);
 	await tools.get("workflow.run")!.execute(["/review"], context);
-	assert.equal(sent.length, 1);
-	assert.match(sent[0], /Notebook page "perf" written/, "the buffered preview reaches the next run");
+	expect(sent.length).toBe(1);
+	expect(sent[0], "the buffered preview reaches the next run").toMatch(/Notebook page "perf" written/);
 });
 
 // WHY: a failed advisory record must not vanish silently: the UI notice names the missing
@@ -522,11 +589,11 @@ test("a host error notice names a transcript record that could not be persisted"
 		throw new Error("append down");
 	};
 	await shell.execute(["echo hi"], context);
-	assert.equal(notices[0], "workflow progress failed: ui down (transcript record not persisted)");
+	expect(notices[0]).toBe("workflow progress failed: ui down (transcript record not persisted)");
 	deps.pi.appendEntry = () => {};
 	notices.length = 0;
 	await shell.execute(["echo hi"], context);
-	assert.equal(notices[0], "workflow progress failed: ui down");
+	expect(notices[0]).toBe("workflow progress failed: ui down");
 });
 
 // WHY: the exit record has exactly one writer (host.recordExit); a second append site would
@@ -536,24 +603,22 @@ test("the workflow-exit record has exactly one writer file", () => {
 	const writers = readdirSync(dir)
 		.filter((name) => name.endsWith(".ts"))
 		.filter((name) => readFileSync(new URL(name, dir), "utf8").includes("appendEntry(WORKFLOW_EXIT_ENTRY_TYPE"));
-	assert.deepEqual(writers, ["host.ts"], "only the host may append the run's exit record");
+	expect(writers, "only the host may append the run's exit record").toStrictEqual(["host.ts"]);
 });
 
 // WHY: docs/workflows.md states the handle count and partitions the surface into guarded,
 // inspector, and terminal categories; the contract table must stay in lockstep so a new
 // handle cannot silently stale the docs or land in the wrong category.
+const WORKFLOWS_DOC = readFileSync(new URL("../../docs/workflows.md", import.meta.url), "utf8");
+
 test("the handle count and partition stated in docs/workflows.md stay in sync", () => {
-	const doc = readFileSync(new URL("../../docs/workflows.md", import.meta.url), "utf8");
-	assert.match(doc, /The surface is 15 handles/, "docs/workflows.md states the handle count; update both together");
+	expect(WORKFLOWS_DOC, "docs/workflows.md states the handle count; update both together").toMatch(/The surface is 15 handles/);
 	const names = (line: string) => [...line.matchAll(/`([A-Za-z]+)`/g)].map((match) => match[1]).sort();
 	const bullet = (label: string): string[] => {
-		const match = new RegExp(`^- \\*\\*${label}:\\*\\* ?(.+)$`, "m").exec(doc);
-		assert.ok(match, `docs/workflows.md lost the ${label} bullet`);
+		const match = new RegExp(`^- \\*\\*${label}:\\*\\* ?(.+)$`, "m").exec(WORKFLOWS_DOC);
+		assertPresent(match, `docs/workflows.md lost the ${label} bullet`);
 		return names(match[1]);
 	};
-	const terminalMatch = /^- `([A-Za-z]+)` and `([A-Za-z]+)` stay reachable too;/m.exec(doc);
-	assert.ok(terminalMatch, "docs/workflows.md lost the terminal-handle bullet");
-	const terminal = [terminalMatch[1], terminalMatch[2]].sort();
 	const contractGuarded = HANDLE_CONTRACT.filter((row) => row.guarded)
 		.map((row) => row.name)
 		.sort();
@@ -561,11 +626,27 @@ test("the handle count and partition stated in docs/workflows.md stay in sync", 
 	const byKind = (kind: WorkflowHandleKind) => handleNames.filter((name) => HANDLE_POLICY[name].kind === kind).sort();
 	const guarded = bullet("Guarded");
 	const inspectors = bullet("Inspectors");
-	assert.deepEqual(guarded, contractGuarded, "the docs Guarded list must match the guarded handles");
-	assert.deepEqual(guarded, byKind("guarded"), "the docs Guarded list must match HANDLE_POLICY");
-	assert.deepEqual(inspectors, byKind("inspector"), "the docs Inspectors list must match HANDLE_POLICY");
-	assert.deepEqual(terminal, byKind("control"), "the docs terminal handles must match HANDLE_POLICY control handles");
-	assert.deepEqual([...guarded, ...inspectors, ...terminal].sort(), [...handleNames].sort(), "the docs partition must cover every handle exactly once");
+	expect(guarded, "the docs Guarded list must match the guarded handles").toStrictEqual(contractGuarded);
+	expect(guarded, "the docs Guarded list must match HANDLE_POLICY").toStrictEqual(byKind("guarded"));
+	expect(inspectors, "the docs Inspectors list must match HANDLE_POLICY").toStrictEqual(byKind("inspector"));
+});
+
+test("the docs terminal handles and partition cover every handle exactly once", () => {
+	const names = (line: string) => [...line.matchAll(/`([A-Za-z]+)`/g)].map((match) => match[1]).sort();
+	const bullet = (label: string): string[] => {
+		const match = new RegExp(`^- \\*\\*${label}:\\*\\* ?(.+)$`, "m").exec(WORKFLOWS_DOC);
+		assertPresent(match, `docs/workflows.md lost the ${label} bullet`);
+		return names(match[1]);
+	};
+	const terminalMatch = /^- `([A-Za-z]+)` and `([A-Za-z]+)` stay reachable too;/m.exec(WORKFLOWS_DOC);
+	assertPresent(terminalMatch, "docs/workflows.md lost the terminal-handle bullet");
+	const terminal = [terminalMatch[1], terminalMatch[2]].sort();
+	const handleNames = Object.keys(HANDLE_POLICY) as WorkflowHandleName[];
+	const byKind = (kind: WorkflowHandleKind) => handleNames.filter((name) => HANDLE_POLICY[name].kind === kind).sort();
+	const guarded = bullet("Guarded");
+	const inspectors = bullet("Inspectors");
+	expect(terminal, "the docs terminal handles must match HANDLE_POLICY control handles").toStrictEqual(byKind("control"));
+	expect([...guarded, ...inspectors, ...terminal].sort(), "the docs partition must cover every handle exactly once").toStrictEqual([...handleNames].sort());
 });
 
 // WHY: notebookWrite returns null, so the clipping notice must ride the buffered preview;
@@ -588,95 +669,98 @@ test("workflow.notebookWrite surfaces truncation in the next run's buffered prev
 
 	await tools.get("workflow.notebookWrite")!.execute({ name: "big", content: long }, context);
 	await tools.get("workflow.run")!.execute(["/review"], context);
-	assert.equal(sent.length, 1);
-	assert.match(sent[0], /Notebook page "big" written/);
-	assert.match(sent[0], /TRUNCATED by lines/);
+	expect(sent.length).toBe(1);
+	expect(sent[0]).toMatch(/Notebook page "big" written/);
+	expect(sent[0]).toMatch(/TRUNCATED by lines/);
 });
 
 // WHY: a run-scoped override must never leak across turns, so each restored field is
 // independent: a throwing setModel restore must not skip the thinking restore.
 test("a throwing model restore still restores the run's thinking level", async () => {
 	const { deps } = fakeRunDeps();
-	const previousModel = { provider: "prev", id: "m" };
-	const requestedModel = { provider: "next", id: "m" };
+	const previousModel = testModel({ provider: "prev", id: "m", input: ["text"], reasoning: false });
+	const requestedModel = testModel({ provider: "next", id: "m", input: ["text"], reasoning: false });
 	const thinking: (string | undefined)[] = [];
 	let setModelCalls = 0;
-	(deps.pi as unknown as { setModel: unknown }).setModel = async () => {
+	deps.pi.setModel = async () => {
 		setModelCalls += 1;
 		if (setModelCalls === 2) {
 			throw new Error("restore down");
 		}
 		return true;
 	};
-	(deps.pi as unknown as { setThinkingLevel: unknown }).setThinkingLevel = (level: string | undefined) => {
+	deps.pi.setThinkingLevel = (level: string | undefined) => {
 		thinking.push(level);
 	};
-	(deps.pi as unknown as { getThinkingLevel: unknown }).getThinkingLevel = () => "medium";
-	const ctx = deps.getCtx() as unknown as { model: unknown; modelRegistry: { getModelOfType: unknown } };
+	deps.pi.getThinkingLevel = () => "medium";
+	const ctx = deps.getCtx();
+	requirePresent(ctx, "expected a command context");
 	ctx.model = previousModel;
-	ctx.modelRegistry.getModelOfType = () => requestedModel;
+	ctx.modelRegistry = stubRegistry({ getModelOfType: () => requestedModel });
 	const tools = new Map(
 		createWorkflowHost(deps)
 			.globals()
 			.map((tool) => [tool.name, tool]),
 	);
-	const context = { signal: new AbortController().signal } as never;
+	const context = { signal: new AbortController().signal };
 
-	await assert.rejects(async () => {
-		await tools.get("workflow.run")!.execute(["/review", { model: requestedModel, thinking: "high" }], context);
-	}, /override restore failed/);
-	assert.deepEqual(thinking, ["high", "medium"], "the thinking restore runs even though setModel threw");
+	await expect(tools.get("workflow.run")!.execute(["/review", { model: requestedModel, thinking: "high" }], context)).rejects.toThrow(
+		/override restore failed/,
+	);
+	expect(thinking, "the thinking restore runs even though setModel threw").toStrictEqual(["high", "medium"]);
 });
 
 // WHY: pi's `setModel` resets the thinking level to the per-model/default value, so a model-only
 // override must still restore the captured level or it leaks into the session after the run.
 test("a model-only override still restores the captured thinking level", async () => {
 	const { deps } = fakeRunDeps();
-	const previousModel = { provider: "prev", id: "m" };
-	const requestedModel = { provider: "next", id: "m" };
+	const previousModel = testModel({ provider: "prev", id: "m", input: ["text"], reasoning: false });
+	const requestedModel = testModel({ provider: "next", id: "m", input: ["text"], reasoning: false });
 	const thinking: (string | undefined)[] = [];
-	(deps.pi as unknown as { setModel: unknown }).setModel = async () => true;
-	(deps.pi as unknown as { setThinkingLevel: unknown }).setThinkingLevel = (level: string | undefined) => {
+	deps.pi.setModel = async () => true;
+	deps.pi.setThinkingLevel = (level: string | undefined) => {
 		thinking.push(level);
 	};
-	(deps.pi as unknown as { getThinkingLevel: unknown }).getThinkingLevel = () => "medium";
-	const ctx = deps.getCtx() as unknown as { model: unknown; modelRegistry: { getModelOfType: unknown } };
+	deps.pi.getThinkingLevel = () => "medium";
+	const ctx = deps.getCtx();
+	requirePresent(ctx, "expected a command context");
 	ctx.model = previousModel;
-	ctx.modelRegistry.getModelOfType = () => requestedModel;
+	ctx.modelRegistry = stubRegistry({ getModelOfType: () => requestedModel });
 	const tools = new Map(
 		createWorkflowHost(deps)
 			.globals()
 			.map((tool) => [tool.name, tool]),
 	);
-	const context = { signal: new AbortController().signal } as never;
+	const context = { signal: new AbortController().signal };
 
 	await tools.get("workflow.run")!.execute(["/review", { model: requestedModel }], context);
-	assert.deepEqual(thinking, ["medium"], "the captured level is restored although no thinking was overridden");
+	expect(thinking, "the captured level is restored although no thinking was overridden").toStrictEqual(["medium"]);
 });
 
 // WHY: arming the output tool mutates run-scoped state, so a registration failure must still
 // run the override restore or the run's model/thinking leak into the next turn.
 test("a throwing output-tool arming still restores the run's model and thinking", async () => {
 	const { deps } = fakeRunDeps();
-	const previousModel = { provider: "prev", id: "m" };
-	const requestedModel = { provider: "next", id: "m" };
+	const previousModel = testModel({ provider: "prev", id: "m", input: ["text"], reasoning: false });
+	const requestedModel = testModel({ provider: "next", id: "m", input: ["text"], reasoning: false });
 	const models: unknown[] = [];
 	const thinking: (string | undefined)[] = [];
-	(deps.pi as unknown as { setModel: unknown }).setModel = async (model: unknown) => {
+	deps.pi.setModel = async (model: unknown) => {
 		models.push(model);
 		return true;
 	};
-	(deps.pi as unknown as { setThinkingLevel: unknown }).setThinkingLevel = (level: string | undefined) => {
+	deps.pi.setThinkingLevel = (level: string | undefined) => {
 		thinking.push(level);
 	};
-	(deps.pi as unknown as { getThinkingLevel: unknown }).getThinkingLevel = () => "medium";
-	(deps.pi as unknown as { getActiveTools: unknown }).getActiveTools = () => ["bash"];
-	(deps.pi as unknown as { registerTool: unknown }).registerTool = () => {
+	deps.pi.getThinkingLevel = () => "medium";
+	deps.pi.getActiveTools = () => ["bash"];
+	deps.pi.registerTool = () => {
 		throw new Error("bad schema");
 	};
-	const ctx = deps.getCtx() as unknown as { model: unknown; modelRegistry: { getModelOfType: unknown } };
+	const ctx = deps.getCtx();
+	requirePresent(ctx, "expected a command context");
 	ctx.model = previousModel;
-	ctx.modelRegistry.getModelOfType = () => requestedModel;
+	ctx.modelRegistry = stubRegistry({ getModelOfType: () => requestedModel });
 	const tools = new Map(
 		createWorkflowHost(deps)
 			.globals()
@@ -684,9 +768,7 @@ test("a throwing output-tool arming still restores the run's model and thinking"
 	);
 	const context = { signal: new AbortController().signal } as never;
 
-	await assert.rejects(async () => {
-		await tools.get("workflow.run")!.execute(["/review", { model: requestedModel, thinking: "high", output: {} }], context);
-	}, /bad schema/);
-	assert.deepEqual(models, [requestedModel, previousModel], "the override restore runs after the arming failure");
-	assert.deepEqual(thinking, ["high", "medium"]);
+	await expect(tools.get("workflow.run")!.execute(["/review", { model: requestedModel, thinking: "high", output: {} }], context)).rejects.toThrow(/bad schema/);
+	expect(models, "the override restore runs after the arming failure").toStrictEqual([requestedModel, previousModel]);
+	expect(thinking).toStrictEqual(["high", "medium"]);
 });

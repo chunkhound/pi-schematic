@@ -1,8 +1,7 @@
 // WAIVER: no public handle for raw bash-result mapping; excepted per AGENTS.md. Wire contract: docs/workflows.md
 // Internal characterization tests: the runner maps pi's bash tool result onto the
 // workflow wire contract and never executes when the readonly guard blocks.
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,7 +20,7 @@ function structured(output: string, extra: Partial<NonNullable<ShellToolResult["
 }
 
 test("blockedShellResult is a failure with a null exit code", () => {
-	assert.deepEqual(blockedShellResult("readonly"), {
+	expect(blockedShellResult("readonly")).toStrictEqual({
 		ok: false,
 		exitCode: null,
 		output: "readonly",
@@ -42,8 +41,8 @@ test("createShellRunner maps pi's structured output onto ShellResult", async () 
 		}),
 	);
 	const result = await run("npm test", { timeout: 30 });
-	assert.deepEqual(seen, { command: "npm test", timeout: 30 });
-	assert.deepEqual(result, {
+	expect(seen).toStrictEqual({ command: "npm test", timeout: 30 });
+	expect(result).toStrictEqual({
 		ok: true,
 		exitCode: 0,
 		output: "full output",
@@ -66,9 +65,9 @@ test("createShellRunner reports a non-zero exit as a failed result, not a reject
 		}),
 	);
 	const result = await run("false");
-	assert.equal(result.ok, false);
-	assert.equal(result.exitCode, 2);
-	assert.equal(result.output, "boom");
+	expect(result.ok).toBe(false);
+	expect(result.exitCode).toBe(2);
+	expect(result.output).toBe("boom");
 });
 
 test("createShellRunner maps an aborted run to killed and keeps the message visible", async () => {
@@ -83,27 +82,36 @@ test("createShellRunner maps an aborted run to killed and keeps the message visi
 		}),
 	);
 	const result = await run("sleep 100");
-	assert.equal(result.ok, false);
-	assert.equal(result.killed, true);
-	assert.equal(result.exitCode, null);
-	assert.match(result.output, /aborted/);
+	expect(result.ok).toBe(false);
+	expect(result.killed).toBe(true);
+	expect(result.exitCode).toBeNull();
+	expect(result.output).toMatch(/aborted/);
 });
 
-test("isTimeoutMessage matches pi's stable timeout text only", () => {
-	assert.equal(isTimeoutMessage("Command timed out after 1 seconds"), true);
-	assert.equal(isTimeoutMessage("Command timed out after 300 seconds"), true);
+test("isTimeoutMessage matches whole-second timeout texts", () => {
+	expect(isTimeoutMessage("Command timed out after 1 seconds")).toBe(true);
+	expect(isTimeoutMessage("Command timed out after 300 seconds")).toBe(true);
+	expect(isTimeoutMessage("Command timed out after 0.01 seconds")).toBe(true);
+	expect(isTimeoutMessage("Command timed out after 1.5 seconds")).toBe(true);
+});
+
+test("isTimeoutMessage matches timeout texts with prepended partial output", () => {
 	// appendStatus prepends the partial output, so the status is the last line of the message.
-	assert.equal(isTimeoutMessage("partial output\n\nCommand timed out after 1 seconds"), true);
-	assert.equal(isTimeoutMessage("line1\nline2\n\nCommand timed out after 300 seconds"), true);
+	expect(isTimeoutMessage("partial output\n\nCommand timed out after 1 seconds")).toBe(true);
+	expect(isTimeoutMessage("line1\nline2\n\nCommand timed out after 300 seconds")).toBe(true);
+});
+
+test("isTimeoutMessage rejects low-level and malformed timeout texts", () => {
 	// The low-level `timeout:<n>` is rethrown by the bash definition, so it must not match.
-	assert.equal(isTimeoutMessage("timeout:1"), false);
-	assert.equal(isTimeoutMessage("Command timed out after seconds"), false);
-	assert.equal(isTimeoutMessage("spawn failure: request timed out"), false);
-	assert.equal(isTimeoutMessage("Command aborted"), false);
-	assert.equal(isTimeoutMessage("spawn failure: no such file"), false);
-	assert.equal(isTimeoutMessage("Command timed out after 0.01 seconds"), true);
-	assert.equal(isTimeoutMessage("Command timed out after 1.5 seconds"), true);
-	assert.equal(isTimeoutMessage("spawn failure: Command timed out after 5 seconds"), false);
+	expect(isTimeoutMessage("timeout:1")).toBe(false);
+	expect(isTimeoutMessage("Command timed out after seconds")).toBe(false);
+	expect(isTimeoutMessage("spawn failure: request timed out")).toBe(false);
+});
+
+test("isTimeoutMessage rejects non-timeout failures", () => {
+	expect(isTimeoutMessage("Command aborted")).toBe(false);
+	expect(isTimeoutMessage("spawn failure: no such file")).toBe(false);
+	expect(isTimeoutMessage("spawn failure: Command timed out after 5 seconds")).toBe(false);
 });
 
 test("createShellRunner reports a timed-out run as killed", async () => {
@@ -116,9 +124,9 @@ test("createShellRunner reports a timed-out run as killed", async () => {
 		}),
 	);
 	const result = await run("sleep 100", { timeout: 1 });
-	assert.equal(result.ok, false);
-	assert.equal(result.killed, true, "pi's timeout kills the process without aborting our signal");
-	assert.equal(result.exitCode, null);
+	expect(result.ok).toBe(false);
+	expect(result.killed, "pi's timeout kills the process without aborting our signal").toBe(true);
+	expect(result.exitCode).toBeNull();
 });
 
 test("a timed-out run that produced partial output still reports killed", async () => {
@@ -131,10 +139,10 @@ test("a timed-out run that produced partial output still reports killed", async 
 		}),
 	);
 	const result = await run("sleep 100", { timeout: 200 });
-	assert.equal(result.ok, false);
-	assert.equal(result.killed, true, "partial output must not hide the timeout classification");
-	assert.equal(result.exitCode, null);
-	assert.match(result.output, /Command timed out after 200 seconds/);
+	expect(result.ok).toBe(false);
+	expect(result.killed, "partial output must not hide the timeout classification").toBe(true);
+	expect(result.exitCode).toBeNull();
+	expect(result.output).toMatch(/Command timed out after 200 seconds/);
 });
 
 test("pi's real bash tool classifies a timeout as killed", { timeout: 15_000 }, async () => {
@@ -143,10 +151,10 @@ test("pi's real bash tool classifies a timeout as killed", { timeout: 15_000 }, 
 	const cwd = await mkdtemp(join(tmpdir(), "pi-workflow-shell-"));
 	try {
 		const result = await createShellRunner(deps({ cwd }))("sleep 10", { timeout: 1 });
-		assert.equal(result.ok, false);
-		assert.equal(result.exitCode, null);
-		assert.equal(result.killed, true, "killed is the shell timeout classification the host maps to time-limit");
-		assert.equal(isTimeoutMessage(result.output), true, "the real pi message matches the real matcher");
+		expect(result.ok).toBe(false);
+		expect(result.exitCode).toBeNull();
+		expect(result.killed, "killed is the shell timeout classification the host maps to time-limit").toBe(true);
+		expect(isTimeoutMessage(result.output), "the real pi message matches the real matcher").toBe(true);
 	} finally {
 		await rm(cwd, { recursive: true, force: true });
 	}
@@ -165,7 +173,7 @@ test("createShellRunner forwards streaming display snapshots", async () => {
 		}),
 	);
 	await run("printf");
-	assert.deepEqual(seen, ["first", "first\nsecond"]);
+	expect(seen).toStrictEqual(["first", "first\nsecond"]);
 });
 
 test("createShellRunner applies the readonly guard to one call without a posture change", async () => {
@@ -179,7 +187,7 @@ test("createShellRunner applies the readonly guard to one call without a posture
 		}),
 	);
 	const result = await run("npm install lodash", { readonly: true });
-	assert.equal(result.ok, false);
-	assert.equal(result.exitCode, null);
-	assert.equal(executed, 0);
+	expect(result.ok).toBe(false);
+	expect(result.exitCode).toBeNull();
+	expect(executed).toBe(0);
 });

@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import type { ExtensionCommandContext, SessionEntry, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import { createState, type SchematicState } from "../../state.js";
 import { createWorkflowHost } from "../../workflow/host.js";
@@ -14,34 +13,34 @@ const commands = [
 ] as unknown as SlashCommandInfo[];
 
 test("resolveRunTarget keeps prompt templates and normalizes skills to skill:<name>", () => {
-	assert.deepEqual(resolveRunTarget(commands, "/review"), { text: "/review", source: "prompt" });
-	assert.deepEqual(resolveRunTarget(commands, "/execute"), { text: "/skill:execute", source: "skill" });
-	assert.deepEqual(resolveRunTarget(commands, "execute"), { text: "/skill:execute", source: "skill" });
-	assert.deepEqual(resolveRunTarget(commands, "/skill:execute"), { text: "/skill:execute", source: "skill" });
+	expect(resolveRunTarget(commands, "/review")).toStrictEqual({ text: "/review", source: "prompt" });
+	expect(resolveRunTarget(commands, "/execute")).toStrictEqual({ text: "/skill:execute", source: "skill" });
+	expect(resolveRunTarget(commands, "execute")).toStrictEqual({ text: "/skill:execute", source: "skill" });
+	expect(resolveRunTarget(commands, "/skill:execute")).toStrictEqual({ text: "/skill:execute", source: "skill" });
 });
 
 test("resolveRunTarget rejects extension commands", () => {
-	assert.throws(() => resolveRunTarget(commands, "/danger"), /extension command/);
+	expect(() => resolveRunTarget(commands, "/danger")).toThrow(/extension command/);
 });
 
 // WHY: a slashless name followed by arguments is prose (`run("review the diff")`), not a command;
 // only an explicit `/name` or a bare name selects the command/skill target.
 test("resolveRunTarget treats a slashless prompt with arguments as prose", () => {
-	assert.deepEqual(resolveRunTarget(commands, "review the diff"), { text: "review the diff", source: "plain" });
-	assert.deepEqual(resolveRunTarget(commands, "execute the plan"), { text: "execute the plan", source: "plain" });
-	assert.deepEqual(resolveRunTarget(commands, "execute"), { text: "/skill:execute", source: "skill" });
-	assert.deepEqual(resolveRunTarget(commands, "/execute"), { text: "/skill:execute", source: "skill" });
+	expect(resolveRunTarget(commands, "review the diff")).toStrictEqual({ text: "review the diff", source: "plain" });
+	expect(resolveRunTarget(commands, "execute the plan")).toStrictEqual({ text: "execute the plan", source: "plain" });
+	expect(resolveRunTarget(commands, "execute")).toStrictEqual({ text: "/skill:execute", source: "skill" });
+	expect(resolveRunTarget(commands, "/execute")).toStrictEqual({ text: "/skill:execute", source: "skill" });
 });
 
 test("resolveRunTarget preserves embedded newlines in prose", () => {
-	assert.deepEqual(resolveRunTarget(commands, "execute\nthe plan"), { text: "execute\nthe plan", source: "plain" });
-	assert.deepEqual(resolveRunTarget(commands, "step one\nstep two"), { text: "step one\nstep two", source: "plain" });
+	expect(resolveRunTarget(commands, "execute\nthe plan")).toStrictEqual({ text: "execute\nthe plan", source: "plain" });
+	expect(resolveRunTarget(commands, "step one\nstep two")).toStrictEqual({ text: "step one\nstep two", source: "plain" });
 });
 
 test("resolveRunTarget leaves unknown prompts as plain text and preserves inline arguments", () => {
-	assert.deepEqual(resolveRunTarget(commands, "just a prompt"), { text: "just a prompt", source: "plain" });
-	assert.deepEqual(resolveRunTarget(commands, "/review foo bar"), { text: "/review foo bar", source: "prompt" });
-	assert.deepEqual(resolveRunTarget(commands, "/unknown x"), { text: "/unknown x", source: "plain" });
+	expect(resolveRunTarget(commands, "just a prompt")).toStrictEqual({ text: "just a prompt", source: "plain" });
+	expect(resolveRunTarget(commands, "/review foo bar")).toStrictEqual({ text: "/review foo bar", source: "prompt" });
+	expect(resolveRunTarget(commands, "/unknown x")).toStrictEqual({ text: "/unknown x", source: "plain" });
 });
 
 function message(id: string, role: string): SessionEntry {
@@ -56,9 +55,9 @@ function message(id: string, role: string): SessionEntry {
 
 test("matchRun includes the complete settled run after the marker", () => {
 	const branch = [message("u0", "user"), message("a1", "assistant"), message("t1", "toolResult"), message("a2", "assistant")];
-	assert.deepEqual(matchRun(branch, "u0"), { fromEntryId: "a1", toEntryId: "a2", branch: branch.slice(1) });
-	assert.deepEqual(matchRun(branch, null)?.toEntryId, "a2");
-	assert.equal(matchRun(branch, "missing"), null);
+	expect(matchRun(branch, "u0")).toStrictEqual({ fromEntryId: "a1", toEntryId: "a2", branch: branch.slice(1) });
+	expect(matchRun(branch, null)?.toEntryId).toBe("a2");
+	expect(matchRun(branch, "missing")).toBeNull();
 });
 
 test("pending correlation resolves when the branch settles", async () => {
@@ -73,7 +72,7 @@ test("pending correlation resolves when the branch settles", async () => {
 	const pending = registry.correlate(null);
 	settle?.();
 	const match = await pending.promise;
-	assert.equal(match.toEntryId, "a1");
+	expect(match.toEntryId).toBe("a1");
 	registry.dispose();
 });
 
@@ -87,15 +86,15 @@ test("registry disposal rejects pending correlations and removes the settled lis
 	});
 	const pending = registry.correlate(null);
 	registry.dispose();
-	await assert.rejects(pending.promise, /disposed/);
+	await expect(pending.promise).rejects.toThrow(/disposed/);
 	registry.dispose();
-	assert.equal(removed, 1);
+	expect(removed).toBe(1);
 });
 
 test("matchRun returns null until an assistant entry appears after the marker", () => {
 	const branch = [message("u0", "user"), message("t1", "toolResult")];
-	assert.equal(matchRun(branch, "u0"), null);
-	assert.equal(matchRun(branch, "missing"), null);
+	expect(matchRun(branch, "u0")).toBeNull();
+	expect(matchRun(branch, "missing")).toBeNull();
 });
 
 // ── Host lifecycle: the registry is disposed with its host ──────────────
@@ -133,8 +132,8 @@ function settle(pi: TestPI): void {
 // WHY: a missing `state.registry.dispose()` leaves the pending correlation promise
 // unrejected, so the assertion below would hang forever without a timeout. 5 s is
 // far above the normal ~1 ms dispose path and short enough to fail fast in CI.
-function rejectsWithin(promise: Promise<unknown>, pattern: RegExp, message?: string): Promise<void> {
-	return assert.rejects(
+function rejectsWithin(promise: Promise<unknown>, pattern: RegExp, _message?: string): Promise<void> {
+	return expect(
 		Promise.race([
 			promise,
 			new Promise((_, reject) =>
@@ -143,9 +142,7 @@ function rejectsWithin(promise: Promise<unknown>, pattern: RegExp, message?: str
 				}, 5000),
 			),
 		]),
-		pattern,
-		message,
-	);
+	).rejects.toThrow(pattern);
 }
 
 test("host disposal disposes its registry and the next host correlates on a fresh one", async () => {
@@ -153,18 +150,18 @@ test("host disposal disposes its registry and the next host correlates on a fres
 	const branch: SessionEntry[] = [];
 	const first = createWorkflowHost(lifecycleDeps(pi, createState(), branch));
 	const pending = first.registry.correlate(null);
-	assert.equal(settleListeners(pi).length, 1, "the first correlate subscribes on pi's real event bus");
+	expect(settleListeners(pi).length, "the first correlate subscribes on pi's real event bus").toBe(1);
 
 	first.dispose();
 	await rejectsWithin(pending.promise, /disposed/, "host disposal must release the pending correlation");
-	assert.equal(settleListeners(pi).length, 0, "host disposal must unsubscribe the registry's settle listener");
+	expect(settleListeners(pi).length, "host disposal must unsubscribe the registry's settle listener").toBe(0);
 
 	const second = createWorkflowHost(lifecycleDeps(pi, createState(), branch));
-	assert.notEqual(second.registry, first.registry, "a new run owns a fresh registry, never the disposed one");
+	expect(second.registry, "a new run owns a fresh registry, never the disposed one").not.toBe(first.registry);
 	branch.push(message("a1", "assistant"));
 	const resolved = second.registry.correlate(null);
 	settle(pi);
-	assert.equal((await resolved.promise).toEntryId, "a1", "the fresh registry resolves like any other");
+	expect((await resolved.promise).toEntryId, "the fresh registry resolves like any other").toBe("a1");
 	second.dispose();
 });
 
@@ -180,7 +177,7 @@ test("host disposal releases the registry even when a newer host owns the sink",
 	const second = createWorkflowHost(lifecycleDeps(pi, state, branch));
 
 	first.dispose();
-	assert.notEqual(state.childUsageSink, null, "the newer host keeps its sink: a cleared sink is not the disposal signal");
+	expect(state.childUsageSink, "the newer host keeps its sink: a cleared sink is not the disposal signal").not.toBeNull();
 	await rejectsWithin(pending.promise, /disposed/, "the older host still disposes its own registry");
 	second.dispose();
 });

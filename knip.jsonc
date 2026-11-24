@@ -18,5 +18,5 @@
   "ignoreBinaries": ["bwrap", "sandbox-exec"],
   // No file imports it. The exact devDependency pins the copy that pi-coding-agent pulls in
   // with a caret range, so the lockfile keeps it on the pinned Pi version.
-  "ignoreDependencies": ["@earendil-works/pi-agent-core"]
+  "ignoreDependencies": []
 }

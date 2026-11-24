@@ -1,7 +1,6 @@
 // Classifier contract exercised through the public `workflow.classify` handle
 // (createWorkflowHost seam); no workflow-internal imports.
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import type { ClassifierApi, ClassifierModel, ClassifierResult } from "@earendil-works/pi-ai";
 import { createState } from "../../state.js";
 import { createWorkflowHost } from "../../workflow/host.js";
@@ -80,9 +79,9 @@ test("workflow.classify routes the requested model ref and passes state plus que
 	const questions = { approve: { type: "bool", instructions: "?", criteria: { true: "yes", false: "no" } } };
 	const { call, seen } = classifyHost(async () => makeResult());
 	const result = await call({ model: { provider: "typesafe", id: "jev" }, state: { review: "ok" }, questions });
-	assert.equal(result.stopReason, "stop");
-	assert.equal(seen.model, model, "the registry's matching classifier model is passed through");
-	assert.deepEqual(seen.context, { state: { review: "ok" }, questions });
+	expect(result.stopReason).toBe("stop");
+	expect(seen.model, "the registry's matching classifier model is passed through").toBe(model);
+	expect(seen.context).toStrictEqual({ state: { review: "ok" }, questions });
 });
 
 // A mismatch on either side of the ref misses: the requested ref is echoed back in the
@@ -94,11 +93,11 @@ test("workflow.classify reports a missing classifier model as an error result ca
 		{ provider: "other", id: "jev" },
 	]) {
 		const result = await call({ model: ref, state: {}, questions: {} });
-		assert.equal(result.stopReason, "error");
-		assert.equal(result.provider, ref.provider);
-		assert.equal(result.model, ref.id);
-		assert.match(result.errorMessage ?? "", new RegExp(`${ref.provider}/${ref.id}`));
-		assert.deepEqual(result.answers, {});
+		expect(result.stopReason).toBe("error");
+		expect(result.provider).toBe(ref.provider);
+		expect(result.model).toBe(ref.id);
+		expect(result.errorMessage ?? "").toMatch(new RegExp(`${ref.provider}/${ref.id}`));
+		expect(result.answers).toStrictEqual({});
 	}
 });
 
@@ -107,9 +106,9 @@ test("workflow.classify converts a rejecting provider into a stopReason error, n
 		throw new Error("provider down");
 	});
 	const result = await call({ model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} });
-	assert.equal(result.stopReason, "error");
-	assert.deepEqual(result.answers, {});
-	assert.match(result.errorMessage ?? "", /provider down/);
+	expect(result.stopReason).toBe("error");
+	expect(result.answers).toStrictEqual({});
+	expect(result.errorMessage ?? "").toMatch(/provider down/);
 });
 
 test("workflow.classify returns an aborted result without calling the provider when the signal already fired", async () => {
@@ -117,8 +116,8 @@ test("workflow.classify returns an aborted result without calling the provider w
 	const controller = new AbortController();
 	controller.abort();
 	const result = await call({ model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} }, controller.signal);
-	assert.equal(seen.model, undefined, "the provider is never called");
-	assert.equal(result.stopReason, "aborted");
+	expect(seen.model, "the provider is never called").toBeUndefined();
+	expect(result.stopReason).toBe("aborted");
 });
 
 // A provider cancelled through the run's own signal (host abort or timeout) rejects with
@@ -130,8 +129,8 @@ test("workflow.classify maps a cancellation rejection to stopReason aborted, nev
 		throw new Error("aborted");
 	});
 	const result = await call({ model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} }, controller.signal);
-	assert.equal(result.stopReason, "aborted");
-	assert.match(result.errorMessage ?? "", /aborted/);
+	expect(result.stopReason).toBe("aborted");
+	expect(result.errorMessage ?? "").toMatch(/aborted/);
 });
 
 // Design: "An answer mirrors its question's criteria: a choice answer keys `probabilities`
@@ -139,7 +138,7 @@ test("workflow.classify maps a cancellation rejection to stopReason aborted, nev
 // single `probability`." The raw provider response → ClassifierResult conversion lives in
 // pi-ai (ctx.modelRegistry.classify, api/system-one-shared); the repo-owned boundary is
 // the handle, which must forward criteria labels out and answers back unchanged.
-test("workflow.classify forwards criteria labels and mirrors criteria-shaped answers keyed by question name", async () => {
+async function classifyFixture(): Promise<{ result: ClassifierResult; seen: { model: unknown; context: unknown; signal: unknown } }> {
 	const questions = {
 		verdict: { type: "choice", instructions: "pick", criteria: { blocker: "must fix", nit: "nice to have" } },
 		safety: { type: "score", instructions: "rate", criteria: ["low risk", "high risk"] },
@@ -168,16 +167,36 @@ test("workflow.classify forwards criteria labels and mirrors criteria-shaped ans
 	};
 	const { call, seen } = classifyHost(async () => providerResult);
 	const result = await call({ model: { provider: "typesafe", id: "jev" }, state: { review: "diff" }, questions });
+	return { result, seen };
+}
+
+test("workflow.classify forwards criteria labels verbatim and keys answers by question name", async () => {
+	const { result, seen } = await classifyFixture();
 	// Labels reach the provider verbatim: they are what `probabilities` gets keyed by.
-	assert.deepEqual(seen.context && (seen.context as { questions: unknown }).questions, questions);
-	// The workflow reads answers by question name, with each criteria-shaped answer intact.
-	assert.deepEqual(Object.keys(result.answers).sort(), ["approve", "safety", "verdict"]);
-	assert.deepEqual(result.answers, providerResult.answers);
-	assert.deepEqual(result.answers.verdict, { type: "choice", choice: "blocker", probabilities: { blocker: 0.7, nit: 0.3 }, confidence: 0.7 });
-	assert.deepEqual(result.answers.safety, { type: "score", score: 4, confidence: 0.6 });
-	assert.deepEqual(result.answers.approve, { type: "bool", probability: 0.92 });
-	assert.equal(result.stopReason, "stop");
-	assert.equal(result.usage?.cost.total, 0.03, "usage rides the result so the run can charge it");
+	expect(seen.context && (seen.context as { questions: unknown }).questions).toStrictEqual({
+		verdict: { type: "choice", instructions: "pick", criteria: { blocker: "must fix", nit: "nice to have" } },
+		safety: { type: "score", instructions: "rate", criteria: ["low risk", "high risk"] },
+		approve: { type: "bool", instructions: "ok?", criteria: { true: "no required changes", false: "at least one fix" } },
+	});
+	expect(Object.keys(result.answers).sort()).toStrictEqual(["approve", "safety", "verdict"]);
+});
+
+test("workflow.classify mirrors each criteria-shaped answer intact", async () => {
+	const { result } = await classifyFixture();
+	expect(result.answers).toStrictEqual({
+		verdict: { type: "choice", choice: "blocker", probabilities: { blocker: 0.7, nit: 0.3 }, confidence: 0.7 },
+		safety: { type: "score", score: 4, confidence: 0.6 },
+		approve: { type: "bool", probability: 0.92 },
+	});
+	expect(result.answers.verdict).toStrictEqual({ type: "choice", choice: "blocker", probabilities: { blocker: 0.7, nit: 0.3 }, confidence: 0.7 });
+	expect(result.answers.safety).toStrictEqual({ type: "score", score: 4, confidence: 0.6 });
+	expect(result.answers.approve).toStrictEqual({ type: "bool", probability: 0.92 });
+});
+
+test("workflow.classify reports the provider stop and its usage", async () => {
+	const { result } = await classifyFixture();
+	expect(result.stopReason).toBe("stop");
+	expect(result.usage?.cost.total, "usage rides the result so the run can charge it").toBe(0.03);
 });
 
 // The workflow branches on stopReason before reading answers, so a provider-reported
@@ -198,9 +217,9 @@ test("workflow.classify carries a provider stopReason error through with its ans
 		state: {},
 		questions: { approve: { type: "bool", instructions: "?", criteria: { true: "yes", false: "no" } } },
 	});
-	assert.equal(result.stopReason, "error");
-	assert.equal(result.errorMessage, "provider rejected the request");
-	assert.deepEqual(result.answers, providerResult.answers);
+	expect(result.stopReason).toBe("error");
+	expect(result.errorMessage).toBe("provider rejected the request");
+	expect(result.answers).toStrictEqual(providerResult.answers);
 });
 
 // Host lifecycle contract: "classify never rejects" — a run that
@@ -226,19 +245,19 @@ test("classify after run end returns stopReason aborted, does not throw, run sur
 	host.dispose();
 	const tool = host.globals().find((candidate) => candidate.name === "workflow.classify")!;
 	const result = (await tool.execute({ model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} }, { signal: host.signal })) as ClassifierResult;
-	assert.equal(result.stopReason, "aborted");
-	assert.deepEqual(result.answers, {});
-	assert.match(result.errorMessage ?? "", /disposed/);
+	expect(result.stopReason).toBe("aborted");
+	expect(result.answers).toStrictEqual({});
+	expect(result.errorMessage ?? "").toMatch(/disposed/);
 	// The run survives: the host never records an exit or abort from a failed classify.
-	assert.equal(host.abortedReason(), null);
-	assert.equal(host.exitRecord(), null);
+	expect(host.abortedReason()).toBeNull();
+	expect(host.exitRecord()).toBeNull();
 });
 
 test("classify with no live session context returns stopReason aborted instead of throwing", async () => {
 	const host = createWorkflowHost(hostDeps(() => null));
 	const tool = host.globals().find((candidate) => candidate.name === "workflow.classify")!;
 	const result = (await tool.execute({ model: { provider: "typesafe", id: "jev" }, state: {}, questions: {} }, { signal: host.signal })) as ClassifierResult;
-	assert.equal(result.stopReason, "aborted");
-	assert.deepEqual(result.answers, {});
-	assert.match(result.errorMessage ?? "", /no live session context/);
+	expect(result.stopReason).toBe("aborted");
+	expect(result.answers).toStrictEqual({});
+	expect(result.errorMessage ?? "").toMatch(/no live session context/);
 });

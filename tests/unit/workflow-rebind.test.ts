@@ -1,7 +1,6 @@
 // WHY: a handoff the model never completes must not hang the run; these tests pin
 // the deadline, the abort path, and the replacement rebind through the public seams.
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { publishWorkflowRuntime } from "../../workflow/coordinator.js";
 import type { RunRegistry } from "../../workflow/run-registry.js";
@@ -103,10 +102,10 @@ test("a handoff settlement timeout aborts the host with error before rejecting",
 	const pi = fakePi();
 	const aborts: [string, string | undefined][] = [];
 	const { ctx } = ctxWith();
-	await assert.rejects(performHandoff(bundleWith(pi, 30), ctlWith(ctx, new AbortController().signal, aborts), "next"), /handoff did not complete/);
-	assert.equal(aborts.length, 1, "the host is aborted exactly once");
-	assert.equal(aborts[0][0], "error", "the abort reason is error");
-	assert.match(aborts[0][1] ?? "", /handoff did not complete/, "the abort message names the timeout");
+	await expect(performHandoff(bundleWith(pi, 30), ctlWith(ctx, new AbortController().signal, aborts), "next")).rejects.toThrow(/handoff did not complete/);
+	expect(aborts.length, "the host is aborted exactly once").toBe(1);
+	expect(aborts[0][0], "the abort reason is error").toBe("error");
+	expect(aborts[0][1] ?? "", "the abort message names the timeout").toMatch(/handoff did not complete/);
 });
 
 test("abort during the wait rejects as cancelled", async () => {
@@ -115,7 +114,7 @@ test("abort during the wait rejects as cancelled", async () => {
 	const { ctx } = ctxWith();
 	const pending = performHandoff(bundleWith(pi), ctlWith(ctx, controller.signal), "next");
 	controller.abort(new Error("stop"));
-	await assert.rejects(pending, /cancelled/);
+	await expect(pending).rejects.toThrow(/cancelled/);
 });
 
 // WHY: a failed boundary is a real handoff failure (lost cut, dropped successor). The
@@ -125,26 +124,26 @@ test("a failed settlement rejects with the boundary's reason", async () => {
 	const aborts: [string, string | undefined][] = [];
 	const settlement = Promise.resolve<Settlement>({ status: "failed", handoffId: null, reason: "successor-not-persisted" });
 	const { ctx } = ctxWith();
-	await assert.rejects(
+	await expect(
 		performHandoff(
 			bundleWith(pi, 500, async () => {}, settlement),
 			ctlWith(ctx, new AbortController().signal, aborts),
 			"next",
 		),
-		/workflow\.handoff failed: successor-not-persisted/,
-	);
-	assert.deepEqual(aborts, [], "a boundary failure is not a timeout: nothing is aborted");
+	).rejects.toThrow(/workflow\.handoff failed: successor-not-persisted/);
+	expect(aborts, "a boundary failure is not a timeout: nothing is aborted").toStrictEqual([]);
 });
 
 test("a completed settlement resolves at once when the run is already idle", async () => {
 	const pi = fakePi();
 	const settlement = Promise.resolve<Settlement>({ status: "complete", handoffId: "h1", reason: null });
 	const { ctx } = ctxWith([], true);
-	await performHandoff(
+	const outcome = await performHandoff(
 		bundleWith(pi, 500, async () => {}, settlement),
 		ctlWith(ctx, new AbortController().signal),
 		"next",
-	);
+	).then(() => "resolved");
+	expect(outcome, "the settlement completes when the run is already idle").toBe("resolved");
 });
 
 // WHY: the successor turn continues the same run, so completion at turn_start still has a
@@ -162,13 +161,13 @@ test("a completed settlement waits for the live run to settle", async () => {
 		settled = true;
 	});
 	await new Promise((resolve) => setImmediate(resolve));
-	assert.equal(settled, false, "a live run keeps the handoff open");
+	expect(settled, "a live run keeps the handoff open").toBe(false);
 	pi.emit("agent_settled", {});
-	assert.equal(settled, false, "a settle that leaves the run active is not the gate");
+	expect(settled, "a settle that leaves the run active is not the gate").toBe(false);
 	setIdle(true);
 	pi.emit("agent_settled", {});
 	await pending;
-	assert.equal(settled, true);
+	expect(settled).toBe(true);
 });
 
 test("an idle wait that outlives the deadline aborts the host", async () => {
@@ -176,17 +175,16 @@ test("an idle wait that outlives the deadline aborts the host", async () => {
 	const aborts: [string, string | undefined][] = [];
 	const settlement = Promise.resolve<Settlement>({ status: "complete", handoffId: "h1", reason: null });
 	const { ctx } = ctxWith([], false);
-	await assert.rejects(
+	await expect(
 		performHandoff(
 			bundleWith(pi, 30, async () => {}, settlement),
 			ctlWith(ctx, new AbortController().signal, aborts),
 			"next",
 		),
-		/handoff successor did not settle/,
-	);
-	assert.equal(aborts.length, 1);
-	assert.equal(aborts[0][0], "error");
-	assert.match(aborts[0][1] ?? "", /successor did not settle/);
+	).rejects.toThrow(/handoff successor did not settle/);
+	expect(aborts.length).toBe(1);
+	expect(aborts[0][0]).toBe("error");
+	expect(aborts[0][1] ?? "").toMatch(/successor did not settle/);
 });
 
 // WHY: cancel must not leak: a surviving settle listener would fire into a disposed run,
@@ -211,11 +209,11 @@ test("a cancelled handoff disposes its settlement watch", async () => {
 		"next",
 	);
 	await new Promise((resolve) => setImmediate(resolve));
-	assert.equal(pi.count("agent_settled"), 1, "the idle gate is armed");
+	expect(pi.count("agent_settled"), "the idle gate is armed").toBe(1);
 	controller.abort(new Error("stop"));
-	await assert.rejects(pending, /cancelled/);
-	assert.equal(disposed, 1, "the settlement watch is disposed");
-	assert.equal(pi.count("agent_settled"), 0, "the idle listener was removed");
+	await expect(pending).rejects.toThrow(/cancelled/);
+	expect(disposed, "the settlement watch is disposed").toBe(1);
+	expect(pi.count("agent_settled"), "the idle listener was removed").toBe(0);
 });
 
 test("a completed handoff disposes its settlement watch", async () => {
@@ -236,7 +234,7 @@ test("a completed handoff disposes its settlement watch", async () => {
 		ctlWith(ctx, new AbortController().signal),
 		"next",
 	);
-	assert.equal(disposed, 1);
+	expect(disposed).toBe(1);
 });
 
 test("rebindRun swaps bundle pi/state/deps and republishes progress", () => {
@@ -263,20 +261,20 @@ test("rebindRun swaps bundle pi/state/deps and republishes progress", () => {
 		},
 		false,
 	);
-	assert.equal(bundle.pi, fresh.pi);
-	assert.equal(bundle.state, fresh.state as never);
-	assert.equal(bundle.deps.setReadonly, fns.setReadonly);
-	assert.equal(ctl.ctx, next);
-	assert.equal(rebound, 1);
+	expect(bundle.pi).toBe(fresh.pi);
+	expect(bundle.state).toBe(fresh.state as never);
+	expect(bundle.deps.setReadonly).toBe(fns.setReadonly);
+	expect(ctl.ctx).toBe(next);
+	expect(rebound).toBe(1);
 });
 
 test("rebindRun throws when no runtime was published", () => {
 	const bundle = bundleWith(fakePi());
 	const ctl = ctlWith(null, new AbortController().signal);
 	const next = { sessionManager: { getSessionId: () => "sess-missing" } } as unknown as ExtensionCommandContext;
-	assert.throws(() => {
+	expect(() => {
 		rebindRun(bundle, ctl, next, { onRebound: () => {}, registry: noopRegistry() }, false);
-	}, /no runtime was published/);
+	}).toThrow(/no runtime was published/);
 });
 
 /** A ctx that replaces the session the way pi does: `withSession` runs, and its failure rejects the call. */
@@ -310,10 +308,17 @@ function publishReplacement(sessionId: string, prepareRunFrontmatter: (text: str
 	return fresh;
 }
 
-test("a cancelled replacement restores the pre-replacement runtime and keeps its context", async () => {
+function cancelFixture(): {
+	bundle: RebindBundle;
+	previous: { pi: unknown; state: unknown; deps: unknown };
+	from: ExtensionCommandContext;
+	ctl: ReturnType<typeof ctlWith>;
+	hooks: RebindHooks<RebindBundle>;
+	reboundWith: () => unknown;
+} {
 	const bundle = bundleWith(fakePi());
 	const previous = { pi: bundle.pi, state: bundle.state, deps: bundle.deps };
-	const from = { newSession: async () => ({ cancelled: true }) } as unknown as ExtensionCommandContext;
+	const from = { newSession: () => Promise.resolve({ cancelled: true }) } as unknown as ExtensionCommandContext;
 	const ctl = ctlWith(from, new AbortController().signal);
 	// WHY: teardown drops the run's input-suppression/cancel subscriptions, so the
 	// failure path re-arms them on the restored session (onRebound is idempotent).
@@ -324,13 +329,22 @@ test("a cancelled replacement restores the pre-replacement runtime and keeps its
 		},
 		registry: noopRegistry(),
 	};
+	return { bundle, previous, from, ctl, hooks, reboundWith: () => reboundWith };
+}
 
-	await assert.rejects(performNewSession(bundle, ctl, hooks), /new session was cancelled/);
-	assert.equal(bundle.pi, previous.pi, "the runtime the run was actually using survives");
-	assert.equal(bundle.state, previous.state);
-	assert.equal(bundle.deps, previous.deps);
-	assert.equal(ctl.ctx, from, "the run keeps a live context");
-	assert.equal(reboundWith, from, "the restored session is re-subscribed");
+test("a cancelled replacement restores the pre-replacement runtime and keeps its context", async () => {
+	const { bundle, previous, ctl, hooks } = cancelFixture();
+	await expect(performNewSession(bundle, ctl, hooks)).rejects.toThrow(/new session was cancelled/);
+	expect(bundle.pi, "the runtime the run was actually using survives").toBe(previous.pi);
+	expect(bundle.state).toBe(previous.state);
+	expect(bundle.deps).toBe(previous.deps);
+});
+
+test("a cancelled replacement keeps the run's live context re-subscribed", async () => {
+	const { bundle, from, ctl, hooks, reboundWith } = cancelFixture();
+	await expect(performNewSession(bundle, ctl, hooks)).rejects.toThrow(/new session was cancelled/);
+	expect(ctl.ctx, "the run keeps a live context").toBe(from);
+	expect(reboundWith(), "the restored session is re-subscribed").toBe(from);
 });
 
 // WHY: once pi has torn the old session down, its runtime is dead; a rebind that fails after
@@ -344,17 +358,16 @@ test("a rebind that fails inside withSession aborts the run with its own error",
 	const ctl = ctlWith(from as unknown as ExtensionCommandContext, new AbortController().signal);
 	const boom = new Error("workflow.new rebind failed");
 
-	await assert.rejects(
+	await expect(
 		performNewSession(bundle, ctl, {
 			onRebound: () => {
 				throw boom;
 			},
 			registry: noopRegistry(),
 		}),
-		(error: unknown) => error === boom,
-	);
-	assert.equal(bundle.pi, fresh.pi, "the run keeps the live replacement runtime");
-	assert.equal(ctl.ctx, next, "the run keeps the live replacement context");
+	).rejects.toBe(boom);
+	expect(bundle.pi, "the run keeps the live replacement runtime").toBe(fresh.pi);
+	expect(ctl.ctx, "the run keeps the live replacement context").toBe(next);
 });
 
 // WHY: a rebind that fails before installing the replacement leaves `ctl.ctx` null; re-arming
@@ -373,14 +386,20 @@ test("a failed rebind leaves no live context and arms no subscriptions", async (
 	};
 
 	// No runtime is published for the replacement, so the rebind fails inside withSession.
-	await assert.rejects(performNewSession(bundle, ctl, hooks), /no runtime was published/);
-	assert.equal(ctl.ctx, null, "no live context: the run must fail, not use a dead session");
-	assert.equal(reboundWith, null, "no subscriptions are re-armed on a dead session");
+	await expect(performNewSession(bundle, ctl, hooks)).rejects.toThrow(/no runtime was published/);
+	expect(ctl.ctx, "no live context: the run must fail, not use a dead session").toBeNull();
+	expect(reboundWith, "no subscriptions are re-armed on a dead session").toBeNull();
 });
 
 // WHY: a failed publication must preserve its own error (no masking rollback), abort the host,
 // and drop the swapped child-usage sink so a disposed host cannot keep spending into the ledger.
-test("a failed publication preserves its error, arms no suppression, and clears the sink", async () => {
+async function failedPublicationFixture(): Promise<{
+	rejection: unknown;
+	bundle: RebindBundle;
+	ctl: ReturnType<typeof ctlWith>;
+	aborts: [string, string | undefined][];
+	rebounds: () => number;
+}> {
 	const next = { sessionManager: { getSessionId: () => "sess-stale" } } as unknown as ExtensionCommandContext;
 	const from = ctxThatReplaces(next);
 	const bundle = bundleWith(fakePi());
@@ -389,38 +408,46 @@ test("a failed publication preserves its error, arms no suppression, and clears 
 	const ctl = ctlWith(from as unknown as ExtensionCommandContext, new AbortController().signal, aborts);
 	let rebounds = 0;
 
-	await assert.rejects(
-		performNewSession(bundle, ctl, {
-			onRebound: () => {
-				rebounds += 1;
-				throw new Error("stale context");
-			},
-			registry: noopRegistry(),
-		}),
-		(error: unknown) => {
-			assert.match(String(error), /no runtime was published/, "the original replacement error stands");
-			assert.doesNotMatch(String(error), /rollback failed/, "no rollback runs for a non-cancelled failure");
-			return true;
+	const rejection = await performNewSession(bundle, ctl, {
+		onRebound: () => {
+			rebounds += 1;
+			throw new Error("stale context");
 		},
+		registry: noopRegistry(),
+	}).then(
+		() => undefined,
+		(e: unknown) => e,
 	);
-	assert.equal(rebounds, 0, "a failed publication never re-arms the run");
-	assert.equal(bundle.state.childUsageSink, null, "the swapped child-usage sink cannot leak");
-	assert.deepEqual(aborts, [["error", "workflow.new: no runtime was published for replacement session sess-stale"]], "the host is aborted with the failure");
-	assert.equal(ctl.ctx, null, "the dead replacement is never bound as the live context");
+	return { rejection, bundle, ctl, aborts, rebounds: () => rebounds };
+}
+
+test("a failed publication preserves its error without rollback or rebound", async () => {
+	const { rejection, rebounds } = await failedPublicationFixture();
+	expect(rejection).toBeDefined();
+	expect(String(rejection), "the original replacement error stands").toMatch(/no runtime was published/);
+	expect(String(rejection), "no rollback runs for a non-cancelled failure").not.toMatch(/rollback failed/);
+	expect(rebounds(), "a failed publication never re-arms the run").toBe(0);
+});
+
+test("a failed publication clears the sink, aborts the host, and binds no live context", async () => {
+	const { bundle, ctl, aborts } = await failedPublicationFixture();
+	expect(bundle.state.childUsageSink, "the swapped child-usage sink cannot leak").toBeNull();
+	expect(aborts, "the host is aborted with the failure").toStrictEqual([
+		["error", "workflow.new: no runtime was published for replacement session sess-stale"],
+	]);
+	expect(ctl.ctx, "the dead replacement is never bound as the live context").toBeNull();
 });
 
 test("the rebound run's next turn runs the replacement's prepareRunFrontmatter", async () => {
 	const sessionId = "sess-rebind-frontmatter";
 	const boom = new Error("model group unavailable");
-	publishReplacement(sessionId, async () => {
-		throw boom;
-	});
+	publishReplacement(sessionId, () => Promise.reject(boom));
 	const next = { sessionManager: { getSessionId: () => sessionId } } as unknown as ExtensionCommandContext;
 	const bundle = bundleWith(fakePi());
 	const ctl = ctlWith(ctxThatReplaces(next) as unknown as ExtensionCommandContext, new AbortController().signal);
 
 	await performNewSession(bundle, ctl, { onRebound: () => {}, registry: noopRegistry() });
-	await assert.rejects(bundle.deps.prepareRunFrontmatter("/review diff", next), (error: unknown) => error === boom);
+	await expect(bundle.deps.prepareRunFrontmatter("/review diff", next)).rejects.toBe(boom);
 });
 
 // WHY: a replacement has no live ctx between `newSession` and `withSession`, so a second
@@ -436,10 +463,10 @@ test("a concurrent workflow.new fails fast instead of starting a second replacem
 	const hooks: RebindHooks<RebindBundle> = { onRebound: () => {}, registry: noopRegistry() };
 
 	const first = performNewSession(bundle, ctl, hooks);
-	await assert.rejects(performNewSession(bundle, ctl, hooks), /no live session context/);
+	await expect(performNewSession(bundle, ctl, hooks)).rejects.toThrow(/no live session context/);
 	await first;
-	assert.equal(from.calls(), 1, "exactly one replacement ran");
-	assert.equal(ctl.ctx, next, "the run is bound to the replacement");
+	expect(from.calls(), "exactly one replacement ran").toBe(1);
+	expect(ctl.ctx, "the run is bound to the replacement").toBe(next);
 });
 
 // WHY (reviewer 4288158708): `workflow.new` must carry the readonly posture across the
@@ -471,8 +498,8 @@ test("rebindRun re-applies the previous readonly posture before republishing pro
 		},
 		true,
 	);
-	assert.deepEqual(log, ["setReadonly", "onRebound"], "readonly is carried via the binding setter before progress republish");
-	assert.equal(bundle.deps.setReadonly, setReadonly, "the binding setter is the live replacement setter");
+	expect(log, "readonly is carried via the binding setter before progress republish").toStrictEqual(["setReadonly", "onRebound"]);
+	expect(bundle.deps.setReadonly, "the binding setter is the live replacement setter").toBe(setReadonly);
 });
 
 // WHY (reviewer 4288158708): capture happens in performNewSession, which reads the pre-replacement
@@ -496,7 +523,7 @@ test("workflow.new carries the previous readonly posture into the replacement se
 	const ctl = ctlWith(ctxThatReplaces(next) as unknown as ExtensionCommandContext, new AbortController().signal);
 
 	await performNewSession(bundle, ctl, { onRebound: () => {}, registry: noopRegistry() });
-	assert.equal(log[0], "true", "the previous readonly posture is carried to the replacement session");
+	expect(log[0], "the previous readonly posture is carried to the replacement session").toBe("true");
 });
 
 // WHY (reviewer 4288158850): a successor-settle deadline must abort the host (stopping the

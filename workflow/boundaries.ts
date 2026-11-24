@@ -33,15 +33,20 @@ export function registerSessionGuard(pi: ExtensionAPI, state: SchematicState): v
 	pi.on("session_before_fork", (_event, ctx) => rejectBoundary(state, ctx, null, "fork this session"));
 	pi.on("session_before_tree", (_event, ctx) => rejectBoundary(state, ctx, null, "move in the session tree"));
 	pi.on("session_before_compact", (event, ctx) =>
-		HOST_MANAGED_COMPACTIONS.includes(event.reason) ? undefined : rejectBoundary(state, ctx, null, "compact this session"));
+		HOST_MANAGED_COMPACTIONS.includes(event.reason) ? undefined : rejectBoundary(state, ctx, null, "compact this session"),
+	);
 }
 
 /** Decide one boundary: pass when no run owns the session, or when this run asked for it.
  * `state.inputSuppressed` is the run's own flag, raised with the `input` handler and cleared on
  * release, so the guard follows the serial invariant instead of mirroring the reservation. */
 function rejectBoundary(state: SchematicState, ctx: ExtensionContext, kind: AdmittedChange | null, label: string): { cancel: true } | undefined {
-	if (!state.inputSuppressed) {return undefined;}
-	if (kind !== null && spendAdmission(kind)) {return undefined;}
+	if (!state.inputSuppressed) {
+		return undefined;
+	}
+	if (kind !== null && spendAdmission(kind)) {
+		return undefined;
+	}
 	warnOperator(ctx, `A workflow is running. Wait for it to finish, or press Escape or Ctrl+C twice to stop it, before you ${label}.`);
 	return { cancel: true };
 }
@@ -51,7 +56,9 @@ function rejectBoundary(state: SchematicState, ctx: ExtensionContext, kind: Admi
  * caller still gets pi's own cancellation (`{ cancelled: true }`, "Compaction cancelled"). */
 function warnOperator(ctx: ExtensionContext, message: string): void {
 	try {
-		if (ctx.hasUI) {ctx.ui.notify(message, "warning");}
+		if (ctx.hasUI) {
+			ctx.ui.notify(message, "warning");
+		}
 	} catch {
 		// The cancel is what the operator's safety depends on, and it already stands.
 	}
@@ -67,18 +74,25 @@ const admissionSlot = registeredState<{ granted: AdmittedChange | null }>("pi-sc
  * return means a change that never reached pi leaves no standing admission behind. */
 export async function admitted<T>(kind: AdmittedChange, change: () => Promise<T>): Promise<T> {
 	const slot = admissionSlot;
+	// A local read keeps the release guard from being flow-narrowed to always-true: the
+	// async `change()` may spend or replace the grant while it runs.
+	const stillOwns = () => slot.granted === kind;
 	slot.granted = kind;
 	try {
 		return await change();
 	} finally {
-		if (slot.granted === kind) {slot.granted = null;}
+		if (stillOwns()) {
+			slot.granted = null;
+		}
 	}
 }
 
 /** Spend the grant once, and only on the change it was held for. */
 function spendAdmission(kind: AdmittedChange): boolean {
 	const slot = admissionSlot;
-	if (slot.granted !== kind) {return false;}
+	if (slot.granted !== kind) {
+		return false;
+	}
 	slot.granted = null;
 	return true;
 }

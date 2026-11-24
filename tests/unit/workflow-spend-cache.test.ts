@@ -1,10 +1,10 @@
 // WHY: the run-spend projection is cached, so a stale read could hide a cost limit. These
 // tests move each spend source through its real host path (branch, child ledger, classifier,
 // baseline commit) and prove the projection follows every move.
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import { assertPresent } from "../assertions.js";
 import { createState, type SchematicState } from "../../state.js";
 import { createWorkflowHost } from "../../workflow/host.js";
 import type { WorkflowHost, WorkflowHostDeps } from "../../workflow/types.js";
@@ -85,13 +85,13 @@ function createEnv(): Env {
 
 function call(host: WorkflowHost, member: string, args: unknown): Promise<unknown> {
 	const tool = host.globals().find((candidate) => candidate.name === `workflow.${member}`);
-	assert.ok(tool, `missing handle workflow.${member}`);
+	assertPresent(tool, `missing handle workflow.${member}`);
 	return tool.execute(args, { signal: host.signal }) as Promise<unknown>;
 }
 
 const cost = (host: WorkflowHost): number => host.metrics().costUsd;
 const close = (actual: number, expected: number, message: string): void => {
-	assert.ok(Math.abs(actual - expected) < 1e-9, `${message}: got ${actual}, want ${expected}`);
+	expect(Math.abs(actual - expected) < 1e-9, `${message}: got ${actual}, want ${expected}`).toBe(true);
 };
 
 test("the cached run projection follows every spend source move", async () => {
@@ -119,13 +119,12 @@ test("the cached run projection follows every spend source move", async () => {
 	// (d) a baseline commit via workflow.new replaces the branch source
 	await call(host, "new", undefined);
 	close(cost(host), 1.5, "baseline commit carries the committed spend after the branch clears");
-	assert.deepEqual(
+	expect(
 		host
 			.metrics()
 			.spend.map((row) => row.key)
 			.sort(),
-		["anthropic/opus", "anthropic/widget", "typesafe/jev"].sort(),
-	);
+	).toStrictEqual(["anthropic/opus", "anthropic/widget", "typesafe/jev"].sort());
 });
 
 // WHY: the child ledger is keyed per tool call; same-model children must merge into one row
@@ -137,7 +136,7 @@ test("the child ledger merges same-model children into one row with one call eac
 	env.state.childUsageSink!("c2", "anthropic", "widget", usd(0.2));
 	close(cost(host), 0.45, "two child rows");
 	const widget = host.metrics().spend.find((row) => row.key === "anthropic/widget");
-	assert.equal(widget?.calls, 2, "one call per child");
+	expect(widget?.calls, "one call per child").toBe(2);
 });
 
 // WHY: workflow.new replaces the branch. Pruning keeps the exclusion set proportional to
@@ -146,7 +145,7 @@ test("pruneExclusions keeps only ids still present in the branch", () => {
 	const env = createEnv();
 	env.branch.push(assistant("a1", "anthropic", "opus", 0.5), assistant("a2", "anthropic", "opus", 0.25));
 	const host = createWorkflowHost(env.deps);
-	close(cost(host), 0, "both entries start excluded as the pre-run branch");
+	expect(cost(host)).toBeCloseTo(0);
 	host.pruneExclusions(new Set(["a2"]));
-	close(cost(host), 0.5, "the pruned id becomes live spend; the retained id stays excluded");
+	expect(cost(host)).toBeCloseTo(0.5);
 });

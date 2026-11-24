@@ -5,9 +5,8 @@
  * example fails here until this list and examples/workflows/README.md agree.
  */
 
-import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import { compileWorkflow } from "../../workflow/compile.js";
 
 const EXAMPLES_DIR_URL = new URL("../../examples/workflows/", import.meta.url);
@@ -19,13 +18,13 @@ test("examples/workflows holds exactly the expected scripts", () => {
 	const actual = readdirSync(EXAMPLES_DIR_URL)
 		.filter((name) => name.endsWith(".js"))
 		.sort();
-	assert.deepEqual(actual, [...EXPECTED]);
+	expect(actual).toStrictEqual([...EXPECTED]);
 });
 
 for (const name of EXPECTED) {
 	test(`${name} satisfies the author contract`, () => {
 		const source = readFileSync(new URL(name, EXAMPLES_DIR_URL), "utf8");
-		assert.doesNotThrow(() => compileWorkflow(source));
+		expect(() => compileWorkflow(source)).not.toThrow();
 	});
 }
 
@@ -34,12 +33,12 @@ test("readonly detection examples restore write posture before every exit", () =
 		const source = readFileSync(new URL(name, EXAMPLES_DIR_URL), "utf8");
 		const restore = source.indexOf("workflow.readonly(false)");
 		const exitAfterDetection = source.indexOf("if (!testCommand)");
-		assert.ok(restore >= 0, `${name} disables readonly`);
-		assert.ok(exitAfterDetection > restore, `${name} restores readonly before the detection-failure exit`);
+		expect(restore >= 0, `${name} disables readonly`).toBe(true);
+		expect(exitAfterDetection > restore, `${name} restores readonly before the detection-failure exit`).toBe(true);
 	}
 });
 
 test("review example trims the detected command before use", () => {
 	const source = readFileSync(new URL("review.js", EXAMPLES_DIR_URL), "utf8");
-	assert.match(source, /detectedOutput\.command\.trim\(\)/);
+	expect(source).toMatch(/detectedOutput\.command\.trim\(\)/);
 });

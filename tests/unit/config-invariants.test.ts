@@ -8,13 +8,22 @@
  * and the documented Pi floor.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { CANCEL_CONFIRM_MS } from "../../workflow/command.js";
+import { MAX_DEFERRED_EFFECTS, MAX_EFFECTS } from "../../workflow/host.js";
+import { HANDOFF_TIMEOUT_MS } from "../../workflow/rebind.js";
+import { HARD_DEADLINE_FACTOR, MAX_TIMEOUT_MS } from "../../workflow/sandbox.js";
+import { TIME_PRESET_MS, TIME_PRESETS } from "../../workflow/limits-dialog.js";
+import { MAX_EFFECT_ROWS, MAX_MODELS_COLLAPSED } from "../../workflow/summary-renderer.js";
+import { STRUCTURED_OUTPUT_TOOL } from "../../workflow/output.js";
+import { RESERVED_REASONS } from "../../workflow/types.js";
+import { createWorkflowAutocompleteProvider } from "../../workflow/autocomplete.js";
 import { fileURLToPath } from "node:url";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import { expect, test } from "vitest";
 import { parse } from "yaml";
-import { assertString } from "../assertions.js";
+import { assertPresent, assertString } from "../assertions.js";
 import { REPO_ROOT, REPO_ROOT_URL } from "../paths.js";
 import { parseJson } from "./parse-json.js";
 import { runGit, spawnNode } from "./spawn-node.js";
@@ -36,6 +45,7 @@ const PackageJson = Type.Object({
 	devDependencies: JsonRecord,
 	overrides: Type.Optional(JsonRecord),
 	scripts: Type.Optional(Type.Object({ typecheck: Type.String() })),
+	engines: Type.Optional(Type.Object({ node: Type.String() })),
 });
 type PackageJson = Static<typeof PackageJson>;
 
@@ -64,6 +74,7 @@ const PINNED_PI_PACKAGES = ["@earendil-works/pi-ai", "@earendil-works/pi-coding-
 // Update when Pi devDependencies are bumped.
 const EXPECTED_PI_VERSION = "1.2.0";
 const EXPECTED_TYPEBOX_VERSION = "1.3.27";
+const EXPECTED_NODE_FLOOR = "22.19.0";
 // Approved peer floors — must track the pinned devDependency versions above.
 const EXPECTED_PI_PEER = `>=${EXPECTED_PI_VERSION}`;
 const EXPECTED_TYPEBOX_PEER = `>=${EXPECTED_TYPEBOX_VERSION}`;
@@ -524,4 +535,228 @@ test("audit-ci config enforces the reviewed allowlist policy", () => {
 test("audit-ci config matches the CI audit command", () => {
 	const { status, diagnostics } = runAuditCi();
 	expect(status, diagnostics).toBe(0);
+});
+
+// ── Workflow invariants (from the /workflow chain) ────────────────
+
+const WORKFLOW_PATH = new URL(".github/workflows/ci.yml", REPO_ROOT_URL);
+const WORKFLOWS_DOC_PATH = new URL("docs/workflows.md", REPO_ROOT_URL);
+const WORKFLOW_ENGINE_DOC_PATH = new URL("docs/workflow-engine.md", REPO_ROOT_URL);
+const ARCHITECTURE_DOC_PATH = new URL("docs/architecture.md", REPO_ROOT_URL);
+
+const EXPECTED_MATRIX = new Set([
+	"ubuntu-latest@22.19.0",
+	"ubuntu-latest@26.13.1",
+	"macos-latest@22.19.0",
+	"macos-latest@26.13.1",
+	"windows-latest@22.19.0",
+	"windows-latest@26.13.1",
+]);
+
+function parseMatrixEntries(workflow: string): Set<string> {
+	const osMatch = /\bos: \[([^\]]+)\]/.exec(workflow);
+	const includeMatches = workflow.matchAll(/- track: ([^\n]+)\n\s+node-version: "([^"]+)"/g);
+	const oses = osMatch ? osMatch[1].split(",").map((s) => s.trim()) : [];
+	const nodes = Array.from(includeMatches, ([, _track, node]) => node.trim());
+	const result = new Set<string>();
+	for (const os of oses) {
+		for (const node of nodes) {
+			result.add(`${os}@${node}`);
+		}
+	}
+	return result;
+}
+
+function stepIndex(workflow: string, step: string): number {
+	const index = workflow.indexOf(`- name: ${step}`);
+	expect(index, `missing workflow step: ${step}`).not.toBe(-1);
+	return index;
+}
+
+function stepBlock(workflow: string, step: string): string {
+	const start = stepIndex(workflow, step);
+	const afterName = workflow.indexOf("\n", start) + 1;
+	const nextStep = workflow.indexOf("\n      - name:", afterName);
+	const end = nextStep === -1 ? workflow.length : nextStep;
+	return workflow.slice(afterName, end);
+}
+
+function minimumNodeVersion(value: string): string {
+	const match = /^>=(?<version>\d+\.\d+\.\d+)$/.exec(value);
+	const version = match?.groups?.version;
+	assertPresent(version, `unsupported engines.node format: ${value}`);
+	return version;
+}
+
+test("workflow keeps the expected CI matrix and fail-fast policy", () => {
+	const workflow = readText(WORKFLOW_PATH);
+	expect(workflow).toMatch(/fail-fast:\s+false/);
+	expect(parseMatrixEntries(workflow)).toStrictEqual(EXPECTED_MATRIX);
+	expect(workflow).toMatch(/run: npx audit-ci --config audit-ci\.jsonc/);
+});
+
+test("workflow ordering: security audit precedes unit tests, which precede E2E tests", () => {
+	const workflow = readText(WORKFLOW_PATH);
+	expect(stepIndex(workflow, "Type check")).toBeLessThan(stepIndex(workflow, "Security audit"));
+	expect(stepIndex(workflow, "Security audit")).toBeLessThan(stepIndex(workflow, "Unit tests"));
+	expect(stepIndex(workflow, "Unit tests")).toBeLessThan(stepIndex(workflow, "E2E tests"));
+});
+
+test("workflow matrix includes the minimum Node floor on ubuntu-latest", () => {
+	const packageJson = parsePackageJson();
+	const nodeFloor = packageJson.engines?.node;
+	assertPresent(nodeFloor, "package.json engines.node missing");
+	expect(EXPECTED_MATRIX.has(`ubuntu-latest@${minimumNodeVersion(nodeFloor)}`)).toBe(true);
+});
+
+// Constants: code owns every value. The engine doc names each constant and its owner file.
+// Author-visible rule values are stated once in docs/workflows.md; pinned below to the code.
+const CONTRACT_CONSTANT_ROWS: [name: string, owner: string][] = [
+	["CANCEL_CONFIRM_MS", "workflow/command.ts"],
+	["HANDOFF_TIMEOUT_MS", "workflow/rebind.ts"],
+	["MAX_DEFERRED_EFFECTS", "workflow/host.ts"],
+	["HARD_DEADLINE_FACTOR", "workflow/sandbox.ts"],
+];
+const INTERNAL_CONSTANT_ROWS: [name: string, owner: string][] = [
+	["MEMORY_LIMIT_BYTES", "workflow/command.ts"],
+	["WORKFLOW_PROGRESS_TICK_MS", "workflow/command.ts"],
+	["MAX_EFFECTS", "workflow/host.ts"],
+	["MAX_TIMEOUT_MS", "workflow/sandbox.ts"],
+	["STRUCTURED_OUTPUT_TOOL", "workflow/output.ts"],
+	["MAX_EFFECT_ROWS", "workflow/summary-renderer.ts"],
+	["MAX_MODELS_COLLAPSED", "workflow/summary-renderer.ts"],
+	["MAX_ENTRY_OUTPUT_LINES", "workflow/activity.ts"],
+	["MAX_ENTRY_OUTPUT_CHARS", "workflow/activity.ts"],
+	["MAX_SUGGESTIONS", "workflow/autocomplete.ts"],
+];
+
+test("workflow engine constants stay pinned to the code", () => {
+	const exported: [name: string, actual: unknown, expected: unknown][] = [
+		["CANCEL_CONFIRM_MS", CANCEL_CONFIRM_MS, 500],
+		["HANDOFF_TIMEOUT_MS", HANDOFF_TIMEOUT_MS, 15 * 60 * 1000],
+		["MAX_DEFERRED_EFFECTS", MAX_DEFERRED_EFFECTS, 16],
+		["MAX_EFFECTS", MAX_EFFECTS, 100],
+		["MAX_TIMEOUT_MS", MAX_TIMEOUT_MS, 2147483647],
+		["HARD_DEADLINE_FACTOR", HARD_DEADLINE_FACTOR, 2],
+		["STRUCTURED_OUTPUT_TOOL", STRUCTURED_OUTPUT_TOOL, "workflow_output"],
+		["MAX_EFFECT_ROWS", MAX_EFFECT_ROWS, 10],
+		["MAX_MODELS_COLLAPSED", MAX_MODELS_COLLAPSED, 8],
+	];
+	for (const [name, actual, expected] of exported) {
+		expect(actual, `${name} changed — update docs/workflows.md (rule owner) if the author-visible value moved`).toBe(expected);
+	}
+});
+
+test("workflow reserved reasons stay exact and the engine doc rows name their owner files", () => {
+	expect([...RESERVED_REASONS]).toStrictEqual(["cost-limit", "time-limit", "cancelled", "error"]);
+	const engineDoc = readText(WORKFLOW_ENGINE_DOC_PATH);
+	for (const [name, owner] of [...CONTRACT_CONSTANT_ROWS, ...INTERNAL_CONSTANT_ROWS]) {
+		expect(engineDoc).toMatch(new RegExp(`| *\`${name}\` *| *\`${owner}\` *|`));
+		expect(existsSync(new URL(owner, REPO_ROOT_URL)), `${name} owner ${owner} is missing`).toBe(true);
+	}
+});
+
+test("workflow engine doc splits contract-visible from internal knobs", () => {
+	const engineDoc = readText(WORKFLOW_ENGINE_DOC_PATH);
+	expect(engineDoc).not.toMatch(/^\| `[A-Z_]+` \|.*\d/m);
+	const contractHeading = engineDoc.indexOf("Contract-visible knobs");
+	const internalHeading = engineDoc.indexOf("Internal knobs");
+	expect(contractHeading >= 0 && internalHeading > contractHeading).toBe(true);
+	for (const [name] of CONTRACT_CONSTANT_ROWS) {
+		expect(engineDoc.indexOf(`\`${name}\``, contractHeading) < internalHeading, `${name} must sit in the contract-visible table`).toBe(true);
+	}
+});
+
+test("workflow author-visible rule prose stays pinned in docs/workflows.md", () => {
+	const workflowsDoc = readText(WORKFLOWS_DOC_PATH);
+	expect(workflowsDoc).toMatch(/MAX_DEFERRED_EFFECTS = 16/);
+	expect(workflowsDoc).toMatch(/within 500 ms \(`CANCEL_CONFIRM_MS`\) confirms/);
+	expect(workflowsDoc).toMatch(/\*\*twice\*\* the soft time target/);
+	expect(workflowsDoc).toMatch(/each handoff wait carries its own full 15-minute deadline/i);
+	expect(workflowsDoc).not.toMatch(/one absolute 15-minute deadline/i);
+});
+
+test("workflow documented time presets match the dialog labels", () => {
+	const workflowsDoc = readText(WORKFLOWS_DOC_PATH);
+	const timePresetSentence = /the time presets are ([^;]+);/i.exec(workflowsDoc);
+	const sentence = timePresetSentence?.[1];
+	assertPresent(sentence, "docs/workflows.md lost the time-preset sentence");
+	const documentedPresets = [...sentence.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+	expect(documentedPresets).toStrictEqual(Object.keys(TIME_PRESET_MS));
+	expect(documentedPresets.every((label) => TIME_PRESETS.includes(label))).toBe(true);
+});
+
+test("the /workflow completion list is capped at the engine suggestion limit", async () => {
+	const entries = Array.from({ length: 25 }, (_, index) => ({
+		name: `flow-${index}`,
+		path: `/w/flow-${index}.js`,
+		source: "global" as const,
+		label: "global",
+	}));
+	const current: Parameters<ReturnType<typeof createWorkflowAutocompleteProvider>>[0] = {
+		getSuggestions: () => Promise.resolve(null),
+		applyCompletion: (lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol }),
+		shouldTriggerFileCompletion: () => false,
+	};
+	const provide = createWorkflowAutocompleteProvider(() => Promise.resolve(entries))(current);
+	const suggestions = await provide.getSuggestions(["/workflow flow"], 0, "/workflow flow".length, { signal: new AbortController().signal });
+	assertPresent(suggestions, "expected workflow suggestions");
+	expect(suggestions.items.length).toBe(20);
+});
+
+test("workflow docs keep one owner per shared rule", () => {
+	const workflowsDoc = readText(WORKFLOWS_DOC_PATH);
+	const engineDoc = readText(WORKFLOW_ENGINE_DOC_PATH);
+	expect(workflowsDoc).toMatch(/Full rejection list \(compiler contract\)/);
+	expect(engineDoc).toMatch(/The rules live in \[workflows\.md\]/);
+	expect(engineDoc).not.toMatch(/\| Rejection \| Rule \|/);
+	expect(workflowsDoc).toMatch(/Checkpoints are optional\. Without `workflow\.checkpoint\(\.\.\.\)`, the workflow is unbounded/);
+	expect(workflowsDoc).toMatch(/`workflow\.exit` is terminal and is not a checkpoint/);
+});
+
+test("workflow docs pin the example and do not restate values", () => {
+	const workflowsDoc = readText(WORKFLOWS_DOC_PATH);
+	expect(workflowsDoc).toMatch(/examples\/workflows\/review\.js/);
+	expect(workflowsDoc).not.toMatch(/jev-latest|"typesafe"/);
+	expect(workflowsDoc).not.toMatch(/MAX_EFFECTS = |MAX_EFFECT_ROWS = /);
+});
+
+test("workflow docs point effect-limit owners at the engine doc", () => {
+	const workflowsDoc = readText(WORKFLOWS_DOC_PATH);
+	const engineDoc = readText(WORKFLOW_ENGINE_DOC_PATH);
+	expect(workflowsDoc).toMatch(/`MAX_EFFECTS`[^\n]*workflow-engine\.md/);
+	expect(workflowsDoc).toMatch(/`MAX_EFFECT_ROWS`[^\n]*workflow-engine\.md/);
+	expect(engineDoc).toMatch(/\| *`workflow-limits` entry *\| *`workflow\/limits-dialog\.ts` *\|/);
+});
+
+test("the handoff cut lives at the turn_end boundary, not the deleted compaction modules", () => {
+	const deleted = ["handoff/compact.ts", "handoff/recovery.ts", "follow-up.ts"];
+	for (const file of deleted) {
+		expect(existsSync(new URL(file, REPO_ROOT_URL)), `${file} must stay deleted`).toBe(false);
+	}
+	expect(readText(new URL("handoff/boundary.ts", REPO_ROOT_URL))).toMatch(/export function watchHandoffSettlement\(/);
+	for (const doc of [ARCHITECTURE_DOC_PATH, WORKFLOWS_DOC_PATH, WORKFLOW_ENGINE_DOC_PATH]) {
+		const text = readText(doc);
+		for (const stale of [...deleted, "HandoffPayload", "HANDOFF_COMPACTION_TIMEOUT_MS"]) {
+			expect(text, `${doc.pathname} still names ${stale}`).not.toContain(stale);
+		}
+	}
+});
+
+test("the Node floor has one source across CI and package metadata", () => {
+	const pkg = parsePackageJson();
+	const workflow = readText(WORKFLOW_PATH);
+	const nodeFloor = pkg.engines?.node;
+	assertPresent(nodeFloor, "package.json engines.node missing");
+	expect(nodeFloor).toBe(`>=${EXPECTED_NODE_FLOOR}`);
+	expect(workflow).toMatch(new RegExp(`node-version: "${EXPECTED_NODE_FLOOR.replaceAll(".", ".")}"`));
+	expect(workflow).not.toMatch(/matrix\.node-version == '22\.19\.0'/);
+	expect(readText(README_PATH)).toMatch(/Node\.js version/);
+	expect(readText(WORKFLOWS_DOC_PATH)).toMatch(/Node\.js >= 22\.19\.0/);
+});
+
+test("Windows current-Pi step runs after packed-host failure but not on cancellation", () => {
+	const workflow = readText(WORKFLOW_PATH);
+	const block = stepBlock(workflow, "Synchronized current Pi compatibility on Windows");
+	expect(block).toMatch(/if: matrix\.os == 'windows-latest' && !cancelled\(\)/);
 });
