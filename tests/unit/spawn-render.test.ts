@@ -155,6 +155,30 @@ test("spawn result identity formats default routed and unknown fallback", async 
 	expect(escapedLines.filter((line: string) => line.includes("\u001b"))).toStrictEqual([]);
 });
 
+test("inherited route identity preserves provider/modelId when present", async () => {
+	const state = createState();
+	const childSpawnTool = await makeChildSpawnTool(state);
+	const lines = childSpawnTool
+		.renderResult(
+			{
+				content: [{ type: "text", text: "done" }],
+				details: {
+					model: "parent",
+					thinking: "low",
+					truncated: false,
+					outcome: "success",
+					route: { status: "inherited", provider: "anthropic", modelId: "opus" },
+				},
+			},
+			{ expanded: false, isPartial: false },
+			theme,
+			createToolRenderContext(),
+		)
+		.render(120);
+
+	expect(lines).toContainEqual(expect.stringContaining("✅ anthropic/opus • low"));
+});
+
 test("collapsed nested spawn render keeps all text blocks from the last assistant message", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);

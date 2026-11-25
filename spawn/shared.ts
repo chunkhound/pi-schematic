@@ -3,6 +3,9 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 export type SpawnOutcome = "running" | "success" | "aborted" | "error";
 
+/** The spawn tool's registered name; the spend ledger's single-owner gate for child tool results. */
+export const SPAWN_TOOL_NAME = "spawn";
+
 export type SpawnRouteDetails =
 	// provider/modelId are optional only to read sessions persisted before they were added;
 	// every new write sets them so the spend ledger never splits one model across two rows.
@@ -19,6 +22,8 @@ export interface SpawnResultDetails {
 	route?: SpawnRouteDetails;
 	stats?: Record<string, number>;
 	statsUnavailable?: boolean;
+	/** Instrumentation-only teardown failures (spend-flush writes) that degraded without failing the run. */
+	teardownFailures?: string[];
 }
 
 export interface SpawnToolResult {
@@ -26,6 +31,20 @@ export interface SpawnToolResult {
 	details: SpawnResultDetails;
 	usage: Usage;
 	isError?: true;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Narrow a tool result's free-form `details` to the spawn contract; other tools' records never match. */
+export function isSpawnResultDetails(value: unknown): value is SpawnResultDetails {
+	return isRecord(value) && typeof value.model === "string" && (value.route === undefined || isRecord(value.route));
+}
+
+/** Single writer of the inherited route shape: every new write carries the provider/modelId identity. */
+export function inheritedRouteDetails(provider: string, modelId: string): SpawnRouteDetails {
+	return { status: "inherited", provider, modelId };
 }
 
 /** Maps the failure stop reasons to their outcome; every other stop reason has none. */

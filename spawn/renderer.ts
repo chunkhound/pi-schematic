@@ -255,6 +255,9 @@ function formatSpawnIdentity(details: Pick<SpawnResultDetails, "model" | "thinki
 		const modelId = escapeDisplayLabel(details.route.modelId);
 		return `${requestedGroup}? fallback → ${provider}/${modelId} • ${details.thinking}`;
 	}
+	if (details.route?.status === "inherited" && typeof details.route.provider === "string" && typeof details.route.modelId === "string") {
+		return `${escapeDisplayLabel(details.route.provider)}/${escapeDisplayLabel(details.route.modelId)} • ${details.thinking}`;
+	}
 	return `${escapeDisplayLabel(details.model)} • ${details.thinking}`;
 }
 

@@ -33,7 +33,15 @@ import { appendSandboxBlockNotice, appendSandboxBlockNoticeToResult } from "../o
 import { HANDOFF_TOOL_NAME } from "../handoff/tool.js";
 import { THINKING_LEVELS } from "../thinking-levels.js";
 import { renderSpawnCall, renderSpawnResult } from "./renderer.js";
-import { getLastAssistantText, getStopReasonOutcome, type SpawnOutcome, type SpawnResultDetails, type SpawnToolResult } from "./shared.js";
+import {
+	getLastAssistantText,
+	getStopReasonOutcome,
+	inheritedRouteDetails,
+	SPAWN_TOOL_NAME,
+	type SpawnOutcome,
+	type SpawnResultDetails,
+	type SpawnToolResult,
+} from "./shared.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -263,7 +271,7 @@ export function buildChildToolNames(
 	availableTools?: Pick<ToolInfo, "name" | "sourceInfo">[],
 ): string[] {
 	const inheritableParentToolNames = availableTools ? getInheritableParentToolNames(parentToolNames, availableTools) : parentToolNames;
-	const inheritedTools = inheritableParentToolNames.filter((name) => name !== "spawn" && name !== HANDOFF_TOOL_NAME);
+	const inheritedTools = inheritableParentToolNames.filter((name) => name !== SPAWN_TOOL_NAME && name !== HANDOFF_TOOL_NAME);
 	return [...new Set([...inheritedTools, ...childTools.map((tool) => tool.name)])];
 }
 
@@ -484,12 +492,12 @@ export function executeSpawn(
 							provider: route.provider,
 							modelId: route.modelId,
 						}
-					: { status: "inherited", provider: route.provider, modelId: route.modelId };
+					: inheritedRouteDetails(route.provider, route.modelId);
 
 		// WHY: capture the run-owned sink before any await. A late flush after this run ends
 		// must write to the run that spawned the child, never the next run's sink.
 		const childUsageSink = state.childUsageSink;
-		const childProvider = route.provider;
+		const childProvider = route.provider || null;
 
 		const childSessionEpoch = state.childSessionEpoch;
 		const isStale = () => state.childSessionEpoch !== childSessionEpoch;
@@ -771,7 +779,7 @@ export function registerSpawnTool(
 	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
 ): void {
 	pi.registerTool({
-		name: "spawn",
+		name: SPAWN_TOOL_NAME,
 		label: "Spawn",
 		description: SPAWN_DESCRIPTION,
 		promptSnippet: SPAWN_PROMPT_SNIPPET,
