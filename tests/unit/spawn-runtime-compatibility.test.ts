@@ -16,7 +16,7 @@ import { REPO_ROOT_URL } from "../paths.js";
 // The fields isSpawnToolResult checks; everything else stays unknown.
 interface CheckedSpawnResult {
 	content: { type: "text"; text: string }[];
-	details: { model: string; thinking: string; truncated: boolean; outcome: string; stats?: unknown };
+	details: { model: string; thinking: string; truncated: boolean; outcome: string; stats?: unknown; teardownFailures?: string[] };
 	usage: Record<string, unknown>;
 	isError?: unknown;
 }
@@ -386,4 +386,39 @@ test("real child usage matches the session stats across assistant, tool result, 
 		cost: { total: piStats.cost },
 	});
 	// Provider-reported usage.totalTokens need not match Pi's four-field stats total.
+});
+
+test("real child spend reaches a live sink and a throwing sink never propagates into the host", async () => {
+	const rows: [string, string | null, string, unknown][] = [];
+	const proof = await runRealChildInvocation({
+		prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK.",
+		sink: (toolCallId, provider, model, usage) => {
+			rows.push([toolCallId, provider, model, usage]);
+		},
+	});
+	const result = spawnResult(proof.result);
+	expect(proof.probeCalls).toBe(1);
+	expect(rows.length).toBeGreaterThanOrEqual(1);
+	expect(rows.at(-1)?.[0]).toBe("spawn-inherited-0");
+	expect(rows.at(-1)?.[3], "the settle flush row carries the child's cumulative usage").toStrictEqual(result.usage);
+	// message_end fires before persistence, so the last LIVE flush must already fold the ending
+	// message's usage onto the stale entries and match the settled total.
+	expect(rows.at(-2)?.[3], "the final live snapshot equals the settled usage").toStrictEqual(result.usage);
+
+	let throws = 0;
+	const failingProof = await runRealChildInvocation({
+		prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK.",
+		sink: () => {
+			throws++;
+			throw new Error("sink boom");
+		},
+	});
+	const failingResult = spawnResult(failingProof.result);
+	expect(throws).toBeGreaterThanOrEqual(1);
+	// Instrumentation failure never replaces the child reply or flips the outcome: the degradation
+	// is reported in details, not as a terminal error.
+	expect(failingResult).not.toHaveProperty("isError");
+	expect(failingResult.content[0].text).toBe(failingProof.expectedText);
+	expect(failingResult.details).toMatchObject({ outcome: "success", teardownFailures: ["spend flush failed: sink boom"] });
+	expect(failingProof.probeCalls, "the child completes even when the live sink throws").toBe(1);
 });
