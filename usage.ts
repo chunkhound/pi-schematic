@@ -2,12 +2,8 @@
 // session branch, the child ledger, and classifier calls — so the workflow budget and
 // the run overview read the same rows and can never drift.
 import type { Usage } from "@earendil-works/pi-ai";
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-
-/** Narrow `value` to an object record so optional spawn-tool fields can be read safely. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+import type { SessionEntry, SessionStats } from "@earendil-works/pi-coding-agent";
+import { isSpawnResultDetails, SPAWN_TOOL_NAME } from "./spawn/shared.js";
 
 /** Bucket for usage pi records without a model: compaction and branch summaries. */
 export const UNATTRIBUTED_MODEL = "unattributed";
@@ -57,15 +53,31 @@ function usageDelta(usage: Usage): SpendDelta {
 	};
 }
 
+/** Normalize an empty provider to null so a session-less model keeps a bare-model key. */
+function normalizeProvider(provider: string | null): string | null {
+	return provider === "" ? null : provider;
+}
+
 /** Accumulate one usage record into a model's spend row; the only per-call accumulator. */
 export function addModelSpend(map: Map<string, ModelSpend>, provider: string | null, model: string, usage: Usage): void {
-	const key = spendKey(provider, model);
+	const normProvider = normalizeProvider(provider);
+	const key = spendKey(normProvider, model);
 	const existing = map.get(key);
 	if (existing) {
 		accumulateSpend(existing, usageDelta(usage));
 		return;
 	}
-	map.set(key, { key, provider, model, ...usageDelta(usage) });
+	map.set(key, { key, provider: normProvider, model, ...usageDelta(usage) });
+}
+
+/** Single de-dup identity for a usage-bearing entry: the entry id pi assigned, else the
+ * tool-call id a tool result carries. Sources without the entry (the child ledger) key by
+ * tool-call id, so both sides address the same spend. */
+export function spendIdentity(entry: SessionEntry): string | null {
+	if (entry.id) {
+		return entry.id;
+	}
+	return entry.type === "message" && entry.message.role === "toolResult" ? entry.message.toolCallId || null : null;
 }
 
 /** Whether `skip` already owns this entry. Checks the entry id and the tool-call id: the
@@ -88,9 +100,9 @@ function isClaimed(entry: SessionEntry, skip: ReadonlySet<string>): boolean {
  * provider/model, and model-less usage (compaction and branch summaries) falls into
  * {@link UNATTRIBUTED_MODEL} with its tokens. Child-owned tool results are skipped so the
  * child ledger is their single owner and a settled child is counted once.
- * Entries whose spend identity (the entry id when pi assigned one, else the tool-call id) is
- * in `skip` are omitted entirely. The run-scoped scan drops pre-run and already-committed
- * entries, and the child ledger claims its tool results, so no entry is counted twice.
+ * An entry is omitted when `skip` owns its non-empty entry id or, for a tool result, its
+ * tool-call id. The run-scoped scan drops pre-run and already-committed entries, and the
+ * child ledger claims its tool results, so no entry is counted twice.
  */
 export function usageByModel(entries: readonly SessionEntry[], options?: { skip?: ReadonlySet<string> }): Map<string, ModelSpend> {
 	const map = new Map<string, ModelSpend>();
@@ -101,17 +113,23 @@ export function usageByModel(entries: readonly SessionEntry[], options?: { skip?
 		}
 		if (entry.type === "message") {
 			const message = entry.message;
-			if (message.role === "assistant") {
-				// pi's assistant message type always carries provider/model, so no fallback is needed.
-				addModelSpend(map, message.provider, message.model, message.usage);
-			} else if (message.role === "toolResult") {
+			if (messageCarriesUsage(message)) {
 				const usage = message.usage;
 				if (usage) {
-					const details = isRecord(message.details) ? message.details : undefined;
-					const child = typeof details?.model === "string" ? details.model : undefined;
-					const route = isRecord(details?.route) ? details.route : undefined;
-					const provider = typeof route?.provider === "string" ? route.provider : undefined;
-					addModelSpend(map, provider ?? null, child ?? UNATTRIBUTED_MODEL, usage);
+					if (message.role === "assistant") {
+						// The provider may answer under a model other than requested; responseModel is the
+						// effective model and model the fallback, so spend follows what actually ran.
+						addModelSpend(map, message.provider, message.responseModel ?? message.model, usage);
+					} else {
+						// Only a spawned child's result carries a model identity; an unrelated tool's free-form
+						// details must not claim a provider/model spend row. The effective model (details.model)
+						// is authoritative, so group aliases that resolve to one model share that row.
+						if (message.toolName === SPAWN_TOOL_NAME && isSpawnResultDetails(message.details)) {
+							addModelSpend(map, message.details.route?.provider ?? null, message.details.model, usage);
+						} else {
+							addModelSpend(map, null, UNATTRIBUTED_MODEL, usage);
+						}
+					}
 				}
 			}
 			continue;
@@ -129,16 +147,31 @@ export function usageByModel(entries: readonly SessionEntry[], options?: { skip?
 	return map;
 }
 
-/** Count assistant messages in a branch: each is one model round-trip (a "turn").
- * Excludes tool results and child sessions, which are not parent-conversation model turns. */
-export function assistantCount(entries: readonly SessionEntry[]): number {
-	let count = 0;
+/** One pass over entries: total usage and assistant-turn count; the shared walk. */
+export interface SessionAccounting {
+	usage: Usage;
+	assistantTurns: number;
+}
+
+/** Fold usage and count assistant turns in a single walk, so callers never traverse twice. */
+export function collectSessionAccounting(entries: readonly SessionEntry[]): SessionAccounting {
+	let usage = zeroUsage();
+	let assistantTurns = 0;
 	for (const entry of entries) {
-		if (entry.type === "message" && entry.message.role === "assistant") {
-			count += 1;
+		const entryUsage = usageFromEntry(entry);
+		if (entryUsage) {
+			usage = addUsage(usage, entryUsage);
+		}
+		if (entry.type === "message" && messageCarriesUsage(entry.message) && entry.message.role === "assistant") {
+			assistantTurns += 1;
 		}
 	}
-	return count;
+	return { usage, assistantTurns };
+}
+
+/** Count assistant messages in a branch: each is one model round-trip (a "turn"). */
+export function assistantCount(entries: readonly SessionEntry[]): number {
+	return collectSessionAccounting(entries).assistantTurns;
 }
 
 /** Fold spend rows from several sources into one new map; never mutates its inputs. */
@@ -166,28 +199,38 @@ export function spendRowsTotal(rows: ReadonlyMap<string, ModelSpend>): number {
 	return total;
 }
 
-/** Shape of pi's whole-session `getSessionStats()` totals; only these fields are read. */
-export interface SessionStatsLike {
-	tokens?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; total?: number };
-	cost?: number;
+/** Fresh zero Usage; the sole zero producer. */
+export function zeroUsage(): Usage {
+	return {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
 }
 
-// Frozen: a shared mutable zero would corrupt every future aggregate on accidental mutation.
-export const ZERO_USAGE: Usage = Object.freeze({
-	input: 0,
-	output: 0,
-	cacheRead: 0,
-	cacheWrite: 0,
-	totalTokens: 0,
-	cost: Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }),
-});
+// Frozen compat stand-in for the removed singleton; consumers must treat it as read-only.
+// Prefer zeroUsage() for a fresh copy so an accidental mutation never corrupts a shared zero.
+export const ZERO_USAGE: Usage = Object.freeze(zeroUsage());
 
+/**
+ * Mirrors pi-coding-agent's unexported combineUsage: the optional token splits appear only
+ * once some usage reports them. A Pi upgrade that changes the usage fields must update this;
+ * one that changes the entry kinds carrying usage updates messageCarriesUsage — the single
+ * role gate every entry walk shares — and usageFromEntry for non-message kinds. The parity
+ * test "real child usage matches the session stats across assistant, tool result, usage,
+ * compaction and branch-summary entries" checks both against Pi.
+ */
 export function addUsage(a: Usage, b: Usage): Usage {
 	return {
 		input: a.input + b.input,
 		output: a.output + b.output,
 		cacheRead: a.cacheRead + b.cacheRead,
 		cacheWrite: a.cacheWrite + b.cacheWrite,
+		...(a.cacheWrite1h !== undefined || b.cacheWrite1h !== undefined ? { cacheWrite1h: (a.cacheWrite1h ?? 0) + (b.cacheWrite1h ?? 0) } : {}),
+		...(a.reasoning !== undefined || b.reasoning !== undefined ? { reasoning: (a.reasoning ?? 0) + (b.reasoning ?? 0) } : {}),
 		totalTokens: a.totalTokens + b.totalTokens,
 		cost: {
 			input: a.cost.input + b.cost.input,
@@ -197,6 +240,11 @@ export function addUsage(a: Usage, b: Usage): Usage {
 			total: a.cost.total + b.cost.total,
 		},
 	};
+}
+
+/** Whether a message carries usage: assistant turns and tool results do, so user/system/custom ends fold nothing. */
+export function messageCarriesUsage(message: { role: string }): message is { role: "assistant" | "toolResult"; usage?: Usage } {
+	return message.role === "assistant" || message.role === "toolResult";
 }
 
 /** Usage carried by one entry: usage entries, summaries, and assistant/tool messages. */
@@ -209,10 +257,7 @@ function usageFromEntry(entry: SessionEntry): Usage | null {
 	}
 	if (entry.type === "message") {
 		const message = entry.message;
-		if (message.role === "assistant") {
-			return message.usage;
-		}
-		if (message.role === "toolResult") {
+		if (messageCarriesUsage(message)) {
 			return message.usage ?? null;
 		}
 	}
@@ -220,21 +265,24 @@ function usageFromEntry(entry: SessionEntry): Usage | null {
 }
 
 export function collectUsage(entries: readonly SessionEntry[]): Usage {
-	return entries.reduce<Usage>((acc, entry) => {
-		const usage = usageFromEntry(entry);
-		return usage ? addUsage(acc, usage) : acc;
-	}, ZERO_USAGE);
+	return collectSessionAccounting(entries).usage;
 }
 
-// Pi exposes whole-session cost as one number; every consumer reads cost.total,
-// so the per-component costs stay zero and the total is authoritative.
-export function sessionStatsToUsage(stats: SessionStatsLike): Usage {
+/**
+ * @deprecated Tightened alias of pi's {@link SessionStats}: every field is required, so a
+ * partial stats object no longer compiles. Use SessionStats directly; there are no fallbacks.
+ */
+export type SessionStatsLike = SessionStats;
+
+// Pi exposes whole-session cost as one number, so only cost.total is authoritative; the
+// per-component costs stay zero by design and addUsage preserves them as-is.
+export function sessionStatsToUsage(stats: SessionStats): Usage {
 	return {
-		input: stats.tokens?.input ?? 0,
-		output: stats.tokens?.output ?? 0,
-		cacheRead: stats.tokens?.cacheRead ?? 0,
-		cacheWrite: stats.tokens?.cacheWrite ?? 0,
-		totalTokens: stats.tokens?.total ?? 0,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: stats.cost ?? 0 },
+		input: stats.tokens.input,
+		output: stats.tokens.output,
+		cacheRead: stats.tokens.cacheRead,
+		cacheWrite: stats.tokens.cacheWrite,
+		totalTokens: stats.tokens.total,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: stats.cost },
 	};
 }

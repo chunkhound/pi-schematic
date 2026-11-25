@@ -14,10 +14,12 @@ import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
 /**
  * Run-scoped sink for live child spend. The active workflow host installs it, and the
  * spawn tool flushes each child's cumulative usage on every message_end and at settle.
- * Null outside a workflow run; only host dispose uninstalls it, never resetState, because
- * a run survives `workflow.new`.
+ * Each flush REPLACES the row for that toolCallId with the given cumulative usage; an
+ * accumulating host would multiply a child's spend by the flush count. Null outside a
+ * workflow run; only host dispose uninstalls it, never resetState, because a run
+ * survives `workflow.new`.
  */
-type ChildUsageSink = (toolCallId: string, provider: string | null, model: string, usage: Usage) => void;
+export type ChildUsageSink = (toolCallId: string, provider: string | null, model: string, usage: Usage) => void;
 
 /** A handoff accepted by the tool, kept until its turn_end boundary is confirmed or failed. */
 export interface StagedHandoff {
@@ -140,7 +142,7 @@ export interface SchematicState {
 	/** Live child-spend sink installed by the active workflow host; see {@link ChildUsageSink}. */
 	childUsageSink: ChildUsageSink | null;
 
-	/** True while a workflow run owns the input channel (serial-run invariant, see docs/workflows.md). */
+	/** True while a workflow run owns the input channel (serial-run invariant). */
 	inputSuppressed: boolean;
 
 	/** Whether readonly mode is active — write/edit/powershell blocked; handoff needs explicit /handoff or a human topic boundary; bash writes limited to temp. */

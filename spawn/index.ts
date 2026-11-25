@@ -23,6 +23,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { abortChildSession, type SchematicState } from "../state.js";
+import { addUsage, collectSessionAccounting, messageCarriesUsage, zeroUsage } from "../usage.js";
 import { formatByteCap, formatPageList } from "../notebook/store.js";
 import { createNotebookToolDefinitions } from "../notebook/tools.js";
 import { resolveSpawnModelRoute } from "../model-groups/router.js";
@@ -86,42 +87,8 @@ interface ChildAccounting {
 	usage: Usage;
 	/** Absent when the child's entries could not be read or summed. */
 	stats?: Record<string, number>;
-}
-
-function emptyChildUsage(): Usage {
-	return {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-	};
-}
-
-/**
- * Mirrors pi-coding-agent's unexported combineUsage: the optional token splits appear only once some usage reports them.
- * This copy and the entry walk in collectChildAccounting follow Pi's own session usage sum. A Pi upgrade that changes
- * the usage fields or the entry kinds that carry usage must update both; the test "real child usage matches the
- * session stats across assistant, tool result, usage, compaction and branch-summary entries" checks them against Pi.
- */
-function combineUsage(first: Usage, second: Usage): Usage {
-	return {
-		input: first.input + second.input,
-		output: first.output + second.output,
-		cacheRead: first.cacheRead + second.cacheRead,
-		cacheWrite: first.cacheWrite + second.cacheWrite,
-		...(first.cacheWrite1h !== undefined || second.cacheWrite1h !== undefined ? { cacheWrite1h: (first.cacheWrite1h ?? 0) + (second.cacheWrite1h ?? 0) } : {}),
-		...(first.reasoning !== undefined || second.reasoning !== undefined ? { reasoning: (first.reasoning ?? 0) + (second.reasoning ?? 0) } : {}),
-		totalTokens: first.totalTokens + second.totalTokens,
-		cost: {
-			input: first.cost.input + second.cost.input,
-			output: first.cost.output + second.cost.output,
-			cacheRead: first.cost.cacheRead + second.cost.cacheRead,
-			cacheWrite: first.cost.cacheWrite + second.cost.cacheWrite,
-			total: first.cost.total + second.cost.total,
-		},
-	};
+	/** True when the entries could not be read; the flush must skip instead of writing a zero. */
+	unreadable?: boolean;
 }
 
 function statsOf(usage: Usage, turns: number): Record<string, number> {
@@ -142,30 +109,13 @@ function collectChildAccounting(session: Pick<AgentSession, "sessionManager">): 
 	// accounting, so an entry list that cannot be read or summed counts as zero usage
 	// and the result reports statsUnavailable instead of losing that text.
 	try {
-		let usage = emptyChildUsage();
-		let assistantTurns = 0;
-		for (const entry of session.sessionManager.getEntries()) {
-			if (entry.type === "usage") {
-				if (entry.usage) {
-					usage = combineUsage(usage, entry.usage);
-				}
-			} else if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage) {
-				usage = combineUsage(usage, entry.usage);
-			} else if (entry.type === "message") {
-				const message = entry.message;
-				if (message.role === "assistant") {
-					assistantTurns++;
-					if (message.usage) {
-						usage = combineUsage(usage, message.usage);
-					}
-				} else if (message.role === "toolResult" && message.usage) {
-					usage = combineUsage(usage, message.usage);
-				}
-			}
-		}
-		return { usage, stats: statsOf(usage, assistantTurns) };
+		const entries = session.sessionManager.getEntries();
+		const accounting = collectSessionAccounting(entries);
+		return { usage: accounting.usage, stats: statsOf(accounting.usage, accounting.assistantTurns) };
 	} catch {
-		return { usage: emptyChildUsage() };
+		// Unreadable entries must never masquerade as zero spend: a flush would overwrite a real
+		// ledger row with a zero. The caller skips the write when `unreadable` is set.
+		return { usage: zeroUsage(), unreadable: true };
 	}
 }
 
@@ -557,14 +507,29 @@ export function executeSpawn(
 		// Child spend belongs to the run ledger from the moment it is incurred. Flushing
 		// cumulative usage on every message_end keeps live cost attributed to the child's
 		// model, so an aborted run cannot leave a model-less residual; cumulative (not
-		// delta) makes the settle flush idempotent.
-		const flushChildSpend = () => {
+		// delta) makes the settle flush idempotent. message_end fires before the message is
+		// persisted, so the flush folds the event's own usage to avoid lagging one message.
+		const flushChildSpend = (eventUsage?: Usage) => {
 			if (!childUsageSink) {
 				return;
 			}
-			childUsageSink(toolCallId, childProvider, childModel.id, collectChildAccounting(session).usage);
+			const accounting = collectChildAccounting(session);
+			if (accounting.unreadable === true) {
+				// Never overwrite a real ledger row with a zero: when the entries cannot be read the
+				// cumulative total is unknown, so the previous live rows stay intact.
+				return;
+			}
+			const usage = eventUsage ? addUsage(accounting.usage, eventUsage) : accounting.usage;
+			childUsageSink(toolCallId, childProvider, childModel.id, usage);
 		};
 		let unsubscribeChildEvents: (() => void) | undefined;
+		// `settled` marks the child finalized: message_end from a retained subscriber after the settle flush is inert.
+		let settled = false;
+		// Instrumentation failures degrade instead of failing: a live-flush throw is retained (first,
+		// falsy-preserving) for the result report; a failing subscribe loses live flushes only.
+		let liveFlushFailed = false;
+		let liveFlushFailure: unknown;
+		const degradedFailures: string[] = [];
 		const buildBaseDetails = (truncated: boolean, outcome: SpawnOutcome): SpawnResultDetails => ({
 			model: childModel.id,
 			thinking: effectiveChildThinking(),
