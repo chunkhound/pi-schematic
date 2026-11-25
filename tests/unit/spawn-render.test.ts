@@ -179,6 +179,32 @@ test("inherited route identity preserves provider/modelId when present", async (
 	expect(lines).toContainEqual(expect.stringContaining("✅ anthropic/opus • low"));
 });
 
+test("spawn result reports teardown failures as a joined dim line without masking success", async () => {
+	const state = createState();
+	const childSpawnTool = await makeChildSpawnTool(state);
+	const details = {
+		model: "mock-model",
+		thinking: "medium",
+		truncated: false,
+		outcome: "success" as const,
+		teardownFailures: ["spend flush failed: sink boom", "event unsubscribe failed: boom"],
+	};
+
+	const staticLines = childSpawnTool
+		.renderResult({ content: [{ type: "text", text: "child reply" }], details }, { expanded: false, isPartial: false }, theme, createToolRenderContext())
+		.render(120);
+	expect(staticLines).toContainEqual(expect.stringContaining("💬 done"));
+	expect(staticLines).toContainEqual(expect.stringContaining("child reply"));
+	expect(staticLines).toContainEqual(expect.stringContaining("spend flush failed: sink boom; event unsubscribe failed: boom"));
+
+	state.childSessions.set("tool-call-1", createSession([{ role: "assistant", content: [{ type: "text", text: "child reply" }] }]));
+	const collapsedLines = childSpawnTool
+		.renderResult({ content: [{ type: "text", text: "child reply" }], details }, { expanded: false, isPartial: false }, theme, createToolRenderContext())
+		.render(120);
+	expect(collapsedLines).toContainEqual(expect.stringContaining("✅ mock-model • medium"));
+	expect(collapsedLines).toContainEqual(expect.stringContaining("spend flush failed: sink boom; event unsubscribe failed: boom"));
+});
+
 test("collapsed nested spawn render keeps all text blocks from the last assistant message", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);

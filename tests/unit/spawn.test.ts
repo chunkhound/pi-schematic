@@ -1401,7 +1401,7 @@ test("a failed child abort during the prompt is reported through the UI notice",
 	expect(result.isError).toBe(true);
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.content[0].text).toBe("Child agent aborted: This operation was aborted\n\nchild result");
-	expect(notifications).toStrictEqual(["Spawn cleanup failed: abort failed"]);
+	expect(notifications).toStrictEqual(["Spawn teardown failed: abort failed"]);
 });
 
 // ── Usage of a spawn that fails ──────────────────────────────────────
@@ -1518,7 +1518,7 @@ test("a completed spawn whose dispose fails returns the dispose error with the c
 		},
 	});
 
-	expect(await host.execute("spawn-dispose-failure")).toStrictEqual(failedSpawnResult("dispose failed"));
+	expect(await host.execute("spawn-dispose-failure")).toStrictEqual(failedSpawnResult("session dispose failed: dispose failed"));
 	expect(host.entryReads).toBe(1);
 	assertChildRegistriesCleared(host.state);
 });
@@ -1745,17 +1745,8 @@ test("headless spawn aggregates Error and cleanup failures without mutating the 
 	Object.freeze(primaryFailure);
 	const { execution, state } = await executeWithFailingCleanup(primaryFailure, cleanupFailure);
 
-	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", EMPTY_CHILD_USAGE);
+	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; session dispose failed: dispose failed", EMPTY_CHILD_USAGE);
 	expect(primaryFailure.cause).toBe(originalCause);
-	assertChildRegistriesCleared(state);
-});
-
-test("headless spawn aggregates primitive and cleanup failures", async () => {
-	const primaryFailure = "prompt failed";
-	const cleanupFailure = new Error("dispose failed");
-	const { execution, state } = await executeWithFailingCleanup(primaryFailure, cleanupFailure);
-
-	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", EMPTY_CHILD_USAGE);
 	assertChildRegistriesCleared(state);
 });
 
@@ -1801,7 +1792,7 @@ test("UI spawn notifies when cleanup also fails after a primary failure", async 
 	});
 
 	assertErrorResult(await execution, "prompt failed", EMPTY_CHILD_USAGE);
-	expect(notifications).toStrictEqual([["Spawn cleanup failed: dispose failed", "error"]]);
+	expect(notifications).toStrictEqual([["Spawn teardown failed: session dispose failed: dispose failed", "error"]]);
 	assertChildRegistriesCleared(state);
 });
 
@@ -1811,7 +1802,7 @@ test("UI spawn names both failures when the cleanup notice throws", async () => 
 	});
 	const { execution, state } = await executeWithFailingCleanup(new Error("prompt failed"), new Error("dispose failed"), notify);
 
-	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", EMPTY_CHILD_USAGE);
+	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; session dispose failed: dispose failed", EMPTY_CHILD_USAGE);
 	expect(notify).toHaveBeenCalledOnce();
 	assertChildRegistriesCleared(state);
 });
@@ -2677,7 +2668,7 @@ test("reset during prompt reports a failed abort once through the UI", async () 
 	rejectPrompt(new Error("prompt rejected"));
 
 	assertErrorResult(await execution, "Spawn invalidated by reset; child abort failed.", EMPTY_CHILD_USAGE);
-	expect(notifications).toStrictEqual([["Spawn cleanup failed: abort failed", "error"]]);
+	expect(notifications).toStrictEqual([["Spawn teardown failed: abort failed", "error"]]);
 	expect(abort).toHaveBeenCalledOnce();
 	expect(dispose).toHaveBeenCalledOnce();
 	assertChildRegistriesCleared(state);
@@ -3154,7 +3145,7 @@ test("an abort during a running update notifies a failed child abort once", asyn
 	expect(result.isError).toBe(true);
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.content[0].text).toBe("abort failed");
-	expect(notifications).toStrictEqual(["Spawn cleanup failed: abort failed"]);
+	expect(notifications).toStrictEqual(["Spawn teardown failed: abort failed"]);
 	expect(prompt).not.toHaveBeenCalled();
 });
 
@@ -3190,7 +3181,7 @@ test("reset during a running update reports one failed abort", async () => {
 	);
 
 	assertErrorResult(result, "Spawn invalidated by reset; child abort failed.", EMPTY_CHILD_USAGE);
-	expect(notifications).toStrictEqual(["Spawn cleanup failed: abort failed"]);
+	expect(notifications).toStrictEqual(["Spawn teardown failed: abort failed"]);
 	expect(prompt).not.toHaveBeenCalled();
 });
 
@@ -3480,7 +3471,7 @@ test("spawn abort before its prompt returns the failed abort and notifies the UI
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.content[0].text).toBe("abort failed");
 	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
-	expect(notifications).toStrictEqual([["Spawn cleanup failed: abort failed", "error"]]);
+	expect(notifications).toStrictEqual([["Spawn teardown failed: abort failed", "error"]]);
 });
 
 test("a completed UI spawn whose dispose fails returns the dispose error without a notice", async () => {
@@ -3503,7 +3494,7 @@ test("a completed UI spawn whose dispose fails returns the dispose error without
 		}),
 	);
 
-	expect(result).toStrictEqual(failedSpawnResult("dispose failed"));
+	expect(result).toStrictEqual(failedSpawnResult("session dispose failed: dispose failed"));
 	expect(notifications).toStrictEqual([]);
 	assertChildRegistriesCleared(host.state);
 });

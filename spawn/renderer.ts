@@ -167,6 +167,12 @@ function normalizeSpawnResultDetails(value: unknown): SpawnResultDetails | undef
 	if (typeof value.statsUnavailable === "boolean") {
 		details.statsUnavailable = value.statsUnavailable;
 	}
+	if (Array.isArray(value.teardownFailures)) {
+		const failures = value.teardownFailures.filter((failure): failure is string => typeof failure === "string");
+		if (failures.length > 0) {
+			details.teardownFailures = failures;
+		}
+	}
 	return details;
 }
 
@@ -236,6 +242,10 @@ function equalStats(a?: Record<string, number>, b?: Record<string, number>): boo
 	}
 	const keys = Object.keys(a);
 	return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
+}
+
+function equalStringArray(a?: string[], b?: string[]): boolean {
+	return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
 
 function equalRoute(a: SpawnResultDetails["route"], b: SpawnResultDetails["route"]): boolean {
@@ -311,6 +321,14 @@ function formatCollapsedStats(details: SpawnResultDetails): { text: string; colo
 		return { text: "stats unavailable", color: "muted" };
 	}
 	return undefined;
+}
+
+/** Compact single-line summary of instrumentation-only teardown failures, if any. */
+function formatTeardownFailureLine(failures: readonly string[] | undefined): string | undefined {
+	if (!failures || failures.length === 0) {
+		return undefined;
+	}
+	return `⚠ ${failures.join("; ")}`;
 }
 
 // ── NestedAgentSessionComponent forward reference ────────────────────
@@ -618,6 +636,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			!equalRoute(prior.route, details.route) ||
 			!equalStats(prior.stats, details.stats) ||
 			prior.statsUnavailable !== details.statsUnavailable ||
+			!equalStringArray(prior.teardownFailures, details.teardownFailures) ||
 			this.nestTheme !== theme;
 		this.details = details;
 		this.nestTheme = theme;
@@ -1032,6 +1051,11 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			lines.push(truncateAndColor(statsLine.text, width, color, statsLine.color));
 		}
 
+		const teardownLine = formatTeardownFailureLine(details?.teardownFailures);
+		if (teardownLine !== undefined) {
+			lines.push(truncateAndColor(teardownLine, width, color, "dim"));
+		}
+
 		return lines;
 	}
 
@@ -1401,9 +1425,11 @@ function renderSpawnResult(
 	const outcome = forcedError ? "error" : (details?.outcome ?? "running");
 	const meta = details ? `${getOutcomeMarker(outcome)}${formatSpawnIdentity(details)}` : "";
 	const status = getOutcomeStatusText(outcome);
+	const teardownLine = formatTeardownFailureLine(details?.teardownFailures);
 	const text = [
 		meta ? theme.fg("dim", meta) : "",
 		status !== undefined ? theme.fg(outcome === "error" ? "warning" : "dim", status) : "",
+		teardownLine !== undefined ? theme.fg("dim", teardownLine) : "",
 		theme.fg("toolOutput", summary),
 	]
 		.filter(Boolean)
