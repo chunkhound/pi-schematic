@@ -42,6 +42,7 @@ interface SchematicState {
   childSessions: Map<string, AgentSession>;
   liveChildSessions: Map<string, AgentSession>;
   childSessionEpoch: number;
+  childUsageSink: ChildUsageSink | null;
 }
 ```
 
@@ -61,7 +62,9 @@ The UI shows an aborted result as aborted although it carries `isError`. Once `d
 
 The result text is cut at the first 2000 lines, then at 51,200 bytes (50 KiB) on a UTF-8 character boundary. The marker writes the size as `50 KiB (51200 bytes)`, the form notebook uses, and advises spawning a new child with a narrower request. Error results are cut to the same limits with the same marker.
 
-The spawn result returns the child's token and cost usage. It counts toward the parent's session totals and footer, not its context size. The usage is one sum over the child session's entries, built the way Pi sums its own session usage. If the entries cannot be read or summed, the spawn keeps the child's text, reports zero usage, omits `details.stats` and sets `statsUnavailable`; the underlying error is not part of the result. `details.stats` and `statsUnavailable` are never both set.
+The spawn result returns the child's token and cost usage. It counts toward the parent's session totals and footer, not its context size. The usage is one sum over the child session's entries, built the way Pi sums its own session usage. If the entries cannot be read or summed, the spawn keeps the child's text, reports zero usage, omits `details.stats` and sets `statsUnavailable`; the underlying error is not part of the result. `details.stats` and `statsUnavailable` are never both set. `sessionStatsToUsage` consumes Pi's session-stats shape (`SessionStats`) with every field required; the former optional-field `SessionStatsLike` name survives only as a type alias with no fallbacks, and `ZERO_USAGE` remains as a frozen stand-in for `zeroUsage()`. The `SessionStats` contract is intentionally full-shape: the cross-repo host must pass complete stats; the `ZERO_USAGE`/`SessionStatsLike` aliases remain for compatibility.
+
+A live child-spend sink (`state.childUsageSink`) receives the child's cumulative spend on every `message_end` and again at settle. Its contract — keyed by tool-call id, every flush replacing the row with the child's cumulative usage, installed only by the workflow host and never uninstalled by resetState — is owned solely by the `ChildUsageSink` type in `state.ts`. Because flushes are cumulative, the settle flush is idempotent; `message_end` fires before Pi persists the message, so each live flush folds the ending message's own usage instead of lagging one message, and a child whose entries cannot be read never overwrites a real ledger row. Instrumentation failures degrade visibly without failing the spawn: a failing subscribe loses live flushes only, reports `Spawn event subscription failed: <reason>` in `details.teardownFailures` and, with a UI, also notifies it; `statsUnavailable` stays reserved for genuinely unsummable entries. A throw from a live flush is retained and reported after persistence as a `spend flush` teardown failure, combined into `Spawn failed and cleanup failed: <primary>; <cleanup>` when no UI shows the notice. Each live flush is a full entries walk over the child session per `message_end`, so cumulative cost is O(n²) over long child sessions, bounded because spawns are short.
 
 Spawn limitations:
 
@@ -69,7 +72,7 @@ Spawn limitations:
 - A dispose failure after a run that returned normally (a success, or an `error` or `aborted` completion) replaces the result with the dispose error.
 - A parent abort after the child's final answer returns the answer behind the abort line.
 - A prompt failure under an aborted parent signal reads as aborted.
-- Error texts show only the error's own message, except two combined texts: `Spawn invalidated by reset; child abort failed.` and, without a UI or when the cleanup notice throws, `Spawn failed and cleanup failed: <primary>; <cleanup>`.
+- Error texts show only the error's own message, except three combined forms: `Spawn invalidated by reset; child abort failed.`; a teardown-failure report (`<label> failed: <reason>; …`) that shows as the `Spawn teardown failed: <report>` error notice with a UI, and as the result text when a successful run hits a non-instrumentation teardown failure; and `Spawn failed and cleanup failed: <primary>; <cleanup>`, the result text when a primary failure coexists with teardown failures and no UI shows the notice.
 - A thrown value that cannot be turned into text makes the spawn reject instead of resolving.
 - A child abort that rejects after the prompt started is reported only as a notice, and only when there is a UI. Pi's own abort does not reject, so only another session implementation reaches this.
 
@@ -141,16 +144,17 @@ Coding-agent guardrail on every OS — not a hardened security boundary. Stronge
 
 ## Package layout (high level)
 
-| Area                                      | Role                                                                                                                            |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `index.ts`                                | Extension entry: tools, hooks, wiring                                                                                           |
-| `prompt-sections.ts` / `system-prompt.ts` | Prompt-section registry, the static context-management primer and the date section                                              |
-| `spawn/`                                  | Child sessions and live TUI rendering                                                                                           |
-| `model-groups/`                           | Persistence, boot validation, CRUD TUI/autocomplete, spawn routing, prompt section                                              |
-| `notebook/`                               | Page store, tools, topic, rehydration, external pager, prompt sections                                                          |
-| `handoff/`                                | Verbatim next-instruction delivery, model-owned context prep, the turn_end boundary (cut, successor, note), live readonly nudge |
-| `readonly-*.ts` / `os-sandbox.ts`         | Readonly posture, bash policy, sandbox                                                                                          |
-| `watchdog.ts` / `tui.ts` / `state.ts`     | Pressure advisories and required-handoff enforcement, status UI, shared state                                                   |
+| Area                                      | Role                                                                                                                                                                                 |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `index.ts`                                | Extension entry: tools, hooks, wiring                                                                                                                                                |
+| `prompt-sections.ts` / `system-prompt.ts` | Prompt-section registry, the static context-management primer and the date section                                                                                                   |
+| `spawn/`                                  | Child sessions and live TUI rendering                                                                                                                                                |
+| `model-groups/`                           | Persistence, boot validation, CRUD TUI/autocomplete, spawn routing, prompt section                                                                                                   |
+| `notebook/`                               | Page store, tools, topic, rehydration, external pager, prompt sections                                                                                                               |
+| `handoff/`                                | Verbatim next-instruction delivery, model-owned context prep, the turn_end boundary (cut, successor, note), live readonly nudge                                                      |
+| `readonly-*.ts` / `os-sandbox.ts`         | Readonly posture, bash policy, sandbox                                                                                                                                               |
+| `watchdog.ts` / `tui.ts` / `state.ts`     | Pressure advisories and required-handoff enforcement, status UI, shared state                                                                                                        |
+| `usage.ts`                                | Spend ledger: per-model spend rows derived from session entries behind one accumulator (`addUsage`/`collectUsage`/`usageByModel`); the child-spend sink contract lives in `state.ts` |
 
 ## See also
 
