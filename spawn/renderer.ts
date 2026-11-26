@@ -323,12 +323,12 @@ function formatCollapsedStats(details: SpawnResultDetails): { text: string; colo
 	return undefined;
 }
 
-/** Compact single-line summary of instrumentation-only teardown failures, if any. */
+/** One-line teardown summary; escapes control bytes and newlines so stored/imported details stay safe. */
 function formatTeardownFailureLine(failures: readonly string[] | undefined): string | undefined {
 	if (!failures || failures.length === 0) {
 		return undefined;
 	}
-	return `⚠ ${failures.join("; ")}`;
+	return `⚠ ${failures.map(escapeDisplayLabel).join("; ")}`;
 }
 
 // ── NestedAgentSessionComponent forward reference ────────────────────
@@ -1075,6 +1075,11 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		if (this.details) {
 			const header = `${getOutcomeMarker(this.liveOutcome)}${formatSpawnIdentity(this.details)}`;
 			lines.push(leftPad + truncateToWidth(colorExpanded("dim", header), childWidth));
+		}
+
+		const teardownLine = formatTeardownFailureLine(this.details?.teardownFailures);
+		if (teardownLine !== undefined) {
+			lines.push(leftPad + truncateToWidth(colorExpanded("dim", teardownLine), childWidth));
 		}
 
 		for (const child of this.children) {

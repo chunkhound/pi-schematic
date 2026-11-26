@@ -179,6 +179,27 @@ test("inherited route identity preserves provider/modelId when present", async (
 	expect(lines).toContainEqual(expect.stringContaining("✅ anthropic/opus • low"));
 });
 
+// Byte-level render contract for stored/imported teardown diagnostics: exactly one line carries the
+// report, terminal control bytes (C0/C1, e.g. SGR ESC and APC) are escaped, and embedded newlines stay escaped.
+function hasControlByte(text: string): boolean {
+	for (const char of text) {
+		const code = char.codePointAt(0);
+		if (code !== undefined && (code < 0x20 || (code >= 0x7f && code <= 0x9f))) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function expectCleanTeardownLine(lines: readonly string[]): void {
+	const hits = lines.filter((line) => line.includes("spend flush failed"));
+	expect(hits).toHaveLength(1);
+	const rendered = hits[0];
+	assertPresent(rendered, "teardown line is rendered");
+	expect(hasControlByte(rendered)).toBe(false);
+	expect(rendered).toMatch(/\\x1B.*\\x9F.*\\n/);
+}
+
 test("spawn result reports teardown failures as a joined dim line without masking success", async () => {
 	const state = createState();
 	const childSpawnTool = await makeChildSpawnTool(state);
@@ -187,7 +208,12 @@ test("spawn result reports teardown failures as a joined dim line without maskin
 		thinking: "medium",
 		truncated: false,
 		outcome: "success" as const,
-		teardownFailures: ["spend flush failed: sink boom", "event unsubscribe failed: boom"],
+		teardownFailures: [
+			"spend flush failed: sink boom",
+			"event unsubscribe failed: boom",
+			// Persisted/imported details may carry SGR/APC control bytes and an embedded newline.
+			"hijack\x1b[31mred\x1b[0m\x9f\nnext",
+		],
 	};
 
 	const staticLines = childSpawnTool
@@ -195,14 +221,20 @@ test("spawn result reports teardown failures as a joined dim line without maskin
 		.render(120);
 	expect(staticLines).toContainEqual(expect.stringContaining("💬 done"));
 	expect(staticLines).toContainEqual(expect.stringContaining("child reply"));
-	expect(staticLines).toContainEqual(expect.stringContaining("spend flush failed: sink boom; event unsubscribe failed: boom"));
+	expectCleanTeardownLine(staticLines);
 
 	state.childSessions.set("tool-call-1", createSession([{ role: "assistant", content: [{ type: "text", text: "child reply" }] }]));
 	const collapsedLines = childSpawnTool
 		.renderResult({ content: [{ type: "text", text: "child reply" }], details }, { expanded: false, isPartial: false }, theme, createToolRenderContext())
 		.render(120);
 	expect(collapsedLines).toContainEqual(expect.stringContaining("✅ mock-model • medium"));
-	expect(collapsedLines).toContainEqual(expect.stringContaining("spend flush failed: sink boom; event unsubscribe failed: boom"));
+	expectCleanTeardownLine(collapsedLines);
+
+	state.childSessions.set("tool-call-1", createSession([{ role: "assistant", content: [{ type: "text", text: "child reply" }] }]));
+	const expandedLines = childSpawnTool
+		.renderResult({ content: [{ type: "text", text: "child reply" }], details }, { expanded: true, isPartial: false }, theme, createToolRenderContext())
+		.render(120);
+	expectCleanTeardownLine(expandedLines);
 });
 
 test("collapsed nested spawn render keeps all text blocks from the last assistant message", async () => {
