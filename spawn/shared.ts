@@ -22,7 +22,7 @@ export interface SpawnResultDetails {
 	route?: SpawnRouteDetails;
 	stats?: Record<string, number>;
 	statsUnavailable?: boolean;
-	/** Instrumentation-only teardown failures (spend-flush writes) that degraded without failing the run. */
+	/** Teardown failures that did not become the result error: instrumentation-only failures (spend flushes, event unsubscribes) on a successful run, or every cleanup failure on a failed run whose error notice succeeded (the primary error is still thrown). */
 	teardownFailures?: string[];
 }
 

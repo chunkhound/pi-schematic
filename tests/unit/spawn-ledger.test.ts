@@ -27,6 +27,37 @@ import {
 } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
 
+function hasControlChars(text: string): boolean {
+	for (const ch of text) {
+		const code = ch.charCodeAt(0);
+		if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/** Run a headless spawn of `session` under `state`; `signal` drives the abort path and `notify` feeds the UI. */
+async function runSpawn(
+	state: ReturnType<typeof createState>,
+	session: ReturnType<typeof mockSessionFactory>,
+	signal?: AbortSignal,
+	notify?: (message: string, level?: string) => void,
+) {
+	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
+	return executeSpawn(
+		"spawn-sanitize",
+		pi,
+		spawnContext({ model: { id: "mock-model" }, cwd: "/tmp", ...(notify ? { notify } : {}) }),
+		state,
+		{ prompt: "Do the task" },
+		signal,
+		undefined,
+		"medium",
+		() => Promise.resolve(sessionResult(session)),
+	);
+}
+
 test("spawn flushes child spend to the run sink keyed by tool-call id", async () => {
 	const rows: [string, string | null, string, unknown][] = [];
 	const state = createState();
@@ -282,7 +313,7 @@ test("a child event subscription failure notifies when a UI is present and the s
 		() => Promise.resolve(sessionResult(session)),
 	);
 	expect(result.details.outcome).toBe("success");
-	expect(notifications).toStrictEqual([["Spawn event subscription failed: subscribe exploded", "warning"]]);
+	expect(notifications).toStrictEqual([["Spawn teardown failed: Spawn event subscription failed: subscribe exploded", "warning"]]);
 	assertChildRegistriesCleared(state);
 });
 
@@ -358,57 +389,176 @@ test("the settle flush runs even when unsubscribe throws", async () => {
 		() => Promise.resolve(sessionResult(session)),
 	);
 
-	assertErrorResult(result, "event unsubscribe failed: unsubscribe exploded", usageFixtureUsd(0.25));
-	expect(rows).toHaveLength(1);
-	expect(rows[0][0]).toBe("spawn-unsub-throw");
-	expect(rows[0][3]).toStrictEqual(usageFixtureUsd(0.25));
+	// An unsubscribe throw is instrumentation-only: it degrades, never fails the successful run, so
+	// the reply stands and the report names the failure in details.teardownFailures.
+	expect(result.details.outcome).toBe("success");
+	expect(result.isError).toBeUndefined();
+	expect(result.content).toStrictEqual([{ type: "text", text: "child result" }]);
+	expect(result.details.teardownFailures).toContain("event unsubscribe failed: unsubscribe exploded");
+	expect(rows).toStrictEqual([["spawn-unsub-throw", "test", "mock-model", usageFixtureUsd(0.25)]]);
 	assertChildRegistriesCleared(state);
 });
 
-test("an aborted child leaves a correctly-keyed sink row", async () => {
+test.each([
+	["the notifier succeeds", false],
+	["the notifier throws", true],
+])("an unsubscribe throw warns once via the UI and keeps the reply when %s", async (_, notifyThrows) => {
+	const notifications: [string, string | undefined][] = [];
+	const notify = vi.fn((message: string, level?: string) => {
+		notifications.push([message, level]);
+		if (notifyThrows) {
+			throw new Error("notify exploded");
+		}
+	});
+	const state = createState();
+	state.childUsageSink = () => undefined;
+	const session = mockSessionFactory({
+		subscribe: () => () => {
+			throw new Error("unsubscribe exploded");
+		},
+		prompt: () => Promise.resolve(),
+	});
+	const result = await runSpawn(state, session, undefined, notify);
+	expect(result.details.outcome).toBe("success");
+	expect(result.content).toStrictEqual([{ type: "text", text: "child result" }]);
+	expect(notifications).toStrictEqual([["Spawn teardown failed: event unsubscribe failed: unsubscribe exploded", "warning"]]);
+	expect(result.details.teardownFailures).toContain("event unsubscribe failed: unsubscribe exploded");
+	expect(notify).toHaveBeenCalledOnce();
+	assertChildRegistriesCleared(state);
+});
+
+test("control characters are stripped from teardown reports", async () => {
+	const state = createState();
+	const session = mockSessionFactory({
+		prompt: () => Promise.resolve(),
+		dispose: () => {
+			throw new Error("\x1b[31mred\x1b[0m\x1b");
+		},
+	});
+	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
+	const result = await executeSpawn(
+		"spawn-ctrl-report",
+		pi,
+		spawnContext({ model: { id: "mock-model" }, cwd: "/tmp" }),
+		state,
+		{ prompt: "Do the task" },
+		undefined,
+		undefined,
+		"medium",
+		() => Promise.resolve(sessionResult(session)),
+	);
+
+	// The dispose throw (with ANSI escapes and a bare ESC) must surface as visible text only: no
+	// control bytes and no leftover ANSI fragments like "[31m".
+	expect(result.isError).toBe(true);
+	expect(result.content[0].text).toBe("session dispose failed: red");
+	expect(result.content[0].text).not.toContain("[31m");
+	expect(hasControlChars(result.content[0].text)).toBe(false);
+	assertChildRegistriesCleared(state);
+});
+
+test("a primary error keeps its newline in the result text", async () => {
+	const state = createState();
+	const session = mockSessionFactory({
+		prompt: () => {
+			throw new Error("first\nsecond");
+		},
+	});
+	const result = await runSpawn(state, session);
+
+	assertErrorResult(result, "first\nsecond", EMPTY_CHILD_USAGE);
+	assertChildRegistriesCleared(state);
+});
+
+test("the Child agent failed line keeps Pi's errorMessage verbatim", async () => {
+	const state = createState();
+	const session = mockSessionFactory({
+		result: [
+			{
+				role: "assistant",
+				content: [],
+				stopReason: "error",
+				errorMessage: "err\nsecond line",
+			},
+		],
+	});
+	const result = await runSpawn(state, session);
+
+	assertErrorResult(result, "Child agent failed: err\nsecond line", EMPTY_CHILD_USAGE);
+	assertChildRegistriesCleared(state);
+});
+
+test("an abort reason survives verbatim in the aborted result text", async () => {
+	const state = createState();
+	const controller = new AbortController();
+	controller.abort(new Error("stopped\nreason"));
+	const session = mockSessionFactory();
+	const result = await runSpawn(state, session, controller.signal);
+
+	expect(result.details.outcome).toBe("aborted");
+	expect(result.content[0].text).toBe("Child agent aborted: stopped\nreason");
+	assertChildRegistriesCleared(state);
+});
+
+test("an aborted child leaves a correctly-keyed sink row and never emits unhandledRejection", async () => {
 	const rows: [string, string | null, string, unknown][] = [];
 	const state = createState();
 	state.childUsageSink = (toolCallId, provider, model, usage) => {
 		rows.push([toolCallId, provider, model, usage]);
 	};
-	const controller = new AbortController();
-	let promptStarted!: () => void;
-	let rejectPrompt!: (err: Error) => void;
-	const started = new Promise<void>((resolve) => {
-		promptStarted = resolve;
-	});
-	const session = mockSessionFactory({
-		prompt: async () => {
-			promptStarted();
-			await new Promise<void>((_, reject) => {
-				rejectPrompt = reject;
-			});
-		},
-		abort: () => {
-			rejectPrompt(Object.assign(new Error("aborted"), { name: "AbortError" }));
-			return Promise.resolve();
-		},
-		getEntries: () => [assistantMessageEntry("a1", "test", "mock-model", 0.25)],
-	});
-	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
-	const execution = executeSpawn(
-		"spawn-aborted-sink",
-		pi,
-		spawnContext({ model: { id: "mock-model" }, cwd: "/tmp" }),
-		state,
-		{ prompt: "Do the task" },
-		controller.signal,
-		undefined,
-		"medium",
-		() => Promise.resolve(sessionResult(session)),
-	);
-	await started;
-	controller.abort();
-	const result = await execution;
+	const unhandled: unknown[] = [];
+	const onUnhandled = (reason: unknown) => {
+		unhandled.push(reason);
+	};
+	process.on("unhandledRejection", onUnhandled);
+	try {
+		const controller = new AbortController();
+		let promptStarted!: () => void;
+		let rejectPrompt!: (err: Error) => void;
+		const started = new Promise<void>((resolve) => {
+			promptStarted = resolve;
+		});
+		const session = mockSessionFactory({
+			prompt: async () => {
+				promptStarted();
+				await new Promise<void>((_, reject) => {
+					rejectPrompt = reject;
+				});
+			},
+			abort: () => {
+				rejectPrompt(Object.assign(new Error("aborted"), { name: "AbortError" }));
+				// Non-stringable rejection: the reporter must observe it, never an unhandledRejection.
+				return new Promise<never>(() => {
+					throw Object.create(null);
+				});
+			},
+			getEntries: () => [assistantMessageEntry("a1", "test", "mock-model", 0.25)],
+		});
+		const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
+		const execution = executeSpawn(
+			"spawn-aborted-sink",
+			pi,
+			spawnContext({ model: { id: "mock-model" }, cwd: "/tmp" }),
+			state,
+			{ prompt: "Do the task" },
+			controller.signal,
+			undefined,
+			"medium",
+			() => Promise.resolve(sessionResult(session)),
+		);
+		await started;
+		controller.abort();
+		const result = await execution;
+		// Cross the next event-loop turn so any detached rejection microtask has flushed.
+		await new Promise((resolve) => setImmediate(resolve));
 
-	expect(result.details.outcome).toBe("aborted");
-	expect(rows).toStrictEqual([["spawn-aborted-sink", "test", "mock-model", result.usage]]);
-	assertChildRegistriesCleared(state);
+		expect(result.details.outcome).toBe("aborted");
+		expect(rows).toStrictEqual([["spawn-aborted-sink", "test", "mock-model", result.usage]]);
+		expect(unhandled).toHaveLength(0);
+		assertChildRegistriesCleared(state);
+	} finally {
+		process.off("unhandledRejection", onUnhandled);
+	}
 });
 
 test("a failed child leaves a correctly-keyed sink row", async () => {
@@ -666,8 +816,11 @@ test("UI spawn notifies the combined teardown text once", async () => {
 	const { execution, state } = await failingRun((message, level) => {
 		notifications.push([message, level]);
 	});
-	assertErrorResult(await execution, "prompt failed", EMPTY_CHILD_USAGE);
+	const result = await execution;
+	assertErrorResult(result, "prompt failed", EMPTY_CHILD_USAGE);
 	expect(notifications).toStrictEqual([["Spawn teardown failed: spend flush failed: sink boom; session dispose failed: dispose failed", "error"]]);
+	// The notice shown, but the failures still belong to the result details, not only the toast.
+	expect(result.details.teardownFailures).toStrictEqual(["spend flush failed: sink boom", "session dispose failed: dispose failed"]);
 	assertChildRegistriesCleared(state);
 });
 test("a throwing cleanup notice falls through to a throw that keeps every failure", async () => {

@@ -22,6 +22,7 @@ import {
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { abortChildSession, type SchematicState } from "../state.js";
 import { addUsage, collectSessionAccounting, messageCarriesUsage, zeroUsage } from "../usage.js";
 import { formatByteCap, formatPageList } from "../notebook/store.js";
@@ -56,15 +57,39 @@ function getLastAssistantMessage(messages: AgentSession["messages"]): AssistantM
 	return undefined;
 }
 
+/** Strip complete ANSI/OSC/APC sequences, then residual C0/C1 control bytes, so externally supplied
+ * diagnostic text can never corrupt TUI rendering or leak escape fragments into result text. */
+function sanitizeDiagnostic(text: string): string {
+	return stripControlChars(stripTerminalSequences(text));
+}
+
+/** Total stringifier for thrown values: an Error yields message-or-name; otherwise String(), never throwing. */
 function failureMessage(error: unknown): string {
-	return error instanceof Error ? error.message || error.name : String(error);
+	try {
+		return error instanceof Error ? error.message || error.name : String(error);
+	} catch {
+		return "[unprintable value]";
+	}
 }
 
 const MAX_DIAGNOSTIC_LENGTH = 200;
 
-/** Flatten and bound a diagnostic line so teardown reports stay single-line and finite. */
+/** Drop remaining C0/C1 control bytes (ESC, CSI bytes, …) so a raw control byte can never
+ * corrupt TUI rendering. Runs after stripTerminalSequences removed complete ANSI sequences. */
+function stripControlChars(text: string): string {
+	let out = "";
+	for (const ch of text) {
+		const code = ch.charCodeAt(0);
+		if (code >= 0x20 && (code < 0x7f || code > 0x9f)) {
+			out += ch;
+		}
+	}
+	return out;
+}
+
+/** Flatten, strip control bytes and bound a diagnostic line so teardown reports stay single-line and finite. */
 function formatDiagnostic(error: unknown): string {
-	const flat = failureMessage(error).replace(/\s+/g, " ").trim();
+	const flat = sanitizeDiagnostic(failureMessage(error)).replace(/\s+/g, " ").trim();
 	return flat.length > MAX_DIAGNOSTIC_LENGTH ? `${flat.slice(0, MAX_DIAGNOSTIC_LENGTH)}…` : flat;
 }
 
@@ -72,55 +97,55 @@ function describeAbort(reason: unknown): string {
 	return reason === undefined ? "Child agent aborted." : `Child agent aborted: ${failureMessage(reason)}`;
 }
 
-function notifyCleanupFailure(ctx: ExtensionContext, error: unknown): void {
+/** Notify a teardown failure verbatim. Returns true only when the notice was actually shown, so a
+ * caller can fall through to the throw that keeps every failure. Never throws. */
+function notifyTeardownFailure(ctx: ExtensionContext, report: string, severity: "error" | "warning"): boolean {
 	if (!ctx.hasUI) {
-		return;
+		return false;
 	}
-	ctx.ui.notify(`Spawn teardown failed: ${formatDiagnostic(error)}`, "error");
+	try {
+		ctx.ui.notify(`Spawn teardown failed: ${report}`, severity);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
-/** Report teardown failures without masking the spawn error: instrumentation-only failures (spend
- * flushes) on a successful run degrade (returned for details, notified with a UI), never thrown. */
+/** Instrumentation failures on a successful run degrade instead of failing (see reportTeardownFailures). */
+const INSTRUMENTATION_LABELS = new Set(["spend flush", "event unsubscribe"]);
+
+/** Report teardown failures without masking the spawn error: instrumentation-only failures on a
+ * successful run degrade (returned for details, notified with a UI), never thrown. */
 function reportTeardownFailures(
 	primary: { error: unknown } | undefined,
 	ctx: ExtensionContext,
 	failures: readonly { label: string; error: unknown }[],
 ): string[] {
+	if (failures.length === 0) {
+		return [];
+	}
 	const report = [...new Set(failures.map((failure) => `${failure.label} failed: ${formatDiagnostic(failure.error)}`))];
 	const combined = report.join("; ");
-	const instrumentationOnly = failures.every((failure) => failure.label === "spend flush");
-	if (!primary && instrumentationOnly) {
-		if (ctx.hasUI) {
-			try {
-				notifyCleanupFailure(ctx, combined);
-			} catch {
-				// A throwing notice never loses the degraded report returned below.
-			}
-		}
-		return report;
-	}
+	const instrumentationOnly = failures.every((failure) => INSTRUMENTATION_LABELS.has(failure.label));
 	if (!primary) {
+		if (instrumentationOnly) {
+			notifyTeardownFailure(ctx, combined, "warning");
+			return report;
+		}
 		throw new AggregateError(
 			failures.map((failure) => failure.error),
 			combined,
 		);
 	}
-	let notified = false;
-	if (ctx.hasUI) {
-		try {
-			notifyCleanupFailure(ctx, combined);
-			notified = true;
-		} catch {
-			// A throwing notice falls through to the throw below, which keeps every failure.
-		}
+	if (notifyTeardownFailure(ctx, combined, "error")) {
+		// The notice shown, but the failures still belong in details.teardownFailures: the caller
+		// throws the primary error separately, so returning the report degrades it instead of losing it.
+		return report;
 	}
-	if (!notified) {
-		throw new AggregateError(
-			[primary.error, ...failures.map((failure) => failure.error)],
-			`Spawn failed and cleanup failed: ${failureMessage(primary.error)}; ${combined}`,
-		);
-	}
-	return [];
+	throw new AggregateError(
+		[primary.error, ...failures.map((failure) => failure.error)],
+		`Spawn failed and cleanup failed: ${failureMessage(primary.error)}; ${combined}`,
+	);
 }
 
 /** Ignore Pi's AbortError only when the current child was cancelled without a reset. */
@@ -219,13 +244,11 @@ function createSpawnAbortContext(state: SchematicState, session: AgentSession, c
 		const p = abortChildSession(state, session);
 		if (p !== reported) {
 			reported = p;
-			// Report abort failures via UI. Guard against notify itself throwing
-			// so the detached promise never emits unhandledRejection.
 			void p.catch((e: unknown) => {
 				try {
-					notifyCleanupFailure(ctx, e);
+					notifyTeardownFailure(ctx, formatDiagnostic(e), "error");
 				} catch {
-					/* reporting must never reject */
+					/* the detached reporter must stay total */
 				}
 			});
 		}
@@ -617,6 +640,18 @@ export function executeSpawn(
 
 		const runChild = async (): Promise<ChildRun> => {
 			let primary: { error: unknown } | undefined;
+			let childRun: ChildRun | undefined;
+			// Collect every teardown failure so none is lost; one guarded step per teardown action,
+			// each labeled for the report, keeping every thrown value (falsy included). Flush runs
+			// first so an unsubscribe throw can never skip the settle write.
+			const teardownFailures: { label: string; error: unknown }[] = [];
+			const guarded = (label: string, step: () => void) => {
+				try {
+					step();
+				} catch (error) {
+					teardownFailures.push({ label, error });
+				}
+			};
 			try {
 				if (isStale()) {
 					await abortAndInvalidate();
@@ -645,17 +680,10 @@ export function executeSpawn(
 							}
 						});
 					} catch (error) {
-						// Report the degraded subscribe even headless, via details.teardownFailures, alongside the
-						// UI warning. The settle flush below still computes the stats, so statsUnavailable stays
-						// reserved for genuinely unsummable entries.
-						degradedFailures.push(`Spawn event subscription failed: ${formatDiagnostic(error)}`);
-						if (ctx.hasUI) {
-							try {
-								ctx.ui.notify(`Spawn event subscription failed: ${formatDiagnostic(error)}`, "warning");
-							} catch {
-								// A throwing notice must never reject the spawn.
-							}
-						}
+						// Degrade: details.teardownFailures always, plus the shared teardown notice (warning).
+						const subscriptionReport = `Spawn event subscription failed: ${formatDiagnostic(error)}`;
+						degradedFailures.push(subscriptionReport);
+						notifyTeardownFailure(ctx, subscriptionReport, "warning");
 					}
 				}
 
@@ -732,27 +760,15 @@ export function executeSpawn(
 					throw invalidatedError;
 				}
 
-				return {
+				childRun = {
 					content: [{ type: "text" as const, text: finalText }] as TextContent[],
 					truncated,
 					outcome,
 				};
 			} catch (error) {
 				primary = { error };
-				throw error;
 			} finally {
 				settled = true;
-				// Collect every teardown failure so none is lost; one guarded step per teardown action,
-				// each labeled for the report, keeping every thrown value (falsy included). Flush runs
-				// first so an unsubscribe throw can never skip the settle write.
-				const teardownFailures: { label: string; error: unknown }[] = [];
-				const guarded = (label: string, step: () => void) => {
-					try {
-						step();
-					} catch (error) {
-						teardownFailures.push({ label, error });
-					}
-				};
 				if (liveFlushFailed) {
 					teardownFailures.push({ label: "spend flush", error: liveFlushFailure });
 				}
@@ -770,15 +786,22 @@ export function executeSpawn(
 						session.dispose();
 					}
 				});
-				if (teardownFailures.length > 0) {
-					const degraded = reportTeardownFailures(primary, ctx, teardownFailures);
-					if (degraded.length > 0) {
-						// A successful run whose only failures are spend flushes keeps its reply, the degradation
-						// reported in the result details rather than as a terminal error.
-						degradedFailures.push(...degraded);
-					}
+			}
+			if (teardownFailures.length > 0) {
+				const degraded = reportTeardownFailures(primary, ctx, teardownFailures);
+				if (degraded.length > 0) {
+					// A successful run whose only failures are instrumentation-only keeps its reply, the
+					// degradation reported in the result details rather than as a terminal error.
+					degradedFailures.push(...degraded);
 				}
 			}
+			if (primary) {
+				throw primary.error;
+			}
+			if (!childRun) {
+				throw new Error("Spawn completed without a result or error.");
+			}
+			return childRun;
 		};
 
 		let completed: ChildRun;
