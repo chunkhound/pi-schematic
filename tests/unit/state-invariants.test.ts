@@ -405,6 +405,15 @@ test("reset clears deferred readonly frontmatter commands", () => {
 	expect(state.pendingReadonlyCommands, "readonly queue cleared").toHaveLength(0);
 });
 
+test("reset preserves an installed child usage sink", () => {
+	const state = createState();
+	const sink = vi.fn();
+	state.childUsageSink = sink;
+
+	resetState(state);
+	expect(state.childUsageSink, "childUsageSink must survive reset").toBe(sink);
+});
+
 test("clipped page flags stay contained and reset clears them", async () => {
 	const state = createState();
 	await saveNotebookPage(mockPi, state, "clipped-page", CLIPPED_BODY);
