@@ -70,36 +70,34 @@ export function addModelSpend(map: Map<string, ModelSpend>, provider: string | n
 	map.set(key, { key, provider: normProvider, model, ...usageDelta(usage) });
 }
 
-/** Single de-dup identity for a usage-bearing entry: the entry id pi assigned, else the
- * tool-call id a tool result carries. Sources without the entry (the child ledger) key by
- * tool-call id, so both sides address the same spend. */
-export function spendIdentity(entry: SessionEntry): string | null {
-	if (entry.id) {
-		return entry.id;
+/** Non-empty claim identities for one entry: the entry id pi assigned, plus a tool result's
+ * tool-call id. Empty ids are never candidates, so a `skip` set containing "" can never
+ * suppress a usage-bearing row. This is the single owner of the claim rule. */
+function claimIds(entry: SessionEntry): string[] {
+	const ids = entry.id ? [entry.id] : [];
+	if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId) {
+		ids.push(entry.message.toolCallId);
 	}
-	return entry.type === "message" && entry.message.role === "toolResult" ? entry.message.toolCallId || null : null;
+	return ids;
 }
 
-/** Whether `skip` already owns this entry. Checks the entry id and the tool-call id: the
- * child ledger is keyed by the latter, and a tool result may carry a distinct pi id. An
- * empty entry id is never matched, preserving the fallback to the tool-call id. */
+/** Primary de-dup identity for a usage-bearing entry: the entry id, else the tool-call id. */
+export function spendIdentity(entry: SessionEntry): string | null {
+	return claimIds(entry)[0] ?? null;
+}
+
+/** Whether `skip` already owns this entry: any of its non-empty claim identities, including
+ * a tool result's tool-call id even when a distinct entry id is present. */
 function isClaimed(entry: SessionEntry, skip: ReadonlySet<string>): boolean {
-	if (entry.id && skip.has(entry.id)) {
-		return true;
-	}
-	if (entry.type !== "message") {
-		return false;
-	}
-	const toolCallId = entry.message.role === "toolResult" ? entry.message.toolCallId : undefined;
-	return toolCallId !== undefined && skip.has(toolCallId);
+	return claimIds(entry).some((id) => skip.has(id));
 }
 
 /**
- * Attribute a branch's usage to models. The run's spend rows are this map plus the child
- * ledger and classifier calls. Assistant turns carry provider/model, `usage` entries carry
- * provider/model, and model-less usage (compaction and branch summaries) falls into
- * {@link UNATTRIBUTED_MODEL} with its tokens. Child-owned tool results are skipped so the
- * child ledger is their single owner and a settled child is counted once.
+ * Attribute a branch's usage to models. Which entries carry usage and how much comes from
+ * {@link usageFromEntry}, the single decision rows and totals share, so a new usage-bearing
+ * kind cannot fold one path and not the other. Attribution (the provider/model row) is
+ * resolved only when building a row, never during amount walks. Child-owned tool results
+ * are skipped so the child ledger is their single owner and a settled child is counted once.
  * An entry is omitted when `skip` owns its non-empty entry id or, for a tool result, its
  * tool-call id. The run-scoped scan drops pre-run and already-committed entries, and the
  * child ledger claims its tool results, so no entry is counted twice.
@@ -111,38 +109,12 @@ export function usageByModel(entries: readonly SessionEntry[], options?: { skip?
 		if (skip && isClaimed(entry, skip)) {
 			continue;
 		}
-		if (entry.type === "message") {
-			const message = entry.message;
-			if (messageCarriesUsage(message)) {
-				const usage = message.usage;
-				if (usage) {
-					if (message.role === "assistant") {
-						// The provider may answer under a model other than requested; responseModel is the
-						// effective model and model the fallback, so spend follows what actually ran.
-						addModelSpend(map, message.provider, message.responseModel ?? message.model, usage);
-					} else {
-						// Only a spawned child's result carries a model identity; an unrelated tool's free-form
-						// details must not claim a provider/model spend row. The effective model (details.model)
-						// is authoritative, so group aliases that resolve to one model share that row.
-						if (message.toolName === SPAWN_TOOL_NAME && isSpawnResultDetails(message.details)) {
-							addModelSpend(map, message.details.route?.provider ?? null, message.details.model, usage);
-						} else {
-							addModelSpend(map, null, UNATTRIBUTED_MODEL, usage);
-						}
-					}
-				}
-			}
+		const usage = usageFromEntry(entry);
+		if (!usage) {
 			continue;
 		}
-		if (entry.type === "usage") {
-			addModelSpend(map, entry.provider, entry.model, entry.usage);
-			continue;
-		}
-		if (entry.type === "compaction" || entry.type === "branch_summary") {
-			if (entry.usage) {
-				addModelSpend(map, null, UNATTRIBUTED_MODEL, entry.usage);
-			}
-		}
+		const { provider, model } = entryAttribution(entry);
+		addModelSpend(map, provider, model, usage);
 	}
 	return map;
 }
@@ -218,10 +190,9 @@ export const ZERO_USAGE: Usage = Object.freeze(zeroUsage());
 /**
  * Mirrors pi-coding-agent's unexported combineUsage: the optional token splits appear only
  * once some usage reports them. A Pi upgrade that changes the usage fields must update this;
- * one that changes the entry kinds carrying usage updates messageCarriesUsage — the single
- * role gate every entry walk shares — and usageFromEntry for non-message kinds. The parity
- * test "real child usage matches the session stats across assistant, tool result, usage,
- * compaction and branch-summary entries" checks both against Pi.
+ * one that changes the entry kinds carrying usage updates usageFromEntry — the single decision
+ * every usage surface shares. The parity test "real child usage matches the session stats across
+ * assistant, tool result, usage, compaction and branch-summary entries" checks both against Pi.
  */
 export function addUsage(a: Usage, b: Usage): Usage {
 	return {
@@ -247,7 +218,8 @@ export function messageCarriesUsage(message: { role: string }): message is { rol
 	return message.role === "assistant" || message.role === "toolResult";
 }
 
-/** Usage carried by one entry: usage entries, summaries, and assistant/tool messages. */
+/** Usage carried by one entry; never reads attribution metadata (provider/model/route), so totals
+ * cannot depend on spawn details.route accessors. */
 function usageFromEntry(entry: SessionEntry): Usage | null {
 	if (entry.type === "usage") {
 		return entry.usage;
@@ -255,13 +227,45 @@ function usageFromEntry(entry: SessionEntry): Usage | null {
 	if (entry.type === "compaction" || entry.type === "branch_summary") {
 		return entry.usage ?? null;
 	}
-	if (entry.type === "message") {
-		const message = entry.message;
-		if (messageCarriesUsage(message)) {
-			return message.usage ?? null;
-		}
+	if (entry.type === "message" && messageCarriesUsage(entry.message)) {
+		return entry.message.usage ?? null;
 	}
 	return null;
+}
+
+/** Where a usage-bearing entry's spend row keys: provider/model, resolved only when building a row.
+ * A hostile details getter (e.g. a throwing route accessor) degrades to unattributed. */
+function entryAttribution(entry: SessionEntry): { provider: string | null; model: string } {
+	if (entry.type === "usage") {
+		return { provider: entry.provider, model: entry.model };
+	}
+	if (entry.type === "compaction" || entry.type === "branch_summary") {
+		return { provider: null, model: UNATTRIBUTED_MODEL };
+	}
+	if (entry.type !== "message") {
+		return { provider: null, model: UNATTRIBUTED_MODEL };
+	}
+	const message = entry.message;
+	if (message.role === "assistant") {
+		// The provider may answer under a model other than requested; responseModel is the
+		// effective model and model the fallback, so spend follows what actually ran.
+		return { provider: message.provider, model: message.responseModel ?? message.model };
+	}
+	// Only a spawned child's result carries a model identity; an unrelated tool's free-form
+	// details must not claim a provider/model spend row. The effective model (details.model)
+	// is authoritative, so group aliases that resolve to one model share that row.
+	if (message.role === "toolResult") {
+		if (message.toolName === SPAWN_TOOL_NAME) {
+			try {
+				if (isSpawnResultDetails(message.details)) {
+					return { provider: message.details.route?.provider ?? null, model: message.details.model };
+				}
+			} catch {
+				// Degrade to unattributed; the amount walk never reads these accessors.
+			}
+		}
+	}
+	return { provider: null, model: UNATTRIBUTED_MODEL };
 }
 
 export function collectUsage(entries: readonly SessionEntry[]): Usage {

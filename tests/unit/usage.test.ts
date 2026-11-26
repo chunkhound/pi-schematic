@@ -152,9 +152,33 @@ test("usageByModel skips a child-owned tool result when claimed, and counts it o
 // or the tool-call id can claim an entry).
 test("usageByModel ignores an empty entry id and skips by tool-call id only", () => {
 	const entries: SessionEntry[] = [toolResultEntry("", { usage: usageFixtureUsd(0.2), model: "haiku", provider: "anthropic", toolCallId: "c1" })];
+	const bare = [toolResultEntry("", { usage: usageFixtureUsd(0.3), model: "haiku", provider: "anthropic", toolCallId: "" })];
 	expect(usageByModel(entries, { skip: new Set(["c1"]) }).size, "empty-id entry skipped via tool-call id").toBe(0);
 	expect(usageByModel(entries, { skip: new Set([""]) }).get("anthropic/haiku")?.costUsd, "empty id is never matched").toBe(0.2);
 	expect(usageByModel(entries).get("anthropic/haiku")?.costUsd, "unclaimed empty-id entry attributed").toBe(0.2);
+	expect(usageByModel(bare, { skip: new Set([""]) }).get("anthropic/haiku")?.costUsd, "an empty skip key never suppresses a usage-bearing tool row").toBe(0.3);
+});
+
+// SSOT contract: spendIdentity owns the entry-id/tool-call-id rule, and isClaimed routes
+// through it, so the run-scoped scan and the child ledger cannot drift on what claims an entry.
+test("spendIdentity yields the entry id, else the tool-call id", () => {
+	expect(spendIdentity(assistantMessageEntry("a1", "anthropic", "opus", 0.5))).toBe("a1");
+	expect(spendIdentity(toolResultEntry("t1", { toolCallId: "c1" }))).toBe("t1");
+	expect(
+		spendIdentity({ type: "usage", id: "", parentId: null, timestamp: "", kind: "classifier", provider: "p", model: "m", usage: usageFixtureUsd(0.1) }),
+	).toBeNull();
+	expect(spendIdentity(toolResultEntry("", { toolCallId: "c1" }))).toBe("c1");
+	expect(spendIdentity(toolResultEntry("", { toolCallId: "" }))).toBeNull();
+});
+
+test("usageByModel claims exactly the identities spendIdentity reports", () => {
+	const entries: SessionEntry[] = [
+		assistantMessageEntry("a1", "anthropic", "opus", 0.5),
+		toolResultEntry("t1", { usage: usageFixtureUsd(0.2), model: "haiku", provider: "anthropic", toolCallId: "c1" }),
+	];
+	expect(usageByModel(entries, { skip: new Set(["a1"]) }).get("anthropic/opus"), "entry id claims the assistant turn").toBeUndefined();
+	expect(usageByModel(entries, { skip: new Set(["c1"]) }).get("anthropic/haiku"), "tool-call id claims the tool result").toBeUndefined();
+	expect(usageByModel(entries, { skip: new Set(["a1", "c1"]) }).size, "both identities are honored").toBe(0);
 });
 
 test("assistant responseModel and child spend collapse onto one effective-model row", () => {
@@ -258,22 +282,4 @@ test("compat exports: ZERO_USAGE, SessionStatsLike and sessionStatsToUsage", () 
 		cost: 0.5,
 	};
 	expect(sessionStatsToUsage(stats)).toMatchObject({ input: 10, totalTokens: 18, cost: { total: 0.5 } });
-});
-
-test("spendIdentity returns the entry id, else the tool-call id, else null", () => {
-	expect(spendIdentity(assistantMessageEntry("a1", "anthropic", "opus", 0.5))).toBe("a1");
-	expect(spendIdentity(toolResultEntry("t1", { toolCallId: "c1" })), "entry id wins over the tool-call id").toBe("t1");
-	expect(spendIdentity(toolResultEntry("", { toolCallId: "c2" })), "empty id falls back to the tool-call id").toBe("c2");
-	expect(
-		spendIdentity({
-			type: "usage",
-			id: "",
-			parentId: null,
-			timestamp: "",
-			kind: "classifier",
-			provider: "p",
-			model: "m",
-			usage: usageFixtureUsd(0.1),
-		}),
-	).toBeNull();
 });

@@ -3,7 +3,9 @@
 import { expect, test } from "vitest";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { UNATTRIBUTED_MODEL, addModelSpend, addUsage, assistantCount, collectUsage, mergeModelSpend, usageByModel, type ModelSpend } from "../../usage.js";
-import { assistantMessageEntry, toolResultEntry, usageFixtureUsd } from "./helpers.js";
+import { collectSessionAccounting } from "../../usage.js";
+import { SPAWN_TOOL_NAME } from "../../spawn/shared.js";
+import { assistantMessageEntry, messageEntry, toolResultEntry, usageFixtureUsd } from "./helpers.js";
 
 function userMessage(id: string): SessionEntry {
 	return {
@@ -61,6 +63,56 @@ test("usageByModel ignores turns without usage and entries of other types", () =
 	expect(spend.size).toBe(0);
 });
 
+// Parity guard: the spend rows and the amount walk classify the same entries identically, so
+// every field sums from the rows to the collected totals across the same accepted entries.
+test("row sums match collected usage field-for-field across every usage-bearing entry kind", () => {
+	const entries: SessionEntry[] = [
+		assistantMessageEntry("a1", "anthropic", "opus", 0.5),
+		{ type: "usage", id: "u1", parentId: null, timestamp: "", kind: "classifier", provider: "p", model: "m", usage: usageFixtureUsd(0.1) },
+		toolResultEntry("t1", { usage: usageFixtureUsd(0.2), model: "haiku", provider: "anthropic", toolCallId: "c1" }),
+		{ type: "compaction", id: "comp1", parentId: null, timestamp: "", summary: "s", firstKeptEntryId: "a1", tokensBefore: 1, usage: usageFixtureUsd(0.05) },
+		{ type: "branch_summary", id: "b1", parentId: "c1", timestamp: "", fromId: "a1", summary: "s", usage: usageFixtureUsd(0.25) },
+	];
+	const spend = usageByModel(entries);
+	const raw = collectUsage(entries);
+	const rows = [...spend.values()];
+	const sum = (field: "costUsd" | "totalTokens" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens") =>
+		rows.reduce((total, row) => total + row[field], 0);
+	expect(sum("costUsd")).toBeCloseTo(raw.cost.total, 9);
+	expect([sum("totalTokens"), sum("inputTokens"), sum("outputTokens"), sum("cacheReadTokens"), sum("cacheWriteTokens")]).toStrictEqual([
+		raw.totalTokens,
+		raw.input,
+		raw.output,
+		raw.cacheRead,
+		raw.cacheWrite,
+	]);
+});
+
+// A hostile spawn result whose route accessor throws must not break the amount walk; row
+// attribution degrades to the unattributed bucket instead of failing the overview.
+test("collectUsage survives a throwing spawn details.route getter; usageByModel degrades to unattributed", () => {
+	const entry = messageEntry("t1", {
+		role: "toolResult",
+		toolName: SPAWN_TOOL_NAME,
+		toolCallId: "c1",
+		content: [{ type: "text", text: "ok" }],
+		isError: false,
+		timestamp: 0,
+		usage: usageFixtureUsd(0.4),
+		details: {
+			model: "haiku",
+			get route() {
+				throw new Error("route getter exploded");
+			},
+		},
+	});
+	expect(collectUsage([entry]).cost.total).toBeCloseTo(0.4, 9);
+	expect(collectSessionAccounting([entry]).usage.cost.total).toBeCloseTo(0.4, 9);
+	const spend = usageByModel([entry]);
+	expect(spend.get(UNATTRIBUTED_MODEL)?.costUsd).toBeCloseTo(0.4, 9);
+	expect(spend.has("anthropic/haiku")).toBe(false);
+});
+
 test("usageByModel attributes a tool result without a child model to the unattributed bucket", () => {
 	// pi's assistant message type always carries provider/model, so the unattributed
 	// fallback is exercised through a model-less tool result instead.
@@ -98,53 +150,6 @@ test("mergeModelSpend returns row copies so mutating the result leaves its sourc
 	const merged = mergeModelSpend(source);
 	requireRow(merged, "acme/widget").costUsd = 99;
 	expect(source.get("acme/widget")?.costUsd).toBe(0.5);
-});
-
-// Parity guard: the spend rows and the raw usage walker classify the same entries identically,
-// so every field sums from rows to the collected total across the same accepted entries.
-test("row sums match collected usage across the same accepted entries", () => {
-	const entries: SessionEntry[] = [
-		assistantMessageEntry("a1", "anthropic", "opus", 0.5),
-		{
-			type: "message",
-			id: "a2",
-			parentId: null,
-			timestamp: "",
-			message: {
-				role: "assistant",
-				api: "test",
-				provider: "anthropic",
-				model: "opus",
-				content: [{ type: "text", text: "x" }],
-				timestamp: 0,
-				stopReason: "stop",
-			},
-		} as unknown as SessionEntry,
-		{ type: "usage", id: "u1", parentId: null, timestamp: "", kind: "classifier", provider: "p", model: "m", usage: usageFixtureUsd(0.1) },
-		toolResultEntry("t1", { usage: usageFixtureUsd(0.2), model: "haiku", provider: "anthropic", toolCallId: "c1" }),
-		{ type: "compaction", id: "comp1", parentId: null, timestamp: "", summary: "s", firstKeptEntryId: "a1", tokensBefore: 1, usage: usageFixtureUsd(0.05) },
-	];
-	const spend = usageByModel(entries);
-	const raw = collectUsage(entries);
-	const sum = [...spend.values()].reduce(
-		(acc, row) => ({
-			costUsd: acc.costUsd + row.costUsd,
-			totalTokens: acc.totalTokens + row.totalTokens,
-			inputTokens: acc.inputTokens + row.inputTokens,
-			outputTokens: acc.outputTokens + row.outputTokens,
-			cacheReadTokens: acc.cacheReadTokens + row.cacheReadTokens,
-			cacheWriteTokens: acc.cacheWriteTokens + row.cacheWriteTokens,
-		}),
-		{ costUsd: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
-	);
-	expect(sum.costUsd).toBeCloseTo(raw.cost.total, 9);
-	expect([sum.totalTokens, sum.inputTokens, sum.outputTokens, sum.cacheReadTokens, sum.cacheWriteTokens]).toStrictEqual([
-		raw.totalTokens,
-		raw.input,
-		raw.output,
-		raw.cacheRead,
-		raw.cacheWrite,
-	]);
 });
 
 test("addUsage returns a new record and leaves both operands unchanged", () => {

@@ -434,11 +434,6 @@
       "count": 56
     }
   },
-  "tests/unit/usage-helpers.test.ts": {
-    "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    }
-  },
   "tests/unit/state-invariants.test.ts": {
     "vitest/max-expects": {
       "count": 24
