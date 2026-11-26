@@ -160,21 +160,12 @@
   },
   "spawn/index.ts": {
     "@typescript-eslint/no-unnecessary-condition": {
-      "count": 3
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     },
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 1
-    },
-    "@typescript-eslint/strict-boolean-expressions": {
-      "count": 2
-    },
-    "no-unsafe-finally": {
-      "count": 2
-    },
-    "preserve-caught-error": {
       "count": 1
     }
   },
@@ -233,9 +224,6 @@
   "tests/unit/config-invariants.test.ts": {
     "ban/wall-clock": {
       "count": 1
-    },
-    "vitest/max-expects": {
-      "count": 7
     }
   },
   "tests/unit/frontmatter-cache.test.ts": {
@@ -271,9 +259,6 @@
   },
   "tests/unit/helpers.ts": {
     "@typescript-eslint/no-dynamic-delete": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-type-assertion": {
       "count": 2
     },
     "ban/wall-clock": {
@@ -440,7 +425,7 @@
   },
   "tests/unit/spawn.test.ts": {
     "@typescript-eslint/no-unsafe-type-assertion": {
-      "count": 2
+      "count": 1
     },
     "@typescript-eslint/only-throw-error": {
       "count": 1

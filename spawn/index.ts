@@ -22,7 +22,9 @@ import {
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { abortChildSession, type SchematicState } from "../state.js";
+import { addUsage, collectSessionAccounting, messageCarriesUsage, zeroUsage } from "../usage.js";
 import { formatByteCap, formatPageList } from "../notebook/store.js";
 import { createNotebookToolDefinitions } from "../notebook/tools.js";
 import { resolveSpawnModelRoute } from "../model-groups/router.js";
@@ -33,7 +35,15 @@ import { appendSandboxBlockNotice, appendSandboxBlockNoticeToResult } from "../o
 import { HANDOFF_TOOL_NAME } from "../handoff/tool.js";
 import { THINKING_LEVELS } from "../thinking-levels.js";
 import { renderSpawnCall, renderSpawnResult } from "./renderer.js";
-import { getLastAssistantText, getStopReasonOutcome, type SpawnOutcome, type SpawnResultDetails, type SpawnToolResult } from "./shared.js";
+import {
+	getLastAssistantText,
+	getStopReasonOutcome,
+	inheritedRouteDetails,
+	SPAWN_TOOL_NAME,
+	type SpawnOutcome,
+	type SpawnResultDetails,
+	type SpawnToolResult,
+} from "./shared.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -47,19 +57,95 @@ function getLastAssistantMessage(messages: AgentSession["messages"]): AssistantM
 	return undefined;
 }
 
+/** Strip complete ANSI/OSC/APC sequences, then residual C0/C1 control bytes, so externally supplied
+ * diagnostic text can never corrupt TUI rendering or leak escape fragments into result text. */
+function sanitizeDiagnostic(text: string): string {
+	return stripControlChars(stripTerminalSequences(text));
+}
+
+/** Total stringifier for thrown values: an Error yields message-or-name; otherwise String(), never throwing. */
 function failureMessage(error: unknown): string {
-	return error instanceof Error ? error.message || error.name : String(error);
+	try {
+		return error instanceof Error ? error.message || error.name : String(error);
+	} catch {
+		return "[unprintable value]";
+	}
+}
+
+const MAX_DIAGNOSTIC_LENGTH = 200;
+
+/** Drop remaining C0/C1 control bytes (ESC, CSI bytes, …) so a raw control byte can never
+ * corrupt TUI rendering. Runs after stripTerminalSequences removed complete ANSI sequences. */
+function stripControlChars(text: string): string {
+	let out = "";
+	for (const ch of text) {
+		const code = ch.charCodeAt(0);
+		if (code >= 0x20 && (code < 0x7f || code > 0x9f)) {
+			out += ch;
+		}
+	}
+	return out;
+}
+
+/** Flatten, strip control bytes and bound a diagnostic line so teardown reports stay single-line and finite. */
+function formatDiagnostic(error: unknown): string {
+	const flat = sanitizeDiagnostic(failureMessage(error)).replace(/\s+/g, " ").trim();
+	return flat.length > MAX_DIAGNOSTIC_LENGTH ? `${flat.slice(0, MAX_DIAGNOSTIC_LENGTH)}…` : flat;
 }
 
 function describeAbort(reason: unknown): string {
 	return reason === undefined ? "Child agent aborted." : `Child agent aborted: ${failureMessage(reason)}`;
 }
 
-function notifyCleanupFailure(ctx: ExtensionContext, error: unknown): void {
+/** Notify a teardown failure verbatim. Returns true only when the notice was actually shown, so a
+ * caller can fall through to the throw that keeps every failure. Never throws. */
+function notifyTeardownFailure(ctx: ExtensionContext, report: string, severity: "error" | "warning"): boolean {
 	if (!ctx.hasUI) {
-		return;
+		return false;
 	}
-	ctx.ui.notify(`Spawn cleanup failed: ${failureMessage(error)}`, "error");
+	try {
+		ctx.ui.notify(`Spawn teardown failed: ${report}`, severity);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** Instrumentation failures on a successful run degrade instead of failing (see reportTeardownFailures). */
+const INSTRUMENTATION_LABELS = new Set(["spend flush", "event unsubscribe"]);
+
+/** Report teardown failures without masking the spawn error: instrumentation-only failures on a
+ * successful run degrade (returned for details, notified with a UI), never thrown. */
+function reportTeardownFailures(
+	primary: { error: unknown } | undefined,
+	ctx: ExtensionContext,
+	failures: readonly { label: string; error: unknown }[],
+): string[] {
+	if (failures.length === 0) {
+		return [];
+	}
+	const report = [...new Set(failures.map((failure) => `${failure.label} failed: ${formatDiagnostic(failure.error)}`))];
+	const combined = report.join("; ");
+	const instrumentationOnly = failures.every((failure) => INSTRUMENTATION_LABELS.has(failure.label));
+	if (!primary) {
+		if (instrumentationOnly) {
+			notifyTeardownFailure(ctx, combined, "warning");
+			return report;
+		}
+		throw new AggregateError(
+			failures.map((failure) => failure.error),
+			combined,
+		);
+	}
+	if (notifyTeardownFailure(ctx, combined, "error")) {
+		// The notice shown, but the failures still belong in details.teardownFailures: the caller
+		// throws the primary error separately, so returning the report degrades it instead of losing it.
+		return report;
+	}
+	throw new AggregateError(
+		[primary.error, ...failures.map((failure) => failure.error)],
+		`Spawn failed and cleanup failed: ${failureMessage(primary.error)}; ${combined}`,
+	);
 }
 
 /** Ignore Pi's AbortError only when the current child was cancelled without a reset. */
@@ -78,42 +164,8 @@ interface ChildAccounting {
 	usage: Usage;
 	/** Absent when the child's entries could not be read or summed. */
 	stats?: Record<string, number>;
-}
-
-function emptyChildUsage(): Usage {
-	return {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-	};
-}
-
-/**
- * Mirrors pi-coding-agent's unexported combineUsage: the optional token splits appear only once some usage reports them.
- * This copy and the entry walk in collectChildAccounting follow Pi's own session usage sum. A Pi upgrade that changes
- * the usage fields or the entry kinds that carry usage must update both; the test "real child usage matches the
- * session stats across assistant, tool result, usage, compaction and branch-summary entries" checks them against Pi.
- */
-function combineUsage(first: Usage, second: Usage): Usage {
-	return {
-		input: first.input + second.input,
-		output: first.output + second.output,
-		cacheRead: first.cacheRead + second.cacheRead,
-		cacheWrite: first.cacheWrite + second.cacheWrite,
-		...(first.cacheWrite1h !== undefined || second.cacheWrite1h !== undefined ? { cacheWrite1h: (first.cacheWrite1h ?? 0) + (second.cacheWrite1h ?? 0) } : {}),
-		...(first.reasoning !== undefined || second.reasoning !== undefined ? { reasoning: (first.reasoning ?? 0) + (second.reasoning ?? 0) } : {}),
-		totalTokens: first.totalTokens + second.totalTokens,
-		cost: {
-			input: first.cost.input + second.cost.input,
-			output: first.cost.output + second.cost.output,
-			cacheRead: first.cost.cacheRead + second.cost.cacheRead,
-			cacheWrite: first.cost.cacheWrite + second.cost.cacheWrite,
-			total: first.cost.total + second.cost.total,
-		},
-	};
+	/** True when the entries could not be read; the flush must skip instead of writing a zero. */
+	unreadable?: boolean;
 }
 
 function statsOf(usage: Usage, turns: number): Record<string, number> {
@@ -134,30 +186,13 @@ function collectChildAccounting(session: Pick<AgentSession, "sessionManager">): 
 	// accounting, so an entry list that cannot be read or summed counts as zero usage
 	// and the result reports statsUnavailable instead of losing that text.
 	try {
-		let usage = emptyChildUsage();
-		let assistantTurns = 0;
-		for (const entry of session.sessionManager.getEntries()) {
-			if (entry.type === "usage") {
-				if (entry.usage) {
-					usage = combineUsage(usage, entry.usage);
-				}
-			} else if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage) {
-				usage = combineUsage(usage, entry.usage);
-			} else if (entry.type === "message") {
-				const message = entry.message;
-				if (message.role === "assistant") {
-					assistantTurns++;
-					if (message.usage) {
-						usage = combineUsage(usage, message.usage);
-					}
-				} else if (message.role === "toolResult" && message.usage) {
-					usage = combineUsage(usage, message.usage);
-				}
-			}
-		}
-		return { usage, stats: statsOf(usage, assistantTurns) };
+		const entries = session.sessionManager.getEntries();
+		const accounting = collectSessionAccounting(entries);
+		return { usage: accounting.usage, stats: statsOf(accounting.usage, accounting.assistantTurns) };
 	} catch {
-		return { usage: emptyChildUsage() };
+		// Unreadable entries must never masquerade as zero spend: a flush would overwrite a real
+		// ledger row with a zero. The caller skips the write when `unreadable` is set.
+		return { usage: zeroUsage(), unreadable: true };
 	}
 }
 
@@ -209,13 +244,11 @@ function createSpawnAbortContext(state: SchematicState, session: AgentSession, c
 		const p = abortChildSession(state, session);
 		if (p !== reported) {
 			reported = p;
-			// Report abort failures via UI. Guard against notify itself throwing
-			// so the detached promise never emits unhandledRejection.
 			void p.catch((e: unknown) => {
 				try {
-					notifyCleanupFailure(ctx, e);
+					notifyTeardownFailure(ctx, formatDiagnostic(e), "error");
 				} catch {
-					/* reporting must never reject */
+					/* the detached reporter must stay total */
 				}
 			});
 		}
@@ -255,7 +288,7 @@ function getInheritableParentToolNames(parentToolNames: string[], availableTools
  * Local child custom tools are added separately. Parent-only custom tools are
  * intentionally excluded so the child never advertises a tool it cannot execute.
  *
- * handoff and spawn never carry into children.
+ * handoff, spawn and the run-scoped workflow_output never carry into children.
  */
 export function buildChildToolNames(
 	parentToolNames: string[],
@@ -263,7 +296,7 @@ export function buildChildToolNames(
 	availableTools?: Pick<ToolInfo, "name" | "sourceInfo">[],
 ): string[] {
 	const inheritableParentToolNames = availableTools ? getInheritableParentToolNames(parentToolNames, availableTools) : parentToolNames;
-	const inheritedTools = inheritableParentToolNames.filter((name) => name !== "spawn" && name !== HANDOFF_TOOL_NAME);
+	const inheritedTools = inheritableParentToolNames.filter((name) => name !== SPAWN_TOOL_NAME && name !== HANDOFF_TOOL_NAME);
 	return [...new Set([...inheritedTools, ...childTools.map((tool) => tool.name)])];
 }
 
@@ -484,7 +517,12 @@ export function executeSpawn(
 							provider: route.provider,
 							modelId: route.modelId,
 						}
-					: { status: "inherited" };
+					: inheritedRouteDetails(route.provider, route.modelId);
+
+		// WHY: capture the run-owned sink before any await. A late flush after this run ends
+		// must write to the run that spawned the child, never the next run's sink.
+		const childUsageSink = state.childUsageSink;
+		const childProvider = route.provider || null;
 
 		const childSessionEpoch = state.childSessionEpoch;
 		const isStale = () => state.childSessionEpoch !== childSessionEpoch;
@@ -541,6 +579,32 @@ export function executeSpawn(
 		// public session value so child details describe what actually runs. The
 		// fallback keeps intentionally partial session test doubles compatible.
 		const effectiveChildThinking = () => session.thinkingLevel ?? requestedChildThinking;
+		// Child spend belongs to the run ledger from the moment it is incurred. Flushing
+		// cumulative usage on every message_end keeps live cost attributed to the child's
+		// model, so an aborted run cannot leave a model-less residual; cumulative (not
+		// delta) makes the settle flush idempotent. message_end fires before the message is
+		// persisted, so the flush folds the event's own usage to avoid lagging one message.
+		const flushChildSpend = (eventUsage?: Usage) => {
+			if (!childUsageSink) {
+				return;
+			}
+			const accounting = collectChildAccounting(session);
+			if (accounting.unreadable === true) {
+				// Never overwrite a real ledger row with a zero: when the entries cannot be read the
+				// cumulative total is unknown, so the previous live rows stay intact.
+				return;
+			}
+			const usage = eventUsage ? addUsage(accounting.usage, eventUsage) : accounting.usage;
+			childUsageSink(toolCallId, childProvider, childModel.id, usage);
+		};
+		let unsubscribeChildEvents: (() => void) | undefined;
+		// `settled` marks the child finalized: message_end from a retained subscriber after the settle flush is inert.
+		let settled = false;
+		// Instrumentation failures degrade instead of failing: a live-flush throw is retained (first,
+		// falsy-preserving) for the result report; a failing subscribe loses live flushes only.
+		let liveFlushFailed = false;
+		let liveFlushFailure: unknown;
+		const degradedFailures: string[] = [];
 		const buildBaseDetails = (truncated: boolean, outcome: SpawnOutcome): SpawnResultDetails => ({
 			model: childModel.id,
 			thinking: effectiveChildThinking(),
@@ -550,6 +614,10 @@ export function executeSpawn(
 		});
 		const buildResultDetails = (truncated: boolean, outcome: SpawnOutcome, accounting: ChildAccounting): SpawnResultDetails => ({
 			...buildBaseDetails(truncated, outcome),
+			// Instrumentation-only teardown failures degrade: the child reply stands, the report names them.
+			...(degradedFailures.length > 0 ? { teardownFailures: [...degradedFailures] } : {}),
+			// statsUnavailable only when the entries are genuinely unsummable; a failed live subscription
+			// does not hide the settled stats computed at settle.
 			...(accounting.stats ? { stats: accounting.stats } : { statsUnavailable: true }),
 		});
 		interface ChildRun {
@@ -572,6 +640,18 @@ export function executeSpawn(
 
 		const runChild = async (): Promise<ChildRun> => {
 			let primary: { error: unknown } | undefined;
+			let childRun: ChildRun | undefined;
+			// Collect every teardown failure so none is lost; one guarded step per teardown action,
+			// each labeled for the report, keeping every thrown value (falsy included). Flush runs
+			// first so an unsubscribe throw can never skip the settle write.
+			const teardownFailures: { label: string; error: unknown }[] = [];
+			const guarded = (label: string, step: () => void) => {
+				try {
+					step();
+				} catch (error) {
+					teardownFailures.push({ label, error });
+				}
+			};
 			try {
 				if (isStale()) {
 					await abortAndInvalidate();
@@ -581,6 +661,31 @@ export function executeSpawn(
 				// attach with a fully-published live ownership record.
 				state.liveChildSessions.set(toolCallId, session);
 				state.childSessions.set(toolCallId, session);
+
+				// Subscribe only when a live sink is installed; a failing subscribe loses live flushes only, and
+				// the settle flush below still runs, so it never fails the spawn. A live-flush throw is retained
+				// and reported with the result, never propagated into Pi's dispatch.
+				if (childUsageSink && typeof session.subscribe === "function") {
+					try {
+						unsubscribeChildEvents = session.subscribe((event) => {
+							if (event.type === "message_end" && !settled) {
+								try {
+									flushChildSpend(messageCarriesUsage(event.message) ? event.message.usage : undefined);
+								} catch (error) {
+									if (!liveFlushFailed) {
+										liveFlushFailed = true;
+										liveFlushFailure = error;
+									}
+								}
+							}
+						});
+					} catch (error) {
+						// Degrade: details.teardownFailures always, plus the shared teardown notice (warning).
+						const subscriptionReport = `Spawn event subscription failed: ${formatDiagnostic(error)}`;
+						degradedFailures.push(subscriptionReport);
+						notifyTeardownFailure(ctx, subscriptionReport, "warning");
+					}
+				}
 
 				try {
 					if (signal?.aborted === true) {
@@ -655,41 +760,48 @@ export function executeSpawn(
 					throw invalidatedError;
 				}
 
-				return {
+				childRun = {
 					content: [{ type: "text" as const, text: finalText }] as TextContent[],
 					truncated,
 					outcome,
 				};
 			} catch (error) {
 				primary = { error };
-				throw error;
 			} finally {
+				settled = true;
+				if (liveFlushFailed) {
+					teardownFailures.push({ label: "spend flush", error: liveFlushFailure });
+				}
+				guarded("spend flush", () => {
+					flushChildSpend();
+				});
+				guarded("event unsubscribe", () => {
+					unsubscribeChildEvents?.();
+				});
 				clearChildSession();
-				try {
-					// AgentSession always provides dispose(); the guard keeps intentionally
-					// partial test doubles compatible with the public session boundary.
+				guarded("session dispose", () => {
+					// AgentSession always provides dispose(); the guard keeps intentionally partial
+					// test doubles compatible with the public session boundary.
 					if (typeof session.dispose === "function") {
 						session.dispose();
 					}
-				} catch (cleanupError) {
-					if (!primary) {
-						throw cleanupError;
-					}
-					let notified = false;
-					if (ctx.hasUI) {
-						try {
-							notifyCleanupFailure(ctx, cleanupError);
-							notified = true;
-						} catch {
-							// A throwing notice falls through to the combined text, which keeps both failures.
-						}
-					}
-					if (!notified) {
-						// Without a cleanup notice the result names both failures.
-						throw new Error(`Spawn failed and cleanup failed: ${failureMessage(primary.error)}; ${failureMessage(cleanupError)}`);
-					}
+				});
+			}
+			if (teardownFailures.length > 0) {
+				const degraded = reportTeardownFailures(primary, ctx, teardownFailures);
+				if (degraded.length > 0) {
+					// A successful run whose only failures are instrumentation-only keeps its reply, the
+					// degradation reported in the result details rather than as a terminal error.
+					degradedFailures.push(...degraded);
 				}
 			}
+			if (primary) {
+				throw primary.error;
+			}
+			if (!childRun) {
+				throw new Error("Spawn completed without a result or error.");
+			}
+			return childRun;
 		};
 
 		let completed: ChildRun;
@@ -734,7 +846,7 @@ export function registerSpawnTool(
 	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
 ): void {
 	pi.registerTool({
-		name: "spawn",
+		name: SPAWN_TOOL_NAME,
 		label: "Spawn",
 		description: SPAWN_DESCRIPTION,
 		promptSnippet: SPAWN_PROMPT_SNIPPET,

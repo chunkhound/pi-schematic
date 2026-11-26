@@ -1,28 +1,22 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import {
-	createExtensionRuntime,
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
-	type ModelRegistry,
-	type AgentSession,
 	type AgentToolResult,
-	type AgentToolUpdateCallback,
 	type CreateAgentSessionOptions,
-	type CreateAgentSessionResult,
 	type ExtensionToolContext,
-	type ExtensionUIContext,
 	type SessionEntry,
 	type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { assertInstanceOf, assertPresent, assertString, expectPrefix, expectSuffix, isRecord } from "../assertions.js";
+import { assertInstanceOf, assertPresent, assertString, expectPrefix, expectSuffix } from "../assertions.js";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createState, resetState, type SchematicState } from "../../state.js";
 import { READONLY_BASH_SCOPE, READONLY_NO_SHELL_SUMMARY, READONLY_WRITE_EDIT_SUMMARY } from "../../notifications.js";
-import { buildChildToolNames, createChildTools, executeSpawn, normalizeSpawnRequirements, registerSpawnTool, type SpawnParameters } from "../../spawn/index.js";
+import { buildChildToolNames, createChildTools, executeSpawn, normalizeSpawnRequirements, registerSpawnTool } from "../../spawn/index.js";
 import { NestedAgentSessionComponent, renderSpawnResult } from "../../spawn/renderer.js";
-import type { SpawnResultDetails, SpawnToolResult } from "../../spawn/shared.js";
+import type { SpawnResultDetails } from "../../spawn/shared.js";
 import { formatByteCap } from "../../notebook/store.js";
 import { SpawnRouteError } from "../../model-groups/router.js";
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
@@ -31,15 +25,23 @@ import { Value } from "typebox/value";
 import { testMinContext } from "./model-groups-constraints-fixture.js";
 import { group } from "./model-groups-helpers.js";
 import {
+	assertChildRegistriesCleared,
 	assertErrorResult,
-	createModelRegistry,
+	assertSpawnDetails,
 	createSession,
-	createToolContext,
 	createToolRenderContext,
-	createUIContext,
+	executeSpawnTool,
+	executeWithFailingCleanup,
+	messageEntry,
+	mockFactoryWith,
+	mockSessionFactory,
+	sessionResult,
+	spawnContext,
+	spawnModel,
 	theme,
 	createDeferred,
 	EMPTY_CHILD_USAGE,
+	usageFixtureUsd,
 } from "./helpers.js";
 import { createTestHost, getTool, getToolRenderCall, getToolRenderResult, type TestPI } from "./test-host.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
@@ -47,93 +49,6 @@ import { createTestHarness, type TestHarness } from "../test-utils.js";
 let h: TestHarness;
 
 // ── Test helpers ─────────────────────────────────────────────────────
-/** A chat model with `fields` over placeholder metadata: no reasoning, text input, zero cost. */
-function spawnModel(fields: Partial<Model<Api>> & Pick<Model<Api>, "id">): Model<Api> {
-	return {
-		name: fields.id,
-		api: "openai-completions",
-		provider: "test",
-		baseUrl: "http://localhost.invalid",
-		reasoning: false,
-		input: ["text"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 128000,
-		maxTokens: 1024,
-		...fields,
-	};
-}
-
-/**
- * The tool context of a spawn call: the parent `model` built by `spawnModel`, the
- * `cwd`, and `modelRegistry` built by `createModelRegistry`. With `notify` the UI is
- * on and `notify` is its only stubbed member.
- */
-function spawnContext(init: {
-	model?: Parameters<typeof spawnModel>[0];
-	cwd?: string;
-	modelRegistry?: Pick<ModelRegistry, "find" | "hasConfiguredAuth">;
-	notify?: ExtensionUIContext["notify"];
-}): ExtensionToolContext {
-	return createToolContext({
-		model: init.model && spawnModel(init.model),
-		cwd: init.cwd,
-		modelRegistry: init.modelRegistry && createModelRegistry(init.modelRegistry),
-		...(init.notify ? { hasUI: true, ui: createUIContext({ notify: init.notify }) } : {}),
-	});
-}
-
-// Throws on details without the members every spawn result and update carries.
-function assertSpawnDetails(details: unknown): asserts details is SpawnResultDetails {
-	if (
-		!isRecord(details) ||
-		typeof details.model !== "string" ||
-		typeof details.thinking !== "string" ||
-		typeof details.truncated !== "boolean" ||
-		typeof details.outcome !== "string"
-	) {
-		throw new Error(`Expected spawn result details, got ${JSON.stringify(details)}.`);
-	}
-}
-
-function assertSpawnToolResult(result: unknown): asserts result is SpawnToolResult {
-	if (!isRecord(result) || !isRecord(result.usage) || !Array.isArray(result.content)) {
-		throw new Error("Expected a spawn result with content and usage.");
-	}
-	assertSpawnDetails(result.details);
-	for (const block of result.content) {
-		if (!isRecord(block) || block.type !== "text" || typeof block.text !== "string") {
-			throw new Error(`Expected text content, got ${JSON.stringify(block)}.`);
-		}
-	}
-}
-
-/** Runs the registered spawn tool and narrows its result to the spawn result shape. */
-async function executeSpawnTool(
-	pi: TestPI,
-	toolCallId: string,
-	params: SpawnParameters,
-	signal: AbortSignal | undefined,
-	onUpdate: AgentToolUpdateCallback<unknown> | undefined,
-	ctx: ExtensionToolContext,
-): Promise<SpawnToolResult> {
-	const result: unknown = await getTool(pi, "spawn").execute(toolCallId, params, signal, onUpdate, ctx);
-	assertSpawnToolResult(result);
-	return result;
-}
-
-// Spawn reads these members of a child session; a mock without messages, prompt, abort or a
-// sessionManager object fails here instead of inside spawn.
-function assertChildSession(session: unknown): asserts session is AgentSession {
-	if (
-		!isRecord(session) ||
-		!Array.isArray(session.messages) ||
-		typeof session.prompt !== "function" ||
-		typeof session.abort !== "function" ||
-		!isRecord(session.sessionManager)
-	) {
-		throw new Error("A mock child session needs messages, prompt, abort and sessionManager.");
-	}
-}
 
 /** The first transcript text block of `session`; throws when the first message is not an assistant text message. */
 function firstAssistantTextBlock(session: ReturnType<typeof createSession>) {
@@ -152,56 +67,6 @@ function assertNestedAgentSessionComponent(component: unknown): asserts componen
 	if (!(component instanceof NestedAgentSessionComponent)) {
 		throw new Error("Expected a nested agent session component.");
 	}
-}
-
-/** What the child-session factory resolves to for `session`, with no extensions loaded. */
-function sessionResult(session: unknown): CreateAgentSessionResult {
-	assertChildSession(session);
-	return { session, extensionsResult: { extensions: [], errors: [], runtime: createExtensionRuntime() } };
-}
-
-interface MockChildSession {
-	messages: unknown[];
-	readonly thinkingLevel: string | undefined;
-	prompt: (prompt?: string) => Promise<void>;
-	abort: () => Promise<unknown>;
-	dispose: () => void;
-	sessionManager: { getEntries: () => SessionEntry[] };
-}
-
-function mockSessionFactory(
-	opts: {
-		prompt?: (prompt?: string) => Promise<unknown>;
-		abort?: () => Promise<unknown>;
-		dispose?: () => void;
-		result?: unknown[];
-		thinkingLevel?: string;
-		getEntries?: () => SessionEntry[];
-	} = {},
-): AgentSession {
-	const defaultResult = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
-	const session: MockChildSession = {
-		messages: [],
-		get thinkingLevel() {
-			return opts.thinkingLevel;
-		},
-		prompt: async (p?: string) => {
-			if (opts.prompt) {
-				await opts.prompt(p);
-			}
-			session.messages = opts.result ?? defaultResult;
-		},
-		abort: opts.abort ?? (() => Promise.resolve()),
-		dispose: opts.dispose ?? vi.fn(),
-		sessionManager: { getEntries: opts.getEntries ?? (() => []) },
-	};
-	assertChildSession(session);
-	return session;
-}
-
-/** Create a session factory for spawn tests — wraps mockSessionFactory with the expected return shape. */
-function mockFactoryWith(opts: Parameters<typeof mockSessionFactory>[0] = {}) {
-	return () => Promise.resolve(sessionResult(mockSessionFactory(opts)));
 }
 
 /** A tool as `getAllTools()` reports it, registered from `source`. */
@@ -242,40 +107,6 @@ beforeEach(() => {
 		h.teardown();
 	};
 });
-
-async function executeWithFailingCleanup(primaryFailure: unknown, cleanupFailure: unknown, notify?: ExtensionUIContext["notify"]) {
-	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
-	const state = createState();
-	const session = mockSessionFactory({
-		// Rejects with any value, primitives included, on purpose; prefer-promise-reject-errors refuses Promise.reject with a non-Error.
-		prompt: () =>
-			new Promise<never>(() => {
-				throw primaryFailure;
-			}),
-		dispose: () => {
-			throw cleanupFailure;
-		},
-	});
-	return {
-		execution: executeSpawn(
-			"spawn-cleanup-failure",
-			pi,
-			spawnContext({ model: { id: "mock-model" }, cwd: "/tmp", notify }),
-			state,
-			{ prompt: "Do the task" },
-			undefined,
-			undefined,
-			"medium",
-			() => Promise.resolve(sessionResult(session)),
-		),
-		state,
-	};
-}
-
-function assertChildRegistriesCleared(state: ReturnType<typeof createState>): void {
-	expect(state.childSessions.size).toBe(0);
-	expect(state.liveChildSessions.size).toBe(0);
-}
 
 test("spawn execute passes broad active registered tool formula to child session", async () => {
 	const state = createState();
@@ -346,7 +177,7 @@ test("spawn forwards requested thinking and reports the session effective thinki
 	expect(seenConfig?.thinkingLevel, "requested thinking is forwarded unchanged").toBe("max");
 	expect(runningDetails.thinking, "running details report Pi's effective thinking").toBe("off");
 	expect(result.details.thinking, "final details report Pi's effective thinking").toBe("off");
-	expect(result.details.route).toStrictEqual({ status: "inherited" });
+	expect(result.details.route).toStrictEqual({ status: "inherited", provider: "test", modelId: "non-reasoning-model" });
 });
 
 test("spawn execute composes Model Group routing with readonly child guards", async () => {
@@ -871,7 +702,13 @@ test("spawn execute derives result stats from the child entries", async () => {
 	expect(updates).toStrictEqual([
 		{
 			content: [],
-			details: { model: "mock-model", thinking: "high", truncated: false, outcome: "running", route: { status: "inherited" } },
+			details: {
+				model: "mock-model",
+				thinking: "high",
+				truncated: false,
+				outcome: "running",
+				route: { status: "inherited", provider: "test", modelId: "mock-model" },
+			},
 		},
 	]);
 	expect(result.content[0].text).toBe("child result");
@@ -896,12 +733,13 @@ function routeErrorOf(error: unknown, message?: string): SpawnRouteError {
 	return error;
 }
 
-function messageEntry(id: string, message: Record<string, unknown>): SessionEntry {
-	return { type: "message", id, parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message } as unknown as SessionEntry;
-}
-
-async function executeWithEntries(getEntries: () => SessionEntry[], opts: Parameters<typeof mockSessionFactory>[0] = {}) {
+async function executeWithEntries(
+	getEntries: () => SessionEntry[],
+	opts: Parameters<typeof mockSessionFactory>[0] = {},
+	sink?: NonNullable<ReturnType<typeof createState>["childUsageSink"]>,
+) {
 	const state = createState();
+	state.childUsageSink = sink ?? null;
 	const pi = await createTestHost(
 		(api) => {
 			registerSpawnTool(api, state, mockFactoryWith({ prompt: () => Promise.resolve(), getEntries, ...opts }));
@@ -1078,20 +916,32 @@ test("an undefined optional child usage field is treated as absent", async () =>
 });
 
 test("a completed spawn preserves its text when child entries cannot be read", async () => {
-	const entriesError = new Error("entries unavailable");
+	const rows: [string, string | null, string, unknown][] = [];
+	let reads = 0;
 	const dispose = vi.fn();
 	const result = await executeWithEntries(
 		() => {
-			throw entriesError;
+			reads++;
+			// The settle flush reads real entries and writes a real ledger row; the later result read
+			// is unreadable, and no zero may overwrite that row.
+			if (reads > 1) {
+				throw new Error("entries unavailable");
+			}
+			return [messageEntry("a1", { role: "assistant", content: [], stopReason: "stop", usage: usageFixtureUsd(0.25) })];
 		},
 		{ dispose },
+		(toolCallId, provider, model, usage) => {
+			rows.push([toolCallId, provider, model, usage]);
+		},
 	);
 
 	expect(result.content[0].text).toBe("child result");
 	expect(result.details.statsUnavailable).toBe(true);
-	expect(result.details.stats).toBeUndefined();
 	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
 	expect(dispose, "the child session is disposed when the entries cannot be read").toHaveBeenCalledOnce();
+	expect(rows, "an unreadable settle read must not overwrite the real ledger row with a zero").toStrictEqual([
+		["spawn-usage", "test", "mock-model", usageFixtureUsd(0.25)],
+	]);
 });
 
 test("a completed spawn keeps its text with zero usage when a child usage cannot be summed", async () => {
@@ -1395,7 +1245,7 @@ test("a failed child abort during the prompt is reported through the UI notice",
 	expect(result.isError).toBe(true);
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.content[0].text).toBe("Child agent aborted: This operation was aborted\n\nchild result");
-	expect(notifications).toStrictEqual(["Spawn cleanup failed: abort failed"]);
+	expect(notifications).toStrictEqual(["Spawn teardown failed: abort failed"]);
 });
 
 // ── Usage of a spawn that fails ──────────────────────────────────────
@@ -1434,7 +1284,7 @@ function failedSpawnResult(text: string) {
 			thinking: "high",
 			truncated: false,
 			outcome: "error",
-			route: { status: "inherited" },
+			route: { status: "inherited", provider: "test", modelId: "mock-model" },
 			stats: { inputTokens: 80, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 1, totalTokens: 95, cost: 13, turns: 2 },
 		},
 		usage: FAILED_CHILD_USAGE,
@@ -1512,7 +1362,7 @@ test("a completed spawn whose dispose fails returns the dispose error with the c
 		},
 	});
 
-	expect(await host.execute("spawn-dispose-failure")).toStrictEqual(failedSpawnResult("dispose failed"));
+	expect(await host.execute("spawn-dispose-failure")).toStrictEqual(failedSpawnResult("session dispose failed: dispose failed"));
 	expect(host.entryReads).toBe(1);
 	assertChildRegistriesCleared(host.state);
 });
@@ -1570,7 +1420,7 @@ test("a parent abort between child creation and the prompt returns an aborted re
 		thinking: "high",
 		truncated: false,
 		outcome: "aborted",
-		route: { status: "inherited" },
+		route: { status: "inherited", provider: "test", modelId: "mock-model" },
 		stats: { inputTokens: 80, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 1, totalTokens: 95, cost: 13, turns: 2 },
 	});
 	expect(result.content[0].text).toBe("Child agent aborted: aborted before start");
@@ -1739,17 +1589,8 @@ test("headless spawn aggregates Error and cleanup failures without mutating the 
 	Object.freeze(primaryFailure);
 	const { execution, state } = await executeWithFailingCleanup(primaryFailure, cleanupFailure);
 
-	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", EMPTY_CHILD_USAGE);
+	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; session dispose failed: dispose failed", EMPTY_CHILD_USAGE);
 	expect(primaryFailure.cause).toBe(originalCause);
-	assertChildRegistriesCleared(state);
-});
-
-test("headless spawn aggregates primitive and cleanup failures", async () => {
-	const primaryFailure = "prompt failed";
-	const cleanupFailure = new Error("dispose failed");
-	const { execution, state } = await executeWithFailingCleanup(primaryFailure, cleanupFailure);
-
-	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", EMPTY_CHILD_USAGE);
 	assertChildRegistriesCleared(state);
 });
 
@@ -1795,7 +1636,7 @@ test("UI spawn notifies when cleanup also fails after a primary failure", async 
 	});
 
 	assertErrorResult(await execution, "prompt failed", EMPTY_CHILD_USAGE);
-	expect(notifications).toStrictEqual([["Spawn cleanup failed: dispose failed", "error"]]);
+	expect(notifications).toStrictEqual([["Spawn teardown failed: session dispose failed: dispose failed", "error"]]);
 	assertChildRegistriesCleared(state);
 });
 
@@ -1805,7 +1646,7 @@ test("UI spawn names both failures when the cleanup notice throws", async () => 
 	});
 	const { execution, state } = await executeWithFailingCleanup(new Error("prompt failed"), new Error("dispose failed"), notify);
 
-	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; dispose failed", EMPTY_CHILD_USAGE);
+	assertErrorResult(await execution, "Spawn failed and cleanup failed: prompt failed; session dispose failed: dispose failed", EMPTY_CHILD_USAGE);
 	expect(notify).toHaveBeenCalledOnce();
 	assertChildRegistriesCleared(state);
 });
@@ -2195,7 +2036,7 @@ test("executeSpawn forwards inherited constraints to routing and succeeds when s
 		sessionFactory,
 	);
 	expect(result.details.outcome).toBe("success");
-	expect(result.details.route).toStrictEqual({ status: "inherited" });
+	expect(result.details.route).toStrictEqual({ status: "inherited", provider: "openai", modelId: "parent" });
 	expect(sessionFactory, "inherited route with satisfied requirements creates one child").toHaveBeenCalledOnce();
 });
 
@@ -2671,7 +2512,7 @@ test("reset during prompt reports a failed abort once through the UI", async () 
 	rejectPrompt(new Error("prompt rejected"));
 
 	assertErrorResult(await execution, "Spawn invalidated by reset; child abort failed.", EMPTY_CHILD_USAGE);
-	expect(notifications).toStrictEqual([["Spawn cleanup failed: abort failed", "error"]]);
+	expect(notifications).toStrictEqual([["Spawn teardown failed: abort failed", "error"]]);
 	expect(abort).toHaveBeenCalledOnce();
 	expect(dispose).toHaveBeenCalledOnce();
 	assertChildRegistriesCleared(state);
@@ -3148,7 +2989,7 @@ test("an abort during a running update notifies a failed child abort once", asyn
 	expect(result.isError).toBe(true);
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.content[0].text).toBe("abort failed");
-	expect(notifications).toStrictEqual(["Spawn cleanup failed: abort failed"]);
+	expect(notifications).toStrictEqual(["Spawn teardown failed: abort failed"]);
 	expect(prompt).not.toHaveBeenCalled();
 });
 
@@ -3184,7 +3025,7 @@ test("reset during a running update reports one failed abort", async () => {
 	);
 
 	assertErrorResult(result, "Spawn invalidated by reset; child abort failed.", EMPTY_CHILD_USAGE);
-	expect(notifications).toStrictEqual(["Spawn cleanup failed: abort failed"]);
+	expect(notifications).toStrictEqual(["Spawn teardown failed: abort failed"]);
 	expect(prompt).not.toHaveBeenCalled();
 });
 
@@ -3474,7 +3315,7 @@ test("spawn abort before its prompt returns the failed abort and notifies the UI
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.content[0].text).toBe("abort failed");
 	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
-	expect(notifications).toStrictEqual([["Spawn cleanup failed: abort failed", "error"]]);
+	expect(notifications).toStrictEqual([["Spawn teardown failed: abort failed", "error"]]);
 });
 
 test("a completed UI spawn whose dispose fails returns the dispose error without a notice", async () => {
@@ -3497,7 +3338,7 @@ test("a completed UI spawn whose dispose fails returns the dispose error without
 		}),
 	);
 
-	expect(result).toStrictEqual(failedSpawnResult("dispose failed"));
+	expect(result).toStrictEqual(failedSpawnResult("session dispose failed: dispose failed"));
 	expect(notifications).toStrictEqual([]);
 	assertChildRegistriesCleared(host.state);
 });

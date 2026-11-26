@@ -7,25 +7,31 @@ import {
 	ModelRegistry,
 	SessionManager,
 	Theme,
+	type AgentSession,
 	type AgentToolResult,
+	type AgentToolUpdateCallback,
+	type CreateAgentSessionResult,
 	type ExtensionCommandContext,
 	type ExtensionContext,
 	type ExtensionToolContext,
 	type ExtensionUIContext,
 	type KeybindingsManager,
+	type SessionEntry,
 	type ToolCallEventResult,
 	type ToolDefinition,
 	type TurnEndEvent,
+	createExtensionRuntime,
 } from "@earendil-works/pi-coding-agent";
-import type { Api, Model, ToolResultMessage } from "@earendil-works/pi-ai";
+import type { Api, Model, ToolResultMessage, Usage } from "@earendil-works/pi-ai";
+import { SPAWN_TOOL_NAME, type SpawnResultDetails, type SpawnToolResult } from "../../spawn/shared.js";
 import { stripTerminalSequences, TuiMainScreen, type Component } from "@earendil-works/pi-tui";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import os from "node:os";
 import { test as base, expect, vi } from "vitest";
-import { createState, resetState } from "../../state.js";
-import { registerSpawnTool } from "../../spawn/index.js";
+import { createState, resetState, type ChildUsageSink } from "../../state.js";
+import { executeSpawn, registerSpawnTool, type SpawnParameters } from "../../spawn/index.js";
 import { assertPresent, isRecord } from "../assertions.js";
 import { AGENT_DIR_ENV_KEY } from "../paths.js";
 import { createTestHost, getTool, loadTestKeybindings, type TestPI } from "./test-host.js";
@@ -45,6 +51,269 @@ export const EMPTY_CHILD_USAGE = {
 	totalTokens: 0,
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
+
+// ── Shared usage fixtures ────────────────────────────────────────────
+// Pi's persisted entry shapes shared by the usage and spawn tests; kept here so a pi
+// type change forces one sweep, not a two-file chase.
+
+const USAGE_FIXTURE_TIME = "2026-10-07T00:00:00.000Z";
+
+/** One usage record: 10 input / 5 output tokens, 1h cache reads, 2 writes, cost `total`. */
+export function usageFixtureUsd(total: number): Usage {
+	return {
+		input: 10,
+		output: 5,
+		cacheRead: 1,
+		cacheWrite: 2,
+		totalTokens: 18,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total },
+	};
+}
+
+/** A full assistant message entry; pi's type always carries provider/model and usage. */
+export function assistantMessageEntry(id: string, provider: string, model: string, total: number, responseModel?: string): SessionEntry {
+	return {
+		type: "message",
+		id,
+		parentId: null,
+		timestamp: USAGE_FIXTURE_TIME,
+		message: {
+			role: "assistant",
+			api: "test",
+			provider,
+			model,
+			...(responseModel !== undefined ? { responseModel } : {}),
+			content: [{ type: "text", text: "x" }],
+			timestamp: 0,
+			usage: usageFixtureUsd(total),
+			stopReason: "stop",
+		},
+	};
+}
+
+/** A tool-result entry; `options` select the tool name, usage, identity and tool-call id. */
+export function toolResultEntry(
+	id: string,
+	options?: { toolName?: string; usage?: Usage; model?: string; provider?: string; toolCallId?: string },
+): SessionEntry {
+	const message: ToolResultMessage = {
+		role: "toolResult",
+		toolName: options?.toolName ?? SPAWN_TOOL_NAME,
+		toolCallId: options?.toolCallId ?? `tc-${id}`,
+		content: [{ type: "text", text: "ok" }],
+		isError: false,
+		timestamp: 0,
+	};
+	if (options !== undefined) {
+		if (options.usage !== undefined) {
+			message.usage = options.usage;
+		}
+		if (options.model !== undefined || options.provider !== undefined) {
+			message.details = {
+				...(options.model !== undefined ? { model: options.model } : {}),
+				...(options.provider !== undefined ? { route: { provider: options.provider } } : {}),
+			};
+		}
+	}
+	return { type: "message", id, parentId: null, timestamp: USAGE_FIXTURE_TIME, message };
+}
+
+// ── Shared spawn test helpers ──────────────────────────────────────────
+// The spawn suite's session fakes and tool-driven entry points, shared by spawn.test.ts
+// and spawn-ledger.test.ts so one file owns the child-session contract.
+
+/** A chat model with `fields` over placeholder metadata: no reasoning, text input, zero cost. */
+export function spawnModel(fields: Partial<Model<Api>> & Pick<Model<Api>, "id">): Model<Api> {
+	return {
+		name: fields.id,
+		api: "openai-completions",
+		provider: "test",
+		baseUrl: "http://localhost.invalid",
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 128000,
+		maxTokens: 1024,
+		...fields,
+	};
+}
+
+/**
+ * The tool context of a spawn call: the parent `model` built by `spawnModel`, the
+ * `cwd`, and `modelRegistry` built by `createModelRegistry`. With `notify` the UI is
+ * on and `notify` is its only stubbed member.
+ */
+export function spawnContext(init: {
+	model?: Parameters<typeof spawnModel>[0];
+	cwd?: string;
+	modelRegistry?: Pick<ModelRegistry, "find" | "hasConfiguredAuth">;
+	notify?: ExtensionUIContext["notify"];
+}): ExtensionToolContext {
+	return createToolContext({
+		model: init.model && spawnModel(init.model),
+		cwd: init.cwd,
+		modelRegistry: init.modelRegistry && createModelRegistry(init.modelRegistry),
+		...(init.notify ? { hasUI: true, ui: createUIContext({ notify: init.notify }) } : {}),
+	});
+}
+
+// Throws on details without the members every spawn result and update carries.
+export function assertSpawnDetails(details: unknown): asserts details is SpawnResultDetails {
+	if (
+		!isRecord(details) ||
+		typeof details.model !== "string" ||
+		typeof details.thinking !== "string" ||
+		typeof details.truncated !== "boolean" ||
+		typeof details.outcome !== "string"
+	) {
+		throw new Error(`Expected spawn result details, got ${JSON.stringify(details)}.`);
+	}
+}
+
+function assertSpawnToolResult(result: unknown): asserts result is SpawnToolResult {
+	if (!isRecord(result) || !isRecord(result.usage) || !Array.isArray(result.content)) {
+		throw new Error("Expected a spawn result with content and usage.");
+	}
+	assertSpawnDetails(result.details);
+	for (const block of result.content) {
+		if (!isRecord(block) || block.type !== "text" || typeof block.text !== "string") {
+			throw new Error(`Expected text content, got ${JSON.stringify(block)}.`);
+		}
+	}
+}
+
+/** Runs the registered spawn tool and narrows its result to the spawn result shape. */
+export async function executeSpawnTool(
+	pi: TestPI,
+	toolCallId: string,
+	params: SpawnParameters,
+	signal: AbortSignal | undefined,
+	onUpdate: AgentToolUpdateCallback<unknown> | undefined,
+	ctx: ExtensionToolContext,
+): Promise<SpawnToolResult> {
+	const result: unknown = await getTool(pi, "spawn").execute(toolCallId, params, signal, onUpdate, ctx);
+	assertSpawnToolResult(result);
+	return result;
+}
+
+// Spawn reads these members of a child session; a mock without messages, prompt, abort or a
+// sessionManager object fails here instead of inside spawn.
+function assertChildSession(session: unknown): asserts session is AgentSession {
+	if (
+		!isRecord(session) ||
+		!Array.isArray(session.messages) ||
+		typeof session.prompt !== "function" ||
+		typeof session.abort !== "function" ||
+		!isRecord(session.sessionManager)
+	) {
+		throw new Error("A mock child session needs messages, prompt, abort and sessionManager.");
+	}
+}
+
+/** What the child-session factory resolves to for `session`, with no extensions loaded. */
+export function sessionResult(session: unknown): CreateAgentSessionResult {
+	assertChildSession(session);
+	return { session, extensionsResult: { extensions: [], errors: [], runtime: createExtensionRuntime() } };
+}
+
+interface MockChildSession {
+	messages: unknown[];
+	readonly thinkingLevel: string | undefined;
+	prompt: (prompt?: string) => Promise<void>;
+	abort: () => Promise<unknown>;
+	dispose: () => void;
+	sessionManager: { getEntries: () => SessionEntry[] };
+	subscribe?: (listener: (event: unknown) => void) => () => void;
+}
+
+export function mockSessionFactory(
+	opts: {
+		prompt?: (prompt?: string) => Promise<unknown>;
+		abort?: () => Promise<unknown>;
+		dispose?: () => void;
+		result?: unknown[];
+		thinkingLevel?: string;
+		getEntries?: () => SessionEntry[];
+		subscribe?: (listener: (event: unknown) => void) => () => void;
+	} = {},
+): AgentSession {
+	const defaultResult = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
+	const session: MockChildSession = {
+		messages: [],
+		get thinkingLevel() {
+			return opts.thinkingLevel;
+		},
+		prompt: async (p?: string) => {
+			if (opts.prompt) {
+				await opts.prompt(p);
+			}
+			session.messages = opts.result ?? defaultResult;
+		},
+		abort: opts.abort ?? (() => Promise.resolve()),
+		dispose: opts.dispose ?? vi.fn(),
+		sessionManager: { getEntries: opts.getEntries ?? (() => []) },
+		...(opts.subscribe ? { subscribe: opts.subscribe } : {}),
+	};
+	assertChildSession(session);
+	return session;
+}
+
+/** Create a session factory for spawn tests — wraps mockSessionFactory with the expected return shape. */
+export function mockFactoryWith(opts: Parameters<typeof mockSessionFactory>[0] = {}) {
+	return () => Promise.resolve(sessionResult(mockSessionFactory(opts)));
+}
+
+export async function executeWithFailingCleanup(
+	primaryFailure: unknown,
+	cleanupFailure: unknown,
+	notify?: ExtensionUIContext["notify"],
+	sink?: ChildUsageSink,
+) {
+	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
+	const state = createState();
+	state.childUsageSink = sink ?? null;
+	const session = mockSessionFactory({
+		// Rejects with any value, primitives included, on purpose; prefer-promise-reject-errors refuses Promise.reject with a non-Error.
+		prompt: () =>
+			new Promise<never>(() => {
+				throw primaryFailure;
+			}),
+		dispose: () => {
+			throw cleanupFailure;
+		},
+	});
+	return {
+		execution: executeSpawn(
+			"spawn-cleanup-failure",
+			pi,
+			spawnContext({ model: { id: "mock-model" }, cwd: "/tmp", notify }),
+			state,
+			{ prompt: "Do the task" },
+			undefined,
+			undefined,
+			"medium",
+			() => Promise.resolve(sessionResult(session)),
+		),
+		state,
+	};
+}
+
+export function assertChildRegistriesCleared(state: ReturnType<typeof createState>): void {
+	expect([state.childSessions.size, state.liveChildSessions.size]).toStrictEqual([0, 0]);
+}
+
+/** Narrow an arbitrary fixture object to a message entry; the loose shape is a test convenience. */
+function requireMessageEntry(value: unknown): asserts value is SessionEntry {
+	if (!isRecord(value) || value.type !== "message" || !isRecord(value.message)) {
+		throw new Error(`Expected a session message entry, got ${JSON.stringify(value)}.`);
+	}
+}
+
+export function messageEntry(id: string, message: Record<string, unknown>): SessionEntry {
+	const entry = { type: "message", id, parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message };
+	requireMessageEntry(entry);
+	return entry;
+}
 
 /** `value` as a record; throws, naming `what`, unless it is an object. */
 export function recordOf(value: unknown, what: string): Record<string, unknown> {
@@ -170,32 +439,35 @@ export function createToolRenderContext(overrides: Partial<RenderContext> = {}):
 }
 
 export function createSession(messages: unknown[]) {
-	return {
+	const session = {
 		messages,
+		prompt: () => Promise.resolve(),
+		abort: vi.fn(() => Promise.resolve()),
+		sessionManager: { getCwd: () => process.cwd() },
 		subscribe: () => vi.fn(),
 		getToolDefinition: () => undefined,
-		sessionManager: { getCwd: () => process.cwd() },
-		abort: vi.fn(() => Promise.resolve()),
-	} as unknown as import("@earendil-works/pi-coding-agent").AgentSession;
+	};
+	assertChildSession(session);
+	return session;
 }
 
 export function createSubscribableSession(messages: unknown[] = []) {
 	let handler: ((event: unknown) => void) | undefined;
-	return {
-		session: {
-			messages,
-			subscribe: (cb: (event: unknown) => void) => {
-				handler = cb;
-				return () => {
-					handler = undefined;
-				};
-			},
-			getToolDefinition: () => undefined,
-			sessionManager: { getCwd: () => process.cwd() },
-			abort: vi.fn(() => Promise.resolve()),
-		} as unknown as import("@earendil-works/pi-coding-agent").AgentSession,
-		emit: (event: unknown) => handler?.(event),
+	const session = {
+		messages,
+		subscribe: (listener: (event: unknown) => void) => {
+			handler = listener;
+			return () => {
+				handler = undefined;
+			};
+		},
+		prompt: () => Promise.resolve(),
+		abort: vi.fn(() => Promise.resolve()),
+		sessionManager: { getCwd: () => process.cwd() },
+		getToolDefinition: () => undefined,
 	};
+	assertChildSession(session);
+	return { session, emit: (event: unknown) => handler?.(event) };
 }
 
 /** The entries of the first `turn_end` handler result that is not `undefined`; throws unless they are an array of objects. */
@@ -795,6 +1067,8 @@ export async function runRealChildInvocation(params: {
 	resetDuringPrompt?: boolean;
 	/** Inside the FIRST stream call, abort the parent controller — spawn rejects with /mid-prompt abort/. */
 	abortMidPrompt?: boolean;
+	/** Install a child-spend sink on the run state before spawning. */
+	sink?: ChildUsageSink;
 }): Promise<RealChildInvocationResult> {
 	const tempRoot = await mkdtemp(join(os.tmpdir(), "pi-schematic-runtime-"));
 	const cwd = join(tempRoot, "project");
@@ -930,6 +1204,7 @@ export default function(pi) {
 		const activeTools = params.activeTools ?? ["read", "agentic_e2e_probe", "spawn"];
 		const state = createState();
 		state.readonlyEnabled = params.readonly ?? false;
+		state.childUsageSink = params.sink ?? null;
 		if (params.notebookPages) {
 			for (const [pageName, pageContent] of Object.entries(params.notebookPages)) {
 				state.notebookPages.set(pageName, pageContent);

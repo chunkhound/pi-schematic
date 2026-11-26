@@ -79,7 +79,7 @@ jobs:
       # audit-ci fails on moderate-or-higher advisories; reviewed exceptions, if ever
       # needed, must be explicit and expiry-tracked in audit-ci.jsonc.
       - name: Type check
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
       - name: Security audit
         run: npx audit-ci --config audit-ci.jsonc

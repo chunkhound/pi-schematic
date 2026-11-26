@@ -109,7 +109,13 @@ function normalizeRoute(value: unknown): SpawnRouteDetails | undefined {
 		return undefined;
 	}
 	if (value.status === "inherited") {
-		return { status: "inherited" };
+		// Accept both the persisted `{status:"inherited"}` and the current shape with
+		// provider/modelId; the extra identity is preserved when present.
+		return {
+			status: "inherited",
+			...(typeof value.provider === "string" ? { provider: value.provider } : {}),
+			...(typeof value.modelId === "string" ? { modelId: value.modelId } : {}),
+		};
 	}
 	if (value.status === "routed" && typeof value.group === "string" && typeof value.provider === "string" && typeof value.modelId === "string") {
 		return { status: "routed", group: value.group, provider: value.provider, modelId: value.modelId };
@@ -160,6 +166,12 @@ function normalizeSpawnResultDetails(value: unknown): SpawnResultDetails | undef
 	}
 	if (typeof value.statsUnavailable === "boolean") {
 		details.statsUnavailable = value.statsUnavailable;
+	}
+	if (Array.isArray(value.teardownFailures)) {
+		const failures = value.teardownFailures.filter((failure): failure is string => typeof failure === "string");
+		if (failures.length > 0) {
+			details.teardownFailures = failures;
+		}
 	}
 	return details;
 }
@@ -232,6 +244,10 @@ function equalStats(a?: Record<string, number>, b?: Record<string, number>): boo
 	return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
 }
 
+function equalStringArray(a?: string[], b?: string[]): boolean {
+	return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
 function equalRoute(a: SpawnResultDetails["route"], b: SpawnResultDetails["route"]): boolean {
 	return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
@@ -248,6 +264,9 @@ function formatSpawnIdentity(details: Pick<SpawnResultDetails, "model" | "thinki
 		const provider = escapeDisplayLabel(details.route.provider);
 		const modelId = escapeDisplayLabel(details.route.modelId);
 		return `${requestedGroup}? fallback → ${provider}/${modelId} • ${details.thinking}`;
+	}
+	if (details.route?.status === "inherited" && typeof details.route.provider === "string" && typeof details.route.modelId === "string") {
+		return `${escapeDisplayLabel(details.route.provider)}/${escapeDisplayLabel(details.route.modelId)} • ${details.thinking}`;
 	}
 	return `${escapeDisplayLabel(details.model)} • ${details.thinking}`;
 }
@@ -302,6 +321,14 @@ function formatCollapsedStats(details: SpawnResultDetails): { text: string; colo
 		return { text: "stats unavailable", color: "muted" };
 	}
 	return undefined;
+}
+
+/** One-line teardown summary; escapes control bytes and newlines so stored/imported details stay safe. */
+function formatTeardownFailureLine(failures: readonly string[] | undefined): string | undefined {
+	if (!failures || failures.length === 0) {
+		return undefined;
+	}
+	return `⚠ ${failures.map(escapeDisplayLabel).join("; ")}`;
 }
 
 // ── NestedAgentSessionComponent forward reference ────────────────────
@@ -609,6 +636,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			!equalRoute(prior.route, details.route) ||
 			!equalStats(prior.stats, details.stats) ||
 			prior.statsUnavailable !== details.statsUnavailable ||
+			!equalStringArray(prior.teardownFailures, details.teardownFailures) ||
 			this.nestTheme !== theme;
 		this.details = details;
 		this.nestTheme = theme;
@@ -1023,6 +1051,11 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			lines.push(truncateAndColor(statsLine.text, width, color, statsLine.color));
 		}
 
+		const teardownLine = formatTeardownFailureLine(details?.teardownFailures);
+		if (teardownLine !== undefined) {
+			lines.push(truncateAndColor(teardownLine, width, color, "dim"));
+		}
+
 		return lines;
 	}
 
@@ -1042,6 +1075,11 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		if (this.details) {
 			const header = `${getOutcomeMarker(this.liveOutcome)}${formatSpawnIdentity(this.details)}`;
 			lines.push(leftPad + truncateToWidth(colorExpanded("dim", header), childWidth));
+		}
+
+		const teardownLine = formatTeardownFailureLine(this.details?.teardownFailures);
+		if (teardownLine !== undefined) {
+			lines.push(leftPad + truncateToWidth(colorExpanded("dim", teardownLine), childWidth));
 		}
 
 		for (const child of this.children) {
@@ -1392,9 +1430,11 @@ function renderSpawnResult(
 	const outcome = forcedError ? "error" : (details?.outcome ?? "running");
 	const meta = details ? `${getOutcomeMarker(outcome)}${formatSpawnIdentity(details)}` : "";
 	const status = getOutcomeStatusText(outcome);
+	const teardownLine = formatTeardownFailureLine(details?.teardownFailures);
 	const text = [
 		meta ? theme.fg("dim", meta) : "",
 		status !== undefined ? theme.fg(outcome === "error" ? "warning" : "dim", status) : "",
+		teardownLine !== undefined ? theme.fg("dim", teardownLine) : "",
 		theme.fg("toolOutput", summary),
 	]
 		.filter(Boolean)
