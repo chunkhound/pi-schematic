@@ -42,6 +42,9 @@ import { getLastAssistantText, getStopReasonOutcome, type SpawnOutcome, type Spa
 // ── Render-only constants ────────────────────────────────────────────
 
 const COLLAPSED_PREVIEW_MAX_LINES = 5;
+// The writer emits at most one report per labeled teardown step (spend flush, event unsubscribe,
+// session dispose, event subscription); cap replayed stored/imported details to that bound.
+const MAX_TEARDOWN_FAILURES = 4;
 const SPAWN_INDENT = 4;
 const PROMPT_PREVIEW_COLLAPSED_LINES = 3;
 const TOOL_RESULT_PREVIEW_CHARS = 60;
@@ -170,7 +173,9 @@ function normalizeSpawnResultDetails(value: unknown): SpawnResultDetails | undef
 	if (Array.isArray(value.teardownFailures)) {
 		const failures = value.teardownFailures.filter((failure): failure is string => typeof failure === "string");
 		if (failures.length > 0) {
-			details.teardownFailures = failures;
+			// The writer emits at most one report per labeled teardown step; a replayed session file is
+			// the only unbounded source, so cap the array to the bounded write contract.
+			details.teardownFailures = failures.slice(0, MAX_TEARDOWN_FAILURES);
 		}
 	}
 	return details;
@@ -245,7 +250,21 @@ function equalStats(a?: Record<string, number>, b?: Record<string, number>): boo
 }
 
 function equalStringArray(a?: string[], b?: string[]): boolean {
-	return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+	if (a === b) {
+		return true;
+	}
+	if (a === undefined || b === undefined) {
+		return false;
+	}
+	if (a.length !== b.length) {
+		return false;
+	}
+	for (let i = 0; i < a.length; i++) {
+		if (a[i] !== b[i]) {
+			return false;
+		}
+	}
+	return true;
 }
 
 function equalRoute(a: SpawnResultDetails["route"], b: SpawnResultDetails["route"]): boolean {
