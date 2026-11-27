@@ -416,7 +416,7 @@ test("a child event subscription failure keeps the settled stats without a UI", 
 	// subscription in details.teardownFailures even headless, and the settled stats are still
 	// computed at settle (statsUnavailable stays reserved for genuinely unsummable entries).
 	expect(result.details.outcome).toBe("success");
-	expect(result.details.teardownFailures).toContain("Spawn event subscription failed: subscribe exploded");
+	expect(result.details.teardownFailures).toContain("event subscription failed: subscribe exploded");
 	expect(result.details.stats).toBeDefined();
 	expect(result.details.statsUnavailable).toBeUndefined();
 	assertChildRegistriesCleared(state);
@@ -439,7 +439,7 @@ test("a child event subscription failure notifies when a UI is present and the s
 		factory: () => Promise.resolve(sessionResult(session)),
 	});
 	expect(result.details.outcome).toBe("success");
-	expect(notifications).toStrictEqual([["Spawn teardown failed: Spawn event subscription failed: subscribe exploded", "warning"]]);
+	expect(notifications).toStrictEqual([["Spawn teardown failed: event subscription failed: subscribe exploded", "warning"]]);
 	assertChildRegistriesCleared(state);
 });
 

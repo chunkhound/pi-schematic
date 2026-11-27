@@ -123,22 +123,43 @@ function notifyTeardownFailure(ctx: ExtensionContext, report: string, severity: 
 	}
 }
 
-/** Instrumentation failures on a successful run degrade instead of failing (see reportTeardownFailures). */
-const INSTRUMENTATION_LABELS = new Set(["spend flush", "event unsubscribe"]);
+/** The teardown steps and whether a failure in one is instrumentation (degrade on a successful run)
+ * versus terminal (must surface as the result error). Single owner of the label strings and their
+ * severity class, so a new step cannot silently flip the classification. */
+type TeardownStep = "spend flush" | "event unsubscribe" | "session dispose" | "event subscription";
+const TEARDOWN_STEPS: Record<TeardownStep, { instrumentation: boolean }> = {
+	"spend flush": { instrumentation: true },
+	"event unsubscribe": { instrumentation: true },
+	"session dispose": { instrumentation: false },
+	"event subscription": { instrumentation: true },
+};
+
+/** One guarded teardown step runner; collects labeled failures so none is lost. */
+function createTeardownRunner() {
+	const failures: { label: TeardownStep; error: unknown }[] = [];
+	const guarded = (label: TeardownStep, step: () => void) => {
+		try {
+			step();
+		} catch (error) {
+			failures.push({ label, error });
+		}
+	};
+	return { failures, guarded };
+}
 
 /** Report teardown failures without masking the spawn error: instrumentation-only failures on a
  * successful run degrade (returned for details, notified with a UI), never thrown. */
 function reportTeardownFailures(
 	primary: { error: unknown } | undefined,
 	ctx: ExtensionContext,
-	failures: readonly { label: string; error: unknown }[],
+	failures: readonly { label: TeardownStep; error: unknown }[],
 ): string[] {
 	if (failures.length === 0) {
 		return [];
 	}
 	const report = [...new Set(failures.map((failure) => `${failure.label} failed: ${formatDiagnostic(failure.error)}`))];
 	const combined = report.join("; ");
-	const instrumentationOnly = failures.every((failure) => INSTRUMENTATION_LABELS.has(failure.label));
+	const instrumentationOnly = failures.every((failure) => TEARDOWN_STEPS[failure.label].instrumentation);
 	if (!primary) {
 		if (instrumentationOnly) {
 			notifyTeardownFailure(ctx, combined, "warning");
@@ -277,12 +298,9 @@ function createSpawnAbortContext(state: SchematicState, session: AgentSession, c
 		const p = abortChildSession(state, session);
 		if (p !== reported) {
 			reported = p;
+			// notifyTeardownFailure never throws, so this detached observer stays total by itself.
 			void p.catch((e: unknown) => {
-				try {
-					notifyTeardownFailure(ctx, formatDiagnostic(e), "error");
-				} catch {
-					/* the detached reporter must stay total */
-				}
+				notifyTeardownFailure(ctx, formatDiagnostic(e), "error");
 			});
 		}
 		return p;
@@ -691,14 +709,7 @@ export function executeSpawn(
 			// Collect every teardown failure so none is lost; one guarded step per teardown action,
 			// each labeled for the report, keeping every thrown value (falsy included). Flush runs
 			// first so an unsubscribe throw can never skip the settle write.
-			const teardownFailures: { label: string; error: unknown }[] = [];
-			const guarded = (label: string, step: () => void) => {
-				try {
-					step();
-				} catch (error) {
-					teardownFailures.push({ label, error });
-				}
-			};
+			const { failures: teardownFailures, guarded } = createTeardownRunner();
 			try {
 				if (isStale()) {
 					await abortAndInvalidate();
@@ -727,10 +738,8 @@ export function executeSpawn(
 							}
 						});
 					} catch (error) {
-						// Degrade: details.teardownFailures always, plus the shared teardown notice (warning).
-						const subscriptionReport = `Spawn event subscription failed: ${formatDiagnostic(error)}`;
-						degradedFailures.push(subscriptionReport);
-						notifyTeardownFailure(ctx, subscriptionReport, "warning");
+						// Degrade via the shared teardown pipeline: the report and the notice use the label grammar.
+						teardownFailures.push({ label: "event subscription", error });
 					}
 				}
 
