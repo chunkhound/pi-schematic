@@ -299,6 +299,70 @@ test.skipIf(process.platform !== "linux" || !canUseOsSandbox())("bwrap executes 
 	}
 });
 
+// ── Cache redirect (#221) ───────────────────────────────────────
+//
+// The sandbox makes `$HOME` read-only, so tools that default their cache there
+// fail on a lock or temp-file write and blame themselves. Both wrappers pin the
+// cache variables under the writable temp dir.
+
+const CACHE_VARS = ["XDG_CACHE_HOME", "UV_CACHE_DIR", "npm_config_cache", "PIP_CACHE_DIR", "CARGO_HOME", "GOMODCACHE", "YARN_CACHE_FOLDER"];
+
+test("both wrappers redirect every cache variable into their temp dir", () => {
+	// wrapWithBwrap takes an explicit temp dir; wrapWithSandboxExec always uses
+	// the canonical one, so each is checked against its own root.
+	const cases = [
+		{ wrapped: wrapWithBwrap("true", "/tmp/pi-cache-redirect"), root: path.join(resolveRealPath("/tmp/pi-cache-redirect"), "schematic-cache") },
+		{ wrapped: wrapWithSandboxExec("true"), root: path.join(resolveRealPath(os.tmpdir()), "schematic-cache") },
+	];
+
+	for (const { wrapped, root } of cases) {
+		for (const name of CACHE_VARS) {
+			// XDG_CACHE_HOME is a base dir; the rest are the tool's own cache dir.
+			const expected = name === "XDG_CACHE_HOME" ? root : path.join(root, name);
+			expect(wrapped, `${name} in: ${wrapped}`).toContain(quoteShellArgument(expected));
+			expect(wrapped, `${name} not redirected`).toContain(name);
+		}
+	}
+});
+
+test("the Linux redirect uses --setenv and keeps the command as one quoted argument", () => {
+	const tempDir = "/tmp/pi-cache-linux";
+	const wrapped = wrapWithBwrap("printf '%s' \"it's quoted\"", tempDir);
+
+	expect(wrapped).toContain("--setenv XDG_CACHE_HOME");
+	// The redirect must not disturb the passthrough contract.
+	expectSuffix(wrapped, ` "$0" -c ${quoteShellArgument("printf '%s' \"it's quoted\"")}`);
+});
+
+test("the macOS redirect runs env before sandbox-exec so Seatbelt still gets its profile", () => {
+	const wrapped = wrapWithSandboxExec("true");
+
+	expect(wrapped).toMatch(/^env XDG_CACHE_HOME=/);
+	expect(wrapped).toContain("sandbox-exec -p '");
+	// The profile must stay a single quoted argument: `env` adds assignments
+	// before it, not inside it.
+	expect(wrapped).toContain(`-p '${buildMacProfile(resolveRealPath(os.tmpdir()))}'`);
+});
+
+test("a cache path containing a quote is escaped, not injected", () => {
+	const tempDir = "/tmp/pi-cache' ; echo injected; #";
+	const wrapped = wrapWithBwrap("true", tempDir);
+
+	// The single quote is closed and reopened, so the outer shell sees one
+	// argument and never runs `echo`.
+	expect(wrapped).toContain(quoteShellArgument(path.join(resolveRealPath(tempDir), "schematic-cache")));
+	expect(wrapped).not.toContain("--setenv XDG_CACHE_HOME '/tmp/pi-cache' ;");
+});
+
+test("the cache redirect leaves the readonly contract alone", () => {
+	const wrapped = wrapWithBwrap("true", "/tmp/pi-cache-contract");
+
+	// Root stays read-only and only the temp dir is bound writable.
+	expect(wrapped).toContain("--ro-bind / /");
+	expect(wrapped).not.toContain("--bind / ");
+	expect(wrapped).not.toMatch(/--bind\s+(?!'\/tmp\/pi-cache-contract')/);
+});
+
 test("quoteShellArgument emits POSIX single-quoted arguments", () => {
 	// POSIX shell single-quote invariant: input is wrapped in single quotes.
 	// Embedded single quotes close, quote, and reopen the outer argument.

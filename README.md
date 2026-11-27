@@ -158,6 +158,8 @@ When you delegate a task with `spawn`, you can declare which capabilities it nee
 
 Readonly blocks write/edit and the Windows `powershell` tool, and guards bash while researching; children inherit the posture. macOS uses `sandbox-exec`; Linux uses `bwrap` when available, otherwise only the command classifier remains. Windows is classifier-only. Readonly bash also blocks launching PowerShell or cmd. Interpreters and indirection can bypass classification. **Readonly is a coding guardrail, not a hardened security boundary.**
 
+Tool caches are redirected into the OS temp dir, so a tool that defaults its cache under `$HOME` (for example `uv`) does not fail on the sandbox's read-only home.
+
 Toggle it with `/readonly`, `Ctrl+Shift+R`, `--readonly`, or workflow frontmatter. Skills and prompts can instruct models to run code and use tools, so review workflow files before trusting them.
 
 ## Documentation and help

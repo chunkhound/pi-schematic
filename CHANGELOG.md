@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Readonly sandbox no longer breaks tools that cache under `$HOME`** — the OS sandbox makes `$HOME` read-only, so a tool whose cache lives there failed on its own lock or temp-file write and reported the failure as its own bug: `uv run` returned `Could not acquire lock / Could not create temporary file / Read-only file system (os error 30)` for `~/.cache/uv`, and the message named nothing about the sandbox (#221). Both wrappers now redirect the cache variables (`XDG_CACHE_HOME`, `UV_CACHE_DIR`, `npm_config_cache`, `PIP_CACHE_DIR`, `CARGO_HOME`, `GOMODCACHE`, `YARN_CACHE_FOLDER`) into `<temp dir>/schematic-cache`, which the sandbox already allows. The readonly contract is unchanged — no writes outside the OS temp dir — and the command the model wrote is untouched, so the classifier is unaffected. The block notice now also names a tool's own `Read-only file system` or `Operation not permitted` error as the sandbox rather than a bug in the tool.
+
 ### Breaking Changes
 
 - **Pi 1.2.0 minimum**: the `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` peers now require 1.2.0 or later, up from 0.99.2. The `typebox` peer minimum stays 1.3.27.
