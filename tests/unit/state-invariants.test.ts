@@ -407,11 +407,11 @@ test("reset clears deferred readonly frontmatter commands", () => {
 
 test("reset preserves an installed child usage sink", () => {
 	const state = createState();
-	const sink = vi.fn();
-	state.childUsageSink = sink;
+	const sinkHost = { owner: "run-1", sink: vi.fn() };
+	state.childUsageSink = sinkHost;
 
 	resetState(state);
-	expect(state.childUsageSink, "childUsageSink must survive reset").toBe(sink);
+	expect(state.childUsageSink, "childUsageSink must survive reset").toBe(sinkHost);
 });
 
 test("clipped page flags stay contained and reset clears them", async () => {

@@ -271,7 +271,7 @@ export async function executeWithFailingCleanup(
 ) {
 	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
 	const state = createState();
-	state.childUsageSink = sink ?? null;
+	state.childUsageSink = sink ? { owner: "test-run", sink } : null;
 	const session = mockSessionFactory({
 		// Rejects with any value, primitives included, on purpose; prefer-promise-reject-errors refuses Promise.reject with a non-Error.
 		prompt: () =>
@@ -1204,7 +1204,7 @@ export default function(pi) {
 		const activeTools = params.activeTools ?? ["read", "agentic_e2e_probe", "spawn"];
 		const state = createState();
 		state.readonlyEnabled = params.readonly ?? false;
-		state.childUsageSink = params.sink ?? null;
+		state.childUsageSink = params.sink ? { owner: "test-run", sink: params.sink } : null;
 		if (params.notebookPages) {
 			for (const [pageName, pageContent] of Object.entries(params.notebookPages)) {
 				state.notebookPages.set(pageName, pageContent);

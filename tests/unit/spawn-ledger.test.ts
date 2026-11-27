@@ -10,8 +10,10 @@
 // lives in spawn-runtime-compatibility.test.ts.
 import { expect, test, vi } from "vitest";
 import { assertPresent } from "../assertions.js";
-import { createState } from "../../state.js";
+import { usageByModel } from "../../usage.js";
+import { createState, type ChildUsageSink } from "../../state.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
+import type { CreateAgentSessionResult } from "@earendil-works/pi-coding-agent";
 import {
 	assertChildRegistriesCleared,
 	assertErrorResult,
@@ -20,49 +22,63 @@ import {
 	EMPTY_CHILD_USAGE,
 	assistantMessageEntry,
 	mockFactoryWith,
+	toolResultEntry,
 	mockSessionFactory,
 	sessionResult,
 	spawnContext,
 	usageFixtureUsd,
 } from "./helpers.js";
 import { createTestHost } from "./test-host.js";
+import { isControlCodePoint } from "../../model-groups/display.js";
+import { group } from "./model-groups-helpers.js";
+import { spawnModel } from "./helpers.js";
 
 function hasControlChars(text: string): boolean {
 	for (const ch of text) {
-		const code = ch.charCodeAt(0);
-		if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
+		const code = ch.codePointAt(0);
+		if (code !== undefined && isControlCodePoint(code)) {
 			return true;
 		}
 	}
 	return false;
 }
 
-/** Run a headless spawn of `session` under `state`; `signal` drives the abort path and `notify` feeds the UI. */
-async function runSpawn(
-	state: ReturnType<typeof createState>,
-	session: ReturnType<typeof mockSessionFactory>,
-	signal?: AbortSignal,
-	notify?: (message: string, level?: string) => void,
-) {
+interface RunSpawnOptions {
+	state?: ReturnType<typeof createState>;
+	sink?: ChildUsageSink;
+	signal?: AbortSignal;
+	notify?: (message: string, level?: string) => void;
+	factory?: () => Promise<CreateAgentSessionResult>;
+}
+
+/** Run a headless spawn under `state`; `signal` drives the abort path, `notify` feeds the UI, and `factory` supplies the child session. */
+async function runSpawn(options: RunSpawnOptions = {}) {
+	const state = options.state ?? createState();
+	if (options.sink) {
+		state.childUsageSink = { owner: "test-run", sink: options.sink };
+	}
 	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
 	return executeSpawn(
 		"spawn-sanitize",
 		pi,
-		spawnContext({ model: { id: "mock-model" }, cwd: "/tmp", ...(notify ? { notify } : {}) }),
+		spawnContext({ model: { id: "mock-model" }, cwd: "/tmp", ...(options.notify ? { notify: options.notify } : {}) }),
 		state,
 		{ prompt: "Do the task" },
-		signal,
+		options.signal,
 		undefined,
 		"medium",
-		() => Promise.resolve(sessionResult(session)),
+		options.factory ?? (() => Promise.resolve(sessionResult(mockSessionFactory()))),
 	);
 }
 
 test("spawn flushes child spend to the run sink keyed by tool-call id", async () => {
 	const rows: [string, string | null, string, unknown][] = [];
 	const state = createState();
-	state.childUsageSink = (toolCallId, provider, model, usage) => {
-		rows.push([toolCallId, provider, model, usage]);
+	state.childUsageSink = {
+		owner: "test-run",
+		sink: (toolCallId, provider, model, usage) => {
+			rows.push([toolCallId, provider, model, usage]);
+		},
 	};
 	const pi = await createTestHost(
 		(api) => {
@@ -94,13 +110,174 @@ test("spawn flushes child spend to the run sink keyed by tool-call id", async ()
 	assertChildRegistriesCleared(state);
 });
 
+test("a routed spawn keys the sink row by the group entry's identity", async () => {
+	const state = createState();
+	const rows: [string, string | null, string, unknown][] = [];
+	state.childUsageSink = {
+		owner: "test-run",
+		sink: (toolCallId, provider, model, usage) => {
+			rows.push([toolCallId, provider, model, usage]);
+		},
+	};
+	const routedModel = spawnModel({ provider: "openai", id: "gpt-routed", reasoning: true });
+	state.modelGroups.groups = [group("review", { models: [{ provider: "openai", modelId: "gpt-routed", thinkingLevel: "low" }] })];
+	const parentRegistry = {
+		find: (provider: string, modelId: string) => (provider === "openai" && modelId === "gpt-routed" ? routedModel : undefined),
+		hasConfiguredAuth: (model: unknown) => model === routedModel,
+	};
+	const entries = [assistantMessageEntry("a1", "openai", "gpt-routed", 0.25)];
+	const pi = await createTestHost(
+		(api) => {
+			registerSpawnTool(
+				api,
+				state,
+				mockFactoryWith({
+					prompt: () => Promise.resolve(),
+					getEntries: () => entries,
+				}),
+			);
+		},
+		{ activeTools: ["read", "bash", "spawn"] },
+	);
+	const result = await executeSpawnTool(
+		pi,
+		"spawn-routed-sink",
+		{ prompt: "Do the task", group: "review" },
+		undefined,
+		undefined,
+		spawnContext({ model: { provider: "openai", id: "parent" }, cwd: "/tmp", modelRegistry: parentRegistry }),
+	);
+
+	expect(result.details.route).toStrictEqual({ status: "routed", group: "review", provider: "openai", modelId: "gpt-routed" });
+	expect(rows).toStrictEqual([["spawn-routed-sink", "openai", "gpt-routed", result.usage]]);
+	// The live row matches the settled ledger row the same entries would produce.
+	const spend = usageByModel(entries).get("openai/gpt-routed");
+	assertPresent(spend, "expected the routed row to be attributed");
+	expect(rows[0][3]).toMatchObject({ cost: { total: spend.costUsd }, totalTokens: spend.totalTokens });
+	assertChildRegistriesCleared(state);
+});
+
+test("child spend keys follow the effective model that ran, not the requested id", async () => {
+	const rows: [string, string | null, string, unknown][] = [];
+	const state = createState();
+	state.childUsageSink = {
+		owner: "test-run",
+		sink: (toolCallId, provider, model, usage) => {
+			rows.push([toolCallId, provider, model, usage]);
+		},
+	};
+	const session = mockSessionFactory({
+		prompt: () => Promise.resolve(),
+		// The provider answered under gpt-resolved while the route requested gpt-requested.
+		getEntries: () => [assistantMessageEntry("a1", "openai", "gpt-requested", 0.25, "gpt-resolved")],
+	});
+	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
+	const result = await executeSpawn(
+		"spawn-effective-model",
+		pi,
+		spawnContext({ model: { id: "mock-model" }, cwd: "/tmp" }),
+		state,
+		{ prompt: "Do the task" },
+		undefined,
+		undefined,
+		"medium",
+		() => Promise.resolve(sessionResult(session)),
+	);
+
+	// Spend keys follow what actually ran; the route keeps the requested identity for display.
+	expect(rows).toStrictEqual([["spawn-effective-model", "openai", "gpt-resolved", result.usage]]);
+	expect(result.details.model).toBe("gpt-resolved");
+	expect(result.details.route).toStrictEqual({ status: "inherited", provider: "test", modelId: "mock-model" });
+	assertChildRegistriesCleared(state);
+});
+
+test("the sink row carries the child's usage-bearing entry count", async () => {
+	const rows: [string, string | null, string, unknown, number][] = [];
+	const state = createState();
+	state.childUsageSink = {
+		owner: "test-run",
+		sink: (toolCallId, provider, model, usage, calls) => {
+			rows.push([toolCallId, provider, model, usage, calls]);
+		},
+	};
+	const session = mockSessionFactory({
+		prompt: () => Promise.resolve(),
+		getEntries: () => [
+			assistantMessageEntry("a1", "test", "mock-model", 0.1),
+			assistantMessageEntry("a2", "test", "mock-model", 0.15),
+			toolResultEntry("t1", { usage: usageFixtureUsd(0.05), model: "mock-model", provider: "test" }),
+		],
+	});
+	const result = await runSpawn({ state, factory: () => Promise.resolve(sessionResult(session)) });
+
+	expect(rows).toHaveLength(1);
+	expect(rows[0][4]).toBe(3);
+	expect(rows[0][3]).toStrictEqual(result.usage);
+	assertChildRegistriesCleared(state);
+});
+
+test("a stale sink host from a finished run receives no later child spend", async () => {
+	const rowsA: [string, string | null, string, unknown][] = [];
+	const rowsB: [string, string | null, string, unknown][] = [];
+	let handler: ((event: unknown) => void) | undefined;
+	const state = createState();
+	state.childUsageSink = {
+		owner: "run-a",
+		sink: (toolCallId, provider, model, usage) => {
+			rowsA.push([toolCallId, provider, model, usage]);
+		},
+	};
+	const session = mockSessionFactory({
+		subscribe: (listener) => {
+			handler = listener;
+			return () => {
+				handler = undefined;
+			};
+		},
+		prompt: () => Promise.resolve(),
+		getEntries: () => [assistantMessageEntry("a1", "test", "mock-model", 0.25)],
+	});
+	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
+	const execution = executeSpawn(
+		"spawn-stale-host",
+		pi,
+		spawnContext({ model: { id: "mock-model" }, cwd: "/tmp" }),
+		state,
+		{ prompt: "Do the task" },
+		undefined,
+		undefined,
+		"medium",
+		() => Promise.resolve(sessionResult(session)),
+	);
+
+	await vi.waitFor(() => handler !== undefined);
+	assertPresent(handler);
+	// A new run takes over before this spawn flushes again; the stale host must not receive it.
+	state.childUsageSink = {
+		owner: "run-b",
+		sink: (toolCallId, provider, model, usage) => {
+			rowsB.push([toolCallId, provider, model, usage]);
+		},
+	};
+	handler({ type: "message_end", message: { role: "assistant", usage: undefined } });
+	const result = await execution;
+
+	expect(result.details.outcome).toBe("success");
+	expect(rowsA).toStrictEqual([]);
+	expect(rowsB).toStrictEqual([]);
+	assertChildRegistriesCleared(state);
+});
+
 test("a sink installed after the run started receives no child spend", async () => {
 	const lateRows: unknown[] = [];
 	const state = createState();
 	const session = mockSessionFactory({
 		prompt: () => {
-			state.childUsageSink = (toolCallId, provider, model, usage) => {
-				lateRows.push([toolCallId, provider, model, usage]);
+			state.childUsageSink = {
+				owner: "test-run",
+				sink: (toolCallId, provider, model, usage) => {
+					lateRows.push([toolCallId, provider, model, usage]);
+				},
 			};
 			return Promise.resolve();
 		},
@@ -126,8 +303,11 @@ test("a sink swapped out mid-run keeps every cumulative write with the original 
 	const rowsB: [string, string | null, string, unknown][] = [];
 	let handler: ((event: unknown) => void) | undefined;
 	const state = createState();
-	state.childUsageSink = (toolCallId, provider, model, usage) => {
-		rowsA.push([toolCallId, provider, model, usage]);
+	state.childUsageSink = {
+		owner: "test-run",
+		sink: (toolCallId, provider, model, usage) => {
+			rowsA.push([toolCallId, provider, model, usage]);
+		},
 	};
 	const session = mockSessionFactory({
 		subscribe: (listener) => {
@@ -156,8 +336,11 @@ test("a sink swapped out mid-run keeps every cumulative write with the original 
 	assertPresent(handler);
 	// The run owns the sink captured before its first await; swapping the host pointer mid-run must not redirect flushes.
 	handler({ type: "message_end", message: { role: "assistant", usage: undefined } });
-	state.childUsageSink = (toolCallId, provider, model, usage) => {
-		rowsB.push([toolCallId, provider, model, usage]);
+	state.childUsageSink = {
+		owner: "test-run",
+		sink: (toolCallId, provider, model, usage) => {
+			rowsB.push([toolCallId, provider, model, usage]);
+		},
 	};
 	handler({ type: "message_end", message: { role: "assistant", usage: undefined } });
 	await execution;
@@ -173,7 +356,7 @@ test("a sink swapped out mid-run keeps every cumulative write with the original 
 test("a throwing live sink flush never propagates into Pi's dispatch, skips cleanup, or masks the spawn error", async () => {
 	const dispose = vi.fn();
 	const state = createState();
-	state.childUsageSink = () => {
+	const sink = () => {
 		throw new Error("sink boom");
 	};
 	let handler: ((event: unknown) => void) | undefined;
@@ -187,21 +370,10 @@ test("a throwing live sink flush never propagates into Pi's dispatch, skips clea
 		},
 		dispose,
 	});
-	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
-	const execution = executeSpawn(
-		"spawn-sink-throw",
-		pi,
-		spawnContext({ model: { id: "mock-model" }, cwd: "/tmp" }),
-		state,
-		{ prompt: "Do the task" },
-		undefined,
-		undefined,
-		"medium",
-		() => Promise.resolve(sessionResult(session)),
-	);
+	const execution = runSpawn({ state, sink, factory: () => Promise.resolve(sessionResult(session)) });
 	// The live message_end flush throws first; it must be retained — never propagated into the
 	// host dispatch — then reported at settle alongside the settle flush failure.
-	await vi.waitFor(() => handler !== undefined);
+	await vi.waitUntil(() => handler !== undefined);
 	assertPresent(handler);
 	handler({ type: "message_end", message: { role: "assistant", usage: usageFixtureUsd(0.1) } });
 
@@ -221,59 +393,24 @@ test("spawn subscribes to child events only when a live sink is installed", asyn
 		subscribe,
 		result: [{ role: "assistant", content: [{ type: "text", text: "child result" }] }],
 	});
-	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
-
-	const noSinkResult = await executeSpawn(
-		"spawn-no-sink",
-		pi,
-		spawnContext({ model: { id: "mock-model" }, cwd: "/tmp" }),
-		createState(),
-		{ prompt: "Do the task" },
-		undefined,
-		undefined,
-		"medium",
-		() => Promise.resolve(sessionResult(session)),
-	);
+	const noSinkResult = await runSpawn({ factory: () => Promise.resolve(sessionResult(session)) });
 	expect(noSinkResult.details.outcome).toBe("success");
 	expect(subscribe, "no sink, no subscription").not.toHaveBeenCalled();
 
 	const state = createState();
-	state.childUsageSink = () => undefined;
-	const withSinkResult = await executeSpawn(
-		"spawn-with-sink",
-		pi,
-		spawnContext({ model: { id: "mock-model" }, cwd: "/tmp" }),
-		state,
-		{ prompt: "Do the task" },
-		undefined,
-		undefined,
-		"medium",
-		() => Promise.resolve(sessionResult(session)),
-	);
+	const withSinkResult = await runSpawn({ state, sink: () => undefined, factory: () => Promise.resolve(sessionResult(session)) });
 	expect(withSinkResult.details.outcome).toBe("success");
 	expect(subscribe, "sink installed, subscription installed").toHaveBeenCalledOnce();
 });
 
 test("a child event subscription failure keeps the settled stats without a UI", async () => {
 	const state = createState();
-	state.childUsageSink = () => undefined;
 	const session = mockSessionFactory({
 		subscribe: () => {
 			throw new Error("subscribe exploded");
 		},
 	});
-	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
-	const result = await executeSpawn(
-		"spawn-sub-fail",
-		pi,
-		spawnContext({ model: { id: "mock-model" }, cwd: "/tmp" }),
-		state,
-		{ prompt: "Do the task" },
-		undefined,
-		undefined,
-		"medium",
-		() => Promise.resolve(sessionResult(session)),
-	);
+	const result = await runSpawn({ state, sink: () => undefined, factory: () => Promise.resolve(sessionResult(session)) });
 
 	// A failing subscribe loses live flushes only; it never fails the spawn, reports the degraded
 	// subscription in details.teardownFailures even headless, and the settled stats are still
@@ -288,30 +425,19 @@ test("a child event subscription failure keeps the settled stats without a UI", 
 test("a child event subscription failure notifies when a UI is present and the spawn continues", async () => {
 	const notifications: [string, string | undefined][] = [];
 	const state = createState();
-	state.childUsageSink = () => undefined;
 	const session = mockSessionFactory({
 		subscribe: () => {
 			throw new Error("subscribe exploded");
 		},
 	});
-	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
-	const result = await executeSpawn(
-		"spawn-sub-fail-ui",
-		pi,
-		spawnContext({
-			model: { id: "mock-model" },
-			cwd: "/tmp",
-			notify: (message, level) => {
-				notifications.push([message, level]);
-			},
-		}),
+	const result = await runSpawn({
 		state,
-		{ prompt: "Do the task" },
-		undefined,
-		undefined,
-		"medium",
-		() => Promise.resolve(sessionResult(session)),
-	);
+		sink: () => undefined,
+		notify: (message, level) => {
+			notifications.push([message, level]);
+		},
+		factory: () => Promise.resolve(sessionResult(session)),
+	});
 	expect(result.details.outcome).toBe("success");
 	expect(notifications).toStrictEqual([["Spawn teardown failed: Spawn event subscription failed: subscribe exploded", "warning"]]);
 	assertChildRegistriesCleared(state);
@@ -333,18 +459,7 @@ test("a falsy teardown throw without a spawn failure still surfaces", async () =
 			throw zero;
 		},
 	});
-	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
-	const result = await executeSpawn(
-		"spawn-falsy-dispose",
-		pi,
-		spawnContext({ model: { id: "mock-model" }, cwd: "/tmp" }),
-		state,
-		{ prompt: "Do the task" },
-		undefined,
-		undefined,
-		"medium",
-		() => Promise.resolve(sessionResult(session)),
-	);
+	const result = await runSpawn({ state, factory: () => Promise.resolve(sessionResult(session)) });
 
 	assertErrorResult(result, "session dispose failed: 0", EMPTY_CHILD_USAGE);
 	assertChildRegistriesCleared(state);
@@ -366,8 +481,11 @@ test("headless spawn names both flush and dispose failures", async () => {
 test("the settle flush runs even when unsubscribe throws", async () => {
 	const rows: [string, string | null, string, unknown][] = [];
 	const state = createState();
-	state.childUsageSink = (toolCallId, provider, model, usage) => {
-		rows.push([toolCallId, provider, model, usage]);
+	state.childUsageSink = {
+		owner: "test-run",
+		sink: (toolCallId, provider, model, usage) => {
+			rows.push([toolCallId, provider, model, usage]);
+		},
 	};
 	const session = mockSessionFactory({
 		subscribe: () => () => {
@@ -411,14 +529,18 @@ test.each([
 		}
 	});
 	const state = createState();
-	state.childUsageSink = () => undefined;
 	const session = mockSessionFactory({
 		subscribe: () => () => {
 			throw new Error("unsubscribe exploded");
 		},
 		prompt: () => Promise.resolve(),
 	});
-	const result = await runSpawn(state, session, undefined, notify);
+	const result = await runSpawn({
+		state,
+		sink: () => undefined,
+		notify,
+		factory: () => Promise.resolve(sessionResult(session)),
+	});
 	expect(result.details.outcome).toBe("success");
 	expect(result.content).toStrictEqual([{ type: "text", text: "child result" }]);
 	expect(notifications).toStrictEqual([["Spawn teardown failed: event unsubscribe failed: unsubscribe exploded", "warning"]]);
@@ -435,18 +557,7 @@ test("control characters are stripped from teardown reports", async () => {
 			throw new Error("\x1b[31mred\x1b[0m\x1b");
 		},
 	});
-	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
-	const result = await executeSpawn(
-		"spawn-ctrl-report",
-		pi,
-		spawnContext({ model: { id: "mock-model" }, cwd: "/tmp" }),
-		state,
-		{ prompt: "Do the task" },
-		undefined,
-		undefined,
-		"medium",
-		() => Promise.resolve(sessionResult(session)),
-	);
+	const result = await runSpawn({ state, factory: () => Promise.resolve(sessionResult(session)) });
 
 	// The dispose throw (with ANSI escapes and a bare ESC) must surface as visible text only: no
 	// control bytes and no leftover ANSI fragments like "[31m".
@@ -464,7 +575,7 @@ test("a primary error keeps its newline in the result text", async () => {
 			throw new Error("first\nsecond");
 		},
 	});
-	const result = await runSpawn(state, session);
+	const result = await runSpawn({ state, factory: () => Promise.resolve(sessionResult(session)) });
 
 	assertErrorResult(result, "first\nsecond", EMPTY_CHILD_USAGE);
 	assertChildRegistriesCleared(state);
@@ -482,7 +593,7 @@ test("the Child agent failed line keeps Pi's errorMessage verbatim", async () =>
 			},
 		],
 	});
-	const result = await runSpawn(state, session);
+	const result = await runSpawn({ state, factory: () => Promise.resolve(sessionResult(session)) });
 
 	assertErrorResult(result, "Child agent failed: err\nsecond line", EMPTY_CHILD_USAGE);
 	assertChildRegistriesCleared(state);
@@ -493,7 +604,7 @@ test("an abort reason survives verbatim in the aborted result text", async () =>
 	const controller = new AbortController();
 	controller.abort(new Error("stopped\nreason"));
 	const session = mockSessionFactory();
-	const result = await runSpawn(state, session, controller.signal);
+	const result = await runSpawn({ state, signal: controller.signal, factory: () => Promise.resolve(sessionResult(session)) });
 
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.content[0].text).toBe("Child agent aborted: stopped\nreason");
@@ -503,8 +614,11 @@ test("an abort reason survives verbatim in the aborted result text", async () =>
 test("an aborted child leaves a correctly-keyed sink row and never emits unhandledRejection", async () => {
 	const rows: [string, string | null, string, unknown][] = [];
 	const state = createState();
-	state.childUsageSink = (toolCallId, provider, model, usage) => {
-		rows.push([toolCallId, provider, model, usage]);
+	state.childUsageSink = {
+		owner: "test-run",
+		sink: (toolCallId, provider, model, usage) => {
+			rows.push([toolCallId, provider, model, usage]);
+		},
 	};
 	const unhandled: unknown[] = [];
 	const onUnhandled = (reason: unknown) => {
@@ -564,8 +678,11 @@ test("an aborted child leaves a correctly-keyed sink row and never emits unhandl
 test("a failed child leaves a correctly-keyed sink row", async () => {
 	const rows: [string, string | null, string, unknown][] = [];
 	const state = createState();
-	state.childUsageSink = (toolCallId, provider, model, usage) => {
-		rows.push([toolCallId, provider, model, usage]);
+	state.childUsageSink = {
+		owner: "test-run",
+		sink: (toolCallId, provider, model, usage) => {
+			rows.push([toolCallId, provider, model, usage]);
+		},
 	};
 	const session = mockSessionFactory({
 		prompt: () => {
@@ -596,8 +713,11 @@ test("an unreadable child entry list never writes a zero ledger row and preserve
 	let handler: ((event: unknown) => void) | undefined;
 	let readable = true;
 	const state = createState();
-	state.childUsageSink = (toolCallId, provider, model, usage) => {
-		rows.push([toolCallId, provider, model, usage]);
+	state.childUsageSink = {
+		owner: "test-run",
+		sink: (toolCallId, provider, model, usage) => {
+			rows.push([toolCallId, provider, model, usage]);
+		},
 	};
 	const session = mockSessionFactory({
 		subscribe: (listener) => {
@@ -648,8 +768,11 @@ test("each sink flush replaces the toolCallId row with cumulative usage", async 
 	const rows: [string, string | null, string, unknown][] = [];
 	let handler: ((event: unknown) => void) | undefined;
 	const state = createState();
-	state.childUsageSink = (toolCallId, provider, model, usage) => {
-		rows.push([toolCallId, provider, model, usage]);
+	state.childUsageSink = {
+		owner: "test-run",
+		sink: (toolCallId, provider, model, usage) => {
+			rows.push([toolCallId, provider, model, usage]);
+		},
 	};
 	const session = mockSessionFactory({
 		subscribe: (listener) => {
@@ -698,8 +821,11 @@ test("a message_end under a non-tool role folds no usage into the live row", asy
 	const rows: [string, string | null, string, unknown][] = [];
 	let handler: ((event: unknown) => void) | undefined;
 	const state = createState();
-	state.childUsageSink = (toolCallId, provider, model, usage) => {
-		rows.push([toolCallId, provider, model, usage]);
+	state.childUsageSink = {
+		owner: "test-run",
+		sink: (toolCallId, provider, model, usage) => {
+			rows.push([toolCallId, provider, model, usage]);
+		},
 	};
 	const session = mockSessionFactory({
 		subscribe: (listener) => {
@@ -743,7 +869,7 @@ test("a message_end under a non-tool role folds no usage into the live row", asy
 test("a live flush that throws undefined degrades with the failure named", async () => {
 	let handler: ((event: unknown) => void) | undefined;
 	const state = createState();
-	state.childUsageSink = () => {
+	const sink = () => {
 		// eslint-disable-next-line @typescript-eslint/only-throw-error -- a thrown undefined must survive
 		throw undefined;
 	};
@@ -754,19 +880,8 @@ test("a live flush that throws undefined degrades with the failure named", async
 		},
 		getEntries: () => [assistantMessageEntry("a1", "test", "mock-model", 0.25)],
 	});
-	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
-	const execution = executeSpawn(
-		"spawn-flush-undefined",
-		pi,
-		spawnContext({ model: { id: "mock-model" }, cwd: "/tmp" }),
-		state,
-		{ prompt: "Do the task" },
-		undefined,
-		undefined,
-		"medium",
-		() => Promise.resolve(sessionResult(session)),
-	);
-	await vi.waitFor(() => handler !== undefined);
+	const execution = runSpawn({ state, sink, factory: () => Promise.resolve(sessionResult(session)) });
+	await vi.waitUntil(() => handler !== undefined);
 	assertPresent(handler);
 	handler({ type: "message_end", message: { role: "assistant", usage: undefined } });
 	const result = await execution;
@@ -780,28 +895,20 @@ test("a live flush that throws undefined degrades with the failure named", async
 
 test("headless spawn aggregates every teardown failure without a primary failure", async () => {
 	const state = createState();
-	state.childUsageSink = () => {
-		throw new Error("sink boom");
-	};
 	const session = mockSessionFactory({
 		prompt: () => Promise.resolve(),
 		dispose: () => {
 			throw new Error("dispose failed");
 		},
 	});
-	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
 	assertErrorResult(
-		await executeSpawn(
-			"spawn-cleanup-only",
-			pi,
-			spawnContext({ model: { id: "mock-model" }, cwd: "/tmp" }),
+		await runSpawn({
 			state,
-			{ prompt: "Do the task" },
-			undefined,
-			undefined,
-			"medium",
-			() => Promise.resolve(sessionResult(session)),
-		),
+			sink: () => {
+				throw new Error("sink boom");
+			},
+			factory: () => Promise.resolve(sessionResult(session)),
+		}),
 		"spend flush failed: sink boom; session dispose failed: dispose failed",
 		EMPTY_CHILD_USAGE,
 	);

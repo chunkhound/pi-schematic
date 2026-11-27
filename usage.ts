@@ -139,22 +139,26 @@ export function usageByModel(entries: readonly SessionEntry[], options?: UsageBy
 export interface SessionAccounting {
 	usage: Usage;
 	assistantTurns: number;
+	/** Count of usage-bearing entries folded into `usage`; the child ledger's per-child call count. */
+	usageEntries: number;
 }
 
 /** Fold usage and count assistant turns in a single walk, so callers never traverse twice. */
 export function collectSessionAccounting(entries: readonly SessionEntry[]): SessionAccounting {
 	let usage = zeroUsage();
 	let assistantTurns = 0;
+	let usageEntries = 0;
 	for (const entry of entries) {
 		const entryUsage = usageFromEntry(entry);
 		if (entryUsage) {
 			usage = addUsage(usage, entryUsage);
+			usageEntries += 1;
 		}
 		if (entry.type === "message" && messageCarriesUsage(entry.message) && entry.message.role === "assistant") {
 			assistantTurns += 1;
 		}
 	}
-	return { usage, assistantTurns };
+	return { usage, assistantTurns, usageEntries };
 }
 
 /** Count assistant messages in a branch: each is one model round-trip (a "turn"). */

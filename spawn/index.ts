@@ -10,7 +10,15 @@
  * extensions of the parent and inherit parent authority by design.
  */
 
-import type { AgentSession, AgentToolUpdateCallback, ExtensionAPI, ExtensionContext, ToolDefinition, ToolInfo } from "@earendil-works/pi-coding-agent";
+import type {
+	AgentSession,
+	AgentToolUpdateCallback,
+	ExtensionAPI,
+	ExtensionContext,
+	SessionEntry,
+	ToolDefinition,
+	ToolInfo,
+} from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, ModelThinkingLevel, TextContent, Usage } from "@earendil-works/pi-ai";
 import { READONLY_CHILD_AUTHORITY_NOTE, READONLY_NO_SHELL_SUMMARY, READONLY_WRITE_EDIT_SUMMARY } from "../notifications.js";
 import {
@@ -23,8 +31,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
-import { abortChildSession, type SchematicState } from "../state.js";
-import { addUsage, collectSessionAccounting, messageCarriesUsage, zeroUsage } from "../usage.js";
+import { abortChildSession, type ChildUsageSinkHost, type SchematicState } from "../state.js";
+import { addUsage, assistantSpendIdentity, collectSessionAccounting, messageCarriesUsage, zeroUsage } from "../usage.js";
 import { formatByteCap, formatPageList } from "../notebook/store.js";
 import { createNotebookToolDefinitions } from "../notebook/tools.js";
 import { resolveSpawnModelRoute } from "../model-groups/router.js";
@@ -166,6 +174,10 @@ interface ChildAccounting {
 	stats?: Record<string, number>;
 	/** True when the entries could not be read; the flush must skip instead of writing a zero. */
 	unreadable?: boolean;
+	/** Spend identity of what actually ran: the last assistant message's effective model, else absent. */
+	effective?: { provider: string | null; model: string };
+	/** Usage-bearing entries folded into `usage`; the sink's per-child call count. */
+	calls: number;
 }
 
 function statsOf(usage: Usage, turns: number): Record<string, number> {
@@ -181,6 +193,18 @@ function statsOf(usage: Usage, turns: number): Record<string, number> {
 	};
 }
 
+/** The spend identity of the child's own run: the last assistant message's effective model, so the
+ * child's rows key like the parent's would attribute them. Absent when no assistant message exists. */
+function childEffectiveSpendIdentity(entries: readonly SessionEntry[]): { provider: string | null; model: string } | undefined {
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const entry = entries[i];
+		if (entry.type === "message" && entry.message.role === "assistant") {
+			return assistantSpendIdentity(entry.message);
+		}
+	}
+	return undefined;
+}
+
 function collectChildAccounting(session: Pick<AgentSession, "sessionManager">): ChildAccounting {
 	// Degraded on purpose: the child's answer or failure text is worth more than its
 	// accounting, so an entry list that cannot be read or summed counts as zero usage
@@ -188,11 +212,16 @@ function collectChildAccounting(session: Pick<AgentSession, "sessionManager">): 
 	try {
 		const entries = session.sessionManager.getEntries();
 		const accounting = collectSessionAccounting(entries);
-		return { usage: accounting.usage, stats: statsOf(accounting.usage, accounting.assistantTurns) };
+		return {
+			usage: accounting.usage,
+			stats: statsOf(accounting.usage, accounting.assistantTurns),
+			effective: childEffectiveSpendIdentity(entries),
+			calls: accounting.usageEntries,
+		};
 	} catch {
 		// Unreadable entries must never masquerade as zero spend: a flush would overwrite a real
 		// ledger row with a zero. The caller skips the write when `unreadable` is set.
-		return { usage: zeroUsage(), unreadable: true };
+		return { usage: zeroUsage(), unreadable: true, calls: 0 };
 	}
 }
 
@@ -520,8 +549,10 @@ export function executeSpawn(
 					: inheritedRouteDetails(route.provider, route.modelId);
 
 		// WHY: capture the run-owned sink before any await. A late flush after this run ends
-		// must write to the run that spawned the child, never the next run's sink.
-		const childUsageSink = state.childUsageSink;
+		// must write to the run that spawned the child, never the next run's sink. The owner
+		// token gates every flush: when the installed host no longer owns this run, the flush
+		// is skipped so a stale host can never claim a later child's spend.
+		const childUsageSinkHost: ChildUsageSinkHost | null = state.childUsageSink;
 		const childProvider = route.provider || null;
 
 		const childSessionEpoch = state.childSessionEpoch;
@@ -585,7 +616,12 @@ export function executeSpawn(
 		// delta) makes the settle flush idempotent. message_end fires before the message is
 		// persisted, so the flush folds the event's own usage to avoid lagging one message.
 		const flushChildSpend = (eventUsage?: Usage) => {
-			if (!childUsageSink) {
+			if (!childUsageSinkHost) {
+				return;
+			}
+			if (state.childUsageSink?.owner !== childUsageSinkHost.owner) {
+				// The run that installed this sink is no longer the installed owner: a fresh run has
+				// taken over or the host disposed it. Never write a later child's spend into it.
 				return;
 			}
 			const accounting = collectChildAccounting(session);
@@ -595,7 +631,11 @@ export function executeSpawn(
 				return;
 			}
 			const usage = eventUsage ? addUsage(accounting.usage, eventUsage) : accounting.usage;
-			childUsageSink(toolCallId, childProvider, childModel.id, usage);
+			// The row keys follow what actually ran (the child's effective model), falling back to
+			// the route identity when no assistant entry names one.
+			const provider = accounting.effective?.provider ?? childProvider;
+			const model = accounting.effective?.model ?? childModel.id;
+			childUsageSinkHost.sink(toolCallId, provider, model, usage, accounting.calls);
 		};
 		let unsubscribeChildEvents: (() => void) | undefined;
 		// `settled` marks the child finalized: message_end from a retained subscriber after the settle flush is inert.
@@ -614,6 +654,9 @@ export function executeSpawn(
 		});
 		const buildResultDetails = (truncated: boolean, outcome: SpawnOutcome, accounting: ChildAccounting): SpawnResultDetails => ({
 			...buildBaseDetails(truncated, outcome),
+			// The spend identity is the model that actually ran, so persisted replay attribution and
+			// the live sink rows share one key; the route details keep the requested identity.
+			model: accounting.effective?.model ?? childModel.id,
 			// Instrumentation-only teardown failures degrade: the child reply stands, the report names them.
 			...(degradedFailures.length > 0 ? { teardownFailures: [...degradedFailures] } : {}),
 			// statsUnavailable only when the entries are genuinely unsummable; a failed live subscription
@@ -665,7 +708,7 @@ export function executeSpawn(
 				// Subscribe only when a live sink is installed; a failing subscribe loses live flushes only, and
 				// the settle flush below still runs, so it never fails the spawn. A live-flush throw is retained
 				// and reported with the result, never propagated into Pi's dispatch.
-				if (childUsageSink && typeof session.subscribe === "function") {
+				if (childUsageSinkHost && typeof session.subscribe === "function") {
 					try {
 						unsubscribeChildEvents = session.subscribe((event) => {
 							if (event.type === "message_end" && !settled) {

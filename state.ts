@@ -18,8 +18,18 @@ import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
  * accumulating host would multiply a child's spend by the flush count. Null outside a
  * workflow run; only host dispose uninstalls it, never resetState, because a run
  * survives `workflow.new`.
+ *
+ * Synchronous by contract: the return type is `undefined`, not `void`, so an async sink
+ * fails to compile instead of producing an unhandled rejection from a discarded promise.
  */
-export type ChildUsageSink = (toolCallId: string, provider: string | null, model: string, usage: Usage) => void;
+export type ChildUsageSink = (toolCallId: string, provider: string | null, model: string, usage: Usage, calls: number) => undefined;
+
+/** Run-scoped live-spend host: the owner token identifies the workflow run that installed the
+ * sink, so a stale host from a finished run can never receive the next run's child spend. */
+export interface ChildUsageSinkHost {
+	owner: unknown;
+	sink: ChildUsageSink;
+}
 
 /** A handoff accepted by the tool, kept until its turn_end boundary is confirmed or failed. */
 export interface StagedHandoff {
@@ -139,8 +149,8 @@ export interface SchematicState {
 	/** One abort promise per child session, shared by signal and reset cleanup. WeakMap entries are GC'd with the session; no manual clear needed. */
 	childAbortPromises: WeakMap<AgentSession, Promise<void>>;
 
-	/** Live child-spend sink installed by the active workflow host; see {@link ChildUsageSink}. */
-	childUsageSink: ChildUsageSink | null;
+	/** Live child-spend sink installed by the active workflow host; see {@link ChildUsageSinkHost}. */
+	childUsageSink: ChildUsageSinkHost | null;
 
 	/** True while a workflow run owns the input channel (serial-run invariant). */
 	inputSuppressed: boolean;
