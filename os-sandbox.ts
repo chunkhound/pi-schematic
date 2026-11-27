@@ -148,6 +148,45 @@ export function buildMacProfile(tempDir: string): string {
 	return parts.join("");
 }
 
+/**
+ * Cache env vars redirected into the sandbox's writable temp dir.
+ *
+ * These tools default their cache under `$HOME`, which the sandbox makes
+ * read-only, so their lock and temp-file writes fail with an error that names
+ * the tool rather than the sandbox (#221: `uv` reports "Could not acquire
+ * lock" for `$HOME/.cache/uv`). A cache holds disposable data, so pointing it
+ * at the temp dir keeps the readonly contract exact — no writes outside the
+ * temp dir — instead of carving out host-path exceptions that can never cover
+ * every tool.
+ *
+ * `XDG_CACHE_HOME` covers the XDG-aware tools (`uv`, `pip`) in one variable;
+ * the rest are listed because they ignore it.
+ */
+const CACHE_DIR_ENV_VARS = ["XDG_CACHE_HOME", "UV_CACHE_DIR", "npm_config_cache", "PIP_CACHE_DIR", "CARGO_HOME", "GOMODCACHE", "YARN_CACHE_FOLDER"] as const;
+
+/** Root of the redirected caches, inside the sandbox's writable temp dir. */
+function cacheRoot(tempDir: string): string {
+	return path.join(tempDir, "schematic-cache");
+}
+
+/** The redirect value for one cache variable, kept under `tempDir`. */
+function cacheDirFor(name: (typeof CACHE_DIR_ENV_VARS)[number], tempDir: string): string {
+	const root = cacheRoot(tempDir);
+	// XDG_CACHE_HOME is a base directory that tools append their own name to;
+	// the rest are the tool's cache directory itself.
+	return name === "XDG_CACHE_HOME" ? root : path.join(root, name);
+}
+
+/** `--setenv NAME VALUE` flags pinning every cache variable under `tempDir`. */
+function cacheEnvFlags(tempDir: string): string[] {
+	return CACHE_DIR_ENV_VARS.map((name) => `--setenv ${name} ${quoteShellArgument(cacheDirFor(name, tempDir))}`);
+}
+
+/** `NAME='VALUE'` assignments pinning every cache variable under `tempDir`. */
+function cacheEnvAssignments(tempDir: string): string {
+	return CACHE_DIR_ENV_VARS.map((name) => `${name}=${quoteShellArgument(cacheDirFor(name, tempDir))}`).join(" ");
+}
+
 /** Quote a dynamic argument for the outer bash that launches the sandbox. */
 export function quoteShellArgument(value: string): string {
 	return `'${value.replace(/'/g, `'"'"'`)}'`;
@@ -171,8 +210,11 @@ function buildInnerBashInvocation(command: string): string {
  * All descendants inherit the sandbox.
  */
 export function wrapWithSandboxExec(command: string): string {
-	const profile = buildMacProfile(getCanonicalTempDir());
-	return `sandbox-exec -p '${profile}' ${buildInnerBashInvocation(command)}`;
+	const tempDir = getCanonicalTempDir();
+	const profile = buildMacProfile(tempDir);
+	// Seatbelt cannot set the environment, so the caches are redirected by `env`
+	// in the outer shell, before sandbox-exec starts (#221).
+	return `env ${cacheEnvAssignments(tempDir)} sandbox-exec -p '${profile}' ${buildInnerBashInvocation(command)}`;
 }
 
 // ── Linux: bubblewrap ────────────────────────────────────────────
@@ -201,6 +243,9 @@ export function wrapWithBwrap(command: string, tempDir: string = getCanonicalTem
 		"--share-net",
 		"--die-with-parent",
 		"--new-session",
+		// Point tool caches at the writable temp dir instead of the read-only
+		// $HOME the sandbox gives them (#221).
+		...cacheEnvFlags(canon),
 	];
 	return `bwrap ${flags.join(" ")} ${buildInnerBashInvocation(command)}`;
 }

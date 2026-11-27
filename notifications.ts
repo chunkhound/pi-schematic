@@ -13,7 +13,7 @@ export const READONLY_BASH_SCOPE = "bash writes/deletions outside temp blocked";
 export const READONLY_NON_TEMP_MUTATION_SCOPE = "write, edit, powershell, and non-temp bash filesystem mutations remain blocked";
 /** Notice appended to a failed sandboxed command's result whose output shows the sandbox's denial phrase. */
 export const READONLY_SANDBOX_BLOCK_NOTICE =
-	"[readonly mode] If this command failed on a write outside the OS temp dir, the OS sandbox blocked it.\nUse /readonly to disable, or write within the OS temp dir.";
+	'[readonly mode] If this command failed on a write outside the OS temp dir, the OS sandbox blocked it.\nA tool\'s own "Read-only file system" or "Operation not permitted" error is the sandbox, not a bug in the tool.\nTool caches are redirected into the temp dir; anything else must be written there too.\nUse /readonly to disable.';
 /** User-visible shorthand for an explicit handoff request. */
 export const READONLY_EXPLICIT_HANDOFF = "explicit /handoff";
 /** All supported ways to activate the temporary readonly handoff exception. */
