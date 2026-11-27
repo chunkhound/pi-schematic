@@ -141,7 +141,7 @@ test("usageByModel attributes assistant, usage-entry, spawned-child, and model-l
 // `usageByModel` must skip exactly the tool calls the ledger already folds.
 test("usageByModel skips a child-owned tool result when claimed, and counts it otherwise", () => {
 	const entries: SessionEntry[] = [toolResultEntry("t1", { usage: usageFixtureUsd(0.2), model: "haiku", provider: "anthropic", toolCallId: "c1" })];
-	const claimed = usageByModel(entries, { skip: new Set(["c1"]) });
+	const claimed = usageByModel(entries, { skipSpawnCallIds: new Set(["c1"]) });
 	expect(claimed.size, "claimed child tool result is excluded").toBe(0);
 
 	const unclaimed = usageByModel(entries);
@@ -153,10 +153,13 @@ test("usageByModel skips a child-owned tool result when claimed, and counts it o
 test("usageByModel ignores an empty entry id and skips by tool-call id only", () => {
 	const entries: SessionEntry[] = [toolResultEntry("", { usage: usageFixtureUsd(0.2), model: "haiku", provider: "anthropic", toolCallId: "c1" })];
 	const bare = [toolResultEntry("", { usage: usageFixtureUsd(0.3), model: "haiku", provider: "anthropic", toolCallId: "" })];
-	expect(usageByModel(entries, { skip: new Set(["c1"]) }).size, "empty-id entry skipped via tool-call id").toBe(0);
-	expect(usageByModel(entries, { skip: new Set([""]) }).get("anthropic/haiku")?.costUsd, "empty id is never matched").toBe(0.2);
+	expect(usageByModel(entries, { skipSpawnCallIds: new Set(["c1"]) }).size, "empty-id entry skipped via tool-call id").toBe(0);
+	expect(usageByModel(entries, { skipSpawnCallIds: new Set([""]) }).get("anthropic/haiku")?.costUsd, "empty id is never matched").toBe(0.2);
 	expect(usageByModel(entries).get("anthropic/haiku")?.costUsd, "unclaimed empty-id entry attributed").toBe(0.2);
-	expect(usageByModel(bare, { skip: new Set([""]) }).get("anthropic/haiku")?.costUsd, "an empty skip key never suppresses a usage-bearing tool row").toBe(0.3);
+	expect(
+		usageByModel(bare, { skipSpawnCallIds: new Set([""]) }).get("anthropic/haiku")?.costUsd,
+		"an empty skip key never suppresses a usage-bearing tool row",
+	).toBe(0.3);
 });
 
 // SSOT contract: spendIdentity owns the entry-id/tool-call-id rule, and isClaimed routes
@@ -176,9 +179,9 @@ test("usageByModel claims exactly the identities spendIdentity reports", () => {
 		assistantMessageEntry("a1", "anthropic", "opus", 0.5),
 		toolResultEntry("t1", { usage: usageFixtureUsd(0.2), model: "haiku", provider: "anthropic", toolCallId: "c1" }),
 	];
-	expect(usageByModel(entries, { skip: new Set(["a1"]) }).get("anthropic/opus"), "entry id claims the assistant turn").toBeUndefined();
-	expect(usageByModel(entries, { skip: new Set(["c1"]) }).get("anthropic/haiku"), "tool-call id claims the tool result").toBeUndefined();
-	expect(usageByModel(entries, { skip: new Set(["a1", "c1"]) }).size, "both identities are honored").toBe(0);
+	expect(usageByModel(entries, { skipEntryIds: new Set(["a1"]) }).get("anthropic/opus"), "entry id claims the assistant turn").toBeUndefined();
+	expect(usageByModel(entries, { skipSpawnCallIds: new Set(["c1"]) }).get("anthropic/haiku"), "tool-call id claims the tool result").toBeUndefined();
+	expect(usageByModel(entries, { skipEntryIds: new Set(["a1"]), skipSpawnCallIds: new Set(["c1"]) }).size, "both identities are honored").toBe(0);
 });
 
 test("assistant responseModel and child spend collapse onto one effective-model row", () => {
@@ -222,11 +225,34 @@ test("usageByModel treats a non-spawn tool result as unattributed even with mode
 	expect(spend.get(UNATTRIBUTED_MODEL)?.costUsd).toBe(0.2);
 });
 
+test("spawn tool-call claims never suppress a non-spawn tool result", () => {
+	const entries: SessionEntry[] = [
+		toolResultEntry("t1", { toolName: "other", usage: usageFixtureUsd(0.2), model: "haiku", provider: "anthropic", toolCallId: "c1" }),
+	];
+	const spend = usageByModel(entries, { skipSpawnCallIds: new Set(["c1"]) });
+	// The call id belongs to the spawn domain; an unrelated tool's result must stay counted.
+	expect(spend.get(UNATTRIBUTED_MODEL)?.costUsd).toBe(0.2);
+});
+
+test("entry-id and spawn tool-call domains never cross-suppress equal strings", () => {
+	const shared = "c1";
+	const entries: SessionEntry[] = [
+		assistantMessageEntry(shared, "anthropic", "opus", 0.5),
+		toolResultEntry("t1", { usage: usageFixtureUsd(0.2), model: "haiku", provider: "anthropic", toolCallId: shared }),
+	];
+	// The entry id exclusion must not drop the tool result, and the spawn call-id exclusion
+	// must not drop the assistant turn: equal strings in different domains never claim each other.
+	expect(usageByModel(entries, { skipEntryIds: new Set([shared]) }).get("anthropic/haiku")?.costUsd, "entry id exclusion leaves the tool result").toBe(0.2);
+	expect(usageByModel(entries, { skipSpawnCallIds: new Set([shared]) }).get("anthropic/opus")?.costUsd, "call-id exclusion leaves the assistant turn").toBe(
+		0.5,
+	);
+});
+
 // SSOT contract: the run-scoped spend scan drops the conversation that predates the run,
 // so only entries kept by the run's id-exclusion set reach the cost rows.
 test("usageByModel omits every entry whose id is excluded", () => {
 	const entries: SessionEntry[] = [assistantMessageEntry("a1", "anthropic", "opus", 0.5), assistantMessageEntry("a2", "anthropic", "opus", 0.25)];
-	const kept = usageByModel(entries, { skip: new Set(["a1"]) });
+	const kept = usageByModel(entries, { skipEntryIds: new Set(["a1"]) });
 	expect(kept.get("anthropic/opus")?.costUsd, "excluded entry is omitted").toBe(0.25);
 	expect(kept.get("anthropic/opus")?.calls).toBe(1);
 	expect(usageByModel(entries).get("anthropic/opus")?.costUsd, "omitting the option keeps every entry").toBe(0.75);

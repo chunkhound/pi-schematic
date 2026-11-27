@@ -70,9 +70,9 @@ export function addModelSpend(map: Map<string, ModelSpend>, provider: string | n
 	map.set(key, { key, provider: normProvider, model, ...usageDelta(usage) });
 }
 
-/** Non-empty claim identities for one entry: the entry id pi assigned, plus a tool result's
+/** Non-empty claim identities for one entry: the entry id if assigned, plus a tool result's
  * tool-call id. Empty ids are never candidates, so a `skip` set containing "" can never
- * suppress a usage-bearing row. This is the single owner of the claim rule. */
+ * suppress a usage-bearing row. This is the single owner of the de-dup rule. */
 function claimIds(entry: SessionEntry): string[] {
 	const ids = entry.id ? [entry.id] : [];
 	if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId) {
@@ -86,10 +86,27 @@ export function spendIdentity(entry: SessionEntry): string | null {
 	return claimIds(entry)[0] ?? null;
 }
 
-/** Whether `skip` already owns this entry: any of its non-empty claim identities, including
- * a tool result's tool-call id even when a distinct entry id is present. */
-function isClaimed(entry: SessionEntry, skip: ReadonlySet<string>): boolean {
-	return claimIds(entry).some((id) => skip.has(id));
+/** Skip exclusion sets for {@link usageByModel}; the two ID domains never cross-suppress. */
+export interface UsageByModelOptions {
+	/** Entry ids whose usage-bearing entries must be excluded (session-entry domain). */
+	skipEntryIds?: ReadonlySet<string>;
+	/** Spawn tool-call ids whose child-owned results must be excluded (child-ledger claims). */
+	skipSpawnCallIds?: ReadonlySet<string>;
+}
+
+/** Whether the exclusion sets own this entry. Entry ids claim any entry; spawn tool-call ids claim
+ * only spawn tool results, so a foreign skip key can never suppress an unrelated tool result. */
+function isClaimed(entry: SessionEntry, options: UsageByModelOptions | undefined): boolean {
+	if (entry.id && options?.skipEntryIds?.has(entry.id) === true) {
+		return true;
+	}
+	if (entry.type === "message" && entry.message.role === "toolResult") {
+		const callId = entry.message.toolCallId;
+		if (callId && entry.message.toolName === SPAWN_TOOL_NAME && options?.skipSpawnCallIds?.has(callId) === true) {
+			return true;
+		}
+	}
+	return false;
 }
 
 /**
@@ -102,11 +119,10 @@ function isClaimed(entry: SessionEntry, skip: ReadonlySet<string>): boolean {
  * tool-call id. The run-scoped scan drops pre-run and already-committed entries, and the
  * child ledger claims its tool results, so no entry is counted twice.
  */
-export function usageByModel(entries: readonly SessionEntry[], options?: { skip?: ReadonlySet<string> }): Map<string, ModelSpend> {
+export function usageByModel(entries: readonly SessionEntry[], options?: UsageByModelOptions): Map<string, ModelSpend> {
 	const map = new Map<string, ModelSpend>();
-	const skip = options?.skip;
 	for (const entry of entries) {
-		if (skip && isClaimed(entry, skip)) {
+		if (isClaimed(entry, options)) {
 			continue;
 		}
 		const usage = usageFromEntry(entry);
