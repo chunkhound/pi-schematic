@@ -3,7 +3,7 @@
 // the run overview read the same rows and can never drift.
 import type { Usage } from "@earendil-works/pi-ai";
 import type { SessionEntry, SessionStats } from "@earendil-works/pi-coding-agent";
-import { isSpawnResultDetails, SPAWN_TOOL_NAME } from "./spawn/shared.js";
+import { isSpawnResultDetails, SPAWN_TOOL_NAME, spawnSpendIdentity } from "./spawn/shared.js";
 
 /** Bucket for usage pi records without a model: compaction and branch summaries. */
 export const UNATTRIBUTED_MODEL = "unattributed";
@@ -233,6 +233,12 @@ function usageFromEntry(entry: SessionEntry): Usage | null {
 	return null;
 }
 
+/** Effective provider/model of an assistant message: responseModel is what actually ran, model the
+ * fallback, so spend follows the resolved model the parent would attribute to the same row. */
+export function assistantSpendIdentity(message: { provider?: string; model: string; responseModel?: string }): { provider: string | null; model: string } {
+	return { provider: message.provider ?? null, model: message.responseModel ?? message.model };
+}
+
 /** Where a usage-bearing entry's spend row keys: provider/model, resolved only when building a row.
  * A hostile details getter (e.g. a throwing route accessor) degrades to unattributed. */
 function entryAttribution(entry: SessionEntry): { provider: string | null; model: string } {
@@ -249,7 +255,7 @@ function entryAttribution(entry: SessionEntry): { provider: string | null; model
 	if (message.role === "assistant") {
 		// The provider may answer under a model other than requested; responseModel is the
 		// effective model and model the fallback, so spend follows what actually ran.
-		return { provider: message.provider, model: message.responseModel ?? message.model };
+		return assistantSpendIdentity(message);
 	}
 	// Only a spawned child's result carries a model identity; an unrelated tool's free-form
 	// details must not claim a provider/model spend row. The effective model (details.model)
@@ -258,7 +264,10 @@ function entryAttribution(entry: SessionEntry): { provider: string | null; model
 		if (message.toolName === SPAWN_TOOL_NAME) {
 			try {
 				if (isSpawnResultDetails(message.details)) {
-					return { provider: message.details.route?.provider ?? null, model: message.details.model };
+					const spend = spawnSpendIdentity(message.details);
+					if (spend) {
+						return { provider: spend.provider, model: spend.model };
+					}
 				}
 			} catch {
 				// Degrade to unattributed; the amount walk never reads these accessors.

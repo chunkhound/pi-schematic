@@ -1,5 +1,6 @@
 import { contentText, type ModelThinkingLevel, type StopReason, type TextContent, type Usage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { stripUnsafeDisplayChars } from "../model-groups/display.js";
 
 export type SpawnOutcome = "running" | "success" | "aborted" | "error";
 
@@ -40,6 +41,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** Narrow a tool result's free-form `details` to the spawn contract; other tools' records never match. */
 export function isSpawnResultDetails(value: unknown): value is SpawnResultDetails {
 	return isRecord(value) && typeof value.model === "string" && (value.route === undefined || isRecord(value.route));
+}
+
+/** The spend-row identity of a spawn result. A present route must name its provider as a string; a
+ * malformed/hostile route degrades to null (unattributed). Control bytes are stripped so a stored or
+ * imported result can neither fragment rows nor smuggle rendering bytes into a surface that prints keys. */
+export function spawnSpendIdentity(details: SpawnResultDetails): { provider: string | null; model: string } | null {
+	const route = details.route;
+	const provider = route?.provider;
+	if (route !== undefined && typeof provider !== "string") {
+		return null;
+	}
+	const normalizedProvider = typeof provider !== "string" || provider === "" ? null : stripUnsafeDisplayChars(provider);
+	return { provider: normalizedProvider, model: stripUnsafeDisplayChars(details.model) };
 }
 
 /** Single writer of the inherited route shape: every new write carries the provider/modelId identity. */
