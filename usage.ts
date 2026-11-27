@@ -182,6 +182,38 @@ export function mergeModelSpend(...maps: ReadonlyMap<string, ModelSpend>[]): Map
 	return merged;
 }
 
+/** Settled accounting for one child call, as the sink would receive it. */
+export interface SettledChildSpend {
+	provider: string | null;
+	model: string;
+	usage: Usage;
+	calls: number;
+}
+
+/**
+ * Reconcile a child's live spend row against its settled accounting: the readable settled read is
+ * authoritative (a stale live snapshot would undercount a run that spent more), and the live row is
+ * retained only when settled accounting is unavailable, so a failed settle write never zeroes a real row.
+ */
+export function reconcileChildSpend(live: ModelSpend | undefined, settled: SettledChildSpend | undefined): ModelSpend | undefined {
+	if (!settled) {
+		return live;
+	}
+	const provider = normalizeProvider(settled.provider);
+	return {
+		key: spendKey(provider, settled.model),
+		provider,
+		model: settled.model,
+		costUsd: settled.usage.cost.total,
+		totalTokens: settled.usage.totalTokens,
+		inputTokens: settled.usage.input,
+		outputTokens: settled.usage.output,
+		cacheReadTokens: settled.usage.cacheRead,
+		cacheWriteTokens: settled.usage.cacheWrite,
+		calls: settled.calls,
+	};
+}
+
 /** Total USD of a spend map. The run's cost is always this sum, never a parallel snapshot. */
 export function spendRowsTotal(rows: ReadonlyMap<string, ModelSpend>): number {
 	let total = 0;

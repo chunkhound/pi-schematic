@@ -2,10 +2,48 @@
 // outputs. Whole-branch totals are covered by usage.test.ts.
 import { expect, test } from "vitest";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { UNATTRIBUTED_MODEL, addModelSpend, addUsage, assistantCount, collectUsage, mergeModelSpend, usageByModel, type ModelSpend } from "../../usage.js";
-import { collectSessionAccounting } from "../../usage.js";
+import {
+	UNATTRIBUTED_MODEL,
+	addModelSpend,
+	addUsage,
+	assistantCount,
+	collectSessionAccounting,
+	collectUsage,
+	mergeModelSpend,
+	reconcileChildSpend,
+	usageByModel,
+	type ModelSpend,
+} from "../../usage.js";
 import { SPAWN_TOOL_NAME } from "../../spawn/shared.js";
 import { assistantMessageEntry, messageEntry, toolResultEntry, usageFixtureUsd } from "./helpers.js";
+
+test("reconcileChildSpend prefers the readable settled read and keeps the live row otherwise", () => {
+	const live: ModelSpend = {
+		key: "p/m",
+		provider: "p",
+		model: "m",
+		costUsd: 0.25,
+		totalTokens: 18,
+		inputTokens: 10,
+		outputTokens: 5,
+		cacheReadTokens: 1,
+		cacheWriteTokens: 2,
+		calls: 1,
+	};
+	const settled = {
+		provider: "p",
+		model: "m",
+		usage: usageFixtureUsd(0.75),
+		calls: 3,
+	};
+	const reconciled = reconcileChildSpend(live, settled);
+	expect(reconciled?.costUsd).toBe(0.75);
+	expect(reconciled?.calls).toBe(3);
+	expect(reconciled?.key).toBe("p/m");
+	// A failed settle leaves the live row intact; it never zeroes a real row.
+	expect(reconcileChildSpend(live, undefined)).toBe(live);
+	expect(reconcileChildSpend(undefined, undefined)).toBeUndefined();
+});
 
 function userMessage(id: string): SessionEntry {
 	return {
