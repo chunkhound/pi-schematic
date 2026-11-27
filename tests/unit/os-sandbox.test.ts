@@ -355,12 +355,18 @@ test("a cache path containing a quote is escaped, not injected", () => {
 });
 
 test("the cache redirect leaves the readonly contract alone", () => {
-	const wrapped = wrapWithBwrap("true", "/tmp/pi-cache-contract");
+	const tempDir = "/tmp/pi-cache-contract";
+	const canon = resolveRealPath(tempDir);
+	const wrapped = wrapWithBwrap("true", tempDir);
 
-	// Root stays read-only and only the temp dir is bound writable.
+	// Root stays read-only.
 	expect(wrapped).toContain("--ro-bind / /");
-	expect(wrapped).not.toContain("--bind / ");
-	expect(wrapped).not.toMatch(/--bind\s+(?!'\/tmp\/pi-cache-contract')/);
+	// The only writable bind is the temp dir, as both its source and destination.
+	// (`--ro-bind` has a single dash before `bind`, so it is not counted here.)
+	const binds = [...wrapped.matchAll(/--bind\s+(\S+)\s+(\S+)/g)];
+	expect(binds).toHaveLength(1);
+	expect(binds[0][1]).toBe(quoteShellArgument(canon));
+	expect(binds[0][2]).toBe(quoteShellArgument(canon));
 });
 
 test("quoteShellArgument emits POSIX single-quoted arguments", () => {
