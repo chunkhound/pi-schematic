@@ -549,6 +549,59 @@ test.each([
 	assertChildRegistriesCleared(state);
 });
 
+test("bidi and zero-width characters are stripped from teardown reports", async () => {
+	const state = createState();
+	const session = mockSessionFactory({
+		prompt: () => Promise.resolve(),
+		dispose: () => {
+			throw new Error("a\u202eb\u202c\u200b");
+		},
+	});
+	const result = await runSpawn({ state, factory: () => Promise.resolve(sessionResult(session)) });
+
+	// U+202E (right-to-left override) and U+200B (zero-width space) distort or hide text;
+	// both must be dropped so the report cannot spoof its own order.
+	expect(result.content[0].text).toBe("session dispose failed: ab");
+	expect(hasControlChars(result.content[0].text)).toBe(false);
+	assertChildRegistriesCleared(state);
+});
+
+test("an all-escape diagnostic names a placeholder instead of an empty reason", async () => {
+	const state = createState();
+	const session = mockSessionFactory({
+		prompt: () => Promise.resolve(),
+		dispose: () => {
+			throw new Error("\x1b[31m\x1b[0m");
+		},
+	});
+	const result = await runSpawn({ state, factory: () => Promise.resolve(sessionResult(session)) });
+
+	expect(result.content[0].text).toBe("session dispose failed: (no details)");
+	assertChildRegistriesCleared(state);
+});
+
+test("diagnostic truncation keeps an astral pair intact", async () => {
+	// 199 a's + an astral emoji + tails: 201 UTF-16 units exceed the 200-unit cap, and cutting
+	// on code points keeps the emoji whole instead of splitting its surrogate pair.
+	const long = "a".repeat(199) + "😀" + "b".repeat(6);
+	const state = createState();
+	const session = mockSessionFactory({
+		prompt: () => Promise.resolve(),
+		dispose: () => {
+			throw new Error(long);
+		},
+	});
+	const result = await runSpawn({ state, factory: () => Promise.resolve(sessionResult(session)) });
+
+	const text = result.content[0].text;
+	expect(text.startsWith("session dispose failed: ")).toBe(true);
+	const suffix = text.slice("session dispose failed: ".length);
+	expect(Array.from(suffix).slice(-2)).toStrictEqual(["😀", "…"]);
+	// No lone surrogate survives the cut.
+	expect(suffix).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+	assertChildRegistriesCleared(state);
+});
+
 test("control characters are stripped from teardown reports", async () => {
 	const state = createState();
 	const session = mockSessionFactory({

@@ -37,6 +37,7 @@ import { formatByteCap, formatPageList } from "../notebook/store.js";
 import { createNotebookToolDefinitions } from "../notebook/tools.js";
 import { resolveSpawnModelRoute } from "../model-groups/router.js";
 import { productionConstraintRegistry, type ConstraintRegistry } from "../model-groups/constraints/registry.js";
+import { stripUnsafeDisplayChars } from "../model-groups/display.js";
 import { MODEL_GROUP_MODALITY_PROSE } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
 import { appendSandboxBlockNotice, appendSandboxBlockNoticeToResult } from "../os-sandbox.js";
@@ -65,8 +66,9 @@ function getLastAssistantMessage(messages: AgentSession["messages"]): AssistantM
 	return undefined;
 }
 
-/** Strip complete ANSI/OSC/APC sequences, then residual C0/C1 control bytes, so externally supplied
- * diagnostic text can never corrupt TUI rendering or leak escape fragments into result text. */
+/** Strip complete ANSI/OSC/APC sequences, then residual C0/C1 and bidi/zero-width characters, so
+ * externally supplied diagnostic text can never corrupt TUI rendering, leak escape fragments into
+ * result text, or spoof its own display order. */
 function sanitizeDiagnostic(text: string): string {
 	return stripControlChars(stripTerminalSequences(text));
 }
@@ -82,23 +84,25 @@ function failureMessage(error: unknown): string {
 
 const MAX_DIAGNOSTIC_LENGTH = 200;
 
-/** Drop remaining C0/C1 control bytes (ESC, CSI bytes, …) so a raw control byte can never
- * corrupt TUI rendering. Runs after stripTerminalSequences removed complete ANSI sequences. */
+/** Drop residual control and bidi/zero-width characters so externally supplied diagnostic text can
+ * never corrupt TUI rendering or spoof its own display. Runs after stripTerminalSequences removed
+ * complete ANSI sequences. */
 function stripControlChars(text: string): string {
-	let out = "";
-	for (const ch of text) {
-		const code = ch.charCodeAt(0);
-		if (code >= 0x20 && (code < 0x7f || code > 0x9f)) {
-			out += ch;
-		}
-	}
-	return out;
+	return stripUnsafeDisplayChars(text);
 }
 
 /** Flatten, strip control bytes and bound a diagnostic line so teardown reports stay single-line and finite. */
 function formatDiagnostic(error: unknown): string {
 	const flat = sanitizeDiagnostic(failureMessage(error)).replace(/\s+/g, " ").trim();
-	return flat.length > MAX_DIAGNOSTIC_LENGTH ? `${flat.slice(0, MAX_DIAGNOSTIC_LENGTH)}…` : flat;
+	if (flat === "") {
+		// A diagnostic that was entirely escape sequences leaves no visible reason.
+		return "(no details)";
+	}
+	if (flat.length <= MAX_DIAGNOSTIC_LENGTH) {
+		return flat;
+	}
+	// Cut on code points, never UTF-16 units, so an astral pair is never split.
+	return `${Array.from(flat).slice(0, MAX_DIAGNOSTIC_LENGTH).join("")}…`;
 }
 
 function describeAbort(reason: unknown): string {
