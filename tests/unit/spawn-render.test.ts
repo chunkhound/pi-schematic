@@ -14,6 +14,7 @@ import { assertPresent, expectPrefix } from "../assertions.js";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { createState, type SchematicState } from "../../state.js";
 import { registerSpawnTool } from "../../spawn/index.js";
+import { isControlCodePoint } from "../../model-groups/display.js";
 import {
 	theme,
 	ansiTheme,
@@ -184,7 +185,7 @@ test("inherited route identity preserves provider/modelId when present", async (
 function hasControlByte(text: string): boolean {
 	for (const char of text) {
 		const code = char.codePointAt(0);
-		if (code !== undefined && (code < 0x20 || (code >= 0x7f && code <= 0x9f))) {
+		if (code !== undefined && isControlCodePoint(code)) {
 			return true;
 		}
 	}
