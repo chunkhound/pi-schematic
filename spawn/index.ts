@@ -68,9 +68,10 @@ function getLastAssistantMessage(messages: AgentSession["messages"]): AssistantM
 
 /** Strip complete ANSI/OSC/APC sequences, then residual C0/C1 and bidi/zero-width characters, so
  * externally supplied diagnostic text can never corrupt TUI rendering, leak escape fragments into
- * result text, or spoof its own display order. */
+ * result text, or spoof its own display order. The C0/C1/bidi strip is `stripUnsafeDisplayChars`
+ * (model-groups/display.ts), the single predicate all codec and sanitizer paths share. */
 function sanitizeDiagnostic(text: string): string {
-	return stripControlChars(stripTerminalSequences(text));
+	return stripUnsafeDisplayChars(stripTerminalSequences(text));
 }
 
 /** Total stringifier for thrown values: an Error yields message-or-name; otherwise String(), never throwing. */
@@ -83,13 +84,6 @@ function failureMessage(error: unknown): string {
 }
 
 const MAX_DIAGNOSTIC_LENGTH = 200;
-
-/** Drop residual control and bidi/zero-width characters so externally supplied diagnostic text can
- * never corrupt TUI rendering or spoof its own display. Runs after stripTerminalSequences removed
- * complete ANSI sequences. */
-function stripControlChars(text: string): string {
-	return stripUnsafeDisplayChars(text);
-}
 
 /** Flatten, strip control bytes and bound a diagnostic line so teardown reports stay single-line and finite. */
 function formatDiagnostic(error: unknown): string {
@@ -111,12 +105,12 @@ function describeAbort(reason: unknown): string {
 
 /** Notify a teardown failure verbatim. Returns true only when the notice was actually shown, so a
  * caller can fall through to the throw that keeps every failure. Never throws. */
-function notifyTeardownFailure(ctx: ExtensionContext, report: string, severity: "error" | "warning"): boolean {
+function notifyTeardownFailure(ctx: ExtensionContext, report: string, severity: "error" | "warning", prefix = "Spawn teardown failed: "): boolean {
 	if (!ctx.hasUI) {
 		return false;
 	}
 	try {
-		ctx.ui.notify(`Spawn teardown failed: ${report}`, severity);
+		ctx.ui.notify(`${prefix}${report}`, severity);
 		return true;
 	} catch {
 		return false;
@@ -300,7 +294,7 @@ function createSpawnAbortContext(state: SchematicState, session: AgentSession, c
 			reported = p;
 			// notifyTeardownFailure never throws, so this detached observer stays total by itself.
 			void p.catch((e: unknown) => {
-				notifyTeardownFailure(ctx, formatDiagnostic(e), "error");
+				notifyTeardownFailure(ctx, formatDiagnostic(e), "error", "Spawn child abort failed: ");
 			});
 		}
 		return p;

@@ -1241,7 +1241,7 @@ test("a failed child abort during the prompt is reported through the UI notice",
 	expect(result.isError).toBe(true);
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.content[0].text).toBe("Child agent aborted: This operation was aborted\n\nchild result");
-	expect(notifications).toStrictEqual(["Spawn teardown failed: abort failed"]);
+	expect(notifications).toStrictEqual(["Spawn child abort failed: abort failed"]);
 });
 
 // ── Usage of a spawn that fails ──────────────────────────────────────
@@ -2508,7 +2508,7 @@ test("reset during prompt reports a failed abort once through the UI", async () 
 	rejectPrompt(new Error("prompt rejected"));
 
 	assertErrorResult(await execution, "Spawn invalidated by reset; child abort failed.", EMPTY_CHILD_USAGE);
-	expect(notifications).toStrictEqual([["Spawn teardown failed: abort failed", "error"]]);
+	expect(notifications).toStrictEqual([["Spawn child abort failed: abort failed", "error"]]);
 	expect(abort).toHaveBeenCalledOnce();
 	expect(dispose).toHaveBeenCalledOnce();
 	assertChildRegistriesCleared(state);
@@ -2985,7 +2985,7 @@ test("an abort during a running update notifies a failed child abort once", asyn
 	expect(result.isError).toBe(true);
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.content[0].text).toBe("abort failed");
-	expect(notifications).toStrictEqual(["Spawn teardown failed: abort failed"]);
+	expect(notifications).toStrictEqual(["Spawn child abort failed: abort failed"]);
 	expect(prompt).not.toHaveBeenCalled();
 });
 
@@ -3021,7 +3021,7 @@ test("reset during a running update reports one failed abort", async () => {
 	);
 
 	assertErrorResult(result, "Spawn invalidated by reset; child abort failed.", EMPTY_CHILD_USAGE);
-	expect(notifications).toStrictEqual(["Spawn teardown failed: abort failed"]);
+	expect(notifications).toStrictEqual(["Spawn child abort failed: abort failed"]);
 	expect(prompt).not.toHaveBeenCalled();
 });
 
@@ -3311,7 +3311,7 @@ test("spawn abort before its prompt returns the failed abort and notifies the UI
 	expect(result.details.outcome).toBe("aborted");
 	expect(result.content[0].text).toBe("abort failed");
 	expect(result.usage).toStrictEqual(EMPTY_CHILD_USAGE);
-	expect(notifications).toStrictEqual([["Spawn teardown failed: abort failed", "error"]]);
+	expect(notifications).toStrictEqual([["Spawn child abort failed: abort failed", "error"]]);
 });
 
 test("a completed UI spawn whose dispose fails returns the dispose error without a notice", async () => {

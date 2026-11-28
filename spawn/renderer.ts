@@ -42,8 +42,10 @@ import { getLastAssistantText, getStopReasonOutcome, type SpawnOutcome, type Spa
 // ── Render-only constants ────────────────────────────────────────────
 
 const COLLAPSED_PREVIEW_MAX_LINES = 5;
-// The writer emits at most one report per labeled teardown step (spend flush, event unsubscribe,
-// session dispose, event subscription); cap replayed stored/imported details to that bound.
+// The write path emits at most four reports: two "spend flush" reports (a retained live throw plus
+// the settle flush) require a successful subscription, which excludes the "event subscription"
+// failure; the other two steps add one each. The cap also bounds arbitrarily long replayed
+// stored/imported arrays.
 const MAX_TEARDOWN_FAILURES = 4;
 const SPAWN_INDENT = 4;
 const PROMPT_PREVIEW_COLLAPSED_LINES = 3;
