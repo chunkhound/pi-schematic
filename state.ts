@@ -166,7 +166,7 @@ export interface SchematicState {
 	 * Empty = no pending toggle.
 	 *
 	 * `type` preserves `/skill:name` vs generic `/name` so lookup can target the
-	 * correct readonly source without conflating skills and prompt templates.
+	 * correct readonly source without conflating skills and prompt commands.
 	 * Enqueued in `input`, drained in `before_agent_start` until the first real
 	 * readonly decision, cleared on session reset.
 	 */
