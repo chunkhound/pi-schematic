@@ -1,10 +1,10 @@
 /**
- * Watchdog: primacy-zone reminder plus sticky enforcement for required handoff.
+ * Watchdog: primacy-zone nudge plus sticky enforcement for required handoff.
  *
  * Exposes nudge text generation and marks when the eligible required-handoff
  * nudge is sent. `agent_end` records the latest context usage; `agent_settled`
  * enforces the required-handoff budget for runs that sent that nudge.
- * Actual reminder injection happens in the `context` hook so it can appear
+ * Actual nudge injection happens in the `context` hook so it can appear
  * before every LLM call in the same agent run.
  */
 
