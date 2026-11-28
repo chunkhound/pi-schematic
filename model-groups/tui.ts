@@ -415,7 +415,7 @@ export function createModelGroupsComponent(
 			return [];
 		}
 		// The modalities hand-edit screen is rebuilt around disabling capabilities
-		// from the union: only the toggleable media rows remain (no Automatic
+		// from the union: only the toggleable modality rows remain (no Automatic
 		// selector row). Text is the required base when the group's members support
 		// it and reasoning is handled per-model (thinkingLevel), so both are
 		// excluded from toggles.

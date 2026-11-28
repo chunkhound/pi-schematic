@@ -127,9 +127,9 @@ This pattern scales from critical review to separate research, implementation, m
 
 ## Capabilities
 
-Model groups advertise what their members can do. Today that means the modalities `text` and `image`, plus `reasoning` when a member model advertises it — the set is derived per member and narrowed per group.
+Model groups advertise what their members can do. Today that means the modalities `text` and `image`, plus `reasoning` when a member model advertises it — the set is derived per member and can be narrowed by an explicit group override.
 
-Model pickers and editor rows put a small chip beside each model (`T` for text, `I` for image) so you can tell at a glance which inputs it handles. A group's set is derived from its members — you can **narrow** it, but never widen it beyond what the members actually support.
+Model pickers and editor rows put a small chip beside each model (`T` for text, `I` for image — reasoning follows the thinking level, not a chip) so you can tell at a glance which inputs it handles. A group's set is derived from its members — you can **narrow** it, but never widen it beyond what the members actually support.
 
 When you delegate a task with `spawn`, you can declare which capabilities it needs. Spawn checks that requirement against the group and the exact model it selects — and if it can't be met, it fails before creating any child rather than improvising around the gap.
 
