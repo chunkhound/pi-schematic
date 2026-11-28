@@ -213,7 +213,7 @@ export function createNotebookToolDefinitions(
 							text:
 								`--- ${params.name} ---\n${content}\n` +
 								`---\nNotebook Pages:\n${formatPageList(state) || "(empty)"}` +
-								(clipped ? `\n\nNotice: This page was clipped at write time; its stored body is incomplete.` : ""),
+								(clipped ? `\n\nNotice: This page was truncated at write time; its stored body is incomplete.` : ""),
 						},
 					],
 					details: { entries: names, found: true, body: content, clipped },
