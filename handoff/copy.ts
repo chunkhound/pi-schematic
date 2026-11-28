@@ -1,8 +1,8 @@
 /** Shared handoff status copy used by command and tool lifecycle paths. */
 
-/** Status shown after a handoff is requested but is not yet eligible. */
+/** Status shown after a handoff is requested but not yet eligible (context below the token threshold). */
 export const HANDOFF_REQUESTED_STATUS = "🤝 Handoff requested — waiting for eligible context";
-/** Status shown when a topic boundary requires an eligible handoff. */
+/** Status shown when an eligible handoff is owed (requested and the context is ready to compact). */
 export const HANDOFF_REQUIRED_STATUS = "🤝 Handoff required — ready to compact";
 /** Status shown while a handoff is staged in the current turn. */
 export const HANDOFF_IN_PROGRESS_STATUS = "🤝 Handoff in progress";

@@ -103,6 +103,8 @@ Readonly is not frozen into the summary: a pending nudge re-announces the ON pos
 
 Compaction replaces the prior transcript with the fixed continuation frame: the next turns see a small context again (quality), and providers start a new input prefix for billing/cache (the dropped history is no longer in that prefix). Spawn runs children in separate context so their token use does not permanently inflate the parent. This extension does not configure provider cache TTLs or breakpoints.
 
+**Handoff vocabulary** — The agreed terms are defined in the project's [Ubiquitous Language](ubiquitous-language.md#handoff-bc1) document, not inline here.
+
 **Skill and prompt frontmatter** — Interactive TUI invocations resolve model selection during idle `input`; headless/RPC invocations ignore it. `readonly: true|false` alone is deferred to `before_agent_start`, where complete skill metadata is available.
 
 - `model: <provider>/<model-id>` selects a configured, authenticated model. Only the first slash separates the provider, so model IDs may contain slashes.

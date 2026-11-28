@@ -30,7 +30,11 @@ export interface StagedHandoff {
 	declineReason: string | null;
 }
 
-/** A required handoff request; lifecycle on `SchematicState.pendingRequestedHandoff`. */
+/**
+ * The sticky handoff contract: owed until the handoff tool is called, the request is reset,
+ * or the watchdog exhausts its attempt budget. Surface copy splits it into "requested"
+ * (not yet eligible) and "required" (ready to compact) — see `handoff/copy.ts`.
+ */
 export interface RequestedHandoff {
 	/** True only after the current session has actually called the handoff tool. */
 	toolCalled: boolean;
@@ -42,7 +46,7 @@ export interface RequestedHandoff {
 	nextInstruction: string | null;
 }
 
-/** A required handoff request that has not been called, counted or nudged yet. */
+/** A freshly created handoff contract: not yet called, counted, or nudged. */
 export function newRequestedHandoff(nextInstruction: string | null): RequestedHandoff {
 	return { toolCalled: false, enforcementAttempts: 0, eligibleNudgeDelivered: false, nextInstruction };
 }
