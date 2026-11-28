@@ -80,7 +80,7 @@ re-deriving what you already learned.
 
 ### Rules
 - Maintain the notebook as a live cache: refresh non-recoverable knowledge as facts change; discard recoverable code facts once they've served their purpose
-- One page = one subject, thread, or subsystem
+- One page = one subject or subsystem
 - Prefer subject pages over workflow-phase pages
 - Use notebook_index as the index before starting, resuming, or replanning
 - Use notebook_read to open only relevant pages

@@ -77,7 +77,7 @@ export function createNotebookToolDefinitions(
 		label: "Notebook Write",
 		description:
 			"Write or refine a compact notebook page that grounds future contexts. " +
-			"One page covers one subject, thread, or subsystem. " +
+			"One page covers one subject or subsystem. " +
 			"Same name overwrites the previous page (refinement). " +
 			"Writes are serialized via a process-local lock; same-name writes overwrite in completion order. " +
 			"Successful writes return the current list of up to date pages. " +
@@ -162,9 +162,9 @@ export function createNotebookToolDefinitions(
 		label: "Notebook Read",
 		description:
 			"Read a notebook page's full body by name. " +
-			"Open one notebook page to recover state for that topic or thread. " +
+			"Open one notebook page to recover state for that subject. " +
 			"Always returns the current notebook page names. " +
-			"A page clipped at write time returns a truncation notice with its stored body.",
+			"A page truncated at write time returns a truncation notice with its stored body.",
 		...(withHints
 			? {
 					promptSnippet: "Read a notebook page by name",
@@ -213,7 +213,7 @@ export function createNotebookToolDefinitions(
 							text:
 								`--- ${params.name} ---\n${content}\n` +
 								`---\nNotebook Pages:\n${formatPageList(state) || "(empty)"}` +
-								(clipped ? `\n\nNotice: This page was clipped at write time; its stored body is incomplete.` : ""),
+								(clipped ? `\n\nNotice: This page was truncated at write time; its stored body is incomplete.` : ""),
 						},
 					],
 					details: { entries: names, found: true, body: content, clipped },

@@ -1,5 +1,6 @@
 import type { PromptSection } from "../prompt-sections.js";
 import type { SchematicState } from "../state.js";
+import { formatPagePreview } from "./store.js";
 
 export function notebookTopicSection(state: SchematicState): PromptSection {
 	return {
@@ -28,12 +29,11 @@ export function notebookPagesSection(state: SchematicState): PromptSection {
 				return undefined;
 			}
 			// Code-unit order, matching Array.prototype.sort() without a comparator.
+			// The first-line preview reuses `formatPagePreview` so the prompt listing
+			// and the tool-facing previews agree on length and the truncation marker.
 			const listing = [...state.notebookPages]
 				.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-				.map(([name, content]) => {
-					const firstLine = (content.split("\n")[0] ?? "").slice(0, 80);
-					return `  ${name}: ${firstLine}`;
-				})
+				.map(([name, content]) => `  ${name}: ${formatPagePreview(content)}`)
 				.join("\n");
 			return (
 				`## Active Notebook Pages\n` +

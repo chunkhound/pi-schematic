@@ -58,7 +58,10 @@ export interface SchematicState {
 	/** Names of pages whose latest accepted write was clipped by the write-size cap. */
 	clippedPages: Set<string>;
 
-	/** Notebook generation counter. 0 = no writes yet; 1 = first write; bumped on discard. */
+	/**
+	 * Notebook generation counter. Sentinel 0 = no committed generation yet;
+	 * 1 = first write; bumped on discard. See `notebook-generation` markers.
+	 */
 	epoch: number;
 
 	/** Current semantic frame for topic-aware spawn vs handoff decisions. */
@@ -277,7 +280,7 @@ export function invalidateHandoffState(state: SchematicState): void {
 	// The discard watermark is deliberately NOT reset here. A branch change is
 	// immediately followed by reconstruction, which derives the watermark from
 	// the newly active branch (staged survivor epochs included). Resetting early
-	// would let a discard reuse a staged epoch and resurrect orphaned entries.
+	// would let a discard reuse a staged epoch and resurrect uncommitted entries.
 	state.pendingRequestedHandoff = null;
 	state.pendingTopicBoundaryHint = null;
 	state.lastWatchdogBand = null;

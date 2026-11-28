@@ -48,7 +48,7 @@ test("lists only the first line of each page", () => {
 	expect(body).not.toContain("second line");
 });
 
-test("truncates a page summary at 80 characters", () => {
+test("truncates a page summary with an ellipsis marker", () => {
 	const state = createState();
 	state.notebookPages.set("alpha", "x".repeat(81));
 
@@ -56,7 +56,7 @@ test("truncates a page summary at 80 characters", () => {
 	assertPresent(rendered, "the pages section renders");
 	const line = rendered.split("\n").find((l) => l.startsWith("  alpha: "));
 
-	expect(line).toBe(`  alpha: ${"x".repeat(80)}`);
+	expect(line).toBe(`  alpha: ${"x".repeat(77)}...`);
 });
 
 test("omits the pages section when the notebook is empty", () => {

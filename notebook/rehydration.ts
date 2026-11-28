@@ -36,6 +36,9 @@ interface NotebookCandidate {
 
 // ── Rehydration entry types ───────────────────────────────────────────
 
+// `ledger-entry` is the legacy pre-rename custom type of a notebook page; it
+// survives only as a read alias for persisted compatibility and must not be
+// written anymore. `notebook-entry` is the current persisted type.
 const PAGE_ENTRY_TYPES = new Set(["notebook-entry", "ledger-entry"]);
 const GENERATION_ENTRY_TYPE = "notebook-generation";
 
@@ -59,7 +62,7 @@ function isKnownNotebookVersion(value: unknown): boolean {
  * the maximum valid observed page/generation epoch — which includes survivor
  * entries staged by an interrupted discard whose marker never landed. A restart
  * (or a retry on a restarted process) therefore cannot reuse that staged epoch
- * and resurrect orphaned survivors; the next discard pass moves past it.
+ * and resurrect uncommitted survivors; the next discard pass moves past it.
  */
 export function reconstructNotebook(state: SchematicState, branch: readonly (SessionEntry | null | undefined)[]): void {
 	// A generation is visible only after its marker is appended. Staged
