@@ -3399,7 +3399,7 @@ test("registerSpawnTool registers a tool with correct name and metadata", async 
 	expect(tool.label).toBe("Spawn");
 	expect(tool.description).toBeTypeOf("string");
 	expect(tool.description).toMatch(/active registered tools executable in the child session/);
-	expect(tool.description).toMatch(/shared notebook tools/);
+	expect(tool.description).toMatch(/child-local notebook tools/);
 	expect(tool.description).toMatch(/cannot spawn or handoff/);
 	expect(tool.description).not.toMatch(/supported built-in tools/);
 	expect(typeof tool.execute).toBe("function");
