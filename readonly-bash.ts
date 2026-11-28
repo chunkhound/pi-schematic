@@ -134,8 +134,8 @@ const UNPARSABLE_SHELLS = new Set(["pwsh", "pwsh.exe", "powershell", "powershell
  * checks each segment for command substitutions ($(...), backticks), write redirects (>),
  * and filesystem mutations. Blocks if any target path resolves outside the OS temp dir.
  *
- * When OS-level sandboxing (canUseOsSandbox()) is available, this serves as a fallback —
- * the kernel-enforced sandbox enforces the same write-restriction policy.
+ * Runs in BOTH guard paths: as a pre-gate before OS-sandbox wrapping when
+ * canUseOsSandbox() is true, and as the only enforcement when no OS sandbox exists.
  *
  * @param cmd - Raw bash command string (may contain multiple segments via &&, ;, |, etc.)
  * @param cwd - Working directory for relative path resolution (defaults to process.cwd())
