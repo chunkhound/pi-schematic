@@ -52,7 +52,13 @@ export function spawnSpendIdentity(details: SpawnResultDetails): { provider: str
 	if (route !== undefined && typeof provider !== "string") {
 		return null;
 	}
-	const normalizedProvider = typeof provider !== "string" || provider === "" ? null : stripUnsafeDisplayChars(provider);
+	let normalizedProvider: string | null = null;
+	if (typeof provider === "string") {
+		const stripped = stripUnsafeDisplayChars(provider);
+		if (stripped !== "") {
+			normalizedProvider = stripped;
+		}
+	}
 	return { provider: normalizedProvider, model: stripUnsafeDisplayChars(details.model) };
 }
 

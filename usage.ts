@@ -53,21 +53,33 @@ function usageDelta(usage: Usage): SpendDelta {
 	};
 }
 
-/** Normalize an empty provider to null so a session-less model keeps a bare-model key. */
+/** Normalize a provider to null when empty or made only of unsafe display bytes, so a session-less
+ * model keeps a bare-model key and control/bidi bytes never reach a rendered row. */
 function normalizeProvider(provider: string | null): string | null {
-	return provider === "" ? null : provider;
+	if (provider === null || provider === "") {
+		return null;
+	}
+	const stripped = stripUnsafeDisplayChars(provider);
+	return stripped === "" ? null : stripped;
+}
+
+/** Normalize a model name for a spend row: drop control/bidi bytes so a byte-bearing name never
+ * splits one model across two rows. */
+function normalizeSpendModel(model: string): string {
+	return stripUnsafeDisplayChars(model);
 }
 
 /** Accumulate one usage record into a model's spend row; the only per-call accumulator. */
 export function addModelSpend(map: Map<string, ModelSpend>, provider: string | null, model: string, usage: Usage): void {
 	const normProvider = normalizeProvider(provider);
-	const key = spendKey(normProvider, model);
+	const normModel = normalizeSpendModel(model);
+	const key = spendKey(normProvider, normModel);
 	const existing = map.get(key);
 	if (existing) {
 		accumulateSpend(existing, usageDelta(usage));
 		return;
 	}
-	map.set(key, { key, provider: normProvider, model, ...usageDelta(usage) });
+	map.set(key, { key, provider: normProvider, model: normModel, ...usageDelta(usage) });
 }
 
 /** Non-empty claim identities for one entry: the entry id if assigned, plus a tool result's
@@ -200,10 +212,11 @@ export function reconcileChildSpend(live: ModelSpend | undefined, settled: Settl
 		return live;
 	}
 	const provider = normalizeProvider(settled.provider);
+	const model = normalizeSpendModel(settled.model);
 	return {
-		key: spendKey(provider, settled.model),
+		key: spendKey(provider, model),
 		provider,
-		model: settled.model,
+		model,
 		costUsd: settled.usage.cost.total,
 		totalTokens: settled.usage.totalTokens,
 		inputTokens: settled.usage.input,

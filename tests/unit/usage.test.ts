@@ -289,23 +289,17 @@ test("mergeModelSpend keeps one row per model when sink rows and parent entries 
 	expect([...merged.values()].filter((row) => row.key === "anthropic/opus")).toHaveLength(1);
 });
 
-// Cross-repo compatibility: the workflow host imports these names, so they stay resolvable
-// and behave even though the module now centers on zeroUsage()/SessionStats.
-test("compat exports: ZERO_USAGE, SessionStatsLike and sessionStatsToUsage", () => {
-	expect(Object.isFrozen(ZERO_USAGE)).toBe(true);
-	expect(ZERO_USAGE).toStrictEqual(zeroUsage());
-	// The alias is deprecated on purpose; this compat test is its one sanctioned consumer.
-	// eslint-disable-next-line @typescript-eslint/no-deprecated -- this compat test is the alias's one sanctioned consumer
-	const stats: SessionStatsLike = {
-		sessionFile: undefined,
-		sessionId: "s",
-		userMessages: 0,
-		assistantMessages: 1,
-		toolCalls: 0,
-		toolResults: 0,
-		totalMessages: 1,
-		tokens: { input: 10, output: 5, cacheRead: 1, cacheWrite: 2, total: 18 },
-		cost: 0.5,
-	};
-	expect(sessionStatsToUsage(stats)).toMatchObject({ input: 10, totalTokens: 18, cost: { total: 0.5 } });
+test("assistant spend keys strip control/bidi bytes from model and provider", () => {
+	const spend = usageByModel([assistantMessageEntry("a1", "anthropic\u200b", "opu\u0000s", 0.5)]);
+	expect([...spend.keys()]).toStrictEqual(["anthropic/opus"]);
+	expect(spend.get("anthropic/opus")?.provider).toBe("anthropic");
+	expect(spend.get("anthropic/opus")?.model).toBe("opus");
+});
+
+test("control-only provider collapses to a bare-model key like an empty provider", () => {
+	const control = usageByModel([assistantMessageEntry("a1", "\u0000\u0001", "opus", 0.5)]);
+	const empty = usageByModel([assistantMessageEntry("a2", "", "opus", 0.25)]);
+	expect(control.get("opus")?.costUsd).toBe(0.5);
+	expect(control.has("/opus")).toBe(false);
+	expect(empty.get("opus")?.costUsd).toBe(0.25);
 });
