@@ -36,6 +36,9 @@ interface NotebookCandidate {
 
 // ── Rehydration entry types ───────────────────────────────────────────
 
+// `ledger-entry` is the legacy pre-rename custom type of a notebook page; it
+// survives only as a read alias for persisted compatibility and must not be
+// written anymore. `notebook-entry` is the current persisted type.
 const PAGE_ENTRY_TYPES = new Set(["notebook-entry", "ledger-entry"]);
 const GENERATION_ENTRY_TYPE = "notebook-generation";
 

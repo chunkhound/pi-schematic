@@ -11,7 +11,8 @@ export function registerNotebookTopicTool(pi: ExtensionAPI, state: SchematicStat
 		description:
 			"Set the active notebook topic for the current session. " +
 			"Use this to establish the current semantic frame when no topic is set yet. " +
-			"Human-set topics are authoritative and cannot be overridden by the agent.",
+			"A human-set topic is authoritative; an active topic (human- or agent-set) " +
+			"cannot be changed mid-session — use handoff instead.",
 		promptSnippet: "Set the active notebook topic for the current session",
 		promptGuidelines: [
 			"Use this early in a fresh session when no active notebook topic exists yet.",

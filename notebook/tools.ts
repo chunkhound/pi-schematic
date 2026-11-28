@@ -162,7 +162,7 @@ export function createNotebookToolDefinitions(
 		label: "Notebook Read",
 		description:
 			"Read a notebook page's full body by name. " +
-			"Open one notebook page to recover state for that topic or thread. " +
+			"Open one notebook page to recover state for that subject or thread. " +
 			"Always returns the current notebook page names. " +
 			"A page clipped at write time returns a truncation notice with its stored body.",
 		...(withHints

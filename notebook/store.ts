@@ -65,9 +65,10 @@ export function formatPageList(state: SchematicState): string {
 }
 
 /**
- * Human-facing `/notebook` selector preview. Adds the TUI clipped badge on top
- * of the plain preview; the badge is TUI-only and must never be fed back into
- * model-visible text (`formatPagePreview`/`formatPageList` stay untouched).
+ * Human-facing `/notebook` selector preview. Adds the TUI truncation badge
+ * (`[truncated]`) on top of the plain preview; the badge is TUI-only and must
+ * never be fed back into model-visible text (`formatPagePreview`/
+ * `formatPageList` stay untouched).
  */
 export function formatPageTuiPreview(content: string, clipped: boolean): string {
 	const preview = formatPagePreview(content);
@@ -135,6 +136,10 @@ export async function saveNotebookPage(
 			);
 		}
 
+		// One write event is surfaced three ways: the internal `clipped` state flag
+		// (kept on the page), the machine-readable `TruncationReport`, and the
+		// TUI `[truncated]` badge / read notice. These all name the same head -
+		// truncation; keep them in lockstep.
 		const clipped = truncated.truncated;
 		const truncation: TruncationReport | null = clipped
 			? {
