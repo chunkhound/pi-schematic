@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Spend ledger** — a new `usage` module (`usage.ts`) derives per-model spend rows from the run's attributed sources (settled session branch, child ledger, classifier calls) behind one accumulator (`addUsage`/`collectUsage`/`usageByModel`). A run-scoped `ChildUsageSink` lets a workflow host receive each child's cumulative spend on every `message_end` and at settle, its contract owned solely by the `ChildUsageSink` type in `state.ts`; the spawn result's `details`/`usage` carry the child's stats, or mark `statsUnavailable` when its entries cannot be read or summed.
+- **Spend ledger** — a new `usage` module (`usage.ts`) derives per-model spend rows from the run's attributed sources (settled session branch, child ledger, classifier calls) behind one accumulator (`addUsage`/`collectUsage`/`usageByModel`). A run-scoped `ChildUsageSink` lets a workflow host receive each child's cumulative spend on every `message_end` and at settle, its contract owned solely by the `ChildUsageSinkHost` type in `state.ts`; the spawn result's `details`/`usage` carry the child's stats, or mark `statsUnavailable` when its entries cannot be read or summed.
 
 ### Changed
 
