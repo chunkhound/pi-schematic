@@ -2,9 +2,9 @@
  * pi-schematic v2 — Extension factory.
  *
  * Wires together the three primitives:
- *   spawn     — delegate isolated work to child contexts
- *   notebook   — durable cross-context memory
- *   handoff   — deliberate task pivot via compaction
+ *   spawn      — delegate isolated work to child contexts (BC3)
+ *   notebook   — durable cross-context memory (BC2)
+ *   handoff    — deliberate task pivot via compaction (BC1)
  *
  * Also registers:
  *   - watchdog (primacy-zone nudge and required-handoff enforcement)
