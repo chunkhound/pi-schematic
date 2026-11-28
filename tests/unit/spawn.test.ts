@@ -12,7 +12,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { assertInstanceOf, assertPresent, assertString, expectPrefix, expectSuffix } from "../assertions.js";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { createState, resetState, type ChildUsageSink, type SchematicState } from "../../state.js";
+import { createState, newRunOwner, resetState, type ChildUsageSink, type SchematicState } from "../../state.js";
 import { READONLY_BASH_SCOPE, READONLY_NO_SHELL_SUMMARY, READONLY_WRITE_EDIT_SUMMARY } from "../../notifications.js";
 import { buildChildToolNames, createChildTools, executeSpawn, normalizeSpawnRequirements, registerSpawnTool } from "../../spawn/index.js";
 import { NestedAgentSessionComponent, renderSpawnResult } from "../../spawn/renderer.js";
@@ -735,7 +735,7 @@ function routeErrorOf(error: unknown, message?: string): SpawnRouteError {
 
 async function executeWithEntries(getEntries: () => SessionEntry[], opts: Parameters<typeof mockSessionFactory>[0] = {}, sink?: ChildUsageSink) {
 	const state = createState();
-	state.childUsageSink = sink ? { owner: "test-run", sink } : null;
+	state.childUsageSink = sink ? { owner: newRunOwner(), sink } : null;
 	const pi = await createTestHost(
 		(api) => {
 			registerSpawnTool(api, state, mockFactoryWith({ prompt: () => Promise.resolve(), getEntries, ...opts }));

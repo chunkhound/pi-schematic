@@ -24,10 +24,26 @@ import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
  */
 export type ChildUsageSink = (toolCallId: string, provider: string | null, model: string, usage: Usage, calls: number) => undefined;
 
+const RUN_OWNER_BRAND = Symbol("run-owner");
+
+/**
+ * Opaque per-installation run-owner token. Only the {@link RunOwner} class mints instances, so
+ * value equality between tokens is meaningless (two instances are never equal); a stale host from a
+ * finished run can never receive the next run's child spend, even if a run id repeats across runs.
+ */
+export class RunOwner {
+	private readonly [RUN_OWNER_BRAND] = true as const;
+}
+
+/** Mint a fresh, unique run-owner token for a workflow run. */
+export function newRunOwner(): RunOwner {
+	return new RunOwner();
+}
+
 /** Run-scoped live-spend host: the owner token identifies the workflow run that installed the
  * sink, so a stale host from a finished run can never receive the next run's child spend. */
 export interface ChildUsageSinkHost {
-	owner: unknown;
+	owner: RunOwner;
 	sink: ChildUsageSink;
 }
 

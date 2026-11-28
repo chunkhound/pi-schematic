@@ -30,7 +30,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import os from "node:os";
 import { test as base, expect, vi } from "vitest";
-import { createState, resetState, type ChildUsageSink } from "../../state.js";
+import { createState, newRunOwner, resetState, type ChildUsageSink } from "../../state.js";
 import { executeSpawn, registerSpawnTool, type SpawnParameters } from "../../spawn/index.js";
 import { assertPresent, isRecord } from "../assertions.js";
 import { AGENT_DIR_ENV_KEY } from "../paths.js";
@@ -271,7 +271,7 @@ export async function executeWithFailingCleanup(
 ) {
 	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
 	const state = createState();
-	state.childUsageSink = sink ? { owner: "test-run", sink } : null;
+	state.childUsageSink = sink ? { owner: newRunOwner(), sink } : null;
 	const session = mockSessionFactory({
 		// Rejects with any value, primitives included, on purpose; prefer-promise-reject-errors refuses Promise.reject with a non-Error.
 		prompt: () =>
@@ -1204,7 +1204,7 @@ export default function(pi) {
 		const activeTools = params.activeTools ?? ["read", "agentic_e2e_probe", "spawn"];
 		const state = createState();
 		state.readonlyEnabled = params.readonly ?? false;
-		state.childUsageSink = params.sink ? { owner: "test-run", sink: params.sink } : null;
+		state.childUsageSink = params.sink ? { owner: newRunOwner(), sink: params.sink } : null;
 		if (params.notebookPages) {
 			for (const [pageName, pageContent] of Object.entries(params.notebookPages)) {
 				state.notebookPages.set(pageName, pageContent);

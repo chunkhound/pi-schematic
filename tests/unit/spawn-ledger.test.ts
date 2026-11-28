@@ -11,7 +11,7 @@
 import { expect, test, vi } from "vitest";
 import { assertPresent } from "../assertions.js";
 import { usageByModel } from "../../usage.js";
-import { createState, type ChildUsageSink } from "../../state.js";
+import { createState, newRunOwner, type ChildUsageSink } from "../../state.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
 import type { CreateAgentSessionResult } from "@earendil-works/pi-coding-agent";
 import {
@@ -55,7 +55,7 @@ interface RunSpawnOptions {
 async function runSpawn(options: RunSpawnOptions = {}) {
 	const state = options.state ?? createState();
 	if (options.sink) {
-		state.childUsageSink = { owner: "test-run", sink: options.sink };
+		state.childUsageSink = { owner: newRunOwner(), sink: options.sink };
 	}
 	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
 	return executeSpawn(
@@ -75,7 +75,7 @@ test("spawn flushes child spend to the run sink keyed by tool-call id", async ()
 	const rows: [string, string | null, string, unknown][] = [];
 	const state = createState();
 	state.childUsageSink = {
-		owner: "test-run",
+		owner: newRunOwner(),
 		sink: (toolCallId, provider, model, usage) => {
 			rows.push([toolCallId, provider, model, usage]);
 		},
@@ -114,7 +114,7 @@ test("a routed spawn keys the sink row by the group entry's identity", async () 
 	const state = createState();
 	const rows: [string, string | null, string, unknown][] = [];
 	state.childUsageSink = {
-		owner: "test-run",
+		owner: newRunOwner(),
 		sink: (toolCallId, provider, model, usage) => {
 			rows.push([toolCallId, provider, model, usage]);
 		},
@@ -161,7 +161,7 @@ test("child spend keys follow the effective model that ran, not the requested id
 	const rows: [string, string | null, string, unknown][] = [];
 	const state = createState();
 	state.childUsageSink = {
-		owner: "test-run",
+		owner: newRunOwner(),
 		sink: (toolCallId, provider, model, usage) => {
 			rows.push([toolCallId, provider, model, usage]);
 		},
@@ -195,7 +195,7 @@ test("the sink row carries the child's usage-bearing entry count", async () => {
 	const rows: [string, string | null, string, unknown, number][] = [];
 	const state = createState();
 	state.childUsageSink = {
-		owner: "test-run",
+		owner: newRunOwner(),
 		sink: (toolCallId, provider, model, usage, calls) => {
 			rows.push([toolCallId, provider, model, usage, calls]);
 		},
@@ -222,7 +222,7 @@ test("a stale sink host from a finished run receives no later child spend", asyn
 	let handler: ((event: unknown) => void) | undefined;
 	const state = createState();
 	state.childUsageSink = {
-		owner: "run-a",
+		owner: newRunOwner(),
 		sink: (toolCallId, provider, model, usage) => {
 			rowsA.push([toolCallId, provider, model, usage]);
 		},
@@ -254,7 +254,7 @@ test("a stale sink host from a finished run receives no later child spend", asyn
 	assertPresent(handler);
 	// A new run takes over before this spawn flushes again; the stale host must not receive it.
 	state.childUsageSink = {
-		owner: "run-b",
+		owner: newRunOwner(),
 		sink: (toolCallId, provider, model, usage) => {
 			rowsB.push([toolCallId, provider, model, usage]);
 		},
@@ -274,7 +274,7 @@ test("a sink installed after the run started receives no child spend", async () 
 	const session = mockSessionFactory({
 		prompt: () => {
 			state.childUsageSink = {
-				owner: "test-run",
+				owner: newRunOwner(),
 				sink: (toolCallId, provider, model, usage) => {
 					lateRows.push([toolCallId, provider, model, usage]);
 				},
@@ -303,8 +303,9 @@ test("a sink swapped out mid-run keeps every cumulative write with the original 
 	const rowsB: [string, string | null, string, unknown][] = [];
 	let handler: ((event: unknown) => void) | undefined;
 	const state = createState();
+	const owner = newRunOwner();
 	state.childUsageSink = {
-		owner: "test-run",
+		owner,
 		sink: (toolCallId, provider, model, usage) => {
 			rowsA.push([toolCallId, provider, model, usage]);
 		},
@@ -337,7 +338,7 @@ test("a sink swapped out mid-run keeps every cumulative write with the original 
 	// The run owns the sink captured before its first await; swapping the host pointer mid-run must not redirect flushes.
 	handler({ type: "message_end", message: { role: "assistant", usage: undefined } });
 	state.childUsageSink = {
-		owner: "test-run",
+		owner,
 		sink: (toolCallId, provider, model, usage) => {
 			rowsB.push([toolCallId, provider, model, usage]);
 		},
@@ -482,7 +483,7 @@ test("the settle flush runs even when unsubscribe throws", async () => {
 	const rows: [string, string | null, string, unknown][] = [];
 	const state = createState();
 	state.childUsageSink = {
-		owner: "test-run",
+		owner: newRunOwner(),
 		sink: (toolCallId, provider, model, usage) => {
 			rows.push([toolCallId, provider, model, usage]);
 		},
@@ -668,7 +669,7 @@ test("an aborted child leaves a correctly-keyed sink row and never emits unhandl
 	const rows: [string, string | null, string, unknown][] = [];
 	const state = createState();
 	state.childUsageSink = {
-		owner: "test-run",
+		owner: newRunOwner(),
 		sink: (toolCallId, provider, model, usage) => {
 			rows.push([toolCallId, provider, model, usage]);
 		},
@@ -732,7 +733,7 @@ test("a failed child leaves a correctly-keyed sink row", async () => {
 	const rows: [string, string | null, string, unknown][] = [];
 	const state = createState();
 	state.childUsageSink = {
-		owner: "test-run",
+		owner: newRunOwner(),
 		sink: (toolCallId, provider, model, usage) => {
 			rows.push([toolCallId, provider, model, usage]);
 		},
@@ -767,7 +768,7 @@ test("an unreadable child entry list never writes a zero ledger row and preserve
 	let readable = true;
 	const state = createState();
 	state.childUsageSink = {
-		owner: "test-run",
+		owner: newRunOwner(),
 		sink: (toolCallId, provider, model, usage) => {
 			rows.push([toolCallId, provider, model, usage]);
 		},
@@ -822,7 +823,7 @@ test("each sink flush replaces the toolCallId row with cumulative usage", async 
 	let handler: ((event: unknown) => void) | undefined;
 	const state = createState();
 	state.childUsageSink = {
-		owner: "test-run",
+		owner: newRunOwner(),
 		sink: (toolCallId, provider, model, usage) => {
 			rows.push([toolCallId, provider, model, usage]);
 		},
@@ -875,7 +876,7 @@ test("a message_end under a non-tool role folds no usage into the live row", asy
 	let handler: ((event: unknown) => void) | undefined;
 	const state = createState();
 	state.childUsageSink = {
-		owner: "test-run",
+		owner: newRunOwner(),
 		sink: (toolCallId, provider, model, usage) => {
 			rows.push([toolCallId, provider, model, usage]);
 		},

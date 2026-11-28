@@ -8,7 +8,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import * as fc from "fast-check";
 import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
-import { createState, resetState, abortAndClearChildSessions, invalidateHandoffState, newRequestedHandoff } from "../../state.js";
+import { createState, newRunOwner, resetState, abortAndClearChildSessions, invalidateHandoffState, newRequestedHandoff } from "../../state.js";
 import type { SchematicState } from "../../state.js";
 import { setActiveNotebookTopic, clearActiveNotebookTopic } from "../../notebook/topic.js";
 import { saveNotebookPage } from "../../notebook/store.js";
@@ -407,7 +407,7 @@ test("reset clears deferred readonly frontmatter commands", () => {
 
 test("reset preserves an installed child usage sink", () => {
 	const state = createState();
-	const sinkHost = { owner: "run-1", sink: vi.fn() };
+	const sinkHost = { owner: newRunOwner(), sink: vi.fn() };
 	state.childUsageSink = sinkHost;
 
 	resetState(state);
