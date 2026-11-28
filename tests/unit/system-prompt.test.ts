@@ -41,7 +41,7 @@ test("the context primer states the notebook, topic, and handoff contracts", () 
 	expect(handoffSection).toMatch(/notebook/i);
 	expect(handoffSection).not.toMatch(/\bbrief\b/i);
 	expect(primer).toMatch(/When the ask no longer matches the topic, call the handoff tool\./i);
-	expect(rulesSection).toMatch(/one subject, thread, or subsystem/i);
+	expect(rulesSection).toMatch(/one subject or subsystem/i);
 	expect(handoffSection).toMatch(/situational context/i);
 	expect(rulesSection, "rules must specify what the notebook must hold before handoff").toMatch(/non-recoverable knowledge/i);
 	expect(rulesSection, "rules must explicitly list what the prompt carries").toMatch(/current state, blockers, and next steps/i);
