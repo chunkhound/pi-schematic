@@ -22,7 +22,7 @@ export interface ModalityLetterRunOptions {
 	/** Include the reasoning letter. Defaults to false, so capability rows omit R unless requested. */
 	includeReasoning?: boolean;
 	/**
-	 * OpenRouter-style consolidation: when the visible media set contains any
+	 * OpenRouter-style consolidation: when the visible modality set contains any
 	 * non-text modality (image), drop the text letter — text is the always-present
 	 * base, so showing it alongside image is redundant. Text-only groups still
 	 * render T. Default false (preserves the full-text-significant list rows).

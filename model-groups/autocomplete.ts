@@ -29,7 +29,7 @@ export type DescriptionColorizer = (color: ThemeColor, text: string) => string;
 /**
  * Build one colored/muted single-letter capability run for a group, padded so
  * the subsequent per-model route column starts at the same offset across rows.
- * Handles an edge case where the group has no effective media modalities.
+ * Handles an edge case where the group has no effective modalities.
  */
 function buildCapsLetters(group: ResolvedModelGroup, colorize: DescriptionColorizer): string {
 	return modalityLetterRun(group.modalities.effective, {
@@ -44,7 +44,7 @@ function buildCapsLetters(group: ResolvedModelGroup, colorize: DescriptionColori
 /**
  * Assemble the `#`-mention tooltip description.
  *
- * With a colorizer: `T I  provider/model • thinking` — the colored media
+ * With a colorizer: `T I  provider/model • thinking` — the colored modality
  * letters (reasoning excluded) are padded to a fixed `capsWidth` column, then
  * the per-model route details in muted. The muted color is re-asserted after
  * every colored span and after the padding so the one-line row stays legible.

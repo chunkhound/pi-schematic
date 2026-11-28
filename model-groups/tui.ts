@@ -766,7 +766,7 @@ export function createModelGroupsComponent(
 		return `${dim("── ")}${theme.fg("accent", label)}${dim(" ──")}`;
 	}
 
-	/** Colored single-letter run for a group's effective media modalities + dimmed padding. Empty set -> "". */
+	/** Colored single-letter run for a group's effective modalities + dimmed padding. Empty set -> "". */
 	function modalityLetterRun(effective: readonly ModelGroupModality[] | null | undefined): string {
 		return buildModalityLetterRun(effective, {
 			render: (modality, letter) => theme.fg(MODALITY_FG[modality], letter),
@@ -1025,7 +1025,7 @@ export function createModelGroupsComponent(
 				theme.fg("dim", rows.length > 1 ? "↑↓ navigate • Enter/Space toggle • Esc back" : rows.length === 1 ? "Enter/Space toggle • Esc back" : "Esc back"),
 			),
 		);
-		// Single dynamic status: Automatic uses the union; an override limits the media set.
+		// Single dynamic status: Automatic uses the union; an override limits the modality set.
 		container.addChild(
 			textLine(
 				theme.fg(
