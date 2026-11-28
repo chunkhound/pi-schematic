@@ -164,6 +164,7 @@ Toggle it with `/readonly`, `Ctrl+Shift+R`, `--readonly`, or workflow frontmatte
 
 - [Why agent-managed context](docs/why.md)
 - [Architecture and exact lifecycle behavior](docs/architecture.md)
+- [Ubiquitous Language — agreed vocabulary](docs/ubiquitous-language.md)
 - [Changelog](CHANGELOG.md)
 - [Questions, bugs, and feature requests](https://github.com/chunkhound/pi-schematic/issues)
 - [Pi package page](https://pi.dev/packages/@chunkhound/pi-schematic)
