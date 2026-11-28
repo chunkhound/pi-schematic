@@ -997,3 +997,50 @@ test("a throwing cleanup notice falls through to a throw that keeps every failur
 	expect(notify).toHaveBeenCalledOnce();
 	assertChildRegistriesCleared(state);
 });
+
+test("a live flush counts the folded ending-message usage in calls", async () => {
+	const rows: [string, string | null, string, number, number][] = [];
+	let handler: ((event: unknown) => void) | undefined;
+	const state = createState();
+	state.childUsageSink = {
+		owner: newRunOwner(),
+		sink: (toolCallId, provider, model, usage, calls) => {
+			rows.push([toolCallId, provider, model, usage.cost.total, calls]);
+		},
+	};
+	const session = mockSessionFactory({
+		subscribe: (listener) => {
+			handler = listener;
+			return () => {
+				handler = undefined;
+			};
+		},
+		prompt: () => Promise.resolve(),
+		getEntries: () => [assistantMessageEntry("a1", "test", "mock-model", 0.25)],
+	});
+	const pi = await createTestHost(vi.fn(), { activeTools: ["read", "bash", "spawn"] });
+	const execution = executeSpawn(
+		"spawn-calls-fold",
+		pi,
+		spawnContext({ model: { id: "mock-model" }, cwd: "/tmp" }),
+		state,
+		{ prompt: "Do the task" },
+		undefined,
+		undefined,
+		"medium",
+		() => Promise.resolve(sessionResult(session)),
+	);
+
+	await vi.waitFor(() => handler !== undefined);
+	assertPresent(handler);
+	// The ending assistant message carries $0.50 and is not yet persisted; the live row must fold
+	// it into both usage and calls, while the settle row reflects only the persisted entry.
+	handler({ type: "message_end", message: { role: "assistant", usage: usageFixtureUsd(0.5) } });
+	const result = await execution;
+
+	expect(rows).toHaveLength(2);
+	expect(rows[0]).toStrictEqual(["spawn-calls-fold", "test", "mock-model", 0.75, 2]);
+	expect(rows[1]).toStrictEqual(["spawn-calls-fold", "test", "mock-model", 0.25, 1]);
+	expect(result.usage.cost.total).toBe(0.25);
+	assertChildRegistriesCleared(state);
+});

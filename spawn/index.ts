@@ -653,11 +653,14 @@ export function executeSpawn(
 				return;
 			}
 			const usage = eventUsage ? addUsage(accounting.usage, eventUsage) : accounting.usage;
+			// The folded event message is not yet persisted, so its usage-bearing entry is not in
+			// `accounting.calls`; count it so `calls` always equals the entries folded into `usage`.
+			const calls = accounting.calls + (eventUsage ? 1 : 0);
 			// The row keys follow what actually ran (the child's effective model), falling back to
 			// the route identity when no assistant entry names one.
 			const provider = accounting.effective?.provider ?? childProvider;
 			const model = accounting.effective?.model ?? childModel.id;
-			childUsageSinkHost.sink(toolCallId, provider, model, usage, accounting.calls);
+			childUsageSinkHost.sink(toolCallId, provider, model, usage, calls);
 		};
 		let unsubscribeChildEvents: (() => void) | undefined;
 		// `settled` marks the child finalized: message_end from a retained subscriber after the settle flush is inert.
