@@ -1,9 +1,10 @@
 // WHY: One module derives usage/cost from the run's attributed sources — the settled
-// session branch, the child ledger, and classifier calls — so the workflow budget and
-// the run overview read the same rows and can never drift.
+// session branch, the child ledger, and classifier calls — behind one accumulator, so
+// settled rows and the spend ledger read the same entries and cannot drift.
 import type { Usage } from "@earendil-works/pi-ai";
 import type { SessionEntry, SessionStats } from "@earendil-works/pi-coding-agent";
 import { isSpawnResultDetails, SPAWN_TOOL_NAME, spawnSpendIdentity } from "./spawn/shared.js";
+import { stripUnsafeDisplayChars } from "./model-groups/display.js";
 
 /** Bucket for usage pi records without a model: compaction and branch summaries. */
 export const UNATTRIBUTED_MODEL = "unattributed";
@@ -130,6 +131,10 @@ function isClaimed(entry: SessionEntry, options: UsageByModelOptions | undefined
  * An entry is omitted when `skip` owns its non-empty entry id or, for a tool result, its
  * tool-call id. The run-scoped scan drops pre-run and already-committed entries, and the
  * child ledger claims its tool results, so no entry is counted twice.
+ *
+ * NOTE: skipSpawnCallIds must be derived from rows the sink actually wrote. When a child wrote
+ * no row (unreadable settle, a throwing sink, or no subscription), skipping its tool result here
+ * drops real spend from the surface, so claim ids only from ledger rows.
  */
 export function usageByModel(entries: readonly SessionEntry[], options?: UsageByModelOptions): Map<string, ModelSpend> {
 	const map = new Map<string, ModelSpend>();
@@ -248,10 +253,6 @@ export function zeroUsage(): Usage {
 	};
 }
 
-// Frozen compat stand-in for the removed singleton; consumers must treat it as read-only.
-// Prefer zeroUsage() for a fresh copy so an accidental mutation never corrupts a shared zero.
-export const ZERO_USAGE: Usage = Object.freeze(zeroUsage());
-
 /**
  * Mirrors pi-coding-agent's unexported combineUsage: the optional token splits appear only
  * once some usage reports them. A Pi upgrade that changes the usage fields must update this;
@@ -345,12 +346,6 @@ function entryAttribution(entry: SessionEntry): { provider: string | null; model
 export function collectUsage(entries: readonly SessionEntry[]): Usage {
 	return collectSessionAccounting(entries).usage;
 }
-
-/**
- * @deprecated Tightened alias of pi's {@link SessionStats}: every field is required, so a
- * partial stats object no longer compiles. Use SessionStats directly; there are no fallbacks.
- */
-export type SessionStatsLike = SessionStats;
 
 // Pi exposes whole-session cost as one number, so only cost.total is authoritative; the
 // per-component costs stay zero by design and addUsage preserves them as-is.

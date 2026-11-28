@@ -4,7 +4,6 @@ import { expect, test } from "vitest";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
 	UNATTRIBUTED_MODEL,
-	ZERO_USAGE,
 	addModelSpend,
 	addUsage,
 	collectUsage,
@@ -15,7 +14,6 @@ import {
 	usageByModel,
 	zeroUsage,
 	type ModelSpend,
-	type SessionStatsLike,
 } from "../../usage.js";
 import { assistantMessageEntry, toolResultEntry, usageFixtureUsd } from "./helpers.js";
 
