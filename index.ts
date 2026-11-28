@@ -7,7 +7,7 @@
  *   handoff   — deliberate task pivot via compaction
  *
  * Also registers:
- *   - watchdog (primacy-zone reminder and required-handoff enforcement)
+ *   - watchdog (primacy-zone nudge and required-handoff enforcement)
  *   - prompt sections (context primer, current date, topic, model groups, notebook listing)
  *   - state reset on /new
  */
@@ -876,7 +876,8 @@ export default function (pi: ExtensionAPI): void {
 
 		// Below primacy-zone threshold (~30%), skip watchdog unless a boundary
 		// hint or a sticky user-requested handoff is pending — context is still
-		// fresh enough that ordinary nudges add noise.
+		// fresh enough that ordinary nudges add noise. This percent gate is
+		// independent of handoff token eligibility (MIN_HANDOFF_TOKENS = 30k).
 		if (!mustEnforceRequestedHandoff && !state.pendingTopicBoundaryHint) {
 			if (percent === null || percent < 30) {
 				state.lastWatchdogBand = null;
