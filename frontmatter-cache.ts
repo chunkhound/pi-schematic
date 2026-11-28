@@ -169,9 +169,9 @@ export function cacheLookupPrompt(store: FrontmatterCache, name: string): boolea
 }
 
 export function cacheLookupCommand(store: FrontmatterCache, name: string): boolean | null {
-	// Production-facing name: `command` (see PendingCommand). cacheLookupPrompt
-	// is the alias retained for older/test call sites; both read the same
-	// frontmatterPromptCache.
+	// Production-facing name: `command` (see PendingCommand). It delegates to
+	// cacheLookupPrompt, which reads frontmatterPromptCache and is also used
+	// directly by tests.
 	return cacheLookupPrompt(store, name);
 }
 
