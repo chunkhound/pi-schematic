@@ -111,7 +111,7 @@ export interface SchematicState {
 	/**
 	 * Published child agent sessions keyed by toolCallId.
 	 * Lifecycle: executeSpawn publishes → renderSpawnResult claims via get+delete.
-	 * This is only the render handoff queue, not the full live-session registry.
+	 * This is only the render delivery queue, not the full live-session registry.
 	 */
 	childSessions: Map<string, AgentSession>;
 
