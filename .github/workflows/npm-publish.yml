@@ -63,7 +63,7 @@ jobs:
       - run: npm ci
 
       - name: Type check
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
       - name: Security audit
         run: npx audit-ci --config audit-ci.jsonc

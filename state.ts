@@ -6,9 +6,46 @@
  */
 
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { Usage } from "@earendil-works/pi-ai";
 import type { ModelGroupsBootValidation, ResolvedModelGroup } from "./model-groups/types.js";
 import type { FrontmatterEntry, FrontmatterIssue } from "./frontmatter-cache.js";
 import type { NotebookTopicBoundaryHint } from "./notebook/topic.js";
+
+/**
+ * Run-scoped sink for live child spend. The active workflow host installs it, and the
+ * spawn tool flushes each child's cumulative usage on every message_end and at settle.
+ * Each flush REPLACES the row for that toolCallId with the given cumulative usage; an
+ * accumulating host would multiply a child's spend by the flush count. Null outside a
+ * workflow run; only host dispose uninstalls it, never resetState, because a run
+ * survives `workflow.new`.
+ *
+ * Synchronous by contract: the return type is `undefined`, not `void`, so an async sink
+ * fails to compile instead of producing an unhandled rejection from a discarded promise.
+ */
+export type ChildUsageSink = (toolCallId: string, provider: string | null, model: string, usage: Usage, calls: number) => undefined;
+
+const RUN_OWNER_BRAND = Symbol("run-owner");
+
+/**
+ * Opaque per-installation run-owner token. Only the {@link RunOwner} class mints instances, so
+ * value equality between tokens is meaningless (two instances are never equal); a stale host from a
+ * finished run can never receive the next run's child spend, even if a run id repeats across runs.
+ */
+export class RunOwner {
+	private readonly [RUN_OWNER_BRAND] = true as const;
+}
+
+/** Mint a fresh, unique run-owner token for a workflow run. */
+export function newRunOwner(): RunOwner {
+	return new RunOwner();
+}
+
+/** Run-scoped live-spend host: the owner token identifies the workflow run that installed the
+ * sink, so a stale host from a finished run can never receive the next run's child spend. */
+export interface ChildUsageSinkHost {
+	owner: RunOwner;
+	sink: ChildUsageSink;
+}
 
 /** A handoff accepted by the tool, kept until its turn_end boundary is confirmed or failed. */
 export interface StagedHandoff {
@@ -128,6 +165,12 @@ export interface SchematicState {
 	/** One abort promise per child session, shared by signal and reset cleanup. WeakMap entries are GC'd with the session; no manual clear needed. */
 	childAbortPromises: WeakMap<AgentSession, Promise<void>>;
 
+	/** Live child-spend sink installed by the active workflow host; see {@link ChildUsageSinkHost}. */
+	childUsageSink: ChildUsageSinkHost | null;
+
+	/** True while a workflow run owns the input channel (serial-run invariant). */
+	inputSuppressed: boolean;
+
 	/** Whether readonly mode is active — write/edit/powershell blocked; handoff needs explicit /handoff or a human topic boundary; bash writes limited to temp. */
 	readonlyEnabled: boolean;
 
@@ -205,6 +248,8 @@ export function createState(): SchematicState {
 		liveChildSessions,
 		childSessionEpoch: 0,
 		childAbortPromises: new WeakMap(),
+		childUsageSink: null,
+		inputSuppressed: false,
 		readonlyEnabled: false,
 		readonlyNudgePending: false,
 		readonlyNudgeRearmAtSettle: false,
