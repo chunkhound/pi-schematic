@@ -12,8 +12,14 @@ import type { SchematicState } from "./state.js";
 
 // ── TUI status / widget keys ─────────────────────────────────────────
 
-/** Status bar key for the handoff-in-progress indicator. */
-export const STATUS_KEY_HANDOFF = "pi-schematic-handoff";
+/**
+ * Status bar key for the handoff indicator.
+ * Deliberately distinct from `HANDOFF_SUCCESSOR_CUSTOM_TYPE` ("pi-schematic-handoff"),
+ * the persisted session-entry type of the successor message: status keys live in the
+ * TUI key namespace, custom types in the branch-entry namespace, and reusing one string
+ * for both made the two namespaces collide (ubiquitous-language audit, BC1).
+ */
+export const STATUS_KEY_HANDOFF = "pi-schematic-status-handoff";
 
 /** Widget key for the high-context warning banner above the editor. */
 export const WIDGET_KEY_WARNING = "pi-schematic-warning";
