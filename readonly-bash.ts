@@ -134,8 +134,8 @@ const UNPARSABLE_SHELLS = new Set(["pwsh", "pwsh.exe", "powershell", "powershell
  * checks each segment for command substitutions ($(...), backticks), write redirects (>),
  * and filesystem mutations. Blocks if any target path resolves outside the OS temp dir.
  *
- * When OS-level sandboxing (canUseOsSandbox()) is available, this serves as a fallback —
- * the kernel-enforced sandbox enforces the same write-restriction policy.
+ * Runs in BOTH guard paths: as a pre-gate before OS-sandbox wrapping when
+ * canUseOsSandbox() is true, and as the only enforcement when no OS sandbox exists.
  *
  * @param cmd - Raw bash command string (may contain multiple segments via &&, ;, |, etc.)
  * @param cwd - Working directory for relative path resolution (defaults to process.cwd())
@@ -1439,8 +1439,13 @@ export type ReadonlyBashGuardResult = { action: "allow" } | { action: "block"; r
 /**
  * Apply the readonly bash guard to a command.
  *
- * L1: OS-level sandboxing — wraps command if available (sandbox-exec / bwrap).
- * L2: Command-pattern inspection — blocks if OS sandbox unavailable.
+ * The command-pattern classifier runs first in BOTH paths as a pre-gate,
+ * blocking unsafe commands before any wrapping.
+ *
+ * L1: OS-level sandboxing — classifier gate, then wrap with sandbox-exec/bwrap
+ *      when available.
+ * L2: Pattern-inspection-only — the classifier gate is the only enforcement when
+ *      no OS sandbox exists (e.g. Windows).
  *
  * @param cmd - Raw bash command string
  * @param cwd - Working directory for path resolution
@@ -1454,7 +1459,7 @@ export function applyReadonlyBashGuard(cmd: unknown, cwd: string): ReadonlyBashG
 		};
 	}
 
-	// L1: OS sandbox (primary enforcement when available)
+	// L1: OS sandbox path — classifier gate, then wrap when available.
 	if (canUseOsSandbox()) {
 		const verdict = classifyBashCommand(cmd, cwd);
 		if (!verdict.ok) {
@@ -1463,7 +1468,7 @@ export function applyReadonlyBashGuard(cmd: unknown, cwd: string): ReadonlyBashG
 		return { action: "sandbox", sandboxedCommand: wrapCommandWithOsSandbox(cmd) };
 	}
 
-	// L2: Pattern inspection fallback (no sandbox available)
+	// L2: Pattern-inspection-only path — no OS sandbox available.
 	const verdict = classifyBashCommand(cmd, cwd);
 	if (!verdict.ok) {
 		return { action: "block", reason: buildReadonlyBashBlockReason(verdict.reason, cmd) };
