@@ -334,7 +334,7 @@ export function createReadonlyChildBashTool(cwd: string) {
 
 const SPAWN_DESCRIPTION =
 	"Spawn an isolated child agent for a focused subtask. " +
-	"Child inherits parent model, thinking level, cwd, active registered tools executable in the child session, and child-local notebook tools unless an optional Model Group routes its model/thinking; children cannot spawn or handoff. " +
+	"Child inherits parent model and thinking level unless an optional Model Group routes them; cwd, active registered tools executable in the child session, and readonly posture carry over; notebook tools are built child-locally over shared state, so each child gets child-local notebook tools. Children cannot spawn or handoff. " +
 	"Reference notebook pages by name — child will notebook_read them on demand.";
 
 const SPAWN_PROMPT_SNIPPET = "Spawn a focused subtask agent";
